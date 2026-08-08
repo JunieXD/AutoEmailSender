@@ -27,7 +27,7 @@ from auto_email_sender_cli.describe import (
     describe_commands,
     describe_command_revisions,
 )
-from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.errors import CliError, redact_error_details
 from auto_email_sender_cli.main import app
 from auto_email_sender_cli.operation_specs import (
     OPERATION_SPECS,
@@ -65,6 +65,19 @@ class _FakeClient:
 
 
 class ContractTests(unittest.TestCase):
+    def test_error_detail_option_catalogs_are_bounded_without_truncating_business_ids(self) -> None:
+        details = redact_error_details(
+            {
+                "available_fields": [f"field_{index}" for index in range(30)],
+                "candidate_ids": list(range(1, 31)),
+            },
+        )
+
+        self.assertEqual(len(details["available_fields"]), 20)
+        self.assertEqual(details["available_fields_total_count"], 30)
+        self.assertTrue(details["available_fields_truncated"])
+        self.assertEqual(details["candidate_ids"], list(range(1, 31)))
+
     def test_operation_manifest_covers_every_capability_without_legacy_drift(self) -> None:
         self.assertEqual(validate_operation_manifest(CAPABILITIES), [])
         self.assertEqual({item.command for item in CAPABILITIES}, set(OPERATION_SPECS))
@@ -439,6 +452,39 @@ class ContractTests(unittest.TestCase):
             )
         self.assertEqual(result.exit_code, 2, msg=result.output)
         self.assertEqual(json.loads(result.stdout)["error"]["code"], "IF_REVISION_REQUIRES_WRITE")
+        self.assertEqual(client.calls, [])
+
+    def test_include_revisions_is_rejected_for_detail_reads(self) -> None:
+        class _DetailClient(_FakeClient):
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                self.calls.append(kwargs)
+                return {"id": 1, "name": "A"}
+
+        client = _DetailClient()
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=client,
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--include-revisions",
+                    "professors",
+                    "get",
+                    "1",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertEqual(
+            json.loads(result.stdout)["error"]["code"],
+            "INCLUDE_REVISIONS_REQUIRES_COLLECTION",
+        )
         self.assertEqual(client.calls, [])
 
     def test_if_revision_is_rejected_for_writes_without_backend_revision_support(self) -> None:
@@ -884,6 +930,7 @@ class ContractTests(unittest.TestCase):
                         "json",
                         "--output-file",
                         destination.as_posix(),
+                        "--include-revisions",
                         "professors",
                         "list",
                         "--fields",
@@ -1150,7 +1197,7 @@ class ContractTests(unittest.TestCase):
                     "professors",
                     "list",
                     "--fields",
-                    "id,name",
+                    "id,name,revision",
                 ],
             )
         self.assertEqual(projected.exit_code, 0, msg=projected.output)
@@ -1355,7 +1402,7 @@ class ContractTests(unittest.TestCase):
         ):
             result = CliRunner().invoke(
                 app,
-                ["--format", "json", "campaigns", "list"],
+                ["--format", "json", "--include-revisions", "campaigns", "list"],
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
         data = json.loads(result.stdout)["data"]
@@ -1456,7 +1503,9 @@ class ContractTests(unittest.TestCase):
         )["mutation_receipt"]
 
         self.assertEqual(receipt["status"], "replayed")
-        self.assertEqual(receipt["backend_command"], "crawler.jobs.create")
+        self.assertNotIn("backend_command", receipt)
+        self.assertNotIn("audit_reference", receipt)
+        self.assertNotIn("warnings", receipt)
 
     def test_direct_file_handlers_reject_collection_only_global_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

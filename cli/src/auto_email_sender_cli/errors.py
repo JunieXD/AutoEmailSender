@@ -55,6 +55,15 @@ _SAFE_TOKEN_KEY_NAMES = {
     "completion_tokens",
     "total_tokens",
 }
+_BOUNDED_ERROR_LIST_KEYS = {
+    "allowed_fields",
+    "available_fields",
+    "allowed_operators",
+    "available_sections",
+    "available_views",
+    "suggestions",
+}
+_MAX_ERROR_LIST_ITEMS = 20
 
 
 def sanitize_error_message(message: object) -> str:
@@ -81,14 +90,26 @@ def _redact_error_value(value: object) -> object:
     if isinstance(value, str):
         return sanitize_error_message(value)
     if isinstance(value, Mapping):
-        return {
-            str(key): (
+        result: dict[str, object] = {}
+        bounded_metadata: dict[str, object] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            result[key_text] = (
                 "[REDACTED]"
-                if _is_sensitive_key(str(key))
+                if _is_sensitive_key(key_text)
                 else _redact_error_value(item)
             )
-            for key, item in value.items()
-        }
+            if (
+                key_text in _BOUNDED_ERROR_LIST_KEYS
+                and isinstance(result[key_text], list)
+                and len(result[key_text]) > _MAX_ERROR_LIST_ITEMS
+            ):
+                total = len(result[key_text])
+                result[key_text] = result[key_text][:_MAX_ERROR_LIST_ITEMS]
+                bounded_metadata[f"{key_text}_total_count"] = total
+                bounded_metadata[f"{key_text}_truncated"] = True
+        result.update(bounded_metadata)
+        return result
     if isinstance(value, Sequence) and not isinstance(value, bytes | bytearray | str):
         return [_redact_error_value(item) for item in value]
     return "[UNSERIALIZABLE]"

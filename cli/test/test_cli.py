@@ -1328,7 +1328,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["data"]["items"][0]["id"], 7)
-        self.assertEqual(payload["_meta"]["pagination"]["next_cursor"], "1")
+        self.assertNotIn("revision", payload["data"]["items"][0])
+        self.assertNotIn("pagination", payload["_meta"])
+        self.assertEqual(payload["data"]["next_cursor"], "1")
         self.assertEqual(payload["data"]["limit"], 1)
         self.assertTrue(payload["data"]["truncated"])
         self.assertEqual(
@@ -1440,12 +1442,12 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["items"], [{"id": 1, "name": "A"}])
-        self.assertEqual(summary["records"]["kind"], "array_summary")
-        self.assertEqual(
-            summary["mutation_receipt"]["changed_resources"][0]["after"]["kind"],
-            "object_summary",
+        self.assertNotIn("records", summary)
+        self.assertNotIn("after", summary["mutation_receipt"]["changed_resources"][0])
+        self.assertIn(
+            "/mutation_receipt/changed_resources/0/after",
+            summary["omitted_paths"],
         )
-        self.assertIn("/records", summary["omitted_paths"])
         self.assertEqual(full["records"], data["records"])
         self.assertEqual(
             full["mutation_receipt"]["changed_resources"][0]["after"],
@@ -1524,6 +1526,60 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(expanded["summary"]["items"]), 5_000)
         self.assertNotIn("omitted_paths", expanded)
 
+    def test_default_projection_enforces_byte_budget_on_rich_collection_items(self) -> None:
+        items = [
+            {
+                "id": index,
+                "status": "pending",
+                "name": f"导师 {index}",
+                "email": f"mentor-{index}@example.edu",
+                "recent_papers": ["论文" * 50 for _ in range(10)],
+                "evidence": {
+                    "source_url": f"https://example.edu/{index}",
+                    "quote": "证据" * 100,
+                },
+            }
+            for index in range(500)
+        ]
+
+        projected = prepare_result_data(
+            {"items": items, "next_cursor": None, "has_more": False},
+            command="crawler.jobs.candidates",
+        )
+        expanded = prepare_result_data(
+            {"items": items[:1], "next_cursor": None, "has_more": False},
+            command="crawler.jobs.candidates",
+            expanded_paths=("recent_papers",),
+        )
+
+        encoded = json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertLessEqual(len(encoded), 64 * 1024)
+        self.assertTrue(projected["projection"]["budget_compacted"])
+        self.assertEqual(projected["projection"]["budget_bytes"], 64 * 1024)
+        self.assertEqual(projected["items"][0]["id"], 0)
+        self.assertEqual(projected["items"][0]["status"], "pending")
+        self.assertIn("/items/*/recent_papers", projected["omitted_paths"])
+        self.assertLessEqual(len(projected["omitted_paths"]), 32)
+        self.assertEqual(expanded["items"][0]["recent_papers"], items[0]["recent_papers"])
+
+    def test_nested_arrays_are_bounded_by_bytes_before_item_count(self) -> None:
+        projected = prepare_result_data(
+            {
+                "plan_id": "plan-rich",
+                "summary": {
+                    "items": [
+                        {"id": index, "value": "内容" * 200}
+                        for index in range(49)
+                    ],
+                },
+            },
+            command="plans.show",
+        )
+
+        self.assertEqual(projected["summary"]["items"]["kind"], "array_summary")
+        self.assertEqual(projected["summary"]["items"]["item_count"], 49)
+        self.assertIn("/summary/items", projected["omitted_paths"])
+
     def test_result_protocol_metadata_is_sparse_and_blocked_actions_expand_on_demand(self) -> None:
         complete = prepare_result_data({"id": 1, "name": "导师"}, command="professors.get")
         self.assertTrue(
@@ -1581,7 +1637,8 @@ class CliTests(unittest.TestCase):
         first = projected["items"][0]
         self.assertEqual(first["available_actions"][0]["risk_level"], "L0")
         self.assertEqual(first["blocked_actions"]["kind"], "object_summary")
-        self.assertIn("/items/0/blocked_actions", projected["omitted_paths"])
+        self.assertIn("/items/*/blocked_actions", projected["omitted_paths"])
+        self.assertEqual(projected["omitted_paths_total"], 100)
 
     def test_root_complete_capability_views_require_a_narrow_scope(self) -> None:
         for view in ("commands", "full"):
@@ -1773,6 +1830,14 @@ class CliTests(unittest.TestCase):
 
         for result in (create_tag, create_professor, update_professor, clear_tags):
             self.assertEqual(result.exit_code, 0, msg=result.output)
+        create_payload = json.loads(create_professor.stdout)
+        receipt_request_id = create_payload["data"]["mutation_receipt"]["request_id"]
+        self.assertNotIn("request_id", create_payload["_meta"])
+        self.assertEqual(create_professor.stdout.count(receipt_request_id), 1)
+        self.assertNotIn(
+            "after",
+            create_payload["data"]["mutation_receipt"]["changed_resources"][0],
+        )
         self.assertEqual(fake_client.calls[0][:2], ("POST", "/api/agent/v1/professor-tags"))
         self.assertEqual(
             fake_client.json_bodies[0],

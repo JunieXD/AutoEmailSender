@@ -276,6 +276,13 @@ def root(
             help="在 summary 中显式展开字段名或 JSON Pointer；可重复，例如 --expand body_text。",
         ),
     ] = [],
+    include_revisions: Annotated[
+        bool,
+        typer.Option(
+            "--include-revisions",
+            help="在集合记录中包含并发保护 revision；详情读取始终包含。",
+        ),
+    ] = False,
 ) -> None:
     specified_options = frozenset(
         name
@@ -287,6 +294,7 @@ def root(
             "filter_expression",
             "projection",
             "expand",
+            "include_revisions",
         )
         if ctx.get_parameter_source(name)
         not in {None, ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP}
@@ -300,6 +308,7 @@ def root(
         force_output=force_output,
         projection=projection,
         expand=tuple(expand),
+        include_revisions=include_revisions,
         specified_options=specified_options,
     )
 

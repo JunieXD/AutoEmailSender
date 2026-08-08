@@ -45,6 +45,7 @@ class CliContext:
     force_output: bool = False
     projection: ResultProjection = ResultProjection.SUMMARY
     expand: tuple[str, ...] = ()
+    include_revisions: bool = False
     specified_options: frozenset[str] = frozenset()
     invoke_command: str | None = None
     invoke_input: dict[str, object] | None = None
@@ -100,12 +101,16 @@ def emit_success(
             else None
         ),
     )
+    response_request_id = request_id or context.request_id
+    receipt = emitted_data.get("mutation_receipt") if isinstance(emitted_data, dict) else None
+    if isinstance(receipt, dict) and receipt.get("request_id") == response_request_id:
+        response_request_id = None
     meta = build_meta(
         command=command,
         guide_topic=guide_topic,
         app_version=app_version,
         warnings=warnings,
-        request_id=request_id or context.request_id,
+        request_id=response_request_id,
     )
     # Some non-paged envelopes (for example campaigns.resend-context) contain
     # an ``items`` field for business data. Only treat it as a collection when
@@ -117,7 +122,7 @@ def emit_success(
         and any(key in emitted_data for key in ("next_cursor", "has_more", "pagination_mode"))
     )
     page_items = emitted_data.get("items") if is_paged_collection else None
-    if is_paged_collection:
+    if is_paged_collection and context.output_format is OutputFormat.JSONL:
         meta["pagination"] = {
             "next_cursor": emitted_data.get("next_cursor"),
             "has_more": bool(emitted_data.get("has_more")),

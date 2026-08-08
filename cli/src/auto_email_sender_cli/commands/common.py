@@ -127,6 +127,12 @@ def validate_context_options(
             message="--output-file 只能用于集合读取命令。",
             exit_code=2,
         )
+    if context.include_revisions and not supports_filter:
+        raise CliError(
+            code="INCLUDE_REVISIONS_REQUIRES_COLLECTION",
+            message="--include-revisions 只能用于集合读取命令。",
+            exit_code=2,
+        )
     if not supports_projection and (
         "projection" in context.specified_options or context.expand
     ):
@@ -220,7 +226,11 @@ def run_read_command(
         # ``--fields id,name`` would produce a different revision from the
         # server's full object and a subsequent ``--if-revision`` write would
         # be rejected even when nobody changed the record.
-        data = augment_state_metadata(add_revisions(data), command=command)
+        include_collection_revisions = _collection_revisions_requested(context, fields)
+        data = augment_state_metadata(
+            add_revisions(data, include_collection=include_collection_revisions),
+            command=command,
+        )
         data = compact_collection_action_metadata(data, command=command)
         data = project_fields(data, fields, command=command)
         data = annotate_collection_limit(
@@ -554,12 +564,24 @@ def normalize_collection_response(data: Any, *, command: str | None = None) -> A
         page = 1
         total_pages = 1
     has_more = page < total_pages
+    try:
+        page_size = int(pagination.get("page_size", len(records)))
+    except (TypeError, ValueError):
+        page_size = len(records)
+    total_records = pagination.get("total_records")
     return {
         **data,
         "items": records,
         "next_cursor": str(page + 1) if has_more else None,
         "has_more": has_more,
         "pagination_mode": "page",
+        "offset": max(0, (page - 1) * page_size),
+        "limit": page_size,
+        **(
+            {"total": total_records}
+            if isinstance(total_records, int) and not isinstance(total_records, bool)
+            else {}
+        ),
     }
 
 
@@ -874,9 +896,9 @@ def project_fields(data: Any, fields: str | None, *, command: str | None = None)
             projected_items.append(item)
             continue
         projected = {key: item.get(key) for key in selected}
-        # These are protocol metadata needed for safe follow-up writes and
-        # executable state transitions. They remain available even when the
-        # Agent projects business fields down to a compact view.
+        # Protocol metadata that is present remains available even when the
+        # Agent projects business fields down to a compact view. Collection
+        # revisions are added only when explicitly requested.
         for metadata_field in (
             "revision",
             "available_actions",
@@ -1079,20 +1101,31 @@ def _augment_state_value(value: Any, *, command: str) -> Any:
     return result
 
 
-def add_revisions(data: Any) -> Any:
+def add_revisions(data: Any, *, include_collection: bool = True) -> Any:
     """Add deterministic optimistic-concurrency tokens to returned objects."""
 
     if not isinstance(data, dict):
         return data
     result = dict(data)
     if isinstance(result.get("items"), list):
-        result["items"] = [
-            _with_revision(item) if isinstance(item, dict) else item
-            for item in result["items"]
-        ]
+        if include_collection:
+            result["items"] = [
+                _with_revision(item) if isinstance(item, dict) else item
+                for item in result["items"]
+            ]
     elif "revision" not in result and any(key in result for key in ("id", "task_id", "job_id", "plan_id")):
         result = _with_revision(result)
     return result
+
+
+def _collection_revisions_requested(context: CliContext, fields: str | None) -> bool:
+    if context.include_revisions:
+        return True
+    return "revision" in {
+        field.strip()
+        for field in (fields or "").split(",")
+        if field.strip()
+    }
 
 
 def _with_revision(value: dict[str, object]) -> dict[str, object]:
@@ -1387,14 +1420,15 @@ def add_mutation_receipt(
         "request_id": request_id,
         "status": mutation_status,
         "changed_resources": changed_resources,
-        "warnings": [],
-        "audit_reference": (response_headers or {}).get("x-audit-reference") or request_id,
     }
+    audit_reference = (response_headers or {}).get("x-audit-reference")
+    if audit_reference and audit_reference != request_id:
+        receipt["audit_reference"] = audit_reference
     header_receipt = (response_headers or {}).get("x-agent-mutation-receipt")
     if header_receipt:
         receipt["backend_receipt_id"] = header_receipt
     header_command = (response_headers or {}).get("x-agent-mutation-command")
-    if header_command:
+    if header_command and header_command != command:
         receipt["backend_command"] = header_command
     return {**data, "mutation_receipt": receipt}
 
@@ -1485,7 +1519,10 @@ def stream_collection_pages_to_file(
                     command=command,
                 )
                 transformed = augment_state_metadata(
-                    add_revisions(transformed),
+                    add_revisions(
+                        transformed,
+                        include_collection=_collection_revisions_requested(context, fields),
+                    ),
                     command=command,
                 )
                 transformed = project_fields(transformed, fields, command=command)

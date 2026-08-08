@@ -306,6 +306,14 @@ def _input_contract(
                 "position": "before_command",
                 "description": "在 summary 中按字段名或 JSON Pointer 显式展开内容；可重复。",
             },
+            "include_revisions": {
+                "flags": ["--include-revisions"],
+                "type": "boolean",
+                "required": False,
+                "supported": supports_pagination(command),
+                "position": "before_command",
+                "description": "集合默认省略 revision；准备逐项并发保护写入时显式启用。",
+            },
         },
         "clear_semantics": (
             "omitted=preserve; supplied value=set; explicit --clear-* or clear=true=clear"
@@ -357,8 +365,8 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
     if is_business_result(command) and not supports_list:
         output_fields = output_fields | RESULT_PROTOCOL_FIELDS
     if command not in _REVISION_EXCLUDED_COMMANDS and (supports_list or _has_revision_output(output_fields)):
-        # ``run_read_command`` always exposes a revision on collection items,
-        # and detail reads expose the same token on identified objects.
+        # Collection revisions are available on demand, while detail reads
+        # expose the token by default on identified objects.
         output_fields = output_fields | {"revision"}
     if supports_dynamic_action_links(command) and (supports_list or "status" in output_fields):
         # ``augment_state_metadata`` adds these fields to every identified
@@ -390,6 +398,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "continuation": {"type": ["object", "null"]},
                 "truncated": {"type": "boolean"},
                 "omitted_paths": {"type": "array", "items": {"type": "string"}},
+                "omitted_paths_total": {"type": "integer"},
             },
             "required": ["items", "next_cursor", "has_more"],
         }
@@ -467,9 +476,9 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         if supports_dynamic_action_links(command)
         else None,
         "result_protocol": {
-            "version": "1",
+            "version": "2",
             "default_projection": "summary",
-            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths"],
+            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths", "omitted_paths_total"],
             "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
             "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据。",
@@ -487,7 +496,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                     "warnings": {"type": "array"},
                     "audit_reference": {"type": ["string", "null"]},
                 },
-                "required": ["request_id", "status", "changed_resources", "warnings", "audit_reference"],
+                "required": ["request_id", "status", "changed_resources"],
             },
         },
         "known_fields": sorted(output_fields),
@@ -511,6 +520,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "continuation",
             "truncated",
             "omitted_paths",
+            "omitted_paths_total",
         ]
         if supports_list
         else [],
