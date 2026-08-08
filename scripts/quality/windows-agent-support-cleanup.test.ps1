@@ -22,7 +22,7 @@ function Write-Manifest(
     [bool]$Enabled = $true
 ) {
     $manifest = [ordered]@{
-        schema_version = 4
+        schema_version = 5
         enabled = $Enabled
         prompt_dismissed = $true
         app_version = "2.4.1"
@@ -45,11 +45,11 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
     $managedRoot = Join-Path $testRoot "managed"
     $profile = Join-Path $managedRoot "profile"
-    $managedCli = Join-Path $managedRoot "bin\auto-email-sender.exe"
+    $managedCli = Join-Path $managedRoot "bin\auto-email-sender.cmd"
     $managedManifest = Join-Path $managedRoot "user-data\agent\installation.json"
     $codexSkill = Join-Path $profile ".agents\skills\auto-email-sender"
     $claudeSkill = Join-Path $profile ".claude\skills\auto-email-sender"
-    Write-Utf8NoBom $managedCli "managed cli"
+    Write-Utf8NoBom $managedCli "@echo off`r`nmanaged cli"
     Write-Utf8NoBom (Join-Path $codexSkill "SKILL.md") "managed codex skill"
     Write-Utf8NoBom (Join-Path $claudeSkill "SKILL.md") "managed claude skill"
     Write-Manifest $managedManifest $managedCli ([ordered]@{
@@ -67,6 +67,32 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $managedCli)) "Managed CLI was not removed."
     Assert-True (-not (Test-Path -LiteralPath $codexSkill)) "Managed Codex Skill was not removed."
     Assert-True (-not (Test-Path -LiteralPath $claudeSkill)) "Managed Claude Code Skill was not removed."
+
+    $v4Root = Join-Path $testRoot "v4"
+    $v4Profile = Join-Path $v4Root "profile"
+    $v4Cli = Join-Path $v4Root "bin\auto-email-sender.exe"
+    $v4Manifest = Join-Path $v4Root "user-data\agent\installation.json"
+    Write-Utf8NoBom $v4Cli "v4 managed cli"
+    $v4 = [ordered]@{
+        schema_version = 4
+        enabled = $true
+        prompt_dismissed = $true
+        app_version = "2.4.1"
+        cli_target = $v4Cli
+        cli_sha256 = ("a" * 64)
+        path_managed = $false
+        agents = @{}
+        updated_at = "2026-08-04T00:00:00.000Z"
+    }
+    Write-Utf8NoBom $v4Manifest (($v4 | ConvertTo-Json -Depth 10) + "`n")
+
+    & $cleanupScript `
+        -ManifestPath $v4Manifest `
+        -CommandDirectory (Split-Path -Parent $v4Cli) `
+        -UserProfilePath $v4Profile `
+        -SkipPathCleanup
+
+    Assert-True (-not (Test-Path -LiteralPath $v4Cli)) "V4 managed CLI was not removed."
 
     $legacyRoot = Join-Path $testRoot "legacy"
     $legacyProfile = Join-Path $legacyRoot "profile"

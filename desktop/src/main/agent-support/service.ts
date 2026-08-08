@@ -24,10 +24,11 @@ import type {
 } from "../../../../contracts/desktop-ipc.js";
 
 const execFileAsync = promisify(execFile);
-const MANIFEST_SCHEMA_VERSION = 4;
-const PREVIOUS_MANIFEST_SCHEMA_VERSION = 3;
-const OLDER_MANIFEST_SCHEMA_VERSION = 2;
-const LEGACY_MANIFEST_SCHEMA_VERSION = 1;
+const MANIFEST_SCHEMA_VERSION = 5;
+const PREVIOUS_MANIFEST_SCHEMA_VERSION = 4;
+const OLDER_MANIFEST_SCHEMA_VERSION = 3;
+const LEGACY_MANIFEST_SCHEMA_VERSION = 2;
+const EARLIEST_MANIFEST_SCHEMA_VERSION = 1;
 const ZSH_PATH_BLOCK_START = "# >>> Auto Email Sender Agent support >>>";
 const ZSH_PATH_BLOCK_END = "# <<< Auto Email Sender Agent support <<<";
 const WINDOWS_ENVIRONMENT_CHANGE_SCRIPT = `
@@ -123,8 +124,10 @@ type AgentSupportManifest = {
 };
 
 export type AgentSupportPaths = {
+  cliBundleSource: string;
   cliSource: string;
   cliTarget: string;
+  legacyCliTarget: string;
   skillSource: string;
   /** Legacy alias for the Codex-compatible shared Agent Skills directory. */
   skillTarget: string;
@@ -155,9 +158,10 @@ export type AgentSupportServiceOptions = {
 
 export function resolveAgentSupportPaths(options: AgentSupportServiceOptions): AgentSupportPaths {
   const executableName = options.platform === "win32" ? "auto-email-sender.exe" : "auto-email-sender";
-  const cliSource = options.isPackaged
-    ? path.join(options.resourcesPath, "cli", executableName)
-    : path.join(options.repoRoot, "cli", "dist", executableName);
+  const cliBundleSource = options.isPackaged
+    ? path.join(options.resourcesPath, "cli")
+    : path.join(options.repoRoot, "cli", "dist", "auto-email-sender");
+  const cliSource = path.join(cliBundleSource, executableName);
   const skillSource = options.isPackaged
     ? path.join(options.resourcesPath, "agent-support", "skills", "auto-email-sender")
     : path.join(options.repoRoot, "agent-support", "skills", "auto-email-sender");
@@ -176,8 +180,13 @@ export function resolveAgentSupportPaths(options: AgentSupportServiceOptions): A
   ) as Record<AgentIntegrationId, string>;
 
   return {
+    cliBundleSource,
     cliSource,
-    cliTarget: path.join(commandDirectory, executableName),
+    cliTarget: path.join(
+      commandDirectory,
+      options.platform === "win32" ? "auto-email-sender.cmd" : executableName,
+    ),
+    legacyCliTarget: path.join(commandDirectory, executableName),
     skillSource,
     skillTarget: agentSkillTargets.codex,
     agentSkillTargets,
@@ -324,8 +333,9 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
 
   const disable = async (): Promise<AgentSupportStatus> => {
     const manifest = await readManifest(paths.manifestPath);
-    if (manifest?.enabled && isManagedCliTarget(manifest, paths)) {
-      await rm(paths.cliTarget, { recursive: true, force: true });
+    const managedCliTarget = getManagedCliTargetPath(manifest, paths);
+    if (managedCliTarget !== null) {
+      await rm(managedCliTarget, { recursive: true, force: true });
     }
     if (manifest?.enabled) {
       for (const agentId of getManagedAgentIds(paths, manifest)) {
@@ -404,7 +414,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     await installCli(
       paths,
       options.platform,
-      isManagedCliTarget(previousManifest, paths),
+      getManagedCliTargetPath(previousManifest, paths),
     );
     const pathManaged = options.platform === "darwin"
       ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
@@ -427,7 +437,11 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       throw new Error(`为避免覆盖你的文件，无法更新：${cliConflict}`);
     }
 
-    await installCli(paths, options.platform, true);
+    await installCli(
+      paths,
+      options.platform,
+      getManagedCliTargetPath(previousManifest, paths),
+    );
     const agentIds = getManagedAgentIds(paths, previousManifest);
     for (const agentId of agentIds) {
       await installSkill(paths.skillSource, paths.agentSkillTargets[agentId], true);
@@ -469,7 +483,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       cli_source: path.resolve(paths.cliSource),
       skill_source: path.resolve(paths.skillSource),
       cli_target: path.resolve(paths.cliTarget),
-      cli_sha256: await sha256File(paths.cliSource),
+      cli_sha256: await sha256Directory(paths.cliBundleSource),
       path_managed: pathManaged,
       agents,
       updated_at: now().toISOString(),
@@ -529,17 +543,19 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
 }
 
 async function hasRequiredSourceFiles(paths: AgentSupportPaths): Promise<boolean> {
-  return (await pathExists(paths.cliSource)) && (await pathExists(path.join(paths.skillSource, "SKILL.md")));
+  return (await pathExists(paths.cliSource))
+    && (await pathIsDirectory(path.join(paths.cliBundleSource, "_internal")))
+    && (await pathExists(path.join(paths.skillSource, "SKILL.md")));
 }
 
 async function installCli(
   paths: AgentSupportPaths,
   platform: NodeJS.Platform,
-  allowManagedReplacement: boolean,
+  managedTarget: string | null,
 ): Promise<void> {
   await mkdir(path.dirname(paths.cliTarget), { recursive: true });
   if (await pathExists(paths.cliTarget)) {
-    if (!allowManagedReplacement) {
+    if (managedTarget !== paths.cliTarget) {
       throw new Error(`命令目标已存在且不属于本软件：${paths.cliTarget}`);
     }
     await rm(paths.cliTarget, { recursive: true, force: true });
@@ -550,11 +566,27 @@ async function installCli(
   }
   const temporaryPath = `${paths.cliTarget}.${randomUUID()}.tmp`;
   try {
-    await cp(paths.cliSource, temporaryPath, { force: false });
+    await writeFile(temporaryPath, windowsCliLauncherContent(paths.cliSource), {
+      encoding: "utf8",
+      flag: "wx",
+    });
     await rename(temporaryPath, paths.cliTarget);
+    if (managedTarget !== null && managedTarget !== paths.cliTarget) {
+      try {
+        await rm(managedTarget, { recursive: true, force: true });
+      } catch (error) {
+        await rm(paths.cliTarget, { force: true }).catch(() => undefined);
+        throw error;
+      }
+    }
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
+}
+
+function windowsCliLauncherContent(cliSource: string): string {
+  const escapedSource = path.resolve(cliSource).replaceAll("%", "%%");
+  return `@echo off\r\n"${escapedSource}" %*\r\nexit /b %ERRORLEVEL%\r\n`;
 }
 
 async function installSkill(
@@ -589,11 +621,11 @@ async function isInstallationHealthy(input: {
     manifest.schema_version !== MANIFEST_SCHEMA_VERSION
     || manifest.app_version !== options.appVersion
     || manifest.cli_source !== path.resolve(paths.cliSource)
+    || manifest.cli_target !== path.resolve(paths.cliTarget)
     || manifest.skill_source !== path.resolve(paths.skillSource)
     || manifest.cli_sha256 === null
     || !(await pathExists(paths.cliTarget))
-    || !(await fileFingerprintMatches(paths.cliTarget, manifest.cli_sha256))
-    || !(await fileFingerprintMatches(paths.cliSource, manifest.cli_sha256))
+    || !(await directoryFingerprintMatches(paths.cliBundleSource, manifest.cli_sha256))
   ) {
     return false;
   }
@@ -617,6 +649,7 @@ async function isInstallationHealthy(input: {
   }
   try {
     return (await lstat(paths.cliTarget)).isFile()
+      && await fileTextMatches(paths.cliTarget, windowsCliLauncherContent(paths.cliSource))
       && hasPathEntry(await input.readWindowsPath(), paths.commandDirectory, ";");
   } catch {
     return false;
@@ -720,8 +753,24 @@ function getManagedAgentIds(
   );
 }
 
-function isManagedCliTarget(manifest: AgentSupportManifest | null, paths: AgentSupportPaths): boolean {
-  return Boolean(manifest?.enabled && manifest.cli_target === path.resolve(paths.cliTarget));
+function getManagedCliTargetPath(
+  manifest: AgentSupportManifest | null,
+  paths: AgentSupportPaths,
+): string | null {
+  if (!manifest?.enabled) {
+    return null;
+  }
+  const target = path.resolve(manifest.cli_target);
+  if (target === path.resolve(paths.cliTarget)) {
+    return paths.cliTarget;
+  }
+  if (
+    manifest.schema_version < MANIFEST_SCHEMA_VERSION
+    && target === path.resolve(paths.legacyCliTarget)
+  ) {
+    return paths.legacyCliTarget;
+  }
+  return null;
 }
 
 function isManagedAgentSkillTarget(
@@ -735,8 +784,11 @@ async function findUnmanagedCliConflict(
   paths: AgentSupportPaths,
   manifest: AgentSupportManifest | null,
 ): Promise<string | null> {
-  if (await pathExists(paths.cliTarget) && !isManagedCliTarget(manifest, paths)) {
-    return paths.cliTarget;
+  const managedTarget = getManagedCliTargetPath(manifest, paths);
+  for (const candidate of new Set([paths.cliTarget, paths.legacyCliTarget])) {
+    if (await pathExists(candidate) && path.resolve(candidate) !== path.resolve(managedTarget ?? "")) {
+      return candidate;
+    }
   }
   return null;
 }
@@ -945,7 +997,8 @@ async function readManifest(manifestPath: string): Promise<AgentSupportManifest 
       (schemaVersion !== MANIFEST_SCHEMA_VERSION
         && schemaVersion !== PREVIOUS_MANIFEST_SCHEMA_VERSION
         && schemaVersion !== OLDER_MANIFEST_SCHEMA_VERSION
-        && schemaVersion !== LEGACY_MANIFEST_SCHEMA_VERSION)
+        && schemaVersion !== LEGACY_MANIFEST_SCHEMA_VERSION
+        && schemaVersion !== EARLIEST_MANIFEST_SCHEMA_VERSION)
       || typeof value.enabled !== "boolean"
       || typeof value.prompt_dismissed !== "boolean"
       || typeof value.cli_target !== "string"
@@ -954,7 +1007,7 @@ async function readManifest(manifestPath: string): Promise<AgentSupportManifest 
       return null;
     }
 
-    const agents = schemaVersion === MANIFEST_SCHEMA_VERSION
+    const agents = schemaVersion >= PREVIOUS_MANIFEST_SCHEMA_VERSION
       ? readManagedAgents(value.agents)
       : readLegacyManagedAgents(value);
     return {
@@ -1057,9 +1110,9 @@ async function sha256Directory(directoryPath: string): Promise<string> {
   return createHash("sha256").update(canonicalListing, "utf8").digest("hex");
 }
 
-async function fileFingerprintMatches(targetPath: string, expected: string): Promise<boolean> {
+async function fileTextMatches(targetPath: string, expected: string): Promise<boolean> {
   try {
-    return await sha256File(targetPath) === expected;
+    return await readFile(targetPath, "utf8") === expected;
   } catch {
     return false;
   }
@@ -1150,6 +1203,14 @@ async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await lstat(targetPath);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pathIsDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await lstat(targetPath)).isDirectory();
   } catch {
     return false;
   }

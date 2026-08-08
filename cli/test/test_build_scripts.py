@@ -16,11 +16,12 @@ BUILD_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "build"
 
 
 class CliBuildScriptTests(unittest.TestCase):
-    def test_posix_build_creates_arm64_macos_one_file_cli_and_self_checks(self) -> None:
+    def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.sh")
 
         self.assertIn("uv run pyinstaller", script)
-        self.assertIn("--onefile", script)
+        self.assertIn("--onedir", script)
+        self.assertNotIn("--onefile", script)
         self.assertIn("--target-arch arm64", script)
         self.assertIn("--copy-metadata auto-email-sender-cli", script)
         self.assertIn("generate_cli_build_identity.py", script)
@@ -28,11 +29,13 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("verify_cli_binary.py", script)
         self.assertIn('--executable "$CliExecutable"', script)
 
-    def test_windows_build_creates_one_file_cli_and_self_checks(self) -> None:
+    def test_windows_build_creates_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.ps1")
 
         self.assertIn("uv run pyinstaller", script)
-        self.assertIn("--onefile", script)
+        self.assertIn("--onedir", script)
+        self.assertNotIn("--onefile", script)
+        self.assertIn('dist\\auto-email-sender\\auto-email-sender.exe', script)
         self.assertIn("auto-email-sender.exe", script)
         self.assertIn("generate_cli_build_identity.py", script)
         self.assertIn("--runtime-hook $BuildIdentityHook", script)
@@ -77,6 +80,21 @@ class CliBuildScriptTests(unittest.TestCase):
         capabilities["_meta"]["build_kind"] = "override"
         with self.assertRaisesRegex(RuntimeError, "unexpected frozen CLI build kind"):
             validate_payloads(version, capabilities)
+
+    def test_frozen_binary_verifier_requires_complete_onedir_layout(self) -> None:
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        validate_bundle_layout = namespace["validate_bundle_layout"]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            bundle = Path(temporary_directory) / "auto-email-sender"
+            bundle.mkdir()
+            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable.write_bytes(b"binary")
+            with self.assertRaisesRegex(RuntimeError, "onedir layout"):
+                validate_bundle_layout(executable)
+
+            (bundle / "_internal").mkdir()
+            validate_bundle_layout(executable)
 
     def test_frozen_binary_verifier_reports_failed_process_output(self) -> None:
         namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())

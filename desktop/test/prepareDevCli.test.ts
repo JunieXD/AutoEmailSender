@@ -116,7 +116,7 @@ describe("development CLI preparation", () => {
     const commands = getDevelopmentCliBuildCommands(repoRoot, "win32");
 
     expect(resolveDevelopmentCliExecutable(repoRoot, "win32")).toBe(
-      path.join(repoRoot, "cli", "dist", "auto-email-sender.exe"),
+      path.join(repoRoot, "cli", "dist", "auto-email-sender", "auto-email-sender.exe"),
     );
     expect(commands.map(({ command }) => command)).toEqual(["pwsh", "powershell.exe"]);
     expect(commands[0].args).toContain("-Clean");
@@ -141,7 +141,13 @@ describe("development CLI preparation", () => {
 
     await expect(runDevelopmentCliBuild({
       repoRoot,
-      executablePath: path.join(repoRoot, "cli", "dist", "auto-email-sender"),
+      executablePath: path.join(
+        repoRoot,
+        "cli",
+        "dist",
+        "auto-email-sender",
+        "auto-email-sender",
+      ),
       commands: [{
         command: process.execPath,
         args: ["-e", "console.log('build stdout'); console.error('build stderr'); process.exit(7)"],

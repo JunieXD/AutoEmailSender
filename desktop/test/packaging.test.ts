@@ -128,8 +128,9 @@ describe("windows installer packaging", () => {
     const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
     const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
 
-    expect(config).toContain("from: ../cli/dist");
+    expect(config).toContain("from: ../cli/dist/auto-email-sender");
     expect(config).toContain("to: cli");
+    expect(config).not.toContain("filter:\n      - auto-email-sender");
     expect(config).toContain("from: ../agent-support");
     expect(config).toContain("to: agent-support");
     expect(workflow).toContain("./scripts/build/build-cli.ps1 -Clean");
@@ -191,7 +192,9 @@ describe("windows installer packaging", () => {
     expect(existsSync(cleanupTestPath)).toBe(true);
     expect(installerScript).toContain("resources\\agent-support\\windows-uninstall.ps1");
     expect(installerScript).toContain("nsExec::ExecToLog");
-    expect(cleanupScript).toContain("Test-SamePath ([string]$manifestCliTarget) $CliTarget");
+    expect(cleanupScript).toContain("$expectedCliTargets");
+    expect(cleanupScript).toContain("auto-email-sender.cmd");
+    expect(cleanupScript).toContain("Remove-PathSafely ([string]$manifestCliTarget)");
     expect(cleanupScript).toContain("$expectedAgentTargets");
     expect(cleanupScript).toContain("claude_code");
     expect(cleanupScript).toContain("copilot_cli");

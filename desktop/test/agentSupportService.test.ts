@@ -47,6 +47,8 @@ async function createFixture(
   const paths = resolveAgentSupportPaths(options);
   await mkdir(path.dirname(paths.cliSource), { recursive: true });
   await writeFile(paths.cliSource, "cli-binary", "utf8");
+  await mkdir(path.join(paths.cliBundleSource, "_internal"), { recursive: true });
+  await writeFile(path.join(paths.cliBundleSource, "_internal", "base_library.zip"), "runtime", "utf8");
   await mkdir(paths.skillSource, { recursive: true });
   await writeFile(paths.skillSource + "/SKILL.md", "---\nname: auto-email-sender\n---\n", "utf8");
   return { root, options, paths };
@@ -83,6 +85,16 @@ describe("Agent support installation", () => {
     await expect(service.enable()).rejects.toThrow("开发版命令行尚未构建");
   });
 
+  it("rejects an incomplete onedir bundle even when the executable exists", async () => {
+    const { options, paths } = await createFixture("darwin", false);
+    await rm(path.join(paths.cliBundleSource, "_internal"), { recursive: true, force: true });
+    await writeFile(path.join(paths.cliBundleSource, "_internal"), "not a directory", "utf8");
+    const service = createAgentSupportService(options);
+
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "unsupported" });
+    await expect(service.enable()).rejects.toThrow("开发版命令行尚未构建");
+  });
+
   macOSSymlinkIt("enables a managed macOS CLI without selecting an Agent automatically", async () => {
     const { options, paths } = await createFixture("darwin");
     await mkdir(options.homePath, { recursive: true });
@@ -100,7 +112,7 @@ describe("Agent support installation", () => {
     expect(await readFile(paths.shellProfilePath!, "utf8")).toContain("Auto Email Sender Agent support");
     const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
     expect(manifest).toMatchObject({
-      schema_version: 4,
+      schema_version: 5,
       enabled: true,
       prompt_dismissed: true,
       app_version: "2.4.1",
@@ -219,7 +231,7 @@ describe("Agent support installation", () => {
     expect(await readFile(path.join(paths.agentSkillTargets.claude_code, "SKILL.md"), "utf8")).toBe("other skill");
   });
 
-  it("copies Windows CLI files and manages only its own user PATH entry", async () => {
+  it("installs a Windows launcher and manages only its own user PATH entry", async () => {
     const { options, paths } = await createFixture("win32");
     let userPath = "C:\\Windows\\System32;C:\\Tools";
     const processEnvironment = { Path: "C:\\Windows\\System32;C:\\Tools" };
@@ -237,7 +249,11 @@ describe("Agent support installation", () => {
     });
 
     await expect(service.enable()).resolves.toMatchObject({ state: "enabled" });
-    expect(await readFile(paths.cliTarget, "utf8")).toBe("cli-binary");
+    const launcher = await readFile(paths.cliTarget, "utf8");
+    expect(launcher).toContain(`"${path.resolve(paths.cliSource)}" %*`);
+    expect(launcher).toContain("exit /b %ERRORLEVEL%");
+    expect(await readFile(path.join(paths.cliBundleSource, "_internal", "base_library.zip"), "utf8"))
+      .toBe("runtime");
     expect(userPath.split(";")).toContain(paths.commandDirectory);
     expect(processEnvironment.Path.split(";")).toContain(paths.commandDirectory);
     expect(environmentChangeBroadcasts).toBe(1);
@@ -262,6 +278,64 @@ describe("Agent support installation", () => {
     expect(userPath).toBe("C:\\Windows\\System32;C:\\Tools");
     expect(processEnvironment.Path).toBe("C:\\Windows\\System32;C:\\Tools");
     expect(environmentChangeBroadcasts).toBe(2);
+    expect(await exists(paths.cliTarget)).toBe(false);
+  });
+
+  it("detects and repairs changes to the Windows launcher or bundled runtime", async () => {
+    const { options, paths } = await createFixture("win32");
+    const service = createAgentSupportService(options);
+    await service.enable();
+
+    await writeFile(paths.cliTarget, "modified launcher", "utf8");
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
+    await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
+    expect(await readFile(paths.cliTarget, "utf8")).toContain(path.resolve(paths.cliSource));
+
+    await writeFile(path.join(paths.cliBundleSource, "_internal", "base_library.zip"), "updated", "utf8");
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
+    await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "enabled" });
+  });
+
+  it("migrates a managed v4 Windows executable to the v5 launcher", async () => {
+    const { options, paths } = await createFixture("win32");
+    await mkdir(path.dirname(paths.legacyCliTarget), { recursive: true });
+    await writeFile(paths.legacyCliTarget, "legacy managed cli", "utf8");
+    await mkdir(path.dirname(paths.manifestPath), { recursive: true });
+    await writeFile(paths.manifestPath, `${JSON.stringify({
+      schema_version: 4,
+      enabled: true,
+      prompt_dismissed: true,
+      app_version: options.appVersion,
+      cli_source: path.resolve(paths.cliSource),
+      skill_source: path.resolve(paths.skillSource),
+      cli_target: path.resolve(paths.legacyCliTarget),
+      cli_sha256: "a".repeat(64),
+      path_managed: false,
+      agents: {},
+      updated_at: "2026-08-04T00:00:00.000Z",
+    }, null, 2)}\n`, "utf8");
+    const service = createAgentSupportService(options);
+
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
+    await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
+    expect(await exists(paths.legacyCliTarget)).toBe(false);
+    expect(await readFile(paths.cliTarget, "utf8")).toContain(path.resolve(paths.cliSource));
+    expect(JSON.parse(await readFile(paths.manifestPath, "utf8"))).toMatchObject({
+      schema_version: 5,
+      cli_target: path.resolve(paths.cliTarget),
+    });
+  });
+
+  it("does not install a launcher beside an unmanaged legacy Windows executable", async () => {
+    const { options, paths } = await createFixture("win32");
+    await mkdir(path.dirname(paths.legacyCliTarget), { recursive: true });
+    await writeFile(paths.legacyCliTarget, "user-owned legacy cli", "utf8");
+    const service = createAgentSupportService(options);
+
+    await expect(service.getStatus()).resolves.toMatchObject({ state: "needs_repair" });
+    await expect(service.enable()).rejects.toThrow("为避免覆盖你的文件");
+    expect(await readFile(paths.legacyCliTarget, "utf8")).toBe("user-owned legacy cli");
     expect(await exists(paths.cliTarget)).toBe(false);
   });
 
@@ -301,7 +375,7 @@ describe("Agent support installation", () => {
     expect(await readFile(path.join(paths.agentSkillTargets.codex, "SKILL.md"), "utf8")).toBe("updated skill");
     expect(await readFile(path.join(paths.agentSkillTargets.claude_code, "SKILL.md"), "utf8")).toBe("updated skill");
     const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    expect(manifest).toMatchObject({ schema_version: 4, app_version: "2.5.0" });
+    expect(manifest).toMatchObject({ schema_version: 5, app_version: "2.5.0" });
     expect(manifest).not.toHaveProperty("last_backup_directory");
   });
 
@@ -322,7 +396,7 @@ describe("Agent support installation", () => {
 
     await expect(service.synchronize()).resolves.toMatchObject({ state: "enabled" });
     const migratedManifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    expect(migratedManifest.schema_version).toBe(4);
+    expect(migratedManifest.schema_version).toBe(5);
     expect(migratedManifest.agents.codex).toMatchObject({ skill_target: path.resolve(paths.skillTarget) });
   });
 
@@ -338,7 +412,7 @@ describe("Agent support installation", () => {
     expect(await exists(paths.agentSkillTargets.codex)).toBe(false);
     expect(await exists(paths.agentSkillTargets.claude_code)).toBe(false);
     const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
-    expect(manifest).toMatchObject({ schema_version: 4, enabled: false, agents: {} });
+    expect(manifest).toMatchObject({ schema_version: 5, enabled: false, agents: {} });
     expect(manifest).not.toHaveProperty("last_backup_directory");
   });
 

@@ -22,7 +22,7 @@ try {
   uv run pyinstaller `
     --noconfirm `
     --clean `
-    --onefile `
+    --onedir `
     --console `
     --name auto-email-sender `
     --distpath (Join-Path $CliDir "dist") `
@@ -33,7 +33,7 @@ try {
     --runtime-hook $BuildIdentityHook `
     (Join-Path $CliDir "src\auto_email_sender_cli\__main__.py")
 
-  $CliExecutable = Join-Path $CliDir "dist\auto-email-sender.exe"
+  $CliExecutable = Join-Path $CliDir "dist\auto-email-sender\auto-email-sender.exe"
   uv run python (Join-Path $RepoRoot "scripts\build\verify_cli_binary.py") `
     --executable $CliExecutable
 } finally {

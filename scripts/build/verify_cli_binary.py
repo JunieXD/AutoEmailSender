@@ -16,6 +16,7 @@ def main() -> None:
     arguments = parser.parse_args()
 
     executable = arguments.executable.resolve()
+    validate_bundle_layout(executable)
     version = _run_json(executable, "version")
     capabilities = _run_json(executable, "capabilities")
     validate_payloads(version, capabilities)
@@ -28,6 +29,16 @@ def main() -> None:
             },
         ),
     )
+
+
+def validate_bundle_layout(executable: Path) -> None:
+    if not executable.is_file():
+        raise RuntimeError(f"frozen CLI executable is missing: {executable}")
+    runtime_directory = executable.parent / "_internal"
+    if not runtime_directory.is_dir():
+        raise RuntimeError(
+            "frozen CLI must use the onedir layout with an adjacent _internal directory",
+        )
 
 
 def validate_payloads(

@@ -36,7 +36,7 @@ uv run python "$RepoRoot/scripts/build/generate_cli_build_identity.py" \
 uv run pyinstaller \
   --noconfirm \
   --clean \
-  --onefile \
+  --onedir \
   --console \
   --name auto-email-sender \
   --distpath "$CliDir/dist" \
@@ -48,6 +48,6 @@ uv run pyinstaller \
   "${TargetArchArgs[@]}" \
   "$CliDir/src/auto_email_sender_cli/__main__.py"
 
-CliExecutable="$CliDir/dist/auto-email-sender"
+CliExecutable="$CliDir/dist/auto-email-sender/auto-email-sender"
 uv run python "$RepoRoot/scripts/build/verify_cli_binary.py" \
   --executable "$CliExecutable"

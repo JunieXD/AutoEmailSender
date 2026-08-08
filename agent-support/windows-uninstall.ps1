@@ -103,14 +103,14 @@ if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
     }
     $ManifestPath = Join-Path $env:APPDATA "auto-email-sender-desktop\agent\installation.json"
 }
-if ([string]::IsNullOrWhiteSpace($CliTarget)) {
-    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+if ([string]::IsNullOrWhiteSpace($CommandDirectory)) {
+    if (-not [string]::IsNullOrWhiteSpace($CliTarget)) {
+        $CommandDirectory = Split-Path -Parent $CliTarget
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $CommandDirectory = Join-Path $env:LOCALAPPDATA "AutoEmailSender\bin"
+    } else {
         return
     }
-    $CliTarget = Join-Path $env:LOCALAPPDATA "AutoEmailSender\bin\auto-email-sender.exe"
-}
-if ([string]::IsNullOrWhiteSpace($CommandDirectory)) {
-    $CommandDirectory = Split-Path -Parent $CliTarget
 }
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     return
@@ -127,7 +127,7 @@ $manifestEnabled = Get-ObjectProperty $manifest "enabled"
 $manifestCliTarget = Get-ObjectProperty $manifest "cli_target"
 $manifestPathManaged = Get-ObjectProperty $manifest "path_managed"
 if (
-    $manifestSchemaVersion -notin @(1, 2, 3, 4) -or
+    $manifestSchemaVersion -notin @(1, 2, 3, 4, 5) -or
     $manifestEnabled -isnot [bool] -or
     $manifestEnabled -ne $true -or
     $manifestCliTarget -isnot [string] -or
@@ -152,7 +152,7 @@ $expectedAgentTargets = [ordered]@{
 }
 
 $managedSkillTargets = [System.Collections.Generic.List[string]]::new()
-if ($manifestSchemaVersion -eq 4) {
+if ($manifestSchemaVersion -in @(4, 5)) {
     $agents = Get-ObjectProperty $manifest "agents"
     foreach ($agentId in $expectedAgentTargets.Keys) {
         $record = Get-ObjectProperty $agents $agentId
@@ -168,14 +168,27 @@ if ($manifestSchemaVersion -eq 4) {
     }
 }
 
-$ownsCli = Test-SamePath ([string]$manifestCliTarget) $CliTarget
+$expectedCliTargets = [System.Collections.Generic.List[string]]::new()
+if (-not [string]::IsNullOrWhiteSpace($CliTarget)) {
+    $expectedCliTargets.Add($CliTarget)
+} else {
+    $expectedCliTargets.Add((Join-Path $CommandDirectory "auto-email-sender.cmd"))
+    $expectedCliTargets.Add((Join-Path $CommandDirectory "auto-email-sender.exe"))
+}
+$ownsCli = $false
+foreach ($expectedCliTarget in $expectedCliTargets) {
+    if (Test-SamePath ([string]$manifestCliTarget) $expectedCliTarget) {
+        $ownsCli = $true
+        break
+    }
+}
 $ownsPath = $ownsCli -and (Test-SamePath (Split-Path -Parent ([string]$manifestCliTarget)) $CommandDirectory)
 if (-not $ownsCli -and $managedSkillTargets.Count -eq 0 -and -not $ownsPath) {
     return
 }
 
 if ($ownsCli) {
-    Remove-PathSafely $CliTarget
+    Remove-PathSafely ([string]$manifestCliTarget)
 }
 foreach ($skillTarget in $managedSkillTargets) {
     Remove-PathSafely $skillTarget

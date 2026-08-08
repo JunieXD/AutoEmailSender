@@ -28,7 +28,7 @@ export type PrepareDevelopmentCliResult = {
   executablePath: string | null;
 };
 
-const FINGERPRINT_SCHEMA = "auto-email-sender-development-cli-v1";
+const FINGERPRINT_SCHEMA = "auto-email-sender-development-cli-v2";
 
 export async function prepareDevelopmentCli(
   options: PrepareDevelopmentCliOptions,
@@ -93,7 +93,7 @@ export function resolveDevelopmentCliExecutable(
   const executableName = platform === "win32"
     ? "auto-email-sender.exe"
     : "auto-email-sender";
-  return path.join(repoRoot, "cli", "dist", executableName);
+  return path.join(repoRoot, "cli", "dist", "auto-email-sender", executableName);
 }
 
 export function getDevelopmentCliBuildCommands(
