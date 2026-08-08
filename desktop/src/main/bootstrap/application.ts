@@ -311,6 +311,7 @@ async function createWindow(): Promise<void> {
     repoRoot,
   });
   await mainWindow.loadURL(pathToFileURL(indexPath).toString());
+  checkForUpdatesOnStartup(() => mainWindow);
 }
 
 async function startDesktopBackend(): Promise<BackendController> {
@@ -386,7 +387,6 @@ function publishBackendReady(controller: BackendController): void {
   controller.ready
     .then(() => {
       unsubscribe();
-      checkForUpdatesOnStartup(() => mainWindow);
     })
     .catch((error: unknown) => {
       unsubscribe();

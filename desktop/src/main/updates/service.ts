@@ -45,6 +45,8 @@ let pendingInstallVersion: string | null = null;
 let activeUpdateCheck: Promise<UpdateStatus> | null = null;
 let updateCheckOwnsErrorReporting = false;
 
+export type StartupUpdateMode = "disabled" | "sparkle" | "electron-updater";
+
 type DownloadStatusPayload = {
   version: string;
   nextVersion: string;
@@ -319,10 +321,14 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
 }
 
 export function checkForUpdatesOnStartup(getWindow: () => BrowserWindow | null): void {
-  if (!app.isPackaged) {
+  const mode = resolveStartupUpdateMode({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+  });
+  if (mode === "disabled") {
     return;
   }
-  if (process.platform === "darwin") {
+  if (mode === "sparkle") {
     try {
       startMacSparkle();
     } catch (error) {
@@ -333,6 +339,16 @@ export function checkForUpdatesOnStartup(getWindow: () => BrowserWindow | null):
   setTimeout(() => {
     void checkForElectronUpdates(getWindow);
   }, 3_000);
+}
+
+export function resolveStartupUpdateMode(input: {
+  isPackaged: boolean;
+  platform: NodeJS.Platform;
+}): StartupUpdateMode {
+  if (!input.isPackaged) {
+    return "disabled";
+  }
+  return input.platform === "darwin" ? "sparkle" : "electron-updater";
 }
 
 function isAutomaticUpdateActionSupported(): boolean {
