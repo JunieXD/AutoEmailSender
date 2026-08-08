@@ -69,6 +69,12 @@ exit /b 0
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "desktop") -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "frontend") -Force | Out-Null
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "backend") -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $releaseRepo "cli") -Force | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $releaseRepo "scripts") -Force | Out-Null
+  Set-Content -Encoding UTF8 -Path (Join-Path $releaseRepo "scripts\build-cli.ps1") -Value @'
+param([switch]$Clean)
+Write-Host "fake CLI build -Clean"
+'@
   Set-Content -Encoding UTF8 -Path (Join-Path $releaseRepo "docs\releases\v9.9.9.md") -Value @"
 # v9.9.9
 
@@ -144,6 +150,9 @@ exit /b 0
     $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_database_schema test.test_migrations_runtime" -Message "release.ps1 没有执行迁移相关后端测试。`n$uvCalls"
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" -Message "release.ps1 没有执行导师抓取 Skill 契约和打包测试。`n$uvCalls"
+    Assert-Contains -Text $uvCalls -Needle "run python -m unittest discover test" -Message "release.ps1 没有执行 CLI 测试。`n$uvCalls"
+    Assert-Contains -Text $verificationOutput -Needle "fake CLI build -Clean" -Message "release.ps1 没有验证 CLI 冻结包。`n$verificationOutput"
+    Assert-Contains -Text $verificationOutput -Needle "[dry-run] uv version 9.9.9 --no-sync in cli" -Message "release.ps1 dry-run 没有预演 CLI 版本更新。`n$verificationOutput"
 
     if (Test-Path $uvCallsPath) {
       Remove-Item -LiteralPath $uvCallsPath -Force
@@ -174,6 +183,8 @@ exit /b 0
     } else {
       throw "release.ps1 在允许的未跟踪公告文件存在时应该成功。`n$output"
     }
+    $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
+    Assert-Contains -Text $uvCalls -Needle "version 9.9.9 --no-sync" -Message "release.ps1 没有同步 CLI 发布版本。`n$uvCalls"
 
     $missingNotesProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
       "-NoLogo",

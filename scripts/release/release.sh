@@ -150,10 +150,31 @@ invoke_verification() {
       uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
   )
 
+  echo "=== 验证 cli ==="
+  (
+    cd "$repo_root/cli"
+    invoke_checked_command "cli: uv sync --dev" uv sync --dev
+    invoke_checked_command "cli: uv run python -m unittest discover test" \
+      uv run python -m unittest discover test
+  )
+  invoke_checked_command "cli: frozen binary" \
+    "$repo_root/scripts/build-cli.sh" --clean
+
   echo "=== 验证 desktop ==="
   (
     cd "$repo_root/desktop"
     invoke_checked_command "desktop: npm test" npm test
+  )
+}
+
+set_cli_version() {
+  (
+    cd "$repo_root/cli"
+    if ((dry_run)); then
+      echo "[dry-run] uv version $version --no-sync in cli"
+      return 0
+    fi
+    uv version "$version" --no-sync
   )
 }
 
@@ -173,11 +194,12 @@ assert_release_version
 assert_clean_repository
 assert_release_notes
 invoke_verification
+set_cli_version
 set_npm_version "desktop"
 set_npm_version "frontend"
 copy_release_notes
 
-run_git add desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$release_tag.md"
+run_git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$release_tag.md"
 run_git commit -m "chore(release): $release_tag"
 run_git tag "$release_tag"
 run_git push origin master

@@ -34,7 +34,9 @@ new_shim() {
 mkdir -p "$temp_bin"
 
 release_repo="$temp_root/release-repo"
-mkdir -p "$release_repo/docs/releases" "$release_repo/desktop" "$release_repo/frontend" "$release_repo/backend"
+mkdir -p "$release_repo/docs/releases" "$release_repo/desktop" "$release_repo/frontend" "$release_repo/backend" "$release_repo/cli" "$release_repo/scripts"
+printf '%s\n' '#!/usr/bin/env bash' 'echo fake CLI build "$@"' > "$release_repo/scripts/build-cli.sh"
+chmod +x "$release_repo/scripts/build-cli.sh"
 cat > "$release_repo/docs/releases/v9.9.9.md" <<'NOTES'
 # v9.9.9
 
@@ -91,15 +93,20 @@ output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
 uv_calls="$(cat "$uv_calls_path")"
 assert_contains "$uv_calls" "run python -m unittest test.test_database_schema test.test_migrations_runtime" "release.sh 没有执行迁移相关后端测试。"
 assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" "release.sh 没有执行导师抓取 Skill 契约和打包测试。"
+assert_contains "$uv_calls" "run python -m unittest discover test" "release.sh 没有执行 CLI 测试。"
+assert_contains "$output" "fake CLI build --clean" "release.sh 没有验证 CLI 冻结包。"
+assert_contains "$output" "[dry-run] uv version 9.9.9 --no-sync in cli" "release.sh dry-run 没有预演 CLI 版本更新。"
 assert_contains "$output" "[dry-run] 未创建提交、tag 或推送" "release.sh dry-run 成功时没有输出完成信息。"
 
 rm -f "$uv_calls_path"
 "$release_script" 9.9.9 --skip-verify --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
 output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
+uv_calls="$(cat "$uv_calls_path")"
 if [[ ! -f "$release_repo/desktop/release-notes.md" ]]; then
   printf '%s\n%s\n' "release.sh 应该把公告复制到 desktop/release-notes.md。" "$output" >&2
   exit 1
 fi
+assert_contains "$uv_calls" "version 9.9.9 --no-sync" "release.sh 没有同步 CLI 发布版本。"
 assert_contains "$output" "已推送 v9.9.9" "release.sh 成功时没有输出 tag 已推送信息。"
 
 set +e

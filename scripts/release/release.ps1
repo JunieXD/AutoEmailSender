@@ -118,10 +118,37 @@ function Invoke-Verification {
     Pop-Location
   }
 
+  Write-Host "=== 验证 cli ==="
+  Push-Location (Join-Path $RepoRoot "cli")
+  try {
+    Invoke-CheckedCommand "cli: uv sync --dev" { uv sync --dev }
+    Invoke-CheckedCommand "cli: uv run python -m unittest discover test" {
+      uv run python -m unittest discover test
+    }
+  } finally {
+    Pop-Location
+  }
+  Invoke-CheckedCommand "cli: frozen binary" {
+    & (Join-Path $RepoRoot "scripts\build-cli.ps1") -Clean
+  }
+
   Write-Host "=== 验证 desktop ==="
   Push-Location (Join-Path $RepoRoot "desktop")
   try {
     Invoke-CheckedCommand "desktop: npm test" { npm test }
+  } finally {
+    Pop-Location
+  }
+}
+
+function Set-CliVersion {
+  Push-Location (Join-Path $RepoRoot "cli")
+  try {
+    if ($DryRun) {
+      Write-Host "[dry-run] uv version $Version --no-sync in cli"
+      return
+    }
+    uv version $Version --no-sync
   } finally {
     Pop-Location
   }
@@ -145,11 +172,12 @@ Assert-ReleaseVersion
 Assert-CleanRepository
 Assert-ReleaseNotes
 Invoke-Verification
+Set-CliVersion
 Set-NpmVersion "desktop"
 Set-NpmVersion "frontend"
 Copy-ReleaseNotes
 
-Run-Git add desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$ReleaseTag.md"
+Run-Git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$ReleaseTag.md"
 Run-Git commit -m "chore(release): $ReleaseTag"
 Run-Git tag $ReleaseTag
 Run-Git push origin master
