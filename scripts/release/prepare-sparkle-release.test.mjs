@@ -14,13 +14,17 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  assertPublishableSparkleAssets,
   assertRequiredDelta,
   deriveSparklePublicKey,
+  extractCurrentReleaseAssetNames,
   extractDeltaSourceVersions,
   extractPreviousDmgAssets,
   getMacDmgName,
   getMacDmgVersion,
+  normalizeGitHubAssetName,
   normalizeReleaseTag,
+  rewriteAppcastAssetNames,
 } from "./prepare-sparkle-release.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -135,6 +139,51 @@ test("allows the legacy pre-clean baseline to fall back to a full DMG", () => {
   );
 });
 
+test("normalizes generated delta names and keeps appcast URLs aligned", () => {
+  const sourceName = "Auto Email Sender2.5.4-2.5.3.delta";
+  const targetName = "Auto.Email.Sender2.5.4-2.5.3.delta";
+  const appcast = `
+    <item>
+      <sparkle:version>2.5.4</sparkle:version>
+      <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.5.4/AutoEmailSender-2.5.4-arm64.dmg" />
+      <sparkle:deltas>
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.5.4/Auto%20Email%20Sender2.5.4-2.5.3.delta" sparkle:deltaFrom="2.5.3" />
+      </sparkle:deltas>
+    </item>`;
+
+  assert.equal(normalizeGitHubAssetName(sourceName), targetName);
+  const rewritten = rewriteAppcastAssetNames(appcast, new Map([[sourceName, targetName]]));
+  assert.deepEqual(
+    extractCurrentReleaseAssetNames(
+      rewritten,
+      "2.5.4",
+      "JunieXD/AutoEmailSender",
+      "v2.5.4",
+    ),
+    ["AutoEmailSender-2.5.4-arm64.dmg", targetName],
+  );
+  assert.doesNotThrow(() =>
+    assertPublishableSparkleAssets(
+      rewritten,
+      "2.5.4",
+      "JunieXD/AutoEmailSender",
+      "v2.5.4",
+      ["AutoEmailSender-2.5.4-arm64.dmg", targetName],
+    ),
+  );
+  assert.throws(
+    () =>
+      assertPublishableSparkleAssets(
+        appcast,
+        "2.5.4",
+        "JunieXD/AutoEmailSender",
+        "v2.5.4",
+        ["AutoEmailSender-2.5.4-arm64.dmg", targetName],
+      ),
+    /可能改写的资产名/,
+  );
+});
+
 test("passes the private key through stdin and stages only publishable files", () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "sparkle-release-test-"));
   try {
@@ -172,8 +221,16 @@ process.stdin.on("data", (chunk) => { privateKey += chunk; });
 process.stdin.on("end", () => {
   if (privateKey.trim() !== process.env.EXPECTED_PRIVATE_KEY) process.exit(3);
   const workDirectory = process.argv.at(-1);
-  fs.writeFileSync(path.join(workDirectory, "appcast.xml"), "<item><sparkle:version>9.9.9</sparkle:version></item>");
-  fs.writeFileSync(path.join(workDirectory, "9.9.8-to-9.9.9.delta"), "delta");
+  fs.writeFileSync(path.join(workDirectory, "appcast.xml"), [
+    "<item>",
+    "<sparkle:version>9.9.9</sparkle:version>",
+    '<enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v9.9.9/AutoEmailSender-9.9.9-arm64.dmg" />',
+    "<sparkle:deltas>",
+    '<enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v9.9.9/Auto%20Email%20Sender9.9.9-9.9.8.delta" sparkle:deltaFrom="9.9.8" />',
+    "</sparkle:deltas>",
+    "</item>",
+  ].join(""));
+  fs.writeFileSync(path.join(workDirectory, "Auto Email Sender9.9.9-9.9.8.delta"), "delta");
 });
 `,
     );
@@ -208,13 +265,21 @@ process.stdin.on("end", () => {
 
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readdirSync(outputDirectory).sort(), [
-      "9.9.8-to-9.9.9.delta",
+      "Auto.Email.Sender9.9.9-9.9.8.delta",
       "AutoEmailSender-9.9.9-arm64.dmg",
       "appcast.xml",
     ]);
     assert.equal(
       readFileSync(path.join(outputDirectory, "AutoEmailSender-9.9.9-arm64.dmg"), "utf8"),
       "current-dmg",
+    );
+    assert.match(
+      readFileSync(path.join(outputDirectory, "appcast.xml"), "utf8"),
+      /Auto\.Email\.Sender9\.9\.9-9\.9\.8\.delta/,
+    );
+    assert.doesNotMatch(
+      readFileSync(path.join(outputDirectory, "appcast.xml"), "utf8"),
+      /Auto%20Email%20Sender/,
     );
     assert.match(result.stdout, /生成 1 个差分包/);
   } finally {

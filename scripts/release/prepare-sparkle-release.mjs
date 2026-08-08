@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createPrivateKey, createPublicKey } from "node:crypto";
-import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -111,6 +111,120 @@ export function extractDeltaSourceVersions(appcast, currentVersion) {
       ),
     ),
   ];
+}
+
+export function normalizeGitHubAssetName(name) {
+  const normalized = name
+    .normalize("NFKC")
+    .replace(/[^0-9A-Za-z._-]+/g, ".")
+    .replace(/\.{2,}/g, ".")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  if (!normalized) {
+    throw new Error(`无法为 GitHub Release 生成安全资产名：${name}`);
+  }
+  return normalized;
+}
+
+function encodeXmlAttribute(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export function rewriteAppcastAssetNames(appcast, assetNameMap) {
+  const rewrittenNames = new Set();
+  const rewrittenAppcast = appcast.replace(
+    /\burl=("([^"]+)"|'([^']+)')/gi,
+    (attribute, quotedValue, doubleQuotedValue, singleQuotedValue) => {
+      const encodedValue = doubleQuotedValue ?? singleQuotedValue;
+      let url;
+      try {
+        url = new URL(decodeXmlAttribute(encodedValue));
+      } catch {
+        return attribute;
+      }
+
+      const lastSlash = url.pathname.lastIndexOf("/");
+      const sourceName = decodeURIComponent(url.pathname.slice(lastSlash + 1));
+      const targetName = assetNameMap.get(sourceName);
+      if (targetName === undefined || targetName === sourceName) {
+        return attribute;
+      }
+
+      url.pathname = `${url.pathname.slice(0, lastSlash + 1)}${targetName}`;
+      rewrittenNames.add(sourceName);
+      const quote = quotedValue[0];
+      return `url=${quote}${encodeXmlAttribute(url.toString())}${quote}`;
+    },
+  );
+
+  for (const [sourceName, targetName] of assetNameMap) {
+    if (sourceName !== targetName && !rewrittenNames.has(sourceName)) {
+      throw new Error(`appcast.xml 未引用待规范化的差分资产：${sourceName}`);
+    }
+  }
+  return rewrittenAppcast;
+}
+
+export function extractCurrentReleaseAssetNames(appcast, currentVersion, repository, tag) {
+  const itemBlocks = appcast.match(/<item\b[\s\S]*?<\/item>/gi) ?? [];
+  const currentItem = itemBlocks.find((itemBlock) => {
+    const match = /<sparkle:version>\s*([^<]+?)\s*<\/sparkle:version>/i.exec(itemBlock);
+    return match !== null && decodeXmlAttribute(match[1].trim()) === currentVersion;
+  });
+  if (currentItem === undefined) {
+    throw new Error(`appcast.xml 不包含当前版本 ${currentVersion}。`);
+  }
+
+  const names = [];
+  for (const match of currentItem.matchAll(/\burl=(?:"([^"]+)"|'([^']+)')/gi)) {
+    const asset = parseGitHubReleaseAssetUrl(
+      decodeXmlAttribute(match[1] ?? match[2]),
+      repository,
+    );
+    if (asset === null || asset.tag !== tag) {
+      throw new Error(`当前版本 ${currentVersion} 包含无效的 GitHub Release 资产 URL。`);
+    }
+    names.push(asset.name);
+  }
+  if (names.length === 0) {
+    throw new Error(`appcast.xml 当前版本 ${currentVersion} 没有可下载资产。`);
+  }
+  return names;
+}
+
+export function assertPublishableSparkleAssets(
+  appcast,
+  currentVersion,
+  repository,
+  tag,
+  stagedAssetNames,
+) {
+  const referencedNames = extractCurrentReleaseAssetNames(
+    appcast,
+    currentVersion,
+    repository,
+    tag,
+  );
+  const referencedSet = new Set(referencedNames);
+  const stagedSet = new Set(stagedAssetNames);
+
+  for (const name of referencedNames) {
+    if (normalizeGitHubAssetName(name) !== name) {
+      throw new Error(`appcast.xml 引用了 GitHub 可能改写的资产名：${name}`);
+    }
+    if (!stagedSet.has(name)) {
+      throw new Error(`appcast.xml 引用了未暂存的资产：${name}`);
+    }
+  }
+  for (const name of stagedAssetNames) {
+    if (!referencedSet.has(name)) {
+      throw new Error(`Sparkle 资产未被 appcast.xml 引用：${name}`);
+    }
+  }
 }
 
 export function assertRequiredDelta(
@@ -387,11 +501,40 @@ async function prepareSparkleRelease(options) {
     );
 
     const generatedAppcastPath = path.join(workDirectory, "appcast.xml");
-    const generatedAppcast = await readFile(generatedAppcastPath, "utf8");
+    let generatedAppcast = await readFile(generatedAppcastPath, "utf8");
     const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!new RegExp(`<sparkle:version>\\s*${escapedVersion}\\s*</sparkle:version>`).test(generatedAppcast)) {
       throw new Error(`生成的 appcast.xml 不包含当前版本 ${version}。`);
     }
+
+    const generatedDeltaFiles = (await readdir(workDirectory))
+      .filter((name) => name.toLowerCase().endsWith(".delta"))
+      .sort();
+    const deltaAssetNameMap = new Map(
+      generatedDeltaFiles.map((name) => [name, normalizeGitHubAssetName(name)]),
+    );
+    const normalizedDeltaNames = [...deltaAssetNameMap.values()];
+    if (new Set(normalizedDeltaNames).size !== normalizedDeltaNames.length) {
+      throw new Error("多个 Sparkle 差分包规范化为同一个 GitHub 资产名。 ");
+    }
+    generatedAppcast = rewriteAppcastAssetNames(generatedAppcast, deltaAssetNameMap);
+    for (const [sourceName, targetName] of deltaAssetNameMap) {
+      if (sourceName !== targetName) {
+        await rename(
+          path.join(workDirectory, sourceName),
+          path.join(workDirectory, targetName),
+        );
+      }
+    }
+
+    const deltaFiles = normalizedDeltaNames.sort();
+    assertPublishableSparkleAssets(
+      generatedAppcast,
+      version,
+      options.repository,
+      tag,
+      [currentDmgName, ...deltaFiles],
+    );
     const requiredDeltaSource = assertRequiredDelta(
       generatedAppcast,
       version,
@@ -405,9 +548,6 @@ async function prepareSparkleRelease(options) {
       "utf8",
     );
 
-    const deltaFiles = (await readdir(workDirectory))
-      .filter((name) => name.toLowerCase().endsWith(".delta"))
-      .sort();
     for (const deltaFile of deltaFiles) {
       await copyFile(
         path.join(workDirectory, deltaFile),

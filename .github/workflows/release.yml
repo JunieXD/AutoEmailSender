@@ -233,6 +233,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -315,6 +320,15 @@ jobs:
           assets=(release-assets/windows/* release-assets/macos/*.dmg release-assets/macos/*.delta "${skill_assets[@]}")
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           gh release upload "$RELEASE_TAG" release-assets/macos/appcast.xml --clobber
+
+      - name: Verify draft Sparkle asset URLs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          node scripts/release/verify-sparkle-draft-assets.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --release-tag "$RELEASE_TAG"
+          --appcast release-assets/macos/appcast.xml
 
       - name: Publish staged GitHub release
         env:
