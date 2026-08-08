@@ -11,7 +11,7 @@ Drive the project release flow from a version number to a verified public GitHub
 
 Publish repository-delivered Skills under the same AutoEmailSender version and tag. Keep `crawl-mentors-to-xlsx` canonical under `.agents/skills/crawl-mentors-to-xlsx`, keep `.claude/skills/crawl-mentors-to-xlsx` as its Claude Code entry, and attach `crawl-mentors-to-xlsx-v<version>.zip` to the same GitHub Release. Do not create a separate Skill-only release, submit to a plugin marketplace, or put the Skill inside Electron installers unless the project explicitly changes that distribution policy.
 
-Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/operations/sparkle-release-operations.md`. Treat that repository document as the detailed source of truth and keep this skill focused on the release procedure.
+Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, read `docs/operations/sparkle-release-operations.md`. On the project Mac, read `docs/operations/windows-parallels-release-qa.md` before Windows packaging or release-candidate QA. Treat those repository documents as the detailed sources of truth and keep this skill focused on the release procedure.
 
 ## Release Flow
 
@@ -32,7 +32,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
    - related owner documentation under `docs/{architecture,product,development,operations}/**` when it changed in the release range
 8. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
 9. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
-10. Run Repository Skill Preflight and Sparkle Preflight below, then run the platform-specific release command from step 4.
+10. Run Repository Skill Preflight, Windows VM Preflight when available, and Sparkle Preflight below, then run the platform-specific release command from step 4.
 11. If local verification fails, follow Test Failure Handling before retrying.
 12. After the tag is pushed, follow Post-Tag Verification. Do not report the release complete merely because the release script exited successfully.
 
@@ -52,6 +52,14 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Do not regenerate or rotate the Sparkle keys during a normal release. Do not copy the private key into the repository, command arguments, workflow files, or logs.
 - The GitHub Actions workflow owns Sparkle download preparation, signing, appcast generation, delta generation, and publication. Do not create an alternate manual publishing path.
 - Confirm the macOS package retains the post-sign bundle cleanup and signature verification described in `docs/operations/sparkle-release-operations.md`, so the release can form a clean baseline for future deltas.
+
+## Windows VM Preflight
+
+- The project Mac has a persistent Parallels VM named `Windows 11` with an NTFS checkout at `C:\Users\junie\Projects\AutoEmailSender-Windows-QA`. Use it for release candidates and Windows-specific packaging, process, path, SQLite, or native dependency changes; do not invoke it for every small edit.
+- Before tagging a release from this Mac, commit the candidate and run `rtk bash scripts/quality/run-windows-vm-release-qa.sh`. The runner transfers committed `HEAD`; it must not test or conceal uncommitted code.
+- Require clean Windows dependency installs, frozen CLI/backend builds, the NSIS artifact, authenticated runtime protocol v3, repeated CLI status stability, safe stale-process failure, and a fresh runtime identity after restart.
+- A VM failure blocks the release until it is classified and resolved. Do not bypass a missing native package, locked SQLite file, backend lifecycle failure, or VM prerequisite by manually editing build output.
+- For changes to Ctrl+C or shutdown behavior, also perform the Windows Terminal control-event check documented in `docs/operations/windows-parallels-release-qa.md`; a forced-exit lifecycle test does not replace a real console Ctrl+C test.
 
 ## Test Failure Handling
 

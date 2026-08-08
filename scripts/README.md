@@ -25,3 +25,5 @@ uv run --project backend --no-sync python scripts/quality/run_all_tests.py
 ```
 
 Successful test output is suppressed. The runner emits periodic progress, expands details for failed suites, and accepts `--slowest N` to diagnose slow Python tests.
+
+On the configured project Mac, `quality/run-windows-vm-release-qa.sh` transfers the committed `HEAD` to the dedicated Parallels Windows 11 VM and invokes `quality/run-windows-release-qa.ps1` for real Windows pre-release builds and runtime checks. See `docs/operations/windows-parallels-release-qa.md`.
