@@ -313,18 +313,67 @@ def prepare_faculty_crawl_job_retry(
 def enrich_faculty_crawl_candidates(
     ctx: typer.Context,
     job_id: Annotated[int, typer.Argument(min=1)],
+    selection_mode: Annotated[
+        str,
+        typer.Option(
+            "--selection",
+            help="候选选择方式：ids、all 或 filter。",
+        ),
+    ],
     candidate_ids: Annotated[
         list[int],
         typer.Option("--candidate-id", min=1, help="可重复指定需要补全资料的候选 ID。"),
-    ],
+    ] = [],
+    review_statuses: Annotated[
+        list[str],
+        typer.Option(
+            "--review-status",
+            help="filter 模式下可重复指定 pending、accepted、rejected 或 merged。",
+        ),
+    ] = [],
+    exclude_candidate_ids: Annotated[
+        list[int],
+        typer.Option("--exclude-candidate-id", min=1, help="从选择结果中排除候选 ID。"),
+    ] = [],
     llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
 ) -> None:
+    normalized_mode = selection_mode.strip().lower()
+    if normalized_mode not in {"ids", "all", "filter"}:
+        raise typer.BadParameter(
+            "--selection 必须是 ids、all 或 filter。",
+            param_hint="--selection",
+        )
+    if normalized_mode == "ids" and not candidate_ids:
+        raise typer.BadParameter(
+            "--selection ids 必须至少提供一个 --candidate-id。",
+            param_hint="--candidate-id",
+        )
+    if normalized_mode != "ids" and candidate_ids:
+        raise typer.BadParameter(
+            "只有 --selection ids 可以提供 --candidate-id。",
+            param_hint="--candidate-id",
+        )
+    if normalized_mode == "filter" and not review_statuses:
+        raise typer.BadParameter(
+            "--selection filter 必须至少提供一个 --review-status。",
+            param_hint="--review-status",
+        )
+    if normalized_mode != "filter" and review_statuses:
+        raise typer.BadParameter(
+            "只有 --selection filter 可以提供 --review-status。",
+            param_hint="--review-status",
+        )
     run_write_command(
         ctx,
         command="crawler.jobs.enrich",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
         json_body={
-            "candidate_ids": candidate_ids,
+            "selection": {
+                "mode": normalized_mode,
+                "ids": candidate_ids,
+                "filter": {"review_status": review_statuses} if review_statuses else {},
+                "exclude_ids": exclude_candidate_ids,
+            },
             "llm_profile_id": llm_profile_id,
         },
         guide_topic="crawler",

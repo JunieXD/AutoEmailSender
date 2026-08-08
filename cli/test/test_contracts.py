@@ -511,7 +511,6 @@ class ContractTests(unittest.TestCase):
             "campaigns.create": "professor_ids",
             "campaigns.prepare-send": "item_ids",
             "crawler.jobs.approve": "candidate_ids",
-            "crawler.jobs.enrich": "candidate_ids",
             "enrichment.jobs.create": "professor_ids",
             "matching.jobs.create": "professor_ids",
             "professors.prepare-bulk-archive": "professor_ids",
@@ -527,6 +526,19 @@ class ContractTests(unittest.TestCase):
             )
             self.assertTrue(parameter["required"], command)
             self.assertIn(parameter_name, description["input"]["schema"]["required"], command)
+
+        enrich = describe_command(app, "crawler.jobs.enrich")
+        assert enrich is not None
+        selection_parameter = next(
+            item for item in enrich["parameters"] if item["name"] == "selection_mode"
+        )
+        self.assertTrue(selection_parameter["required"])
+        self.assertNotIn("candidate_ids", enrich["input"]["schema"]["required"])
+        self.assertTrue(
+            {"selection", "submission", "skips", "observation"}.issubset(
+                enrich["output"]["known_fields"],
+            ),
+        )
 
     def test_detail_contracts_publish_nested_result_fields(self) -> None:
         expected_fields = {

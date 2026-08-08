@@ -2838,6 +2838,19 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(queued.json()["selected_count"], 1)
         self.assertEqual(queued.json()["skipped_count"], 1)
         self.assertEqual(queued.json()["enriched_count"], 0)
+        self.assertEqual(queued.json()["phase"], "submission")
+        self.assertEqual(
+            queued.json()["selection"],
+            {
+                "mode": "ids",
+                "matched_count": 2,
+                "eligible_count": 1,
+                "excluded_count": 0,
+            },
+        )
+        self.assertEqual(queued.json()["submission"]["queued_count"], 1)
+        self.assertEqual(queued.json()["skips"]["by_reason"][0]["code"], "MISSING_PROFILE_URL")
+        self.assertEqual(queued.json()["observation"]["status"], "running")
         self.assertEqual(queued.json(), replayed.json())
 
         with sqlite3.connect(self.db_path) as connection:
@@ -2861,6 +2874,105 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(enrichment_task, (candidate_id, "pending"))
         self.assertEqual(job_status, "running")
         self.assertEqual(log_count, 1)
+
+    def test_agent_can_enrich_all_crawl_candidates_with_exclusions(self) -> None:
+        llm_profile_id = self._create_llm_profile()
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-all-job"},
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute("UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?", (job_id,))
+            eligible_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, profile_url, review_status)
+                VALUES (?, ?, ?, ?, 'pending') RETURNING id
+                """,
+                (job_id, "待补全候选", "all-eligible@example.edu", "https://example.edu/all-eligible"),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, review_status)
+                VALUES (?, ?, ?, 'pending')
+                """,
+                (job_id, "无主页候选", "all-skip@example.edu"),
+            )
+            excluded_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, profile_url, review_status)
+                VALUES (?, ?, ?, ?, 'rejected') RETURNING id
+                """,
+                (job_id, "排除候选", "all-excluded@example.edu", "https://example.edu/all-excluded"),
+            ).fetchone()[0]
+            connection.commit()
+
+        response = self.client.post(
+            f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-all-request"},
+            json={
+                "selection": {
+                    "mode": "all",
+                    "exclude_ids": [excluded_id],
+                },
+                "llm_profile_id": llm_profile_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["selection"]["matched_count"], 2)
+        self.assertEqual(payload["selection"]["eligible_count"], 1)
+        self.assertEqual(payload["selection"]["excluded_count"], 1)
+        self.assertEqual(payload["submission"]["queued_count"], 1)
+        self.assertEqual(payload["skips"]["count"], 1)
+        with sqlite3.connect(self.db_path) as connection:
+            queued_candidate_ids = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                    (job_id,),
+                ).fetchall()
+            }
+        self.assertEqual(queued_candidate_ids, {eligible_id})
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "DELETE FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            )
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (job_id,),
+            )
+            connection.commit()
+        filtered = self.client.post(
+            f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-filter-request"},
+            json={
+                "selection": {
+                    "mode": "filter",
+                    "filter": {"review_status": ["rejected"]},
+                },
+                "llm_profile_id": llm_profile_id,
+            },
+        )
+        self.assertEqual(filtered.status_code, 201, msg=filtered.text)
+        self.assertEqual(filtered.json()["selection"]["matched_count"], 1)
+        self.assertEqual(filtered.json()["submission"]["queued_count"], 1)
+        with sqlite3.connect(self.db_path) as connection:
+            filtered_candidate_id = connection.execute(
+                "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        self.assertEqual(filtered_candidate_id, excluded_id)
 
     def test_agent_can_manage_communication_groups_without_implicit_merges(self) -> None:
         first_identity_id = self._create_identity()

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
+from app.schemas.selection import SelectionSpec
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
@@ -296,10 +297,122 @@ async def update_faculty_crawl_candidate_record(
     return CrawlCandidateRead.model_validate(candidate)
 
 
+async def _resolve_candidate_selection(
+    session: AsyncSession,
+    *,
+    job_id: int,
+    selection: SelectionSpec,
+) -> tuple[list[CrawlCandidate], int]:
+    if selection.mode == "ids":
+        candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+            session,
+            job_id=job_id,
+            candidate_ids=selection.ids,
+        )
+        if missing_candidate_ids:
+            raise CrawlJobRecordError(
+                status_code=404,
+                code="CRAWL_CANDIDATES_NOT_FOUND",
+                message="部分候选导师不存在或不属于该抓取任务。",
+            )
+    else:
+        statement = select(CrawlCandidate).where(
+            CrawlCandidate.job_id == job_id,
+            canonical_candidate_clause(),
+        )
+        filters = selection.filter if selection.mode == "filter" else {}
+        unknown_filters = sorted(set(filters) - {"review_status", "has_profile_url"})
+        if unknown_filters:
+            raise CrawlJobRecordError(
+                status_code=422,
+                code="INVALID_CRAWL_CANDIDATE_SELECTION_FILTER",
+                message=f"不支持的候选筛选字段：{', '.join(unknown_filters)}",
+            )
+        if "review_status" in filters:
+            raw_statuses = filters["review_status"]
+            statuses = [raw_statuses] if isinstance(raw_statuses, str) else raw_statuses
+            allowed_statuses = {"pending", "accepted", "rejected", "merged"}
+            if (
+                not isinstance(statuses, list)
+                or not statuses
+                or any(not isinstance(item, str) or item not in allowed_statuses for item in statuses)
+            ):
+                raise CrawlJobRecordError(
+                    status_code=422,
+                    code="INVALID_CRAWL_CANDIDATE_SELECTION_FILTER",
+                    message="review_status 必须是 pending、accepted、rejected 或 merged。",
+                )
+            statement = statement.where(CrawlCandidate.review_status.in_(statuses))
+        if "has_profile_url" in filters:
+            has_profile_url = filters["has_profile_url"]
+            if not isinstance(has_profile_url, bool):
+                raise CrawlJobRecordError(
+                    status_code=422,
+                    code="INVALID_CRAWL_CANDIDATE_SELECTION_FILTER",
+                    message="has_profile_url 必须是布尔值。",
+                )
+            profile_url_length = func.length(func.trim(func.coalesce(CrawlCandidate.profile_url, "")))
+            statement = statement.where(
+                profile_url_length > 0 if has_profile_url else profile_url_length == 0,
+            )
+        candidates = list(await session.scalars(statement.order_by(CrawlCandidate.id.asc())))
+
+    excluded_ids: set[int] = set()
+    if selection.exclude_ids:
+        excluded_candidates, missing_exclude_ids = await canonicalize_candidate_ids(
+            session,
+            job_id=job_id,
+            candidate_ids=selection.exclude_ids,
+        )
+        if missing_exclude_ids:
+            raise CrawlJobRecordError(
+                status_code=404,
+                code="CRAWL_CANDIDATE_EXCLUSIONS_NOT_FOUND",
+                message="部分排除候选不存在或不属于该抓取任务。",
+            )
+        excluded_ids = {candidate.id for candidate in excluded_candidates}
+    selected_candidates = [candidate for candidate in candidates if candidate.id not in excluded_ids]
+    return selected_candidates, len(candidates) - len(selected_candidates)
+
+
+def _enrichment_skip_summary(skipped_count: int) -> dict[str, object]:
+    reasons: list[dict[str, object]] = []
+    if skipped_count:
+        reasons.append(
+            {
+                "code": "MISSING_PROFILE_URL",
+                "count": skipped_count,
+                "message": "缺少有效个人主页",
+                "recoverable": True,
+                "suggested_action": "crawler.candidates.update",
+            },
+        )
+    return {"count": skipped_count, "by_reason": reasons}
+
+
+def _enrichment_observation(job: CrawlJob) -> dict[str, object]:
+    terminal = job.status in {
+        CrawlJobStatus.COMPLETED.value,
+        CrawlJobStatus.PARTIALLY_COMPLETED.value,
+        CrawlJobStatus.FAILED.value,
+        CrawlJobStatus.CANCELED.value,
+    }
+    settled = terminal or job.status in {
+        CrawlJobStatus.NEEDS_REVIEW.value,
+        CrawlJobStatus.PAUSED.value,
+    }
+    return {
+        "id": job.id,
+        "status": job.status,
+        "settled": settled,
+        "terminal": terminal,
+    }
+
+
 async def enqueue_faculty_crawl_candidate_enrichment_records(
     session: AsyncSession,
     job_id: int,
-    candidate_ids: list[int],
+    selection: SelectionSpec,
     *,
     llm_profile_id: int | None,
     event_name: str = "crawl_job.candidate_enrichment_queued",
@@ -321,23 +434,11 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             code="CRAWL_CANDIDATE_ENRICHMENT_NOT_REVIEWABLE",
             message="抓取任务尚未进入审核状态，不能补全候选资料。",
         )
-    if not candidate_ids:
-        raise CrawlJobRecordError(
-            status_code=400,
-            code="CRAWL_CANDIDATE_ENRICHMENT_REQUIRED",
-            message="请至少选择一位候选导师。",
-        )
-    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
+    candidates, excluded_count = await _resolve_candidate_selection(
         session,
         job_id=job.id,
-        candidate_ids=candidate_ids,
+        selection=selection,
     )
-    if missing_candidate_ids:
-        raise CrawlJobRecordError(
-            status_code=404,
-            code="CRAWL_CANDIDATES_NOT_FOUND",
-            message="部分候选导师不存在或不属于该抓取任务。",
-        )
     await _resolve_and_refresh_llm_profile(
         session,
         job,
@@ -349,20 +450,38 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
     enrichable_candidates = [candidate for candidate in candidates if (candidate.profile_url or "").strip()]
     skipped_count = len(candidates) - len(enrichable_candidates)
     if not enrichable_candidates:
+        message = (
+            f"跳过 {skipped_count} 位缺少详情页 URL 的候选。"
+            if skipped_count
+            else "没有候选导师匹配当前选择条件。"
+        )
         return CrawlJobEnrichResult(
             selected_count=0,
             enriched_count=0,
             unchanged_count=0,
             failed_count=0,
             skipped_count=skipped_count,
-            message=f"跳过 {skipped_count} 位缺少详情页 URL 的候选。",
+            message=message,
+            selection={
+                "mode": selection.mode,
+                "matched_count": len(candidates),
+                "eligible_count": 0,
+                "excluded_count": excluded_count,
+            },
+            submission={
+                "queued_count": 0,
+                "already_active_count": 0,
+                "already_completed_count": 0,
+                "rejected_count": 0,
+            },
+            skips=_enrichment_skip_summary(skipped_count),
+            observation=_enrichment_observation(job),
         )
 
     now = utc_now()
     enqueued_count = 0
-    existing_count = 0
-    runnable_existing_count = 0
-    completed_skipped_count = 0
+    already_active_count = 0
+    already_completed_count = 0
     for candidate in enrichable_candidates:
         existing_task = await session.scalar(
             select(CrawlCandidateEnrichmentTask).where(
@@ -381,15 +500,13 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
                     existing_task.updated_at = now
                     enqueued_count += 1
                     continue
-                existing_count += 1
-                completed_skipped_count += 1
+                already_completed_count += 1
                 continue
             if existing_task.status in {
                 CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
                 CrawlCandidateEnrichmentTaskStatus.PENDING.value,
             }:
-                existing_count += 1
-                runnable_existing_count += 1
+                already_active_count += 1
                 continue
             existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
             existing_task.worker_id = None
@@ -410,24 +527,24 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
                 )
                 await session.flush()
         except IntegrityError:
-            existing_count += 1
-            runnable_existing_count += 1
+            already_active_count += 1
             continue
         enqueued_count += 1
 
-    if enqueued_count > 0 or runnable_existing_count > 0:
+    if enqueued_count > 0 or already_active_count > 0:
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now
         await mark_crawl_job_run_running(session, job, now=now)
 
     selected_count = len(enrichable_candidates)
+    existing_count = already_active_count + already_completed_count
     skipped_message = f"跳过 {skipped_count} 位缺少详情页 URL 的候选。" if skipped_count > 0 else ""
-    completed_skipped_message = f"已补全跳过 {completed_skipped_count} 位。" if completed_skipped_count > 0 else ""
+    completed_skipped_message = f"已补全跳过 {already_completed_count} 位。" if already_completed_count > 0 else ""
     if enqueued_count > 0:
         message = f"已加入补全队列：选中 {selected_count} 位，入队 {enqueued_count} 位。{completed_skipped_message}{skipped_message}"
-    elif completed_skipped_count > 0 and existing_count == completed_skipped_count:
-        message = f"选中 {selected_count} 位，已补全跳过 {completed_skipped_count} 位。{skipped_message}"
+    elif already_completed_count > 0 and existing_count == already_completed_count:
+        message = f"选中 {selected_count} 位，已补全跳过 {already_completed_count} 位。{skipped_message}"
     else:
         message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{completed_skipped_message}{skipped_message}"
     await _record_job_event(
@@ -436,9 +553,13 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         event_name,
         metadata={
             "selected_count": selected_count,
+            "matched_count": len(candidates),
             "enqueued_count": enqueued_count,
             "existing_count": existing_count,
+            "already_active_count": already_active_count,
+            "already_completed_count": already_completed_count,
             "skipped_count": skipped_count,
+            "selection_mode": selection.mode,
             "llm_profile_id": job.llm_profile_id,
         },
         actor=actor,
@@ -450,6 +571,20 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         failed_count=0,
         skipped_count=skipped_count,
         message=message,
+        selection={
+            "mode": selection.mode,
+            "matched_count": len(candidates),
+            "eligible_count": selected_count,
+            "excluded_count": excluded_count,
+        },
+        submission={
+            "queued_count": enqueued_count,
+            "already_active_count": already_active_count,
+            "already_completed_count": already_completed_count,
+            "rejected_count": 0,
+        },
+        skips=_enrichment_skip_summary(skipped_count),
+        observation=_enrichment_observation(job),
     )
 
 

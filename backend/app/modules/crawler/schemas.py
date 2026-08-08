@@ -258,10 +258,50 @@ class CrawlJobEnrichPayload(BaseModel):
     llm_profile_id: int | None = None
 
 
+class CrawlJobEnrichSelectionRead(ApiSchema):
+    mode: Literal["ids", "all", "filter"]
+    matched_count: int
+    eligible_count: int
+    excluded_count: int = 0
+
+
+class CrawlJobEnrichSubmissionRead(ApiSchema):
+    queued_count: int
+    already_active_count: int
+    already_completed_count: int
+    rejected_count: int = 0
+
+
+class CrawlJobReasonCountRead(ApiSchema):
+    code: str
+    count: int
+    message: str
+    recoverable: bool
+    suggested_action: str | None = None
+
+
+class CrawlJobSkipSummaryRead(ApiSchema):
+    count: int
+    by_reason: list[CrawlJobReasonCountRead] = Field(default_factory=list)
+
+
+class CrawlJobEnrichObservationRead(ApiSchema):
+    resource: str = "crawler.jobs"
+    id: int
+    status: CrawlJobStatusDTO
+    settled: bool
+    terminal: bool = False
+
+
 class CrawlJobEnrichResult(ApiSchema):
+    phase: Literal["submission"] = "submission"
     selected_count: int
     enriched_count: int
     unchanged_count: int
     failed_count: int
     skipped_count: int = 0
     message: str
+    selection: CrawlJobEnrichSelectionRead | None = None
+    submission: CrawlJobEnrichSubmissionRead | None = None
+    skips: CrawlJobSkipSummaryRead | None = None
+    observation: CrawlJobEnrichObservationRead | None = None

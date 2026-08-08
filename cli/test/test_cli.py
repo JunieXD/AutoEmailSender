@@ -131,6 +131,74 @@ class CliTests(unittest.TestCase):
             ["settled", "terminal"],
         )
 
+    def test_crawler_enrich_can_select_all_without_candidate_ids(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/52/enrich": {
+                    "phase": "submission",
+                    "selection": {"mode": "all", "matched_count": 2, "eligible_count": 2},
+                    "submission": {"queued_count": 2},
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "crawler",
+                    "jobs",
+                    "enrich",
+                    "52",
+                    "--selection",
+                    "all",
+                    "--exclude-candidate-id",
+                    "8",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(
+            fake_client.json_bodies[0],
+            {
+                "selection": {
+                    "mode": "all",
+                    "ids": [],
+                    "filter": {},
+                    "exclude_ids": [8],
+                },
+                "llm_profile_id": None,
+            },
+        )
+
+    def test_crawler_enrich_rejects_inconsistent_selection_options(self) -> None:
+        cases = (
+            ["--selection", "ids"],
+            ["--selection", "all", "--candidate-id", "7"],
+            ["--selection", "filter"],
+            ["--selection", "ids", "--candidate-id", "7", "--review-status", "pending"],
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                result = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "crawler",
+                        "jobs",
+                        "enrich",
+                        "52",
+                        *arguments,
+                    ],
+                )
+                self.assertEqual(result.exit_code, 2, msg=result.output)
+                self.assertEqual(json.loads(result.stdout)["error"]["code"], "INVALID_ARGUMENT")
+
     def test_parser_failures_always_use_the_json_error_envelope(self) -> None:
         cases = (
             (["--format", "json", "professors", "get"], "professors.get"),
@@ -2786,6 +2854,8 @@ class CliTests(unittest.TestCase):
                     "jobs",
                     "enrich",
                     "52",
+                    "--selection",
+                    "ids",
                     "--candidate-id",
                     "7",
                     "--candidate-id",
@@ -2874,7 +2944,15 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(
             fake_client.json_bodies[12],
-            {"candidate_ids": [7, 8], "llm_profile_id": 3},
+            {
+                "selection": {
+                    "mode": "ids",
+                    "ids": [7, 8],
+                    "filter": {},
+                    "exclude_ids": [],
+                },
+                "llm_profile_id": 3,
+            },
         )
 
     def test_communication_group_commands_preserve_and_update_match_source(self) -> None:

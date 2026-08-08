@@ -631,7 +631,7 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "test-email.get": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
     "test-email.generate": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
     "test-email.save": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
-    "crawler.jobs.enrich": frozenset({"selected_count", "enriched_count", "unchanged_count", "failed_count", "skipped_count", "message"}),
+    "crawler.jobs.enrich": frozenset({"phase", "selected_count", "enriched_count", "unchanged_count", "failed_count", "skipped_count", "message", "selection", "submission", "skips", "observation"}),
     "matching.jobs.cancel": frozenset({"ok", "job"}),
     "matching.jobs.delete": frozenset({"ok", "job"}),
     "matching.jobs.restore": frozenset({"ok", "job"}),

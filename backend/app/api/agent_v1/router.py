@@ -2771,13 +2771,16 @@ async def enrich_agent_crawl_candidates(
         return await execute_agent_mutation(
             session,
             command="crawler.jobs.enrich",
-            request_data={"job_id": job_id, **payload.model_dump(mode="json")},
+            request_data={
+                "job_id": job_id,
+                **payload.model_dump(mode="json", exclude_none=True),
+            },
             idempotency_key=idempotency_key,
             response_type=CrawlJobEnrichResult,
             mutation=lambda: enqueue_faculty_crawl_candidate_enrichment_records(
                 session,
                 job_id,
-                payload.candidate_ids,
+                payload.resolved_selection(),
                 llm_profile_id=payload.llm_profile_id,
                 event_name="agent_cli.crawl_candidate_enrichment.queued",
                 actor="agent_cli",

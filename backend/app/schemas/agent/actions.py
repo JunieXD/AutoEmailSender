@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas.base import ApiSchema
+from app.schemas.selection import SelectionSpec
 from app.modules.crawler.public import CrawlCandidateReviewStatusDTO
 
 
@@ -289,16 +290,29 @@ class AgentCrawlJobRetryRequest(ApiSchema):
 
 
 class AgentCrawlJobEnrichRequest(ApiSchema):
-    candidate_ids: list[int] = Field(min_length=1)
+    selection: SelectionSpec | None = None
+    candidate_ids: list[int] | None = None
     llm_profile_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
-    def validate_candidate_ids(self) -> "AgentCrawlJobEnrichRequest":
-        if any(candidate_id < 1 for candidate_id in self.candidate_ids):
-            raise ValueError("candidate_ids 必须是正整数")
-        if len(set(self.candidate_ids)) != len(self.candidate_ids):
-            raise ValueError("candidate_ids 不能包含重复的候选导师 ID")
+    def validate_selection(self) -> "AgentCrawlJobEnrichRequest":
+        if self.selection is not None and self.candidate_ids is not None:
+            raise ValueError("selection 和 candidate_ids 不能同时提供")
+        if self.selection is None and self.candidate_ids is None:
+            raise ValueError("请提供 selection 或 candidate_ids")
+        if self.candidate_ids is not None:
+            if not self.candidate_ids:
+                raise ValueError("candidate_ids 必须至少包含一个候选导师 ID")
+            if any(candidate_id < 1 for candidate_id in self.candidate_ids):
+                raise ValueError("candidate_ids 必须是正整数")
+            if len(set(self.candidate_ids)) != len(self.candidate_ids):
+                raise ValueError("candidate_ids 不能包含重复的候选导师 ID")
         return self
+
+    def resolved_selection(self) -> SelectionSpec:
+        if self.selection is not None:
+            return self.selection
+        return SelectionSpec(mode="ids", ids=self.candidate_ids or [])
 
 
 class AgentCampaignCreateRequest(ApiSchema):
