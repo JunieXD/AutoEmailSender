@@ -203,7 +203,10 @@ describe("windows installer packaging", () => {
     );
 
     expect(hostRunner).toContain("--force-full");
+    expect(hostRunner).toContain("skipping Git bundle transfer");
+    expect(hostRunner).toContain("Creating incremental Git bundle");
     expect(guestRunner).toContain("[switch]$ForceFull");
+    expect(guestRunner).toContain("[string]$ExpectedRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");
     expect(guestRunner).toContain("Test-VerifiedStage");
     expect(guestRunner).toContain("toolchainFingerprint");

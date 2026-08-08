@@ -36,7 +36,7 @@ VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\
 rtk bash scripts/quality/run-windows-vm-release-qa.sh
 ```
 
-宿主脚本会确认 VM、在 Mac 桌面创建临时完整 Git bundle、让 Windows 更新本地 NTFS checkout、运行需要更新的依赖与发布构建阶段，然后删除传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
+宿主脚本会确认 VM，并让 Windows 更新本地 NTFS checkout：首次运行传输完整 Git bundle，已有基线时只传增量对象，目标提交已经存在时不再传 bundle。随后运行需要更新的依赖与发布构建阶段并删除临时传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
 
 VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；任何相关文件或工具版本变化都会自动重跑对应阶段。NSIS 安装器和打包后的运行时生命周期每次都重新构建、重新验证，不使用阶段缓存。需要排查缓存或周期性做全新基线时运行：
 

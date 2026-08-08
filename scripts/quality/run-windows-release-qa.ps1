@@ -1,7 +1,9 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$BundlePath,
+  [string]$BundlePath = "",
   [string]$CheckoutPath = "$env:USERPROFILE\Projects\AutoEmailSender-Windows-QA",
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern('^[0-9a-fA-F]{40}$')]
+  [string]$ExpectedRevision,
   [switch]$ForceFull,
   [switch]$SkipRuntimeLifecycle
 )
@@ -191,13 +193,16 @@ if ($nodeArchitecture -ne "x64") {
 if (-not ((& uv python find 3.12) -match "python")) {
   throw "Python 3.12 managed by uv is required."
 }
-if (-not (Test-Path -LiteralPath $BundlePath -PathType Leaf)) {
+if ($BundlePath -and -not (Test-Path -LiteralPath $BundlePath -PathType Leaf)) {
   throw "Git bundle is missing: $BundlePath"
 }
 
 $checkoutParent = Split-Path -Parent $CheckoutPath
 New-Item -ItemType Directory -Force -Path $checkoutParent | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $CheckoutPath ".git"))) {
+  if (-not $BundlePath) {
+    throw "The dedicated Windows QA checkout is missing and no Git bundle was provided."
+  }
   Invoke-QaStep "Clone dedicated NTFS checkout" {
     & git clone $BundlePath $CheckoutPath
     Assert-NativeSuccess "git clone"
@@ -209,14 +214,19 @@ if ($trackedChanges) {
   throw "The dedicated Windows QA checkout has tracked changes. Preserve or discard them before release QA.`n$trackedChanges"
 }
 
-Invoke-QaStep "Update checkout from committed bundle" {
-  & git -C $CheckoutPath fetch --force $BundlePath HEAD
-  Assert-NativeSuccess "git fetch"
-  & git -C $CheckoutPath checkout --detach FETCH_HEAD
-  Assert-NativeSuccess "git checkout"
+if ($BundlePath) {
+  Invoke-QaStep "Update checkout from committed bundle" {
+    & git -C $CheckoutPath fetch --force $BundlePath HEAD
+    Assert-NativeSuccess "git fetch"
+    & git -C $CheckoutPath checkout --detach FETCH_HEAD
+    Assert-NativeSuccess "git checkout"
+  }
 }
 
 $revision = (& git -C $CheckoutPath rev-parse HEAD).Trim()
+if ($revision -ne $ExpectedRevision) {
+  throw "Windows checkout revision $revision does not match expected revision $ExpectedRevision."
+}
 Write-Host "Testing committed revision $revision"
 
 $gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
