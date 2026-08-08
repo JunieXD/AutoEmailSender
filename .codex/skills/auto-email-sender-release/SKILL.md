@@ -16,9 +16,9 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 ## Release Flow
 
 1. Confirm the version matches `x.y.z` or the supported prerelease form `x.y.z-suffix`, without a leading `v`.
-2. Fetch current tags from `origin`, then run `node scripts/release/check-release-version.mjs --version <version> --repo-root .`. Require `v<version>` to be absent and the requested version to be greater than the repository's highest valid release tag. Never publish a downgrade from `master` or reuse a tag.
+2. Fetch current tags from `origin`. If `v<version>` exists only because an unpublished workflow failed, follow Unpublished Tag Reuse before continuing. Then run `node scripts/release/check-release-version.mjs --version <version> --repo-root .`. Require `v<version>` to be absent and the requested version to be greater than the repository's remaining highest valid release tag. Never publish a downgrade from `master`.
 3. Check the repository state. Do not stage or touch unrelated changes. A real release must run from `master` with no changes except the prepared `docs/releases/v<version>.md`.
-4. Choose the release scripts for the current shell:
+4. Choose the release scripts for the current shell. A real release commits and pushes the versioned candidate, then dispatches `release.yml` with the exact commit SHA. The workflow creates the tag only after both platform builds succeed:
    - Linux/macOS/Git Bash: `./scripts/prepare-release.sh <version>` and later `./scripts/release.sh <version>`.
    - Windows PowerShell: `pwsh -NoLogo -NoProfile -File .\scripts\prepare-release.ps1 <version>` and later `pwsh -NoLogo -NoProfile -File .\scripts\release.ps1 <version>`.
 5. Run the prepare-release command. It creates a release note template only; it is not a generated changelog.
@@ -32,9 +32,18 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
    - related owner documentation under `docs/{architecture,product,development,operations}/**` when it changed in the release range
 8. Write `docs/releases/v<version>.md` directly from that context as a user-friendly announcement.
 9. Keep these sections in order: `### 新增功能`, `### 体验优化`, `### 问题修复`. Put higher-impact changes first.
-10. Run Repository Skill Preflight, Windows VM Preflight when available, and Sparkle Preflight below, then run the platform-specific release command from step 4.
+10. Run Repository Skill Preflight, Windows VM Preflight when available, and Sparkle Preflight below, then run the platform-specific release command from step 4. Confirm the dispatched workflow's `headSha` matches the release commit before treating it as the candidate run.
 11. If local verification fails, follow Test Failure Handling before retrying.
-12. After the tag is pushed, follow Post-Tag Verification. Do not report the release complete merely because the release script exited successfully.
+12. Monitor the deferred release workflow. It must build and stage every required artifact before creating the tag. After the workflow creates the tag, follow Post-Tag Verification. Do not report the release complete merely because the release script exited successfully.
+
+## Unpublished Tag Reuse
+
+- Keep every tag immutable once its GitHub Release is public, any public asset or update feed references it, or its publish job has succeeded. Fix such a version only with a higher version.
+- Reuse a failed tag only when the user has authorized unpublished-tag reuse and all of these checks pass: the exact tag has no GitHub Release (including drafts), no public assets or package entry, no appcast reference, and every workflow publish job for the tag failed, was cancelled, or was skipped before publication.
+- Treat a draft Release separately. Inspect its assets before any deletion. Do not reuse the tag while a draft or staged asset exists; remove an empty failed draft only when that destructive cleanup is in scope, then verify the Release is absent.
+- Do not reuse artifacts from the failed tag run. Fix and commit the cause, prepare the final versioned candidate without a tag, and require the repository preflight plus relevant Windows and macOS packaging preflights to pass on that exact commit first.
+- Immediately before reuse, resolve and record the old local and remote tag targets. Delete only the exact `refs/tags/v<version>` locally and on `origin`, fetch with pruning, and verify the tag and Release are absent. Never use a wildcard or delete another version.
+- Dispatch the replacement release only for the already-validated candidate commit. Let the publish job create the replacement tag after both platform builds succeed. Verify the new remote tag target before publication and report that the unpublished tag was replaced.
 
 ## Repository Skill Preflight
 
@@ -56,7 +65,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 ## Windows VM Preflight
 
 - The project Mac has a persistent Parallels VM named `Windows 11` with an NTFS checkout at `C:\Users\junie\Projects\AutoEmailSender-Windows-QA`. Use it for release candidates and Windows-specific packaging, process, path, SQLite, or native dependency changes; do not invoke it for every small edit.
-- Before tagging a release from this Mac, commit the candidate and run `rtk bash scripts/quality/run-windows-vm-release-qa.sh`. The runner transfers committed `HEAD`; it must not test or conceal uncommitted code.
+- Before tagging a release from this Mac, commit the candidate and run `rtk bash scripts/quality/run-windows-vm-release-qa.sh`. The runner transfers committed `HEAD`; it must not test or conceal uncommitted code. It may reuse a previously successful stage only when the Git tree inputs, toolchain fingerprint, and required outputs match. It always rebuilds the installer and reruns packaged lifecycle checks. Use `--force-full` when establishing a fresh cache baseline or investigating cache integrity.
 - Require clean Windows dependency installs, frozen CLI/backend builds, the NSIS artifact, authenticated runtime protocol v3, repeated CLI status stability, safe stale-process failure, and a fresh runtime identity after restart.
 - A VM failure blocks the release until it is classified and resolved. Do not bypass a missing native package, locked SQLite file, backend lifecycle failure, or VM prerequisite by manually editing build output.
 - For changes to Ctrl+C or shutdown behavior, also perform the Windows Terminal control-event check documented in `docs/operations/windows-parallels-release-qa.md`; a forced-exit lifecycle test does not replace a real console Ctrl+C test.
@@ -120,7 +129,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. If an older published source cannot produce a delta (for example, because of code-signing extended attributes), verify the signed full-DMG fallback and report the affected source versions. Do not replace published assets; publish the packaging fix as a new clean baseline, then require a later release to generate a delta from that baseline before calling differential updates healthy.
 - If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still documents the Codex and Claude Code user-level installation paths, paste-ready installation requests, manual Release ZIP installation, complete-directory requirement, and update instructions.
 - If macOS functional QA is in scope, verify from an installed previous version that Sparkle displays the release notes, validates the update, and restarts into the new version. Follow Update QA Safety.
-- For a transient Actions failure, rerun only after identifying the cause. For a product or packaging defect, fix `master` and publish a new version. Do not move or recreate a pushed tag, manually replace signed assets, or rotate Sparkle keys without explicit user approval.
+- For a transient Actions failure, rerun only after identifying the cause. For a product or packaging defect, fix `master`; use a higher version for any published release, or follow Unpublished Tag Reuse when its strict conditions are satisfied. Do not replace published signed assets or rotate Sparkle keys without explicit user approval.
 
 ## Update QA Safety
 

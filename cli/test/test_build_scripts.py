@@ -33,6 +33,7 @@ class CliBuildScriptTests(unittest.TestCase):
     def test_windows_build_creates_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.ps1")
 
+        self.assertIn("[switch]$SkipSync", script)
         self.assertIn("uv run pyinstaller", script)
         self.assertIn("--onedir", script)
         self.assertNotIn("--onefile", script)

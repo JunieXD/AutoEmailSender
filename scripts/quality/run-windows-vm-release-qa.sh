@@ -2,6 +2,28 @@
 
 set -euo pipefail
 
+usage() {
+  echo "Usage: $0 [--force-full] [--skip-runtime-lifecycle]" >&2
+}
+
+force_full=0
+skip_runtime_lifecycle=0
+while (($#)); do
+  case "$1" in
+    --force-full)
+      force_full=1
+      ;;
+    --skip-runtime-lifecycle)
+      skip_runtime_lifecycle=1
+      ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+  shift
+done
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 vm_name="${AUTO_EMAIL_SENDER_WINDOWS_VM_NAME:-Windows 11}"
@@ -45,10 +67,18 @@ git -C "$repo_root" bundle verify "$bundle_path"
 cp "$script_dir/run-windows-release-qa.ps1" "$runner_path"
 
 echo "Running Windows release QA for $(git -C "$repo_root" rev-parse --short=12 HEAD) in $vm_name"
-prlctl exec "$vm_name" --current-user powershell.exe \
-  -NoLogo \
-  -NoProfile \
-  -ExecutionPolicy Bypass \
-  -File "Z:/Desktop/$runner_name" \
-  -BundlePath "Z:/Desktop/$bundle_name" \
+guest_args=(
+  -NoLogo
+  -NoProfile
+  -ExecutionPolicy Bypass
+  -File "Z:/Desktop/$runner_name"
+  -BundlePath "Z:/Desktop/$bundle_name"
   -CheckoutPath "$guest_checkout"
+)
+if ((force_full)); then
+  guest_args+=(-ForceFull)
+fi
+if ((skip_runtime_lifecycle)); then
+  guest_args+=(-SkipRuntimeLifecycle)
+fi
+prlctl exec "$vm_name" --current-user powershell.exe "${guest_args[@]}"

@@ -1,5 +1,7 @@
 param(
-  [switch]$Clean
+  [switch]$Clean,
+  [switch]$CleanPlaywright,
+  [switch]$SkipSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,10 +16,15 @@ $PlaywrightHooksDir = Join-Path $RepoRoot "scripts\build\pyinstaller-hooks"
 Push-Location $BackendDir
 try {
   if ($Clean) {
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "build", "dist", "ms-playwright"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "build", "dist"
+  }
+  if ($CleanPlaywright) {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "ms-playwright"
   }
 
-  uv sync --dev
+  if (-not $SkipSync) {
+    uv sync --dev
+  }
   $env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir
   uv run python -m playwright install --only-shell chromium
   uv run pyinstaller `

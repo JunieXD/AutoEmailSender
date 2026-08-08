@@ -8,6 +8,7 @@ temp_bin="$temp_root/bin"
 stdout_path="$temp_root/stdout.txt"
 stderr_path="$temp_root/stderr.txt"
 uv_calls_path="$temp_root/uv-calls.txt"
+gh_calls_path="$temp_root/gh-calls.txt"
 
 cleanup() {
   rm -rf "$temp_root"
@@ -53,6 +54,7 @@ if [[ "$3" == "status" ]]; then
     *) exit 2 ;;
   esac
 fi
+if [[ "$3" == "rev-parse" ]]; then echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; exit 0; fi
 exit 0'
 
 new_shim npm '#!/usr/bin/env bash
@@ -63,6 +65,9 @@ exit 0'
 new_shim uv "#!/usr/bin/env bash
 echo fake uv \"\$@\"
 printf '%s\n' \"\$*\" >> '$uv_calls_path'
+exit 0"
+new_shim gh "#!/usr/bin/env bash
+printf '%s\n' \"\$*\" >> '$gh_calls_path'
 exit 0"
 
 old_path="$PATH"
@@ -96,7 +101,7 @@ assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skil
 assert_contains "$uv_calls" "run python -m unittest discover test" "release.sh 没有执行 CLI 测试。"
 assert_contains "$output" "fake CLI build --clean" "release.sh 没有验证 CLI 冻结包。"
 assert_contains "$output" "[dry-run] uv version 9.9.9 --no-sync in cli" "release.sh dry-run 没有预演 CLI 版本更新。"
-assert_contains "$output" "[dry-run] 未创建提交、tag 或推送" "release.sh dry-run 成功时没有输出完成信息。"
+assert_contains "$output" "正式 tag 只会在双平台构建成功后创建" "release.sh dry-run 没有说明延迟创建 tag。"
 
 rm -f "$uv_calls_path"
 "$release_script" 9.9.9 --skip-verify --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
@@ -107,7 +112,9 @@ if [[ ! -f "$release_repo/desktop/release-notes.md" ]]; then
   exit 1
 fi
 assert_contains "$uv_calls" "version 9.9.9 --no-sync" "release.sh 没有同步 CLI 发布版本。"
-assert_contains "$output" "已推送 v9.9.9" "release.sh 成功时没有输出 tag 已推送信息。"
+assert_contains "$output" "启动 v9.9.9 候选工作流" "release.sh 成功时没有输出候选工作流状态。"
+gh_calls="$(cat "$gh_calls_path")"
+assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true" "release.sh 没有按精确提交启动延迟发布工作流。"
 
 set +e
 "$release_script" 8.8.8 --dry-run --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"

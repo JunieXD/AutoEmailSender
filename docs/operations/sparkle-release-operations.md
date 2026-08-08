@@ -47,16 +47,18 @@ gh secret set SPARKLE_ED_PRIVATE_KEY < /安全路径/auto-email-sender-sparkle-p
 
 ## 发布流程
 
-正常发布仍使用现有脚本创建 tag：
+正常发布仍使用现有脚本准备并推送发布提交：
 
 ```bash
 ./scripts/prepare-release.sh 2.4.0
 ./scripts/release.sh 2.4.0
 ```
 
-tag 触发的 workflow 会：
+脚本会把精确发布提交交给 `Release Desktop` workflow。workflow 先在没有新 tag 的情况下完成双平台构建；只有两个构建都成功后，publish job 才为该提交创建 tag 并公开 Release。为兼容历史操作，手动推送 tag 仍可触发同一 workflow。
 
-1. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布。
+workflow 会：
+
+1. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布，也不提前占用版本 tag。
 2. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
 3. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
    从 v2.5.3 干净基线开始，脚本必须为最新的旧版本生成 delta；缺少该 delta 时会直接终止发布，不能静默退化为仅全量更新。

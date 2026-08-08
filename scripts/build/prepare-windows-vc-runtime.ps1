@@ -11,6 +11,11 @@ if (-not $OutputPath) {
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $DownloadUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+$SecurityModulePath = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+if (-not (Test-Path -LiteralPath $SecurityModulePath -PathType Leaf)) {
+  throw "PowerShell security module is missing: $SecurityModulePath"
+}
+Import-Module -Name $SecurityModulePath -Force -ErrorAction Stop
 
 function Test-MicrosoftRedistributable {
   param([Parameter(Mandatory = $true)][string]$Path)

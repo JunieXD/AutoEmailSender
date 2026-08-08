@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$BundlePath,
   [string]$CheckoutPath = "$env:USERPROFILE\Projects\AutoEmailSender-Windows-QA",
+  [switch]$ForceFull,
   [switch]$SkipRuntimeLifecycle
 )
 
@@ -17,9 +18,15 @@ function Invoke-QaStep {
   )
 
   Write-Host "`n=== $Name ==="
-  & $Action
-  if ($LASTEXITCODE -ne 0) {
-    throw "$Name failed with exit code $LASTEXITCODE"
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    & $Action
+    if ($LASTEXITCODE -ne 0) {
+      throw "$Name failed with exit code $LASTEXITCODE"
+    }
+  } finally {
+    $timer.Stop()
+    Write-Host ("--- {0}: {1:n1}s ---" -f $Name, $timer.Elapsed.TotalSeconds)
   }
 }
 
@@ -85,6 +92,74 @@ function Stop-QaDesktopTree {
   }
 }
 
+function Get-StringSha256 {
+  param([Parameter(Mandatory = $true)][string]$Value)
+
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+    return -join ($algorithm.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") })
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
+function Get-StageFingerprint {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$Paths,
+    [string[]]$AdditionalValues = @()
+  )
+
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($path in $Paths) {
+    $gitPath = $path.Replace("\", "/")
+    $treeId = (& git -C $CheckoutPath rev-parse "HEAD:$gitPath" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $treeId) {
+      $treeId = "missing"
+    }
+    $parts.Add("$gitPath=$treeId")
+  }
+  foreach ($value in $AdditionalValues) {
+    $parts.Add($value)
+  }
+  return Get-StringSha256 -Value ($parts -join "`n")
+}
+
+function Test-VerifiedStage {
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$Fingerprint,
+    [string[]]$RequiredPaths = @()
+  )
+
+  if ($ForceFull -or -not $script:VerifiedStages.ContainsKey($Name)) {
+    return $false
+  }
+  if ([string]$script:VerifiedStages[$Name] -ne $Fingerprint) {
+    return $false
+  }
+  foreach ($path in $RequiredPaths) {
+    if (-not (Test-Path -LiteralPath $path)) {
+      return $false
+    }
+  }
+  Write-Host "[reuse] $Name inputs and outputs match a previously successful stage."
+  return $true
+}
+
+function Save-VerifiedStage {
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$Fingerprint
+  )
+
+  $script:VerifiedStages[$Name] = $Fingerprint
+  New-Item -ItemType Directory -Force -Path $script:QaCacheDirectory | Out-Null
+  $temporaryPath = "$($script:QaCachePath).tmp"
+  $script:VerifiedStages | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $temporaryPath
+  Move-Item -Force -LiteralPath $temporaryPath -Destination $script:QaCachePath
+}
+
 if ($env:OS -ne "Windows_NT") {
   throw "This guest runner must execute on Windows."
 }
@@ -144,55 +219,126 @@ Invoke-QaStep "Update checkout from committed bundle" {
 $revision = (& git -C $CheckoutPath rev-parse HEAD).Trim()
 Write-Host "Testing committed revision $revision"
 
-Invoke-QaStep "Frontend clean install and production build" {
-  Push-Location (Join-Path $CheckoutPath "frontend")
-  try {
-    & npm ci
-    Assert-NativeSuccess "frontend npm ci"
-    & node -e "require.resolve('@rolldown/binding-win32-' + process.arch + '-msvc')"
-    Assert-NativeSuccess "Rolldown native binding check"
-    & npm run build
-    Assert-NativeSuccess "frontend build"
-  } finally {
-    Pop-Location
+$gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
+$script:QaCacheDirectory = Join-Path $gitDirectory "auto-email-sender-windows-qa"
+$script:QaCachePath = Join-Path $script:QaCacheDirectory "verified-stages.json"
+$script:VerifiedStages = @{}
+if (-not $ForceFull -and (Test-Path -LiteralPath $script:QaCachePath -PathType Leaf)) {
+  $cachedStages = Get-Content -Raw -LiteralPath $script:QaCachePath | ConvertFrom-Json
+  foreach ($property in $cachedStages.PSObject.Properties) {
+    $script:VerifiedStages[$property.Name] = [string]$property.Value
   }
 }
 
-Invoke-QaStep "Agent CLI tests and frozen build" {
-  Push-Location (Join-Path $CheckoutPath "cli")
-  try {
-    & uv sync --dev
-    Assert-NativeSuccess "CLI uv sync"
-    & uv run python -m unittest discover test
-    Assert-NativeSuccess "CLI tests"
-  } finally {
-    Pop-Location
-  }
-  & (Join-Path $CheckoutPath "scripts\build\build-cli.ps1") -Clean
+$nodeVersion = (& node --version).Trim()
+$npmVersion = (& npm --version).Trim()
+$uvVersion = (& uv --version).Trim()
+$pythonPath = (& uv python find 3.12).Trim()
+$toolchainFingerprint = "node=$nodeVersion;npm=$npmVersion;uv=$uvVersion;python=$pythonPath"
+
+Invoke-QaStep "Windows packaging prerequisites" {
+  & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")
 }
 
-Invoke-QaStep "Backend tests and frozen build" {
-  Push-Location (Join-Path $CheckoutPath "backend")
-  try {
-    & uv sync --dev
-    Assert-NativeSuccess "backend uv sync"
-    & uv run python -m unittest discover test
-    Assert-NativeSuccess "backend tests"
-  } finally {
-    Pop-Location
+$qaRunnerInput = "scripts/quality/run-windows-release-qa.ps1"
+$frontendFingerprint = Get-StageFingerprint -Paths @("frontend", $qaRunnerInput) -AdditionalValues @($toolchainFingerprint)
+$frontendDist = Join-Path $CheckoutPath "frontend\dist\index.html"
+$frontendNodeModules = Join-Path $CheckoutPath "frontend\node_modules"
+if (-not (Test-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint -RequiredPaths @($frontendDist, $frontendNodeModules))) {
+  Invoke-QaStep "Frontend clean install and production build" {
+    Push-Location (Join-Path $CheckoutPath "frontend")
+    try {
+      & npm ci --prefer-offline
+      Assert-NativeSuccess "frontend npm ci"
+      & node -e "require.resolve('@rolldown/binding-win32-' + process.arch + '-msvc')"
+      Assert-NativeSuccess "Rolldown native binding check"
+      & npm run build
+      Assert-NativeSuccess "frontend build"
+    } finally {
+      Pop-Location
+    }
   }
-  & (Join-Path $CheckoutPath "scripts\build\build-backend.ps1") -Clean
+  Save-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint
 }
 
-Invoke-QaStep "Desktop typecheck, tests, and installer build" {
+$cliInputs = @("cli", "scripts/build/build-cli.ps1", "scripts/build/generate_cli_build_identity.py", "scripts/build/verify_cli_binary.py", $qaRunnerInput)
+$cliTestFingerprint = Get-StageFingerprint -Paths $cliInputs -AdditionalValues @($toolchainFingerprint)
+$cliEnvironment = Join-Path $CheckoutPath "cli\.venv\Scripts\python.exe"
+if (-not (Test-VerifiedStage -Name "cli-tests" -Fingerprint $cliTestFingerprint -RequiredPaths @($cliEnvironment))) {
+  Invoke-QaStep "Agent CLI dependency sync and tests" {
+    Push-Location (Join-Path $CheckoutPath "cli")
+    try {
+      & uv sync --dev
+      Assert-NativeSuccess "CLI uv sync"
+      & uv run --no-sync python -m unittest discover test
+      Assert-NativeSuccess "CLI tests"
+    } finally {
+      Pop-Location
+    }
+  }
+  Save-VerifiedStage -Name "cli-tests" -Fingerprint $cliTestFingerprint
+}
+
+$cliBuildFingerprint = Get-StageFingerprint -Paths $cliInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
+$cliExecutable = Join-Path $CheckoutPath "cli\dist\auto-email-sender\auto-email-sender.exe"
+if (-not (Test-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint -RequiredPaths @($cliExecutable))) {
+  Invoke-QaStep "Agent CLI frozen build" {
+    & (Join-Path $CheckoutPath "scripts\build\build-cli.ps1") -Clean -SkipSync
+  }
+  Save-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint
+}
+
+$backendTestInputs = @("backend", "scripts/build", "scripts/packaging", ".agents/skills", ".claude/skills", ".codex/skills", $qaRunnerInput)
+$backendTestFingerprint = Get-StageFingerprint -Paths $backendTestInputs -AdditionalValues @($toolchainFingerprint)
+$backendEnvironment = Join-Path $CheckoutPath "backend\.venv\Scripts\python.exe"
+if (-not (Test-VerifiedStage -Name "backend-tests" -Fingerprint $backendTestFingerprint -RequiredPaths @($backendEnvironment))) {
+  Invoke-QaStep "Backend dependency sync and tests" {
+    Push-Location (Join-Path $CheckoutPath "backend")
+    try {
+      & uv sync --dev
+      Assert-NativeSuccess "backend uv sync"
+      & uv run --no-sync python -m unittest discover test
+      Assert-NativeSuccess "backend tests"
+    } finally {
+      Pop-Location
+    }
+  }
+  Save-VerifiedStage -Name "backend-tests" -Fingerprint $backendTestFingerprint
+}
+
+$backendBuildInputs = @("backend", "scripts/build/build-backend.ps1", "scripts/build/pyinstaller-hooks", $qaRunnerInput)
+$backendBuildFingerprint = Get-StageFingerprint -Paths $backendBuildInputs -AdditionalValues @($toolchainFingerprint)
+$backendExecutable = Join-Path $CheckoutPath "backend\dist\backend\backend.exe"
+if (-not (Test-VerifiedStage -Name "backend-build" -Fingerprint $backendBuildFingerprint -RequiredPaths @($backendExecutable))) {
+  Invoke-QaStep "Backend frozen build" {
+    & (Join-Path $CheckoutPath "scripts\build\build-backend.ps1") -Clean -SkipSync
+  }
+  Save-VerifiedStage -Name "backend-build" -Fingerprint $backendBuildFingerprint
+}
+
+$desktopTestInputs = @("desktop", "scripts/build", "frontend/package.json", "frontend/package-lock.json", $qaRunnerInput)
+$desktopTestFingerprint = Get-StageFingerprint -Paths $desktopTestInputs -AdditionalValues @($toolchainFingerprint)
+$desktopNodeModules = Join-Path $CheckoutPath "desktop\node_modules"
+if (-not (Test-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint -RequiredPaths @($desktopNodeModules))) {
+  Invoke-QaStep "Desktop clean install, typecheck, and tests" {
+    Push-Location (Join-Path $CheckoutPath "desktop")
+    try {
+      & npm ci --prefer-offline
+      Assert-NativeSuccess "desktop npm ci"
+      & npm run typecheck
+      Assert-NativeSuccess "desktop typecheck"
+      & npm run test
+      Assert-NativeSuccess "desktop tests"
+    } finally {
+      Pop-Location
+    }
+  }
+  Save-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint
+}
+
+Invoke-QaStep "Windows installer build" {
   Push-Location (Join-Path $CheckoutPath "desktop")
   try {
-    & npm ci
-    Assert-NativeSuccess "desktop npm ci"
-    & npm run typecheck
-    Assert-NativeSuccess "desktop typecheck"
-    & npm run test
-    Assert-NativeSuccess "desktop tests"
     & npm run dist
     Assert-NativeSuccess "desktop installer build"
   } finally {

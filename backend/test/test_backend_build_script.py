@@ -44,8 +44,11 @@ class BackendBuildScriptTest(unittest.TestCase):
     def test_installs_only_playwright_browsers_to_packaged_resource_dir(self) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
+        self.assertIn("[switch]$SkipSync", content)
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
         self.assertIn("uv run python -m playwright install --only-shell chromium", content)
+        self.assertIn("[switch]$CleanPlaywright", content)
+        self.assertNotIn('"build", "dist", "ms-playwright"', content)
 
     def test_collects_document_extraction_dependencies_for_packaging(self) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")

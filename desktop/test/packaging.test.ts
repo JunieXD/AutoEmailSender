@@ -165,6 +165,10 @@ describe("windows installer packaging", () => {
       path.resolve("..", "scripts", "build", "prepare-windows-vc-runtime.ps1"),
       "utf8",
     );
+    const workflow = readFileSync(
+      path.resolve("..", ".github", "workflows", "release.yml"),
+      "utf8",
+    );
 
     expect(packageJson.scripts["prepare:windows-runtime"]).toContain(
       "prepare-windows-vc-runtime.ps1",
@@ -173,12 +177,42 @@ describe("windows installer packaging", () => {
     expect(packageJson.scripts.publish).toContain("npm run prepare:windows-runtime");
     expect(config).toContain("from: build/runtime/vc_redist.x64.exe");
     expect(config).toContain("to: runtime/vc_redist.x64.exe");
+    expect(prepareScript).toContain("Join-Path $PSHOME");
+    expect(prepareScript).toContain("Import-Module -Name $SecurityModulePath");
     expect(prepareScript).toContain("Get-AuthenticodeSignature");
     expect(prepareScript).toContain("Microsoft Corporation");
+    expect(workflow.indexOf("Prepare Windows packaging prerequisites")).toBeLessThan(
+      workflow.indexOf("Install frontend dependencies"),
+    );
+    expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
+    expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
     expect(installerScript).toContain("!macro customInstall");
     expect(installerScript).toContain("vc_redist.x64.exe\" /install /quiet /norestart");
     expect(installerScript).toContain('$R0 == "3010"');
     expect(installerScript).toContain("Abort");
+  });
+
+  it("keeps Windows VM release QA incremental without caching final integration checks", () => {
+    const hostRunner = readFileSync(
+      path.resolve("..", "scripts", "quality", "run-windows-vm-release-qa.sh"),
+      "utf8",
+    );
+    const guestRunner = readFileSync(
+      path.resolve("..", "scripts", "quality", "run-windows-release-qa.ps1"),
+      "utf8",
+    );
+
+    expect(hostRunner).toContain("--force-full");
+    expect(guestRunner).toContain("[switch]$ForceFull");
+    expect(guestRunner).toContain("Get-StageFingerprint");
+    expect(guestRunner).toContain("Test-VerifiedStage");
+    expect(guestRunner).toContain("toolchainFingerprint");
+    expect(guestRunner).toContain('Invoke-QaStep "Windows installer build"');
+    expect(guestRunner).toContain(
+      'Invoke-QaStep "Packaged runtime identity and stale-process lifecycle"',
+    );
+    expect(guestRunner).not.toContain('Test-VerifiedStage -Name "installer"');
+    expect(guestRunner).not.toContain('Test-VerifiedStage -Name "runtime-lifecycle"');
   });
 
   it("keeps app data cleanup as an opt-in uninstall section", () => {
@@ -318,17 +352,22 @@ describe("macOS desktop packaging", () => {
     expect(workflow).toContain("if ((${#skill_assets[@]} != 1))");
     expect(workflow).toContain('--json isDraft --jq .isDraft');
     expect(workflow).toContain("Refusing to replace assets on published Release");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("Create deferred release tag");
+    expect(workflow.indexOf("Validate staged release artifacts")).toBeLessThan(
+      workflow.indexOf("Create deferred release tag"),
+    );
     expect(workflow.indexOf('--json isDraft --jq .isDraft')).toBeLessThan(
-      workflow.indexOf('gh release edit "${{ github.ref_name }}" --notes-file'),
+      workflow.indexOf('gh release edit "$RELEASE_TAG" --notes-file'),
     );
     expect(workflow.indexOf("Refusing to replace assets on published Release")).toBeLessThan(
-      workflow.indexOf('gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber'),
+      workflow.indexOf('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber'),
     );
     expect(workflow.indexOf("release-assets/skill/*.zip")).toBeLessThan(
       workflow.indexOf("release-assets/macos/appcast.xml --clobber"),
     );
     expect(workflow.indexOf("release-assets/macos/appcast.xml --clobber")).toBeGreaterThan(
-      workflow.indexOf('gh release upload "${{ github.ref_name }}" "${assets[@]}" --clobber'),
+      workflow.indexOf('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber'),
     );
   });
 });

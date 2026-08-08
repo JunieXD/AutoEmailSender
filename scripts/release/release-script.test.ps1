@@ -8,6 +8,7 @@ $tempBin = Join-Path $tempRoot "bin"
 $stdoutPath = Join-Path $tempRoot "stdout.txt"
 $stderrPath = Join-Path $tempRoot "stderr.txt"
 $uvCallsPath = Join-Path $tempRoot "uv-calls.txt"
+$ghCallsPath = Join-Path $tempRoot "gh-calls.txt"
 $releaseNotesDirectory = Join-Path $repoRoot "docs\releases"
 $releaseNotesPath = Join-Path $releaseNotesDirectory "v9.9.9.md"
 
@@ -95,6 +96,12 @@ if "%3"=="add" exit /b 0
 if "%3"=="commit" exit /b 0
 if "%3"=="tag" exit /b 0
 if "%3"=="push" exit /b 0
+if "%3"=="rev-parse" echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & exit /b 0
+exit /b 0
+"@
+  New-CmdShim -Directory $tempBin -Name "gh" -Content @"
+@echo off
+echo %* >> "$ghCallsPath"
 exit /b 0
 "@
 
@@ -153,6 +160,7 @@ exit /b 0
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest discover test" -Message "release.ps1 没有执行 CLI 测试。`n$uvCalls"
     Assert-Contains -Text $verificationOutput -Needle "fake CLI build -Clean" -Message "release.ps1 没有验证 CLI 冻结包。`n$verificationOutput"
     Assert-Contains -Text $verificationOutput -Needle "[dry-run] uv version 9.9.9 --no-sync in cli" -Message "release.ps1 dry-run 没有预演 CLI 版本更新。`n$verificationOutput"
+    Assert-Contains -Text $verificationOutput -Needle "正式 tag 只会在双平台构建成功后创建" -Message "release.ps1 dry-run 没有说明延迟创建 tag。`n$verificationOutput"
 
     if (Test-Path $uvCallsPath) {
       Remove-Item -LiteralPath $uvCallsPath -Force
@@ -177,14 +185,16 @@ exit /b 0
       if (-not (Test-Path (Join-Path $releaseRepo "desktop\release-notes.md"))) {
         throw "release.ps1 应该把公告复制到 desktop\\release-notes.md。`n$output"
       }
-      if ($output -notmatch "已推送 v9.9.9") {
-        throw "release.ps1 成功时没有输出 tag 已推送信息。`n$output"
+      if ($output -notmatch "启动 v9.9.9 候选工作流") {
+        throw "release.ps1 成功时没有输出候选工作流状态。`n$output"
       }
     } else {
       throw "release.ps1 在允许的未跟踪公告文件存在时应该成功。`n$output"
     }
     $uvCalls = Get-Content -Raw -Encoding UTF8 $uvCallsPath
     Assert-Contains -Text $uvCalls -Needle "version 9.9.9 --no-sync" -Message "release.ps1 没有同步 CLI 发布版本。`n$uvCalls"
+    $ghCalls = Get-Content -Raw -Encoding UTF8 $ghCallsPath
+    Assert-Contains -Text $ghCalls -Needle "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true" -Message "release.ps1 没有按精确提交启动延迟发布工作流。`n$ghCalls"
 
     $missingNotesProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
       "-NoLogo",

@@ -1,5 +1,6 @@
 param(
-  [switch]$Clean
+  [switch]$Clean,
+  [switch]$SkipSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +15,9 @@ try {
       (Join-Path $CliDir "dist")
   }
 
-  uv sync --dev
+  if (-not $SkipSync) {
+    uv sync --dev
+  }
   $BuildIdentityHook = Join-Path $CliDir "build\generated\cli_build_identity_hook.py"
   uv run python (Join-Path $RepoRoot "scripts\build\generate_cli_build_identity.py") `
     --repo-root $RepoRoot `

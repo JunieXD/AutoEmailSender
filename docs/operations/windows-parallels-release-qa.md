@@ -36,15 +36,24 @@ VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\
 rtk bash scripts/quality/run-windows-vm-release-qa.sh
 ```
 
-宿主脚本会确认 VM、在 Mac 桌面创建临时完整 Git bundle、让 Windows 更新本地 NTFS checkout、运行全新依赖安装与发布构建，然后删除传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
+宿主脚本会确认 VM、在 Mac 桌面创建临时完整 Git bundle、让 Windows 更新本地 NTFS checkout、运行需要更新的依赖与发布构建阶段，然后删除传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
+
+VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；任何相关文件或工具版本变化都会自动重跑对应阶段。NSIS 安装器和打包后的运行时生命周期每次都重新构建、重新验证，不使用阶段缓存。需要排查缓存或周期性做全新基线时运行：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
+```
+
+`--force-full` 只忽略阶段验证记录；`npm ci` 仍使用 npm 下载缓存，Playwright Chromium 按锁定版本保存在专用 QA checkout 中并由安装命令重新核对，不再为每个提交强制下载同一个浏览器。
 
 Windows 侧执行：
 
-1. 前端 `npm ci`、Rolldown 当前架构原生绑定检查和 Vite 生产构建；
-2. CLI 全部测试、干净 PyInstaller 构建和冻结版本校验；
-3. 后端全部测试、Playwright 运行时安装、干净 PyInstaller 构建及自检；
-4. Electron `npm ci`、类型检查、全部桌面测试和 NSIS 安装包构建；
-5. 启动 `win-unpacked`，验证 v3 认证运行握手、重复 CLI 状态查询、进程退出后的安全失效，以及重启后生成新 `runtime_id`。
+1. 先下载并校验微软签名的 VC++ x64 Runtime，使环境或 PowerShell 模块问题在昂贵测试前失败；
+2. 前端 `npm ci`、Rolldown 当前架构原生绑定检查和 Vite 生产构建；
+3. CLI 全部测试、干净 PyInstaller 构建和冻结版本校验；
+4. 后端全部测试、Playwright 运行时核对、干净 PyInstaller 构建及自检；
+5. Electron `npm ci`、类型检查、全部桌面测试和 NSIS 安装包构建；
+6. 启动 `win-unpacked`，验证 v3 认证运行握手、重复 CLI 状态查询、进程退出后的安全失效，以及重启后生成新 `runtime_id`。
 
 失败会阻止发布。先判断是产品缺陷、锁文件/打包缺陷还是 VM 环境损坏，不要手工向 `node_modules` 塞包后把结果记为通过。VM runner 为 Electron 与 electron-builder 使用可访问的镜像，但 npm 依赖仍严格来自锁文件；修改镜像不能掩盖校验和或架构错误。
 

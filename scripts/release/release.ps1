@@ -179,12 +179,22 @@ Copy-ReleaseNotes
 
 Run-Git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$ReleaseTag.md"
 Run-Git commit -m "chore(release): $ReleaseTag"
-Run-Git tag $ReleaseTag
 Run-Git push origin master
-Run-Git push origin $ReleaseTag
 
 if ($DryRun) {
-  Write-Host "[dry-run] 未创建提交、tag 或推送。真实发布会触发 GitHub Actions 创建 Release。"
+  Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true"
+  Write-Host "[dry-run] 未创建提交、tag 或推送。正式 tag 只会在双平台构建成功后创建。"
 } else {
-  Write-Host "已推送 $ReleaseTag。GitHub Actions 将继续构建并发布 Release。"
+  $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
+  Push-Location $RepoRoot
+  try {
+    gh workflow run release.yml `
+      --ref master `
+      -f "release_tag=$ReleaseTag" `
+      -f "release_sha=$releaseSha" `
+      -f "publish=true"
+  } finally {
+    Pop-Location
+  }
+  Write-Host "已推送发布提交 $releaseSha 并启动 $ReleaseTag 候选工作流。双平台构建成功后才会创建 tag 和公开 Release。"
 }
