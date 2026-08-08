@@ -3,18 +3,18 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--force-full] [--skip-runtime-lifecycle]" >&2
+  echo "Usage: $0 [--force-full] [--quick]" >&2
 }
 
 force_full=0
-skip_runtime_lifecycle=0
+qa_mode="release"
 while (($#)); do
   case "$1" in
     --force-full)
       force_full=1
       ;;
-    --skip-runtime-lifecycle)
-      skip_runtime_lifecycle=1
+    --quick)
+      qa_mode="quick"
       ;;
     *)
       usage
@@ -83,7 +83,7 @@ else
 fi
 cp "$script_dir/run-windows-release-qa.ps1" "$runner_path"
 
-echo "Running Windows release QA for ${target_revision:0:12} in $vm_name"
+echo "Running Windows $qa_mode QA for ${target_revision:0:12} in $vm_name"
 guest_args=(
   -NoLogo
   -NoProfile
@@ -91,6 +91,7 @@ guest_args=(
   -File "Z:/Desktop/$runner_name"
   -CheckoutPath "$guest_checkout"
   -ExpectedRevision "$target_revision"
+  -Mode "$qa_mode"
 )
 if [[ -f "$bundle_path" ]]; then
   guest_args+=(-BundlePath "Z:/Desktop/$bundle_name")
@@ -100,8 +101,5 @@ if [[ -n "$guest_revision" && "$guest_revision" != "$target_revision" ]]; then
 fi
 if ((force_full)); then
   guest_args+=(-ForceFull)
-fi
-if ((skip_runtime_lifecycle)); then
-  guest_args+=(-SkipRuntimeLifecycle)
 fi
 prlctl exec "$vm_name" --current-user powershell.exe "${guest_args[@]}"

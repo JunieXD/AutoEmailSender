@@ -7,7 +7,8 @@ param(
   [ValidatePattern('^$|^[0-9a-fA-F]{40}$')]
   [string]$PreviousRevision = "",
   [switch]$ForceFull,
-  [switch]$SkipRuntimeLifecycle
+  [ValidateSet("release", "quick")]
+  [string]$Mode = "release"
 )
 
 Set-StrictMode -Version Latest
@@ -293,6 +294,7 @@ if ($revision -ne $ExpectedRevision) {
   throw "Windows checkout revision $revision does not match expected revision $ExpectedRevision."
 }
 Write-Host "Testing committed revision $revision"
+Write-Host "Windows QA mode: $Mode"
 Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
 
 $gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
@@ -312,8 +314,10 @@ $uvVersion = (& uv --version).Trim()
 $pythonPath = (& uv python find 3.12).Trim()
 $toolchainFingerprint = "node=$nodeVersion;npm=$npmVersion;uv=$uvVersion;python=$pythonPath"
 
-Invoke-QaStep "Windows packaging prerequisites" {
-  & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")
+if ($Mode -eq "release") {
+  Invoke-QaStep "Windows packaging prerequisites" {
+    & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")
+  }
 }
 
 $qaRunnerInput = "scripts/quality/run-windows-release-qa.ps1"
@@ -405,13 +409,22 @@ if ($cliSuiteRan) {
   Save-VerifiedStage -Name "cli-build-contracts" -Fingerprint $cliContractFingerprint
 }
 
-$cliBuildFingerprint = Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
+$cliQuickBuildFingerprint = Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint)
+$cliBuildStageName = if ($Mode -eq "release") { "cli-build" } else { "cli-build-quick" }
+$cliBuildFingerprint = if ($Mode -eq "release") {
+  Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
+} else {
+  $cliQuickBuildFingerprint
+}
 $cliExecutable = Join-Path $CheckoutPath "cli\dist\auto-email-sender\auto-email-sender.exe"
-if (-not (Test-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint -RequiredPaths @($cliExecutable))) {
+if (-not (Test-VerifiedStage -Name $cliBuildStageName -Fingerprint $cliBuildFingerprint -RequiredPaths @($cliExecutable))) {
   Invoke-QaStep "Agent CLI frozen build" {
     & (Join-Path $CheckoutPath "scripts\build\build-cli.ps1") -Clean -SkipSync
   }
-  Save-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint
+  Save-VerifiedStage -Name $cliBuildStageName -Fingerprint $cliBuildFingerprint
+  if ($Mode -eq "release") {
+    Save-VerifiedStage -Name "cli-build-quick" -Fingerprint $cliQuickBuildFingerprint
+  }
 }
 
 $backendEnvironment = Join-Path $CheckoutPath "backend\.venv\Scripts\python.exe"
@@ -479,7 +492,7 @@ if ($backendSuiteRan) {
   Save-VerifiedStage -Name "backend-release-contracts" -Fingerprint $backendContractFingerprint
 }
 
-$backendBuildInputs = @("backend", "scripts/build/build-backend.ps1", "scripts/build/pyinstaller-hooks", $qaRunnerInput)
+$backendBuildInputs = @("backend", "scripts/build/build-backend.ps1", "scripts/build/pyinstaller-hooks")
 $backendBuildFingerprint = Get-StageFingerprint -Paths $backendBuildInputs -AdditionalValues @($toolchainFingerprint)
 $backendExecutable = Join-Path $CheckoutPath "backend\dist\backend\backend.exe"
 if (-not (Test-VerifiedStage -Name "backend-build" -Fingerprint $backendBuildFingerprint -RequiredPaths @($backendExecutable))) {
@@ -489,7 +502,7 @@ if (-not (Test-VerifiedStage -Name "backend-build" -Fingerprint $backendBuildFin
   Save-VerifiedStage -Name "backend-build" -Fingerprint $backendBuildFingerprint
 }
 
-$desktopTestInputs = @("desktop", "scripts/build", "frontend/package.json", "frontend/package-lock.json", $qaRunnerInput)
+$desktopTestInputs = @("desktop", "scripts/build", "frontend/package.json", "frontend/package-lock.json")
 $desktopTestFingerprint = Get-StageFingerprint -Paths $desktopTestInputs -AdditionalValues @($toolchainFingerprint)
 $desktopNodeModules = Join-Path $CheckoutPath "desktop\node_modules"
 if (-not (Test-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint -RequiredPaths @($desktopNodeModules))) {
@@ -509,17 +522,17 @@ if (-not (Test-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFing
   Save-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint
 }
 
-Invoke-QaStep "Windows installer build" {
-  Push-Location (Join-Path $CheckoutPath "desktop")
-  try {
-    & npm run dist
-    Assert-NativeSuccess "desktop installer build"
-  } finally {
-    Pop-Location
+if ($Mode -eq "release") {
+  Invoke-QaStep "Windows installer build" {
+    Push-Location (Join-Path $CheckoutPath "desktop")
+    try {
+      & npm run dist:prepared
+      Assert-NativeSuccess "desktop installer build"
+    } finally {
+      Pop-Location
+    }
   }
-}
 
-if (-not $SkipRuntimeLifecycle) {
   Invoke-QaStep "Packaged runtime identity and stale-process lifecycle" {
     $appExecutable = Join-Path $CheckoutPath "desktop\release\win-unpacked\Auto Email Sender.exe"
     $cliExecutable = Join-Path $CheckoutPath "cli\dist\auto-email-sender\auto-email-sender.exe"
@@ -577,6 +590,8 @@ if (-not $SkipRuntimeLifecycle) {
       }
     }
   }
+  Write-Host "`nWindows release QA passed for $revision"
+} else {
+  Write-Host "`nWindows quick QA passed for $revision"
+  Write-Host "Quick QA skips VC++ installer preparation, NSIS, and packaged lifecycle checks; it is not valid release preflight evidence."
 }
-
-Write-Host "`nWindows release QA passed for $revision"

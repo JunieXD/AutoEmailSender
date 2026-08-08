@@ -192,7 +192,7 @@ describe("windows installer packaging", () => {
     expect(installerScript).toContain("Abort");
   });
 
-  it("keeps Windows VM release QA incremental without caching final integration checks", () => {
+  it("separates quick Windows QA from uncached release integration checks", () => {
     const hostRunner = readFileSync(
       path.resolve("..", "scripts", "quality", "run-windows-vm-release-qa.sh"),
       "utf8",
@@ -201,12 +201,19 @@ describe("windows installer packaging", () => {
       path.resolve("..", "scripts", "quality", "run-windows-release-qa.ps1"),
       "utf8",
     );
+    const packageJson = JSON.parse(
+      readFileSync(path.resolve("package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
 
     expect(hostRunner).toContain("--force-full");
+    expect(hostRunner).toContain("--quick");
+    expect(hostRunner).not.toContain("--skip-runtime-lifecycle");
     expect(hostRunner).toContain("skipping Git bundle transfer");
     expect(hostRunner).toContain("Creating incremental Git bundle");
     expect(hostRunner).toContain('-PreviousRevision "$guest_revision"');
     expect(guestRunner).toContain("[switch]$ForceFull");
+    expect(guestRunner).toContain('[ValidateSet("release", "quick")]');
+    expect(guestRunner).toContain('[string]$Mode = "release"');
     expect(guestRunner).toContain("[string]$ExpectedRevision");
     expect(guestRunner).toContain("[string]$PreviousRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");
@@ -220,11 +227,18 @@ describe("windows installer packaging", () => {
     );
     expect(guestRunner).toContain("test.test_backend_build_script");
     expect(guestRunner).toContain('Invoke-QaStep "Windows installer build"');
+    expect(guestRunner).toContain("if ($Mode -eq \"release\")");
+    expect(guestRunner).toContain("npm run dist:prepared");
     expect(guestRunner).toContain(
       'Invoke-QaStep "Packaged runtime identity and stale-process lifecycle"',
     );
+    expect(guestRunner).toContain("it is not valid release preflight evidence");
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "installer"');
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "runtime-lifecycle"');
+    expect(packageJson.scripts["dist:prepared"]).toContain("electron-builder");
+    expect(packageJson.scripts.dist).toBe(
+      "npm run prepare:windows-runtime && npm run dist:prepared",
+    );
   });
 
   it("fails Windows frozen builds before stale outputs can be verified", () => {
@@ -359,7 +373,8 @@ describe("macOS desktop packaging", () => {
     const packageJson = readFileSync(path.resolve("package.json"), "utf8");
 
     expect(packageJson).toContain('"pack": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win --dir"');
-    expect(packageJson).toContain('"dist": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
+    expect(packageJson).toContain('"dist:prepared": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
+    expect(packageJson).toContain('"dist": "npm run prepare:windows-runtime && npm run dist:prepared"');
     expect(packageJson).toContain('"publish": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"');
     expect(packageJson).toContain('"pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never"');
     expect(packageJson).toContain('"dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');

@@ -23,7 +23,8 @@
     "prepare:windows-runtime": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ../scripts/build/prepare-windows-vc-runtime.ps1",
     "pack": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win --dir",
     "pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never",
-    "dist": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "dist:prepared": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "dist": "npm run prepare:windows-runtime && npm run dist:prepared",
     "dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
     "publish": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"
   },

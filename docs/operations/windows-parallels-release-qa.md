@@ -28,6 +28,14 @@ VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\
 
 普通前后端逻辑小改动先运行本机聚焦测试和 CI，不要为每次小测试启动 VM。
 
+开发过程中确实需要真实 Windows 验证、但还没有进入发布候选阶段时，可运行快速模式：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
+```
+
+快速模式仍会传输已提交的 `HEAD`，并按输入指纹运行或复用前端、CLI、后端和桌面测试及冻结构建，但会跳过 VC++ 安装器准备、NSIS 构建和打包后的启动/运行身份生命周期。因此它适合日常 Windows 回归，不构成发布前验收结果。准备 tag 时必须重新运行不带 `--quick` 的正式模式。
+
 ## 一键验收
 
 先提交需要测试的代码。脚本只打包 `HEAD`，不会复制工作区中的未提交修改：
@@ -38,13 +46,13 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh
 
 宿主脚本会确认 VM，并让 Windows 更新本地 NTFS checkout：首次运行传输完整 Git bundle，已有基线时只传增量对象，目标提交已经存在时不再传 bundle。随后运行需要更新的依赖与发布构建阶段并删除临时传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
 
-VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；后端全套测试只在 `backend/**` 或工具链变化时重跑，打包脚本和仓库 Skill 变化只重跑对应的聚焦契约测试。任何相关文件或工具版本变化都会自动重跑对应阶段。NSIS 安装器和打包后的运行时生命周期每次都重新构建、重新验证，不使用阶段缓存。需要排查缓存或周期性做全新基线时运行：
+VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；后端全套测试只在 `backend/**` 或工具链变化时重跑，打包脚本和仓库 Skill 变化只重跑对应的聚焦契约测试。任何相关文件或工具版本变化都会自动重跑对应阶段。正式模式的 NSIS 安装器和打包后运行时生命周期每次都重新构建、重新验证，不使用阶段缓存；快速模式明确跳过二者。需要排查缓存或周期性做全新基线时运行：
 
 ```bash
 rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
 ```
 
-`--force-full` 只忽略阶段验证记录；`npm ci` 仍使用 npm 下载缓存，Playwright Chromium 按锁定版本保存在专用 QA checkout 中并由安装命令重新核对，不再为每个提交强制下载同一个浏览器。
+`--force-full` 只忽略可缓存阶段的验证记录；它不会改变正式/快速模式边界。`npm ci` 仍使用 npm 下载缓存，Playwright Chromium 按锁定版本保存在专用 QA checkout 中并由安装命令重新核对，不再为每个提交强制下载同一个浏览器。
 
 Windows 侧会先结束可执行路径位于专用 QA checkout 内的残留应用进程，避免上一次中止的验收锁住冻结包；不会按进程名清理 checkout 外的程序。随后执行：
 
