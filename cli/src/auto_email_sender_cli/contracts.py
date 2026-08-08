@@ -74,7 +74,7 @@ def build_command_contract(
     input_file_examples: list[dict[str, object]],
     next_steps: list[str],
 ) -> dict[str, object]:
-    """Build the stable v2 contract returned by ``describe``.
+    """Build the stable command contract returned by ``describe``.
 
     ``parameters`` is generated directly from the Click command object.  That
     means a required flag, enum, range or path cannot drift from the actual
@@ -446,22 +446,15 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                         "command",
                         "arguments",
                         "risk_level",
-                        "confirmation_required",
-                        "confirmation_required_before_invocation",
-                        "produces_confirmation_plan",
-                        "plan_role",
-                        "blocked_reason",
                     ],
                     "properties": {
                         "action": {"type": "string"},
                         "command": {"type": "string"},
                         "arguments": {"type": "object"},
                         "risk_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
-                        "confirmation_required": {"type": "boolean"},
                         "confirmation_required_before_invocation": {"type": "boolean"},
                         "produces_confirmation_plan": {"type": "boolean"},
                         "plan_role": {"type": "string", "enum": ["none", "producer", "consumer", "delegated"]},
-                        "blocked_reason": {"type": "null"},
                         "required_input": {"type": "array", "items": {"type": "string"}},
                         "execution_mode": {"type": "string", "enum": ["invoke", "poll"]},
                     },
@@ -476,6 +469,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "version": "1",
             "default_projection": "summary",
             "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths"],
+            "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
             "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据。",
         }

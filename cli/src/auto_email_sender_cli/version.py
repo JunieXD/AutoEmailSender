@@ -8,8 +8,8 @@ PACKAGE_NAME = "auto-email-sender-cli"
 FALLBACK_VERSION = "2.4.1"
 PROTOCOL_VERSION = "2"
 # The runtime protocol is shared with the desktop descriptor and remains v2.
-# Schema v3 adds executable action links, bounded result metadata, and invoke.
-SCHEMA_VERSION = "3"
+# Schema v4 makes routine discovery, result metadata, and action links sparse.
+SCHEMA_VERSION = "4"
 DEVELOPMENT_BUILD_REVISION = "development"
 
 

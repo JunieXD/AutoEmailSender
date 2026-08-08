@@ -14,8 +14,8 @@ from auto_email_sender_cli.version import get_build_identity
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
 
-CONTRACT_VERSION: Final = "3"
-CAPABILITY_CATALOG_VERSION: Final = "3"
+CONTRACT_VERSION: Final = "4"
+CAPABILITY_CATALOG_VERSION: Final = "4"
 
 
 # Discovery must be cheap enough to use at the start of every Agent turn.
@@ -1586,43 +1586,20 @@ def _capability_card(
     *,
     contract_revision: str | None,
 ) -> dict[str, object]:
-    """Keep the routing facts while omitting detailed schema duplicates."""
+    """Keep routing and safety facts without repeating the full contract."""
 
     spec = _require_operation_spec(item.command)
     card: dict[str, object] = {
         "command": item.command,
         "summary": item.summary,
         "resource": discovery_resource(item.command),
-        "operation": capability_operation(item.command),
         "availability": item.availability,
-        "risk_level": item.risk_level,
-        "risk_mode": spec.effects.risk_mode,
-        "plan_role": spec.effects.plan_role,
-        "delegated_effects": spec.effects.delegated_effects,
-        "requires_target_contract": spec.effects.requires_target_contract,
-        "effects": {
-            "mutates": spec.effects.mutates,
-            "external_action": effect_has_external_action(spec.effects),
-            "delegated_effects": spec.effects.delegated_effects,
-            "requires_target_contract": spec.effects.requires_target_contract,
-            "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
-            "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
-            "current": {
-                "mutates": spec.effects.mutates,
-                "external_services": list(spec.effects.external_services),
-                "cost_may_apply": spec.effects.cost_may_apply,
-            },
-            "downstream": {
-                "mutates": spec.effects.downstream_mutates,
-                "external_services": list(spec.effects.downstream_external_services),
-                "cost_may_apply": spec.effects.downstream_cost_may_apply,
-            },
-            "long_running": item.long_running,
+        "risk": {
+            "level": item.risk_level,
+            "mode": spec.effects.risk_mode,
+            "plan_role": spec.effects.plan_role,
+            "traits": _effect_traits(item, spec.effects),
         },
-        "contract_version": CONTRACT_VERSION,
-        "introduced_in": spec.introduced_in,
-        "deprecated": spec.deprecated,
-        "replaced_by": list(spec.replaced_by),
     }
     if contract_revision is not None:
         card["contract_revision"] = contract_revision
@@ -1633,7 +1610,32 @@ def _capability_card(
             "location": item.ui_location,
             "instruction": item.manual_action,
         }
+    if spec.deprecated or spec.replaced_by:
+        card["lifecycle"] = {
+            "deprecated": spec.deprecated,
+            "replaced_by": list(spec.replaced_by),
+        }
     return card
+
+
+def _effect_traits(item: Capability, effects: object) -> list[str]:
+    traits: list[str] = []
+    for enabled, name in (
+        (getattr(effects, "mutates", False), "mutates"),
+        (bool(getattr(effects, "external_services", ())), "external_action"),
+        (getattr(effects, "cost_may_apply", False), "cost_may_apply"),
+        (getattr(effects, "downstream_mutates", False), "downstream_mutates"),
+        (bool(getattr(effects, "downstream_external_services", ())), "downstream_external_action"),
+        (getattr(effects, "downstream_cost_may_apply", False), "downstream_cost_may_apply"),
+        (getattr(effects, "requires_confirmation_plan", False), "confirmation_required"),
+        (getattr(effects, "produces_confirmation_plan", False), "produces_confirmation_plan"),
+        (getattr(effects, "delegated_effects", False), "delegated_effects"),
+        (getattr(effects, "requires_target_contract", False), "requires_target_contract"),
+        (item.long_running, "long_running"),
+    ):
+        if enabled:
+            traits.append(name)
+    return traits
 
 
 def _resource_card(
@@ -1650,21 +1652,26 @@ def _resource_card(
         "summary": _DISCOVERY_RESOURCE_SUMMARIES.get(resource, resource),
         "command_count": len(capabilities),
         "available_count": available_count,
-        "unavailable_count": len(capabilities) - available_count,
         "risk_levels": risk_levels,
-        "has_mutations": any(
-            _require_operation_spec(item.command).effects.mutates
-            or _require_operation_spec(item.command).effects.delegated_effects
-            for item in capabilities
-        ),
-        "has_external_actions": any(
-            effect_has_external_action(_require_operation_spec(item.command).effects)
-            for item in capabilities
-        ),
-        "has_delegated_gateways": any(
-            _require_operation_spec(item.command).effects.delegated_effects
-            for item in capabilities
-        ),
+        "traits": [
+            trait
+            for trait, enabled in (
+                ("mutates", any(
+                    _require_operation_spec(item.command).effects.mutates
+                    or _require_operation_spec(item.command).effects.delegated_effects
+                    for item in capabilities
+                )),
+                ("external_action", any(
+                    effect_has_external_action(_require_operation_spec(item.command).effects)
+                    for item in capabilities
+                )),
+                ("delegated_gateway", any(
+                    _require_operation_spec(item.command).effects.delegated_effects
+                    for item in capabilities
+                )),
+            )
+            if enabled
+        ],
     }
 
 

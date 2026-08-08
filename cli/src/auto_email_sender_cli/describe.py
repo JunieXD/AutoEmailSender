@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from typing import Any, Final
 
@@ -35,8 +34,7 @@ DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
     "idempotency",
     "lifecycle",
 )
-_MAX_COMPACT_DESCRIPTION_BYTES: Final = 3_300
-_MAX_INLINE_PARAMETER_CARDS: Final = 6
+_MAX_COMPACT_DESCRIPTION_BYTES: Final = 1_500
 
 _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
     "input": "input",
@@ -222,7 +220,8 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     """
 
     parameters = description.get("parameters")
-    compact_parameters: dict[str, object] = {}
+    required_parameters: dict[str, object] = {}
+    optional_parameters: list[str] = []
     if isinstance(parameters, list):
         for parameter in parameters:
             if not isinstance(parameter, dict):
@@ -230,11 +229,14 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             name = parameter.get("name")
             if not isinstance(name, str):
                 continue
-            compact_parameters[name] = _compact_parameter(parameter)
+            if parameter.get("required") is True:
+                required_parameters[name] = _compact_parameter(parameter)
+            else:
+                optional_parameters.append(name)
 
     unavailable = description.get("kind") == "unavailable"
     input_contract = description.get("input")
-    global_options: dict[str, object] = {}
+    global_options: list[str] = []
     if isinstance(input_contract, dict) and not unavailable:
         raw_global_options = input_contract.get("global_options")
         if isinstance(raw_global_options, dict):
@@ -242,11 +244,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                 if not isinstance(name, str) or not isinstance(option, dict):
                     continue
                 if name in {"request_id", "format"} or bool(option.get("supported")):
-                    global_options[name] = {
-                        key: option[key]
-                        for key in ("flags", "type", "values", "supported", "description")
-                        if key in option
-                    }
+                    global_options.append(name)
 
     output_contract = description.get("output")
     if not isinstance(output_contract, dict):
@@ -254,74 +252,60 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     known_fields = output_contract.get("known_fields")
     fields = [field for field in known_fields if isinstance(field, str)] if isinstance(known_fields, list) else []
 
+    input_summary: dict[str, object] = {
+        "required": required_parameters,
+        "optional": optional_parameters,
+        "global_options": global_options,
+    }
+    if description.get("input_file_examples"):
+        input_summary["file_input"] = True
+
+    output_traits = [
+        trait
+        for trait, enabled in (
+            ("pagination", output_contract.get("pagination")),
+            ("fields", output_contract.get("field_selection")),
+            ("filter", output_contract.get("structured_filter")),
+            ("file_export", output_contract.get("file_export")),
+            ("state", output_contract.get("state_metadata") is not None),
+        )
+        if enabled
+    ]
+    output_summary: dict[str, object] = {
+        "key_fields": _key_output_fields(fields),
+    }
+    if output_traits:
+        output_summary["traits"] = output_traits
+    terminal_states = output_contract.get("terminal_states")
+    if isinstance(terminal_states, list) and terminal_states:
+        output_summary["terminal_states"] = terminal_states
+
     summary: dict[str, object] = {
         "command": description.get("command"),
         "summary": description.get("summary"),
         "usage": description.get("usage"),
         "contract_version": description.get("contract_version"),
         "contract_revision": description.get("contract_revision"),
-        "risk": _compact_risk(description.get("risk")),
-        "input": {
-            "parameters": compact_parameters,
-            "global_options": global_options,
-            "file_input_available": bool(description.get("input_file_examples")),
-        },
-        "output": {
-            "shape": "page" if output_contract.get("pagination") else "object",
-            "field_count": len(fields),
-            "key_fields": _key_output_fields(fields),
-            "pagination": bool(output_contract.get("pagination")),
-            "field_selection": bool(output_contract.get("field_selection")),
-            "structured_filter": bool(output_contract.get("structured_filter")),
-            "file_export": bool(output_contract.get("file_export")),
-            "terminal_states": output_contract.get("terminal_states", []),
-            "state_metadata": output_contract.get("state_metadata") is not None,
-        },
+        "risk": _compact_risk(description.get("risk"), description.get("effects")),
+        "input": input_summary,
+        "output": output_summary,
         "effects": _compact_effects(description.get("effects")),
         "preconditions": _compact_preconditions(description.get("preconditions")),
-        "state_transitions": description.get("state_transitions", []),
         "errors": _compact_errors(description.get("errors")),
-        "next_actions": [
-            dict(action) if isinstance(action, dict) else action
-            for action in description.get("next_actions", [])
-        ]
-        if isinstance(description.get("next_actions"), list)
-        else [],
-        "details_available": {
-            "sections": list(DESCRIPTION_SECTIONS),
-            "full_view": True,
-        },
+        "details_available": True,
     }
+    next_commands = _compact_next_commands(description.get("next_actions"))
+    if next_commands:
+        summary["next_commands"] = next_commands
     if isinstance(description.get("unavailability"), dict):
         summary["unavailability"] = description["unavailability"]
-        summary["input"] = {
-            "parameters": {},
-            "global_options": {},
-            "file_input_available": False,
-        }
-        summary["output"] = {
-            "shape": "none",
-            "field_count": 0,
-            "key_fields": [],
-            "pagination": False,
-            "field_selection": False,
-            "structured_filter": False,
-            "file_export": False,
-            "terminal_states": [],
-            "state_metadata": False,
-        }
-    result_protocol = output_contract.get("result_protocol")
-    if isinstance(result_protocol, dict) and not unavailable:
-        summary["output"]["result_protocol"] = {
-            key: result_protocol[key]
-            for key in ("version", "default_projection", "fields")
-            if key in result_protocol
-        }
+        summary["input"] = {"required": {}, "optional": [], "global_options": []}
+        summary["output"] = {"key_fields": []}
     trust = description.get("trust")
     if isinstance(trust, dict) and trust.get("external_content") != "none":
         summary["trust"] = {
             key: trust[key]
-            for key in ("external_content", "instruction_policy", "untrusted_fields")
+            for key in ("external_content", "instruction_policy")
             if key in trust
         }
     idempotency = description.get("idempotency")
@@ -332,7 +316,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     ):
         summary["idempotency"] = {
             key: idempotency[key]
-            for key in ("mode", "supports_idempotent_retry", "retry_guidance")
+            for key in ("mode", "supports_idempotent_retry")
             if key in idempotency
         }
     lifecycle = description.get("lifecycle")
@@ -340,92 +324,30 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
         summary["lifecycle"] = lifecycle
     children = description.get("children")
     if isinstance(children, list) and children:
-        summary["children"] = children
+        summary["children"] = [
+            child.get("command")
+            for child in children
+            if isinstance(child, dict) and isinstance(child.get("command"), str)
+        ]
     return _bound_compact_description(summary)
 
 
 def _bound_compact_description(summary: dict[str, object]) -> dict[str, object]:
-    """Keep the default execution card within one small Agent context slice.
-
-    Full parameter help, state transitions, and recovery prose remain
-    addressable through ``--section`` and ``--view full``.  Large commands
-    retain every required parameter inline and list optional parameter names,
-    so an Agent knows when it must request the input section instead of
-    guessing a flag contract.
-    """
-
-    if _compact_size(summary) <= _MAX_COMPACT_DESCRIPTION_BYTES:
-        return summary
-
-    input_contract = summary.get("input")
-    if isinstance(input_contract, dict):
-        parameters = input_contract.get("parameters")
-        if isinstance(parameters, dict):
-            for parameter in parameters.values():
-                if isinstance(parameter, dict):
-                    parameter.pop("description", None)
-            if len(parameters) > _MAX_INLINE_PARAMETER_CARDS:
-                required_parameters = {
-                    name: parameter
-                    for name, parameter in parameters.items()
-                    if isinstance(parameter, dict) and parameter.get("required") is True
-                }
-                optional_parameters = [
-                    name
-                    for name, parameter in parameters.items()
-                    if not isinstance(parameter, dict) or parameter.get("required") is not True
-                ]
-                input_contract["parameters"] = required_parameters
-                input_contract["optional_parameters"] = optional_parameters
-                input_contract["parameter_details_required"] = bool(optional_parameters)
-        global_options = input_contract.get("global_options")
-        if isinstance(global_options, dict):
-            for option in global_options.values():
-                if isinstance(option, dict):
-                    option.pop("description", None)
+    """Drop routing hints if an unusually broad command card exceeds budget."""
 
     if _compact_size(summary) > _MAX_COMPACT_DESCRIPTION_BYTES:
-        summary.pop("state_transitions", None)
-        next_actions = summary.get("next_actions")
-        if isinstance(next_actions, list):
-            for action in next_actions:
-                if isinstance(action, dict):
-                    action.pop("reason", None)
-                    action.pop("blocked_reason", None)
-        idempotency = summary.get("idempotency")
-        if isinstance(idempotency, dict):
-            idempotency.pop("retry_guidance", None)
-        trust = summary.get("trust")
-        if isinstance(trust, dict):
-            trust.pop("untrusted_fields", None)
-
+        summary.pop("children", None)
+        summary.pop("next_commands", None)
     if _compact_size(summary) > _MAX_COMPACT_DESCRIPTION_BYTES:
-        errors = summary.get("errors")
-        if isinstance(errors, list):
-            summary["errors"] = [
-                {"code": error.get("code")}
-                for error in errors
-                if isinstance(error, dict) and error.get("code")
-            ]
-        output = summary.get("output")
-        if isinstance(output, dict):
-            output.pop("terminal_states", None)
-
-    details_available = summary.get("details_available")
-    if isinstance(details_available, dict):
-        details_available["compact_truncated"] = True
+        summary.pop("idempotency", None)
+        summary.pop("trust", None)
     return summary
 
 
 def _compact_size(value: object) -> int:
-    return len(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8"),
-    )
+    import json
+
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"))
 
 
 def description_sections(
@@ -453,11 +375,10 @@ def description_sections(
 def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
     type_info = parameter.get("type")
     result: dict[str, object] = {
-        "kind": parameter.get("kind"),
         "type": type_info.get("kind", "string") if isinstance(type_info, dict) else "string",
-        "required": bool(parameter.get("required")),
-        "flags": parameter.get("flags", []),
     }
+    if parameter.get("kind") == "option":
+        result["flags"] = parameter.get("flags", [])
     if isinstance(type_info, dict):
         values = type_info.get("values")
         if isinstance(values, list):
@@ -467,84 +388,76 @@ def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
                 result[key] = type_info[key]
     if bool(parameter.get("multiple")):
         result["multiple"] = True
-    if parameter.get("default") is not None:
-        result["default"] = parameter["default"]
-    if parameter.get("help"):
-        result["description"] = parameter["help"]
     return result
 
 
-def _compact_risk(value: object) -> dict[str, object]:
+def _compact_risk(value: object, effects: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
-    return {
-        key: value[key]
-        for key in (
-            "level",
-            "availability",
-            "risk_mode",
-            "plan_role",
-            "delegated_effects",
-            "requires_target_contract",
-            "mutates",
-            "external_action",
-            "requires_plan",
-            "confirmation_required_before_invocation",
-            "produces_confirmation_plan",
-            "long_running",
+    effect_data = effects if isinstance(effects, dict) else {}
+    downstream = effect_data.get("downstream_effects")
+    downstream_data = downstream if isinstance(downstream, dict) else {}
+    traits = [
+        trait
+        for trait, enabled in (
+            ("mutates", value.get("mutates")),
+            ("external_action", value.get("external_action")),
+            ("cost_may_apply", effect_data.get("cost_may_apply")),
+            ("downstream_mutates", downstream_data.get("mutates")),
+            ("downstream_external_action", downstream_data.get("external_services")),
+            ("downstream_cost_may_apply", downstream_data.get("cost_may_apply")),
+            ("confirmation_required", value.get("confirmation_required_before_invocation")),
+            ("produces_confirmation_plan", value.get("produces_confirmation_plan")),
+            ("delegated_effects", value.get("delegated_effects")),
+            ("requires_target_contract", value.get("requires_target_contract")),
+            ("long_running", value.get("long_running")),
         )
-        if key in value
+        if enabled
+    ]
+    result: dict[str, object] = {
+        "level": value.get("level"),
+        "mode": value.get("risk_mode", "static"),
+        "plan_role": value.get("plan_role", "none"),
+        "traits": traits,
     }
+    if value.get("availability") != "available":
+        result["availability"] = value.get("availability")
+    return result
 
 
 def _compact_preconditions(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
-    return {
-        key: value[key]
-        for key in (
-            "runtime",
-            "manual_app_open_required",
-            "blocked_reason_when_unavailable",
-        )
-        if key in value
-    }
+    runtime = value.get("runtime")
+    return {"runtime": runtime} if runtime not in {None, "offline"} else {}
 
 
 def _compact_effects(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
-    result = {
-        key: value[key]
-        for key in (
-            "mutates",
-            "external_services",
-            "cost_may_apply",
-            "reversible",
-            "requires_explicit_user_intent",
-            "confirmation_required_before_invocation",
-            "produces_confirmation_plan",
-            "plan_role",
-            "risk_mode",
-            "delegated_effects",
-            "requires_target_contract",
-            "impact_scope",
-            "confirmation_rule",
-            "unknown_external_result_protection",
-        )
-        if key in value
-    }
+    result: dict[str, object] = {}
+    services = value.get("external_services")
+    if isinstance(services, list) and services:
+        result["services"] = services
     nested = value.get("downstream_effects")
     if isinstance(nested, dict) and (
         nested.get("external_services")
         or nested.get("cost_may_apply")
         or nested.get("mutates")
     ):
-        result["downstream_effects"] = {
-            key: nested[key]
-            for key in ("mutates", "external_services", "cost_may_apply", "reversible")
-            if key in nested
-        }
+        downstream: dict[str, object] = {}
+        downstream_services = nested.get("external_services")
+        if isinstance(downstream_services, list) and downstream_services:
+            downstream["services"] = downstream_services
+        downstream["traits"] = [
+            trait
+            for trait, enabled in (
+                ("mutates", nested.get("mutates")),
+                ("cost_may_apply", nested.get("cost_may_apply")),
+            )
+            if enabled
+        ]
+        result["downstream"] = downstream
     return result
 
 
@@ -572,17 +485,33 @@ def _key_output_fields(fields: list[str]) -> list[str]:
 def _compact_errors(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
+    generic_errors = {
+        "INVALID_ARGUMENT",
+        "APP_UNAVAILABLE",
+        "RUNTIME_PROTOCOL_MISMATCH",
+        "IF_REVISION_REQUIRES_WRITE",
+    }
     result: list[dict[str, object]] = []
     seen: set[str] = set()
     for error in value:
         if not isinstance(error, dict):
             continue
         code = error.get("code")
-        if not isinstance(code, str) or code in seen:
+        if not isinstance(code, str) or code in seen or code in generic_errors:
             continue
         seen.add(code)
-        result.append({"code": code, "retryable": bool(error.get("retryable"))})
+        result.append({"code": code, "retryable": True} if error.get("retryable") else {"code": code})
     return result
+
+
+def _compact_next_commands(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        command
+        for action in value
+        if isinstance(action, dict) and isinstance((command := action.get("command")), str)
+    ]
 
 
 def _describe_parameter(parameter: Any) -> dict[str, object]:

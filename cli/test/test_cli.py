@@ -13,9 +13,11 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from auto_email_sender_cli.main import app
+from auto_email_sender_cli.commands.common import augment_state_metadata
 from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
+    list_capabilities,
     list_capability_cards,
     list_resource_catalog,
 )
@@ -34,12 +36,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["_meta"]["schema_version"], "3")
+        self.assertEqual(payload["_meta"]["schema_version"], "4")
         self.assertEqual(payload["_meta"]["command"], "version")
         self.assertEqual(payload["data"]["schema_version"], payload["_meta"]["schema_version"])
-        self.assertEqual(payload["data"]["contract_version"], "3")
-        self.assertEqual(payload["data"]["catalog_version"], "3")
-        self.assertEqual(payload["data"]["build_revision"], payload["_meta"]["build_revision"])
+        self.assertEqual(payload["data"]["contract_version"], "4")
+        self.assertEqual(payload["data"]["catalog_version"], "4")
+        self.assertNotIn("build_revision", payload["_meta"])
+        self.assertNotIn("warnings", payload["_meta"])
         self.assertIn(payload["data"]["build_kind"], {"development", "embedded", "override"})
         self.assertNotIn("agent_guide", payload["_meta"])
 
@@ -135,20 +138,14 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["data"]["view"], "commands")
         self.assertEqual(payload["data"]["items"][0]["availability"], "available")
-        self.assertIn("effects", payload["data"]["items"][0])
+        self.assertIn("risk", payload["data"]["items"][0])
+        self.assertIn("traits", payload["data"]["items"][0]["risk"])
         self.assertTrue(any(item["availability"] == "available" for item in payload["data"]["items"]))
 
     def test_capabilities_mark_desktop_only_areas_as_unavailable(self) -> None:
-        result = self.runner.invoke(
-            app,
-            ["--format", "json", "capabilities", "--view", "full"],
-        )
-
-        self.assertEqual(result.exit_code, 0, msg=result.output)
-        # Full discovery is opt-in, but it still must remain bounded. Detailed
-        # input/output contracts belong behind per-command describe calls.
-        self.assertLess(len(result.stdout.encode("utf-8")), 140_000)
-        items = json.loads(result.stdout)["data"]["items"]
+        # Inspect the manifest directly: root full discovery is intentionally
+        # rejected by the CLI because it needlessly consumes an Agent context.
+        items = list_capabilities()
         by_command = {item["command"]: item for item in items}
         self.assertEqual(by_command["professors.create"]["availability"], "available")
         self.assertEqual(by_command["professors.export"]["availability"], "available")
@@ -242,16 +239,22 @@ class CliTests(unittest.TestCase):
         self.assertIn("catalog_revision", payload)
         # The old default emitted every leaf's detailed metadata.  This limit
         # protects the routine discovery path from consuming an Agent turn.
-        self.assertLess(len(result.stdout.encode("utf-8")), 8_000)
+        self.assertLess(len(result.stdout.encode("utf-8")), 5_000)
         system = next(item for item in payload["items"] if item["resource"] == "system")
-        self.assertTrue(system["has_delegated_gateways"])
-        self.assertTrue(system["has_mutations"])
-        self.assertTrue(system["has_external_actions"])
+        self.assertIn("delegated_gateway", system["traits"])
+        self.assertIn("mutates", system["traits"])
+        self.assertIn("external_action", system["traits"])
 
         invoke = list_capability_cards(command="invoke")[0]
-        self.assertTrue(invoke["delegated_effects"])
-        self.assertTrue(invoke["requires_target_contract"])
-        self.assertTrue(invoke["effects"]["external_action"])
+        self.assertIn("delegated_effects", invoke["risk"]["traits"])
+        self.assertIn("requires_target_contract", invoke["risk"]["traits"])
+
+        professors = self.runner.invoke(
+            app,
+            ["--format", "json", "capabilities", "--resource", "professors"],
+        )
+        self.assertEqual(professors.exit_code, 0, msg=professors.output)
+        self.assertLess(len(professors.stdout.encode("utf-8")), 8_000)
 
     def test_every_catalog_resource_can_be_selected_without_guessing_aliases(self) -> None:
         catalog = list_resource_catalog()
@@ -347,6 +350,8 @@ class CliTests(unittest.TestCase):
                 "capabilities",
                 "--view",
                 "commands",
+                "--resource",
+                "professors",
                 "--since",
                 initial_data["scope_revision"],
             ],
@@ -393,13 +398,19 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)["data"]
         self.assertEqual(payload["command"], "drafts.generate")
         self.assertEqual(payload["risk"]["level"], "L1")
-        self.assertTrue(payload["preconditions"]["manual_app_open_required"])
-        parameters = payload["input"]["parameters"]
-        self.assertTrue(parameters["professor_id"]["required"])
+        self.assertEqual(payload["preconditions"]["runtime"], "desktop_app_ready")
+        parameters = payload["input"]["required"]
         self.assertEqual(parameters["professor_id"]["type"], "integer")
-        self.assertEqual(parameters["generation_mode"]["enum"], ["template", "ai_rewrite", "manual"])
+        self.assertEqual(
+            parameters["generation_mode"]["enum"],
+            ["template", "ai_rewrite", "manual"],
+        )
         self.assertNotIn("parameters", payload)
-        self.assertIn("output", payload["details_available"]["sections"])
+        self.assertTrue(payload["details_available"])
+        self.assertLess(
+            len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+            1_500,
+        )
 
     def test_describe_expands_only_requested_contract_sections(self) -> None:
         result = self.runner.invoke(
@@ -875,7 +886,78 @@ class CliTests(unittest.TestCase):
         self.assertTrue(projected["truncated"])
         self.assertLess(len(json.dumps(projected, ensure_ascii=False).encode("utf-8")), 2_000)
         self.assertEqual(len(expanded["summary"]["items"]), 5_000)
-        self.assertNotIn("/summary/items", expanded["omitted_paths"])
+        self.assertNotIn("omitted_paths", expanded)
+
+    def test_result_protocol_metadata_is_sparse_and_blocked_actions_expand_on_demand(self) -> None:
+        complete = prepare_result_data({"id": 1, "name": "导师"}, command="professors.get")
+        self.assertTrue(
+            {"projection", "limit", "continuation", "truncated", "omitted_paths"}.isdisjoint(
+                complete,
+            ),
+        )
+
+        collection = prepare_result_data(
+            {"items": [{"id": 1}], "next_cursor": None, "has_more": False},
+            command="professors.list",
+        )
+        self.assertEqual(collection["limit"], 1)
+        self.assertNotIn("continuation", collection)
+        self.assertNotIn("truncated", collection)
+        self.assertNotIn("projection", collection)
+
+        blocked = {"retry": "当前状态不允许重试。", "wait": "任务已经结束。"}
+        compact = prepare_result_data(
+            {"id": 1, "blocked_actions": blocked},
+            command="crawler.jobs.get",
+        )
+        expanded = prepare_result_data(
+            {"id": 1, "blocked_actions": blocked},
+            command="crawler.jobs.get",
+            expanded_paths=("blocked_actions",),
+        )
+        self.assertEqual(compact["blocked_actions"]["kind"], "object_summary")
+        self.assertIn("/blocked_actions", compact["omitted_paths"])
+        self.assertEqual(expanded["blocked_actions"], blocked)
+        self.assertEqual(expanded["projection"]["expanded_paths"], ["blocked_actions"])
+        self.assertNotIn("truncated", expanded)
+
+        domain_limit = prepare_result_data(
+            {"id": 1, "limit": 25},
+            command="settings.get",
+        )
+        self.assertEqual(domain_limit, {"id": 1, "limit": 25})
+
+    def test_one_hundred_state_records_stay_bounded_without_losing_action_safety(self) -> None:
+        items = [
+            augment_state_metadata(
+                {"id": index + 1, "status": "partially_completed"},
+                command="campaigns.list",
+            )
+            for index in range(100)
+        ]
+        projected = prepare_result_data(
+            {"items": items, "next_cursor": None, "has_more": False},
+            command="campaigns.list",
+        )
+
+        encoded = json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.assertLess(len(encoded), 40_000)
+        first = projected["items"][0]
+        self.assertEqual(first["available_actions"][0]["risk_level"], "L0")
+        self.assertEqual(first["blocked_actions"]["kind"], "object_summary")
+        self.assertIn("/items/0/blocked_actions", projected["omitted_paths"])
+
+    def test_root_complete_capability_views_require_a_narrow_scope(self) -> None:
+        for view in ("commands", "full"):
+            with self.subTest(view=view):
+                result = self.runner.invoke(
+                    app,
+                    ["--format", "json", "capabilities", "--view", view],
+                )
+                self.assertEqual(result.exit_code, 2, msg=result.output)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["error"]["code"], "RESULT_TOO_LARGE")
+                self.assertIn("--resource", payload["error"]["details"]["suggestions"][0])
 
     def test_retryable_write_error_returns_the_generated_request_id(self) -> None:
         class FailingClient:

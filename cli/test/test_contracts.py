@@ -210,7 +210,7 @@ class ContractTests(unittest.TestCase):
                         default=str,
                     ).encode("utf-8"),
                 ),
-                3_600,
+                1_501,
                 capability.command,
             )
             self.assertEqual(
@@ -701,7 +701,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(producer["effects"]["current_effects"]["external_services"], [])
         self.assertEqual(producer["effects"]["downstream_effects"]["external_services"], ["smtp"])
         compact_producer = compact_command_description(producer)
-        self.assertTrue(compact_producer["effects"]["downstream_effects"]["mutates"])
+        self.assertIn("downstream_mutates", compact_producer["risk"]["traits"])
+        self.assertIn("mutates", compact_producer["effects"]["downstream"]["traits"])
 
         self.assertEqual(consumer["effects"]["plan_role"], "consumer")
         self.assertFalse(consumer["effects"]["produces_confirmation_plan"])
@@ -721,8 +722,8 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(delegated["risk"]["requires_target_contract"])
 
         compact_delegated = compact_command_description(delegated)
-        self.assertTrue(compact_delegated["risk"]["delegated_effects"])
-        self.assertTrue(compact_delegated["risk"]["requires_target_contract"])
+        self.assertIn("delegated_effects", compact_delegated["risk"]["traits"])
+        self.assertIn("requires_target_contract", compact_delegated["risk"]["traits"])
 
     def test_compact_description_does_not_mutate_full_next_actions(self) -> None:
         description = describe_command(app, "plans.execute")
@@ -736,7 +737,7 @@ class ContractTests(unittest.TestCase):
         compact = compact_command_description(description)
 
         self.assertEqual(description["next_actions"], original_actions)
-        self.assertNotEqual(compact["next_actions"], original_actions)
+        self.assertNotIn("next_actions", compact)
 
     def test_offline_and_wait_error_lifecycle_contracts_are_precise(self) -> None:
         version = describe_command(app, "version")
@@ -1346,11 +1347,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(prepare_send["command"], "campaigns.prepare-send")
         self.assertEqual(prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]})
         self.assertEqual(prepare_send["risk_level"], "L3")
-        self.assertFalse(prepare_send["confirmation_required"])
-        self.assertFalse(prepare_send["confirmation_required_before_invocation"])
+        self.assertNotIn("confirmation_required", prepare_send)
+        self.assertNotIn("confirmation_required_before_invocation", prepare_send)
         self.assertTrue(prepare_send["produces_confirmation_plan"])
         self.assertEqual(prepare_send["plan_role"], "producer")
-        self.assertIsNone(prepare_send["blocked_reason"])
+        self.assertNotIn("blocked_reason", prepare_send)
 
         plan = augment_state_metadata(
             {"plan_id": "plan-7", "status": "pending"},
@@ -1359,11 +1360,11 @@ class ContractTests(unittest.TestCase):
         plan_actions = {item["action"]: item for item in plan["available_actions"]}
         self.assertEqual(plan_actions["execute"]["command"], "plans.execute")
         self.assertEqual(plan_actions["execute"]["arguments"], {"plan_id": "plan-7"})
-        self.assertTrue(plan_actions["execute"]["confirmation_required"])
         self.assertTrue(
             plan_actions["execute"]["confirmation_required_before_invocation"],
         )
-        self.assertFalse(plan_actions["execute"]["produces_confirmation_plan"])
+        self.assertNotIn("confirmation_required", plan_actions["execute"])
+        self.assertNotIn("produces_confirmation_plan", plan_actions["execute"])
         self.assertEqual(plan_actions["execute"]["plan_role"], "consumer")
         self.assertEqual(plan_actions["execute"]["required_input"], ["confirm"])
 

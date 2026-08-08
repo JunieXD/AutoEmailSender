@@ -44,7 +44,7 @@ _TEXT_FIELDS = frozenset(
     },
 )
 _STRUCTURED_FIELDS = frozenset(
-    {"evidence", "metadata", "result", "messages", "history", "logs"},
+    {"evidence", "metadata", "result", "messages", "history", "logs", "blocked_actions"},
 )
 _MAX_DETAIL_PREVIEW_CHARS = 480
 _MAX_COLLECTION_PREVIEW_CHARS = 120
@@ -124,29 +124,34 @@ def prepare_result_data(
     if continuation is not None:
         omitted_paths.append("/items/*")
     omitted_paths = _dedupe_paths(omitted_paths)
-    return {
-        **summarized,
-        "projection": {
+    result: dict[str, object] = dict(summarized)
+    if omitted_paths or selectors or normalized_projection == "full":
+        result["projection"] = {
             "version": RESULT_PROTOCOL_VERSION,
             "mode": normalized_projection,
             "expanded_paths": list(selectors),
-        },
-        "limit": limit,
-        "continuation": continuation,
-        "truncated": bool(omitted_paths),
-        "omitted_paths": omitted_paths,
-    }
+        }
+    if limit is not None:
+        result["limit"] = limit
+    if continuation is not None:
+        result["continuation"] = continuation
+    if omitted_paths:
+        result["truncated"] = True
+        result["omitted_paths"] = omitted_paths
+    return result
 
 
 def result_protocol_metadata(data: Any) -> dict[str, object] | None:
     """Extract metadata that JSONL cannot carry beside flattened items."""
 
-    if not isinstance(data, dict) or "projection" not in data:
+    if not isinstance(data, dict):
         return None
-    return {
-        key: data.get(key)
+    metadata = {
+        key: data[key]
         for key in ("projection", "limit", "continuation", "truncated", "omitted_paths")
+        if key in data
     }
+    return metadata or None
 
 
 def _summarize_value(
@@ -229,7 +234,7 @@ def _should_summarize(
     if key in _STRUCTURED_FIELDS:
         if _selector_targets_descendant(path, value, selectors):
             return False
-        return isinstance(value, dict | list)
+        return isinstance(value, dict | list) and bool(value)
     return False
 
 
@@ -331,13 +336,13 @@ def _is_collection_path(path: str) -> bool:
 
 
 def _result_limit(data: Mapping[str, object]) -> int | None:
+    items = data.get("items")
+    if not isinstance(items, list):
+        return None
     value = data.get("limit")
     if isinstance(value, int) and not isinstance(value, bool):
         return value
-    items = data.get("items")
-    if isinstance(items, list):
-        return len(items)
-    return None
+    return len(items)
 
 
 def _continuation(

@@ -51,13 +51,13 @@ class CliBuildScriptTests(unittest.TestCase):
             "data": {
                 "cli_version": "2.4.1",
                 "protocol_version": "2",
-                "schema_version": "3",
-                "contract_version": "3",
-                "catalog_version": "3",
+                "schema_version": "4",
+                "contract_version": "4",
+                "catalog_version": "4",
                 "build_revision": revision,
                 "build_kind": "embedded",
             },
-            "_meta": {"build_revision": revision, "build_kind": "embedded"},
+            "_meta": {"schema_version": "4", "command": "version"},
         }
         capabilities = {
             "ok": True,
@@ -65,7 +65,7 @@ class CliBuildScriptTests(unittest.TestCase):
                 "build": {"revision": revision, "kind": "embedded"},
                 "scope_revision": "scope-1",
             },
-            "_meta": {"build_revision": revision, "build_kind": "embedded"},
+            "_meta": {"schema_version": "4", "command": "capabilities"},
         }
         validate_payloads(version, capabilities)
 
@@ -75,9 +75,7 @@ class CliBuildScriptTests(unittest.TestCase):
 
         version["data"]["build_revision"] = revision
         version["data"]["build_kind"] = "override"
-        version["_meta"]["build_kind"] = "override"
         capabilities["data"]["build"]["kind"] = "override"
-        capabilities["_meta"]["build_kind"] = "override"
         with self.assertRaisesRegex(RuntimeError, "unexpected frozen CLI build kind"):
             validate_payloads(version, capabilities)
 

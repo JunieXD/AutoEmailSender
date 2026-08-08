@@ -57,16 +57,17 @@ def resolve_action_links(
             "command": target_command,
             "arguments": arguments,
             "risk_level": capability.risk_level,
-            "confirmation_required": spec.effects.requires_confirmation_plan,
-            "confirmation_required_before_invocation": spec.effects.requires_confirmation_plan,
-            "produces_confirmation_plan": spec.effects.produces_confirmation_plan,
-            "plan_role": spec.effects.plan_role,
-            "blocked_reason": None,
         }
         if required_input:
             link["required_input"] = required_input
         if execution_mode != "invoke":
             link["execution_mode"] = execution_mode
+        if spec.effects.requires_confirmation_plan:
+            link["confirmation_required_before_invocation"] = True
+        if spec.effects.produces_confirmation_plan:
+            link["produces_confirmation_plan"] = True
+        if spec.effects.plan_role != "none":
+            link["plan_role"] = spec.effects.plan_role
         links.append(link)
     return links, blocked
 

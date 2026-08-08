@@ -68,11 +68,12 @@ def validate_payloads(
         if not str(version_data.get(key) or "").strip():
             raise RuntimeError(f"frozen CLI version payload is missing {key}")
 
-    for meta in (version_meta, capability_meta):
-        if meta.get("build_revision") != revision:
-            raise RuntimeError("frozen CLI metadata build revision does not match version data")
-        if meta.get("build_kind") != build_kind:
-            raise RuntimeError("frozen CLI metadata build kind does not match version data")
+    if version_meta.get("command") != "version":
+        raise RuntimeError("frozen CLI version metadata names the wrong command")
+    if capability_meta.get("command") != "capabilities":
+        raise RuntimeError("frozen CLI capability metadata names the wrong command")
+    if version_meta.get("schema_version") != version_data.get("schema_version"):
+        raise RuntimeError("frozen CLI metadata schema does not match version data")
 
     capability_build = _object(capability_data.get("build"), "capabilities.data.build")
     if capability_build.get("revision") != revision:

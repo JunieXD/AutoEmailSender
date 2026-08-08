@@ -20,8 +20,6 @@ from auto_email_sender_cli.result_protocol import (
 from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
-    get_build_identity,
-    get_cli_version,
 )
 
 
@@ -64,18 +62,15 @@ def build_meta(
     # command handlers migrate.  Repeating a prose guide hint in every result
     # wastes context and makes a static manual appear authoritative.
     _ = guide_topic
-    build = get_build_identity()
     meta: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
         "command": command,
-        "cli_version": get_cli_version(),
-        "build_revision": build["revision"],
-        "build_kind": build["kind"],
-        "build_dirty": build["dirty"],
-        "app_version": app_version,
-        "warnings": warnings or [],
     }
+    if app_version is not None:
+        meta["app_version"] = app_version
+    if warnings:
+        meta["warnings"] = warnings
     if request_id:
         meta["request_id"] = request_id
     return meta

@@ -411,7 +411,7 @@ def capabilities_command(
     ] = None,
     all_details: Annotated[
         bool,
-        typer.Option("--all", help="等同于 --view full；仅在确实需要完整能力清单时使用。"),
+        typer.Option("--all", help="等同于 --view full；必须同时用 --command 或 --resource 缩小范围。"),
     ] = False,
     since: Annotated[
         str | None,
@@ -462,6 +462,21 @@ def capabilities_command(
             or ("commands" if command or resource else "catalog")
         )
     )
+    if effective_view in {"commands", "full"} and not (command or resource):
+        error = CliError(
+            code="RESULT_TOO_LARGE",
+            message="根级完整命令目录过大，请先按资源或命令缩小范围。",
+            exit_code=2,
+            details={
+                "view": effective_view,
+                "suggestions": [
+                    "capabilities --resource <resource>",
+                    "capabilities --command <command>",
+                ],
+            },
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
     # The global catalog revision is tied to the embedded build and semantic
     # manifests. Parser-derived leaf hashes are computed only for the selected
     # command-card/full scope; the default resource catalog stays O(resources).
@@ -577,9 +592,11 @@ def capabilities_command(
         }
         human_lines = ["当前 CLI 命令："]
         for item in items:
+            risk = item.get("risk")
+            risk_level = risk.get("level") if isinstance(risk, dict) else "unknown"
             human_lines.append(
                 f"- [{item['availability']}] {item['command']}: {item['summary']} "
-                f"(风险 {item['risk_level']})",
+                f"(风险 {risk_level})",
             )
     else:
         items = full_items
@@ -612,7 +629,6 @@ def capabilities_command(
         "next": {
             "list_commands": "auto-email-sender --format json capabilities --resource <resource>",
             "describe_command": "auto-email-sender --format json describe --command <command>",
-            "complete_catalog": "auto-email-sender --format json capabilities --view full",
             "verify_installation": "auto-email-sender --format json doctor",
         },
     }
@@ -731,7 +747,7 @@ def describe_command_handler(
                 exit_code=2,
                 details={
                     "sections": invalid_sections,
-                    "available_sections": data["details_available"]["sections"],
+                    "available_sections": list(DESCRIPTION_SECTIONS),
                 },
             )
             emit_error(context, command="describe", error=error)
