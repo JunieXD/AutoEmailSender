@@ -1,7 +1,7 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import TextStyle from "@tiptap/extension-text-style";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FontFamily } from "./FontFamily";
 import { FontSize } from "./FontSize";
 import { TemplatePlaceholder } from "./TemplatePlaceholder";
@@ -20,9 +20,17 @@ const createEditor = () =>
     content: "<p></p>",
   });
 
+let activeEditor: Editor | null = null;
+
+afterEach(() => {
+  activeEditor?.destroy();
+  activeEditor = null;
+});
+
 describe("TemplatePlaceholder", () => {
   it("keeps the active text style when inserting a placeholder", () => {
     const editor = createEditor();
+    activeEditor = editor;
 
     editor
       .chain()

@@ -283,7 +283,7 @@ describe('CommunityMentorsPage', () => {
     fireEvent.change(screen.getByLabelText('搜索导入预览导师'), {
       target: { value: '张老师' },
     });
-    expect(document.body.style.overflow).toBe('hidden');
+    await waitFor(() => expect(document.body.style.overflow).toBe('hidden'));
 
     firstRender.unmount();
     expect(document.body.style.overflow).toBe('');
@@ -297,7 +297,7 @@ describe('CommunityMentorsPage', () => {
     expect(screen.getByText(/已加载 1 位，已选择 1\/2000/)).toBeInTheDocument();
     expect(apiMocks.listRecords).toHaveBeenCalledTimes(1);
     expect(apiMocks.preview).toHaveBeenCalledTimes(1);
-    expect(document.body.style.overflow).toBe('hidden');
+    await waitFor(() => expect(document.body.style.overflow).toBe('hidden'));
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     await waitFor(() => expect(document.body.style.overflow).toBe(''));
@@ -1023,7 +1023,7 @@ describe('CommunityMentorsPage', () => {
     expect(communityChoice).toHaveAttribute('aria-pressed', 'false');
     expect(localChoice).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('空值（将清空本地内容）')).toBeInTheDocument();
-    expect(document.body.style.overflow).toBe('hidden');
+    await waitFor(() => expect(document.body.style.overflow).toBe('hidden'));
 
     fireEvent.click(screen.getByRole('button', { name: '全部采用社区' }));
     expect(communityChoice).toHaveAttribute('aria-pressed', 'true');
