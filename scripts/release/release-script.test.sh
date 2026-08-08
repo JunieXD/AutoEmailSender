@@ -38,17 +38,31 @@ release_repo="$temp_root/release-repo"
 mkdir -p "$release_repo/docs/releases" "$release_repo/desktop" "$release_repo/frontend" "$release_repo/backend" "$release_repo/cli" "$release_repo/scripts"
 printf '%s\n' '#!/usr/bin/env bash' 'echo fake CLI build "$@"' > "$release_repo/scripts/build-cli.sh"
 chmod +x "$release_repo/scripts/build-cli.sh"
+printf '%s\n' '[project]' 'version = "9.9.9"' > "$release_repo/cli/pyproject.toml"
+printf '%s\n' '{"version":"9.9.9"}' > "$release_repo/desktop/package.json"
+printf '%s\n' '{"version":"9.9.9","packages":{"":{"version":"9.9.9"}}}' > "$release_repo/desktop/package-lock.json"
+printf '%s\n' '{"version":"9.9.9"}' > "$release_repo/frontend/package.json"
+printf '%s\n' '{"version":"9.9.9","packages":{"":{"version":"9.9.9"}}}' > "$release_repo/frontend/package-lock.json"
 cat > "$release_repo/docs/releases/v9.9.9.md" <<'NOTES'
 # v9.9.9
 
-## 更新内容
+### 新增功能
 
-- 测试公告。
+### 体验优化
+
+### 问题修复
+
+## 安装说明
+
+## 自动更新
+
+## 导师抓取 Skill
 NOTES
 
 new_shim git '#!/usr/bin/env bash
 if [[ "$3" == "branch" ]]; then echo master; exit 0; fi
 if [[ "$3" == "status" ]]; then
+  if [[ "${PROMOTION_CLEAN:-}" == "1" ]]; then exit 0; fi
   case " $* " in
     *" --untracked-files=all "*) echo "?? docs/releases/v9.9.9.md"; exit 0 ;;
     *) exit 2 ;;
@@ -101,7 +115,7 @@ assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skil
 assert_contains "$uv_calls" "run python -m unittest discover test" "release.sh 没有执行 CLI 测试。"
 assert_contains "$output" "fake CLI build --clean" "release.sh 没有验证 CLI 冻结包。"
 assert_contains "$output" "[dry-run] uv version 9.9.9 --no-sync in cli" "release.sh dry-run 没有预演 CLI 版本更新。"
-assert_contains "$output" "正式 tag 只会在双平台构建成功后创建" "release.sh dry-run 没有说明延迟创建 tag。"
+assert_contains "$output" "候选认证成功后，使用 --promote-run" "release.sh dry-run 没有说明认证后提升流程。"
 
 rm -f "$uv_calls_path"
 "$release_script" 9.9.9 --skip-verify --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
@@ -114,9 +128,20 @@ fi
 assert_contains "$uv_calls" "version 9.9.9 --no-sync" "release.sh 没有同步 CLI 发布版本。"
 assert_contains "$output" "fake npm version 9.9.9 --no-git-tag-version --allow-same-version" "release.sh 不支持复用已经同步的 npm 版本。"
 assert_contains "$output" "发布版本和公告已包含在候选提交中，复用当前 HEAD" "release.sh 没有复用已经提交并验证的候选。"
-assert_contains "$output" "启动 v9.9.9 候选工作流" "release.sh 成功时没有输出候选工作流状态。"
+assert_contains "$output" "启动 v9.9.9 候选认证" "release.sh 成功时没有输出候选认证状态。"
 gh_calls="$(cat "$gh_calls_path")"
-assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true" "release.sh 没有按精确提交启动延迟发布工作流。"
+assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=false -f candidate_run_id=" "release.sh 没有按精确提交启动候选认证工作流。"
+
+rm -f "$gh_calls_path" "$uv_calls_path"
+PROMOTION_CLEAN=1 "$release_script" 9.9.9 --promote-run 123456 --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
+output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
+assert_contains "$output" "只会发布候选 run 123456 的已认证产物" "release.sh 没有说明 promotion 只复用候选产物。"
+gh_calls="$(cat "$gh_calls_path")"
+assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true -f candidate_run_id=123456" "release.sh 没有按候选 run ID 启动提升工作流。"
+if [[ -f "$uv_calls_path" ]]; then
+  printf '%s\n' "release.sh promotion 不应重新运行产品验证。" >&2
+  exit 1
+fi
 
 set +e
 "$release_script" 8.8.8 --dry-run --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"

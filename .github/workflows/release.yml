@@ -1,4 +1,8 @@
 name: Release Desktop
+run-name: >-
+  ${{ github.event_name == 'push' && format('Release {0}', github.ref_name) ||
+      inputs.candidate_run_id != '' && format('Promote {0} from candidate {1}', inputs.release_tag, inputs.candidate_run_id) ||
+      format('Certify {0} at {1}', inputs.release_tag, inputs.release_sha) }}
 
 on:
   push:
@@ -15,20 +19,27 @@ on:
         required: true
         type: string
       publish:
-        description: Create the tag and public Release after both builds succeed
+        description: Promote artifacts from candidate_run_id to a public Release
         required: true
         default: false
         type: boolean
+      candidate_run_id:
+        description: Successful certification run whose exact artifacts should be promoted
+        required: false
+        default: ""
+        type: string
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   preflight:
+    if: github.event_name == 'push' || inputs.candidate_run_id == ''
     runs-on: ubuntu-latest
 
     steps:
@@ -73,6 +84,7 @@ jobs:
         run: >-
           node --test
           scripts/release/check-release-version.test.mjs
+          scripts/release/release-candidate.test.mjs
           scripts/release/release-preflight.test.mjs
           scripts/release/prepare-sparkle-release.test.mjs
           scripts/release/verify-sparkle-draft-assets.test.mjs
@@ -106,6 +118,7 @@ jobs:
             test.test_crawl_mentors_skill_package
 
   build-windows:
+    if: github.event_name == 'push' || inputs.candidate_run_id == ''
     runs-on: windows-latest
     needs: preflight
 
@@ -182,6 +195,17 @@ jobs:
         working-directory: desktop
         run: npm run dist:prepared
 
+      - name: Record Windows candidate evidence
+        shell: pwsh
+        run: >-
+          node scripts/release/release-candidate.mjs platform
+          --platform windows
+          --release-tag "$env:RELEASE_TAG"
+          --release-sha "$env:RELEASE_SHA"
+          --run-id "$env:GITHUB_RUN_ID"
+          --artifact-dir desktop/release
+          --output release-evidence/windows.json
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -192,7 +216,15 @@ jobs:
             desktop/release/AutoEmailSender-Setup-*.exe.blockmap
             desktop/release/latest.yml
 
+      - name: Upload Windows candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-evidence
+          if-no-files-found: error
+          path: release-evidence/windows.json
+
   build-macos:
+    if: github.event_name == 'push' || inputs.candidate_run_id == ''
     runs-on: macos-latest
     needs: preflight
 
@@ -272,6 +304,16 @@ jobs:
           --release-tag "$RELEASE_TAG"
           --output-dir desktop/release/sparkle-publish
 
+      - name: Record macOS candidate evidence
+        run: >-
+          node scripts/release/release-candidate.mjs platform
+          --platform macos
+          --release-tag "$RELEASE_TAG"
+          --release-sha "$RELEASE_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --artifact-dir desktop/release/sparkle-publish
+          --output release-evidence/macos.json
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -279,12 +321,108 @@ jobs:
           if-no-files-found: error
           path: desktop/release/sparkle-publish/*
 
-  publish:
-    if: github.event_name == 'push' || inputs.publish == true
+      - name: Upload macOS candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-evidence
+          if-no-files-found: error
+          path: release-evidence/macos.json
+
+  certify:
+    if: github.event_name == 'push' || inputs.candidate_run_id == ''
     runs-on: ubuntu-latest
     needs:
       - build-windows
       - build-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download Windows artifacts and evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*
+          path: release-inputs
+
+      - name: Download macOS artifacts and evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: release-inputs
+
+      - name: Package mentor crawler Skill
+        run: >-
+          python scripts/packaging/package_crawl_mentors_skill.py
+          --version "$RELEASE_TAG"
+          --output-dir release-inputs/skill-release
+
+      - name: Record Skill candidate evidence
+        run: >-
+          node scripts/release/release-candidate.mjs platform
+          --platform skill
+          --release-tag "$RELEASE_TAG"
+          --release-sha "$RELEASE_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --artifact-dir release-inputs/skill-release
+          --output release-inputs/skill-evidence/skill.json
+
+      - name: Create candidate certification report
+        run: >-
+          node scripts/release/release-candidate.mjs candidate
+          --repository "$GITHUB_REPOSITORY"
+          --release-tag "$RELEASE_TAG"
+          --release-sha "$RELEASE_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --release-notes desktop/release-notes.md
+          --windows-dir release-inputs/windows-release
+          --windows-evidence release-inputs/windows-evidence/windows.json
+          --macos-dir release-inputs/macos-release
+          --macos-evidence release-inputs/macos-evidence/macos.json
+          --skill-dir release-inputs/skill-release
+          --skill-evidence release-inputs/skill-evidence/skill.json
+          --output release-inputs/release-candidate/release-candidate.json
+
+      - name: Upload Skill candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-release
+          if-no-files-found: error
+          path: release-inputs/skill-release/*
+
+      - name: Upload candidate certification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          if-no-files-found: error
+          path: release-inputs/release-candidate/release-candidate.json
+
+  publish:
+    if: >-
+      always() &&
+      ((github.event_name == 'push' && needs.certify.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.candidate_run_id != ''))
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+      - build-windows
+      - build-macos
+      - certify
+    env:
+      CANDIDATE_RUN_ID: ${{ github.event_name == 'push' && github.run_id || inputs.candidate_run_id }}
 
     steps:
       - name: Checkout
@@ -303,23 +441,63 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Validate certified candidate workflow run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          candidate="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r .name <<<"$candidate")" = "Release Desktop"
+          test "$(jq -r .event <<<"$candidate")" = "workflow_dispatch"
+          test "$(jq -r .status <<<"$candidate")" = "completed"
+          test "$(jq -r .conclusion <<<"$candidate")" = "success"
+          test "$(jq -r .head_sha <<<"$candidate")" = "$RELEASE_SHA"
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: windows-release
           path: release-assets/windows
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
           name: macos-release
           path: release-assets/macos
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Package mentor crawler Skill
+      - name: Download Skill artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: skill-release
+          path: release-assets/skill
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download candidate certification report
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: release-assets/candidate
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify certified candidate report and artifact digests
         run: >-
-          python scripts/packaging/package_crawl_mentors_skill.py
-          --version "$RELEASE_TAG"
-          --output-dir release-assets/skill
+          node scripts/release/release-candidate.mjs verify
+          --manifest release-assets/candidate/release-candidate.json
+          --repository "$GITHUB_REPOSITORY"
+          --release-tag "$RELEASE_TAG"
+          --release-sha "$RELEASE_SHA"
+          --run-id "$CANDIDATE_RUN_ID"
+          --release-notes desktop/release-notes.md
+          --windows-dir release-assets/windows
+          --macos-dir release-assets/macos
+          --skill-dir release-assets/skill
 
       - name: Validate staged release artifacts
         shell: bash

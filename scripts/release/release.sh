@@ -2,15 +2,17 @@
 set -euo pipefail
 
 usage() {
-  echo "用法: scripts/release.sh <version> [--dry-run] [--skip-verify] [--repo-root <path>]" >&2
+  echo "用法: scripts/release.sh <version> [--promote-run <run-id>] [--dry-run] [--skip-verify] [--repo-root <path>]" >&2
 }
 
 version=""
 dry_run=0
 skip_verify=0
+promote_run_id=""
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 release_version_checker="$script_dir/check-release-version.mjs"
+release_preflight="$script_dir/release-preflight.mjs"
 
 while (($#)); do
   case "$1" in
@@ -21,6 +23,14 @@ while (($#)); do
     --skip-verify)
       skip_verify=1
       shift
+      ;;
+    --promote-run)
+      if (($# < 2)); then
+        usage
+        exit 2
+      fi
+      promote_run_id="$2"
+      shift 2
       ;;
     --repo-root)
       if (($# < 2)); then
@@ -46,6 +56,10 @@ while (($#)); do
 done
 
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  usage
+  exit 2
+fi
+if [[ -n "$promote_run_id" && ! "$promote_run_id" =~ ^[1-9][0-9]*$ ]]; then
   usage
   exit 2
 fi
@@ -91,7 +105,7 @@ assert_clean_repository() {
     [[ -z "$line" ]] && continue
     local path="${line:3}"
     path="${path//\\//}"
-    if [[ "$path" != "$allowed_release_notes_path" ]]; then
+    if [[ -n "$promote_run_id" || "$path" != "$allowed_release_notes_path" ]]; then
       unexpected_status=1
       break
     fi
@@ -101,6 +115,23 @@ assert_clean_repository() {
     echo "工作区存在未提交改动，请先提交或清理后再发布。" >&2
     exit 1
   fi
+}
+
+invoke_release_preflight() {
+  local release_sha="${1:-}"
+  if ((dry_run)); then
+    echo "[dry-run] validate frozen $release_tag metadata${release_sha:+ at $release_sha}"
+    return 0
+  fi
+  local arguments=(
+    "$release_preflight"
+    --version "$version"
+    --repo-root "$repo_root"
+  )
+  if [[ -n "$release_sha" ]]; then
+    arguments+=(--release-sha "$release_sha")
+  fi
+  invoke_checked_command "frozen release candidate preflight" node "${arguments[@]}"
 }
 
 assert_release_notes() {
@@ -193,11 +224,38 @@ set_npm_version() {
 assert_release_version
 assert_clean_repository
 assert_release_notes
+
+if [[ -n "$promote_run_id" ]]; then
+  if ((skip_verify)); then
+    echo "--skip-verify 不能用于候选提升。" >&2
+    exit 2
+  fi
+  if ((dry_run)); then
+    invoke_release_preflight "<release-commit-sha>"
+    echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$promote_run_id"
+  else
+    release_sha="$(git -C "$repo_root" rev-parse HEAD)"
+    invoke_release_preflight "$release_sha"
+    (
+      cd "$repo_root"
+      gh workflow run release.yml \
+        --ref master \
+        -f "release_tag=$release_tag" \
+        -f "release_sha=$release_sha" \
+        -f "publish=true" \
+        -f "candidate_run_id=$promote_run_id"
+    )
+    echo "已启动 $release_tag 提升工作流，只会发布候选 run $promote_run_id 的已认证产物。"
+  fi
+  exit 0
+fi
+
 invoke_verification
 set_cli_version
 set_npm_version "desktop"
 set_npm_version "frontend"
 copy_release_notes
+invoke_release_preflight
 
 run_git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$release_tag.md"
 if ((dry_run)); then
@@ -210,20 +268,24 @@ else
     echo "发布版本和公告已包含在候选提交中，复用当前 HEAD。"
   fi
 fi
-run_git push origin master
 
 if ((dry_run)); then
-  echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=true"
-  echo "[dry-run] 未创建提交、tag 或推送。正式 tag 只会在双平台构建成功后创建。"
+  run_git push origin master
+  echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
+  echo "[dry-run] 未创建提交、tag 或推送。候选认证成功后，使用 --promote-run <run-id> 发布同一批产物。"
 else
   release_sha="$(git -C "$repo_root" rev-parse HEAD)"
+  invoke_release_preflight "$release_sha"
+  run_git push origin master
   (
     cd "$repo_root"
     gh workflow run release.yml \
       --ref master \
       -f "release_tag=$release_tag" \
       -f "release_sha=$release_sha" \
-      -f "publish=true"
+      -f "publish=false" \
+      -f "candidate_run_id="
   )
-  echo "已推送发布提交 $release_sha 并启动 ${release_tag} 候选工作流。双平台构建成功后才会创建 tag 和公开 Release。"
+  echo "已推送发布提交 $release_sha 并启动 $release_tag 候选认证；本次不会创建 tag 或 Release。"
+  echo "认证成功后运行：./scripts/release.sh $version --promote-run <candidate-run-id>"
 fi

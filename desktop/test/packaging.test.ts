@@ -186,8 +186,8 @@ describe("windows installer packaging", () => {
     );
     expect(workflow).toContain("preflight:");
     expect(workflow).toContain("node scripts/release/release-preflight.mjs");
-    expect(workflow).toContain("build-windows:\n    runs-on: windows-latest\n    needs: preflight");
-    expect(workflow).toContain("build-macos:\n    runs-on: macos-latest\n    needs: preflight");
+    expect(workflow).toMatch(/build-windows:[\s\S]*?runs-on: windows-latest\n    needs: preflight/);
+    expect(workflow).toMatch(/build-macos:[\s\S]*?runs-on: macos-latest\n    needs: preflight/);
     expect(workflow).toContain("working-directory: desktop\n        run: npm run dist:prepared");
     expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
@@ -391,6 +391,7 @@ describe("macOS desktop packaging", () => {
 
     expect(workflow).toContain("build-windows:");
     expect(workflow).toContain("build-macos:");
+    expect(workflow).toContain("certify:");
     expect(workflow).toContain("publish:");
     expect(workflow).toContain("needs:");
     expect(workflow).toContain("scripts/release/prepare-sparkle-release.mjs");
@@ -400,7 +401,14 @@ describe("macOS desktop packaging", () => {
     expect(workflow).toContain('--json isDraft --jq .isDraft');
     expect(workflow).toContain("Refusing to replace assets on published Release");
     expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain("candidate_run_id:");
+    expect(workflow).toContain("release-candidate.mjs candidate");
+    expect(workflow).toContain("release-candidate.mjs verify");
+    expect(workflow).toContain("run-id: ${{ env.CANDIDATE_RUN_ID }}");
     expect(workflow).toContain("Create deferred release tag");
+    expect(workflow.indexOf("Verify certified candidate report and artifact digests")).toBeLessThan(
+      workflow.indexOf("Create deferred release tag"),
+    );
     expect(workflow.indexOf("Validate staged release artifacts")).toBeLessThan(
       workflow.indexOf("Create deferred release tag"),
     );

@@ -5,6 +5,7 @@ param(
 
   [switch]$DryRun,
   [switch]$SkipVerify,
+  [string]$PromoteRun = "",
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 )
 
@@ -15,8 +16,12 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new()
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 $ReleaseTag = "v$Version"
 $ReleaseVersionChecker = Join-Path $PSScriptRoot "check-release-version.mjs"
+$ReleasePreflight = Join-Path $PSScriptRoot "release-preflight.mjs"
 $CuratedReleaseNotesPath = Join-Path $RepoRoot "docs\releases\$ReleaseTag.md"
 $DesktopReleaseNotesPath = Join-Path $RepoRoot "desktop\release-notes.md"
+if ($PromoteRun -and $PromoteRun -notmatch '^[1-9][0-9]*$') {
+  throw "PromoteRun 必须是有效的候选 workflow run ID。"
+}
 
 function Run-Git {
   param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
@@ -56,11 +61,27 @@ function Assert-CleanRepository {
   $unexpectedStatus = @(
     $status | Where-Object {
       $path = $_.Substring(3).Replace("\", "/")
-      $path -ne $allowedReleaseNotesPath
+      $PromoteRun -or $path -ne $allowedReleaseNotesPath
     }
   )
   if ($unexpectedStatus.Count -gt 0) {
     throw "工作区存在未提交改动，请先提交或清理后再发布。"
+  }
+}
+
+function Invoke-ReleasePreflight {
+  param([string]$ReleaseSha = "")
+  if ($DryRun) {
+    $suffix = if ($ReleaseSha) { " at $ReleaseSha" } else { "" }
+    Write-Host "[dry-run] validate frozen $ReleaseTag metadata$suffix"
+    return
+  }
+  $arguments = @($ReleasePreflight, "--version", $Version, "--repo-root", $RepoRoot)
+  if ($ReleaseSha) {
+    $arguments += @("--release-sha", $ReleaseSha)
+  }
+  Invoke-CheckedCommand "frozen release candidate preflight" {
+    node @arguments
   }
 }
 
@@ -171,11 +192,39 @@ function Set-NpmVersion {
 Assert-ReleaseVersion
 Assert-CleanRepository
 Assert-ReleaseNotes
+
+if ($PromoteRun) {
+  if ($SkipVerify) {
+    throw "SkipVerify 不能用于候选提升。"
+  }
+  if ($DryRun) {
+    Invoke-ReleasePreflight -ReleaseSha "<release-commit-sha>"
+    Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$PromoteRun"
+  } else {
+    $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
+    Invoke-ReleasePreflight -ReleaseSha $releaseSha
+    Push-Location $RepoRoot
+    try {
+      gh workflow run release.yml `
+        --ref master `
+        -f "release_tag=$ReleaseTag" `
+        -f "release_sha=$releaseSha" `
+        -f "publish=true" `
+        -f "candidate_run_id=$PromoteRun"
+    } finally {
+      Pop-Location
+    }
+    Write-Host "已启动 $ReleaseTag 提升工作流，只会发布候选 run $PromoteRun 的已认证产物。"
+  }
+  exit 0
+}
+
 Invoke-Verification
 Set-CliVersion
 Set-NpmVersion "desktop"
 Set-NpmVersion "frontend"
 Copy-ReleaseNotes
+Invoke-ReleasePreflight
 
 Run-Git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$ReleaseTag.md"
 if ($DryRun) {
@@ -188,22 +237,25 @@ if ($DryRun) {
     Write-Host "发布版本和公告已包含在候选提交中，复用当前 HEAD。"
   }
 }
-Run-Git push origin master
-
 if ($DryRun) {
-  Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true"
-  Write-Host "[dry-run] 未创建提交、tag 或推送。正式 tag 只会在双平台构建成功后创建。"
+  Run-Git push origin master
+  Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
+  Write-Host "[dry-run] 未创建提交、tag 或推送。候选认证成功后，使用 -PromoteRun <run-id> 发布同一批产物。"
 } else {
   $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
+  Invoke-ReleasePreflight -ReleaseSha $releaseSha
+  Run-Git push origin master
   Push-Location $RepoRoot
   try {
     gh workflow run release.yml `
       --ref master `
       -f "release_tag=$ReleaseTag" `
       -f "release_sha=$releaseSha" `
-      -f "publish=true"
+      -f "publish=false" `
+      -f "candidate_run_id="
   } finally {
     Pop-Location
   }
-  Write-Host "已推送发布提交 $releaseSha 并启动 $ReleaseTag 候选工作流。双平台构建成功后才会创建 tag 和公开 Release。"
+  Write-Host "已推送发布提交 $releaseSha 并启动 $ReleaseTag 候选认证；本次不会创建 tag 或 Release。"
+  Write-Host "认证成功后运行：.\scripts\release.ps1 $Version -PromoteRun <candidate-run-id>"
 }
