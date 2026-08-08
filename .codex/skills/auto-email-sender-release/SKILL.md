@@ -60,6 +60,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
 - Confirm `gh` is authenticated to `JunieXD/AutoEmailSender` and that `gh secret list` contains both `SPARKLE_PUBLIC_ED_KEY` and `SPARKLE_ED_PRIVATE_KEY`. Check names only; never attempt to read, print, or reconstruct secret values.
 - Do not regenerate or rotate the Sparkle keys during a normal release. Do not copy the private key into the repository, command arguments, workflow files, or logs.
 - The GitHub Actions workflow owns Sparkle download preparation, signing, appcast generation, delta generation, and publication. Do not create an alternate manual publishing path.
+- Treat the whole-feed signature separately from enclosure signatures. After any appcast URL or metadata rewrite, require `sign_update` to re-sign the final XML, then verify that exact output with `SPARKLE_PUBLIC_ED_KEY`. The draft gate must repeat feed verification before publication; URL and asset-name checks alone are insufficient.
 - Confirm the macOS package retains the post-sign bundle cleanup and signature verification described in `docs/operations/sparkle-release-operations.md`, so the release can form a clean baseline for future deltas.
 
 ## Windows VM Preflight
@@ -125,6 +126,7 @@ Before handling Sparkle keys, macOS update artifacts, or end-to-end update QA, r
   - `crawl-mentors-to-xlsx-v<version>.zip`
   - `appcast.xml`
   - zero to three `.delta` files
+- Download the public `releases/latest/download/appcast.xml` and verify its whole-feed signature with the public key embedded in the previous installed client. Also verify the current DMG and delta enclosure signatures; a matching URL, filename, or size does not prove the feed itself is valid.
 - When an earlier Sparkle appcast exists, inspect the `Generate signed appcast and deltas` log and account for every omitted delta. Never treat a zero-delta result as silently normal.
 - For the first Sparkle-enabled release, no delta is expected because no earlier appcast exists. If an older published source cannot produce a delta (for example, because of code-signing extended attributes), verify the signed full-DMG fallback and report the affected source versions. Do not replace published assets; publish the packaging fix as a new clean baseline, then require a later release to generate a delta from that baseline before calling differential updates healthy.
 - If `website/**` changed in the release range, locate the `Deploy Website` run for the exact release commit, wait for it to succeed, and verify the public Skill guide opens and still documents the Codex and Claude Code user-level installation paths, paste-ready installation requests, manual Release ZIP installation, complete-directory requirement, and update instructions.

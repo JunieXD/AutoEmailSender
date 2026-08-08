@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createPrivateKey, createPublicKey } from "node:crypto";
+import { createPrivateKey, createPublicKey, verify } from "node:crypto";
 import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ const DEFAULT_REPOSITORY = "JunieXD/AutoEmailSender";
 const MAXIMUM_DELTAS = 3;
 const REQUIRED_DELTA_BASELINE_VERSION = "2.5.3";
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+const ED25519_SPKI_PUBLIC_KEY_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 export function normalizeReleaseTag(tag) {
   const match = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(tag.trim());
@@ -47,6 +48,36 @@ export function deriveSparklePublicKey(privateKey) {
   });
   const publicKeyDer = createPublicKey(privateKeyObject).export({ format: "der", type: "spki" });
   return publicKeyDer.subarray(-32).toString("base64");
+}
+
+export function assertSparkleAppcastSignature(appcast, publicKey) {
+  const contents = Buffer.isBuffer(appcast) ? appcast : Buffer.from(appcast, "utf8");
+  const signatureBlock = /<!-- sparkle-signatures:\s*\nedSignature:\s*([^\s]+)\s*\nlength:\s*(\d+)\s*\n-->\s*$/u.exec(
+    contents.toString("utf8"),
+  );
+  if (signatureBlock === null) {
+    throw new Error("appcast.xml 缺少 Sparkle feed 签名。 ");
+  }
+
+  const signedLength = Number.parseInt(signatureBlock[2], 10);
+  if (!Number.isSafeInteger(signedLength) || signedLength <= 0 || signedLength > contents.length) {
+    throw new Error("appcast.xml 的 Sparkle feed 签名长度无效。 ");
+  }
+
+  const signature = Buffer.from(signatureBlock[1], "base64");
+  if (signature.length !== 64) {
+    throw new Error("appcast.xml 的 Sparkle feed 签名格式无效。 ");
+  }
+
+  const publicKeyBytes = Buffer.from(validateSparklePublicKey(publicKey), "base64");
+  const publicKeyObject = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PUBLIC_KEY_PREFIX, publicKeyBytes]),
+    format: "der",
+    type: "spki",
+  });
+  if (!verify(null, contents.subarray(0, signedLength), publicKeyObject, signature)) {
+    throw new Error("appcast.xml 在最终修改后未通过 Sparkle feed 签名验证。 ");
+  }
 }
 
 export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_DELTAS) {
@@ -306,6 +337,7 @@ function parseArguments(argv) {
     releaseNotesPath: "",
     outputDirectory: "",
     generateAppcastPath: "",
+    signUpdatePath: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -337,6 +369,9 @@ function parseArguments(argv) {
       case "--generate-appcast":
         options.generateAppcastPath = path.resolve(value);
         break;
+      case "--sign-update":
+        options.signUpdatePath = path.resolve(value);
+        break;
       default:
         throw new Error(`未知参数：${argument}`);
     }
@@ -354,6 +389,7 @@ function parseArguments(argv) {
     "bin",
     "generate_appcast",
   );
+  options.signUpdatePath ||= path.join(path.dirname(options.generateAppcastPath), "sign_update");
   return options;
 }
 
@@ -465,6 +501,7 @@ async function prepareSparkleRelease(options) {
     access(currentDmgPath),
     access(options.releaseNotesPath),
     access(options.generateAppcastPath),
+    access(options.signUpdatePath),
   ]);
   await assertEmptyOutputDirectory(options.outputDirectory);
 
@@ -527,6 +564,16 @@ async function prepareSparkleRelease(options) {
       }
     }
 
+    await writeFile(generatedAppcastPath, generatedAppcast, "utf8");
+    runInherited(
+      options.signUpdatePath,
+      ["--ed-key-file", "-", generatedAppcastPath],
+      `${privateKey}\n`,
+    );
+    const signedAppcast = await readFile(generatedAppcastPath);
+    assertSparkleAppcastSignature(signedAppcast, configuredPublicKey);
+    generatedAppcast = signedAppcast.toString("utf8");
+
     const deltaFiles = normalizedDeltaNames.sort();
     assertPublishableSparkleAssets(
       generatedAppcast,
@@ -542,11 +589,7 @@ async function prepareSparkleRelease(options) {
     );
 
     await copyFile(currentDmgPath, path.join(options.outputDirectory, currentDmgName));
-    await writeFile(
-      path.join(options.outputDirectory, "appcast.xml"),
-      generatedAppcast,
-      "utf8",
-    );
+    await copyFile(generatedAppcastPath, path.join(options.outputDirectory, "appcast.xml"));
 
     for (const deltaFile of deltaFiles) {
       await copyFile(

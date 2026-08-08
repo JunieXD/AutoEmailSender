@@ -63,8 +63,8 @@ workflow 会：
 3. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。
    从 v2.5.3 干净基线开始，脚本必须为最新的旧版本生成 delta；缺少该 delta 时会直接终止发布，不能静默退化为仅全量更新。
 4. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
-5. `generate_appcast` 可能按 `.app` 目录名生成含空格的差分文件名。发布脚本会先把差分包规范化为 GitHub 不会改写的安全文件名，并同步重写 appcast URL；签名覆盖差分包内容，因此文件改名不会改变 `sparkle:edSignature`。
-6. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`。公开前必须逐项核对 appcast 当前版本引用的文件名、URL、GitHub 实际资产名和非零大小，全部一致后再发布为稳定 Release。
+5. `generate_appcast` 可能按 `.app` 目录名生成含空格的差分文件名。发布脚本会先把差分包规范化为 GitHub 不会改写的安全文件名，并同步重写 appcast URL；签名覆盖差分包内容，因此文件改名不会改变 enclosure 的 `sparkle:edSignature`。但 feed 签名覆盖整个 XML，脚本必须在完成所有 URL 改写后用 `sign_update` 对最终 appcast 重新签名，并立即使用配置的公钥验签。
+6. publish job 合并两端产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`。公开前必须再次验证最终 feed 签名，并逐项核对 appcast 当前版本引用的文件名、URL、GitHub 实际资产名和非零大小，全部一致后再发布为稳定 Release。
 
 工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
 
@@ -72,7 +72,7 @@ workflow 会：
 
 v2.4.0 和 v2.4.1 的 DMG 含有旧式代码签名扩展属性，Sparkle 无法把它们作为差分源；v2.5.3 是首个经过签名后清理并验证的公开基线。ad-hoc 构建之间可能出现签名 identity 不一致警告，但已验证这不会阻止从干净基线生成 delta。后续版本必须至少包含从最新干净基线生成的差分包，否则 workflow 失败。
 
-2026-08-09 对 v2.5.4 做过一次经所有者明确授权的公开 appcast 元数据修复。当时全部 Release 资产下载计数均为 0，已备份原 appcast，只把 2.5.3 → 2.5.4 差分 URL 从 Sparkle 生成的空格文件名改为 GitHub 实际保存的点号文件名；tag、DMG、差分包内容、长度和 Ed25519 签名均未改变。此记录不放宽常规规则：以后仍不得替换已有用户可能读取的公开 appcast 或签名资产，应由更高版本修复。
+2026-08-09 对 v2.5.4 做过一次经所有者明确授权的公开 appcast 元数据修复。当时全部 Release 资产下载计数均为 0，已备份原 appcast，只把 2.5.3 → 2.5.4 差分 URL 从 Sparkle 生成的空格文件名改为 GitHub 实际保存的点号文件名；tag、DMG、差分包内容、长度和 enclosure Ed25519 签名均未改变。随后发现这次 URL 修改使覆盖整个 XML 的 feed 签名失效，2.5.3 会因 `SURequireSignedFeed=true` 拒绝清单。再次应急处理时，先备份 SHA-256 为 `47d447514eb2e49fc675ca0ae02166c4063aca62bb865aa294ea4ac84a33b874` 的无效 feed，仅用原 Sparkle 密钥更新 feed 签名和签名长度；修复后的 SHA-256 为 `c73c5cee9f66064b16896440227af2cbb952e558daf495e9d388963107d7c5a4`，并已用 2.5.3 内置公钥、Sparkle 官方工具及线上 `latest/download` 文件完成验签。DMG、差分包、tag 和其他 Release 资产均未改变。此记录不放宽常规规则：以后不得在签名后修改 appcast，draft 公开前必须验签最终文件；已有用户可能读取的公开资产仍应优先通过更高版本修复。
 
 ## 发布后检查
 

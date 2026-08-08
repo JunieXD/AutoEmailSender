@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertDraftSparkleAssets } from "./verify-sparkle-draft-assets.mjs";
+import {
+  assertDraftSparkleAssets,
+  assertSignedDraftSparkleAssets,
+} from "./verify-sparkle-draft-assets.mjs";
 
 const repository = "JunieXD/AutoEmailSender";
 const tag = "v2.5.4";
@@ -49,6 +52,21 @@ test("rejects a GitHub-normalized delta name before publication", () => {
         tag,
       }),
     /缺少 appcast\.xml 引用的精确资产名/,
+  );
+});
+
+test("rejects an unsigned or modified final appcast before publication", () => {
+  assert.throws(
+    () =>
+      assertSignedDraftSparkleAssets({
+        release: { isDraft: true, assets: [asset(dmgName, 200), asset(deltaName, 100)] },
+        appcast,
+        publicKey: "JRJRe0L2YixWpEKBYPlhqmtS/wa123RdC8iNC30dKxM=",
+        version,
+        repository,
+        tag,
+      }),
+    /缺少 Sparkle feed 签名/,
   );
 });
 

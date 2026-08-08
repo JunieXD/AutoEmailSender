@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createPrivateKey, sign } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertPublishableSparkleAssets,
   assertRequiredDelta,
+  assertSparkleAppcastSignature,
   deriveSparklePublicKey,
   extractCurrentReleaseAssetNames,
   extractDeltaSourceVersions,
@@ -28,6 +30,24 @@ import {
 } from "./prepare-sparkle-release.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const ed25519Pkcs8SeedPrefix = Buffer.from("302e020100300506032b657004220420", "hex");
+
+function signAppcastForTest(appcast, privateKey) {
+  const contents = Buffer.from(appcast, "utf8");
+  const privateKeyObject = createPrivateKey({
+    key: Buffer.concat([ed25519Pkcs8SeedPrefix, Buffer.from(privateKey, "base64")]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const signature = sign(null, contents, privateKeyObject).toString("base64");
+  return Buffer.concat([
+    contents,
+    Buffer.from(
+      `\n<!-- sparkle-signatures:\nedSignature: ${signature}\nlength: ${contents.length}\n-->\n`,
+      "utf8",
+    ),
+  ]);
+}
 
 test("normalizes stable release tags and installer names", () => {
   assert.deepEqual(normalizeReleaseTag("v2.4.0"), { tag: "v2.4.0", version: "2.4.0" });
@@ -43,6 +63,22 @@ test("derives the matching Sparkle public key from an exported private seed", ()
 
   assert.equal(Buffer.from(publicKey, "base64").length, 32);
   assert.throws(() => deriveSparklePublicKey("not-a-private-key"), /私钥种子/);
+});
+
+test("rejects an appcast modified after its feed signature was created", () => {
+  const privateKey = Buffer.alloc(32, 7).toString("base64");
+  const publicKey = deriveSparklePublicKey(privateKey);
+  const signedAppcast = signAppcastForTest("<rss>original URL</rss>", privateKey);
+
+  assert.doesNotThrow(() => assertSparkleAppcastSignature(signedAppcast, publicKey));
+  assert.throws(
+    () =>
+      assertSparkleAppcastSignature(
+        Buffer.from(signedAppcast.toString("utf8").replace("original URL", "rewritten URL")),
+        publicKey,
+      ),
+    /最终修改后未通过/,
+  );
 });
 
 test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
@@ -209,10 +245,45 @@ process.exit(2);
     chmodSync(ghPath, 0o755);
 
     const privateKey = Buffer.alloc(32, 11).toString("base64");
+    const fakeSignerPath = path.join(tempRoot, "sign_update");
+    writeFileSync(
+      fakeSignerPath,
+      `#!/usr/bin/env node
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const prefix = Buffer.from("302e020100300506032b657004220420", "hex");
+let privateKey = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { privateKey += chunk; });
+process.stdin.on("end", () => {
+  if (privateKey.trim() !== process.env.EXPECTED_PRIVATE_KEY) process.exit(3);
+  const filePath = process.argv.at(-1);
+  const current = fs.readFileSync(filePath, "utf8");
+  const unsigned = current.replace(/\\n?<!-- sparkle-signatures:[\\s\\S]*?-->\\s*$/, "");
+  const contents = Buffer.from(unsigned, "utf8");
+  const privateKeyObject = crypto.createPrivateKey({
+    key: Buffer.concat([prefix, Buffer.from(privateKey.trim(), "base64")]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const signature = crypto.sign(null, contents, privateKeyObject).toString("base64");
+  fs.writeFileSync(
+    filePath,
+    Buffer.concat([
+      contents,
+      Buffer.from("\\n<!-- sparkle-signatures:\\nedSignature: " + signature + "\\nlength: " + contents.length + "\\n-->\\n"),
+    ]),
+  );
+});
+`,
+    );
+    chmodSync(fakeSignerPath, 0o755);
+
     const fakeGeneratorPath = path.join(tempRoot, "generate_appcast");
     writeFileSync(
       fakeGeneratorPath,
       `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 let privateKey = "";
@@ -221,7 +292,8 @@ process.stdin.on("data", (chunk) => { privateKey += chunk; });
 process.stdin.on("end", () => {
   if (privateKey.trim() !== process.env.EXPECTED_PRIVATE_KEY) process.exit(3);
   const workDirectory = process.argv.at(-1);
-  fs.writeFileSync(path.join(workDirectory, "appcast.xml"), [
+  const appcastPath = path.join(workDirectory, "appcast.xml");
+  fs.writeFileSync(appcastPath, [
     "<item>",
     "<sparkle:version>9.9.9</sparkle:version>",
     '<enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v9.9.9/AutoEmailSender-9.9.9-arm64.dmg" />',
@@ -230,6 +302,12 @@ process.stdin.on("end", () => {
     "</sparkle:deltas>",
     "</item>",
   ].join(""));
+  const signResult = spawnSync(
+    process.env.FAKE_SIGN_UPDATE_PATH,
+    ["--ed-key-file", "-", appcastPath],
+    { input: privateKey },
+  );
+  if (signResult.status !== 0) process.exit(4);
   fs.writeFileSync(path.join(workDirectory, "Auto Email Sender9.9.9-9.9.8.delta"), "delta");
 });
 `,
@@ -250,6 +328,8 @@ process.stdin.on("end", () => {
         outputDirectory,
         "--generate-appcast",
         fakeGeneratorPath,
+        "--sign-update",
+        fakeSignerPath,
       ],
       {
         encoding: "utf8",
@@ -257,6 +337,7 @@ process.stdin.on("end", () => {
           ...process.env,
           PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
           EXPECTED_PRIVATE_KEY: privateKey,
+          FAKE_SIGN_UPDATE_PATH: fakeSignerPath,
           SPARKLE_ED_PRIVATE_KEY: privateKey,
           SPARKLE_PUBLIC_ED_KEY: deriveSparklePublicKey(privateKey),
         },
@@ -280,6 +361,12 @@ process.stdin.on("end", () => {
     assert.doesNotMatch(
       readFileSync(path.join(outputDirectory, "appcast.xml"), "utf8"),
       /Auto%20Email%20Sender/,
+    );
+    assert.doesNotThrow(() =>
+      assertSparkleAppcastSignature(
+        readFileSync(path.join(outputDirectory, "appcast.xml")),
+        deriveSparklePublicKey(privateKey),
+      ),
     );
     assert.match(result.stdout, /生成 1 个差分包/);
   } finally {

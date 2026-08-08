@@ -5,9 +5,18 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  assertSparkleAppcastSignature,
   extractCurrentReleaseAssetNames,
   normalizeReleaseTag,
 } from "./prepare-sparkle-release.mjs";
+
+export function assertSignedDraftSparkleAssets({ publicKey, appcast, ...options }) {
+  assertSparkleAppcastSignature(appcast, publicKey);
+  return assertDraftSparkleAssets({
+    ...options,
+    appcast: Buffer.isBuffer(appcast) ? appcast.toString("utf8") : appcast,
+  });
+}
 
 export function assertDraftSparkleAssets({
   release,
@@ -79,10 +88,15 @@ function loadDraftRelease(repository, tag) {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const { tag, version } = normalizeReleaseTag(options.releaseTag);
-  const appcast = await readFile(options.appcastPath, "utf8");
-  const expectedNames = assertDraftSparkleAssets({
+  const publicKey = process.env.SPARKLE_PUBLIC_ED_KEY;
+  if (!publicKey) {
+    throw new Error("缺少 SPARKLE_PUBLIC_ED_KEY，无法核验最终 appcast.xml 签名。 ");
+  }
+  const appcast = await readFile(options.appcastPath);
+  const expectedNames = assertSignedDraftSparkleAssets({
     release: loadDraftRelease(options.repository, tag),
     appcast,
+    publicKey,
     version,
     repository: options.repository,
     tag,

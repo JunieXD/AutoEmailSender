@@ -324,6 +324,7 @@ jobs:
       - name: Verify draft Sparkle asset URLs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: >-
           node scripts/release/verify-sparkle-draft-assets.mjs
           --repository "$GITHUB_REPOSITORY"
