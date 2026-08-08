@@ -6,6 +6,7 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -146,6 +147,8 @@ class CliBuildScriptTests(unittest.TestCase):
         repo_root = REPOSITORY_ROOT
         generator = BUILD_SCRIPTS_ROOT / "generate_cli_build_identity.py"
         revision = "a" * 40
+        with (repo_root / "cli" / "pyproject.toml").open("rb") as source:
+            expected_version = tomllib.load(source)["project"]["version"]
         environment = os.environ.copy()
         environment["AUTO_EMAIL_SENDER_BUILD_REVISION"] = revision
 
@@ -190,7 +193,7 @@ class CliBuildScriptTests(unittest.TestCase):
             embedded = json.loads(probe.stdout)
             self.assertEqual(embedded["revision"], revision)
             self.assertIn(embedded["dirty"], {"0", "1"})
-            self.assertEqual(embedded["version"], "2.4.1")
+            self.assertEqual(embedded["version"], expected_version)
 
 
 def _read_script(name: str) -> str:
