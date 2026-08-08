@@ -817,7 +817,13 @@ class CliTests(unittest.TestCase):
         self.assertIn("catalog_revision", payload)
         # The old default emitted every leaf's detailed metadata.  This limit
         # protects the routine discovery path from consuming an Agent turn.
-        self.assertLess(len(result.stdout.encode("utf-8")), 5_000)
+        semantic_output = json.dumps(
+            json.loads(result.stdout),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertLess(len(semantic_output), 5_000)
+        self.assertLess(len(result.stdout.encode("utf-8")), 6_000)
         system = next(item for item in payload["items"] if item["resource"] == "system")
         self.assertIn("delegated_gateway", system["traits"])
         self.assertIn("mutates", system["traits"])
@@ -1250,6 +1256,10 @@ class CliTests(unittest.TestCase):
                     backend_state=None,
                 ),
             ),
+            patch(
+                "auto_email_sender_cli.output._MACHINE_OUTPUT_REQUIRES_ASCII",
+                True,
+            ),
         ):
             result = self.runner.invoke(app, ["--format", "json", "status"])
 
@@ -1257,6 +1267,7 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["data"]["state"], "stopped")
         self.assertIn("手动打开", " ".join(payload["_meta"]["warnings"]))
+        result.stdout.encode("ascii")
 
     def test_status_uses_the_authenticated_runtime_probe(self) -> None:
         descriptor = SimpleNamespace(
@@ -1304,18 +1315,27 @@ class CliTests(unittest.TestCase):
         self.assertIsNone(payload["data"]["repair_command"])
 
     def test_jsonl_has_meta_item_and_summary_records(self) -> None:
-        result = self.runner.invoke(app, ["--format", "jsonl", "capabilities"])
+        with patch(
+            "auto_email_sender_cli.output._MACHINE_OUTPUT_REQUIRES_ASCII",
+            True,
+        ):
+            result = self.runner.invoke(app, ["--format", "jsonl", "capabilities"])
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         rows = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(rows[0]["type"], "meta")
         self.assertEqual(rows[1]["type"], "item")
+        result.stdout.encode("ascii")
 
     def test_jsonl_errors_use_an_explicit_error_record(self) -> None:
-        result = self.runner.invoke(
-            app,
-            ["--format", "jsonl", "describe", "--command", "missing.command"],
-        )
+        with patch(
+            "auto_email_sender_cli.output._MACHINE_OUTPUT_REQUIRES_ASCII",
+            True,
+        ):
+            result = self.runner.invoke(
+                app,
+                ["--format", "jsonl", "describe", "--command", "missing.command"],
+            )
 
         self.assertEqual(result.exit_code, 4, msg=result.output)
         rows = [json.loads(line) for line in result.stdout.splitlines()]
@@ -1323,6 +1343,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rows[0]["type"], "error")
         self.assertEqual(rows[0]["error"]["code"], "COMMAND_NOT_FOUND")
         self.assertEqual(rows[0]["meta"]["command"], "describe")
+        result.stdout.encode("ascii")
 
     def test_professor_list_calls_agent_api_and_keeps_pagination_metadata(self) -> None:
         fake_client = _FakeAgentClient(
@@ -3687,7 +3708,7 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 2, msg=result.output)
-        self.assertIn("不能同时使用", result.output)
+        self.assertIn("不能同时使用", json.loads(result.stdout)["error"]["message"])
         self.assertEqual(fake_client.calls, [])
 
     def test_settings_update_merges_only_explicit_fields_with_current_settings(self) -> None:

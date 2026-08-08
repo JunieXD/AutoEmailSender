@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -21,6 +22,12 @@ from auto_email_sender_cli.version import (
     PROTOCOL_VERSION,
     SCHEMA_VERSION,
 )
+
+
+# Windows PowerShell 5 can decode captured native UTF-8 output with a legacy
+# code page. Escaping non-ASCII characters keeps machine-readable JSON intact
+# without changing the human-facing table output.
+_MACHINE_OUTPUT_REQUIRES_ASCII = sys.platform == "win32"
 
 
 class OutputFormat(StrEnum):
@@ -152,18 +159,37 @@ def emit_success(
         result_metadata = result_protocol_metadata(emitted_data)
         if result_metadata is not None:
             meta_row["result"] = result_metadata
-        typer.echo(json.dumps(meta_row, ensure_ascii=False))
+        typer.echo(json.dumps(meta_row, ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII))
         jsonl_items = page_items if isinstance(page_items, list) else emitted_data
         if isinstance(jsonl_items, list):
             for item in jsonl_items:
-                typer.echo(json.dumps({"type": "item", "data": item}, ensure_ascii=False))
+                typer.echo(
+                    json.dumps(
+                        {"type": "item", "data": item},
+                        ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
+                    )
+                )
             typer.echo(
-                json.dumps({"type": "summary", "data": {"total": len(jsonl_items)}}, ensure_ascii=False),
+                json.dumps(
+                    {"type": "summary", "data": {"total": len(jsonl_items)}},
+                    ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
+                ),
             )
         else:
-            typer.echo(json.dumps({"type": "item", "data": emitted_data}, ensure_ascii=False))
+            typer.echo(
+                json.dumps(
+                    {"type": "item", "data": emitted_data},
+                    ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
+                )
+            )
         return
-    typer.echo(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
+    typer.echo(
+        json.dumps(
+            envelope,
+            ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
+            separators=(",", ":"),
+        )
+    )
 
 
 def emit_error(
@@ -209,12 +235,18 @@ def emit_error(
         typer.echo(
             json.dumps(
                 {"type": "error", "error": payload, "meta": envelope["_meta"]},
-                ensure_ascii=False,
+                ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
                 separators=(",", ":"),
             ),
         )
         return
-    typer.echo(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
+    typer.echo(
+        json.dumps(
+            envelope,
+            ensure_ascii=_MACHINE_OUTPUT_REQUIRES_ASCII,
+            separators=(",", ":"),
+        )
+    )
 
 
 def _pretty_json(value: Any) -> str:
