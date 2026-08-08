@@ -195,7 +195,15 @@ def wait_for_resource(
                 if elapsed >= timeout_seconds:
                     timed_out = True
                     break
-                time.sleep(min(interval_seconds, max(0.0, timeout_seconds - elapsed)))
+                remaining = max(0.0, timeout_seconds - elapsed)
+                sleep_seconds = min(interval_seconds, remaining)
+                time.sleep(sleep_seconds)
+                if sleep_seconds >= remaining:
+                    # Some platforms may return from a short sleep slightly early.
+                    # When this sleep consumed the planned timeout budget, do not
+                    # issue another request with an artificial minimum timeout.
+                    timed_out = True
+                    break
         finally:
             if executor is not None:
                 executor.shutdown()

@@ -271,7 +271,7 @@ class CliTests(unittest.TestCase):
         with patch(
             "auto_email_sender_cli.commands.wait.AgentApiClient",
             return_value=fake_client,
-        ):
+        ), patch("auto_email_sender_cli.commands.wait.time.sleep", return_value=None):
             result = self.runner.invoke(
                 app,
                 [
