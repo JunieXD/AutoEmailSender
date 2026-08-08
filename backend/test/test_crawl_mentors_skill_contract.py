@@ -226,6 +226,7 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
             self.assertEqual(workbook.active.title, "Professors")
             headers = [cell.value for cell in next(workbook["Professors"].iter_rows())]
             self.assertEqual(headers, PROFESSOR_LEGACY_TEMPLATE_COLUMNS)
+            workbook.close()
 
             parsed = parse_professor_import_file(
                 output_path.name,
@@ -389,6 +390,7 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
                     workbook.save(mutated_path)
                     result = validate_professors_xlsx(mutated_path)
                     self.assertFalse(result["ok"])
+                    workbook.close()
 
     def test_canonical_generator_stores_formula_like_page_text_as_text(self) -> None:
         record = _record(recent_papers=["=1+1", "+SUM(A1:A2)"])
@@ -400,6 +402,7 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
             workbook = load_workbook(output_path, data_only=False)
             self.assertEqual(workbook["Professors"]["H2"].data_type, "s")
             self.assertEqual(workbook["Professors"]["H2"].value, "=1+1|+SUM(A1:A2)")
+            workbook.close()
 
 
 if __name__ == "__main__":

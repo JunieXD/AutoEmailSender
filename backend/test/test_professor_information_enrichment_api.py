@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -88,7 +89,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(crawl_jobs.status_code, 200)
         self.assertEqual(crawl_jobs.json(), [])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             candidate_id = int(
                 connection.execute(
                     "SELECT id FROM crawl_candidates WHERE job_id = ?",
@@ -191,7 +192,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = int(created.json()["id"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             candidate_id = int(
                 connection.execute(
                     "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",

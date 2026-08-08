@@ -237,17 +237,18 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         )
 
         async def scenario() -> tuple[int, str, bool]:
-            release = asyncio.Event()
+            release = False
             ignored_cancellation = asyncio.Event()
-            finished = asyncio.Event()
+            generation_task: asyncio.Task[object] | None = None
 
             async def stubborn_generation(**_kwargs):
-                while not release.is_set():
+                nonlocal generation_task
+                generation_task = asyncio.current_task()
+                while not release:
                     try:
-                        await release.wait()
+                        await asyncio.sleep(0.001)
                     except asyncio.CancelledError:
                         ignored_cancellation.set()
-                finished.set()
                 return self._build_match_evaluation_result(match_score=88)
 
             real_timeout = asyncio.timeout
@@ -258,7 +259,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 ),
                 patch(
                     "app.modules.matching.job_runtime.asyncio.timeout",
-                    new=lambda _seconds: real_timeout(0.02),
+                    new=lambda _seconds: real_timeout(1),
                 ),
                 patch(
                     "app.modules.matching.job_runtime._MATCH_ANALYSIS_CANCEL_GRACE_SECONDS",
@@ -270,7 +271,7 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                         self.session_factory,
                         item_concurrency=1,
                     ),
-                    timeout=0.5,
+                    timeout=4,
                 )
 
             [item] = await self._get_job_items(job.id)
@@ -284,12 +285,15 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                     )
                 )
             cancellation_was_ignored = ignored_cancellation.is_set()
-            release.set()
-            await asyncio.wait_for(finished.wait(), timeout=0.5)
+            release = True
+            generation_finished = False
+            if generation_task is not None:
+                done, _ = await asyncio.wait({generation_task}, timeout=2)
+                generation_finished = generation_task in done
             return (
                 processed,
                 item.status,
-                cancellation_was_ignored and not running_runs,
+                cancellation_was_ignored and not running_runs and generation_finished,
             )
 
         processed, item_status, ignored_cancellation = self._run_async(scenario())

@@ -49,9 +49,13 @@ def package_skill(repo_root: Path, version: str, output_directory: Path) -> Path
         raise ValueError(f"Skill ZIP 不允许符号链接：{', '.join(symlinks)}")
 
     actual_files = tuple(
-        path.relative_to(skill_root).as_posix()
-        for path in skill_entries
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        sorted(
+            path.relative_to(skill_root).as_posix()
+            for path in skill_entries
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix != ".pyc"
+        )
     )
     expected_files = tuple(sorted(CANONICAL_SKILL_FILES))
     if actual_files != expected_files:

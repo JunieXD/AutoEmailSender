@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import io
 import json
 import os
@@ -404,7 +405,7 @@ class ApiEndpointTests(unittest.TestCase):
             response = self.client.post("/api/llm-profiles/preview/test", json=payload)
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT learned_extra_body
@@ -469,7 +470,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(calls[1], "https://responses-only.example.com/v1/responses")
         self.assertTrue(all(url.endswith("/responses") for url in calls[1:]))
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             endpoint_row = connection.execute(
                 """
                 SELECT learned_endpoint_kind

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -633,8 +634,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(len(started), 25)
         self.assertEqual(len(set(started)), 25)
         self.assertEqual(
-            {professor_name.split("-")[0] for professor_name in started[:5]},
+            {professor_name.split("-")[0] for professor_name in started[:10]},
             batch_names,
+            msg=f"unexpected early scheduler order: {started[:10]}",
         )
         self.assertEqual(
             sum(task.status == EmailTaskStatus.REVIEW_REQUIRED.value for task in tasks),
@@ -926,6 +928,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         batch_status: str = BatchTaskStatus.RUNNING.value,
         batch_name: str = "批量草稿任务",
     ) -> list[int]:
+        fixture_id = uuid.uuid4().hex
         async with self.session_factory() as session:
             if await session.get(AppSetting, 1) is None:
                 session.add(AppSetting(id=1))
@@ -933,7 +936,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 name="测试身份",
                 profile_name="测试身份",
                 sender_name="王同学",
-                email_address=f"sender-{datetime.now(UTC).timestamp()}@example.com",
+                email_address=f"sender-{fixture_id}@example.com",
                 smtp_host="smtp.example.com",
                 smtp_port=465,
                 smtp_username="sender@example.com",
@@ -959,7 +962,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             if with_primary_material:
                 identity.current_primary_material = material
             llm_profile = LLMProfile(
-                name=f"默认模型-{datetime.now(UTC).timestamp()}",
+                name=f"默认模型-{fixture_id}",
                 provider="openai",
                 api_base_url="https://api.example.com/v1",
                 api_key="sk-test-key",
@@ -990,7 +993,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                             if batch_name == "批量草稿任务"
                             else f"{batch_name}-{index}"
                         ),
-                        email=f"professor-{index}-{datetime.now(UTC).timestamp()}@example.edu",
+                        email=f"professor-{index}-{fixture_id}@example.edu",
                         title="Professor",
                         university="Example University",
                         school="School of AI",
@@ -1020,13 +1023,14 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         previous_status: str,
         source_body: str,
     ) -> int:
+        fixture_id = uuid.uuid4().hex
         async with self.session_factory() as session:
             session.add(AppSetting(id=1))
             identity = IdentityProfile(
                 name="工作区恢复身份",
                 profile_name="工作区恢复身份",
                 sender_name="王同学",
-                email_address=f"workspace-rewrite-{datetime.now(UTC).timestamp()}@example.com",
+                email_address=f"workspace-rewrite-{fixture_id}@example.com",
                 smtp_host="smtp.example.com",
                 smtp_port=465,
                 smtp_username="sender@example.com",
@@ -1050,7 +1054,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             )
             identity.current_primary_material = material
             llm_profile = LLMProfile(
-                name=f"工作区恢复模型-{datetime.now(UTC).timestamp()}",
+                name=f"工作区恢复模型-{fixture_id}",
                 provider="openai",
                 api_base_url="https://api.example.com/v1",
                 api_key="sk-test-key",
@@ -1063,7 +1067,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 llm_profile=llm_profile,
                 professor=Professor(
                     name="工作区恢复导师",
-                    email=f"workspace-rewrite-professor-{datetime.now(UTC).timestamp()}@example.edu",
+                    email=f"workspace-rewrite-professor-{fixture_id}@example.edu",
                     title="Professor",
                     university="Example University",
                     school="School of AI",

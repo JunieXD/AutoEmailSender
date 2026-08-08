@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import json
 import os
 import sqlite3
@@ -42,7 +43,7 @@ class RecentPapersMigrationTests(unittest.TestCase):
                 )
 
                 papers = [f"Paper {index}" for index in range(1, 13)]
-                with sqlite3.connect(database_path) as connection:
+                with closing(sqlite3.connect(database_path)) as connection, connection:
                     connection.executemany(
                         "INSERT INTO professors (name, email, recent_papers) VALUES (?, ?, ?)",
                         [
@@ -74,7 +75,7 @@ class RecentPapersMigrationTests(unittest.TestCase):
                 command.downgrade(config, PREVIOUS_REVISION)
                 command.upgrade(config, "head")
 
-                with sqlite3.connect(database_path) as connection:
+                with closing(sqlite3.connect(database_path)) as connection, connection:
                     professor_rows = dict(
                         connection.execute(
                             "SELECT email, recent_papers FROM professors"

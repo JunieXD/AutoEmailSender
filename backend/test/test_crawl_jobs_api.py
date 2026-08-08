@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import os
 import tempfile
 import unittest
@@ -100,7 +101,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["entry_type"], "list")
         import sqlite3
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             task = connection.execute(
                 "SELECT parent_url, discovery_reason, expansion_mode, depth FROM crawl_page_tasks WHERE job_id = ?",
                 (response.json()["id"],),
@@ -281,7 +282,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["entry_type"], "profile")
         import sqlite3
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             task = connection.execute(
                 "SELECT discovery_reason, expansion_mode, depth FROM crawl_page_tasks WHERE job_id = ?",
                 (response.json()["id"],),
@@ -516,7 +517,7 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         import sqlite3
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             raw_attempt_count = connection.execute(
                 "SELECT COUNT(*) FROM crawl_pages WHERE job_id = ?",
                 (job_id,),
@@ -1248,7 +1249,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             stored = connection.execute(
                 "SELECT recent_papers FROM professors WHERE email = ?",
                 ("papers@example.edu",),
