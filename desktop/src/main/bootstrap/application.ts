@@ -23,6 +23,10 @@ import { registerDesktopIpc } from "../ipc/register.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "../shell/startup-at-login.js";
 import { bindTrayInteractions } from "../shell/tray.js";
 import {
+  isProtectedBackendNavigation,
+  preventProtectedBackendNavigation,
+} from "../shell/backend-navigation-guard.js";
+import {
   createExternalUrlService,
   parseExternalNavigationUrl,
   parseWebUrl,
@@ -229,6 +233,9 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isProtectedBackendNavigation(url, backend?.baseUrl)) {
+      return { action: "deny" };
+    }
     const parsedUrl = parseWebUrl(url);
     if (parsedUrl !== null) {
       void externalUrlService.openExternalUrl(parsedUrl).catch((error: unknown) => {
@@ -238,6 +245,9 @@ async function createWindow(): Promise<void> {
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (preventProtectedBackendNavigation(event, url, backend?.baseUrl)) {
+      return;
+    }
     const parsedUrl = parseExternalNavigationUrl(
       url,
       mainWindow?.webContents.getURL(),

@@ -29,6 +29,7 @@ const nodeTestFiles = [
   "test/mentorFilter.test.ts",
   "test/notifications.test.ts",
   "test/professorDashboardStatus.test.ts",
+  "test/protectedApiAccess.test.ts",
   "test/taskCopy.test.ts",
   "test/templatePlaceholders.test.ts",
   "test/validateTaskForm.test.ts",

@@ -62,6 +62,7 @@ import {
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
+import { downloadBlob } from "@/lib/api/download";
 import { createCrawlJob } from "@/lib/api/crawlJobsApi";
 import { downloadCommunitySharePackage } from "@/entities/community-mentor/api/communityMentors";
 import {
@@ -497,24 +498,13 @@ const UrlInputField = ({
   );
 };
 
-const triggerBlobDownload = (blob: Blob, filename: string) => {
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
-};
-
 const saveCommunitySharePackageBlob = async (
   blob: Blob,
 ): Promise<"saved" | "canceled"> => {
   const saveWithDesktopDialog =
     window.autoEmailSender?.saveCommunitySharePackage;
   if (!saveWithDesktopDialog) {
-    triggerBlobDownload(blob, "community-share.xlsx");
+    downloadBlob(blob, "community-share.xlsx");
     return "saved";
   }
   const result = await saveWithDesktopDialog(await blob.arrayBuffer());
@@ -1851,8 +1841,7 @@ export const ProfessorsPage = () => {
 
   const handleDownloadTemplate = async (format: "xlsx" | "csv") => {
     try {
-      const blob = await downloadProfessorTemplate(format);
-      triggerBlobDownload(blob, `professors_import_template.${format}`);
+      await downloadProfessorTemplate(format);
     } catch (downloadError) {
       notifyError(
         "下载导入模板失败",
@@ -1863,8 +1852,7 @@ export const ProfessorsPage = () => {
 
   const handleDownloadExport = async (format: "xlsx" | "csv") => {
     try {
-      const blob = await downloadProfessorExport(format);
-      triggerBlobDownload(blob, `professors_export.${format}`);
+      await downloadProfessorExport(format);
     } catch (downloadError) {
       notifyError(
         "导出导师信息失败",

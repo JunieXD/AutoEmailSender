@@ -4,6 +4,7 @@
   "excluded_sources": [
     "lib/api/client.ts",
     "lib/api/client.test.ts",
+    "lib/api/download.ts",
     "entities/community-mentor/api/catalogCache.ts"
   ],
   "actions": [

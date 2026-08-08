@@ -201,9 +201,9 @@ describe("ProfessorsPage layout", () => {
     listProfessorsForManagement.mockReset();
     listProfessorsForManagement.mockResolvedValue([professor]);
     downloadProfessorExport.mockReset();
-    downloadProfessorExport.mockResolvedValue(new Blob(["professors-export"]));
+    downloadProfessorExport.mockResolvedValue(undefined);
     downloadProfessorTemplate.mockReset();
-    downloadProfessorTemplate.mockResolvedValue(new Blob(["professors-template"]));
+    downloadProfessorTemplate.mockResolvedValue(undefined);
     downloadCommunitySharePackage.mockReset();
     downloadCommunitySharePackage.mockResolvedValue(
       new Blob(["community-share"]),
@@ -1171,26 +1171,9 @@ describe("ProfessorsPage layout", () => {
 
     fireEvent.click(within(screen.getByTestId("professor-intake-模板批量新增")).getByRole("button", { name: "模板导入" }));
 
-    const link = document.createElement("a");
-    const click = vi.spyOn(link, "click").mockImplementation(() => undefined);
-    const createElement = vi.spyOn(document, "createElement").mockReturnValue(link);
-    const createObjectURL = vi.fn(() => "blob:professors-template");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
-
     fireEvent.click(screen.getByRole("button", { name: "下载 XLSX 模板" }));
 
     await waitFor(() => expect(downloadProfessorTemplate).toHaveBeenCalledWith("xlsx"));
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
-    expect(createElement).toHaveBeenCalledWith("a");
-    expect(link).toHaveAttribute("href", "blob:professors-template");
-    expect(link).toHaveAttribute("download", "professors_import_template.xlsx");
-    expect(link).not.toHaveAttribute("target");
-    expect(link).not.toHaveAttribute("rel");
-    expect(click).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:professors-template");
-    createElement.mockRestore();
-    click.mockRestore();
   });
 
   it("opens the mentor crawler Skill guide from the import dialog", async () => {
@@ -1235,25 +1218,8 @@ describe("ProfessorsPage layout", () => {
     expect(screen.getByText("字段顺序与导入模板一致，未修改即可重新导入系统。")).toBeInTheDocument();
     expect(screen.getByText("导出文件包含个人备注，请谨慎分享。")).toBeInTheDocument();
 
-    const link = document.createElement("a");
-    const click = vi.spyOn(link, "click").mockImplementation(() => undefined);
-    const createElement = vi.spyOn(document, "createElement").mockReturnValue(link);
-    const createObjectURL = vi.fn(() => "blob:professors-export");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
-
     fireEvent.click(screen.getByRole("button", { name: "导出 XLSX" }));
 
     await waitFor(() => expect(downloadProfessorExport).toHaveBeenCalledWith("xlsx"));
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
-    expect(createElement).toHaveBeenCalledWith("a");
-    expect(link).toHaveAttribute("href", "blob:professors-export");
-    expect(link).toHaveAttribute("download", "professors_export.xlsx");
-    expect(link).not.toHaveAttribute("target");
-    expect(link).not.toHaveAttribute("rel");
-    expect(click).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:professors-export");
-    createElement.mockRestore();
-    click.mockRestore();
   });
 });

@@ -479,17 +479,6 @@ const formatFileSize = (sizeBytes: number) => {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const triggerBlobDownload = (blob: Blob, filename: string) => {
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
-};
-
 const formatDuration = (durationMs: number | null) =>
   durationMs === null ? "未返回" : `${durationMs} ms`;
 
@@ -2962,8 +2951,7 @@ export const ProfilePage = () => {
 
   const handleDownloadMaterial = async (material: IdentityMaterialDTO) => {
     try {
-      const blob = await downloadMaterial(material.id);
-      triggerBlobDownload(blob, material.original_filename);
+      await downloadMaterial(material.id, material.original_filename);
     } catch (downloadError) {
       notifyError(
         "下载材料失败",

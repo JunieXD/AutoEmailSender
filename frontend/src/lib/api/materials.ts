@@ -1,4 +1,5 @@
-import { apiFetch, apiFetchBlob } from '@/lib/api/client';
+import { apiFetch } from '@/lib/api/client';
+import { downloadApiFile } from '@/lib/api/download';
 import type { IdentityMaterialDTO, IdentityMaterialType } from '@/types';
 
 export const uploadIdentityMaterial = (
@@ -31,5 +32,5 @@ export const deleteMaterial = (materialId: number) =>
     method: 'DELETE',
   });
 
-export const downloadMaterial = (materialId: number) =>
-  apiFetchBlob(`/api/materials/${materialId}/download`);
+export const downloadMaterial = (materialId: number, filename: string) =>
+  downloadApiFile(`/api/materials/${materialId}/download`, filename);

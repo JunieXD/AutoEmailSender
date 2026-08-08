@@ -1,4 +1,5 @@
-import { apiFetch, apiFetchBlob } from '@/lib/api/client';
+import { apiFetch } from '@/lib/api/client';
+import { fetchApiFile } from '@/lib/api/download';
 import type {
   CommunityCatalogDTO,
   CommunityImportPayloadDTO,
@@ -33,6 +34,6 @@ export const importCommunityMentors = (payload: CommunityImportPayloadDTO) =>
   });
 
 export const downloadCommunitySharePackage = (professorIds: number[]) =>
-  apiFetchBlob('/api/community-mentors/share-package', undefined, {
+  fetchApiFile('/api/community-mentors/share-package', undefined, {
     professor_ids: professorIds.join(','),
   });

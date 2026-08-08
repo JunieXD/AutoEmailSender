@@ -347,10 +347,6 @@ describe("DiagnosticLogPanel", () => {
   });
 
   it("选择抓取任务后可以导出该任务 JSONL", async () => {
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => undefined);
-
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
@@ -358,7 +354,6 @@ describe("DiagnosticLogPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "导出抓取日志" }));
 
     await waitFor(() => expect(exportCrawlerDebugLog).toHaveBeenCalledWith(42));
-    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
     expect(notificationApi.notifySuccess).toHaveBeenCalledWith("抓取日志已导出");
   });
 

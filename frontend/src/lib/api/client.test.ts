@@ -3,7 +3,6 @@ import {
   apiFetch,
   apiFetchBlob,
   buildApiPath,
-  buildApiUrl,
   updateDesktopBackendBaseUrl,
 } from "@/lib/api/client";
 import type { DesktopBackendStatus } from "@/types/desktop";
@@ -17,7 +16,6 @@ describe("api client desktop base url", () => {
 
   it("uses relative paths in browser mode", () => {
     expect(buildApiPath("/api/ping")).toBe("/api/ping");
-    expect(buildApiUrl("/api/ping")).toBe("http://localhost:3000/api/ping");
   });
 
   it("uses desktop backend base url when preload provides it", () => {
@@ -32,7 +30,6 @@ describe("api client desktop base url", () => {
     };
 
     expect(buildApiPath("/api/ping")).toBe("http://127.0.0.1:48123/api/ping");
-    expect(buildApiUrl("/api/ping")).toBe("http://127.0.0.1:48123/api/ping");
   });
 
   it("uses runtime desktop backend base url updates", () => {
@@ -49,7 +46,6 @@ describe("api client desktop base url", () => {
     updateDesktopBackendBaseUrl("http://127.0.0.1:48124");
 
     expect(buildApiPath("/api/ping")).toBe("http://127.0.0.1:48124/api/ping");
-    expect(buildApiUrl("/api/ping")).toBe("http://127.0.0.1:48124/api/ping");
   });
 
   it("waits for a desktop backend ready event before fetching without an initial base url", async () => {

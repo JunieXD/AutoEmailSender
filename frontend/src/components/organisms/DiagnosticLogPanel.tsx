@@ -28,6 +28,7 @@ import {
   type OperationLogDTO,
 } from "@/lib/api/diagnosticsApi";
 import { listCrawlJobs } from "@/lib/api/crawlJobsApi";
+import { downloadBlob } from "@/lib/api/download";
 import { formatApiDateTime, parseApiDateTime } from "@/lib/dateTime";
 import type { CrawlJobSummaryDTO } from "@/types";
 
@@ -218,14 +219,10 @@ export const DiagnosticLogPanel = () => {
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: "application/json",
       });
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `auto-email-diagnostics-${exportDate || formatFilenameTimestamp(new Date())}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
+      downloadBlob(
+        blob,
+        `auto-email-diagnostics-${exportDate || formatFilenameTimestamp(new Date())}.json`,
+      );
       safeRecordUserAction({
         eventName: "diagnostics.export_succeeded",
         data: {
@@ -261,8 +258,7 @@ export const DiagnosticLogPanel = () => {
 
     setExportingCrawlerLog(true);
     try {
-      const blob = await exportCrawlerDebugLog(jobId);
-      downloadBlob(blob, `crawl-job-${jobId}.jsonl`);
+      await exportCrawlerDebugLog(jobId);
       safeRecordUserAction({
         eventName: "diagnostics.crawler_debug_export_succeeded",
         data: { jobId },
@@ -502,17 +498,6 @@ function SummaryMetric({
       </div>
     </div>
   );
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
 }
 
 function formatCrawlJobOption(job: CrawlJobSummaryDTO): string {

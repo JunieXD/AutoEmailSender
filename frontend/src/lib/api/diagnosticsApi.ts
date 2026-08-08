@@ -1,4 +1,5 @@
-import { apiFetch, apiFetchBlob } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
+import { downloadApiFile } from "@/lib/api/download";
 
 export interface OperationLogDTO {
   id: number;
@@ -56,4 +57,7 @@ export const exportOperationLogs = (params: OperationLogListParams = {}) =>
   );
 
 export const exportCrawlerDebugLog = (jobId: number) =>
-  apiFetchBlob(`/api/diagnostics/crawler-debug/${jobId}/export`);
+  downloadApiFile(
+    `/api/diagnostics/crawler-debug/${jobId}/export`,
+    `crawl-job-${jobId}.jsonl`,
+  );

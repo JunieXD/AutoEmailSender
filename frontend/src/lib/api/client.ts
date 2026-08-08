@@ -32,14 +32,6 @@ export const updateDesktopBackendBaseUrl = (baseUrl: string | null | undefined):
   desktopBackendBaseUrlOverride = normalized || null;
 };
 
-export const buildApiUrl = (
-  path: string,
-  params?: Record<string, string | number | null | undefined>,
-) => {
-  const apiPath = buildApiPath(path, params);
-  return apiPath.startsWith("http") ? apiPath : new URL(apiPath, window.location.origin).toString();
-};
-
 type ApiSuccessParser<T> = (response: Response) => Promise<T>;
 
 export const apiFetch = <T>(

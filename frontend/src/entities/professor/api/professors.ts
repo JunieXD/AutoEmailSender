@@ -1,4 +1,5 @@
-import { apiFetch, apiFetchBlob } from '@/lib/api/client';
+import { apiFetch } from '@/lib/api/client';
+import { downloadApiFile } from '@/lib/api/download';
 import type {
   ProfessorActionResultDTO,
   ProfessorBulkArchivePayloadDTO,
@@ -120,7 +121,17 @@ export const importProfessorsFromFile = async (file: File) => {
 };
 
 export const downloadProfessorTemplate = (format: 'xlsx' | 'csv') =>
-  apiFetchBlob('/api/professors/template', undefined, { format });
+  downloadApiFile(
+    '/api/professors/template',
+    `professors_import_template.${format}`,
+    undefined,
+    { format },
+  );
 
 export const downloadProfessorExport = (format: 'xlsx' | 'csv') =>
-  apiFetchBlob('/api/professors/export', undefined, { format });
+  downloadApiFile(
+    '/api/professors/export',
+    `professors_export.${format}`,
+    undefined,
+    { format },
+  );
