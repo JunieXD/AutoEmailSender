@@ -9,6 +9,7 @@ import type {
 } from "../../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
 import { getFrontendIndexPath, startBackend } from "../backend/service.js";
+import { createDesktopBackendClient } from "../backend/client.js";
 import type {
   BackendController,
   BackendExit,
@@ -51,6 +52,16 @@ let currentAgentSupportStatus: AgentSupportStatus | null = null;
 let currentStartupAtLoginStatus: StartupAtLoginStatus | null = null;
 const windowCreationState = { pendingCreation: null as Promise<void> | null };
 let desktopApplicationBootstrapped = false;
+const desktopBackendClient = createDesktopBackendClient({
+  getConnection: () => (
+    backend === null
+      ? null
+      : {
+          baseUrl: backend.baseUrl,
+          accessToken: backend.uiAccessToken,
+        }
+  ),
+});
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
@@ -512,10 +523,7 @@ export function bootstrapDesktopApplication(): void {
       publishAgentSupportStatus(await agentSupportService.dismissOnboarding()),
     getWindow: () => mainWindow,
     materialOpen: {
-      getBackendBaseUrl: () => (
-        currentBackendStatus.state === "ready" ? currentBackendStatus.baseUrl : null
-      ),
-      getBackendAccessToken: () => backend?.uiAccessToken ?? null,
+      backendClient: desktopBackendClient,
       userDataPath: app.getPath("userData"),
     },
   });

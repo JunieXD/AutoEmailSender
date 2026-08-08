@@ -1,5 +1,6 @@
 ﻿import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { createDesktopBackendClient } from "../src/main/backend/client.js";
 import {
   createMaterialOpenService,
   MATERIAL_OPEN_COPY_TTL_MS,
@@ -13,13 +14,21 @@ const okResponse = (body: string, headers: Record<string, string> = {}) =>
     headers,
   });
 
+const createTestBackendClient = (
+  fetchMock: typeof fetch,
+  baseUrl = "http://127.0.0.1:8010",
+  accessToken = "ui-access-token",
+) => createDesktopBackendClient({
+  getConnection: () => ({ baseUrl, accessToken }),
+  dependencies: { fetch: fetchMock },
+});
+
 describe("desktop material open service", () => {
   it("rejects invalid material ids before contacting backend", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     const service = createMaterialOpenService({
-      getBackendBaseUrl: () => "http://127.0.0.1:8010",
+      backendClient: createTestBackendClient(fetchMock),
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
-      dependencies: { fetch: fetchMock },
     });
 
     await expect(service.openMaterial("C:\\secret.pdf")).resolves.toMatchObject({
@@ -41,11 +50,9 @@ describe("desktop material open service", () => {
       }),
     );
     const service = createMaterialOpenService({
-      getBackendBaseUrl: () => "http://127.0.0.1:8010",
-      getBackendAccessToken: () => "ui-access-token",
+      backendClient: createTestBackendClient(fetchMock),
       userDataPath: "C:\\Users\\Alice\\AppData\\Roaming\\auto-email-sender-desktop",
       dependencies: {
-        fetch: fetchMock,
         mkdir: vi.fn().mockResolvedValue(undefined),
         readdir: vi.fn().mockRejectedValue(new Error("missing")),
         chmod: chmodMock,
@@ -64,19 +71,17 @@ describe("desktop material open service", () => {
     expect(writtenPaths[0]).toMatch(/42-\d+-resume\.docx$/);
     expect(chmodMock).toHaveBeenCalledWith(writtenPaths[0], 0o444);
     expect(openPathMock).toHaveBeenCalledWith(writtenPaths[0]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8010/api/materials/42/download",
-      { headers: { Authorization: "Bearer ui-access-token" } },
-    );
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("http://127.0.0.1:8010/api/materials/42/download");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer ui-access-token");
   });
 
   it("reports missing backend files as not found", async () => {
     const service = createMaterialOpenService({
-      getBackendBaseUrl: () => "http://127.0.0.1:8010",
+      backendClient: createTestBackendClient(
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 404 })),
+      ),
       userDataPath: "C:\\Data",
-      dependencies: {
-        fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 404 })),
-      },
     });
 
     await expect(service.openMaterial(7)).resolves.toMatchObject({
@@ -87,10 +92,11 @@ describe("desktop material open service", () => {
 
   it("reports system open failures", async () => {
     const service = createMaterialOpenService({
-      getBackendBaseUrl: () => "http://127.0.0.1:8010",
+      backendClient: createTestBackendClient(
+        vi.fn<typeof fetch>().mockResolvedValue(okResponse("content")),
+      ),
       userDataPath: "C:\\Data",
       dependencies: {
-        fetch: vi.fn<typeof fetch>().mockResolvedValue(okResponse("content")),
         mkdir: vi.fn().mockResolvedValue(undefined),
         readdir: vi.fn().mockRejectedValue(new Error("missing")),
         chmod: vi.fn().mockResolvedValue(undefined),
@@ -108,10 +114,11 @@ describe("desktop material open service", () => {
   it("cleans expired copies without failing on locked files", async () => {
     const rmMock = vi.fn().mockRejectedValue(new Error("locked"));
     const service = createMaterialOpenService({
-      getBackendBaseUrl: () => "http://127.0.0.1:8010",
+      backendClient: createTestBackendClient(
+        vi.fn<typeof fetch>().mockResolvedValue(okResponse("content")),
+      ),
       userDataPath: "C:\\Data",
       dependencies: {
-        fetch: vi.fn<typeof fetch>().mockResolvedValue(okResponse("content")),
         mkdir: vi.fn().mockResolvedValue(undefined),
         readdir: vi.fn().mockResolvedValue(["old.pdf"]),
         stat: vi.fn().mockResolvedValue({ mtimeMs: 1 }),

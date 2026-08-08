@@ -4,6 +4,7 @@ import { chmod, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
+import type { DesktopBackendClient } from "../backend/client.js";
 import type {
   DesktopMaterialOpenResult as MaterialOpenResult,
 } from "../../../../contracts/desktop-ipc.js";
@@ -12,7 +13,6 @@ export const MATERIAL_OPEN_COPY_TTL_MS = 24 * 60 * 60 * 1000;
 export const MATERIAL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.materialOpen;
 
 type MaterialOpenDependencies = {
-  fetch: typeof fetch;
   openPath: (filePath: string) => Promise<string>;
   copyFile: typeof copyFile;
   chmod: typeof chmod;
@@ -25,8 +25,7 @@ type MaterialOpenDependencies = {
 };
 
 export type MaterialOpenServiceOptions = {
-  getBackendBaseUrl: () => string | null | undefined;
-  getBackendAccessToken?: () => string | null | undefined;
+  backendClient: DesktopBackendClient;
   userDataPath: string;
   dependencies?: Partial<MaterialOpenDependencies>;
 };
@@ -36,7 +35,6 @@ type MaterialOpenRequest = {
 };
 
 const defaultDependencies: MaterialOpenDependencies = {
-  fetch,
   openPath: (filePath: string) => shell.openPath(filePath),
   copyFile,
   chmod,
@@ -60,17 +58,10 @@ export function createMaterialOpenService(options: MaterialOpenServiceOptions) {
         return buildError("MaterialOpenInvalidId", "材料 ID 无效");
       }
 
-      const backendBaseUrl = options.getBackendBaseUrl();
-      if (!backendBaseUrl) {
-        return buildError("MaterialOpenBackendUnavailable", "系统服务尚未就绪，请稍后再试");
-      }
-      const backendAccessToken = options.getBackendAccessToken?.()?.trim() || undefined;
-
       await cleanupExpiredCopies(tempDir, dependencies);
 
       const copyResult = await createReadonlyCopy({
-        backendBaseUrl,
-        backendAccessToken,
+        backendClient: options.backendClient,
         materialId: parsedMaterialId,
         tempDir,
         dependencies,
@@ -126,19 +117,14 @@ export function sanitizeCopyFilename(materialId: number, originalFilename: strin
 }
 
 async function createReadonlyCopy(options: {
-  backendBaseUrl: string;
-  backendAccessToken?: string;
+  backendClient: DesktopBackendClient;
   materialId: number;
   tempDir: string;
   dependencies: MaterialOpenDependencies;
 }): Promise<{ copyPath: string } | { error: MaterialOpenResult }> {
   try {
     await options.dependencies.mkdir(options.tempDir, { recursive: true });
-    const response = await fetchWithBackendError(
-      options.dependencies,
-      `${options.backendBaseUrl}/api/materials/${options.materialId}/download`,
-      options.backendAccessToken,
-    );
+    const response = await fetchWithBackendError(options.backendClient, options.materialId);
     if ("error" in response) {
       return response;
     }
@@ -163,15 +149,12 @@ async function createReadonlyCopy(options: {
 }
 
 async function fetchWithBackendError(
-  dependencies: MaterialOpenDependencies,
-  url: string,
-  accessToken?: string,
+  backendClient: DesktopBackendClient,
+  materialId: number,
 ): Promise<{ response: Response } | { error: MaterialOpenResult }> {
   let response: Response;
   try {
-    response = await dependencies.fetch(url, {
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-    });
+    response = await backendClient.request(`/api/materials/${materialId}/download`);
   } catch (error) {
     return { error: buildError("MaterialOpenBackendUnavailable", "系统服务尚未就绪，请稍后再试") };
   }
