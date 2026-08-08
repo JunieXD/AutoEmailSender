@@ -2668,6 +2668,115 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(professor_name, "计划外修改")
 
+    def test_agent_crawl_candidate_approval_freezes_filtered_selection(self) -> None:
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-selection-job"},
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (job_id,),
+            )
+            selected_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, review_status)
+                VALUES (?, ?, ?, 'pending') RETURNING id
+                """,
+                (job_id, "冻结候选", "frozen@example.edu"),
+            ).fetchone()[0]
+            excluded_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, review_status)
+                VALUES (?, ?, ?, 'pending') RETURNING id
+                """,
+                (job_id, "排除候选", "excluded@example.edu"),
+            ).fetchone()[0]
+            changed_to_match_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, review_status)
+                VALUES (?, ?, ?, 'rejected') RETURNING id
+                """,
+                (job_id, "稍后匹配", "changed@example.edu"),
+            ).fetchone()[0]
+            connection.commit()
+
+        prepared = self.client.post(
+            f"/api/agent/v1/crawler/jobs/{job_id}/prepare-approve",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-filtered-approval"},
+            json={
+                "selection": {
+                    "mode": "filter",
+                    "filter": {"review_status": ["pending"]},
+                    "exclude_ids": [excluded_id],
+                },
+            },
+        )
+        self.assertEqual(prepared.status_code, 201, msg=prepared.text)
+        selection = prepared.json()["summary"]["selection"]
+        self.assertEqual(selection["mode"], "filter")
+        self.assertEqual(selection["matched_count"], 2)
+        self.assertEqual(selection["selected_count"], 1)
+        self.assertEqual(selection["excluded_count"], 1)
+        self.assertRegex(selection["frozen_ids_hash"], r"^[0-9a-f]{64}$")
+
+        with sqlite3.connect(self.db_path) as connection:
+            added_after_plan_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, review_status)
+                VALUES (?, ?, ?, 'pending') RETURNING id
+                """,
+                (job_id, "新增候选", "added@example.edu"),
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE crawl_candidates SET review_status = 'pending' WHERE id = ?",
+                (changed_to_match_id,),
+            )
+            connection.commit()
+
+        executed = self.client.post(
+            f"/api/agent/v1/plans/{prepared.json()['plan_id']}/execute",
+            headers=self._agent_headers(),
+            json={"confirm": True},
+        )
+        self.assertEqual(executed.status_code, 200, msg=executed.text)
+        self.assertEqual(executed.json()["result"]["inserted_count"], 1)
+        with sqlite3.connect(self.db_path) as connection:
+            imported_emails = {
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT email FROM professors
+                    WHERE email IN (?, ?, ?, ?)
+                    """,
+                    (
+                        "frozen@example.edu",
+                        "excluded@example.edu",
+                        "changed@example.edu",
+                        "added@example.edu",
+                    ),
+                ).fetchall()
+            }
+            statuses = dict(
+                connection.execute(
+                    "SELECT id, review_status FROM crawl_candidates WHERE id IN (?, ?, ?, ?)",
+                    (selected_id, excluded_id, changed_to_match_id, added_after_plan_id),
+                ).fetchall(),
+            )
+        self.assertEqual(imported_emails, {"frozen@example.edu"})
+        self.assertEqual(statuses[selected_id], "accepted")
+        self.assertEqual(statuses[excluded_id], "pending")
+        self.assertEqual(statuses[changed_to_match_id], "pending")
+        self.assertEqual(statuses[added_after_plan_id], "pending")
+
     def test_agent_can_prepare_and_execute_crawl_job_retry_change_plan(self) -> None:
         llm_profile_id = self._create_llm_profile()
         created = self.client.post(
@@ -3190,6 +3299,63 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, msg=response.text)
         self.assertEqual(response.json()["submission"]["queued_count"], 5)
         self.assertEqual(len(task_selects), 1)
+
+    def test_agent_crawler_job_list_filters_requested_and_effective_models(self) -> None:
+        llm_profile_id = self._create_llm_profile()
+        created_ids: list[int] = []
+        for index in range(2):
+            created = self.client.post(
+                "/api/agent/v1/crawler/jobs",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": f"crawl-filter-job-{index}",
+                },
+                json={
+                    "university": "筛选大学",
+                    "school": f"学院 {index}",
+                    "start_url": f"https://example.edu/filter-{index}",
+                    "entry_type": "list",
+                    "llm_profile_id": llm_profile_id,
+                },
+            )
+            self.assertEqual(created.status_code, 201, msg=created.text)
+            created_ids.append(int(created.json()["id"]))
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (created_ids[1],),
+            )
+            run_id = connection.execute(
+                "SELECT current_run_id FROM crawl_jobs WHERE id = ?",
+                (created_ids[1],),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO crawl_worker_token_usages (
+                    job_id, run_id, worker_kind, work_item_id, model_name
+                ) VALUES (?, ?, 'page', 'filter-model', 'effective-filter-model')
+                """,
+                (created_ids[1], run_id),
+            )
+            connection.commit()
+
+        filtered = self._agent_get(
+            "/api/agent/v1/crawler/jobs",
+            params={
+                "status": "needs_review",
+                "requested_model_name": "test-model",
+                "effective_model_name": "effective-filter-model",
+                "university": "筛选大学",
+            },
+        ).json()
+
+        self.assertEqual([item["id"] for item in filtered["items"]], [created_ids[1]])
+        self.assertEqual(filtered["items"][0]["requested_model_name"], "test-model")
+        self.assertEqual(
+            filtered["items"][0]["effective_models"],
+            ["effective-filter-model"],
+        )
 
     def test_agent_crawler_batch_operations_isolate_item_failures(self) -> None:
         create_headers = {
@@ -4411,6 +4577,50 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(cannot_send.status_code, 409, msg=cannot_send.text)
         self.assertEqual(cannot_send.json()["error"]["code"], "CAMPAIGN_NOT_ACTIVE")
 
+    def test_agent_campaign_list_pages_and_filters_before_aggregating(self) -> None:
+        first_campaign_id, _ = self._create_template_campaign(key_suffix="first")
+        second_campaign_id, _ = self._create_template_campaign(key_suffix="second")
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE batch_tasks SET status = 'stopped' WHERE id = ?",
+                (first_campaign_id,),
+            )
+            connection.commit()
+
+        first_page = self._agent_get(
+            "/api/agent/v1/campaigns",
+            params={"limit": 1},
+        ).json()
+        self.assertEqual([item["id"] for item in first_page["items"]], [second_campaign_id])
+        self.assertTrue(first_page["has_more"])
+        self.assertEqual(first_page["next_cursor"], "1")
+        second_page = self._agent_get(
+            "/api/agent/v1/campaigns",
+            params={"limit": 1, "cursor": first_page["next_cursor"]},
+        ).json()
+        self.assertEqual([item["id"] for item in second_page["items"]], [first_campaign_id])
+        self.assertFalse(second_page["has_more"])
+        self.assertIsNone(second_page["next_cursor"])
+
+        stopped = self._agent_get(
+            "/api/agent/v1/campaigns",
+            params={"status": "stopped"},
+        ).json()
+        self.assertEqual([item["id"] for item in stopped["items"]], [first_campaign_id])
+        detail = self._agent_get(f"/api/agent/v1/campaigns/{first_campaign_id}").json()
+        self.assertEqual(stopped["items"][0]["review_required_count"], detail["review_required_count"])
+        self.assertEqual(
+            stopped["items"][0]["can_start_draft_generation"],
+            detail["can_start_draft_generation"],
+        )
+
+        invalid = self.client.get(
+            "/api/agent/v1/campaigns",
+            headers=self._agent_headers(),
+            params={"status": "unknown"},
+        )
+        self.assertEqual(invalid.status_code, 422, msg=invalid.text)
+
     def test_agent_campaign_pause_resets_running_draft_and_remove_hides_item(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
         with sqlite3.connect(self.db_path) as connection:
@@ -4655,17 +4865,17 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, msg=response.text)
         return response.json()
 
-    def _create_template_campaign(self) -> tuple[int, int]:
-        identity_id = self._create_identity()
-        llm_profile_id = self._create_llm_profile()
-        professor_id = self._create_professor(email="campaign-stale@example.edu")
+    def _create_template_campaign(self, *, key_suffix: str = "helper") -> tuple[int, int]:
+        identity_id = self._create_identity(email=f"campaign-sender-{key_suffix}@example.com")
+        llm_profile_id = self._create_llm_profile(name=f"Agent 活动模型 {key_suffix}")
+        professor_id = self._create_professor(email=f"campaign-{key_suffix}@example.edu")
         material_id = self._upload_material(identity_id)
         template_id = self._create_template()
         prepared = self.client.post(
             "/api/agent/v1/campaigns/prepare-create",
             headers={
                 **self._agent_headers(),
-                "Idempotency-Key": "agent-template-campaign-helper",
+                "Idempotency-Key": f"agent-template-campaign-{key_suffix}",
             },
             json={
                 "name": "待修改活动",
@@ -4786,12 +4996,12 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, msg=response.text)
         return response.json()["id"]
 
-    def _create_llm_profile(self) -> int:
+    def _create_llm_profile(self, *, name: str = "Agent 测试模型") -> int:
         response = self.client.post(
             "/api/llm-profiles",
             headers=self._ui_headers(),
             json={
-                "name": "Agent 测试模型",
+                "name": name,
                 "provider": "openai",
                 "api_base_url": "https://api.example.com/v1",
                 "api_key": "llm-secret-value",

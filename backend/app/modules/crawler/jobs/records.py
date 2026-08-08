@@ -15,6 +15,7 @@ from app.models import (
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
     CrawlJobKind,
+    CrawlJobRun,
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
@@ -153,6 +154,12 @@ async def list_faculty_crawl_job_records(
     view: str,
     offset: int,
     limit: int,
+    status: str | None = None,
+    llm_profile_id: int | None = None,
+    requested_model_name: str | None = None,
+    effective_model_name: str | None = None,
+    university: str | None = None,
+    school: str | None = None,
 ) -> list[CrawlJobSummaryRead]:
     statement = (
         select(CrawlJob)
@@ -168,6 +175,31 @@ async def list_faculty_crawl_job_records(
             status_code=422,
             code="INVALID_CRAWL_JOB_VIEW",
             message="未知任务视图",
+        )
+    if status is not None:
+        statement = statement.where(CrawlJob.status == status)
+    if llm_profile_id is not None:
+        statement = statement.where(CrawlJob.llm_profile_id == llm_profile_id)
+    if university is not None:
+        statement = statement.where(CrawlJob.university == university)
+    if school is not None:
+        statement = statement.where(CrawlJob.school == school)
+    if requested_model_name is not None:
+        statement = statement.join(
+            CrawlJobRun,
+            CrawlJobRun.id == CrawlJob.current_run_id,
+        ).where(
+            CrawlJobRun.llm_runtime_snapshot["model_name"].as_string()
+            == requested_model_name,
+        )
+    if effective_model_name is not None:
+        statement = statement.where(
+            select(CrawlWorkerTokenUsage.id)
+            .where(
+                CrawlWorkerTokenUsage.job_id == CrawlJob.id,
+                CrawlWorkerTokenUsage.model_name == effective_model_name,
+            )
+            .exists(),
         )
     jobs = list(
         await session.scalars(
@@ -308,7 +340,7 @@ async def update_faculty_crawl_candidate_record(
     return CrawlCandidateRead.model_validate(candidate)
 
 
-async def _resolve_candidate_selection(
+async def resolve_faculty_crawl_candidate_selection(
     session: AsyncSession,
     *,
     job_id: int,
@@ -445,7 +477,7 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             code="CRAWL_CANDIDATE_ENRICHMENT_NOT_REVIEWABLE",
             message="抓取任务尚未进入审核状态，不能补全候选资料。",
         )
-    candidates, excluded_count = await _resolve_candidate_selection(
+    candidates, excluded_count = await resolve_faculty_crawl_candidate_selection(
         session,
         job_id=job.id,
         selection=selection,
@@ -1008,6 +1040,13 @@ async def _build_crawl_job_summaries(
     for job_id, model_name in model_rows:
         if isinstance(model_name, str) and model_name:
             effective_models.setdefault(int(job_id), []).append(model_name)
+    llm_context_by_job = {
+        job.id: public_llm_context(
+            job.current_run.llm_runtime_snapshot if job.current_run is not None else None,
+            effective_models=effective_models.get(job.id, []),
+        )
+        for job in jobs
+    }
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(
             update={
@@ -1019,10 +1058,13 @@ async def _build_crawl_job_summaries(
                 "cached_tokens": metrics.cached_tokens,
                 "total_tokens": metrics.total_tokens,
                 "duration_seconds": metrics.duration_seconds,
-                "llm_context": public_llm_context(
-                    job.current_run.llm_runtime_snapshot if job.current_run is not None else None,
-                    effective_models=effective_models.get(job.id, []),
+                "llm_context": llm_context_by_job[job.id],
+                "requested_model_name": (
+                    llm_context_by_job[job.id].get("model_name")
+                    if llm_context_by_job[job.id] is not None
+                    else None
                 ),
+                "effective_models": effective_models.get(job.id, []),
             },
         )
         for job in jobs

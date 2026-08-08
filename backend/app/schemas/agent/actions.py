@@ -271,17 +271,30 @@ class AgentCrawlCandidateUpdateRequest(ApiSchema):
 
 
 class AgentCrawlJobApproveRequest(ApiSchema):
-    """Candidate IDs to import after a separately confirmed impact preview."""
+    """Candidates to import after a separately confirmed impact preview."""
 
-    candidate_ids: list[int] = Field(min_length=1)
+    selection: SelectionSpec | None = None
+    candidate_ids: list[int] | None = None
 
     @model_validator(mode="after")
-    def reject_duplicate_candidate_ids(self) -> "AgentCrawlJobApproveRequest":
-        if any(candidate_id < 1 for candidate_id in self.candidate_ids):
-            raise ValueError("candidate_ids 必须是正整数")
-        if len(set(self.candidate_ids)) != len(self.candidate_ids):
-            raise ValueError("candidate_ids 不能包含重复的候选导师 ID")
+    def validate_selection(self) -> "AgentCrawlJobApproveRequest":
+        if self.selection is not None and self.candidate_ids is not None:
+            raise ValueError("selection 和 candidate_ids 不能同时提供")
+        if self.selection is None and self.candidate_ids is None:
+            raise ValueError("请提供 selection 或 candidate_ids")
+        if self.candidate_ids is not None:
+            if not self.candidate_ids:
+                raise ValueError("candidate_ids 必须至少包含一个候选导师 ID")
+            if any(candidate_id < 1 for candidate_id in self.candidate_ids):
+                raise ValueError("candidate_ids 必须是正整数")
+            if len(set(self.candidate_ids)) != len(self.candidate_ids):
+                raise ValueError("candidate_ids 不能包含重复的候选导师 ID")
         return self
+
+    def resolved_selection(self) -> SelectionSpec:
+        if self.selection is not None:
+            return self.selection
+        return SelectionSpec(mode="ids", ids=self.candidate_ids or [])
 
 
 class AgentCrawlJobRetryRequest(ApiSchema):

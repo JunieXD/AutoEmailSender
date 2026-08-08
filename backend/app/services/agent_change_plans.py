@@ -39,6 +39,7 @@ from app.modules.community.public import (
     CommunityMentorComparisonRead,
 )
 from app.modules.crawler.public import CrawlJobRetryPayload
+from app.schemas.selection import SelectionSpec
 from app.modules.professors.public import (
     ParsedProfessorImport,
     ProfessorBulkTagsPayload,
@@ -78,6 +79,7 @@ from app.modules.crawler.public import (
     CrawlJobRecordError,
     canonical_candidate_clause,
     canonicalize_candidate_ids,
+    resolve_faculty_crawl_candidate_selection,
     retry_faculty_crawl_job_record,
 )
 from app.modules.community.public import (
@@ -586,17 +588,22 @@ async def create_test_email_send_change_plan(
 async def create_crawl_candidate_approval_change_plan(
     session_factory: async_sessionmaker[AsyncSession],
     job_id: int,
-    candidate_ids: list[int],
+    selection: SelectionSpec,
     *,
     idempotency_key: str | None,
 ) -> AgentChangePlanRead:
     normalized_key = normalize_idempotency_key(idempotency_key)
-    normalized_candidate_ids = sorted(candidate_ids)
+    normalized_selection = selection.model_dump(mode="json")
+    normalized_selection["ids"] = sorted(normalized_selection["ids"])
+    normalized_selection["exclude_ids"] = sorted(normalized_selection["exclude_ids"])
+    review_status = normalized_selection["filter"].get("review_status")
+    if isinstance(review_status, list):
+        normalized_selection["filter"]["review_status"] = sorted(review_status)
     request_fingerprint = fingerprint(
         {
             "action": CRAWL_CANDIDATE_APPROVE_ACTION,
             "job_id": job_id,
-            "candidate_ids": normalized_candidate_ids,
+            "selection": normalized_selection,
         },
     )
     async with session_factory() as session:
@@ -611,11 +618,38 @@ async def create_crawl_candidate_approval_change_plan(
                 await _expire_if_needed(session, existing)
                 return _serialize_change_plan(existing, idempotent_replay=True)
 
+        await _load_approvable_crawl_job(session, job_id)
+        try:
+            candidates, excluded_count = await resolve_faculty_crawl_candidate_selection(
+                session,
+                job_id=job_id,
+                selection=selection,
+            )
+        except CrawlJobRecordError as exc:
+            raise AgentApiError(
+                status_code=exc.status_code,
+                code=exc.code,
+                message=exc.message,
+            ) from exc
+        if not candidates:
+            raise AgentApiError(
+                status_code=409,
+                code="CRAWL_CANDIDATE_SELECTION_EMPTY",
+                message="没有候选导师匹配当前审批选择条件。",
+            )
+        frozen_candidate_ids = sorted(candidate.id for candidate in candidates)
         snapshot = await _prepare_crawl_candidate_approval_snapshot(
             session,
             job_id,
-            normalized_candidate_ids,
+            frozen_candidate_ids,
         )
+        snapshot["summary"]["selection"] = {
+            "mode": selection.mode,
+            "matched_count": len(candidates) + excluded_count,
+            "selected_count": len(candidates),
+            "excluded_count": excluded_count,
+            "frozen_ids_hash": fingerprint(frozen_candidate_ids),
+        }
         snapshot["approval_fingerprint"] = _crawl_candidate_approval_snapshot_fingerprint(snapshot)
         now = utc_now()
         plan = AgentChangePlan(
@@ -1952,28 +1986,7 @@ async def _prepare_crawl_candidate_approval_snapshot(
     job_id: int,
     candidate_ids: list[int],
 ) -> dict[str, object]:
-    job = await session.scalar(
-        select(CrawlJob).where(
-            CrawlJob.id == job_id,
-            CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
-        ),
-    )
-    if job is None:
-        raise AgentApiError(
-            status_code=404,
-            code="CRAWL_JOB_NOT_FOUND",
-            message="未找到导师抓取任务。",
-        )
-    if job.status not in {
-        CrawlJobStatus.NEEDS_REVIEW.value,
-        CrawlJobStatus.PARTIALLY_COMPLETED.value,
-        CrawlJobStatus.CANCELED.value,
-    }:
-        raise AgentApiError(
-            status_code=409,
-            code="CRAWL_JOB_NOT_READY_FOR_APPROVAL",
-            message="抓取任务尚未进入可审核状态，不能导入候选导师。",
-        )
+    job = await _load_approvable_crawl_job(session, job_id)
 
     candidates, missing_candidate_ids = await canonicalize_candidate_ids(
         session,
@@ -2110,6 +2123,35 @@ async def _prepare_crawl_candidate_approval_snapshot(
         },
         "warnings": warnings,
     }
+
+
+async def _load_approvable_crawl_job(
+    session: AsyncSession,
+    job_id: int,
+) -> CrawlJob:
+    job = await session.scalar(
+        select(CrawlJob).where(
+            CrawlJob.id == job_id,
+            CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
+        ),
+    )
+    if job is None:
+        raise AgentApiError(
+            status_code=404,
+            code="CRAWL_JOB_NOT_FOUND",
+            message="未找到导师抓取任务。",
+        )
+    if job.status not in {
+        CrawlJobStatus.NEEDS_REVIEW.value,
+        CrawlJobStatus.PARTIALLY_COMPLETED.value,
+        CrawlJobStatus.CANCELED.value,
+    }:
+        raise AgentApiError(
+            status_code=409,
+            code="CRAWL_JOB_NOT_READY_FOR_APPROVAL",
+            message="抓取任务尚未进入可审核状态，不能导入候选导师。",
+        )
+    return job
 
 
 def _crawl_candidate_approval_request_from_snapshot(

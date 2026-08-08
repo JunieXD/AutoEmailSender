@@ -44,7 +44,17 @@ _TEXT_FIELDS = frozenset(
     },
 )
 _STRUCTURED_FIELDS = frozenset(
-    {"evidence", "metadata", "result", "messages", "history", "logs", "blocked_actions"},
+    {
+        "after",
+        "blocked_actions",
+        "evidence",
+        "history",
+        "logs",
+        "messages",
+        "metadata",
+        "records",
+        "result",
+    },
 )
 _MAX_DETAIL_PREVIEW_CHARS = 480
 _MAX_COLLECTION_PREVIEW_CHARS = 120
@@ -148,7 +158,14 @@ def result_protocol_metadata(data: Any) -> dict[str, object] | None:
         return None
     metadata = {
         key: data[key]
-        for key in ("projection", "limit", "continuation", "truncated", "omitted_paths")
+        for key in (
+            "projection",
+            "limit",
+            "continuation",
+            "truncated",
+            "omitted_paths",
+            "action_groups",
+        )
         if key in data
     }
     return metadata or None

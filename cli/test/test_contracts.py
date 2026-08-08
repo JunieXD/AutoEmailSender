@@ -38,6 +38,7 @@ from auto_email_sender_cli.commands.common import (
     _redact_receipt_value,
     _with_revision,
     add_mutation_receipt,
+    compact_collection_action_metadata,
     augment_state_metadata,
     apply_structured_filter,
     fetch_all_pages,
@@ -525,7 +526,6 @@ class ContractTests(unittest.TestCase):
         expected = {
             "campaigns.create": "professor_ids",
             "campaigns.prepare-send": "item_ids",
-            "crawler.jobs.approve": "candidate_ids",
             "enrichment.jobs.create": "professor_ids",
             "matching.jobs.create": "professor_ids",
             "professors.prepare-bulk-archive": "professor_ids",
@@ -543,7 +543,14 @@ class ContractTests(unittest.TestCase):
             self.assertIn(parameter_name, description["input"]["schema"]["required"], command)
 
         enrich = describe_command(app, "crawler.jobs.enrich")
+        approve = describe_command(app, "crawler.jobs.approve")
         assert enrich is not None
+        assert approve is not None
+        approve_selection = next(
+            item for item in approve["parameters"] if item["name"] == "selection_mode"
+        )
+        self.assertTrue(approve_selection["required"])
+        self.assertNotIn("candidate_ids", approve["input"]["schema"]["required"])
         selection_parameter = next(
             item for item in enrich["parameters"] if item["name"] == "selection_mode"
         )
@@ -1248,6 +1255,29 @@ class ContractTests(unittest.TestCase):
     def test_native_filter_pushdown_reduces_backend_work_with_local_fallback(self) -> None:
         self.assertEqual(
             server_filter_params(
+                '{"status":"needs_review","llm_profile_id":3,'
+                '"requested_model_name":"step-3.5-flash",'
+                '"effective_models":{"contains":"step-3.5-flash"},'
+                '"university":"示例大学"}',
+                command="crawler.jobs.list",
+            ),
+            {
+                "status": "needs_review",
+                "llm_profile_id": 3,
+                "requested_model_name": "step-3.5-flash",
+                "effective_model_name": "step-3.5-flash",
+                "university": "示例大学",
+            },
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"effective_models":{"eq":"step-3.5-flash"}}',
+                command="crawler.jobs.list",
+            ),
+            {},
+        )
+        self.assertEqual(
+            server_filter_params(
                 '{"identity_id":{"eq":7},"has_reply":true,"professor_name":{"contains":"Li"}}',
                 command="communications.threads.list",
             ),
@@ -1328,13 +1358,12 @@ class ContractTests(unittest.TestCase):
                 ["--format", "json", "campaigns", "list"],
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
-        item = json.loads(result.stdout)["data"]["items"][0]
+        data = json.loads(result.stdout)["data"]
+        item = data["items"][0]
         self.assertEqual(item["revision"], expected_revision)
-        self.assertTrue(item["available_actions"])
-        derived_revision = _with_revision(
-            {key: value for key, value in item.items() if key != "revision"},
-        )["revision"]
-        self.assertNotEqual(derived_revision, expected_revision)
+        self.assertNotIn("available_actions", item)
+        self.assertEqual(data["action_groups"][0]["ids"], [9])
+        self.assertTrue(data["action_groups"][0]["available_actions"])
 
     def test_usage_filter_recomputes_token_summary_for_filtered_records(self) -> None:
         data = {
@@ -1413,6 +1442,21 @@ class ContractTests(unittest.TestCase):
             json_body={"group_id": 17},
         )["mutation_receipt"]
         self.assertEqual(receipt["changed_resources"][0]["id"], "17")
+
+    def test_mutation_receipt_preserves_backend_replay_status(self) -> None:
+        receipt = add_mutation_receipt(
+            {"id": 17},
+            command="crawler.jobs.create",
+            request_id="req-crawler-create",
+            json_body={"university": "示例大学"},
+            response_headers={
+                "x-agent-mutation-status": "replayed",
+                "x-agent-mutation-command": "crawler.jobs.create",
+            },
+        )["mutation_receipt"]
+
+        self.assertEqual(receipt["status"], "replayed")
+        self.assertEqual(receipt["backend_command"], "crawler.jobs.create")
 
     def test_direct_file_handlers_reject_collection_only_global_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1509,6 +1553,43 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(prepare_send["plan_role"], "producer")
         self.assertNotIn("blocked_reason", prepare_send)
 
+        running_campaign = augment_state_metadata(
+            {"id": 42, "status": "running"},
+            command="campaigns.get",
+        )
+        campaign_actions = {
+            item["action"]: item for item in running_campaign["available_actions"]
+        }
+        self.assertEqual(
+            campaign_actions["wait"]["arguments"],
+            {"resource": "campaigns", "resource_id": [42]},
+        )
+
+    def test_resource_lists_group_repeated_action_metadata(self) -> None:
+        data = augment_state_metadata(
+            {
+                "items": [
+                    {"id": 7, "status": "running"},
+                    {"id": 8, "status": "running"},
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            },
+            command="crawler.jobs.list",
+        )
+
+        compact = compact_collection_action_metadata(
+            data,
+            command="crawler.jobs.list",
+        )
+
+        self.assertNotIn("available_actions", compact["items"][0])
+        self.assertNotIn("blocked_actions", compact["items"][0])
+        self.assertEqual(compact["action_groups"][0]["ids"], [7, 8])
+        actions = compact["action_groups"][0]["available_actions"]
+        self.assertTrue(actions)
+        self.assertTrue(all("arguments" not in action for action in actions))
+
         plan = augment_state_metadata(
             {"plan_id": "plan-7", "status": "pending"},
             command="plans.show",
@@ -1531,7 +1612,7 @@ class ContractTests(unittest.TestCase):
         crawler_actions = {item["action"]: item for item in crawler["available_actions"]}
         self.assertEqual(crawler_actions["enrich"]["command"], "crawler.jobs.enrich")
         self.assertEqual(crawler_actions["enrich"]["required_input"], ["selection_mode"])
-        self.assertEqual(crawler_actions["approve"]["required_input"], ["candidate_ids"])
+        self.assertEqual(crawler_actions["approve"]["required_input"], ["selection_mode"])
 
         partial_crawler = augment_state_metadata(
             {"id": 8, "status": "partially_completed"},
@@ -1598,7 +1679,7 @@ class ContractTests(unittest.TestCase):
         review = _available_actions("crawler.jobs", 10, "needs_review")
         review_actions = {item["action"]: item for item in review}
         self.assertEqual(review_actions["enrich"]["required_input"], ["selection_mode"])
-        self.assertEqual(review_actions["approve"]["required_input"], ["candidate_ids"])
+        self.assertEqual(review_actions["approve"]["required_input"], ["selection_mode"])
 
 
 if __name__ == "__main__":

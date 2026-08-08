@@ -272,6 +272,8 @@ async def list_professor_information_enrichment_jobs(
     view: str,
     offset: int = 0,
     limit: int = 50,
+    status: str | None = None,
+    llm_profile_id: int | None = None,
 ) -> list[ProfessorInformationEnrichmentJobRead]:
     statement = (
         select(CrawlJob)
@@ -290,6 +292,10 @@ async def list_professor_information_enrichment_jobs(
         statement = statement.where(CrawlJob.deleted_at.is_not(None))
     else:
         raise ValueError("未知任务视图")
+    if status is not None:
+        statement = statement.where(CrawlJob.status == status)
+    if llm_profile_id is not None:
+        statement = statement.where(CrawlJob.llm_profile_id == llm_profile_id)
     jobs = list(await session.scalars(statement))
     return await _serialize_professor_information_enrichment_jobs(session, jobs)
 

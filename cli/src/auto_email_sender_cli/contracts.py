@@ -385,6 +385,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "pagination": {"type": ["object", "null"]},
                 "summary": {"type": ["object", "null"]},
                 "model_options": {"type": "array"},
+                "action_groups": {"type": "array"},
                 "projection": {"type": "object"},
                 "continuation": {"type": ["object", "null"]},
                 "truncated": {"type": "boolean"},

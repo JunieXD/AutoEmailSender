@@ -2200,6 +2200,7 @@ async def delete_agent_communication_group(
 async def list_agent_match_analysis_jobs(
     identity_id: int | None = Query(default=None, ge=1),
     llm_profile_id: int | None = Query(default=None, ge=1),
+    status_filter: str | None = Query(default=None, alias="status"),
     view: Literal["current", "trash"] = Query(default="current"),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
@@ -2210,6 +2211,8 @@ async def list_agent_match_analysis_jobs(
         statement = statement.where(MatchAnalysisJob.identity_id == identity_id)
     if llm_profile_id is not None:
         statement = statement.where(MatchAnalysisJob.llm_profile_id == llm_profile_id)
+    if status_filter is not None:
+        statement = statement.where(MatchAnalysisJob.status == status_filter)
     if view == "trash":
         statement = statement.where(MatchAnalysisJob.deleted_at.is_not(None))
     else:
@@ -2407,6 +2410,8 @@ async def restore_agent_match_analysis_job(
 )
 async def list_agent_professor_information_enrichment_jobs(
     view: Literal["current", "trash"] = Query(default="current"),
+    status_filter: str | None = Query(default=None, alias="status"),
+    llm_profile_id: int | None = Query(default=None, ge=1),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
@@ -2415,6 +2420,8 @@ async def list_agent_professor_information_enrichment_jobs(
         jobs = await list_professor_information_enrichment_jobs(
             session,
             view=view,
+            status=status_filter,
+            llm_profile_id=llm_profile_id,
             offset=cursor,
             limit=limit + 1,
         )
@@ -2584,6 +2591,12 @@ async def restore_agent_professor_information_enrichment_job(
 @router.get("/crawler/jobs", response_model=AgentPage[CrawlJobSummaryRead])
 async def list_agent_faculty_crawl_jobs(
     view: Literal["current", "trash"] = Query(default="current"),
+    status_filter: str | None = Query(default=None, alias="status"),
+    llm_profile_id: int | None = Query(default=None, ge=1),
+    requested_model_name: str | None = Query(default=None),
+    effective_model_name: str | None = Query(default=None),
+    university: str | None = Query(default=None),
+    school: str | None = Query(default=None),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
@@ -2594,6 +2607,12 @@ async def list_agent_faculty_crawl_jobs(
             view=view,
             offset=cursor,
             limit=limit + 1,
+            status=status_filter,
+            llm_profile_id=llm_profile_id,
+            requested_model_name=requested_model_name,
+            effective_model_name=effective_model_name,
+            university=university,
+            school=school,
         )
     except CrawlJobRecordError as exc:
         raise _agent_crawl_job_error(exc) from exc
@@ -2759,7 +2778,7 @@ async def prepare_agent_crawl_candidate_approval(
     return await create_crawl_candidate_approval_change_plan(
         get_session_factory(),
         job_id,
-        payload.candidate_ids,
+        payload.resolved_selection(),
         idempotency_key=idempotency_key,
     )
 
@@ -3265,17 +3284,22 @@ async def read_agent_token_usage_visualization(
 async def list_agent_email_campaigns(
     view: Literal["current", "trash"] = Query(default="current"),
     identity_id: int | None = Query(default=None, ge=1),
+    status: Literal["running", "paused", "stopped", "completed", "expired"] | None = Query(
+        default=None,
+    ),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentPage[AgentCampaignRead]:
-    campaigns = await list_agent_campaigns(
+    campaigns, next_cursor, has_more = await list_agent_campaigns(
         session,
         view=view,
         identity_id=identity_id,
+        status=status,
+        cursor=cursor,
+        limit=limit,
     )
-    page, next_cursor, has_more = _slice_page(campaigns, cursor=cursor, limit=limit)
-    return AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
+    return AgentPage(items=campaigns, next_cursor=next_cursor, has_more=has_more)
 
 
 @router.post(

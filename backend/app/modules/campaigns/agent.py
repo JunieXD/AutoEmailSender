@@ -4,7 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import case, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -134,13 +134,32 @@ class CampaignRestoreSendContext:
     final_draft: FinalCampaignDraft
 
 
+@dataclass(frozen=True, slots=True)
+class CampaignTaskSummary:
+    counts: Counter[str]
+    canceled_send_count: int
+    has_dispatchable: bool
+    has_ai_pending: bool
+
+
 async def list_agent_campaigns(
     session: AsyncSession,
     *,
     view: str,
     identity_id: int | None,
-) -> list[AgentCampaignRead]:
-    statement = _campaign_load_statement().order_by(BatchTask.created_at.desc(), BatchTask.id.desc())
+    status: str | None,
+    cursor: int,
+    limit: int,
+) -> tuple[list[AgentCampaignRead], str | None, bool]:
+    statement = (
+        select(BatchTask)
+        .options(
+            selectinload(BatchTask.identity),
+            selectinload(BatchTask.llm_profile),
+            selectinload(BatchTask.primary_material),
+        )
+        .order_by(BatchTask.created_at.desc(), BatchTask.id.desc())
+    )
     if view == "current":
         statement = statement.where(BatchTask.deleted_at.is_(None))
     elif view == "trash":
@@ -153,8 +172,26 @@ async def list_agent_campaigns(
         )
     if identity_id is not None:
         statement = statement.where(BatchTask.identity_id == identity_id)
-    campaigns = list((await session.scalars(statement)).unique())
-    return [_serialize_campaign(campaign) for campaign in campaigns]
+    if status is not None:
+        statement = statement.where(BatchTask.status == status)
+    campaigns = list(
+        (await session.scalars(statement.offset(cursor).limit(limit + 1))).unique()
+    )
+    has_more = len(campaigns) > limit
+    page = campaigns[:limit]
+    summaries = await _campaign_task_summaries(
+        session,
+        [campaign.id for campaign in page],
+    )
+    next_cursor = str(cursor + len(page)) if has_more else None
+    return (
+        [
+            _serialize_campaign(campaign, task_summary=summaries[campaign.id])
+            for campaign in page
+        ],
+        next_cursor,
+        has_more,
+    )
 
 
 async def get_agent_campaign(
@@ -1725,6 +1762,104 @@ def _campaign_load_statement():
     )
 
 
+async def _campaign_task_summaries(
+    session: AsyncSession,
+    campaign_ids: list[int],
+) -> dict[int, CampaignTaskSummary]:
+    summaries = {
+        campaign_id: CampaignTaskSummary(
+            counts=Counter(),
+            canceled_send_count=0,
+            has_dispatchable=False,
+            has_ai_pending=False,
+        )
+        for campaign_id in campaign_ids
+    }
+    if not campaign_ids:
+        return summaries
+
+    visible = or_(
+        EmailTask.status != EmailTaskStatus.CANCELED.value,
+        EmailTask.cancellation_reason.is_(None),
+        EmailTask.cancellation_reason
+        != EmailTaskCancellationReason.USER_REMOVED.value,
+    )
+    active = and_(visible, EmailTask.batch_send_canceled_at.is_(None))
+    statuses = [status.value for status in EmailTaskStatus]
+    status_columns = [
+        func.sum(
+            case(
+                (and_(active, EmailTask.status == task_status), 1),
+                else_=0,
+            ),
+        ).label(f"status_{task_status}")
+        for task_status in statuses
+    ]
+    rows = await session.execute(
+        select(
+            EmailTask.batch_task_id,
+            *status_columns,
+            func.sum(
+                case(
+                    (
+                        and_(visible, EmailTask.batch_send_canceled_at.is_not(None)),
+                        1,
+                    ),
+                    else_=0,
+                ),
+            ).label("canceled_send_count"),
+            func.max(
+                case(
+                    (
+                        and_(active, EmailTask.status.in_(CAMPAIGN_DISPATCHABLE_STATUSES)),
+                        1,
+                    ),
+                    else_=0,
+                ),
+            ).label("has_dispatchable"),
+            func.max(
+                case(
+                    (
+                        and_(
+                            active,
+                            or_(
+                                EmailTask.outreach_generation_mode.is_(None),
+                                func.lower(EmailTask.outreach_generation_mode)
+                                != OUTREACH_GENERATION_MODE_TEMPLATE,
+                            ),
+                            EmailTask.status.in_(
+                                {
+                                    EmailTaskStatus.DISCOVERED.value,
+                                    EmailTaskStatus.MATCHED.value,
+                                    EmailTaskStatus.DRAFT_FAILED.value,
+                                },
+                            ),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                ),
+            ).label("has_ai_pending"),
+        )
+        .where(EmailTask.batch_task_id.in_(campaign_ids))
+        .group_by(EmailTask.batch_task_id),
+    )
+    for row in rows.mappings():
+        campaign_id = int(row["batch_task_id"])
+        summaries[campaign_id] = CampaignTaskSummary(
+            counts=Counter(
+                {
+                    task_status: int(row[f"status_{task_status}"] or 0)
+                    for task_status in statuses
+                },
+            ),
+            canceled_send_count=int(row["canceled_send_count"] or 0),
+            has_dispatchable=bool(row["has_dispatchable"]),
+            has_ai_pending=bool(row["has_ai_pending"]),
+        )
+    return summaries
+
+
 async def _load_campaign_or_raise(session: AsyncSession, campaign_id: int) -> BatchTask:
     campaign = await session.scalar(
         _campaign_load_statement().where(BatchTask.id == campaign_id),
@@ -1902,14 +2037,33 @@ async def _record_campaign_action(
     )
 
 
-def _serialize_campaign(campaign: BatchTask) -> AgentCampaignRead:
-    visible_tasks = [
-        task for task in campaign.email_tasks if not _is_user_removed_campaign_item(task)
-    ]
-    active_tasks = [
-        task for task in visible_tasks if task.batch_send_canceled_at is None
-    ]
-    counts = Counter(task.status for task in active_tasks)
+def _serialize_campaign(
+    campaign: BatchTask,
+    *,
+    task_summary: CampaignTaskSummary | None = None,
+) -> AgentCampaignRead:
+    visible_tasks: list[EmailTask] | None = None
+    if task_summary is None:
+        visible_tasks = [
+            task for task in campaign.email_tasks if not _is_user_removed_campaign_item(task)
+        ]
+        active_tasks = [
+            task for task in visible_tasks if task.batch_send_canceled_at is None
+        ]
+        counts = Counter(task.status for task in active_tasks)
+        canceled_send_count = sum(
+            1 for task in visible_tasks if task.batch_send_canceled_at is not None
+        )
+        can_start_draft_generation = _campaign_can_start_draft_generation(campaign)
+    else:
+        counts = task_summary.counts
+        canceled_send_count = task_summary.canceled_send_count
+        can_start_draft_generation = (
+            campaign.status in CAMPAIGN_ALLOWED_ACTIVE_STATUSES
+            and campaign.deleted_at is None
+            and not task_summary.has_dispatchable
+            and task_summary.has_ai_pending
+        )
     identity = campaign.identity
     llm_profile = campaign.llm_profile
     if identity is None or llm_profile is None:  # pragma: no cover - database foreign keys
@@ -1955,10 +2109,8 @@ def _serialize_campaign(campaign: BatchTask) -> AgentCampaignRead:
         ),
         failed_count=counts[EmailTaskStatus.SEND_FAILED.value],
         canceled_count=counts[EmailTaskStatus.CANCELED.value],
-        canceled_send_count=sum(
-            1 for task in visible_tasks if task.batch_send_canceled_at is not None
-        ),
-        can_start_draft_generation=_campaign_can_start_draft_generation(campaign),
+        canceled_send_count=canceled_send_count,
+        can_start_draft_generation=can_start_draft_generation,
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
     )

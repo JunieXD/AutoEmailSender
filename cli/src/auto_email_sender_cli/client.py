@@ -197,6 +197,8 @@ class AgentApiClient:
             in {
                 "x-request-id",
                 "x-agent-mutation-receipt",
+                "x-agent-mutation-status",
+                "x-agent-mutation-command",
                 "x-audit-reference",
             }
         }

@@ -148,6 +148,8 @@ class CrawlJobSummaryRead(CrawlJobRead):
     total_tokens: int = 0
     duration_seconds: int = 0
     llm_context: CrawlJobLLMContextRead | None = None
+    requested_model_name: str | None = None
+    effective_models: list[str] = Field(default_factory=list)
 
 
 class CrawlJobDetailsRead(ApiSchema):

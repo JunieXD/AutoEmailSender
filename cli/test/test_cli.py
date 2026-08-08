@@ -427,6 +427,71 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(result.exit_code, 2, msg=result.output)
                 self.assertEqual(json.loads(result.stdout)["error"]["code"], "INVALID_ARGUMENT")
 
+    def test_crawler_approve_can_select_all_and_rejects_inconsistent_options(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/52/prepare-approve": {
+                    "plan_id": "plan-52",
+                    "status": "awaiting_confirmation",
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "crawler",
+                    "jobs",
+                    "approve",
+                    "52",
+                    "--selection",
+                    "all",
+                    "--exclude-candidate-id",
+                    "8",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(
+            fake_client.json_bodies[0],
+            {
+                "selection": {
+                    "mode": "all",
+                    "ids": [],
+                    "filter": {},
+                    "exclude_ids": [8],
+                },
+            },
+        )
+
+        cases = (
+            ["--selection", "ids"],
+            ["--selection", "all", "--candidate-id", "7"],
+            ["--selection", "filter"],
+            ["--selection", "ids", "--candidate-id", "7", "--review-status", "pending"],
+        )
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                invalid = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "crawler",
+                        "jobs",
+                        "approve",
+                        "52",
+                        *arguments,
+                    ],
+                )
+                self.assertEqual(invalid.exit_code, 2, msg=invalid.output)
+                self.assertEqual(json.loads(invalid.stdout)["error"]["code"], "INVALID_ARGUMENT")
+
     def test_crawler_batch_commands_send_compact_item_payloads(self) -> None:
         fake_client = _FakeAgentClient(
             {
@@ -1352,6 +1417,40 @@ class CliTests(unittest.TestCase):
         self.assertEqual(full_data["projection"]["mode"], "full")
         self.assertEqual(full_data["items"][0]["message"], long_message)
         self.assertNotIn("/items/0/message", full_data["omitted_paths"])
+
+    def test_summary_projection_compacts_legacy_aliases_and_receipt_snapshots(self) -> None:
+        data = {
+            "items": [{"id": 1, "name": "A"}],
+            "records": [{"id": 1, "name": "A"}],
+            "next_cursor": None,
+            "has_more": False,
+            "mutation_receipt": {
+                "request_id": "req-1",
+                "changed_resources": [
+                    {"id": "1", "after": {"id": 1, "name": "A"}},
+                ],
+            },
+        }
+
+        summary = prepare_result_data(data, command="usage.records")
+        full = prepare_result_data(
+            data,
+            command="usage.records",
+            projection="full",
+        )
+
+        self.assertEqual(summary["items"], [{"id": 1, "name": "A"}])
+        self.assertEqual(summary["records"]["kind"], "array_summary")
+        self.assertEqual(
+            summary["mutation_receipt"]["changed_resources"][0]["after"]["kind"],
+            "object_summary",
+        )
+        self.assertIn("/records", summary["omitted_paths"])
+        self.assertEqual(full["records"], data["records"])
+        self.assertEqual(
+            full["mutation_receipt"]["changed_resources"][0]["after"],
+            {"id": 1, "name": "A"},
+        )
 
     def test_json_and_jsonl_apply_the_same_projection_to_object_results(self) -> None:
         long_body = "完整草稿正文" * 300
@@ -3185,6 +3284,8 @@ class CliTests(unittest.TestCase):
                     "jobs",
                     "approve",
                     "52",
+                    "--selection",
+                    "ids",
                     "--candidate-id",
                     "7",
                     "--candidate-id",
@@ -3289,7 +3390,17 @@ class CliTests(unittest.TestCase):
             fake_client.calls[10][:2],
             ("POST", "/api/agent/v1/crawler/jobs/52/prepare-approve"),
         )
-        self.assertEqual(fake_client.json_bodies[10], {"candidate_ids": [7, 8]})
+        self.assertEqual(
+            fake_client.json_bodies[10],
+            {
+                "selection": {
+                    "mode": "ids",
+                    "ids": [7, 8],
+                    "filter": {},
+                    "exclude_ids": [],
+                },
+            },
+        )
         self.assertEqual(
             fake_client.calls[11][:2],
             ("POST", "/api/agent/v1/crawler/jobs/52/prepare-retry"),

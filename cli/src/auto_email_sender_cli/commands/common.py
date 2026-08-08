@@ -32,6 +32,27 @@ _MAX_STDOUT_ALL_ITEMS = 10_000
 _MAX_STDOUT_ALL_BYTES = 16 * 1024 * 1024
 
 _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
+    "campaigns.list": {
+        "identity_id": "identity_id",
+        "status": "status",
+    },
+    "crawler.jobs.list": {
+        "effective_models": "effective_model_name",
+        "llm_profile_id": "llm_profile_id",
+        "requested_model_name": "requested_model_name",
+        "school": "school",
+        "status": "status",
+        "university": "university",
+    },
+    "enrichment.jobs.list": {
+        "llm_profile_id": "llm_profile_id",
+        "status": "status",
+    },
+    "matching.jobs.list": {
+        "identity_id": "identity_id",
+        "llm_profile_id": "llm_profile_id",
+        "status": "status",
+    },
     "communications.threads.list": {
         "identity_id": "identity_id",
         "professor_id": "professor_id",
@@ -200,6 +221,7 @@ def run_read_command(
         # server's full object and a subsequent ``--if-revision`` write would
         # be rejected even when nobody changed the record.
         data = augment_state_metadata(add_revisions(data), command=command)
+        data = compact_collection_action_metadata(data, command=command)
         data = project_fields(data, fields, command=command)
         data = annotate_collection_limit(
             data,
@@ -684,9 +706,14 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
         if parameter is None:
             continue
         if isinstance(condition, dict):
-            if set(condition) != {"eq"}:
+            allowed_operator = (
+                "contains"
+                if command == "crawler.jobs.list" and field == "effective_models"
+                else "eq"
+            )
+            if set(condition) != {allowed_operator}:
                 continue
-            expected = condition["eq"]
+            expected = condition[allowed_operator]
         else:
             expected = condition
         if expected is None or isinstance(expected, dict | list):
@@ -698,7 +725,7 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
 
 
 def _server_filter_value_is_safe(command: str, field: str, value: object) -> bool:
-    if field in {"identity_id", "professor_id"}:
+    if field in {"identity_id", "llm_profile_id", "professor_id"}:
         return isinstance(value, int) and not isinstance(value, bool) and value > 0
     if field in {"has_sent", "has_reply"}:
         return isinstance(value, bool)
@@ -964,6 +991,81 @@ def augment_state_metadata(data: Any, *, command: str) -> Any:
     if not supports_dynamic_action_links(command):
         return data
     return _augment_state_value(data, command=command)
+
+
+def compact_collection_action_metadata(data: Any, *, command: str) -> Any:
+    """Group repeated lifecycle actions on top-level resource lists."""
+
+    if not command.endswith(".list") or not isinstance(data, dict):
+        return data
+    items = data.get("items")
+    if not isinstance(items, list):
+        return data
+
+    grouped: dict[str, dict[str, object]] = {}
+    compact_items: list[object] = []
+    for item in items:
+        if not isinstance(item, dict):
+            compact_items.append(item)
+            continue
+        resource_id = item.get("id")
+        status = item.get("status")
+        actions = item.get("available_actions")
+        if (
+            isinstance(resource_id, bool)
+            or not isinstance(resource_id, str | int)
+            or not isinstance(status, str)
+            or not isinstance(actions, list)
+        ):
+            compact_items.append(item)
+            continue
+        compact_actions = [
+            {key: value for key, value in action.items() if key != "arguments"}
+            for action in actions
+            if isinstance(action, dict)
+        ]
+        blocked_actions = (
+            item.get("blocked_actions")
+            if isinstance(item.get("blocked_actions"), dict)
+            else {}
+        )
+        signature = json.dumps(
+            {
+                "status": status,
+                "available_actions": compact_actions,
+                "blocked_actions": blocked_actions,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        group = grouped.setdefault(
+            signature,
+            {
+                "status": status,
+                "ids": [],
+                "available_actions": compact_actions,
+                **({"blocked_actions": blocked_actions} if blocked_actions else {}),
+            },
+        )
+        group_ids = group["ids"]
+        assert isinstance(group_ids, list)
+        group_ids.append(resource_id)
+        compact_items.append(
+            {
+                key: value
+                for key, value in item.items()
+                if key not in {"available_actions", "blocked_actions", "blocked_reason"}
+            },
+        )
+
+    if not grouped:
+        return data
+    action_groups = sorted(
+        grouped.values(),
+        key=lambda group: (str(group["status"]), str(group["ids"][0])),
+    )
+    return {**data, "items": compact_items, "action_groups": action_groups}
 
 
 def _augment_state_value(value: Any, *, command: str) -> Any:
@@ -1275,9 +1377,15 @@ def add_mutation_receipt(
             "after": _redact_receipt_value(data),
         },
     ]
+    response_status = (response_headers or {}).get("x-agent-mutation-status")
+    mutation_status = (
+        response_status
+        if response_status in {"pending", "applied", "replayed"}
+        else "applied"
+    )
     receipt: dict[str, object] = {
         "request_id": request_id,
-        "status": "applied",
+        "status": mutation_status,
         "changed_resources": changed_resources,
         "warnings": [],
         "audit_reference": (response_headers or {}).get("x-audit-reference") or request_id,
@@ -1285,6 +1393,9 @@ def add_mutation_receipt(
     header_receipt = (response_headers or {}).get("x-agent-mutation-receipt")
     if header_receipt:
         receipt["backend_receipt_id"] = header_receipt
+    header_command = (response_headers or {}).get("x-agent-mutation-command")
+    if header_command:
+        receipt["backend_command"] = header_command
     return {**data, "mutation_receipt": receipt}
 
 

@@ -216,7 +216,7 @@ def _crawler_target(
     if action == "retry":
         return "crawler.jobs.retry", arguments, [], "invoke"
     if action == "approve":
-        return "crawler.jobs.approve", arguments, ["candidate_ids"], "invoke"
+        return "crawler.jobs.approve", arguments, ["selection_mode"], "invoke"
     if action == "enrich":
         return "crawler.jobs.enrich", arguments, ["selection_mode"], "invoke"
     return None
@@ -240,7 +240,7 @@ def _campaign_target(
             return "campaigns.items", campaign_arguments, [], "invoke"
         return "campaigns.get", campaign_arguments, [], "invoke"
     if action == "wait":
-        return "wait", {"resource": "campaigns", "resource_id": campaign_id}, [], "invoke"
+        return "wait", {"resource": "campaigns", "resource_id": [campaign_id]}, [], "invoke"
     if action == "start-drafts":
         if item_id is not None:
             return None

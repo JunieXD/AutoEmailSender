@@ -227,6 +227,28 @@ class AgentApiClientTests(unittest.TestCase):
         timeout = transport.requests[0].extensions["timeout"]
         self.assertTrue(all(value == 0.25 for value in timeout.values()))
 
+    def test_success_records_mutation_status_and_command_headers(self) -> None:
+        http_client, _ = _http_client(
+            httpx.Response(
+                200,
+                json={"id": 7},
+                headers={
+                    "X-Agent-Mutation-Receipt": "receipt-7",
+                    "X-Agent-Mutation-Status": "replayed",
+                    "X-Agent-Mutation-Command": "crawler.jobs.create",
+                },
+            ),
+        )
+        client = AgentApiClient(_descriptor(), http_client=http_client)
+
+        client.request("POST", "/api/jobs", idempotency_key="request-7")
+
+        self.assertEqual(client.last_response_headers["x-agent-mutation-status"], "replayed")
+        self.assertEqual(
+            client.last_response_headers["x-agent-mutation-command"],
+            "crawler.jobs.create",
+        )
+
     def test_multi_page_fetch_reuses_the_same_http_client(self) -> None:
         http_client, transport = _http_client(
             httpx.Response(
