@@ -205,17 +205,41 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--force-full");
     expect(hostRunner).toContain("skipping Git bundle transfer");
     expect(hostRunner).toContain("Creating incremental Git bundle");
+    expect(hostRunner).toContain('-PreviousRevision "$guest_revision"');
     expect(guestRunner).toContain("[switch]$ForceFull");
     expect(guestRunner).toContain("[string]$ExpectedRevision");
+    expect(guestRunner).toContain("[string]$PreviousRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");
     expect(guestRunner).toContain("Test-VerifiedStage");
+    expect(guestRunner).toContain("Import-LegacyVerifiedStage");
     expect(guestRunner).toContain("toolchainFingerprint");
+    expect(guestRunner).toContain("Stop-StaleQaCheckoutProcesses");
+    expect(guestRunner).toContain('Test-VerifiedStage -Name "backend-suite"');
+    expect(guestRunner).toContain(
+      'Test-VerifiedStage -Name "backend-release-contracts"',
+    );
+    expect(guestRunner).toContain("test.test_backend_build_script");
     expect(guestRunner).toContain('Invoke-QaStep "Windows installer build"');
     expect(guestRunner).toContain(
       'Invoke-QaStep "Packaged runtime identity and stale-process lifecycle"',
     );
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "installer"');
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "runtime-lifecycle"');
+  });
+
+  it("fails Windows frozen builds before stale outputs can be verified", () => {
+    for (const [scriptName, buildAssertion, executableMarker] of [
+      ["build-backend.ps1", 'Assert-NativeSuccess "backend PyInstaller build"', "$PackagedBackendExe ="],
+      ["build-cli.ps1", 'Assert-NativeSuccess "CLI PyInstaller build"', "$CliExecutable ="],
+    ] as const) {
+      const script = readFileSync(
+        path.resolve("..", "scripts", "build", scriptName),
+        "utf8",
+      );
+      expect(script).toContain("Remove-CleanBuildDirectory");
+      expect(script.indexOf(buildAssertion)).toBeGreaterThan(-1);
+      expect(script.indexOf(buildAssertion)).toBeLessThan(script.indexOf(executableMarker));
+    }
   });
 
   it("keeps app data cleanup as an opt-in uninstall section", () => {

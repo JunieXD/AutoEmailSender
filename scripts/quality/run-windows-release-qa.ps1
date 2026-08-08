@@ -4,6 +4,8 @@ param(
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[0-9a-fA-F]{40}$')]
   [string]$ExpectedRevision,
+  [ValidatePattern('^$|^[0-9a-fA-F]{40}$')]
+  [string]$PreviousRevision = "",
   [switch]$ForceFull,
   [switch]$SkipRuntimeLifecycle
 )
@@ -94,6 +96,30 @@ function Stop-QaDesktopTree {
   }
 }
 
+function Stop-StaleQaCheckoutProcesses {
+  param([Parameter(Mandatory = $true)][string]$RootPath)
+
+  $checkoutPrefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd("\") + "\"
+  $staleProcesses = @(
+    Get-CimInstance Win32_Process | Where-Object {
+      $_.ExecutablePath -and
+      $_.ExecutablePath.StartsWith($checkoutPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+  )
+  if ($staleProcesses.Count -eq 0) {
+    Write-Host "No stale process is running from the dedicated QA checkout."
+    return
+  }
+
+  foreach ($process in $staleProcesses) {
+    Write-Host "Stopping stale QA process $($process.Name) ($($process.ProcessId)): $($process.ExecutablePath)"
+    & taskkill.exe /PID $process.ProcessId /T /F | Out-Host
+    if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue)) {
+      throw "Unable to stop stale QA process $($process.ProcessId)."
+    }
+  }
+}
+
 function Get-StringSha256 {
   param([Parameter(Mandatory = $true)][string]$Value)
 
@@ -109,13 +135,14 @@ function Get-StringSha256 {
 function Get-StageFingerprint {
   param(
     [Parameter(Mandatory = $true)][string[]]$Paths,
-    [string[]]$AdditionalValues = @()
+    [string[]]$AdditionalValues = @(),
+    [string]$Revision = "HEAD"
   )
 
   $parts = New-Object System.Collections.Generic.List[string]
   foreach ($path in $Paths) {
     $gitPath = $path.Replace("\", "/")
-    $treeId = (& git -C $CheckoutPath rev-parse "HEAD:$gitPath" 2>$null | Out-String).Trim()
+    $treeId = (& git -C $CheckoutPath rev-parse "${Revision}:$gitPath" 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $treeId) {
       $treeId = "missing"
     }
@@ -160,6 +187,44 @@ function Save-VerifiedStage {
   $temporaryPath = "$($script:QaCachePath).tmp"
   $script:VerifiedStages | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $temporaryPath
   Move-Item -Force -LiteralPath $temporaryPath -Destination $script:QaCachePath
+}
+
+function Import-LegacyVerifiedStage {
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$LegacyName,
+    [Parameter(Mandatory = $true)][string[]]$LegacyPaths,
+    [Parameter(Mandatory = $true)][string[]]$CurrentContentPaths,
+    [Parameter(Mandatory = $true)][string[]]$LegacyAdditionalValues,
+    [Parameter(Mandatory = $true)][string]$CurrentFingerprint,
+    [string[]]$RequiredPaths = @()
+  )
+
+  if ($ForceFull -or -not $PreviousRevision -or -not $script:VerifiedStages.ContainsKey($LegacyName)) {
+    return $false
+  }
+  foreach ($path in $RequiredPaths) {
+    if (-not (Test-Path -LiteralPath $path)) {
+      return $false
+    }
+  }
+
+  $legacyFingerprint = Get-StageFingerprint `
+    -Paths $LegacyPaths `
+    -AdditionalValues $LegacyAdditionalValues `
+    -Revision $PreviousRevision
+  if ([string]$script:VerifiedStages[$LegacyName] -ne $legacyFingerprint) {
+    return $false
+  }
+  $currentContentFingerprint = Get-StageFingerprint -Paths $CurrentContentPaths
+  $previousContentFingerprint = Get-StageFingerprint -Paths $CurrentContentPaths -Revision $PreviousRevision
+  if ($currentContentFingerprint -ne $previousContentFingerprint) {
+    return $false
+  }
+
+  Write-Host "[reuse] Migrating verified $LegacyName from unchanged inputs at $PreviousRevision."
+  Save-VerifiedStage -Name $Name -Fingerprint $CurrentFingerprint
+  return $true
 }
 
 if ($env:OS -ne "Windows_NT") {
@@ -228,6 +293,7 @@ if ($revision -ne $ExpectedRevision) {
   throw "Windows checkout revision $revision does not match expected revision $ExpectedRevision."
 }
 Write-Host "Testing committed revision $revision"
+Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
 
 $gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
 $script:QaCacheDirectory = Join-Path $gitDirectory "auto-email-sender-windows-qa"
@@ -251,10 +317,24 @@ Invoke-QaStep "Windows packaging prerequisites" {
 }
 
 $qaRunnerInput = "scripts/quality/run-windows-release-qa.ps1"
-$frontendFingerprint = Get-StageFingerprint -Paths @("frontend", $qaRunnerInput) -AdditionalValues @($toolchainFingerprint)
+$frontendFingerprint = Get-StageFingerprint -Paths @("frontend") -AdditionalValues @(
+  $toolchainFingerprint,
+  "command=npm ci; native binding check; npm run build"
+)
 $frontendDist = Join-Path $CheckoutPath "frontend\dist\index.html"
 $frontendNodeModules = Join-Path $CheckoutPath "frontend\node_modules"
-if (-not (Test-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint -RequiredPaths @($frontendDist, $frontendNodeModules))) {
+$frontendVerified = Test-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint -RequiredPaths @($frontendDist, $frontendNodeModules)
+if (-not $frontendVerified) {
+  $frontendVerified = Import-LegacyVerifiedStage `
+    -Name "frontend" `
+    -LegacyName "frontend" `
+    -LegacyPaths @("frontend", $qaRunnerInput) `
+    -CurrentContentPaths @("frontend") `
+    -LegacyAdditionalValues @($toolchainFingerprint) `
+    -CurrentFingerprint $frontendFingerprint `
+    -RequiredPaths @($frontendDist, $frontendNodeModules)
+}
+if (-not $frontendVerified) {
   Invoke-QaStep "Frontend clean install and production build" {
     Push-Location (Join-Path $CheckoutPath "frontend")
     try {
@@ -271,10 +351,31 @@ if (-not (Test-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint 
   Save-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint
 }
 
-$cliInputs = @("cli", "scripts/build/build-cli.ps1", "scripts/build/generate_cli_build_identity.py", "scripts/build/verify_cli_binary.py", $qaRunnerInput)
-$cliTestFingerprint = Get-StageFingerprint -Paths $cliInputs -AdditionalValues @($toolchainFingerprint)
+$cliBuildInputs = @("cli", "scripts/build/build-cli.ps1", "scripts/build/generate_cli_build_identity.py", "scripts/build/verify_cli_binary.py")
+$cliTestFingerprint = Get-StageFingerprint -Paths @("cli") -AdditionalValues @(
+  $toolchainFingerprint,
+  "command=python -m unittest discover test"
+)
+$cliContractFingerprint = Get-StageFingerprint -Paths @(
+  "cli/test/test_build_scripts.py",
+  "scripts/build/build-cli.ps1",
+  "scripts/build/generate_cli_build_identity.py",
+  "scripts/build/verify_cli_binary.py"
+) -AdditionalValues @($toolchainFingerprint, "command=test.test_build_scripts")
 $cliEnvironment = Join-Path $CheckoutPath "cli\.venv\Scripts\python.exe"
-if (-not (Test-VerifiedStage -Name "cli-tests" -Fingerprint $cliTestFingerprint -RequiredPaths @($cliEnvironment))) {
+$cliSuiteVerified = Test-VerifiedStage -Name "cli-suite" -Fingerprint $cliTestFingerprint -RequiredPaths @($cliEnvironment)
+if (-not $cliSuiteVerified) {
+  $cliSuiteVerified = Import-LegacyVerifiedStage `
+    -Name "cli-suite" `
+    -LegacyName "cli-tests" `
+    -LegacyPaths @($cliBuildInputs + $qaRunnerInput) `
+    -CurrentContentPaths @("cli") `
+    -LegacyAdditionalValues @($toolchainFingerprint) `
+    -CurrentFingerprint $cliTestFingerprint `
+    -RequiredPaths @($cliEnvironment)
+}
+$cliSuiteRan = $false
+if (-not $cliSuiteVerified) {
   Invoke-QaStep "Agent CLI dependency sync and tests" {
     Push-Location (Join-Path $CheckoutPath "cli")
     try {
@@ -286,10 +387,25 @@ if (-not (Test-VerifiedStage -Name "cli-tests" -Fingerprint $cliTestFingerprint 
       Pop-Location
     }
   }
-  Save-VerifiedStage -Name "cli-tests" -Fingerprint $cliTestFingerprint
+  Save-VerifiedStage -Name "cli-suite" -Fingerprint $cliTestFingerprint
+  $cliSuiteRan = $true
+}
+if ($cliSuiteRan) {
+  Save-VerifiedStage -Name "cli-build-contracts" -Fingerprint $cliContractFingerprint
+} elseif (-not (Test-VerifiedStage -Name "cli-build-contracts" -Fingerprint $cliContractFingerprint -RequiredPaths @($cliEnvironment))) {
+  Invoke-QaStep "Agent CLI build contract tests" {
+    Push-Location (Join-Path $CheckoutPath "cli")
+    try {
+      & uv run --no-sync python -m unittest test.test_build_scripts
+      Assert-NativeSuccess "CLI build contract tests"
+    } finally {
+      Pop-Location
+    }
+  }
+  Save-VerifiedStage -Name "cli-build-contracts" -Fingerprint $cliContractFingerprint
 }
 
-$cliBuildFingerprint = Get-StageFingerprint -Paths $cliInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
+$cliBuildFingerprint = Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
 $cliExecutable = Join-Path $CheckoutPath "cli\dist\auto-email-sender\auto-email-sender.exe"
 if (-not (Test-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint -RequiredPaths @($cliExecutable))) {
   Invoke-QaStep "Agent CLI frozen build" {
@@ -298,10 +414,37 @@ if (-not (Test-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint
   Save-VerifiedStage -Name "cli-build" -Fingerprint $cliBuildFingerprint
 }
 
-$backendTestInputs = @("backend", "scripts/build", "scripts/packaging", ".agents/skills", ".claude/skills", ".codex/skills", $qaRunnerInput)
-$backendTestFingerprint = Get-StageFingerprint -Paths $backendTestInputs -AdditionalValues @($toolchainFingerprint)
 $backendEnvironment = Join-Path $CheckoutPath "backend\.venv\Scripts\python.exe"
-if (-not (Test-VerifiedStage -Name "backend-tests" -Fingerprint $backendTestFingerprint -RequiredPaths @($backendEnvironment))) {
+$backendSuiteFingerprint = Get-StageFingerprint -Paths @("backend") -AdditionalValues @(
+  $toolchainFingerprint,
+  "command=python -m unittest discover test"
+)
+$backendContractInputs = @(
+  "backend/test/test_backend_build_script.py",
+  "backend/test/test_crawl_mentors_skill_contract.py",
+  "backend/test/test_crawl_mentors_skill_package.py",
+  "scripts/build",
+  "scripts/packaging",
+  ".agents/skills",
+  ".claude/skills"
+)
+$backendContractFingerprint = Get-StageFingerprint -Paths $backendContractInputs -AdditionalValues @(
+  $toolchainFingerprint,
+  "command=release packaging contract tests"
+)
+$backendSuiteRan = $false
+$backendSuiteVerified = Test-VerifiedStage -Name "backend-suite" -Fingerprint $backendSuiteFingerprint -RequiredPaths @($backendEnvironment)
+if (-not $backendSuiteVerified) {
+  $backendSuiteVerified = Import-LegacyVerifiedStage `
+    -Name "backend-suite" `
+    -LegacyName "backend-tests" `
+    -LegacyPaths @("backend", "scripts/build", "scripts/packaging", ".agents/skills", ".claude/skills", ".codex/skills", $qaRunnerInput) `
+    -CurrentContentPaths @("backend") `
+    -LegacyAdditionalValues @($toolchainFingerprint) `
+    -CurrentFingerprint $backendSuiteFingerprint `
+    -RequiredPaths @($backendEnvironment)
+}
+if (-not $backendSuiteVerified) {
   Invoke-QaStep "Backend dependency sync and tests" {
     Push-Location (Join-Path $CheckoutPath "backend")
     try {
@@ -313,7 +456,27 @@ if (-not (Test-VerifiedStage -Name "backend-tests" -Fingerprint $backendTestFing
       Pop-Location
     }
   }
-  Save-VerifiedStage -Name "backend-tests" -Fingerprint $backendTestFingerprint
+  Save-VerifiedStage -Name "backend-suite" -Fingerprint $backendSuiteFingerprint
+  $backendSuiteRan = $true
+}
+
+if ($backendSuiteRan) {
+  # The full discovery above includes these release-specific contract modules.
+  Save-VerifiedStage -Name "backend-release-contracts" -Fingerprint $backendContractFingerprint
+} elseif (-not (Test-VerifiedStage -Name "backend-release-contracts" -Fingerprint $backendContractFingerprint -RequiredPaths @($backendEnvironment))) {
+  Invoke-QaStep "Backend release packaging contract tests" {
+    Push-Location (Join-Path $CheckoutPath "backend")
+    try {
+      & uv run --no-sync python -m unittest `
+        test.test_backend_build_script `
+        test.test_crawl_mentors_skill_contract `
+        test.test_crawl_mentors_skill_package
+      Assert-NativeSuccess "backend release packaging contract tests"
+    } finally {
+      Pop-Location
+    }
+  }
+  Save-VerifiedStage -Name "backend-release-contracts" -Fingerprint $backendContractFingerprint
 }
 
 $backendBuildInputs = @("backend", "scripts/build/build-backend.ps1", "scripts/build/pyinstaller-hooks", $qaRunnerInput)

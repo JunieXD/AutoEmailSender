@@ -95,6 +95,9 @@ guest_args=(
 if [[ -f "$bundle_path" ]]; then
   guest_args+=(-BundlePath "Z:/Desktop/$bundle_name")
 fi
+if [[ -n "$guest_revision" && "$guest_revision" != "$target_revision" ]]; then
+  guest_args+=(-PreviousRevision "$guest_revision")
+fi
 if ((force_full)); then
   guest_args+=(-ForceFull)
 fi

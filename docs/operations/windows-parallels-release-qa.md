@@ -38,7 +38,7 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh
 
 宿主脚本会确认 VM，并让 Windows 更新本地 NTFS checkout：首次运行传输完整 Git bundle，已有基线时只传增量对象，目标提交已经存在时不再传 bundle。随后运行需要更新的依赖与发布构建阶段并删除临时传输文件。Windows checkout 有 tracked 修改时会安全停止，不会执行 `reset --hard`。
 
-VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；任何相关文件或工具版本变化都会自动重跑对应阶段。NSIS 安装器和打包后的运行时生命周期每次都重新构建、重新验证，不使用阶段缓存。需要排查缓存或周期性做全新基线时运行：
+VM 会按 Git tree 内容、Node/npm/uv/Python 工具链和必需输出记录已成功阶段。输入完全一致时，后续候选可复用前端构建、CLI/后端测试与冻结包、桌面依赖和测试；后端全套测试只在 `backend/**` 或工具链变化时重跑，打包脚本和仓库 Skill 变化只重跑对应的聚焦契约测试。任何相关文件或工具版本变化都会自动重跑对应阶段。NSIS 安装器和打包后的运行时生命周期每次都重新构建、重新验证，不使用阶段缓存。需要排查缓存或周期性做全新基线时运行：
 
 ```bash
 rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
@@ -46,7 +46,7 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh --force-full
 
 `--force-full` 只忽略阶段验证记录；`npm ci` 仍使用 npm 下载缓存，Playwright Chromium 按锁定版本保存在专用 QA checkout 中并由安装命令重新核对，不再为每个提交强制下载同一个浏览器。
 
-Windows 侧执行：
+Windows 侧会先结束可执行路径位于专用 QA checkout 内的残留应用进程，避免上一次中止的验收锁住冻结包；不会按进程名清理 checkout 外的程序。随后执行：
 
 1. 先下载并校验微软签名的 VC++ x64 Runtime，使环境或 PowerShell 模块问题在昂贵测试前失败；
 2. 前端 `npm ci`、Rolldown 当前架构原生绑定检查和 Vite 生产构建；
