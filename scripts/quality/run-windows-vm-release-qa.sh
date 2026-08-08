@@ -49,6 +49,6 @@ prlctl exec "$vm_name" --current-user powershell.exe \
   -NoLogo \
   -NoProfile \
   -ExecutionPolicy Bypass \
-  -File "Z:\Desktop\$runner_name" \
-  -BundlePath "Z:\Desktop\$bundle_name" \
+  -File "Z:/Desktop/$runner_name" \
+  -BundlePath "Z:/Desktop/$bundle_name" \
   -CheckoutPath "$guest_checkout"
