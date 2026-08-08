@@ -901,6 +901,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
         expired = datetime.now(UTC) - timedelta(seconds=1)
         active_until = datetime.now(UTC) + timedelta(seconds=60)
         async with self.session_factory() as session:
+            session.add(AppSetting(id=1, crawler_worker_count=2))
             session.add(
                 CrawlPageTask(
                     job_id=job_id,
