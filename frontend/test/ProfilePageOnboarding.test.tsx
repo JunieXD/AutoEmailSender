@@ -107,8 +107,7 @@ vi.mock("@/lib/api/outreachTemplates", () => ({
 
 vi.mock("@/lib/api/materials", () => ({
   deleteMaterial: vi.fn(),
-  getMaterialDownloadUrl: vi.fn(),
-  getMaterialOpenUrl: vi.fn(),
+  downloadMaterial: vi.fn(),
   setPrimaryMaterial: vi.fn(),
   uploadIdentityMaterial: vi.fn(),
 }));

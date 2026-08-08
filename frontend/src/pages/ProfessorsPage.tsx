@@ -82,9 +82,9 @@ import {
   createProfessor,
   createProfessorTag,
   deleteProfessorTag,
-  getProfessorExportDownloadUrl,
+  downloadProfessorExport,
+  downloadProfessorTemplate,
   getProfessor,
-  getProfessorTemplateDownloadUrl,
   importProfessorsFromFile,
   getProfessorTagUsage,
   listProfessorTags,
@@ -495,14 +495,6 @@ const UrlInputField = ({
       </div>
     </div>
   );
-};
-
-const triggerDownload = (url: string) => {
-  const link = document.createElement("a");
-  link.href = url;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
 };
 
 const triggerBlobDownload = (blob: Blob, filename: string) => {
@@ -1857,12 +1849,28 @@ export const ProfessorsPage = () => {
     }
   };
 
-  const handleDownloadTemplate = (format: "xlsx" | "csv") => {
-    triggerDownload(getProfessorTemplateDownloadUrl(format));
+  const handleDownloadTemplate = async (format: "xlsx" | "csv") => {
+    try {
+      const blob = await downloadProfessorTemplate(format);
+      triggerBlobDownload(blob, `professors_import_template.${format}`);
+    } catch (downloadError) {
+      notifyError(
+        "下载导入模板失败",
+        getActionErrorMessage(downloadError, "下载导入模板失败"),
+      );
+    }
   };
 
-  const handleDownloadExport = (format: "xlsx" | "csv") => {
-    triggerDownload(getProfessorExportDownloadUrl(format));
+  const handleDownloadExport = async (format: "xlsx" | "csv") => {
+    try {
+      const blob = await downloadProfessorExport(format);
+      triggerBlobDownload(blob, `professors_export.${format}`);
+    } catch (downloadError) {
+      notifyError(
+        "导出导师信息失败",
+        getActionErrorMessage(downloadError, "导出导师信息失败"),
+      );
+    }
   };
 
   const handleChooseImportFile = (event: ChangeEvent<HTMLInputElement>) => {

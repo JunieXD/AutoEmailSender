@@ -81,6 +81,13 @@ describe("api client", () => {
   it("throws ApiError with backend detail, message, text, or fallback error messages", async () => {
     const cases = [
       [new Response(JSON.stringify({ detail: "未找到身份配置" }), { status: 404 }), "未找到身份配置"],
+      [
+        new Response(
+          JSON.stringify({ error: { code: "AUTH_REQUIRED", message: "此本地接口需要访问令牌。" } }),
+          { status: 401 },
+        ),
+        "此本地接口需要访问令牌。",
+      ],
       [new Response(JSON.stringify({ message: "模型不可用" }), { status: 400 }), "模型不可用"],
       [new Response("服务暂不可用", { status: 503 }), "服务暂不可用"],
       [new Response("", { status: 500 }), "请求失败"],

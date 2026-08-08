@@ -41,6 +41,7 @@ const jsdomTestFiles = [
   "src/**/*.test.tsx",
   "test/**/*.test.tsx",
   "src/lib/api/client.test.ts",
+  "test/ProtectedDownloadsApi.test.ts",
   "src/lib/desktopApi.test.ts",
   "test/apiClient.test.ts",
   "test/diagnostics.test.ts",

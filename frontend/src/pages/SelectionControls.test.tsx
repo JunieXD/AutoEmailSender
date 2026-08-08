@@ -210,7 +210,8 @@ vi.mock("@/entities/professor/api/professors", () => ({
     },
     professors: [],
   })),
-  getProfessorTemplateDownloadUrl: vi.fn(),
+  downloadProfessorExport: vi.fn(),
+  downloadProfessorTemplate: vi.fn(),
   importProfessorsFromFile: vi.fn(),
   listProfessorTags: vi.fn(async () => [
     {

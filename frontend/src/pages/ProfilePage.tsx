@@ -65,7 +65,7 @@ import {
 } from "@/lib/api/outreachTemplates";
 import {
   deleteMaterial,
-  getMaterialDownloadUrl,
+  downloadMaterial,
   setPrimaryMaterial,
   uploadIdentityMaterial,
 } from "@/lib/api/materials";
@@ -479,12 +479,15 @@ const formatFileSize = (sizeBytes: number) => {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const triggerDownload = (url: string) => {
+const triggerBlobDownload = (blob: Blob, filename: string) => {
+  const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url;
+  link.href = objectUrl;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
+  URL.revokeObjectURL(objectUrl);
 };
 
 const formatDuration = (durationMs: number | null) =>
@@ -1579,6 +1582,7 @@ const MaterialLibraryModal = ({
   onChangeMaterialFilter,
   onUpload,
   onOpen,
+  onDownload,
   onClose,
   onSetPrimary,
   onDelete,
@@ -1595,6 +1599,7 @@ const MaterialLibraryModal = ({
   onChangeMaterialFilter: (value: MaterialFilterValue) => void;
   onUpload: (file: File) => void;
   onOpen: (material: IdentityMaterialDTO) => void;
+  onDownload: (material: IdentityMaterialDTO) => void;
   onClose: () => void;
   onSetPrimary: (material: IdentityMaterialDTO) => void;
   onDelete: (material: IdentityMaterialDTO) => void;
@@ -1774,9 +1779,7 @@ const MaterialLibraryModal = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            triggerDownload(getMaterialDownloadUrl(material.id))
-                          }
+                          onClick={() => onDownload(material)}
                           className="ui-btn-secondary"
                         >
                           <Download className="h-4 w-4" />
@@ -2957,6 +2960,18 @@ export const ProfilePage = () => {
     }
   };
 
+  const handleDownloadMaterial = async (material: IdentityMaterialDTO) => {
+    try {
+      const blob = await downloadMaterial(material.id);
+      triggerBlobDownload(blob, material.original_filename);
+    } catch (downloadError) {
+      notifyError(
+        "下载材料失败",
+        getActionErrorMessage(downloadError, "下载材料失败"),
+      );
+    }
+  };
+
   const handleMaterialUpload = async (file: File) => {
     if (!editingIdentity) {
       return;
@@ -3955,6 +3970,7 @@ export const ProfilePage = () => {
           onChangeMaterialFilter={setMaterialFilter}
           onUpload={(file) => void handleMaterialUpload(file)}
           onOpen={(material) => void handleOpenMaterial(material)}
+          onDownload={(material) => void handleDownloadMaterial(material)}
           onClose={() => setMaterialModalOpen(false)}
           onSetPrimary={(material) => void handleSetPrimaryMaterial(material)}
           onDelete={(material) => void handleDeleteMaterial(material)}

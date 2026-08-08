@@ -1,4 +1,4 @@
-import { apiFetch, buildApiUrl } from '@/lib/api/client';
+import { apiFetch, apiFetchBlob } from '@/lib/api/client';
 import type {
   ProfessorActionResultDTO,
   ProfessorBulkArchivePayloadDTO,
@@ -119,8 +119,8 @@ export const importProfessorsFromFile = async (file: File) => {
   });
 };
 
-export const getProfessorTemplateDownloadUrl = (format: 'xlsx' | 'csv') =>
-  buildApiUrl('/api/professors/template', { format });
+export const downloadProfessorTemplate = (format: 'xlsx' | 'csv') =>
+  apiFetchBlob('/api/professors/template', undefined, { format });
 
-export const getProfessorExportDownloadUrl = (format: 'xlsx' | 'csv') =>
-  buildApiUrl('/api/professors/export', { format });
+export const downloadProfessorExport = (format: 'xlsx' | 'csv') =>
+  apiFetchBlob('/api/professors/export', undefined, { format });

@@ -198,6 +198,19 @@ function getApiErrorMessage(data: unknown): string {
   if (
     typeof data === "object" &&
     data !== null &&
+    "error" in data &&
+    typeof data.error === "object" &&
+    data.error !== null &&
+    "message" in data.error &&
+    typeof data.error.message === "string" &&
+    data.error.message.trim()
+  ) {
+    return data.error.message;
+  }
+
+  if (
+    typeof data === "object" &&
+    data !== null &&
     "message" in data &&
     typeof data.message === "string" &&
     data.message.trim()

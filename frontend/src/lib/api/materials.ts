@@ -1,4 +1,4 @@
-import { apiFetch, buildApiUrl } from '@/lib/api/client';
+import { apiFetch, apiFetchBlob } from '@/lib/api/client';
 import type { IdentityMaterialDTO, IdentityMaterialType } from '@/types';
 
 export const uploadIdentityMaterial = (
@@ -31,7 +31,5 @@ export const deleteMaterial = (materialId: number) =>
     method: 'DELETE',
   });
 
-export const getMaterialOpenUrl = (materialId: number) => buildApiUrl(`/api/materials/${materialId}/open`);
-
-export const getMaterialDownloadUrl = (materialId: number) =>
-  buildApiUrl(`/api/materials/${materialId}/download`);
+export const downloadMaterial = (materialId: number) =>
+  apiFetchBlob(`/api/materials/${materialId}/download`);

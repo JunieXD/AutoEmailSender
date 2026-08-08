@@ -396,8 +396,7 @@
         "uploadIdentityMaterial",
         "setPrimaryMaterial",
         "deleteMaterial",
-        "getMaterialOpenUrl",
-        "getMaterialDownloadUrl"
+        "downloadMaterial"
       ],
       "status": "available",
       "required_capabilities": [
@@ -488,8 +487,8 @@
         "importSampleProfessors",
         "triggerCrawler",
         "importProfessorsFromFile",
-        "getProfessorTemplateDownloadUrl",
-        "getProfessorExportDownloadUrl"
+        "downloadProfessorTemplate",
+        "downloadProfessorExport"
       ],
       "action_overrides": {
         "importSampleProfessors": {
@@ -502,7 +501,7 @@
           "required_capabilities": [],
           "reason": "旧的一键抓取入口没有稳定输入合同；Agent 应使用 crawler.jobs.create。"
         },
-        "getProfessorTemplateDownloadUrl": {
+        "downloadProfessorTemplate": {
           "status": "planned",
           "required_capabilities": [],
           "reason": "CLI 尚未开放空白导入模板下载。"
