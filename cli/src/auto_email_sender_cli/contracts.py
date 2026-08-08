@@ -616,7 +616,7 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "capabilities": frozenset({"catalog_version", "catalog_revision", "build", "scope", "scope_revision", "view", "items", "summary", "cache", "next"}),
     "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "unavailability", "unchanged", "cache", "contract_version", "contract_revision", "resource", "operation", "input", "output", "effects", "trust", "state_transitions", "errors", "next_actions", "idempotency", "lifecycle", "details_available", "details"}),
     "doctor": frozenset({"healthy", "checks", "recommended_action", "repair_command"}),
-    "wait": frozenset({"resource", "id", "status", "terminal", "timed_out", "poll_count", "elapsed_seconds", "result", "available_actions"}),
+    "wait": frozenset({"resource", "id", "status", "state_category", "settled", "terminal", "timed_out", "until", "poll_count", "elapsed_seconds", "result", "available_actions"}),
     "professors.tags.usage": frozenset({"tag", "professors"}),
     "communications.threads.get": frozenset({"id", "identity_id", "identity_name", "identity_email_address", "professor_id", "professor_name", "professor_email", "sent_count", "received_count", "has_sent", "has_reply", "last_message_at", "messages", "messages_next_cursor", "messages_has_more"}),
     "communications.sync": frozenset({"identity_id", "detected_count", "completed_at", "message"}),

@@ -389,6 +389,8 @@ class ContractTests(unittest.TestCase):
         wait = describe_command(app, "wait")
         assert wait is not None
         self.assertIn("elapsed_seconds", wait["output"]["known_fields"])
+        self.assertIn("state_category", wait["output"]["known_fields"])
+        self.assertIn("settled", wait["output"]["known_fields"])
         self.assertEqual(
             wait["output"]["schema"]["properties"]["data"]["properties"]["elapsed_seconds"]["type"],
             ["number", "null"],

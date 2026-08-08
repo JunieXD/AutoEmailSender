@@ -46,6 +46,91 @@ class CliTests(unittest.TestCase):
         self.assertIn(payload["data"]["build_kind"], {"development", "embedded", "override"})
         self.assertNotIn("agent_guide", payload["_meta"])
 
+    def test_wait_stops_when_crawler_needs_review(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/crawler/jobs/52": {"id": 52, "status": "needs_review"}},
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "52",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["state_category"], "attention_required")
+        self.assertTrue(payload["data"]["settled"])
+        self.assertFalse(payload["data"]["terminal"])
+        self.assertFalse(payload["data"]["timed_out"])
+        self.assertEqual(payload["data"]["poll_count"], 1)
+
+    def test_wait_terminal_condition_does_not_treat_review_as_terminal(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/crawler/jobs/52": {"id": 52, "status": "needs_review"}},
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "52",
+                    "--until",
+                    "terminal",
+                    "--timeout-seconds",
+                    "0",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["data"]["settled"])
+        self.assertFalse(payload["data"]["terminal"])
+        self.assertTrue(payload["data"]["timed_out"])
+        self.assertEqual(payload["data"]["until"], "terminal")
+
+    def test_wait_rejects_unknown_stop_condition(self) -> None:
+        result = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "wait",
+                "--resource",
+                "crawler.jobs",
+                "--id",
+                "52",
+                "--until",
+                "unknown",
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"]["code"], "INVALID_WAIT_CONDITION")
+        self.assertEqual(
+            payload["error"]["details"]["available_conditions"],
+            ["settled", "terminal"],
+        )
+
     def test_parser_failures_always_use_the_json_error_envelope(self) -> None:
         cases = (
             (["--format", "json", "professors", "get"], "professors.get"),

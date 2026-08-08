@@ -39,6 +39,12 @@ _TERMINAL_STATES = {
     "draft_failed",
     "reply_detected",
 }
+_ATTENTION_REQUIRED_STATES = {
+    "needs_review",
+    "review_required",
+    "paused",
+}
+_WAIT_CONDITIONS = {"settled", "terminal"}
 
 
 def wait_for_resource(
@@ -59,6 +65,13 @@ def wait_for_resource(
         float,
         typer.Option("--interval-seconds", min=0.1, max=30),
     ] = 1.0,
+    until: Annotated[
+        str,
+        typer.Option(
+            "--until",
+            help="停止条件：settled 表示后台已停止运行，terminal 表示最终结束。",
+        ),
+    ] = "settled",
 ) -> None:
     context = cli_context(ctx)
     command = "wait"
@@ -73,6 +86,14 @@ def wait_for_resource(
         emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code)
     try:
+        normalized_until = until.strip().lower()
+        if normalized_until not in _WAIT_CONDITIONS:
+            raise CliError(
+                code="INVALID_WAIT_CONDITION",
+                message=f"不支持的等待条件：{until}",
+                exit_code=2,
+                details={"available_conditions": sorted(_WAIT_CONDITIONS)},
+            )
         validate_context_options(
             context,
             supports_filter=False,
@@ -88,7 +109,7 @@ def wait_for_resource(
             latest = client.request("GET", route.format(id=resource_id))
             polls += 1
             status_value = _status(latest)
-            if status_value in _TERMINAL_STATES:
+            if _wait_condition_met(status_value, normalized_until):
                 break
             elapsed = time.monotonic() - started
             if elapsed >= timeout_seconds:
@@ -96,12 +117,18 @@ def wait_for_resource(
                 break
             time.sleep(min(interval_seconds, max(0.0, timeout_seconds - elapsed)))
         status_value = _status(latest)
+        state_category = _state_category(status_value)
+        terminal = state_category == "terminal"
+        settled = state_category in {"attention_required", "terminal"}
         data = {
             "resource": resource,
             "id": resource_id,
             "status": status_value,
-            "terminal": not timed_out and status_value in _TERMINAL_STATES,
+            "state_category": state_category,
+            "settled": settled,
+            "terminal": terminal,
             "timed_out": timed_out,
+            "until": normalized_until,
             "poll_count": polls,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "result": latest,
@@ -131,6 +158,23 @@ def _status(value: object) -> str | None:
         if isinstance(nested, dict) and isinstance(nested.get("status"), str):
             return str(nested["status"]).lower()
     return None
+
+
+def _state_category(status_value: str | None) -> str:
+    if status_value in _TERMINAL_STATES:
+        return "terminal"
+    if status_value in _ATTENTION_REQUIRED_STATES:
+        return "attention_required"
+    if status_value is None:
+        return "unknown"
+    return "active"
+
+
+def _wait_condition_met(status_value: str | None, until: str) -> bool:
+    category = _state_category(status_value)
+    if until == "terminal":
+        return category == "terminal"
+    return category in {"attention_required", "terminal"}
 
 
 def _available_actions(

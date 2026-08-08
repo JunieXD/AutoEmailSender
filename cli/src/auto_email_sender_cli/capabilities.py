@@ -463,7 +463,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         external_action=True,
     ),
-    Capability("wait", "等待已运行的后台任务进入终态，不会启动桌面应用", "L0", "available", long_running=True),
+    Capability("wait", "等待已运行的后台任务停止运行或进入终态，不会启动桌面应用", "L0", "available", long_running=True),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
     Capability("professors.get", "按 ID 读取导师完整档案", "L0", "available"),
     Capability("professors.tags.list", "读取导师标签", "L0", "available"),
