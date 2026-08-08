@@ -270,6 +270,7 @@ async def list_professor_information_enrichment_jobs(
     session: AsyncSession,
     *,
     view: str,
+    offset: int = 0,
     limit: int = 50,
 ) -> list[ProfessorInformationEnrichmentJobRead]:
     statement = (
@@ -280,6 +281,7 @@ async def list_professor_information_enrichment_jobs(
             CrawlJob.task_center_visible.is_(True),
         )
         .order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
+        .offset(offset)
         .limit(limit)
     )
     if view == "current":
@@ -289,7 +291,7 @@ async def list_professor_information_enrichment_jobs(
     else:
         raise ValueError("未知任务视图")
     jobs = list(await session.scalars(statement))
-    return [await serialize_professor_information_enrichment_job(session, job) for job in jobs]
+    return await _serialize_professor_information_enrichment_jobs(session, jobs)
 
 
 async def get_professor_information_enrichment_job(
@@ -330,28 +332,115 @@ async def serialize_professor_information_enrichment_job(
     session: AsyncSession,
     job: CrawlJob,
 ) -> ProfessorInformationEnrichmentJobRead:
-    task_rows = list(
-        (
-            await session.execute(
-                select(
-                    CrawlCandidateEnrichmentTask.status,
-                    CrawlCandidateEnrichmentTask.skip_reason,
-                ).where(CrawlCandidateEnrichmentTask.job_id == job.id)
+    serialized = await _serialize_professor_information_enrichment_jobs(session, [job])
+    return serialized[0]
+
+
+async def _serialize_professor_information_enrichment_jobs(
+    session: AsyncSession,
+    jobs: list[CrawlJob],
+) -> list[ProfessorInformationEnrichmentJobRead]:
+    if not jobs:
+        return []
+
+    job_ids = [job.id for job in jobs]
+    aggregate_rows = (
+        await session.execute(
+            select(
+                CrawlCandidateEnrichmentTask.job_id,
+                CrawlCandidateEnrichmentTask.status,
+                CrawlCandidateEnrichmentTask.skip_reason,
+                func.count(CrawlCandidateEnrichmentTask.id).label("task_count"),
             )
-        ).all()
-    )
-    counts = Counter(row.status for row in task_rows)
-    skip_reason_counts: Counter[str] = Counter()
-    skip_reason_definitions: dict[str, InformationEnrichmentSkipReason] = {}
-    for row in task_rows:
+            .where(CrawlCandidateEnrichmentTask.job_id.in_(job_ids))
+            .group_by(
+                CrawlCandidateEnrichmentTask.job_id,
+                CrawlCandidateEnrichmentTask.status,
+                CrawlCandidateEnrichmentTask.skip_reason,
+            )
+        )
+    ).all()
+    counts_by_job: dict[int, Counter[str]] = {
+        job_id: Counter() for job_id in job_ids
+    }
+    skip_counts_by_job: dict[int, Counter[str]] = {
+        job_id: Counter() for job_id in job_ids
+    }
+    skip_definitions_by_job: dict[
+        int,
+        dict[str, InformationEnrichmentSkipReason],
+    ] = {job_id: {} for job_id in job_ids}
+    for row in aggregate_rows:
+        task_count = int(row.task_count)
+        counts_by_job[row.job_id][row.status] += task_count
         if row.status != CrawlCandidateEnrichmentTaskStatus.SKIPPED.value:
             continue
         reason = (
             resolve_information_enrichment_skip_reason(row.skip_reason)
             or UNCLASSIFIED_SKIP_REASON
         )
-        skip_reason_counts[reason.code] += 1
-        skip_reason_definitions[reason.code] = reason
+        skip_counts_by_job[row.job_id][reason.code] += task_count
+        skip_definitions_by_job[row.job_id][reason.code] = reason
+
+    failed_status = CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
+    failed_job_ids = [
+        job.id
+        for job in jobs
+        if not job.error_message and counts_by_job[job.id][failed_status]
+    ]
+    latest_errors_by_job: dict[int, str] = {}
+    if failed_job_ids:
+        row_number = func.row_number().over(
+            partition_by=CrawlCandidateEnrichmentTask.job_id,
+            order_by=(
+                CrawlCandidateEnrichmentTask.updated_at.desc(),
+                CrawlCandidateEnrichmentTask.id.desc(),
+            ),
+        ).label("row_number")
+        ranked_errors = (
+            select(
+                CrawlCandidateEnrichmentTask.job_id.label("job_id"),
+                CrawlCandidateEnrichmentTask.last_error.label("last_error"),
+                row_number,
+            )
+            .where(
+                CrawlCandidateEnrichmentTask.job_id.in_(failed_job_ids),
+                CrawlCandidateEnrichmentTask.status == failed_status,
+                CrawlCandidateEnrichmentTask.last_error.is_not(None),
+            )
+            .subquery()
+        )
+        error_rows = (
+            await session.execute(
+                select(ranked_errors.c.job_id, ranked_errors.c.last_error).where(
+                    ranked_errors.c.row_number == 1,
+                )
+            )
+        ).all()
+        latest_errors_by_job = {
+            int(row.job_id): str(row.last_error) for row in error_rows
+        }
+
+    return [
+        _build_professor_information_enrichment_job_read(
+            job,
+            counts=counts_by_job[job.id],
+            skip_reason_counts=skip_counts_by_job[job.id],
+            skip_reason_definitions=skip_definitions_by_job[job.id],
+            latest_task_error=latest_errors_by_job.get(job.id),
+        )
+        for job in jobs
+    ]
+
+
+def _build_professor_information_enrichment_job_read(
+    job: CrawlJob,
+    *,
+    counts: Counter[str],
+    skip_reason_counts: Counter[str],
+    skip_reason_definitions: dict[str, InformationEnrichmentSkipReason],
+    latest_task_error: str | None,
+) -> ProfessorInformationEnrichmentJobRead:
     queued_count = counts[CrawlCandidateEnrichmentTaskStatus.PENDING.value] + counts[
         CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
     ]
@@ -364,22 +453,7 @@ async def serialize_professor_information_enrichment_job(
     target_count = sum(counts.values())
     metrics = build_crawl_job_metrics(job)
     current_run = job.current_run
-    last_error = job.error_message
-    if not last_error and failed_count:
-        last_error = await session.scalar(
-            select(CrawlCandidateEnrichmentTask.last_error)
-            .where(
-                CrawlCandidateEnrichmentTask.job_id == job.id,
-                CrawlCandidateEnrichmentTask.status
-                == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
-                CrawlCandidateEnrichmentTask.last_error.is_not(None),
-            )
-            .order_by(
-                CrawlCandidateEnrichmentTask.updated_at.desc(),
-                CrawlCandidateEnrichmentTask.id.desc(),
-            )
-            .limit(1)
-        )
+    last_error = job.error_message or latest_task_error
     return ProfessorInformationEnrichmentJobRead(
         id=job.id,
         name=job.display_name or f"信息补全 #{job.id}",

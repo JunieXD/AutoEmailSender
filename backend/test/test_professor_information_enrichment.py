@@ -398,6 +398,50 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token_records.records[0].feature_type, "information_enrichment")
         self.assertEqual(token_records.records[0].title, "并发编辑导师 · 信息补全")
 
+    async def test_worker_marks_no_new_information_as_skipped(self) -> None:
+        professor_id = await self._create_professor(
+            name="无新增资料导师",
+            email="existing@example.edu",
+            profile_url="https://example.edu/no-new-information",
+        )
+        job_id = await create_professor_information_enrichment_job(
+            self.session_factory,
+            professor_ids=[professor_id],
+            llm_profile_id=self.llm_profile_id,
+            trigger_mode="single",
+        )
+        task_id = await self._claim_only_task(job_id)
+        payload = CandidateEnrichmentPayload(
+            email=None,
+            title=None,
+            department=None,
+            research_direction=None,
+            recent_papers=[],
+        )
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(return_value=(payload, None)),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="test-worker",
+            )
+        self.assertEqual(processed, 1)
+
+        async with self.session_factory() as session:
+            await finalize_idle_jobs(session)
+            await session.commit()
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            job_read = await get_professor_information_enrichment_job(session, job_id)
+
+        assert task is not None and job_read is not None
+        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
+        self.assertEqual(task.skip_reason, "个人主页未提供可补全的新信息")
+        self.assertEqual(job_read.succeeded_count, 0)
+        self.assertEqual(job_read.skipped_count, 1)
+        self.assertEqual(job_read.skip_reasons[0].code, "NO_NEW_INFORMATION")
+
     async def test_terminal_error_is_sanitized_without_losing_original_reason(self) -> None:
         professor_id = await self._create_professor(
             name="失败导师",

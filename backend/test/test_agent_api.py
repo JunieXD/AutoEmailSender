@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 from test.migrated_database import create_migrated_sqlite_database
 
@@ -2155,6 +2156,64 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
+    def test_agent_enrichment_job_list_pages_and_batches_task_statistics(self) -> None:
+        from app.core.database import get_engine
+
+        llm_profile_id = self._create_llm_profile()
+        job_ids: list[int] = []
+        for index in range(4):
+            professor_id = self._create_professor(
+                email=f"enrichment-page-{index}@example.edu",
+                profile_url=f"https://example.edu/enrichment-page-{index}",
+            )
+            response = self.client.post(
+                "/api/agent/v1/enrichment/jobs",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": f"agent-enrichment-page-{index}",
+                },
+                json={
+                    "professor_ids": [professor_id],
+                    "llm_profile_id": llm_profile_id,
+                    "name": f"分页任务 {index}",
+                },
+            )
+            self.assertEqual(response.status_code, 201, msg=response.text)
+            job_ids.append(int(response.json()["id"]))
+
+        task_selects: list[str] = []
+
+        def count_task_selects(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            normalized = " ".join(statement.lower().split())
+            if "from crawl_candidate_enrichment_tasks" in normalized:
+                task_selects.append(normalized)
+
+        engine = get_engine()
+        event.listen(engine.sync_engine, "before_cursor_execute", count_task_selects)
+        try:
+            response = self._agent_get(
+                "/api/agent/v1/enrichment/jobs",
+                params={"cursor": 1, "limit": 2},
+            )
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_task_selects)
+
+        page = response.json()
+        self.assertEqual(
+            [item["id"] for item in page["items"]],
+            [job_ids[2], job_ids[1]],
+        )
+        self.assertTrue(page["has_more"])
+        self.assertEqual(page["next_cursor"], "3")
+        self.assertEqual(len(task_selects), 1)
+
     def test_agent_can_manage_faculty_crawl_jobs_idempotently(self) -> None:
         request_body = {
             "university": "示例大学",
@@ -3014,6 +3073,123 @@ class AgentApiTests(unittest.TestCase):
                 (job_id,),
             ).fetchone()[0]
         self.assertEqual(filtered_candidate_id, excluded_id)
+
+    def test_agent_enrichment_noop_does_not_require_or_change_model_context(self) -> None:
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-noop-job"},
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (job_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email)
+                VALUES (?, ?, ?)
+                """,
+                (job_id, "无主页候选", "noop-enrich@example.edu"),
+            )
+            connection.commit()
+
+        result = self.client.post(
+            f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-noop"},
+            json={"selection": {"mode": "all"}},
+        )
+
+        self.assertEqual(result.status_code, 201, msg=result.text)
+        self.assertEqual(result.json()["submission"]["queued_count"], 0)
+        self.assertEqual(result.json()["skipped_count"], 1)
+        detail = self._agent_get(f"/api/agent/v1/crawler/jobs/{job_id}").json()
+        self.assertIsNone(detail["llm_profile_id"])
+        self.assertIsNone(detail["llm_context"])
+
+    def test_agent_enrichment_prefetches_existing_tasks_once(self) -> None:
+        from app.core.database import get_engine
+
+        llm_profile_id = self._create_llm_profile()
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-prefetch-job",
+            },
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = int(created.json()["id"])
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (job_id,),
+            )
+            for index in range(5):
+                connection.execute(
+                    """
+                    INSERT INTO crawl_candidates (job_id, name, email, profile_url)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        f"批量候选 {index}",
+                        f"prefetch-{index}@example.edu",
+                        f"https://example.edu/prefetch-{index}",
+                    ),
+                )
+            connection.commit()
+
+        task_selects: list[str] = []
+
+        def count_task_selects(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            normalized = " ".join(statement.lower().split())
+            if (
+                normalized.startswith("select")
+                and "from crawl_candidate_enrichment_tasks" in normalized
+            ):
+                task_selects.append(normalized)
+
+        engine = get_engine()
+        event.listen(engine.sync_engine, "before_cursor_execute", count_task_selects)
+        try:
+            response = self.client.post(
+                f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "crawl-enrich-prefetch",
+                },
+                json={
+                    "selection": {"mode": "all"},
+                    "llm_profile_id": llm_profile_id,
+                },
+            )
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_task_selects)
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        self.assertEqual(response.json()["submission"]["queued_count"], 5)
+        self.assertEqual(len(task_selects), 1)
 
     def test_agent_crawler_batch_operations_isolate_item_failures(self) -> None:
         create_headers = {

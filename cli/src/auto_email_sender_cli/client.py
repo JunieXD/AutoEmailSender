@@ -46,6 +46,7 @@ class AgentApiClient:
         files: Any | None = None,
         idempotency_key: str | None = None,
         if_revision: str | None = None,
+        request_timeout: float | None = None,
     ) -> Any:
         response = self._perform_request(
             method,
@@ -57,6 +58,7 @@ class AgentApiClient:
             idempotency_key=idempotency_key,
             if_revision=if_revision,
             accept="application/json",
+            request_timeout=request_timeout,
         )
         if response.is_success:
             self._record_response_metadata(response)
@@ -104,6 +106,7 @@ class AgentApiClient:
         idempotency_key: str | None = None,
         if_revision: str | None = None,
         accept: str,
+        request_timeout: float | None = None,
     ) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {self.descriptor.access_token}",
@@ -127,7 +130,7 @@ class AgentApiClient:
                     data=data,
                     files=files,
                     headers=headers,
-                    timeout=self.timeout,
+                    timeout=request_timeout if request_timeout is not None else self.timeout,
                 )
             except httpx.HTTPError as exc:
                 last_network_error = exc

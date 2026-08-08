@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 import typer
@@ -13,7 +14,7 @@ from auto_email_sender_cli.commands.common import (
     format_detail,
     validate_context_options,
 )
-from auto_email_sender_cli.errors import CliError
+from auto_email_sender_cli.errors import CliError, sanitize_error_message
 from auto_email_sender_cli.output import emit_error, emit_success
 
 
@@ -116,37 +117,94 @@ def wait_for_resource(
             supports_output_file=False,
             supports_projection=False,
         )
-        client = AgentApiClient(timeout=max(30.0, interval_seconds + 5.0))
+        client = AgentApiClient(timeout=min(30.0, max(0.1, timeout_seconds)))
         started = time.monotonic()
+        deadline = started + timeout_seconds
         polls = 0
         poll_rounds = 0
         latest_by_id: dict[int, object] = {}
+        query_failures: dict[int, CliError] = {}
+        permanent_query_failure_ids: set[int] = set()
         timed_out = False
-        while True:
-            poll_rounds += 1
-            pending_ids = [
-                item_id
-                for item_id in resource_id
-                if not _wait_condition_met(_status(latest_by_id.get(item_id)), normalized_until)
-            ]
-            for item_id in pending_ids:
-                latest_by_id[item_id] = client.request("GET", route.format(id=item_id))
-                polls += 1
-            if all(
-                _wait_condition_met(_status(latest_by_id.get(item_id)), normalized_until)
-                for item_id in resource_id
-            ):
-                break
-            elapsed = time.monotonic() - started
-            if elapsed >= timeout_seconds:
-                timed_out = True
-                break
-            time.sleep(min(interval_seconds, max(0.0, timeout_seconds - elapsed)))
+        executor = (
+            ThreadPoolExecutor(max_workers=min(16, len(resource_id)))
+            if len(resource_id) > 1
+            else None
+        )
+        try:
+            while True:
+                if poll_rounds > 0 and time.monotonic() >= deadline:
+                    timed_out = True
+                    break
+                poll_rounds += 1
+                pending_ids = [
+                    item_id
+                    for item_id in resource_id
+                    if not _wait_condition_met(
+                        _status(latest_by_id.get(item_id)),
+                        normalized_until,
+                    )
+                    and item_id not in permanent_query_failure_ids
+                ]
+                if len(resource_id) == 1:
+                    item_id = pending_ids[0]
+                    latest_by_id[item_id] = client.request(
+                        "GET",
+                        route.format(id=item_id),
+                        request_timeout=_remaining_request_timeout(
+                            deadline,
+                            allow_expired=timeout_seconds == 0 and poll_rounds == 1,
+                        ),
+                    )
+                    polls += 1
+                elif pending_ids:
+                    assert executor is not None
+                    results = list(
+                        executor.map(
+                            lambda item_id: _poll_wait_resource(
+                                client,
+                                route,
+                                item_id,
+                                deadline=deadline,
+                                allow_expired=timeout_seconds == 0 and poll_rounds == 1,
+                            ),
+                            pending_ids,
+                        )
+                    )
+                    for item_id, latest, error, attempted in results:
+                        if not attempted:
+                            continue
+                        polls += 1
+                        if error is None:
+                            latest_by_id[item_id] = latest
+                            query_failures.pop(item_id, None)
+                            continue
+                        query_failures[item_id] = error
+                        if not error.retryable:
+                            permanent_query_failure_ids.add(item_id)
+                if all(
+                    _wait_condition_met(
+                        _status(latest_by_id.get(item_id)),
+                        normalized_until,
+                    )
+                    or item_id in permanent_query_failure_ids
+                    for item_id in resource_id
+                ):
+                    break
+                elapsed = time.monotonic() - started
+                if elapsed >= timeout_seconds:
+                    timed_out = True
+                    break
+                time.sleep(min(interval_seconds, max(0.0, timeout_seconds - elapsed)))
+        finally:
+            if executor is not None:
+                executor.shutdown()
         elapsed_seconds = round(time.monotonic() - started, 3)
         timed_out_ids = [
             item_id
             for item_id in resource_id
             if not _wait_condition_met(_status(latest_by_id.get(item_id)), normalized_until)
+            and item_id not in permanent_query_failure_ids
         ]
         if len(resource_id) == 1:
             item_id = resource_id[0]
@@ -194,6 +252,11 @@ def wait_for_resource(
                     for item in resources
                     if item["state_category"] == "attention_required"
                 ],
+                "query_failed_ids": sorted(query_failures),
+                "query_failures": [
+                    _wait_query_failure(item_id, query_failures[item_id])
+                    for item_id in sorted(query_failures)
+                ],
                 "timed_out_ids": timed_out_ids,
                 "settled": all(bool(item["settled"]) for item in resources),
                 "terminal": all(bool(item["terminal"]) for item in resources),
@@ -206,6 +269,8 @@ def wait_for_resource(
                 "action_groups": _wait_action_groups(resource, resources),
             }
         warnings = ["等待超时；部分任务仍未满足停止条件。"] if timed_out else []
+        if query_failures:
+            warnings.append("部分任务状态读取失败；已保留其他任务的观察结果。")
         emit_success(
             context,
             command=command,
@@ -218,6 +283,53 @@ def wait_for_resource(
     except CliError as error:
         emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
+
+
+def _remaining_request_timeout(deadline: float, *, allow_expired: bool) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        if allow_expired:
+            return 0.1
+        raise TimeoutError
+    return max(0.05, min(30.0, remaining))
+
+
+def _poll_wait_resource(
+    client: AgentApiClient,
+    route: str,
+    resource_id: int,
+    *,
+    deadline: float,
+    allow_expired: bool,
+) -> tuple[int, object | None, CliError | None, bool]:
+    try:
+        request_timeout = _remaining_request_timeout(
+            deadline,
+            allow_expired=allow_expired,
+        )
+    except TimeoutError:
+        return resource_id, None, None, False
+    try:
+        latest = client.request(
+            "GET",
+            route.format(id=resource_id),
+            request_timeout=request_timeout,
+        )
+    except CliError as error:
+        return resource_id, None, error, True
+    return resource_id, latest, None, True
+
+
+def _wait_query_failure(resource_id: int, error: CliError) -> dict[str, object]:
+    reason = sanitize_error_message(error.message)
+    if len(reason) > 240:
+        reason = f"{reason[:237]}..."
+    return {
+        "id": resource_id,
+        "code": error.code,
+        "reason": reason,
+        "retryable": error.retryable,
+    }
 
 
 def _status(value: object) -> str | None:

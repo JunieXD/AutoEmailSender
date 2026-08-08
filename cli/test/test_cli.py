@@ -5,6 +5,8 @@ import json
 import os
 import stat
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +24,7 @@ from auto_email_sender_cli.capabilities import (
     list_resource_catalog,
 )
 from auto_email_sender_cli.describe import describe_command, describe_commands
-from auto_email_sender_cli.errors import RuntimeUnavailableError, redact_error_details
+from auto_email_sender_cli.errors import CliError, RuntimeUnavailableError, redact_error_details
 from auto_email_sender_cli.result_protocol import prepare_result_data
 
 
@@ -211,6 +213,151 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["timed_out"])
         self.assertEqual(payload["timed_out_ids"], [52])
         self.assertEqual(payload["settled_count"], 1)
+
+    def test_wait_many_isolates_permanent_query_failures(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/51": {"id": 51, "status": "needs_review"},
+                "/api/agent/v1/crawler/jobs/52": CliError(
+                    code="CRAWL_JOB_NOT_FOUND",
+                    message="任务不存在",
+                    exit_code=4,
+                    retryable=False,
+                ),
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "51",
+                    "--id",
+                    "52",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(payload["settled_count"], 1)
+        self.assertEqual(payload["query_failed_ids"], [52])
+        self.assertEqual(payload["timed_out_ids"], [])
+        self.assertFalse(payload["timed_out"])
+        self.assertEqual(
+            payload["query_failures"],
+            [
+                {
+                    "id": 52,
+                    "code": "CRAWL_JOB_NOT_FOUND",
+                    "reason": "任务不存在",
+                    "retryable": False,
+                }
+            ],
+        )
+        self.assertEqual(payload["by_status"], {"needs_review": 1, "unknown": 1})
+
+    def test_wait_single_stops_before_request_after_deadline(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/crawler/jobs/52": {"id": 52, "status": "running"}},
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "52",
+                    "--timeout-seconds",
+                    "0.01",
+                    "--interval-seconds",
+                    "0.1",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertTrue(payload["timed_out"])
+        self.assertEqual(payload["poll_count"], 1)
+        self.assertEqual(payload["poll_rounds"], 1)
+
+    def test_wait_many_polls_resources_concurrently(self) -> None:
+        fake_client = _ConcurrentWaitAgentClient()
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "51",
+                    "--id",
+                    "52",
+                    "--id",
+                    "53",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertGreaterEqual(fake_client.max_active_requests, 2)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(payload["settled_count"], 3)
+        self.assertEqual(payload["poll_count"], 3)
+
+    def test_wait_many_clears_retryable_failure_after_recovery(self) -> None:
+        fake_client = _RecoveringWaitAgentClient()
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "51",
+                    "--id",
+                    "52",
+                    "--timeout-seconds",
+                    "1",
+                    "--interval-seconds",
+                    "0.1",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        envelope = json.loads(result.stdout)
+        payload = envelope["data"]
+        self.assertEqual(payload["settled_count"], 2)
+        self.assertEqual(payload["query_failed_ids"], [])
+        self.assertEqual(payload["query_failures"], [])
+        self.assertEqual(payload["poll_count"], 3)
+        self.assertEqual(payload["poll_rounds"], 2)
+        self.assertNotIn("warnings", envelope["_meta"])
 
     def test_crawler_enrich_can_select_all_without_candidate_ids(self) -> None:
         fake_client = _FakeAgentClient(
@@ -4133,7 +4280,10 @@ class _FakeAgentClient:
         self.json_bodies.append(json_body)
         self.data_bodies.append(data)
         self.file_bodies.append(files)
-        return self.responses[path]
+        response = self.responses[path]
+        if isinstance(response, Exception):
+            raise response
+        return response
 
     def download_bytes(
         self,
@@ -4146,6 +4296,48 @@ class _FakeAgentClient:
         response = self.responses[path]
         assert isinstance(response, bytes)
         return response
+
+
+class _ConcurrentWaitAgentClient(_FakeAgentClient):
+    def __init__(self) -> None:
+        super().__init__({})
+        self._lock = threading.Lock()
+        self._active_requests = 0
+        self.max_active_requests = 0
+
+    def request(self, method: str, path: str, **kwargs: object) -> object:
+        with self._lock:
+            self._active_requests += 1
+            self.max_active_requests = max(
+                self.max_active_requests,
+                self._active_requests,
+            )
+        try:
+            time.sleep(0.02)
+            resource_id = int(path.rsplit("/", 1)[-1])
+            return {"id": resource_id, "status": "needs_review"}
+        finally:
+            with self._lock:
+                self._active_requests -= 1
+
+
+class _RecoveringWaitAgentClient(_FakeAgentClient):
+    def __init__(self) -> None:
+        super().__init__({})
+        self._attempts_by_path: dict[str, int] = {}
+
+    def request(self, method: str, path: str, **kwargs: object) -> object:
+        attempts = self._attempts_by_path.get(path, 0) + 1
+        self._attempts_by_path[path] = attempts
+        if path.endswith("/52") and attempts == 1:
+            raise CliError(
+                code="APP_UNAVAILABLE",
+                message="本地服务暂时不可用",
+                exit_code=7,
+                retryable=True,
+            )
+        resource_id = int(path.rsplit("/", 1)[-1])
+        return {"id": resource_id, "status": "needs_review"}
 
 
 if __name__ == "__main__":

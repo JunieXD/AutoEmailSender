@@ -450,14 +450,6 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         job_id=job.id,
         selection=selection,
     )
-    await _resolve_and_refresh_llm_profile(
-        session,
-        job,
-        llm_profile_id,
-        trigger="enrich",
-        actor=actor,
-    )
-
     enrichable_candidates = [candidate for candidate in candidates if (candidate.profile_url or "").strip()]
     skipped_count = len(candidates) - len(enrichable_candidates)
     if not enrichable_candidates:
@@ -493,23 +485,25 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
     enqueued_count = 0
     already_active_count = 0
     already_completed_count = 0
-    for candidate in enrichable_candidates:
-        existing_task = await session.scalar(
+    tasks_to_enqueue: list[
+        tuple[CrawlCandidate, CrawlCandidateEnrichmentTask | None]
+    ] = []
+    existing_tasks = list(
+        await session.scalars(
             select(CrawlCandidateEnrichmentTask).where(
                 CrawlCandidateEnrichmentTask.job_id == job.id,
-                CrawlCandidateEnrichmentTask.candidate_id == candidate.id,
             ),
         )
+    )
+    existing_tasks_by_candidate_id = {
+        task.candidate_id: task for task in existing_tasks
+    }
+    for candidate in enrichable_candidates:
+        existing_task = existing_tasks_by_candidate_id.get(candidate.id)
         if existing_task is not None:
             if existing_task.status == CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value:
                 if _candidate_has_missing_enrichment_fields(candidate):
-                    existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
-                    existing_task.worker_id = None
-                    existing_task.claimed_at = None
-                    existing_task.lease_expires_at = None
-                    existing_task.last_error = None
-                    existing_task.updated_at = now
-                    enqueued_count += 1
+                    tasks_to_enqueue.append((candidate, existing_task))
                     continue
                 already_completed_count += 1
                 continue
@@ -519,11 +513,26 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             }:
                 already_active_count += 1
                 continue
+        tasks_to_enqueue.append((candidate, existing_task))
+
+    if tasks_to_enqueue:
+        await _resolve_and_refresh_llm_profile(
+            session,
+            job,
+            llm_profile_id,
+            trigger="enrich",
+            actor=actor,
+        )
+
+    for candidate, existing_task in tasks_to_enqueue:
+        if existing_task is not None:
             existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
             existing_task.worker_id = None
             existing_task.claimed_at = None
             existing_task.lease_expires_at = None
             existing_task.last_error = None
+            existing_task.skip_reason = None
+            existing_task.finished_at = None
             existing_task.updated_at = now
             enqueued_count += 1
             continue

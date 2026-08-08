@@ -213,6 +213,20 @@ class AgentApiClientTests(unittest.TestCase):
         self.assertEqual(len(transport.requests), 2)
         self.assertIs(client._http_client, http_client)
 
+    def test_request_timeout_overrides_the_client_default(self) -> None:
+        http_client, transport = _http_client(httpx.Response(200, json={"status": "ok"}))
+        client = AgentApiClient(_descriptor(), timeout=30.0, http_client=http_client)
+
+        result = client.request(
+            "GET",
+            "/api/ping",
+            request_timeout=0.25,
+        )
+
+        self.assertEqual(result, {"status": "ok"})
+        timeout = transport.requests[0].extensions["timeout"]
+        self.assertTrue(all(value == 0.25 for value in timeout.values()))
+
     def test_multi_page_fetch_reuses_the_same_http_client(self) -> None:
         http_client, transport = _http_client(
             httpx.Response(

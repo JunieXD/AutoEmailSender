@@ -232,6 +232,8 @@ async def run_crawler_v2_enrichment_worker_once(
                     task=task,
                     candidate=candidate,
                 )
+                if not enriched_fields and skip_reason is None:
+                    skip_reason = NO_NEW_INFORMATION_SKIP_REASON.legacy_message
             else:
                 enriched_fields = candidate_enriched_fields
                 if not enriched_fields:

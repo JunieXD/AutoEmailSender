@@ -2415,7 +2415,8 @@ async def list_agent_professor_information_enrichment_jobs(
         jobs = await list_professor_information_enrichment_jobs(
             session,
             view=view,
-            limit=cursor + limit + 1,
+            offset=cursor,
+            limit=limit + 1,
         )
     except ValueError as exc:
         raise AgentApiError(
@@ -2423,7 +2424,7 @@ async def list_agent_professor_information_enrichment_jobs(
             code="INVALID_ENRICHMENT_JOB_VIEW",
             message=str(exc),
         ) from exc
-    page, next_cursor, has_more = _slice_page(jobs[cursor:], cursor=cursor, limit=limit)
+    page, next_cursor, has_more = _slice_page(jobs, cursor=cursor, limit=limit)
     return AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
 
 
