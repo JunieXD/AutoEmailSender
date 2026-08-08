@@ -94,7 +94,13 @@ export const PageSizeSelector = ({
   };
 
   return (
-    <div className={`flex flex-wrap items-center gap-2 ${className ?? ""}`}>
+    <div
+      className={`${
+        selectedValue === CUSTOM_VALUE
+          ? "flex flex-wrap items-center gap-2"
+          : "flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap"
+      } ${className ?? ""}`}
+    >
       <span className="text-sm text-stone-500">每页</span>
       <NativeSelectField
         ariaLabel={ariaLabel}
