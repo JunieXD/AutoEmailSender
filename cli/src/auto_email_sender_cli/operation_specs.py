@@ -1153,6 +1153,7 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
     ),
     "crawler.jobs.create-many": (
         _action("crawler.jobs.list", "读取返回任务 ID 的最新状态"),
+        _action("wait", "使用返回的任务 ID 批量等待后台抓取停止运行"),
     ),
     "crawler.jobs.get": (
         _action("crawler.jobs.events", "读取抓取事件时间线"),
@@ -1165,6 +1166,7 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
     "crawler.jobs.enrich": (_action("crawler.jobs.get", "读取候选补全后的任务状态"),),
     "crawler.jobs.enrich-many": (
         _action("crawler.jobs.list", "读取各任务补全后的状态"),
+        _action("wait", "使用提交回执中的任务 ID 批量等待补全停止运行"),
     ),
     "crawler.jobs.pause": (_action("crawler.jobs.get", "确认任务已暂停"),),
     "crawler.jobs.resume": (_action("crawler.jobs.get", "读取继续运行的任务状态"),),

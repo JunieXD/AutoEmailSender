@@ -131,6 +131,87 @@ class CliTests(unittest.TestCase):
             ["settled", "terminal"],
         )
 
+    def test_wait_aggregates_multiple_resources_without_full_results(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/51": {"id": 51, "status": "needs_review"},
+                "/api/agent/v1/crawler/jobs/52": {"id": 52, "status": "failed"},
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "51",
+                    "--id",
+                    "52",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(payload["total_count"], 2)
+        self.assertEqual(payload["settled_count"], 2)
+        self.assertEqual(payload["terminal_count"], 1)
+        self.assertEqual(payload["by_status"], {"failed": 1, "needs_review": 1})
+        self.assertEqual(payload["failed_ids"], [52])
+        self.assertEqual(payload["attention_required_ids"], [51])
+        self.assertEqual(payload["timed_out_ids"], [])
+        self.assertEqual(payload["poll_count"], 2)
+        self.assertEqual(payload["poll_rounds"], 1)
+        self.assertNotIn("result", payload)
+        self.assertTrue(all("available_actions" not in item for item in payload["resources"]))
+        groups = {item["status"]: item for item in payload["action_groups"]}
+        self.assertEqual(groups["needs_review"]["ids"], [51])
+        review_actions = {
+            item["action"]: item for item in groups["needs_review"]["available_actions"]
+        }
+        self.assertEqual(review_actions["enrich"]["required_input"], ["selection_mode"])
+        self.assertNotIn("arguments", review_actions["enrich"])
+
+    def test_wait_many_reports_only_unsettled_ids_on_timeout(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/51": {"id": 51, "status": "needs_review"},
+                "/api/agent/v1/crawler/jobs/52": {"id": 52, "status": "running"},
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.wait.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "wait",
+                    "--resource",
+                    "crawler.jobs",
+                    "--id",
+                    "51",
+                    "--id",
+                    "52",
+                    "--timeout-seconds",
+                    "0",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertTrue(payload["timed_out"])
+        self.assertEqual(payload["timed_out_ids"], [52])
+        self.assertEqual(payload["settled_count"], 1)
+
     def test_crawler_enrich_can_select_all_without_candidate_ids(self) -> None:
         fake_client = _FakeAgentClient(
             {

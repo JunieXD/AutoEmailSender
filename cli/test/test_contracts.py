@@ -391,6 +391,12 @@ class ContractTests(unittest.TestCase):
         self.assertIn("elapsed_seconds", wait["output"]["known_fields"])
         self.assertIn("state_category", wait["output"]["known_fields"])
         self.assertIn("settled", wait["output"]["known_fields"])
+        self.assertIn("by_status", wait["output"]["known_fields"])
+        self.assertIn("timed_out_ids", wait["output"]["known_fields"])
+        resource_id_parameter = next(
+            item for item in wait["parameters"] if item["name"] == "resource_id"
+        )
+        self.assertTrue(resource_id_parameter["multiple"])
         self.assertEqual(
             wait["output"]["schema"]["properties"]["data"]["properties"]["elapsed_seconds"]["type"],
             ["number", "null"],
@@ -1504,6 +1510,24 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(plan_actions["execute"]["plan_role"], "consumer")
         self.assertEqual(plan_actions["execute"]["required_input"], ["confirm"])
 
+        crawler = augment_state_metadata(
+            {"id": 7, "status": "needs_review"},
+            command="crawler.jobs.get",
+        )
+        crawler_actions = {item["action"]: item for item in crawler["available_actions"]}
+        self.assertEqual(crawler_actions["enrich"]["command"], "crawler.jobs.enrich")
+        self.assertEqual(crawler_actions["enrich"]["required_input"], ["selection_mode"])
+        self.assertEqual(crawler_actions["approve"]["required_input"], ["candidate_ids"])
+
+        partial_crawler = augment_state_metadata(
+            {"id": 8, "status": "partially_completed"},
+            command="crawler.jobs.get",
+        )
+        partial_actions = {
+            item["action"]: item for item in partial_crawler["available_actions"]
+        }
+        self.assertIn("enrich", partial_actions)
+
     def test_read_only_status_fields_do_not_gain_lifecycle_actions(self) -> None:
         projected = augment_state_metadata(
             {"status": "success", "total_tokens": 3},
@@ -1556,6 +1580,11 @@ class ContractTests(unittest.TestCase):
         partial_actions = {item["action"]: item for item in partial}
         self.assertEqual(partial_actions["retry"]["command"], "enrichment.jobs.retry-failed")
         self.assertNotIn("wait", partial_actions)
+
+        review = _available_actions("crawler.jobs", 10, "needs_review")
+        review_actions = {item["action"]: item for item in review}
+        self.assertEqual(review_actions["enrich"]["required_input"], ["selection_mode"])
+        self.assertEqual(review_actions["approve"]["required_input"], ["candidate_ids"])
 
 
 if __name__ == "__main__":

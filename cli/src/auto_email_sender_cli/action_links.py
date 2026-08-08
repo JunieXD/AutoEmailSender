@@ -184,7 +184,7 @@ def _job_target(
     if action == "read":
         return f"{resource}.get", arguments, [], "invoke"
     if action == "wait":
-        return "wait", {"resource": resource, "resource_id": job_id}, [], "invoke"
+        return "wait", {"resource": resource, "resource_id": [job_id]}, [], "invoke"
     if action == "cancel":
         return f"{resource}.cancel", arguments, [], "invoke"
     if action == "retry":
@@ -206,7 +206,7 @@ def _crawler_target(
     if action == "read":
         return "crawler.jobs.get", arguments, [], "invoke"
     if action == "wait":
-        return "wait", {"resource": "crawler.jobs", "resource_id": job_id}, [], "invoke"
+        return "wait", {"resource": "crawler.jobs", "resource_id": [job_id]}, [], "invoke"
     if action in {"cancel", "pause", "resume", "resume-review", "archive", "restore"}:
         command = {
             "archive": "crawler.jobs.delete",
@@ -216,7 +216,9 @@ def _crawler_target(
     if action == "retry":
         return "crawler.jobs.retry", arguments, [], "invoke"
     if action == "approve":
-        return "crawler.jobs.approve", arguments, [], "invoke"
+        return "crawler.jobs.approve", arguments, ["candidate_ids"], "invoke"
+    if action == "enrich":
+        return "crawler.jobs.enrich", arguments, ["selection_mode"], "invoke"
     return None
 
 

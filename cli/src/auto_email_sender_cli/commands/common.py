@@ -1093,7 +1093,10 @@ def _state_actions_for_item(
         return _draft_state_actions(status, item)
 
     if status in {"partial_failed", "partially_completed", "failed"}:
-        return ["read", "retry"], {
+        actions = ["read", "retry"]
+        if normalized.startswith("crawler.jobs.") and status == "partially_completed":
+            actions.append("enrich")
+        return actions, {
             "wait": "对象已结束；请读取逐项结果后仅重试失败项",
             "cancel": "对象已结束，不能取消",
             "resume": "部分成功对象不能直接恢复",
@@ -1126,7 +1129,7 @@ def _state_actions_for_item(
     if status in {"needs_review", "review_required"}:
         actions = ["read"]
         if normalized.startswith("crawler.jobs."):
-            actions.extend(["resume-review", "approve"])
+            actions.extend(["resume-review", "approve", "enrich"])
         if normalized.startswith("campaigns."):
             actions.append("prepare-send")
         return actions, {

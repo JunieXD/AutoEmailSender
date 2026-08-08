@@ -479,10 +479,16 @@ def _compact_effects(value: object) -> dict[str, object]:
 def _key_output_fields(fields: list[str]) -> list[str]:
     priority = (
         "id",
+        "ids",
         "plan_id",
         "job_id",
         "task_id",
         "status",
+        "total_count",
+        "by_status",
+        "failed_ids",
+        "timed_out_ids",
+        "action_groups",
         "requested_count",
         "created_count",
         "accepted_count",
