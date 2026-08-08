@@ -20,10 +20,14 @@ from app.models import (
 )
 
 from ..candidate_identity import canonical_candidate_clause, consolidate_job_candidates
+from .records import pause_faculty_crawl_job_record
 from .runs import mark_crawl_job_run_finished, mark_crawl_job_run_queued
 
 
 INTERRUPTED_JOB_ERROR = "抓取任务因桌面端进程中断而停止"
+INTERRUPTED_JOB_PAUSED_MESSAGE = (
+    "检测到上次运行被中断，智能抓取任务已自动暂停，可手动继续"
+)
 MAX_AGENT_TRACE_EVENTS = 100
 
 
@@ -53,6 +57,27 @@ async def _recover_interrupted_crawl_job(
     async with session_factory() as session:
         job = await session.get(CrawlJob, job_id)
         if job is None or job.status != CrawlJobStatus.RUNNING.value:
+            return
+
+        if job.job_kind == CrawlJobKind.FACULTY_CRAWL.value:
+            job = await pause_faculty_crawl_job_record(
+                session,
+                job.id,
+                event_name="crawl_job.interrupted_paused",
+                actor="system",
+            )
+            now = utc_now()
+            trace = _normalize_trace(job.agent_trace)
+            trace.append(
+                {
+                    "event_type": "job_interrupted_paused",
+                    "message": INTERRUPTED_JOB_PAUSED_MESSAGE,
+                    "created_at": now.isoformat(),
+                }
+            )
+            job.agent_trace = trace[-MAX_AGENT_TRACE_EVENTS:]
+            job.updated_at = now
+            await session.commit()
             return
 
         if (

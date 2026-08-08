@@ -12,12 +12,14 @@ from app.models import (
     Base,
     CrawlCandidate,
     CrawlJob,
+    CrawlJobKind,
     CrawlJobStatus,
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
 from app.modules.crawler.jobs.recovery import (
     INTERRUPTED_JOB_ERROR,
+    INTERRUPTED_JOB_PAUSED_MESSAGE,
     recover_interrupted_crawl_jobs,
 )
 
@@ -41,7 +43,7 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             pass
 
     async def test_running_job_without_work_or_candidates_is_failed(self) -> None:
-        job_id = await self._create_running_job()
+        job_id = await self._create_running_job(job_kind="legacy_crawl")
 
         await recover_interrupted_crawl_jobs(self.session_factory)
 
@@ -54,7 +56,7 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job.current_run.status, CrawlJobStatus.FAILED.value)
 
     async def test_running_job_with_candidates_moves_to_review(self) -> None:
-        job_id = await self._create_running_job()
+        job_id = await self._create_running_job(job_kind="legacy_crawl")
         async with self.session_factory() as session:
             session.add(
                 CrawlCandidate(
@@ -74,9 +76,10 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
             self.assertIsNone(job.error_message)
 
-    async def test_running_job_with_processing_work_is_requeued_and_lease_expires(self) -> None:
+    async def test_running_faculty_crawl_is_paused_and_processing_work_released(self) -> None:
         job_id = await self._create_running_job()
         future_lease = datetime.now(UTC) + timedelta(minutes=5)
+        claimed_at = datetime.now(UTC)
         async with self.session_factory() as session:
             task = CrawlPageTask(
                 job_id=job_id,
@@ -84,13 +87,13 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 original_url="https://example.edu/faculty",
                 status=CrawlPageTaskStatus.PROCESSING.value,
                 worker_id="interrupted-worker",
+                claimed_at=claimed_at,
                 lease_expires_at=future_lease,
             )
             session.add(task)
             await session.commit()
             task_id = task.id
 
-        recovered_at = datetime.now(UTC)
         await recover_interrupted_crawl_jobs(self.session_factory)
 
         async with self.session_factory() as session:
@@ -98,17 +101,59 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             task = await session.get(CrawlPageTask, task_id)
             assert job is not None and task is not None
             await session.refresh(job, ["current_run"])
+            self.assertEqual(job.status, CrawlJobStatus.PAUSED.value)
+            self.assertEqual(job.current_run.status, CrawlJobStatus.PAUSED.value)
+            self.assertEqual(task.status, CrawlPageTaskStatus.PENDING.value)
+            self.assertIsNone(task.worker_id)
+            self.assertIsNone(task.claimed_at)
+            self.assertIsNone(task.lease_expires_at)
+            self.assertEqual(task.last_error, "任务已暂停，释放处理中工作项")
+            self.assertEqual(job.agent_trace[-1]["message"], INTERRUPTED_JOB_PAUSED_MESSAGE)
+
+    async def test_running_enrichment_job_is_still_requeued(self) -> None:
+        job_id = await self._create_running_job(
+            job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+        )
+
+        await recover_interrupted_crawl_jobs(self.session_factory)
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            await session.refresh(job, ["current_run"])
             self.assertEqual(job.status, CrawlJobStatus.QUEUED.value)
             self.assertEqual(job.current_run.status, CrawlJobStatus.QUEUED.value)
-            self.assertLessEqual(task.lease_expires_at, datetime.now(UTC))
-            self.assertGreaterEqual(task.lease_expires_at, recovered_at)
 
-    async def _create_running_job(self) -> int:
+    async def test_queued_faculty_crawl_is_not_paused(self) -> None:
         async with self.session_factory() as session:
             job = CrawlJob(
                 university="示例大学",
                 school="计算机学院",
                 start_url="https://example.edu/faculty",
+                status=CrawlJobStatus.QUEUED.value,
+            )
+            session.add(job)
+            await session.commit()
+            job_id = job.id
+
+        await recover_interrupted_crawl_jobs(self.session_factory)
+
+        async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            self.assertEqual(job.status, CrawlJobStatus.QUEUED.value)
+
+    async def _create_running_job(
+        self,
+        *,
+        job_kind: str = CrawlJobKind.FACULTY_CRAWL.value,
+    ) -> int:
+        async with self.session_factory() as session:
+            job = CrawlJob(
+                university="示例大学",
+                school="计算机学院",
+                start_url="https://example.edu/faculty",
+                job_kind=job_kind,
                 status=CrawlJobStatus.RUNNING.value,
             )
             session.add(job)
