@@ -106,6 +106,45 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
+        self.assertEqual(items[1].skip_reason_code, "MISSING_PROFILE_URL")
+        self.assertTrue(items[1].skip_recoverable)
+        self.assertEqual(items[1].suggested_action, "professors.update")
+        self.assertEqual(items[2].skip_reason_code, "ALREADY_COMPLETE")
+        self.assertFalse(items[2].skip_recoverable)
+        self.assertIsNone(items[2].suggested_action)
+        self.assertEqual(items[3].skip_reason_code, "PROFESSOR_ARCHIVED")
+        self.assertTrue(items[3].skip_recoverable)
+        self.assertEqual(items[3].suggested_action, "professors.restore")
+
+        async with self.session_factory() as session:
+            job_read = await get_professor_information_enrichment_job(session, job_id)
+        assert job_read is not None
+        self.assertEqual(
+            [reason.model_dump() for reason in job_read.skip_reasons],
+            [
+                {
+                    "code": "ALREADY_COMPLETE",
+                    "count": 1,
+                    "message": "资料已完整，无需补全",
+                    "recoverable": False,
+                    "suggested_action": None,
+                },
+                {
+                    "code": "MISSING_PROFILE_URL",
+                    "count": 1,
+                    "message": "缺少有效个人主页",
+                    "recoverable": True,
+                    "suggested_action": "professors.update",
+                },
+                {
+                    "code": "PROFESSOR_ARCHIVED",
+                    "count": 1,
+                    "message": "导师已在回收站",
+                    "recoverable": True,
+                    "suggested_action": "professors.restore",
+                },
+            ],
+        )
 
     async def test_batch_items_page_filters_and_counts_without_loading_all_items(self) -> None:
         active_id = await self._create_professor(
@@ -157,6 +196,52 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(skipped_page.total_count, 3)
         self.assertEqual([item.status for item in skipped_page.items], ["skipped"])
         self.assertTrue(skipped_page.has_more)
+
+    async def test_unknown_and_empty_legacy_skip_reasons_are_safely_classified(self) -> None:
+        first_id = await self._create_professor(
+            name="旧版原因导师",
+            profile_url="https://example.edu/legacy-reason",
+        )
+        second_id = await self._create_professor(
+            name="空原因导师",
+            profile_url="https://example.edu/empty-reason",
+        )
+        job_id = await create_professor_information_enrichment_job(
+            self.session_factory,
+            professor_ids=[first_id, second_id],
+            llm_profile_id=self.llm_profile_id,
+            trigger_mode="batch",
+        )
+
+        async with self.session_factory() as session:
+            tasks = list(
+                await session.scalars(
+                    select(CrawlCandidateEnrichmentTask)
+                    .where(CrawlCandidateEnrichmentTask.job_id == job_id)
+                    .order_by(CrawlCandidateEnrichmentTask.id.asc())
+                )
+            )
+            tasks[0].status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+            tasks[0].skip_reason = "旧版本写入的任意原因"
+            tasks[1].status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+            tasks[1].skip_reason = None
+            await session.commit()
+
+        async with self.session_factory() as session:
+            job = await get_professor_information_enrichment_job(session, job_id)
+            items = await list_professor_information_enrichment_items(session, job_id)
+
+        assert job is not None and items is not None
+        self.assertEqual(job.skipped_count, 2)
+        self.assertEqual(len(job.skip_reasons), 1)
+        self.assertEqual(job.skip_reasons[0].code, "UNCLASSIFIED")
+        self.assertEqual(job.skip_reasons[0].count, 2)
+        self.assertEqual(job.skip_reasons[0].message, "未分类的跳过原因")
+        self.assertFalse(job.skip_reasons[0].recoverable)
+        self.assertEqual(items[0].skip_reason, "旧版本写入的任意原因")
+        self.assertEqual(items[0].skip_reason_code, "UNCLASSIFIED")
+        self.assertIsNone(items[1].skip_reason)
+        self.assertEqual(items[1].skip_reason_code, "UNCLASSIFIED")
 
     async def test_batch_creation_uses_local_time_in_default_name(self) -> None:
         professor_id = await self._create_professor(

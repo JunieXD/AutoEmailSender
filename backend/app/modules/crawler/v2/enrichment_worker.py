@@ -49,7 +49,11 @@ from ..llm.structured_output import (
     request_crawler_structured_completion,
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
-from app.modules.professors.public import apply_enrichment_to_professor
+from app.modules.professors.public import (
+    MISSING_PROFILE_URL_SKIP_REASON,
+    NO_NEW_INFORMATION_SKIP_REASON,
+    apply_enrichment_to_professor,
+)
 from app.modules.crawler.candidate_identity import (
     apply_candidate_enrichment_values,
     consolidate_candidate_identity,
@@ -112,7 +116,7 @@ async def run_crawler_v2_enrichment_worker_once(
         candidate_id = candidate.id
         if not (candidate.profile_url or "").strip():
             task.status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
-            task.skip_reason = "缺少有效的导师主页链接"
+            task.skip_reason = MISSING_PROFILE_URL_SKIP_REASON.legacy_message
             task.finished_at = utc_now()
             task.worker_id = None
             task.claimed_at = None
@@ -231,7 +235,7 @@ async def run_crawler_v2_enrichment_worker_once(
             else:
                 enriched_fields = candidate_enriched_fields
                 if not enriched_fields:
-                    skip_reason = "个人主页未提供可补全的新信息"
+                    skip_reason = NO_NEW_INFORMATION_SKIP_REASON.legacy_message
             append_crawler_v2_debug_event(
                 task.job_id,
                 worker_kind="enrichment",

@@ -569,7 +569,12 @@ class ContractTests(unittest.TestCase):
             "professors.tags.usage": {"tag", "professors"},
             "campaigns.get": {"identity", "llm_profile", "template", "reference_material"},
             "crawler.jobs.get": {"page_count", "candidate_count", "total_tokens"},
-            "enrichment.jobs.get": {"completed_count", "total_tokens", "duration_seconds"},
+            "enrichment.jobs.get": {
+                "completed_count",
+                "total_tokens",
+                "duration_seconds",
+                "skip_reasons",
+            },
         }
         for command, fields in expected_fields.items():
             description = describe_command(app, command)

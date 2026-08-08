@@ -2066,8 +2066,11 @@ class AgentApiTests(unittest.TestCase):
             email="enrichment-agent@example.edu",
             profile_url="https://example.edu/enrichment-agent",
         )
+        missing_profile_id = self._create_professor(
+            email="enrichment-agent-missing-profile@example.edu",
+        )
         request_body = {
-            "professor_ids": [professor_id],
+            "professor_ids": [professor_id, missing_profile_id],
             "llm_profile_id": llm_profile_id,
             "name": "Agent 信息补全",
         }
@@ -2093,7 +2096,10 @@ class AgentApiTests(unittest.TestCase):
         job_id = int(job["id"])
         self.assertEqual(job["trigger_mode"], "batch")
         self.assertEqual(job["status"], "queued")
-        self.assertEqual(job["target_count"], 1)
+        self.assertEqual(job["target_count"], 2)
+        self.assertEqual(job["skipped_count"], 1)
+        self.assertEqual(job["skip_reasons"][0]["code"], "MISSING_PROFILE_URL")
+        self.assertEqual(job["skip_reasons"][0]["count"], 1)
         self.assertNotIn("api_key", created.text)
 
         current_jobs = self._agent_get("/api/agent/v1/enrichment/jobs").json()
@@ -2103,9 +2109,15 @@ class AgentApiTests(unittest.TestCase):
         items = self._agent_get(
             f"/api/agent/v1/enrichment/jobs/{job_id}/items",
         ).json()
-        self.assertEqual(len(items["items"]), 1)
+        self.assertEqual(len(items["items"]), 2)
         self.assertEqual(items["items"][0]["professor_id"], professor_id)
         self.assertEqual(items["items"][0]["status"], "queued")
+        self.assertIsNone(items["items"][0]["skip_reason_code"])
+        self.assertEqual(items["items"][1]["professor_id"], missing_profile_id)
+        self.assertEqual(items["items"][1]["status"], "skipped")
+        self.assertEqual(items["items"][1]["skip_reason_code"], "MISSING_PROFILE_URL")
+        self.assertTrue(items["items"][1]["skip_recoverable"])
+        self.assertEqual(items["items"][1]["suggested_action"], "professors.update")
 
         canceled = self.client.post(
             f"/api/agent/v1/enrichment/jobs/{job_id}/cancel",

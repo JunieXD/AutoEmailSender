@@ -45,6 +45,16 @@ from .schemas import (
     ProfessorInformationEnrichmentItemRead,
     ProfessorInformationEnrichmentItemsPageRead,
     ProfessorInformationEnrichmentJobRead,
+    ProfessorInformationEnrichmentSkipReasonRead,
+)
+from .skip_reasons import (
+    ALREADY_COMPLETE_SKIP_REASON,
+    ENRICHMENT_IN_PROGRESS_SKIP_REASON,
+    MISSING_PROFILE_URL_SKIP_REASON,
+    PROFESSOR_ARCHIVED_SKIP_REASON,
+    UNCLASSIFIED_SKIP_REASON,
+    InformationEnrichmentSkipReason,
+    resolve_information_enrichment_skip_reason,
 )
 
 INFORMATION_ENRICHMENT_FIELDS = (
@@ -192,9 +202,14 @@ async def create_professor_information_enrichment_job_record(
     queued_count = 0
     skipped_count = 0
     for professor in ordered_professors:
-        skip_reason = _batch_skip_reason(
+        skip_reason_definition = _batch_skip_reason(
             professor,
             active=professor.id in active_professor_ids,
+        )
+        skip_reason = (
+            skip_reason_definition.legacy_message
+            if skip_reason_definition is not None
+            else None
         )
         candidate = _build_candidate(job.id, professor)
         session.add(candidate)
@@ -315,13 +330,28 @@ async def serialize_professor_information_enrichment_job(
     session: AsyncSession,
     job: CrawlJob,
 ) -> ProfessorInformationEnrichmentJobRead:
-    counts = Counter(
-        await session.scalars(
-            select(CrawlCandidateEnrichmentTask.status).where(
-                CrawlCandidateEnrichmentTask.job_id == job.id,
+    task_rows = list(
+        (
+            await session.execute(
+                select(
+                    CrawlCandidateEnrichmentTask.status,
+                    CrawlCandidateEnrichmentTask.skip_reason,
+                ).where(CrawlCandidateEnrichmentTask.job_id == job.id)
             )
-        )
+        ).all()
     )
+    counts = Counter(row.status for row in task_rows)
+    skip_reason_counts: Counter[str] = Counter()
+    skip_reason_definitions: dict[str, InformationEnrichmentSkipReason] = {}
+    for row in task_rows:
+        if row.status != CrawlCandidateEnrichmentTaskStatus.SKIPPED.value:
+            continue
+        reason = (
+            resolve_information_enrichment_skip_reason(row.skip_reason)
+            or UNCLASSIFIED_SKIP_REASON
+        )
+        skip_reason_counts[reason.code] += 1
+        skip_reason_definitions[reason.code] = reason
     queued_count = counts[CrawlCandidateEnrichmentTaskStatus.PENDING.value] + counts[
         CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
     ]
@@ -379,6 +409,16 @@ async def serialize_professor_information_enrichment_job(
         updated_at=job.updated_at,
         deleted_at=job.deleted_at,
         last_error=sanitize_user_visible_error(last_error) if last_error else None,
+        skip_reasons=[
+            ProfessorInformationEnrichmentSkipReasonRead(
+                code=code,
+                count=skip_reason_counts[code],
+                message=skip_reason_definitions[code].message,
+                recoverable=skip_reason_definitions[code].recoverable,
+                suggested_action=skip_reason_definitions[code].suggested_action,
+            )
+            for code in sorted(skip_reason_counts)
+        ],
     )
 
 
@@ -528,6 +568,12 @@ def _serialize_professor_information_enrichment_item(
 ) -> ProfessorInformationEnrichmentItemRead:
     candidate = task.candidate
     professor = task.professor
+    skip_reason = resolve_information_enrichment_skip_reason(task.skip_reason)
+    if (
+        skip_reason is None
+        and task.status == CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
+    ):
+        skip_reason = UNCLASSIFIED_SKIP_REASON
     return ProfessorInformationEnrichmentItemRead(
         id=task.id,
         job_id=task.job_id,
@@ -556,6 +602,9 @@ def _serialize_professor_information_enrichment_item(
         finished_at=task.finished_at,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        skip_reason_code=skip_reason.code if skip_reason is not None else None,
+        skip_recoverable=skip_reason.recoverable if skip_reason is not None else None,
+        suggested_action=skip_reason.suggested_action if skip_reason is not None else None,
     )
 
 
@@ -928,15 +977,19 @@ def _validate_single_professor(professor: Professor, *, active: bool) -> None:
         raise RuntimeError("该导师已有信息补全正在进行")
 
 
-def _batch_skip_reason(professor: Professor, *, active: bool) -> str | None:
+def _batch_skip_reason(
+    professor: Professor,
+    *,
+    active: bool,
+) -> InformationEnrichmentSkipReason | None:
     if professor.archived_at is not None:
-        return "导师已在回收站"
+        return PROFESSOR_ARCHIVED_SKIP_REASON
     if not _is_valid_profile_url(professor.profile_url):
-        return "缺少有效的导师主页链接"
+        return MISSING_PROFILE_URL_SKIP_REASON
     if not get_missing_information_enrichment_fields(professor):
-        return "资料已完整，无需补全"
+        return ALREADY_COMPLETE_SKIP_REASON
     if active:
-        return "已有信息补全正在进行"
+        return ENRICHMENT_IN_PROGRESS_SKIP_REASON
     return None
 
 

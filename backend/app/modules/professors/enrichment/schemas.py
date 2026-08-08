@@ -24,6 +24,14 @@ ProfessorInformationEnrichmentItemStatus = Literal[
     "skipped",
     "canceled",
 ]
+ProfessorInformationEnrichmentSkipReasonCode = Literal[
+    "PROFESSOR_ARCHIVED",
+    "MISSING_PROFILE_URL",
+    "ALREADY_COMPLETE",
+    "ENRICHMENT_IN_PROGRESS",
+    "NO_NEW_INFORMATION",
+    "UNCLASSIFIED",
+]
 
 
 class CreateProfessorInformationEnrichmentRequest(BaseModel):
@@ -41,6 +49,14 @@ class CreateProfessorInformationEnrichmentJobRequest(BaseModel):
         if isinstance(value, str):
             return value.strip() or None
         return value
+
+
+class ProfessorInformationEnrichmentSkipReasonRead(BaseModel):
+    code: ProfessorInformationEnrichmentSkipReasonCode
+    count: int = Field(ge=1)
+    message: str
+    recoverable: bool
+    suggested_action: str | None = None
 
 
 class ProfessorInformationEnrichmentJobRead(ApiSchema):
@@ -68,6 +84,9 @@ class ProfessorInformationEnrichmentJobRead(ApiSchema):
     updated_at: datetime
     deleted_at: datetime | None
     last_error: str | None
+    skip_reasons: list[ProfessorInformationEnrichmentSkipReasonRead] = Field(
+        default_factory=list,
+    )
 
 
 class ProfessorInformationEnrichmentItemRead(ApiSchema):
@@ -94,6 +113,9 @@ class ProfessorInformationEnrichmentItemRead(ApiSchema):
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    skip_reason_code: ProfessorInformationEnrichmentSkipReasonCode | None = None
+    skip_recoverable: bool | None = None
+    suggested_action: str | None = None
 
 
 class ProfessorInformationEnrichmentItemsPageRead(ApiSchema):

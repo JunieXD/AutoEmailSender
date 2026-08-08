@@ -137,6 +137,21 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()[0]["status"], "skipped")
         self.assertEqual(items.json()[0]["skip_reason"], "已有信息补全正在进行")
+        self.assertEqual(items.json()[0]["skip_reason_code"], "ENRICHMENT_IN_PROGRESS")
+        self.assertTrue(items.json()[0]["skip_recoverable"])
+        self.assertEqual(items.json()[0]["suggested_action"], "enrichment.jobs.list")
+        self.assertEqual(
+            payload["skip_reasons"],
+            [
+                {
+                    "code": "ENRICHMENT_IN_PROGRESS",
+                    "count": 1,
+                    "message": "已有信息补全正在进行",
+                    "recoverable": True,
+                    "suggested_action": "enrichment.jobs.list",
+                }
+            ],
+        )
 
         deleted = self.client.delete(
             f"/api/professor-information-enrichment-jobs/{job_id}",

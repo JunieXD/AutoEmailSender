@@ -27,6 +27,10 @@ from .service import (
     retry_failed_professor_information_enrichment_job_record,
     serialize_professor_information_enrichment_job,
 )
+from .skip_reasons import (
+    MISSING_PROFILE_URL_SKIP_REASON,
+    NO_NEW_INFORMATION_SKIP_REASON,
+)
 
 __all__ = [
     "CreateProfessorInformationEnrichmentJobRequest",
@@ -36,6 +40,8 @@ __all__ = [
     "ProfessorInformationEnrichmentItemsPageRead",
     "ProfessorInformationEnrichmentJobActionRead",
     "ProfessorInformationEnrichmentJobRead",
+    "MISSING_PROFILE_URL_SKIP_REASON",
+    "NO_NEW_INFORMATION_SKIP_REASON",
     "apply_enrichment_to_professor",
     "create_professor_information_enrichment_job",
     "create_professor_information_enrichment_job_record",
