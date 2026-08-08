@@ -199,6 +199,138 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(result.exit_code, 2, msg=result.output)
                 self.assertEqual(json.loads(result.stdout)["error"]["code"], "INVALID_ARGUMENT")
 
+    def test_crawler_batch_commands_send_compact_item_payloads(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/crawler/jobs/create-many": {
+                    "phase": "submission",
+                    "requested_count": 2,
+                    "created_count": 2,
+                    "failed_count": 0,
+                    "created_job_ids": [51, 52],
+                    "failures": [],
+                },
+                "/api/agent/v1/crawler/jobs/enrich-many": {
+                    "phase": "submission",
+                    "requested_count": 2,
+                    "accepted_count": 2,
+                    "failed_count": 0,
+                    "queued_count": 4,
+                    "skipped_count": 1,
+                    "items": [],
+                    "failures": [],
+                },
+            },
+        )
+        items = [
+            {
+                "university": "示例大学 A",
+                "school": "计算机学院",
+                "start_url": "https://a.example.edu/faculty",
+            },
+            {
+                "university": "示例大学 B",
+                "school": "电子学院",
+                "start_url": "https://b.example.edu/faculty",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            items_file = Path(directory) / "crawl-jobs.json"
+            items_file.write_text(json.dumps({"items": items}), encoding="utf-8")
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=fake_client,
+            ):
+                created = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "crawler",
+                        "jobs",
+                        "create-many",
+                        "--items-file",
+                        str(items_file),
+                    ],
+                )
+                enriched = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "crawler",
+                        "jobs",
+                        "enrich-many",
+                        "--job-id",
+                        "51",
+                        "--job-id",
+                        "52",
+                        "--selection",
+                        "filter",
+                        "--review-status",
+                        "pending",
+                        "--llm-profile-id",
+                        "3",
+                    ],
+                )
+
+        self.assertEqual(created.exit_code, 0, msg=created.output)
+        self.assertEqual(enriched.exit_code, 0, msg=enriched.output)
+        self.assertEqual(fake_client.json_bodies[0], {"items": items})
+        self.assertEqual(
+            fake_client.json_bodies[1],
+            {
+                "items": [
+                    {
+                        "job_id": job_id,
+                        "selection": {
+                            "mode": "filter",
+                            "ids": [],
+                            "filter": {"review_status": ["pending"]},
+                            "exclude_ids": [],
+                        },
+                        "llm_profile_id": 3,
+                    }
+                    for job_id in (51, 52)
+                ],
+            },
+        )
+
+    def test_crawler_batch_commands_reject_ambiguous_or_oversized_inputs(self) -> None:
+        duplicate_jobs = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "crawler",
+                "jobs",
+                "enrich-many",
+                "--job-id",
+                "51",
+                "--job-id",
+                "51",
+                "--selection",
+                "all",
+            ],
+        )
+        invalid_mode = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "crawler",
+                "jobs",
+                "enrich-many",
+                "--job-id",
+                "51",
+                "--selection",
+                "ids",
+            ],
+        )
+        for result in (duplicate_jobs, invalid_mode):
+            self.assertEqual(result.exit_code, 2, msg=result.output)
+            self.assertEqual(json.loads(result.stdout)["error"]["code"], "INVALID_ARGUMENT")
+
     def test_parser_failures_always_use_the_json_error_envelope(self) -> None:
         cases = (
             (["--format", "json", "professors", "get"], "professors.get"),

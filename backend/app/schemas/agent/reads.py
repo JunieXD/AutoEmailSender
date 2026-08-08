@@ -234,6 +234,43 @@ class AgentLLMProfileModelsRead(ApiSchema):
     trust_level: Literal["untrusted_external_content"] = "untrusted_external_content"
 
 
+class AgentBatchItemFailureRead(ApiSchema):
+    index: int
+    resource_id: int | None = None
+    code: str
+    message: str
+    retryable: bool = False
+
+
+class AgentCrawlJobBatchCreateRead(ApiSchema):
+    phase: Literal["submission"] = "submission"
+    requested_count: int
+    created_count: int
+    failed_count: int
+    created_job_ids: list[int] = Field(default_factory=list)
+    failures: list[AgentBatchItemFailureRead] = Field(default_factory=list)
+
+
+class AgentCrawlJobBatchEnrichItemRead(ApiSchema):
+    job_id: int
+    queued_count: int
+    already_active_count: int
+    already_completed_count: int
+    skipped_count: int
+    status: str
+
+
+class AgentCrawlJobBatchEnrichRead(ApiSchema):
+    phase: Literal["submission"] = "submission"
+    requested_count: int
+    accepted_count: int
+    failed_count: int
+    queued_count: int
+    skipped_count: int
+    items: list[AgentCrawlJobBatchEnrichItemRead] = Field(default_factory=list)
+    failures: list[AgentBatchItemFailureRead] = Field(default_factory=list)
+
+
 class AgentLLMProfileTestRead(ApiSchema):
     profile_id: int
     ok: bool

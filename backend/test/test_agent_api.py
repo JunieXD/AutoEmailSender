@@ -2974,6 +2974,115 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(filtered_candidate_id, excluded_id)
 
+    def test_agent_crawler_batch_operations_isolate_item_failures(self) -> None:
+        create_headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "crawl-create-many-request",
+        }
+        create_payload = {
+            "items": [
+                {
+                    "university": "示例大学 A",
+                    "school": "计算机学院",
+                    "start_url": "https://a.example.edu/faculty",
+                    "entry_type": "list",
+                },
+                {
+                    "university": "无效大学",
+                    "school": "计算机学院",
+                    "start_url": "not-a-url",
+                    "entry_type": "list",
+                },
+                {
+                    "university": "示例大学 B",
+                    "school": "电子学院",
+                    "start_url": "https://b.example.edu/faculty",
+                    "entry_type": "list",
+                },
+            ],
+        }
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs/create-many",
+            headers=create_headers,
+            json=create_payload,
+        )
+        replayed = self.client.post(
+            "/api/agent/v1/crawler/jobs/create-many",
+            headers=create_headers,
+            json=create_payload,
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        self.assertEqual(replayed.status_code, 201, msg=replayed.text)
+        self.assertEqual(created.json(), replayed.json())
+        payload = created.json()
+        self.assertEqual(payload["requested_count"], 3)
+        self.assertEqual(payload["created_count"], 2)
+        self.assertEqual(payload["failed_count"], 1)
+        self.assertEqual(payload["failures"][0]["index"], 1)
+        self.assertEqual(payload["failures"][0]["code"], "INVALID_BATCH_ITEM")
+        first_job_id, second_job_id = payload["created_job_ids"]
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (first_job_id,),
+            )
+            candidate_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, email, profile_url)
+                VALUES (?, ?, ?, ?) RETURNING id
+                """,
+                (
+                    first_job_id,
+                    "批量补全候选",
+                    "batch-enrich@example.edu",
+                    "https://a.example.edu/faculty/member",
+                ),
+            ).fetchone()[0]
+            connection.commit()
+        llm_profile_id = self._create_llm_profile()
+        enriched = self.client.post(
+            "/api/agent/v1/crawler/jobs/enrich-many",
+            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-many-request"},
+            json={
+                "items": [
+                    {
+                        "job_id": first_job_id,
+                        "selection": {"mode": "all"},
+                        "llm_profile_id": llm_profile_id,
+                    },
+                    {
+                        "job_id": second_job_id,
+                        "selection": {"mode": "all"},
+                        "llm_profile_id": llm_profile_id,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(enriched.status_code, 201, msg=enriched.text)
+        enrich_payload = enriched.json()
+        self.assertEqual(enrich_payload["requested_count"], 2)
+        self.assertEqual(enrich_payload["accepted_count"], 1)
+        self.assertEqual(enrich_payload["failed_count"], 1)
+        self.assertEqual(enrich_payload["queued_count"], 1)
+        self.assertEqual(enrich_payload["items"][0]["job_id"], first_job_id)
+        self.assertEqual(enrich_payload["failures"][0]["resource_id"], second_job_id)
+        self.assertEqual(
+            enrich_payload["failures"][0]["code"],
+            "CRAWL_CANDIDATE_ENRICHMENT_NOT_REVIEWABLE",
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            queued_candidate_id = connection.execute(
+                "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+                (first_job_id,),
+            ).fetchone()[0]
+            second_job_status = connection.execute(
+                "SELECT status FROM crawl_jobs WHERE id = ?",
+                (second_job_id,),
+            ).fetchone()[0]
+        self.assertEqual(queued_candidate_id, candidate_id)
+        self.assertEqual(second_job_status, "queued")
+
     def test_agent_can_manage_communication_groups_without_implicit_merges(self) -> None:
         first_identity_id = self._create_identity()
         second_identity_id = self._create_identity(email="second-sender@example.com")

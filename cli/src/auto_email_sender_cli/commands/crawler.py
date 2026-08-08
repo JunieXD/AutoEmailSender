@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -77,6 +79,30 @@ def create_faculty_crawl_job(
             "entry_type": entry_type,
             "llm_profile_id": llm_profile_id,
         },
+        guide_topic="crawler",
+        human_formatter=format_detail,
+    )
+
+
+@jobs_app.command("create-many")
+def create_many_faculty_crawl_jobs(
+    ctx: typer.Context,
+    items_file: Annotated[
+        Path,
+        typer.Option(
+            "--items-file",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="包含抓取任务对象数组或 {items: [...]} 的 UTF-8 JSON 文件。",
+        ),
+    ],
+) -> None:
+    run_write_command(
+        ctx,
+        command="crawler.jobs.create-many",
+        path="/api/agent/v1/crawler/jobs/create-many",
+        json_body={"items": _read_batch_items(items_file)},
         guide_topic="crawler",
         human_formatter=format_detail,
     )
@@ -379,6 +405,91 @@ def enrich_faculty_crawl_candidates(
         guide_topic="crawler",
         human_formatter=format_detail,
     )
+
+
+@jobs_app.command("enrich-many")
+def enrich_many_faculty_crawl_jobs(
+    ctx: typer.Context,
+    job_ids: Annotated[
+        list[int],
+        typer.Option("--job-id", min=1, help="可重复指定要补全候选的抓取任务 ID。"),
+    ],
+    selection_mode: Annotated[
+        str,
+        typer.Option("--selection", help="批量候选选择方式：all 或 filter。"),
+    ],
+    review_statuses: Annotated[
+        list[str],
+        typer.Option(
+            "--review-status",
+            help="filter 模式下可重复指定 pending、accepted、rejected 或 merged。",
+        ),
+    ] = [],
+    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+) -> None:
+    normalized_mode = selection_mode.strip().lower()
+    if normalized_mode not in {"all", "filter"}:
+        raise typer.BadParameter(
+            "批量补全的 --selection 必须是 all 或 filter；ids 模式请逐任务调用 enrich。",
+            param_hint="--selection",
+        )
+    if len(set(job_ids)) != len(job_ids):
+        raise typer.BadParameter("--job-id 不能重复。", param_hint="--job-id")
+    if len(job_ids) > 100:
+        raise typer.BadParameter("一次最多提交 100 个抓取任务。", param_hint="--job-id")
+    if normalized_mode == "filter" and not review_statuses:
+        raise typer.BadParameter(
+            "--selection filter 必须至少提供一个 --review-status。",
+            param_hint="--review-status",
+        )
+    if normalized_mode == "all" and review_statuses:
+        raise typer.BadParameter(
+            "只有 --selection filter 可以提供 --review-status。",
+            param_hint="--review-status",
+        )
+    selection = {
+        "mode": normalized_mode,
+        "ids": [],
+        "filter": {"review_status": review_statuses} if review_statuses else {},
+        "exclude_ids": [],
+    }
+    run_write_command(
+        ctx,
+        command="crawler.jobs.enrich-many",
+        path="/api/agent/v1/crawler/jobs/enrich-many",
+        json_body={
+            "items": [
+                {
+                    "job_id": job_id,
+                    "selection": selection,
+                    "llm_profile_id": llm_profile_id,
+                }
+                for job_id in job_ids
+            ],
+        },
+        guide_topic="crawler",
+        human_formatter=format_detail,
+    )
+
+
+def _read_batch_items(items_file: Path) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(items_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            "--items-file 必须是可读取的 UTF-8 JSON 文件。",
+            param_hint="--items-file",
+        ) from exc
+    if isinstance(payload, dict):
+        payload = payload.get("items")
+    if not isinstance(payload, list) or not payload or not all(isinstance(item, dict) for item in payload):
+        raise typer.BadParameter(
+            "--items-file 必须包含非空任务对象数组或 {items: [...]}。",
+            param_hint="--items-file",
+        )
+    if len(payload) > 100:
+        raise typer.BadParameter("一次最多提交 100 个抓取任务。", param_hint="--items-file")
+    return payload
 
 
 @jobs_app.command("pause")

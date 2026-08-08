@@ -539,6 +539,14 @@ class ContractTests(unittest.TestCase):
                 enrich["output"]["known_fields"],
             ),
         )
+        create_many = describe_command(app, "crawler.jobs.create-many")
+        enrich_many = describe_command(app, "crawler.jobs.enrich-many")
+        assert create_many is not None
+        assert enrich_many is not None
+        self.assertIn("items_file", create_many["input"]["schema"]["required"])
+        self.assertIn("job_ids", enrich_many["input"]["schema"]["required"])
+        self.assertIn("selection_mode", enrich_many["input"]["schema"]["required"])
+        self.assertTrue(create_many["input_file_examples"])
 
     def test_detail_contracts_publish_nested_result_fields(self) -> None:
         expected_fields = {

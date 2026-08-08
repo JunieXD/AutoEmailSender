@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
+from pydantic import ValidationError
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -41,6 +42,7 @@ from app.models import (
 )
 from app.schemas.agent import (
     AgentActionPlanRead,
+    AgentBatchItemsRequest,
     AgentCampaignCreateRequest,
     AgentCampaignItemRead,
     AgentCampaignRead,
@@ -54,6 +56,9 @@ from app.schemas.agent import (
     AgentCrawlCandidateRead,
     AgentCrawlJobEventRead,
     AgentCrawlCandidateUpdateRequest,
+    AgentCrawlJobBatchCreateRead,
+    AgentCrawlJobBatchEnrichItem,
+    AgentCrawlJobBatchEnrichRead,
     AgentCrawlJobApproveRequest,
     AgentCrawlJobEnrichRequest,
     AgentCrawlJobRetryRequest,
@@ -2618,6 +2623,26 @@ async def create_agent_faculty_crawl_job(
         raise _agent_crawl_job_error(exc) from exc
 
 
+@router.post(
+    "/crawler/jobs/create-many",
+    response_model=AgentCrawlJobBatchCreateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_many_agent_faculty_crawl_jobs(
+    payload: AgentBatchItemsRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentCrawlJobBatchCreateRead:
+    return await execute_agent_mutation(
+        session,
+        command="crawler.jobs.create-many",
+        request_data=payload.model_dump(mode="json"),
+        idempotency_key=idempotency_key,
+        response_type=AgentCrawlJobBatchCreateRead,
+        mutation=lambda: _create_many_agent_faculty_crawl_jobs(session, payload.items),
+    )
+
+
 @router.get("/crawler/jobs/{job_id}", response_model=CrawlJobSummaryRead)
 async def read_agent_faculty_crawl_job(
     job_id: int,
@@ -2788,6 +2813,26 @@ async def enrich_agent_crawl_candidates(
         )
     except CrawlJobRecordError as exc:
         raise _agent_crawl_job_error(exc) from exc
+
+
+@router.post(
+    "/crawler/jobs/enrich-many",
+    response_model=AgentCrawlJobBatchEnrichRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def enrich_many_agent_crawl_candidates(
+    payload: AgentBatchItemsRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentCrawlJobBatchEnrichRead:
+    return await execute_agent_mutation(
+        session,
+        command="crawler.jobs.enrich-many",
+        request_data=payload.model_dump(mode="json"),
+        idempotency_key=idempotency_key,
+        response_type=AgentCrawlJobBatchEnrichRead,
+        mutation=lambda: _enrich_many_agent_crawl_candidates(session, payload.items),
+    )
 
 
 @router.patch("/crawler/candidates/{candidate_id}", response_model=AgentCrawlCandidateRead)
@@ -4863,6 +4908,133 @@ async def _create_agent_faculty_crawl_job(
         actor="agent_cli",
     )
     return await get_faculty_crawl_job_summary(session, job.id)
+
+
+async def _create_many_agent_faculty_crawl_jobs(
+    session: AsyncSession,
+    raw_items: list[dict[str, object]],
+) -> AgentCrawlJobBatchCreateRead:
+    created_job_ids: list[int] = []
+    failures: list[dict[str, object]] = []
+    for index, raw_item in enumerate(raw_items):
+        try:
+            payload = CrawlJobCreatePayload.model_validate(raw_item)
+        except ValidationError as exc:
+            failures.append(
+                {
+                    "index": index,
+                    "code": "INVALID_BATCH_ITEM",
+                    "message": _batch_validation_message(exc),
+                    "retryable": False,
+                },
+            )
+            continue
+        try:
+            async with session.begin_nested():
+                job = await create_faculty_crawl_job_record(
+                    session,
+                    payload,
+                    event_name="agent_cli.crawl_job.created",
+                    actor="agent_cli",
+                )
+                created_job_ids.append(job.id)
+        except CrawlJobRecordError as exc:
+            failures.append(
+                {
+                    "index": index,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.status_code >= 500,
+                },
+            )
+    return AgentCrawlJobBatchCreateRead(
+        requested_count=len(raw_items),
+        created_count=len(created_job_ids),
+        failed_count=len(failures),
+        created_job_ids=created_job_ids,
+        failures=failures,
+    )
+
+
+async def _enrich_many_agent_crawl_candidates(
+    session: AsyncSession,
+    raw_items: list[dict[str, object]],
+) -> AgentCrawlJobBatchEnrichRead:
+    items: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    for index, raw_item in enumerate(raw_items):
+        resource_id = raw_item.get("job_id")
+        normalized_resource_id = (
+            resource_id
+            if isinstance(resource_id, int) and not isinstance(resource_id, bool) and resource_id > 0
+            else None
+        )
+        try:
+            payload = AgentCrawlJobBatchEnrichItem.model_validate(raw_item)
+        except ValidationError as exc:
+            failures.append(
+                {
+                    "index": index,
+                    "resource_id": normalized_resource_id,
+                    "code": "INVALID_BATCH_ITEM",
+                    "message": _batch_validation_message(exc),
+                    "retryable": False,
+                },
+            )
+            continue
+        try:
+            async with session.begin_nested():
+                result = await enqueue_faculty_crawl_candidate_enrichment_records(
+                    session,
+                    payload.job_id,
+                    payload.selection,
+                    llm_profile_id=payload.llm_profile_id,
+                    event_name="agent_cli.crawl_candidate_enrichment.queued",
+                    actor="agent_cli",
+                )
+        except CrawlJobRecordError as exc:
+            failures.append(
+                {
+                    "index": index,
+                    "resource_id": payload.job_id,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.code == "CRAWL_CANDIDATE_ENRICHMENT_RUNNING",
+                },
+            )
+            continue
+        submission = result.submission
+        observation = result.observation
+        items.append(
+            {
+                "job_id": payload.job_id,
+                "queued_count": submission.queued_count if submission is not None else 0,
+                "already_active_count": (
+                    submission.already_active_count if submission is not None else 0
+                ),
+                "already_completed_count": (
+                    submission.already_completed_count if submission is not None else 0
+                ),
+                "skipped_count": result.skipped_count,
+                "status": observation.status if observation is not None else "unknown",
+            },
+        )
+    return AgentCrawlJobBatchEnrichRead(
+        requested_count=len(raw_items),
+        accepted_count=len(items),
+        failed_count=len(failures),
+        queued_count=sum(int(item["queued_count"]) for item in items),
+        skipped_count=sum(int(item["skipped_count"]) for item in items),
+        items=items,
+        failures=failures,
+    )
+
+
+def _batch_validation_message(error: ValidationError) -> str:
+    first_error = error.errors(include_url=False)[0]
+    location = ".".join(str(item) for item in first_error.get("loc", ()))
+    message = str(first_error.get("msg") or "批量项格式无效")
+    return f"{location}: {message}" if location else message
 
 
 async def _update_agent_faculty_crawl_candidate(

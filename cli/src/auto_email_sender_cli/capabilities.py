@@ -1043,6 +1043,16 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         guide_topic="crawler",
     ),
     Capability(
+        "crawler.jobs.create-many",
+        "从 JSON 批量创建导师抓取任务，并逐项返回成功 ID 或失败原因",
+        "L2",
+        "available",
+        mutates=True,
+        external_action=True,
+        long_running=True,
+        guide_topic="crawler",
+    ),
+    Capability(
         "crawler.candidates.update",
         "修改一位抓取候选的资料或审核状态",
         "L1",
@@ -1123,6 +1133,16 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability(
         "crawler.jobs.enrich",
         "将指定候选加入资料补全队列；会访问公开主页并调用模型，但不会发送邮件",
+        "L2",
+        "available",
+        mutates=True,
+        external_action=True,
+        long_running=True,
+        guide_topic="crawler",
+    ),
+    Capability(
+        "crawler.jobs.enrich-many",
+        "为多个抓取任务批量选择候选并加入资料补全队列",
         "L2",
         "available",
         mutates=True,

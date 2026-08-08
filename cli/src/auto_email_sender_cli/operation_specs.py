@@ -1074,7 +1074,14 @@ _bind(
     "tasks.calculate-match",
 )
 _bind("external_llm_campaign", "campaigns.start-drafts", "campaigns.retry-item-draft")
-_bind("external_crawler", "crawler.jobs.create", "crawler.jobs.resume", "crawler.jobs.enrich")
+_bind(
+    "external_crawler",
+    "crawler.jobs.create",
+    "crawler.jobs.create-many",
+    "crawler.jobs.resume",
+    "crawler.jobs.enrich",
+    "crawler.jobs.enrich-many",
+)
 _bind(
     "plan_local",
     "professors.tags.prepare-bulk",
@@ -1144,6 +1151,9 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
         _action("crawler.jobs.pages", "读取抓取网页摘要"),
         _action("crawler.jobs.candidates", "读取抓取候选导师"),
     ),
+    "crawler.jobs.create-many": (
+        _action("crawler.jobs.list", "读取返回任务 ID 的最新状态"),
+    ),
     "crawler.jobs.get": (
         _action("crawler.jobs.events", "读取抓取事件时间线"),
         _action("crawler.jobs.pages", "读取抓取网页摘要"),
@@ -1153,6 +1163,9 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
     "crawler.jobs.pages": (_action("crawler.jobs.get", "读取任务状态和进度"),),
     "crawler.jobs.candidates": (_action("crawler.jobs.get", "读取任务状态和进度"),),
     "crawler.jobs.enrich": (_action("crawler.jobs.get", "读取候选补全后的任务状态"),),
+    "crawler.jobs.enrich-many": (
+        _action("crawler.jobs.list", "读取各任务补全后的状态"),
+    ),
     "crawler.jobs.pause": (_action("crawler.jobs.get", "确认任务已暂停"),),
     "crawler.jobs.resume": (_action("crawler.jobs.get", "读取继续运行的任务状态"),),
     "crawler.jobs.cancel": (_action("crawler.jobs.get", "确认任务已取消"),),

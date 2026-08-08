@@ -51,6 +51,21 @@ _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
 
 
 JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
+    "crawler.jobs.create-many": {
+        "option": "--items-file",
+        "format": "json",
+        "example": {
+            "items": [
+                {
+                    "university": "示例大学",
+                    "school": "计算机学院",
+                    "start_url": "https://example.edu/faculty",
+                    "entry_type": "list",
+                    "llm_profile_id": 1,
+                },
+            ],
+        },
+    },
     "professors.community.import": {
         "option": "--items-file",
         "format": "json",
@@ -468,6 +483,13 @@ def _key_output_fields(fields: list[str]) -> list[str]:
         "job_id",
         "task_id",
         "status",
+        "requested_count",
+        "created_count",
+        "accepted_count",
+        "queued_count",
+        "skipped_count",
+        "failed_count",
+        "failures",
         "revision",
         "items",
         "next_cursor",

@@ -315,6 +315,16 @@ class AgentCrawlJobEnrichRequest(ApiSchema):
         return SelectionSpec(mode="ids", ids=self.candidate_ids or [])
 
 
+class AgentBatchItemsRequest(ApiSchema):
+    items: list[dict[str, object]] = Field(min_length=1, max_length=100)
+
+
+class AgentCrawlJobBatchEnrichItem(ApiSchema):
+    job_id: int = Field(ge=1)
+    selection: SelectionSpec
+    llm_profile_id: int | None = Field(default=None, ge=1)
+
+
 class AgentCampaignCreateRequest(ApiSchema):
     name: str = Field(min_length=1, max_length=255)
     identity_id: int = Field(ge=1)
