@@ -32,6 +32,7 @@ from app.modules.crawler.candidate_identity import (
     find_canonical_candidate_for_identity,
     merge_candidate_payload as merge_candidate_payload_shared,
 )
+from .chunking import MAX_CRAWL_HTML_CHARS
 from .domain_policy import registrable_domain_from_hostname
 from .fetch_ledger import (
     PageFetchDecision,
@@ -2535,7 +2536,8 @@ async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) ->
 
 
 def html_to_snapshot(url: str, html: str, fetch_method: str) -> PageSnapshot:
-    soup = BeautifulSoup(html, "html.parser")
+    bounded_html = html[:MAX_CRAWL_HTML_CHARS]
+    soup = BeautifulSoup(bounded_html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
@@ -2557,7 +2559,7 @@ def html_to_snapshot(url: str, html: str, fetch_method: str) -> PageSnapshot:
         url=url,
         title=title,
         text=text,
-        html=html,
+        html=bounded_html,
         links=links,
         fetch_method=fetch_method,
         status="succeeded",

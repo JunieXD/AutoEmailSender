@@ -49,6 +49,18 @@ class CrawlerToolTests(unittest.TestCase):
             session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
         )
 
+    def test_html_to_snapshot_caps_untrusted_html_before_parsing(self) -> None:
+        oversized_html = "<main>教师名单</main>" + "x" * crawler_tools.MAX_CRAWL_HTML_CHARS
+
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://example.edu/faculty",
+            oversized_html,
+            "http",
+        )
+
+        self.assertEqual(len(snapshot.html), crawler_tools.MAX_CRAWL_HTML_CHARS)
+        self.assertIn("教师名单", snapshot.text)
+
     def test_browser_pagination_wait_ignores_only_active_page_number_change(self) -> None:
         shared = "教师名单 " + ("张三 教授 李四 副教授 " * 80)
         self.assertFalse(

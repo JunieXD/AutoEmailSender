@@ -13,6 +13,9 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 _STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
 _UNLABELED_RECORD_LINK_TEXT = "无文字链接"
 _GENERATED_MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]+\]\([^\s)\n]+\)")
+MAX_CRAWL_HTML_CHARS = 1_000_000
+MAX_STRUCTURE_BOUNDARY_HTML_CHARS = 500_000
+MAX_STRUCTURE_BOUNDARY_TAG_MARKERS = 10_000
 
 
 @dataclass(frozen=True)
@@ -135,9 +138,30 @@ def _normalize_chunk_content(value: str) -> str:
     return "\n\n".join(part for part in paragraphs if part)
 
 
+def _is_chinese_char(char: str) -> bool:
+    return "\u4e00" <= char <= "\u9fff"
+
+
+def _is_ascii_word_char(char: str) -> bool:
+    return (
+        "A" <= char <= "Z"
+        or "a" <= char <= "z"
+        or "0" <= char <= "9"
+        or char in "_@./:-"
+    )
+
+
 def estimate_tokens(value: str) -> int:
-    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", value))
-    ascii_words = len(re.findall(r"[A-Za-z0-9_@./:-]+", value))
+    chinese_chars = 0
+    ascii_words = 0
+    inside_ascii_word = False
+    for char in value:
+        is_chinese = _is_chinese_char(char)
+        is_ascii_word = _is_ascii_word_char(char)
+        chinese_chars += int(is_chinese)
+        if is_ascii_word and not inside_ascii_word:
+            ascii_words += 1
+        inside_ascii_word = is_ascii_word
     other_chars = max(len(value) - chinese_chars, 0)
     return max(1, chinese_chars + ascii_words + other_chars // 4)
 
@@ -161,7 +185,14 @@ def html_to_link_enriched_text(
     structure_block_max_links: int = 12,
 ) -> str:
     prepared_html = html or ""
-    if preserve_structure_boundaries and prepared_html:
+    if len(prepared_html) > MAX_CRAWL_HTML_CHARS:
+        prepared_html = ""
+    if (
+        preserve_structure_boundaries
+        and prepared_html
+        and len(prepared_html) <= MAX_STRUCTURE_BOUNDARY_HTML_CHARS
+        and prepared_html.count("<") <= MAX_STRUCTURE_BOUNDARY_TAG_MARKERS
+    ):
         prepared_html = _inject_structure_boundaries(
             prepared_html,
             max_tokens=structure_block_max_tokens,
@@ -326,26 +357,37 @@ def build_page_chunks(
     page_fingerprint = fingerprint_page(enriched)
     target_tokens = balanced_target_tokens(enriched, selected_config)
     units, separator, strict_overlap = _content_units(enriched, selected_config)
+    hard_max_tokens = max(1, selected_config.hard_max_tokens)
+    target_tokens = min(max(1, target_tokens), hard_max_tokens)
     chunks: list[str] = []
     current: list[str] = []
     for unit in units:
-        candidate = separator.join([*current, unit]) if current else unit
-        if current and estimate_tokens(candidate) > target_tokens:
+        bounded_units = _split_text_to_token_limit(unit, hard_max_tokens)
+        for bounded_unit in bounded_units:
+            if not current:
+                current = [bounded_unit]
+                continue
+
+            candidate = separator.join([*current, bounded_unit])
+            if estimate_tokens(candidate) <= target_tokens:
+                current.append(bounded_unit)
+                continue
+
             chunks.append(separator.join(current))
-            current = _select_overlap_tail(
+            overlap = _select_overlap_tail(
                 current,
                 selected_config.overlap_tokens,
                 strict=strict_overlap,
             )
-        current.append(unit)
-        while estimate_tokens(separator.join(current)) > selected_config.hard_max_tokens and len(current) > 1:
-            midpoint = max(1, len(current) // 2)
-            chunks.append(separator.join(current[:midpoint]))
-            current = _select_overlap_tail(
-                current[:midpoint],
-                selected_config.overlap_tokens,
-                strict=strict_overlap,
-            ) + current[midpoint:]
+            current = [
+                *_fit_overlap_before_unit(
+                    overlap,
+                    bounded_unit,
+                    separator=separator,
+                    hard_max_tokens=hard_max_tokens,
+                ),
+                bounded_unit,
+            ]
     if current:
         chunks.append(separator.join(current))
     chunks = _merge_small_tail_chunks(chunks, selected_config)
@@ -401,7 +443,12 @@ def _content_units(content: str, config: ChunkingConfig) -> tuple[list[str], str
     paragraphs = [_normalize_lines(part) for part in re.split(r"\n\s*\n", content)]
     paragraphs = [part for part in paragraphs if part]
     if len(paragraphs) <= 1:
-        return content.splitlines(), "\n", False
+        lines = [
+            bounded_line
+            for line in content.splitlines()
+            for bounded_line in _split_text_to_token_limit(line, config.hard_max_tokens)
+        ]
+        return lines, "\n", False
 
     units: list[str] = []
     for paragraph in paragraphs:
@@ -413,23 +460,80 @@ def _content_units(content: str, config: ChunkingConfig) -> tuple[list[str], str
 
 
 def _pack_oversized_lines(lines: list[str], hard_max_tokens: int) -> list[str]:
+    token_limit = max(1, hard_max_tokens)
     packed: list[str] = []
     current: list[str] = []
     for line in lines:
-        candidate = "\n".join([*current, line]) if current else line
-        if current and estimate_tokens(candidate) > hard_max_tokens:
-            packed.append("\n".join(current))
-            current = []
-        current.append(line)
+        for bounded_line in _split_text_to_token_limit(line, token_limit):
+            candidate = "\n".join([*current, bounded_line]) if current else bounded_line
+            if current and estimate_tokens(candidate) > token_limit:
+                packed.append("\n".join(current))
+                current = []
+            current.append(bounded_line)
     if current:
         packed.append("\n".join(current))
     return packed
 
 
+def _split_text_to_token_limit(value: str, token_limit: int) -> list[str]:
+    """Split a single unbroken unit in linear time while preserving all text."""
+
+    if not value:
+        return []
+
+    limit = max(1, token_limit)
+    parts: list[str] = []
+    start = 0
+    chinese_chars = 0
+    ascii_words = 0
+    other_chars = 0
+    inside_ascii_word = False
+
+    for index, char in enumerate(value):
+        is_chinese = _is_chinese_char(char)
+        is_ascii_word = _is_ascii_word_char(char)
+        next_chinese_chars = chinese_chars + int(is_chinese)
+        next_ascii_words = ascii_words + int(is_ascii_word and not inside_ascii_word)
+        next_other_chars = other_chars + int(not is_chinese)
+        next_tokens = next_chinese_chars + next_ascii_words + next_other_chars // 4
+
+        if index > start and next_tokens > limit:
+            parts.append(value[start:index])
+            start = index
+            chinese_chars = int(is_chinese)
+            ascii_words = int(is_ascii_word)
+            other_chars = int(not is_chinese)
+        else:
+            chinese_chars = next_chinese_chars
+            ascii_words = next_ascii_words
+            other_chars = next_other_chars
+        inside_ascii_word = is_ascii_word
+
+    parts.append(value[start:])
+    return parts
+
+
 def _select_overlap_tail(lines: list[str], overlap_tokens: int, *, strict: bool) -> list[str]:
+    if overlap_tokens <= 0:
+        return []
     if strict:
         return _strict_overlap_tail(lines, overlap_tokens)
     return _overlap_tail(lines, overlap_tokens)
+
+
+def _fit_overlap_before_unit(
+    overlap: list[str],
+    unit: str,
+    *,
+    separator: str,
+    hard_max_tokens: int,
+) -> list[str]:
+    for offset in range(len(overlap) + 1):
+        fitted = overlap[offset:]
+        candidate = separator.join([*fitted, unit])
+        if estimate_tokens(candidate) <= hard_max_tokens:
+            return fitted
+    return []
 
 
 def split_chunk_content(

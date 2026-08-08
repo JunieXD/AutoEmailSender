@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from app.modules.crawler.pages.chunking import (
     ChunkingConfig,
+    MAX_CRAWL_HTML_CHARS,
     build_page_chunks,
     estimate_tokens,
     fingerprint_page,
@@ -291,6 +293,91 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreater(len(chunks), 2)
         self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 1300)
 
+    def test_build_page_chunks_drops_overlap_when_near_limit_unit_would_not_fit(self) -> None:
+        small_record = "甲" * 98
+        near_limit_record = "乙" * 3186
+        html = (
+            f"<table><tr><td>{small_record}</td></tr></table>"
+            f"<div>{near_limit_record}</div>"
+        )
+
+        chunks = build_page_chunks(
+            source_url="https://hz.xidian.edu.cn/info/1201/40244.htm",
+            html=html,
+            text="",
+            config=ChunkingConfig(),
+        )
+
+        self.assertEqual(len(chunks), 2)
+        self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 3200)
+        self.assertEqual(sum(chunk.content.count("甲") for chunk in chunks), 98)
+        self.assertEqual(sum(chunk.content.count("乙") for chunk in chunks), 3186)
+
+    def test_build_page_chunks_splits_single_line_above_hard_limit(self) -> None:
+        oversized_record = "甲" * 6500
+
+        chunks = build_page_chunks(
+            source_url="https://example.edu/faculty",
+            html=f"<main>{oversized_record}</main>",
+            text=oversized_record,
+            config=ChunkingConfig(overlap_tokens=0),
+        )
+
+        self.assertEqual(len(chunks), 3)
+        self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 3200)
+        self.assertEqual(sum(chunk.content.count("甲") for chunk in chunks), 6500)
+
+    def test_link_enrichment_falls_back_to_text_when_html_exceeds_safety_limit(self) -> None:
+        oversized_html = "<main>" + "甲" * MAX_CRAWL_HTML_CHARS + "</main>"
+
+        content = html_to_link_enriched_text(
+            "https://example.edu/faculty",
+            oversized_html,
+            "安全回退文本",
+        )
+
+        self.assertEqual(content, "安全回退文本")
+
+    def test_link_enrichment_skips_quadratic_structure_scan_for_complex_html(self) -> None:
+        with (
+            patch(
+                "app.modules.crawler.pages.chunking.MAX_STRUCTURE_BOUNDARY_HTML_CHARS",
+                10,
+            ),
+            patch(
+                "app.modules.crawler.pages.chunking._inject_structure_boundaries",
+            ) as inject_boundaries,
+        ):
+            content = html_to_link_enriched_text(
+                "https://example.edu/faculty",
+                "<main>教师名单</main>",
+                "",
+            )
+
+        inject_boundaries.assert_not_called()
+        self.assertEqual(content, "教师名单")
+
+    def test_zero_overlap_does_not_duplicate_lines(self) -> None:
+        lines = [f"记录{index}：" + "甲" * 20 for index in range(12)]
+        source_text = "\n".join(lines)
+
+        chunks = build_page_chunks(
+            source_url="https://example.edu/faculty",
+            html="",
+            text=source_text,
+            config=ChunkingConfig(
+                target_tokens=80,
+                hard_max_tokens=100,
+                overlap_tokens=0,
+                single_chunk_max_tokens=80,
+                min_balanced_target_tokens=80,
+                max_balanced_target_tokens=80,
+            ),
+        )
+
+        combined_lines = [line for chunk in chunks for line in chunk.content.splitlines()]
+        self.assertEqual(combined_lines, lines)
+
 
     def test_default_recursive_split_config_supports_dense_small_chunks(self) -> None:
         config = ChunkingConfig()
@@ -559,6 +646,24 @@ class CrawlerChunkingTests(unittest.TestCase):
 
     def test_estimate_tokens_counts_chinese_and_ascii(self) -> None:
         self.assertGreaterEqual(estimate_tokens("张三教授 email@example.edu"), 6)
+
+    def test_estimate_tokens_preserves_legacy_counting_semantics(self) -> None:
+        samples = (
+            "",
+            "纯中文内容",
+            "email@example.edu and https://example.edu/a-b",
+            "中英 mixed_123@example.edu：标点！\n下一行",
+            "a" * 13000,
+        )
+        for value in samples:
+            with self.subTest(value=value[:40]):
+                chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", value))
+                ascii_words = len(re.findall(r"[A-Za-z0-9_@./:-]+", value))
+                expected = max(
+                    1,
+                    chinese_chars + ascii_words + (len(value) - chinese_chars) // 4,
+                )
+                self.assertEqual(estimate_tokens(value), expected)
 
 
 if __name__ == "__main__":
