@@ -178,7 +178,16 @@ Set-NpmVersion "frontend"
 Copy-ReleaseNotes
 
 Run-Git add cli/pyproject.toml cli/uv.lock desktop/package.json desktop/package-lock.json frontend/package.json frontend/package-lock.json desktop/release-notes.md "docs/releases/$ReleaseTag.md"
-Run-Git commit -m "chore(release): $ReleaseTag"
+if ($DryRun) {
+  Run-Git commit -m "chore(release): $ReleaseTag"
+} else {
+  $stagedPaths = @(git -C $RepoRoot diff --cached --name-only)
+  if ($stagedPaths.Count -gt 0) {
+    Run-Git commit -m "chore(release): $ReleaseTag"
+  } else {
+    Write-Host "发布版本和公告已包含在候选提交中，复用当前 HEAD。"
+  }
+}
 Run-Git push origin master
 
 if ($DryRun) {

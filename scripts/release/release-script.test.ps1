@@ -188,6 +188,9 @@ exit /b 0
       if ($output -notmatch "启动 v9.9.9 候选工作流") {
         throw "release.ps1 成功时没有输出候选工作流状态。`n$output"
       }
+      if ($output -notmatch "发布版本和公告已包含在候选提交中，复用当前 HEAD") {
+        throw "release.ps1 没有复用已经提交并验证的候选。`n$output"
+      }
     } else {
       throw "release.ps1 在允许的未跟踪公告文件存在时应该成功。`n$output"
     }

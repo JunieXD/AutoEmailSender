@@ -112,6 +112,7 @@ if [[ ! -f "$release_repo/desktop/release-notes.md" ]]; then
   exit 1
 fi
 assert_contains "$uv_calls" "version 9.9.9 --no-sync" "release.sh 没有同步 CLI 发布版本。"
+assert_contains "$output" "发布版本和公告已包含在候选提交中，复用当前 HEAD" "release.sh 没有复用已经提交并验证的候选。"
 assert_contains "$output" "启动 v9.9.9 候选工作流" "release.sh 成功时没有输出候选工作流状态。"
 gh_calls="$(cat "$gh_calls_path")"
 assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true" "release.sh 没有按精确提交启动延迟发布工作流。"
