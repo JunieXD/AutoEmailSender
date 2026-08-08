@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.time import local_now
 from app.models import (
     EmailDirection,
     EmailLog,
@@ -798,7 +799,7 @@ class DashboardStatsTests(unittest.TestCase):
 
     def test_dashboard_service_filters_email_metrics_by_sent_date_range(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
-        today = datetime.now(UTC).date()
+        today = local_now().date()
         start_date = (today - timedelta(days=3)).isoformat()
         end_date = (today - timedelta(days=3)).isoformat()
 
@@ -865,7 +866,7 @@ class DashboardStatsTests(unittest.TestCase):
 
     def test_dashboard_service_filters_reply_wait_by_first_reply_date(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
-        reply_date = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+        reply_date = (local_now().date() - timedelta(days=1)).isoformat()
 
         async def run_query():
             async with self.session_factory() as session:
@@ -1033,7 +1034,7 @@ class DashboardStatsTests(unittest.TestCase):
 
     def test_dashboard_service_excludes_replies_outside_date_range(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
-        today = datetime.now(UTC).date()
+        today = local_now().date()
         start_date = (today - timedelta(days=3)).isoformat()
         end_date = (today - timedelta(days=3)).isoformat()
 
@@ -1177,8 +1178,8 @@ class DashboardStatsTests(unittest.TestCase):
                 params={
                     "identity_id": identity_id,
                     "llm_profile_id": llm_profile_id,
-                    "start_date": (datetime.now(UTC).date() - timedelta(days=3)).isoformat(),
-                    "end_date": (datetime.now(UTC).date() - timedelta(days=3)).isoformat(),
+                    "start_date": (local_now().date() - timedelta(days=3)).isoformat(),
+                    "end_date": (local_now().date() - timedelta(days=3)).isoformat(),
                 },
             )
         finally:
