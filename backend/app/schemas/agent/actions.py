@@ -131,7 +131,7 @@ class AgentProfessorTagSetRequest(ApiSchema):
 
 
 class AgentProfessorBulkTagsRequest(ApiSchema):
-    professor_ids: list[int] = Field(default_factory=list)
+    professor_ids: list[int] = Field(min_length=1)
     mode: Literal["add", "remove", "replace"]
     tag_ids: list[int] = Field(default_factory=list)
 

@@ -61,7 +61,7 @@ def create_professor_information_enrichment_job(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="可重复指定需要补全的导师 ID。"),
-    ] = [],
+    ],
     name: Annotated[str | None, typer.Option("--name", help="可选任务名称。")] = None,
 ) -> None:
     run_write_command(

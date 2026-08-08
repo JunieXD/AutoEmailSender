@@ -504,6 +504,28 @@ class ContractTests(unittest.TestCase):
                 command,
             )
 
+    def test_required_id_collections_match_agent_api_validation(self) -> None:
+        expected = {
+            "campaigns.create": "professor_ids",
+            "campaigns.prepare-send": "item_ids",
+            "crawler.jobs.approve": "candidate_ids",
+            "crawler.jobs.enrich": "candidate_ids",
+            "enrichment.jobs.create": "professor_ids",
+            "matching.jobs.create": "professor_ids",
+            "professors.prepare-bulk-archive": "professor_ids",
+            "professors.tags.prepare-bulk": "professor_ids",
+        }
+        for command, parameter_name in expected.items():
+            description = describe_command(app, command)
+            assert description is not None
+            parameter = next(
+                item
+                for item in description["parameters"]
+                if item["name"] == parameter_name
+            )
+            self.assertTrue(parameter["required"], command)
+            self.assertIn(parameter_name, description["input"]["schema"]["required"], command)
+
     def test_detail_contracts_publish_nested_result_fields(self) -> None:
         expected_fields = {
             "communications.threads.get": {"messages", "messages_next_cursor", "messages_has_more"},

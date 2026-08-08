@@ -271,7 +271,7 @@ def prepare_faculty_crawl_candidate_approval(
             min=1,
             help="可重复指定要导入导师库的候选 ID；该命令只生成预览。",
         ),
-    ] = [],
+    ],
 ) -> None:
     run_write_command(
         ctx,
@@ -316,7 +316,7 @@ def enrich_faculty_crawl_candidates(
     candidate_ids: Annotated[
         list[int],
         typer.Option("--candidate-id", min=1, help="可重复指定需要补全资料的候选 ID。"),
-    ] = [],
+    ],
     llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
 ) -> None:
     run_write_command(

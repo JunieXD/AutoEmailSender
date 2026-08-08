@@ -134,7 +134,7 @@ def prepare_campaign_create(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="可重复指定活动中的导师 ID。"),
-    ] = [],
+    ],
     generation_mode: Annotated[
         CampaignGenerationMode,
         typer.Option("--generation-mode", help="template 或 ai_rewrite。"),
@@ -369,7 +369,7 @@ def prepare_campaign_send(
             min=1,
             help="可重复指定要发送的待审核活动项 ID；该命令只生成发送计划。",
         ),
-    ] = [],
+    ],
 ) -> None:
     run_write_command(
         ctx,

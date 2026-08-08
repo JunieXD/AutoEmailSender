@@ -70,7 +70,7 @@ def create_match_analysis_job(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="可重复指定需要分析的导师 ID。"),
-    ] = [],
+    ],
     name: Annotated[str | None, typer.Option("--name", help="可选任务名称。")]=None,
 ) -> None:
     run_write_command(

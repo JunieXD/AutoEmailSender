@@ -478,7 +478,7 @@ def prepare_bulk_professor_archive(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="重复指定要移入回收站的导师 ID。"),
-    ] = [],
+    ],
 ) -> None:
     run_write_command(
         ctx,
@@ -597,7 +597,7 @@ def prepare_bulk_professor_tags(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="重复指定要修改的导师 ID。"),
-    ] = [],
+    ],
     mode: Annotated[
         str,
         typer.Option("--mode", help="add、remove 或 replace。"),
