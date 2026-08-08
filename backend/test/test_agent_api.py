@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 import io
 import json
 import os
@@ -267,7 +268,7 @@ class AgentApiTests(unittest.TestCase):
             material_id=material_id,
             template_id=template_id,
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_logs SET reply_headers = ? WHERE id = ?",
                 (json.dumps({"authorization": "Bearer workspace-header-secret"}), received_message_id),
@@ -356,7 +357,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(warning["trust_level"], "untrusted_external_content")
         self.assertNotIn("workspace-sync-secret", warning["message"])
         self.assertIn("[REDACTED]", warning["message"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             ensured_log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -445,7 +446,7 @@ class AgentApiTests(unittest.TestCase):
             "untrusted_external_content",
         )
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET status = 'scheduled', scheduled_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (task_id,),
@@ -469,7 +470,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(canceled_schedule.json()["current_task"]["status"], "review_required")
         self.assertIsNone(canceled_schedule.json()["current_task"]["scheduled_at"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (task_id,),
@@ -503,7 +504,7 @@ class AgentApiTests(unittest.TestCase):
             material_id=material_id,
             template_id=template_id,
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -532,7 +533,7 @@ class AgentApiTests(unittest.TestCase):
             continued.json()["current_task"]["parent_task_id"],
             continued_task_id,
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             follow_up_count = connection.execute(
                 "SELECT COUNT(*) FROM email_tasks WHERE parent_task_id = ?",
                 (task_id,),
@@ -603,7 +604,7 @@ class AgentApiTests(unittest.TestCase):
         )
 
     def test_agent_diagnostics_are_filterable_and_redact_existing_log_secrets(self) -> None:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO operation_logs (
@@ -793,7 +794,7 @@ class AgentApiTests(unittest.TestCase):
 
     def test_agent_can_update_safe_identity_settings_without_exposing_credentials(self) -> None:
         identity_id = self._create_identity()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             original_credentials = connection.execute(
                 """
                 SELECT smtp_password, imap_password
@@ -855,7 +856,7 @@ class AgentApiTests(unittest.TestCase):
             "IDENTITY_OPERATION_REJECTED",
         )
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             stored = connection.execute(
                 """
                 SELECT profile_name, name, sender_name, default_language,
@@ -941,7 +942,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(rejected_secret.json()["error"]["code"], "INVALID_AGENT_REQUEST")
         self.assertNotIn("never-echo-this-api-key", rejected_secret.text)
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             stored = connection.execute(
                 """
                 SELECT name, model_name, temperature, max_tokens, provider,
@@ -1115,7 +1116,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["archived_at"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             professor_count = connection.execute(
                 "SELECT COUNT(*) FROM professors WHERE email = ?",
                 ("new-professor@example.edu",),
@@ -1270,7 +1271,7 @@ class AgentApiTests(unittest.TestCase):
                 f"/api/agent/v1/professors/{professor_id}",
             ).json()
             self.assertIn(second_tag_id, [tag["id"] for tag in professor["tags"]])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -1405,7 +1406,7 @@ class AgentApiTests(unittest.TestCase):
                 f"/api/agent/v1/professors/{professor_id}",
             ).json()
             self.assertEqual(professor["tags"], [])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             delete_log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -1546,7 +1547,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(existing["name"], "已有导师")
         self.assertEqual(existing["personal_note"], "更新备注")
         self.assertEqual([tag["name"] for tag in existing["tags"]], ["待跟进"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             import_log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -1646,7 +1647,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(default_set.status_code, 200, msg=default_set.text)
         self.assertTrue(default_set.json()["is_default"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             template_count = connection.execute(
                 "SELECT COUNT(*) FROM outreach_templates WHERE name LIKE '首次联系%'",
             ).fetchone()[0]
@@ -1704,7 +1705,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(result["format_name"], "md")
         self.assertIn("追问", result["body_text"])
         self.assertEqual(result["trust_level"], "untrusted_external_content")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             template_count = connection.execute(
                 "SELECT COUNT(*) FROM outreach_templates",
             ).fetchone()[0]
@@ -1771,7 +1772,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(primary_replay.status_code, 200, msg=primary_replay.text)
         self.assertEqual(primary_replay.json()["id"], second_material_id)
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             material_count = connection.execute(
                 "SELECT COUNT(*) FROM identity_materials WHERE identity_id = ?",
                 (identity_id,),
@@ -1827,7 +1828,7 @@ class AgentApiTests(unittest.TestCase):
         sync_mock.assert_awaited_once()
         self.assertEqual(response.headers["x-agent-mutation-status"], "applied")
         self.assertEqual(replayed.headers["x-agent-mutation-status"], "replayed")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             sync_log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -1912,7 +1913,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(replayed.json()["task_id"], first.json()["task_id"])
         self.assertEqual(first.headers["x-agent-mutation-status"], "applied")
         self.assertEqual(replayed.headers["x-agent-mutation-status"], "replayed")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             draft_rows = connection.execute(
                 "SELECT COUNT(*) FROM email_logs WHERE email_task_id = ? AND direction = 'draft'",
                 (first.json()["task_id"],),
@@ -2069,7 +2070,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             job_count = connection.execute(
                 "SELECT COUNT(*) FROM match_analysis_jobs WHERE name = ?",
                 ("Agent 匹配分析",),
@@ -2277,7 +2278,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(job["status"], "queued")
         self.assertEqual(job["start_urls"], request_body["start_urls"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO crawl_pages (
@@ -2391,7 +2392,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["deleted_at"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             job_count = connection.execute(
                 "SELECT COUNT(*) FROM crawl_jobs WHERE school = ?",
                 ("计算机学院",),
@@ -2418,7 +2419,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             candidate_id = connection.execute(
                 """
                 INSERT INTO crawl_candidates (job_id, name, email, university, confidence)
@@ -2467,7 +2468,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -2547,7 +2548,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertTrue(replayed.json()["idempotent_replay"])
         self.assertEqual(replayed.json()["plan_id"], plan["plan_id"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             existing_name = connection.execute(
                 "SELECT name FROM professors WHERE id = ?",
                 (existing_professor_id,),
@@ -2587,7 +2588,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(executed.json()["result"]["skipped_count"], 1)
         self.assertTrue(executed_replay.json()["idempotent_replay"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             existing = connection.execute(
                 "SELECT name, title, department FROM professors WHERE id = ?",
                 (existing_professor_id,),
@@ -2637,7 +2638,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -2690,7 +2691,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(stale_candidate.status_code, 409, msg=stale_candidate.text)
         self.assertEqual(stale_candidate.json()["error"]["code"], "PLAN_STALE")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             professor_name = connection.execute(
                 "SELECT name FROM professors WHERE id = ?",
                 (existing_professor_id,),
@@ -2710,7 +2711,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -2757,7 +2758,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(selection["excluded_count"], 1)
         self.assertRegex(selection["frozen_ids_hash"], r"^[0-9a-f]{64}$")
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             added_after_plan_id = connection.execute(
                 """
                 INSERT INTO crawl_candidates (job_id, name, email, review_status)
@@ -2778,7 +2779,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(executed.status_code, 200, msg=executed.text)
         self.assertEqual(executed.json()["result"]["inserted_count"], 1)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             imported_emails = {
                 row[0]
                 for row in connection.execute(
@@ -2820,7 +2821,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'canceled' WHERE id = ?",
                 (job_id,),
@@ -2865,7 +2866,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertIn("尚未重试抓取任务", plan["confirmation_message"])
         self.assertTrue(replayed.json()["idempotent_replay"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             before_candidates = connection.execute(
                 "SELECT COUNT(*) FROM crawl_candidates WHERE job_id = ?",
                 (job_id,),
@@ -2899,7 +2900,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(executed.json()["result"]["status"], "queued")
         self.assertTrue(replay.json()["idempotent_replay"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             candidate_count = connection.execute(
                 "SELECT COUNT(*) FROM crawl_candidates WHERE job_id = ?",
                 (job_id,),
@@ -2942,7 +2943,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'failed' WHERE id = ?",
                 (job_id,),
@@ -2962,7 +2963,7 @@ class AgentApiTests(unittest.TestCase):
             json={"clear_existing_data": True},
         )
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO crawl_candidates (job_id, name, email)
@@ -2979,7 +2980,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "PLAN_STALE")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             candidate_count = connection.execute(
                 "SELECT COUNT(*) FROM crawl_candidates WHERE job_id = ?",
                 (job_id,),
@@ -3005,7 +3006,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -3070,7 +3071,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(read_job.json()["llm_context"]["profile_source"], "explicit")
         self.assertEqual(read_job.json()["llm_context"]["model_name"], "test-model")
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             enrichment_task = connection.execute(
                 """
                 SELECT candidate_id, status FROM crawl_candidate_enrichment_tasks
@@ -3127,7 +3128,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute("UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?", (job_id,))
             eligible_id = connection.execute(
                 """
@@ -3171,7 +3172,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(payload["selection"]["excluded_count"], 1)
         self.assertEqual(payload["submission"]["queued_count"], 1)
         self.assertEqual(payload["skips"]["count"], 1)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             queued_candidate_ids = {
                 row[0]
                 for row in connection.execute(
@@ -3181,7 +3182,7 @@ class AgentApiTests(unittest.TestCase):
             }
         self.assertEqual(queued_candidate_ids, {eligible_id})
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "DELETE FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
                 (job_id,),
@@ -3205,7 +3206,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(filtered.status_code, 201, msg=filtered.text)
         self.assertEqual(filtered.json()["selection"]["matched_count"], 1)
         self.assertEqual(filtered.json()["submission"]["queued_count"], 1)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             filtered_candidate_id = connection.execute(
                 "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
                 (job_id,),
@@ -3225,7 +3226,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -3271,7 +3272,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = int(created.json()["id"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (job_id,),
@@ -3350,7 +3351,7 @@ class AgentApiTests(unittest.TestCase):
             self.assertEqual(created.status_code, 201, msg=created.text)
             created_ids.append(int(created.json()["id"]))
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (created_ids[1],),
@@ -3434,7 +3435,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(payload["failures"][0]["code"], "INVALID_BATCH_ITEM")
         first_job_id, second_job_id = payload["created_job_ids"]
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
                 (first_job_id,),
@@ -3483,7 +3484,7 @@ class AgentApiTests(unittest.TestCase):
             enrich_payload["failures"][0]["code"],
             "CRAWL_CANDIDATE_ENRICHMENT_NOT_REVIEWABLE",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             queued_candidate_id = connection.execute(
                 "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
                 (first_job_id,),
@@ -3683,7 +3684,7 @@ class AgentApiTests(unittest.TestCase):
     def test_material_delete_change_plan_requires_confirmation_and_executes_once(self) -> None:
         identity_id = self._create_identity()
         material_id = self._upload_material(identity_id)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             material_file_path = connection.execute(
                 "SELECT file_path FROM identity_materials WHERE id = ?",
                 (material_id,),
@@ -3742,7 +3743,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertTrue(executed_replay.json()["idempotent_replay"])
         self.assertEqual(executed_replay.json()["result"], executed.json()["result"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             material_count = connection.execute(
                 "SELECT COUNT(*) FROM identity_materials WHERE id = ?",
                 (material_id,),
@@ -3769,7 +3770,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201, msg=created.text)
         plan_id = created.json()["plan_id"]
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO email_tasks (
@@ -3853,7 +3854,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertTrue(executed_replay.json()["idempotent_replay"])
         self.assertEqual(executed_replay.json()["result"], executed.json()["result"])
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             archived_at = connection.execute(
                 "SELECT archived_at FROM outreach_templates WHERE id = ?",
                 (template_id,),
@@ -3894,7 +3895,7 @@ class AgentApiTests(unittest.TestCase):
         still_awaiting = self._agent_get(f"/api/agent/v1/plans/{plan_id}").json()
         self.assertEqual(still_awaiting["status"], "awaiting_confirmation")
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             archived_at = connection.execute(
                 "SELECT archived_at FROM outreach_templates WHERE id = ?",
                 (template_id,),
@@ -4041,7 +4042,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertIsNone(draft["reference_material_id"])
         self.assertEqual(draft["attachment_material_ids"], [material_id])
         self.assertIn("再次联系", draft["generated_subject"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             directions = [
                 row[0]
                 for row in connection.execute(
@@ -4083,7 +4084,7 @@ class AgentApiTests(unittest.TestCase):
         rewrite_payload = captured["payload"]
         self.assertEqual(rewrite_payload.body_text, "请将这封邮件改得更简洁。")
         self.assertEqual(rewrite_payload.attachment_material_ids, [])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             sent_count = connection.execute(
                 "SELECT COUNT(*) FROM email_logs WHERE direction = 'sent'",
             ).fetchone()[0]
@@ -4165,7 +4166,7 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"delivery": "immediate"},
         ).json()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE agent_action_plans SET expires_at = ? WHERE id = ?",
                 (
@@ -4187,7 +4188,7 @@ class AgentApiTests(unittest.TestCase):
         task_id = draft["task_id"]
         material_id = draft["attachment_material_ids"][0]
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE identity_materials SET size_bytes = ? WHERE id = ?",
                 (1024 * 1024, material_id),
@@ -4205,7 +4206,7 @@ class AgentApiTests(unittest.TestCase):
             1024 * 1024,
         )
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE identity_materials SET size_bytes = ? WHERE id = ?",
                 (1024 * 1024 + 1, material_id),
@@ -4384,7 +4385,7 @@ class AgentApiTests(unittest.TestCase):
         )
         material_id = self._upload_material(identity_id)
         template_id = self._create_template()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE professors SET research_direction = '' WHERE id = ?",
                 (fallback_professor_id,),
@@ -4609,7 +4610,7 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_campaign_list_pages_and_filters_before_aggregating(self) -> None:
         first_campaign_id, _ = self._create_template_campaign(key_suffix="first")
         second_campaign_id, _ = self._create_template_campaign(key_suffix="second")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE batch_tasks SET status = 'stopped' WHERE id = ?",
                 (first_campaign_id,),
@@ -4652,7 +4653,7 @@ class AgentApiTests(unittest.TestCase):
 
     def test_agent_campaign_pause_resets_running_draft_and_remove_hides_item(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE batch_tasks SET status = 'running' WHERE id = ?",
                 (campaign_id,),
@@ -4686,7 +4687,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(paused.json()["generating_draft_count"], 0)
         self.assertEqual(paused.json()["pending_generation_count"], 1)
         cancel_generation.assert_called_once()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             claim_state = connection.execute(
                 """
                 SELECT draft_claim_id, draft_claimed_at, draft_lease_expires_at
@@ -4716,7 +4717,7 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_campaign_can_cancel_future_scheduled_item_without_reauthorizing_it(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
         scheduled_at = datetime.now(UTC) + timedelta(days=1)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE batch_tasks
@@ -4759,7 +4760,7 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_campaign_restore_future_scheduled_item_requires_l3_plan(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
         scheduled_at = datetime.now(UTC) + timedelta(days=1)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE batch_tasks
@@ -4841,7 +4842,7 @@ class AgentApiTests(unittest.TestCase):
 
     def test_agent_campaign_resume_requires_l3_plan_for_pending_delivery(self) -> None:
         campaign_id, item_id = self._create_template_campaign()
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET status = 'approved' WHERE id = ?",
                 (item_id,),
@@ -5098,7 +5099,7 @@ class AgentApiTests(unittest.TestCase):
         material_id: int,
         template_id: int,
     ) -> tuple[int, int]:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             task_id = connection.execute(
                 """
                 INSERT INTO email_tasks (

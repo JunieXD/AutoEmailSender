@@ -30,6 +30,7 @@ cli/build/
 cli/dist/
 desktop/dist/
 desktop/release/
+desktop/build/runtime/vc_redist.x64.exe
 desktop/native/sparkle/build/
 desktop/native/sparkle/vendor/
 .superpowers

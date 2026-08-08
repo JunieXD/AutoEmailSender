@@ -1,5 +1,26 @@
 !include LogicLib.nsh
 
+!macro customInstall
+  ${IfNot} ${FileExists} "$INSTDIR\resources\runtime\vc_redist.x64.exe"
+    MessageBox MB_ICONSTOP "缺少 Microsoft Visual C++ 运行库，无法完成安装。请重新下载安装包。"
+    Abort
+  ${EndIf}
+
+  DetailPrint "正在安装 Microsoft Visual C++ x64 运行库…"
+  nsExec::ExecToLog '"$INSTDIR\resources\runtime\vc_redist.x64.exe" /install /quiet /norestart'
+  Pop $R0
+  ${If} $R0 == "0"
+    DetailPrint "Microsoft Visual C++ 运行库安装完成。"
+  ${ElseIf} $R0 == "1638"
+    DetailPrint "系统中已有兼容的 Microsoft Visual C++ 运行库。"
+  ${ElseIf} $R0 == "3010"
+    DetailPrint "Microsoft Visual C++ 运行库安装完成；系统稍后可能需要重启。"
+  ${Else}
+    MessageBox MB_ICONSTOP "Microsoft Visual C++ 运行库安装失败（退出码 $R0）。Auto Email Sender 尚未完成安装。"
+    Abort
+  ${EndIf}
+!macroend
+
 !ifdef BUILD_UNINSTALLER
 Var /GLOBAL UninstallShouldDeleteAppData
 !endif

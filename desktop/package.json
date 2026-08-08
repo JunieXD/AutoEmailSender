@@ -20,11 +20,12 @@
     "setup:sparkle": "../scripts/build/setup-sparkle.sh",
     "build:sparkle": "../scripts/build/build-sparkle-bridge.sh",
     "prepare:sparkle": "npm run setup:sparkle && npm run build:sparkle",
-    "pack": "npm run build && electron-builder --config electron-builder.yml --win --dir",
+    "prepare:windows-runtime": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ../scripts/build/prepare-windows-vc-runtime.ps1",
+    "pack": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win --dir",
     "pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never",
-    "dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "dist": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish never",
     "dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never",
-    "publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"
+    "publish": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"

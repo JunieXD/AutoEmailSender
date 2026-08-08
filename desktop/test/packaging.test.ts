@@ -155,6 +155,32 @@ describe("windows installer packaging", () => {
     expect(config).toContain("createDesktopShortcut: true");
   });
 
+  it("ships and installs the signed Microsoft VC++ x64 runtime prerequisite", () => {
+    const config = readFileSync(path.resolve("electron-builder.yml"), "utf8");
+    const packageJson = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
+    const prepareScript = readFileSync(
+      path.resolve("..", "scripts", "build", "prepare-windows-vc-runtime.ps1"),
+      "utf8",
+    );
+
+    expect(packageJson.scripts["prepare:windows-runtime"]).toContain(
+      "prepare-windows-vc-runtime.ps1",
+    );
+    expect(packageJson.scripts.dist).toContain("npm run prepare:windows-runtime");
+    expect(packageJson.scripts.publish).toContain("npm run prepare:windows-runtime");
+    expect(config).toContain("from: build/runtime/vc_redist.x64.exe");
+    expect(config).toContain("to: runtime/vc_redist.x64.exe");
+    expect(prepareScript).toContain("Get-AuthenticodeSignature");
+    expect(prepareScript).toContain("Microsoft Corporation");
+    expect(installerScript).toContain("!macro customInstall");
+    expect(installerScript).toContain("vc_redist.x64.exe\" /install /quiet /norestart");
+    expect(installerScript).toContain('$R0 == "3010"');
+    expect(installerScript).toContain("Abort");
+  });
+
   it("keeps app data cleanup as an opt-in uninstall section", () => {
     const scriptPath = path.resolve("build", "installer.nsh");
     const script = readFileSync(scriptPath, "utf8");
@@ -268,12 +294,12 @@ describe("macOS desktop packaging", () => {
     expect(config).toContain('artifactName: "AutoEmailSender-${version}-${arch}.${ext}"');
   });
 
-  it("declares macOS package scripts without changing Windows scripts", () => {
+  it("declares platform-specific packaging prerequisites", () => {
     const packageJson = readFileSync(path.resolve("package.json"), "utf8");
 
-    expect(packageJson).toContain('"pack": "npm run build && electron-builder --config electron-builder.yml --win --dir"');
-    expect(packageJson).toContain('"dist": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
-    expect(packageJson).toContain('"publish": "npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"');
+    expect(packageJson).toContain('"pack": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win --dir"');
+    expect(packageJson).toContain('"dist": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish never"');
+    expect(packageJson).toContain('"publish": "npm run prepare:windows-runtime && npm run build && electron-builder --config electron-builder.yml --win nsis --publish always"');
     expect(packageJson).toContain('"pack:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac --dir --publish never"');
     expect(packageJson).toContain('"dist:mac": "npm run prepare:sparkle && npm run build && electron-builder --config electron-builder.yml --mac dmg --publish never"');
     expect(packageJson).not.toContain('"publish:mac"');
