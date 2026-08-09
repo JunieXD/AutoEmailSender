@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import unittest
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +20,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.migrations import get_alembic_config
-from test.migrated_database import create_migrated_sqlite_database
 from app.models import Base, Professor, ProfessorCommunityLink
 from app.modules.community.public import (
     CommunityImportPayload,
@@ -165,6 +164,7 @@ def _dataset_payloads(
     *,
     records: list[dict[str, object]] | None = None,
     revocation_records: list[dict[str, object]] | None = None,
+    revocation_events: list[dict[str, object]] | None = None,
     minimum_app_version: str = "2.4.1",
     dataset_version: str = DATASET_VERSION,
     generated_at: str = GENERATED_AT,
@@ -210,7 +210,7 @@ def _dataset_payloads(
         "dataset_version": dataset_version,
         "generated_at": generated_at,
         "records": revocation_records or [],
-        "events": [],
+        "events": revocation_events or [],
     }
     file_payloads = {
         catalog_path: _json_bytes(catalog),
@@ -432,6 +432,55 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
             [None, "http://127.0.0.1:7897"],
         )
 
+    async def test_offline_state_is_preserved_when_loading_cached_records(self) -> None:
+        payloads = _dataset_payloads()
+        shard_path = _published_shard_path(payloads)
+        good_service = self._service(_transport_for_payloads(payloads))
+        await good_service.get_catalog(force_refresh=True)
+        await good_service.load_records(
+            dataset_version=DATASET_VERSION,
+            unit_paths=[shard_path],
+        )
+
+        async def offline(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("offline", request=request)
+
+        offline_service = self._service(httpx.MockTransport(offline))
+        catalog = await offline_service.get_catalog(force_refresh=True)
+        records = await offline_service.load_records(
+            dataset_version=DATASET_VERSION,
+            unit_paths=[shard_path],
+        )
+
+        self.assertTrue(catalog.stale)
+        self.assertTrue(records.stale)
+        self.assertEqual(records.warning, catalog.warning)
+
+    async def test_older_mirror_cannot_replace_a_newer_cached_lifecycle(self) -> None:
+        newer_version = "v2-dddddddddddddddddddddddddddddddd"
+        retirement = {
+            "community_record_id": "mentor_example0001",
+            "status": "retired",
+            "reason": "官网确认退休",
+            "source_url": "https://example.edu/retired",
+            "observed_at": "2026-08-04T00:00:00Z",
+        }
+        newer_payloads = _dataset_payloads(
+            dataset_version=newer_version,
+            generated_at="2026-08-04T00:00:00Z",
+            revocation_records=[retirement],
+        )
+        newer_service = self._service(_transport_for_payloads(newer_payloads))
+        await newer_service.get_catalog(force_refresh=True)
+
+        older_service = self._service(_transport_for_payloads(_dataset_payloads()))
+        fallback = await older_service.get_catalog(force_refresh=True)
+
+        self.assertEqual(fallback.catalog.dataset_version, newer_version)
+        self.assertTrue(fallback.stale)
+        self.assertEqual(fallback.revocations.records[0].status, "retired")
+        self.assertIn("拒绝回退", fallback.warning or "")
+
     async def test_reuses_content_addressed_shard_across_dataset_versions(self) -> None:
         first_payloads = _dataset_payloads()
         shard_path = _published_shard_path(first_payloads)
@@ -540,6 +589,64 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         await service.get_catalog(force_refresh=True)
 
         with self.assertRaisesRegex(CommunityDataError, "重复主邮箱"):
+            await service.load_records(
+                dataset_version=DATASET_VERSION,
+                unit_paths=[shard_path],
+            )
+
+    async def test_rejects_two_community_entities_sharing_a_secondary_email(self) -> None:
+        first = _record_payload()
+        first_contacts = list(first["contacts"])  # type: ignore[arg-type]
+        first_contacts.append(
+            {
+                "email": "shared@example.edu",
+                "is_primary": False,
+                "affiliation_id": "aff_example0001",
+                "source_url": "https://example.edu/faculty/zhang",
+                "observed_at": GENERATED_AT,
+            },
+        )
+        first["contacts"] = first_contacts
+        second = _record_payload(
+            id="mentor_example0002",
+            email="other@example.edu",
+            contacts=[
+                {
+                    "email": "other@example.edu",
+                    "is_primary": True,
+                    "affiliation_id": "aff_example0002",
+                    "source_url": "https://example.edu/faculty/other",
+                    "observed_at": GENERATED_AT,
+                },
+                {
+                    "email": "shared@example.edu",
+                    "is_primary": False,
+                    "affiliation_id": "aff_example0002",
+                    "source_url": "https://example.edu/faculty/other",
+                    "observed_at": GENERATED_AT,
+                },
+            ],
+            affiliations=[
+                {
+                    "id": "aff_example0002",
+                    "organization_id": UNIT_ID,
+                    "status": "current",
+                    "is_primary": True,
+                    "title": "教授",
+                    "university": "示例大学",
+                    "school": "计算机学院",
+                    "department": "人工智能系",
+                    "source_url": "https://example.edu/faculty/other",
+                    "observed_at": GENERATED_AT,
+                },
+            ],
+        )
+        payloads = _dataset_payloads(records=[first, second])
+        shard_path = _published_shard_path(payloads)
+        service = self._service(_transport_for_payloads(payloads))
+        await service.get_catalog(force_refresh=True)
+
+        with self.assertRaisesRegex(CommunityDataError, "重复当前邮箱"):
             await service.load_records(
                 dataset_version=DATASET_VERSION,
                 unit_paths=[shard_path],
@@ -887,6 +994,83 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(states["research_direction"], "remote_modified")
         self.assertEqual(comparison.category, "conflict")
 
+    async def test_locally_cleared_linked_field_is_not_filled_back_by_default(self) -> None:
+        record = CommunityMentorRecord.model_validate(_record_payload())
+        original_values = community_record_values(record)
+        async with self.session_factory() as session:
+            professor = Professor(**original_values)
+            session.add(professor)
+            await session.flush()
+            session.add(
+                ProfessorCommunityLink(
+                    professor_id=professor.id,
+                    community_record_id=record.id,
+                    dataset_version=DATASET_VERSION,
+                    imported_snapshot_json=original_values,
+                    remote_status="active",
+                ),
+            )
+            professor.title = None
+            await session.flush()
+
+            comparison = (await build_community_comparisons(session, [record]))[0]
+            title = next(field for field in comparison.fields if field.field == "title")
+            self.assertEqual(title.state, "local_modified")
+            self.assertEqual(title.suggested_choice, "local")
+
+            await import_community_records(
+                session,
+                dataset_version=DATASET_VERSION,
+                comparisons=[comparison],
+                items=[_import_item(comparison)],
+            )
+            await session.commit()
+            await session.refresh(professor)
+
+        self.assertIsNone(professor.title)
+
+    async def test_secondary_community_email_matches_existing_local_professor(self) -> None:
+        raw = _record_payload()
+        contacts = list(raw["contacts"])  # type: ignore[arg-type]
+        contacts.append(
+            {
+                "email": "zhang.secondary@example.edu",
+                "is_primary": False,
+                "affiliation_id": "aff_example0001",
+                "source_url": "https://example.edu/faculty/zhang",
+                "observed_at": GENERATED_AT,
+            },
+        )
+        raw["contacts"] = contacts
+        record = CommunityMentorRecord.model_validate(raw)
+        async with self.session_factory() as session:
+            values = community_record_values(record)
+            values["email"] = "zhang.secondary@example.edu"
+            professor = Professor(**values)
+            session.add(professor)
+            await session.flush()
+
+            comparison = (await build_community_comparisons(session, [record]))[0]
+            self.assertEqual(comparison.local_professor_id, professor.id)
+            self.assertEqual(comparison.match_reason, "secondary_email")
+            self.assertFalse(comparison.identity_conflict)
+
+            summary = await import_community_records(
+                session,
+                dataset_version=DATASET_VERSION,
+                comparisons=[comparison],
+                items=[_import_item(comparison)],
+            )
+            await session.commit()
+
+            professors = list((await session.execute(select(Professor))).scalars())
+            link = await session.scalar(select(ProfessorCommunityLink))
+
+        self.assertEqual(len(professors), 1)
+        self.assertEqual(professors[0].email, "zhang.secondary@example.edu")
+        self.assertEqual(summary.linked_count, 1)
+        self.assertIsNotNone(link)
+
     async def test_recent_papers_comparison_ignores_legacy_items_after_first_8(self) -> None:
         papers = [f"Paper {index}" for index in range(1, 9)]
         record = CommunityMentorRecord.model_validate(
@@ -1184,6 +1368,170 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(link.remote_status, "retired")
             self.assertIsNone(professor.archived_at)
             self.assertIsNotNone(await session.get(Professor, professor.id))
+
+    async def test_relocation_warns_existing_import_without_marking_it_revoked(self) -> None:
+        relocation = {
+            "kind": "relocation",
+            "id": "relocation_example0001",
+            "community_record_id": "mentor_example0001",
+            "status": "relocated",
+            "from_organization_id": "org_example_oldschool",
+            "to_organization_id": UNIT_ID,
+            "reason": "导师主要任职已调动至计算机学院",
+            "source_url": "https://example.edu/faculty/zhang",
+            "observed_at": GENERATED_AT,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            client = httpx.AsyncClient(
+                transport=_transport_for_payloads(
+                    _dataset_payloads(revocation_events=[relocation]),
+                ),
+            )
+            try:
+                bundle = await CommunityMentorDataService(
+                    cache_directory=Path(temp_dir) / "cache",
+                    base_urls=(BASE_URL,),
+                    http_client=client,
+                ).get_catalog(force_refresh=True)
+            finally:
+                await client.aclose()
+
+        async with self.session_factory() as session:
+            professor = Professor(name="张老师", email="zhang@example.edu")
+            session.add(professor)
+            await session.flush()
+            link = ProfessorCommunityLink(
+                professor_id=professor.id,
+                community_record_id="mentor_example0001",
+                dataset_version=DATASET_VERSION,
+                imported_snapshot_json={"name": "张老师", "email": "zhang@example.edu"},
+                imported_at=datetime(2026, 8, 1, tzinfo=UTC),
+                last_checked_at=datetime(2026, 8, 1, tzinfo=UTC),
+                remote_status="active",
+            )
+            session.add(link)
+            await session.flush()
+
+            warnings = await sync_community_link_lifecycle(session, bundle)
+
+            self.assertEqual(len(warnings), 1)
+            self.assertEqual(warnings[0].status, "relocated")
+            self.assertEqual(link.remote_status, "active")
+            self.assertIsNone(link.remote_revoked_at)
+
+    async def test_stale_cache_cannot_restore_a_previous_revocation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_directory = Path(temp_dir) / "cache"
+            good_client = httpx.AsyncClient(
+                transport=_transport_for_payloads(_dataset_payloads()),
+            )
+            try:
+                good_service = CommunityMentorDataService(
+                    cache_directory=cache_directory,
+                    base_urls=(BASE_URL,),
+                    http_client=good_client,
+                )
+                await good_service.get_catalog(force_refresh=True)
+            finally:
+                await good_client.aclose()
+
+            async def offline(request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("offline", request=request)
+
+            offline_client = httpx.AsyncClient(transport=httpx.MockTransport(offline))
+            try:
+                stale_bundle = await CommunityMentorDataService(
+                    cache_directory=cache_directory,
+                    base_urls=(BASE_URL,),
+                    http_client=offline_client,
+                ).get_catalog(force_refresh=True)
+            finally:
+                await offline_client.aclose()
+
+        async with self.session_factory() as session:
+            professor = Professor(name="张老师", email="zhang@example.edu")
+            session.add(professor)
+            await session.flush()
+            checked_at = stale_bundle.verified_at + timedelta(days=1)
+            link = ProfessorCommunityLink(
+                professor_id=professor.id,
+                community_record_id="mentor_example0001",
+                dataset_version="v2-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                imported_snapshot_json={"name": "张老师", "email": "zhang@example.edu"},
+                imported_at=datetime(2026, 8, 1, tzinfo=UTC),
+                last_checked_at=checked_at,
+                remote_status="retired",
+                remote_revoked_at=datetime(2026, 8, 5, tzinfo=UTC),
+            )
+            session.add(link)
+            await session.flush()
+
+            warnings = await sync_community_link_lifecycle(session, stale_bundle)
+
+            self.assertEqual(link.remote_status, "retired")
+            self.assertEqual(link.last_checked_at, checked_at)
+            self.assertEqual(len(warnings), 1)
+            self.assertEqual(warnings[0].status, "retired")
+
+    async def test_older_cache_cannot_overwrite_a_newer_active_link(self) -> None:
+        revocation = {
+            "community_record_id": "mentor_example0001",
+            "status": "retired",
+            "reason": "旧缓存中的退休记录",
+            "source_url": "https://example.edu/retired",
+            "observed_at": GENERATED_AT,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_directory = Path(temp_dir) / "cache"
+            good_client = httpx.AsyncClient(
+                transport=_transport_for_payloads(
+                    _dataset_payloads(revocation_records=[revocation]),
+                ),
+            )
+            try:
+                await CommunityMentorDataService(
+                    cache_directory=cache_directory,
+                    base_urls=(BASE_URL,),
+                    http_client=good_client,
+                ).get_catalog(force_refresh=True)
+            finally:
+                await good_client.aclose()
+
+            async def offline(request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("offline", request=request)
+
+            offline_client = httpx.AsyncClient(transport=httpx.MockTransport(offline))
+            try:
+                older_bundle = await CommunityMentorDataService(
+                    cache_directory=cache_directory,
+                    base_urls=(BASE_URL,),
+                    http_client=offline_client,
+                ).get_catalog(force_refresh=True)
+            finally:
+                await offline_client.aclose()
+
+        async with self.session_factory() as session:
+            professor = Professor(name="张老师", email="zhang@example.edu")
+            session.add(professor)
+            await session.flush()
+            checked_at = older_bundle.verified_at + timedelta(days=1)
+            link = ProfessorCommunityLink(
+                professor_id=professor.id,
+                community_record_id="mentor_example0001",
+                dataset_version="v2-ffffffffffffffffffffffffffffffff",
+                imported_snapshot_json={"name": "张老师", "email": "zhang@example.edu"},
+                imported_at=datetime(2026, 8, 1, tzinfo=UTC),
+                last_checked_at=checked_at,
+                remote_status="active",
+            )
+            session.add(link)
+            await session.flush()
+
+            warnings = await sync_community_link_lifecycle(session, older_bundle)
+
+            self.assertEqual(link.remote_status, "active")
+            self.assertEqual(link.last_checked_at, checked_at)
+            self.assertEqual(warnings, [])
 
     def test_share_package_contains_only_community_safe_columns(self) -> None:
         professor = Professor(

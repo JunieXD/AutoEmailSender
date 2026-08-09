@@ -71,7 +71,7 @@ import type {
   CommunityFieldStateDTO,
   CommunityMentorComparisonDTO,
   CommunityMentorRecordDTO,
-  CommunityMentorStatusDTO,
+  CommunityLifecycleWarningStatusDTO,
   CommunityRecordsDTO,
 } from '@/types';
 
@@ -219,7 +219,7 @@ const previewFieldStateOptionLabels = Object.fromEntries(
 const getChangedFields = (item: CommunityMentorComparisonDTO) =>
   item.fields.filter((field) => field.state !== 'same');
 
-const lifecycleLabels: Record<CommunityMentorStatusDTO, string> = {
+const lifecycleLabels: Record<CommunityLifecycleWarningStatusDTO, string> = {
   active: '在职',
   retired: '已退休',
   departed: '已离职或调动',
@@ -227,6 +227,7 @@ const lifecycleLabels: Record<CommunityMentorStatusDTO, string> = {
   stale: '信息过时',
   disputed: '信息有争议',
   removed: '已撤销',
+  relocated: '已调动任职',
 };
 
 const getErrorMessage = (error: unknown, fallback: string) =>

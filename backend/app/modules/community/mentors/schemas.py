@@ -49,6 +49,7 @@ CommunityRevokedStatus = Literal[
     "disputed",
     "removed",
 ]
+CommunityLifecycleWarningStatus = CommunityMentorStatus | Literal["relocated"]
 CommunityComparisonCategory = Literal[
     "new",
     "linked_unchanged",
@@ -365,6 +366,29 @@ class CommunityRevocationRecord(CommunityDatasetSchema):
         return _validated_community_web_url(value, label="生命周期来源链接")
 
 
+class CommunityRelocationRecord(CommunityDatasetSchema):
+    kind: Literal["relocation"]
+    id: str = Field(pattern=r"^relocation_[a-z0-9][a-z0-9_-]{5,95}$")
+    community_record_id: str = Field(pattern=MENTOR_ID_PATTERN)
+    status: Literal["relocated"]
+    from_organization_id: str = Field(pattern=ORGANIZATION_ID_PATTERN)
+    to_organization_id: str = Field(pattern=ORGANIZATION_ID_PATTERN)
+    reason: str = Field(min_length=1, max_length=1_000)
+    source_url: str = Field(max_length=500)
+    observed_at: datetime
+
+    @field_validator("source_url")
+    @classmethod
+    def _validate_source_url(cls, value: str) -> str:
+        return _validated_community_web_url(value, label="调动来源链接")
+
+    @model_validator(mode="after")
+    def _validate_organization_change(self) -> "CommunityRelocationRecord":
+        if self.from_organization_id == self.to_organization_id:
+            raise ValueError("调动事件的新旧机构不能相同")
+        return self
+
+
 class CommunityRevocationsDocument(CommunityDatasetSchema):
     schema_version: Literal[2]
     dataset_version: str = Field(pattern=DATASET_VERSION_PATTERN)
@@ -377,6 +401,14 @@ class CommunityRevocationsDocument(CommunityDatasetSchema):
         record_ids = [item.community_record_id for item in self.records]
         if len(record_ids) != len(set(record_ids)):
             raise ValueError("生命周期文件包含重复导师 ID")
+        relocation_ids: list[str] = []
+        for event in self.events:
+            if event.get("kind") != "relocation":
+                continue
+            relocation = CommunityRelocationRecord.model_validate(event)
+            relocation_ids.append(relocation.id)
+        if len(relocation_ids) != len(set(relocation_ids)):
+            raise ValueError("生命周期文件包含重复调动事件")
         return self
 
 
@@ -384,7 +416,7 @@ class CommunityLifecycleWarningRead(ApiSchema):
     community_record_id: str
     professor_id: int
     professor_name: str
-    status: CommunityMentorStatus
+    status: CommunityLifecycleWarningStatus
     reason: str | None
     source_url: str | None
     observed_at: datetime | None

@@ -247,6 +247,29 @@ describe('CommunityMentorsPage', () => {
     await waitFor(() => expect(apiMocks.getCatalog).toHaveBeenCalledWith(true));
   });
 
+  it('shows a relocation warning without presenting it as retirement', async () => {
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      lifecycle_warnings: [
+        {
+          community_record_id: 'mentor_example0001',
+          professor_id: 1,
+          professor_name: '张老师',
+          status: 'relocated',
+          reason: '导师主要任职已从示例大学调动至样本大学',
+          source_url: 'https://example.edu/source',
+          observed_at: '2026-08-03T00:00:00Z',
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('已导入导师有生命周期变化')).toBeInTheDocument();
+    expect(screen.getByText('· 已调动任职')).toBeInTheDocument();
+    expect(screen.queryByText('· 已退休')).not.toBeInTheDocument();
+  });
+
   it('reuses the session catalog immediately and refreshes when returning to the page', async () => {
     apiMocks.getCatalog.mockResolvedValue(populatedCatalog);
 

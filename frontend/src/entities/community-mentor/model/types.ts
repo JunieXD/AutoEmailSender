@@ -7,6 +7,10 @@ export type CommunityMentorStatusDTO =
   | 'disputed'
   | 'removed';
 
+export type CommunityLifecycleWarningStatusDTO =
+  | CommunityMentorStatusDTO
+  | 'relocated';
+
 export type CommunityComparisonCategoryDTO =
   | 'new'
   | 'linked_unchanged'
@@ -47,7 +51,7 @@ export interface CommunityLifecycleWarningDTO {
   community_record_id: string;
   professor_id: number;
   professor_name: string;
-  status: CommunityMentorStatusDTO;
+  status: CommunityLifecycleWarningStatusDTO;
   reason: string | null;
   source_url: string | null;
   observed_at: string | null;

@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, TypeVar
@@ -40,6 +40,7 @@ from .schemas import (
     CommunityMentorComparisonRead,
     CommunityMentorRecord,
     CommunityRecordsRead,
+    CommunityRelocationRecord,
     CommunityRevocationRecord,
     CommunityRevocationsDocument,
     CommunityShardDocument,
@@ -61,6 +62,7 @@ TOTAL_SELECTED_SHARDS_MAX_BYTES = 80 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 20.0
 CACHE_INDEX_NAME = "cache-index.json"
+CACHE_REFRESH_STATE_NAME = "refresh-state.json"
 QUERY_IN_BATCH_SIZE = 10_000
 COMMUNITY_CACHE_MAX_BYTES = 500 * 1024 * 1024
 COMMUNITY_CACHE_RETAINED_VERSIONS = 2
@@ -89,6 +91,7 @@ LIFECYCLE_STATUS_LABELS = {
     "stale": "信息过时",
     "disputed": "信息有争议",
     "removed": "已撤销",
+    "relocated": "已调动任职",
 }
 
 
@@ -207,7 +210,9 @@ class CommunityMentorDataService:
     async def get_catalog(self, *, force_refresh: bool) -> CommunityCatalogBundle:
         if not force_refresh:
             try:
-                return self._load_cached_catalog(stale=False, warning=None)
+                return self._with_cached_refresh_state(
+                    self._load_cached_catalog(stale=False, warning=None),
+                )
             except CommunityDataError:
                 pass
 
@@ -220,10 +225,17 @@ class CommunityMentorDataService:
 
         warning = failures[-1] if failures else "社区导师库暂时无法访问"
         try:
-            return self._load_cached_catalog(
+            fallback_warning = f"网络刷新失败，正在使用最后一次验证成功的缓存：{warning}"
+            bundle = self._load_cached_catalog(
                 stale=True,
-                warning=f"网络刷新失败，正在使用最后一次验证成功的缓存：{warning}",
+                warning=fallback_warning,
             )
+            self._write_refresh_state(
+                dataset_version=bundle.catalog.dataset_version,
+                stale=True,
+                warning=fallback_warning,
+            )
+            return bundle
         except CommunityDataError as cache_exc:
             detail = warning if failures else str(cache_exc)
             raise CommunityDataError(
@@ -237,7 +249,9 @@ class CommunityMentorDataService:
         dataset_version: str,
         unit_paths: list[str],
     ) -> CommunityRecordBundle:
-        bundle = self._load_cached_catalog(stale=False, warning=None)
+        bundle = self._with_cached_refresh_state(
+            self._load_cached_catalog(stale=False, warning=None),
+        )
         if bundle.catalog.dataset_version != dataset_version:
             raise CommunityDataError(
                 "社区数据版本已经变化，请刷新目录后重新选择",
@@ -325,15 +339,19 @@ class CommunityMentorDataService:
                 seen_record_ids.add(record.id)
                 records.append(record)
 
-        primary_emails: dict[str, str] = {}
+        current_emails: dict[str, str] = {}
         for record in records:
-            existing_record_id = primary_emails.get(record.email)
-            if existing_record_id is not None and existing_record_id != record.id:
-                raise CommunityDataError(
-                    f"社区数据包含重复主邮箱：{record.email}",
-                    code="COMMUNITY_DATA_INVALID",
-                )
-            primary_emails[record.email] = record.id
+            for contact in record.contacts:
+                existing_record_id = current_emails.get(contact.email)
+                if existing_record_id is not None and existing_record_id != record.id:
+                    duplicate_label = (
+                        "重复主邮箱" if contact.email == record.email else "重复当前邮箱"
+                    )
+                    raise CommunityDataError(
+                        f"社区数据包含跨导师{duplicate_label}：{contact.email}",
+                        code="COMMUNITY_DATA_INVALID",
+                    )
+                current_emails[contact.email] = record.id
 
         source = (
             "network"
@@ -435,6 +453,7 @@ class CommunityMentorDataService:
             "revocations.json",
         )
         self._validate_dataset_documents(latest, manifest, catalog, revocations)
+        self._validate_monotonic_update(latest)
 
         verified_at = datetime.now(UTC)
         self._cache_catalog(
@@ -445,6 +464,11 @@ class CommunityMentorDataService:
             version=latest.dataset_version,
             base_url=base_url,
             verified_at=verified_at,
+        )
+        self._write_refresh_state(
+            dataset_version=latest.dataset_version,
+            stale=False,
+            warning=None,
         )
         return CommunityCatalogBundle(
             latest=latest,
@@ -545,6 +569,73 @@ class CommunityMentorDataService:
             warning=warning,
             verified_at=verified_at.astimezone(UTC),
         )
+
+    def _validate_monotonic_update(self, latest: CommunityLatestDocument) -> None:
+        try:
+            cached = self._load_cached_catalog(stale=False, warning=None)
+        except CommunityDataError:
+            return
+        if latest.generated_at < cached.latest.generated_at:
+            raise CommunityDataError(
+                "社区镜像提供的版本早于本地已验证版本，已拒绝回退",
+                code="COMMUNITY_DATA_ROLLBACK_DETECTED",
+            )
+        if (
+            latest.generated_at == cached.latest.generated_at
+            and latest.dataset_version != cached.latest.dataset_version
+        ):
+            raise CommunityDataError(
+                "社区镜像在相同生成时间提供了不同数据版本，已拒绝切换",
+                code="COMMUNITY_DATA_MIRROR_CONFLICT",
+            )
+
+    def _with_cached_refresh_state(
+        self,
+        bundle: CommunityCatalogBundle,
+    ) -> CommunityCatalogBundle:
+        state_path = self.cache_directory / CACHE_REFRESH_STATE_NAME
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return bundle
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"schema_version", "dataset_version", "stale", "warning"}
+            or state.get("schema_version") != 1
+            or state.get("dataset_version") != bundle.catalog.dataset_version
+            or not isinstance(state.get("stale"), bool)
+            or not (state.get("warning") is None or isinstance(state.get("warning"), str))
+        ):
+            return bundle
+        return replace(
+            bundle,
+            stale=state["stale"],
+            warning=state["warning"],
+        )
+
+    def _write_refresh_state(
+        self,
+        *,
+        dataset_version: str,
+        stale: bool,
+        warning: str | None,
+    ) -> None:
+        payload = json.dumps(
+            {
+                "schema_version": 1,
+                "dataset_version": dataset_version,
+                "stale": stale,
+                "warning": warning,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        try:
+            self._write_atomic(self.cache_directory / CACHE_REFRESH_STATE_NAME, payload)
+        except CommunityDataError:
+            # The verified catalog remains usable even if this advisory state cannot persist.
+            return
 
     async def _load_or_download_manifest_file(
         self,
@@ -1100,12 +1191,21 @@ def _is_empty(field: str, value: Any) -> bool:
 def _identity_conflict_reason(professor: Professor, record: CommunityMentorRecord) -> str | None:
     if not _values_equal("name", professor.name, record.name):
         return "邮箱相同，但姓名不同，需要人工确认是否为同一位导师"
-    if (
-        professor.university
-        and record.university
-        and not _values_equal("university", professor.university, record.university)
-    ):
-        return "邮箱相同，但学校不同，可能是调动、双聘或邮箱复用，需要人工确认"
+    local_organization = {
+        "university": professor.university,
+        "school": professor.school,
+    }
+    if any(local_organization.values()):
+        organization_matches = any(
+            all(
+                not local_value
+                or _values_equal(field, local_value, getattr(affiliation, field))
+                for field, local_value in local_organization.items()
+            )
+            for affiliation in record.affiliations
+        )
+        if not organization_matches:
+            return "邮箱相同，但学校或学院不同，可能是调动、双聘或邮箱复用，需要人工确认"
     return None
 
 
@@ -1136,23 +1236,24 @@ def _build_field_comparisons(
         elif _values_equal(field, local_value, community_value):
             state = "same"
             suggested_choice = "local"
+        elif snapshot is not None:
+            if not baseline_present:
+                state = "local_modified"
+                suggested_choice = "local"
+            elif _values_equal(field, local_value, baseline_value):
+                state = "remote_modified"
+                suggested_choice = "community"
+            elif _values_equal(field, community_value, baseline_value):
+                state = "local_modified"
+                suggested_choice = "local"
+            else:
+                state = "conflict"
+                suggested_choice = "local"
         elif _is_empty(field, local_value) and not _is_empty(field, community_value):
             state = "fill_available"
             suggested_choice = "community"
         elif _is_empty(field, community_value):
             state = "local_only"
-            suggested_choice = "local"
-        elif snapshot is None:
-            state = "conflict"
-            suggested_choice = "local"
-        elif not baseline_present:
-            state = "local_modified"
-            suggested_choice = "local"
-        elif _values_equal(field, local_value, baseline_value):
-            state = "remote_modified"
-            suggested_choice = "community"
-        elif _values_equal(field, community_value, baseline_value):
-            state = "local_modified"
             suggested_choice = "local"
         else:
             state = "conflict"
@@ -1227,7 +1328,17 @@ async def build_community_comparisons(
             ).scalars(),
         )
     links_by_record_id = {link.community_record_id: link for link in links}
-    record_emails = sorted({record.email.lower() for record in records})
+    record_emails_by_id = {
+        record.id: {contact.email.lower() for contact in record.contacts}
+        for record in records
+    }
+    record_emails = sorted(
+        {
+            email
+            for emails in record_emails_by_id.values()
+            for email in emails
+        }
+    )
     professors_by_email: dict[str, list[Professor]] = {}
     candidate_links_by_professor_id: dict[int, ProfessorCommunityLink] = {}
     if record_emails:
@@ -1276,21 +1387,31 @@ async def build_community_comparisons(
         if link is not None and isinstance(link.imported_snapshot_json, dict):
             snapshot = link.imported_snapshot_json
         if professor is not None:
-            other_email_matches = [
-                candidate
-                for candidate in professors_by_email.get(record.email.lower(), [])
+            other_email_matches = {
+                candidate.id: candidate
+                for email in record_emails_by_id[record.id]
+                for candidate in professors_by_email.get(email, [])
                 if candidate.id != professor.id
-            ]
+            }
             if other_email_matches:
                 identity_conflict = True
                 match_reason = (
                     "社区邮箱已被另一位本地导师使用，可能是邮箱重新分配或社区实体重复"
                 )
         if professor is None:
-            candidates = professors_by_email.get(record.email.lower(), [])
+            candidates_by_id = {
+                candidate.id: candidate
+                for email in record_emails_by_id[record.id]
+                for candidate in professors_by_email.get(email, [])
+            }
+            candidates = list(candidates_by_id.values())
             if len(candidates) == 1:
                 professor = candidates[0]
-                match_reason = "email"
+                match_reason = (
+                    "email"
+                    if professor.email and professor.email.lower() == record.email.lower()
+                    else "secondary_email"
+                )
                 candidate_link = candidate_links_by_professor_id.get(professor.id)
                 if (
                     candidate_link is not None
@@ -1395,27 +1516,82 @@ async def sync_community_link_lifecycle(
         item.community_record_id: item
         for item in bundle.revocations.records
     }
-    checked_at = utc_now()
+    relocations_by_id: dict[str, CommunityRelocationRecord] = {}
+    for event in bundle.revocations.events:
+        if event.get("kind") != "relocation":
+            continue
+        relocation = CommunityRelocationRecord.model_validate(event)
+        existing = relocations_by_id.get(relocation.community_record_id)
+        if existing is None or relocation.observed_at > existing.observed_at:
+            relocations_by_id[relocation.community_record_id] = relocation
+    verified_at = bundle.verified_at
     warnings: list[CommunityLifecycleWarningRead] = []
     for link in links:
         revocation = revoked_by_id.get(link.community_record_id)
-        link.last_checked_at = checked_at
-        link.dataset_version = bundle.catalog.dataset_version
-        if revocation is None:
-            link.remote_status = "active"
-            link.remote_revoked_at = None
+        if (
+            link.last_checked_at is not None
+            and verified_at < link.last_checked_at
+            and bundle.catalog.dataset_version != link.dataset_version
+        ):
+            if link.remote_status != "active":
+                warnings.append(
+                    CommunityLifecycleWarningRead(
+                        community_record_id=link.community_record_id,
+                        professor_id=link.professor_id,
+                        professor_name=link.professor.name,
+                        status=link.remote_status,
+                        reason="当前社区缓存早于本地上次核验，保留现有生命周期状态；请刷新后再处理",
+                        source_url=None,
+                        observed_at=link.remote_revoked_at,
+                    ),
+                )
             continue
-        link.remote_status = revocation.status
-        link.remote_revoked_at = revocation.observed_at or checked_at
+        if link.last_checked_at is None or verified_at > link.last_checked_at:
+            link.last_checked_at = verified_at
+            link.dataset_version = bundle.catalog.dataset_version
+        if revocation is not None:
+            link.remote_status = revocation.status
+            link.remote_revoked_at = revocation.observed_at or verified_at
+            warnings.append(
+                CommunityLifecycleWarningRead(
+                    community_record_id=link.community_record_id,
+                    professor_id=link.professor_id,
+                    professor_name=link.professor.name,
+                    status=revocation.status,
+                    reason=revocation.reason,
+                    source_url=revocation.source_url,
+                    observed_at=revocation.observed_at,
+                ),
+            )
+            continue
+        if bundle.stale:
+            if link.remote_status != "active":
+                warnings.append(
+                    CommunityLifecycleWarningRead(
+                        community_record_id=link.community_record_id,
+                        professor_id=link.professor_id,
+                        professor_name=link.professor.name,
+                        status=link.remote_status,
+                        reason="离线缓存中没有足够的新证据恢复该状态，请联网刷新后再处理",
+                        source_url=None,
+                        observed_at=link.remote_revoked_at,
+                    ),
+                )
+            continue
+        link.remote_status = "active"
+        link.remote_revoked_at = None
+        relocation = relocations_by_id.get(link.community_record_id)
+        if relocation is None or relocation.observed_at <= link.imported_at:
+            continue
         warnings.append(
             CommunityLifecycleWarningRead(
                 community_record_id=link.community_record_id,
                 professor_id=link.professor_id,
                 professor_name=link.professor.name,
-                status=revocation.status,
-                reason=revocation.reason,
-                source_url=revocation.source_url,
-                observed_at=revocation.observed_at,
+                status="relocated",
+                reason=relocation.reason,
+                source_url=relocation.source_url,
+                observed_at=relocation.observed_at,
             ),
         )
     return warnings
