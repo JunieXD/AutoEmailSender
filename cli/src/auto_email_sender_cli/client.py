@@ -25,12 +25,17 @@ class AgentApiClient:
         http_client: httpx.Client | None = None,
     ) -> None:
         self._refresh_runtime_on_failure = descriptor is None
-        self.descriptor = ensure_runtime_protocol_compatible(
-            descriptor or ensure_runtime_descriptor(),
-        )
         self.timeout = timeout
         self._http_client = http_client or httpx.Client(timeout=timeout)
         self._owns_http_client = http_client is None
+        try:
+            self.descriptor = ensure_runtime_protocol_compatible(
+                descriptor or ensure_runtime_descriptor(http_client=self._http_client),
+            )
+        except Exception:
+            if self._owns_http_client:
+                self._http_client.close()
+            raise
         self.last_request_id: str | None = None
         self.last_response_status: int | None = None
         self.last_response_headers: dict[str, str] = {}
@@ -141,7 +146,7 @@ class AgentApiClient:
                     and isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
                 ):
                     self.descriptor = ensure_runtime_protocol_compatible(
-                        ensure_runtime_descriptor(),
+                        ensure_runtime_descriptor(http_client=self._http_client),
                     )
                     continue
                 if not safe_method and not isinstance(
@@ -164,7 +169,7 @@ class AgentApiClient:
             ):
                 previous_runtime = _runtime_identity(self.descriptor)
                 refreshed = ensure_runtime_protocol_compatible(
-                    ensure_runtime_descriptor(),
+                    ensure_runtime_descriptor(http_client=self._http_client),
                 )
                 if _runtime_identity(refreshed) != previous_runtime:
                     self.descriptor = refreshed

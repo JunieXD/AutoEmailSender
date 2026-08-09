@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import shutil
 import sys
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Annotated
 
@@ -19,6 +21,8 @@ from auto_email_sender_cli.capabilities import (
     list_capabilities,
     list_resource_catalog,
     normalize_capability_command,
+    search_capabilities,
+    search_capability_cards,
     suggest_capabilities,
 )
 from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
@@ -28,6 +32,7 @@ from auto_email_sender_cli.commands import (
     communication_groups_app,
     crawler_app,
     dashboard_app,
+    deliveries_app,
     diagnostics_app,
     drafts_app,
     enrichment_app,
@@ -63,6 +68,13 @@ from auto_email_sender_cli.output import (
     emit_error,
     emit_success,
 )
+from auto_email_sender_cli.result_protocol import (
+    DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_OUTPUT_ITEMS,
+    HARD_MAX_OUTPUT_BYTES,
+    HARD_MAX_OUTPUT_ITEMS,
+    MIN_MAX_OUTPUT_BYTES,
+)
 from auto_email_sender_cli.runtime import (
     get_runtime_file_path,
     load_runtime_descriptor,
@@ -76,16 +88,185 @@ from auto_email_sender_cli.version import (
 )
 
 
+_ROOT_VALUE_OPTIONS = frozenset(
+    {
+        "--format",
+        "--request-id",
+        "--operation-id",
+        "--if-revision",
+        "--output-file",
+        "--filter",
+        "--projection",
+        "--expand",
+        "--max-output-bytes",
+        "--max-items",
+    },
+)
+_ROOT_FLAG_OPTIONS = frozenset({"--json", "--force-output", "--include-revisions"})
+_ROOT_OUTPUT_FORMATS = frozenset(item.value for item in OutputFormat)
+_CAPABILITY_CARD_SELECT_FIELDS = (
+    "command",
+    "summary",
+    "resource",
+    "availability",
+    "risk",
+    "contract_revision",
+    "unavailable_reason",
+    "manual_action",
+    "lifecycle",
+)
+_COMMAND_CONTRACT_REVISION_CACHE: dict[str, str] = {}
+
+
+def _root_option_name(argument: str) -> str:
+    return argument.split("=", 1)[0]
+
+
+def _first_command_index(arguments: list[str]) -> int:
+    """Locate the root command while accounting for root option values."""
+
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            return min(index + 1, len(arguments))
+        option = _root_option_name(argument)
+        if option in _ROOT_FLAG_OPTIONS:
+            index += 1
+            continue
+        if option in _ROOT_VALUE_OPTIONS:
+            index += 1 if "=" in argument else 2
+            continue
+        if argument.startswith("-"):
+            index += 1
+            continue
+        return index
+    return len(arguments)
+
+
+def _should_move_ambiguous_root_option(
+    *,
+    option: str,
+    value: str | None,
+    index: int,
+    command_index: int,
+    command_path: tuple[str, str | None],
+) -> bool:
+    if index < command_index:
+        return True
+    root_command, leaf_command = command_path
+    if option == "--request-id" and root_command == "diagnostics" and leaf_command in {
+        "logs",
+        "crawler-debug",
+    }:
+        return False
+    if (
+        option == "--format"
+        and root_command == "professors"
+        and leaf_command in {"export", "download-template"}
+    ):
+        return value is not None and value.strip().lower() in _ROOT_OUTPUT_FORMATS
+    return True
+
+
+def _reorder_root_options(arguments: list[str]) -> list[str]:
+    """Allow documented global options on either side of a leaf command.
+
+    Click normally stops parsing group options once it enters a subcommand.
+    Moving only the known root options keeps leaf parsing intact.  The two
+    historical name collisions remain leaf-local after their command; Agents
+    can use ``--operation-id`` to disambiguate the root request identifier.
+    """
+
+    command_index = _first_command_index(arguments)
+    root_command = arguments[command_index] if command_index < len(arguments) else ""
+    leaf_command = (
+        arguments[command_index + 1]
+        if command_index + 1 < len(arguments)
+        and not arguments[command_index + 1].startswith("-")
+        else None
+    )
+    moved: list[str] = []
+    remaining: list[str] = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            remaining.extend(arguments[index:])
+            break
+        option = _root_option_name(argument)
+        if option in _ROOT_FLAG_OPTIONS:
+            moved.append(argument)
+            index += 1
+            continue
+        if option in _ROOT_VALUE_OPTIONS:
+            inline_value = argument.split("=", 1)[1] if "=" in argument else None
+            value = inline_value
+            consumed = 1
+            if inline_value is None and index + 1 < len(arguments):
+                value = arguments[index + 1]
+                consumed = 2
+            ambiguous = option in {"--format", "--request-id"}
+            should_move = not ambiguous or _should_move_ambiguous_root_option(
+                option=option,
+                value=value,
+                index=index,
+                command_index=command_index,
+                command_path=(root_command, leaf_command),
+            )
+            if should_move:
+                moved.extend(arguments[index : index + consumed])
+                index += consumed
+                continue
+        remaining.append(argument)
+        index += 1
+    return [*moved, *remaining]
+
+
+def _normalize_capability_select(values: list[str]) -> tuple[list[str], list[str]]:
+    selected: list[str] = []
+    invalid: list[str] = []
+    for value in values:
+        for candidate in value.split(","):
+            normalized = candidate.strip().lower().replace("-", "_")
+            if not normalized or normalized in selected or normalized in invalid:
+                continue
+            if normalized not in _CAPABILITY_CARD_SELECT_FIELDS:
+                invalid.append(candidate.strip())
+            else:
+                selected.append(normalized)
+    return selected, invalid
+
+
+def _select_capability_card_fields(
+    items: list[dict[str, object]],
+    selected: list[str],
+) -> list[dict[str, object]]:
+    if not selected:
+        return items
+    return [
+        {key: item[key] for key in selected if key in item}
+        for item in items
+    ]
+
+
 class AgentTyperGroup(TyperGroup):
     """Keep parser failures inside the structured Agent result protocol."""
 
     def main(self, *args: object, **kwargs: object) -> object:
         standalone_mode = bool(kwargs.pop("standalone_mode", True))
         raw_args = kwargs.get("args")
+        arguments = (
+            [str(item) for item in raw_args]
+            if isinstance(raw_args, (list, tuple))
+            else list(sys.argv[1:])
+        )
+        reordered_args = _reorder_root_options(arguments)
+        kwargs["args"] = reordered_args
         try:
             result = super().main(*args, standalone_mode=False, **kwargs)
         except UsageError as exc:
-            _emit_usage_error(exc, raw_args)
+            _emit_usage_error(exc, reordered_args)
             if standalone_mode:
                 raise SystemExit(exc.exit_code) from None
             raise typer.Exit(exc.exit_code) from exc
@@ -109,6 +290,9 @@ def _emit_usage_error(error: UsageError, raw_args: object) -> None:
     parameter_hint = getattr(error, "param_hint", None)
     if parameter_hint:
         details["parameter"] = str(parameter_hint)
+    suggestions = _usage_error_suggestions(error)
+    if suggestions:
+        details["suggestions"] = suggestions
     emit_error(
         context,
         command=command,
@@ -124,6 +308,37 @@ def _emit_usage_error(error: UsageError, raw_args: object) -> None:
             ),
         ),
     )
+
+
+def _usage_error_suggestions(error: UsageError) -> list[str]:
+    possibilities = getattr(error, "possibilities", None)
+    if isinstance(possibilities, (list, tuple)) and possibilities:
+        return [str(item) for item in possibilities[:5]]
+
+    option_name = getattr(error, "option_name", None)
+    command = getattr(getattr(error, "ctx", None), "command", None)
+    if isinstance(option_name, str) and command is not None:
+        option_names: list[str] = []
+        for parameter in getattr(command, "params", ()):
+            for item in (*getattr(parameter, "opts", ()), *getattr(parameter, "secondary_opts", ())):
+                rendered = str(item)
+                option_names.append(
+                    rendered
+                    if rendered.startswith("-")
+                    else f"--{rendered.replace('_', '-')}"
+                )
+        return get_close_matches(option_name, option_names, n=5, cutoff=0.45)
+
+    match = re.search(r"No such command ['\"]([^'\"]+)['\"]", str(getattr(error, "message", "")))
+    context = getattr(error, "ctx", None)
+    if match is not None and context is not None and isinstance(command, TyperGroup):
+        return get_close_matches(
+            match.group(1),
+            [str(item) for item in command.list_commands(context)],
+            n=5,
+            cutoff=0.45,
+        )
+    return []
 
 
 def _output_format_from_arguments(arguments: list[str]) -> OutputFormat:
@@ -182,6 +397,7 @@ app.add_typer(llm_profiles_app, name="llm-profiles")
 app.add_typer(matching_app, name="matching")
 app.add_typer(enrichment_app, name="enrichment")
 app.add_typer(drafts_app, name="drafts")
+app.add_typer(deliveries_app, name="deliveries")
 app.add_typer(plans_app, name="plans")
 app.add_typer(settings_app, name="settings")
 app.add_typer(tasks_app, name="tasks")
@@ -211,7 +427,20 @@ def _current_command_contract_revisions(
             if capability.availability == "available"
         ]
     )
-    revisions = describe_command_revisions(app, selected_commands)
+    missing_commands = [
+        command
+        for command in selected_commands
+        if command not in _COMMAND_CONTRACT_REVISION_CACHE
+    ]
+    if missing_commands:
+        _COMMAND_CONTRACT_REVISION_CACHE.update(
+            describe_command_revisions(app, missing_commands),
+        )
+    revisions = {
+        command: _COMMAND_CONTRACT_REVISION_CACHE[command]
+        for command in selected_commands
+        if command in _COMMAND_CONTRACT_REVISION_CACHE
+    }
     missing = sorted(set(selected_commands) - set(revisions))
     if missing:
         raise RuntimeError(f"Published capability is not describable: {', '.join(missing)}")
@@ -233,6 +462,7 @@ def root(
         str | None,
         typer.Option(
             "--request-id",
+            "--operation-id",
             help="可复用的操作标识；网络超时后用同一值重试不会重复本地副作用。",
         ),
     ] = None,
@@ -275,6 +505,27 @@ def root(
             help="在 summary 中显式展开字段名或 JSON Pointer；可重复，例如 --expand body_text。",
         ),
     ] = [],
+    max_output_bytes: Annotated[
+        int,
+        typer.Option(
+            "--max-output-bytes",
+            min=MIN_MAX_OUTPUT_BYTES,
+            max=HARD_MAX_OUTPUT_BYTES,
+            help=(
+                "业务 data 的 UTF-8 字节预算；超出时返回明确的截断路径，"
+                "full/expand 也不能绕过该上限。"
+            ),
+        ),
+    ] = DEFAULT_MAX_OUTPUT_BYTES,
+    max_items: Annotated[
+        int,
+        typer.Option(
+            "--max-items",
+            min=1,
+            max=HARD_MAX_OUTPUT_ITEMS,
+            help="stdout 集合允许保留的最大条目数；完整大集合请改用 --output-file。",
+        ),
+    ] = DEFAULT_MAX_OUTPUT_ITEMS,
     include_revisions: Annotated[
         bool,
         typer.Option(
@@ -293,6 +544,8 @@ def root(
             "filter_expression",
             "projection",
             "expand",
+            "max_output_bytes",
+            "max_items",
             "include_revisions",
         )
         if ctx.get_parameter_source(name)
@@ -307,6 +560,8 @@ def root(
         force_output=force_output,
         projection=projection,
         expand=tuple(expand),
+        max_output_bytes=max_output_bytes,
+        max_items=max_items,
         include_revisions=include_revisions,
         specified_options=specified_options,
     )
@@ -410,6 +665,18 @@ def capabilities_command(
         str | None,
         typer.Option("--resource", help="按资源族筛选，例如 professors、communications、campaigns。"),
     ] = None,
+    query: Annotated[
+        str | None,
+        typer.Option("--query", help="按中文或英文意图检索并排序最相关命令。"),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", min=1, max=25, help="--query 最多返回多少个命令，默认 8。"),
+    ] = None,
+    resource_exact: Annotated[
+        bool,
+        typer.Option("--resource-exact", help="只匹配指定资源，不包含其子资源。"),
+    ] = False,
     view: Annotated[
         str | None,
         typer.Option(
@@ -420,6 +687,17 @@ def capabilities_command(
     all_details: Annotated[
         bool,
         typer.Option("--all", help="等同于 --view full；必须同时用 --command 或 --resource 缩小范围。"),
+    ] = False,
+    select: Annotated[
+        list[str],
+        typer.Option(
+            "--select",
+            help="只保留命令卡字段；逗号分隔或重复使用，例如 command,summary,risk。",
+        ),
+    ] = [],
+    minimal: Annotated[
+        bool,
+        typer.Option("--minimal", help="省略 build、next 和工作区提示，只返回缓存与结果必需字段。"),
     ] = False,
     since: Annotated[
         str | None,
@@ -432,6 +710,54 @@ def capabilities_command(
     context = _context(ctx)
     _validate_system_context(context, "capabilities")
     requested_view = view.strip().lower() if view else None
+    normalized_query = query.strip() if query is not None else None
+    selected_fields, invalid_select_fields = _normalize_capability_select(select)
+    if query is not None and not normalized_query:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--query 不能为空。",
+            exit_code=2,
+            details={"query": query},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if query is not None and command is not None:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--query 与 --command 不能同时使用。",
+            exit_code=2,
+            details={"query": query, "command": command},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if resource_exact and resource is None:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--resource-exact 必须与 --resource 一起使用。",
+            exit_code=2,
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if limit is not None and query is None:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--limit 只能与 --query 一起使用。",
+            exit_code=2,
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if invalid_select_fields:
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message=f"未知命令卡字段：{', '.join(invalid_select_fields)}",
+            exit_code=2,
+            details={
+                "fields": invalid_select_fields,
+                "available_fields": list(_CAPABILITY_CARD_SELECT_FIELDS),
+            },
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
     if requested_view is not None and requested_view not in {"catalog", "commands", "full"}:
         error = CliError(
             code="INVALID_ARGUMENT",
@@ -447,6 +773,15 @@ def capabilities_command(
             message="--all 只能与 --view full 一起使用。",
             exit_code=2,
             details={"view": view},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if query is not None and (all_details or requested_view not in {None, "commands"}):
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--query 返回精简命令卡，只能使用 --view commands。",
+            exit_code=2,
+            details={"view": "full" if all_details else requested_view},
         )
         emit_error(context, command="capabilities", error=error)
         raise typer.Exit(error.exit_code)
@@ -467,10 +802,19 @@ def capabilities_command(
         if all_details
         else (
             requested_view
-            or ("commands" if command or resource else "catalog")
+            or ("commands" if command or resource or query else "catalog")
         )
     )
-    if effective_view in {"commands", "full"} and not (command or resource):
+    if selected_fields and effective_view != "commands":
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--select 只能用于 commands 命令卡视图。",
+            exit_code=2,
+            details={"view": effective_view},
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    if effective_view in {"commands", "full"} and not (command or resource or query):
         error = CliError(
             code="RESULT_TOO_LARGE",
             message="根级完整命令目录过大，请先按资源或命令缩小范围。",
@@ -490,20 +834,37 @@ def capabilities_command(
     # command-card/full scope; the default resource catalog stays O(resources).
     catalog_revision = capability_catalog_revision()
     try:
-        full_items = list_capabilities(
-            command,
-            resource=resource,
+        query_matches = (
+            search_capabilities(
+                normalized_query or "",
+                resource=resource,
+                resource_exact=resource_exact,
+                limit=limit or 8,
+            )
+            if query is not None
+            else ()
         )
-        if (command or resource) and not full_items:
-            requested = command or resource or ""
+        full_items = (
+            [item.to_dict() for item in query_matches]
+            if query is not None
+            else list_capabilities(
+                command,
+                resource=resource,
+                resource_exact=resource_exact,
+            )
+        )
+        if (command or resource or query) and not full_items:
+            requested = command or resource or query or ""
             normalized = normalize_capability_command(requested)
             error = CliError(
                 code="CAPABILITY_NOT_FOUND",
-                message=f"没有找到能力：{command or resource}",
+                message=f"没有找到能力：{requested}",
                 exit_code=4,
                 details={
-                    "command": requested,
-                    "normalized_command": normalized,
+                    "request": requested,
+                    "normalized_request": normalized,
+                    "command": requested if command is not None else None,
+                    "normalized_command": normalized if command is not None else None,
                     "suggestions": suggest_capabilities(normalized),
                 },
             )
@@ -529,34 +890,58 @@ def capabilities_command(
         contract_revisions = _current_command_contract_revisions(
             available_selected_commands,
         )
-        full_items = list_capabilities(
-            command,
-            resource=resource,
-            contract_revisions=contract_revisions,
-        )
+        if query is not None:
+            full_items = [
+                {
+                    **item.to_dict(),
+                    **(
+                        {"contract_revision": contract_revisions[item.command]}
+                        if item.command in contract_revisions
+                        else {}
+                    ),
+                }
+                for item in query_matches
+            ]
+        else:
+            full_items = list_capabilities(
+                command,
+                resource=resource,
+                resource_exact=resource_exact,
+                contract_revisions=contract_revisions,
+            )
+    scope_options = {
+        "command": normalize_capability_command(command) if command else None,
+        "resource": normalize_capability_command(resource) if resource else None,
+        "resource_exact": resource_exact,
+        "query": normalized_query,
+        "limit": (limit or 8) if query is not None else None,
+        "select": selected_fields,
+        "minimal": minimal,
+    }
     scope_revision = capability_catalog_revision(
         contract_revisions,
         commands=selected_commands,
         view=effective_view,
+        scope=scope_options,
     )
     scope = {
-        "command": normalize_capability_command(command) if command else None,
-        "resource": normalize_capability_command(resource) if resource else None,
+        **scope_options,
         "view": effective_view,
     }
     if since is not None and since == scope_revision:
         data = {
             "catalog_version": CAPABILITY_CATALOG_VERSION,
             "catalog_revision": catalog_revision,
-            "build": get_build_identity(),
             "scope": scope,
             "scope_revision": scope_revision,
             "view": effective_view,
             "items": [],
             "summary": {"commands": len(full_items), "unchanged": True},
             "cache": {"status": "not_modified", "refresh_required": False},
-            "next": {"reuse_cached_result": True},
         }
+        if not minimal:
+            data["build"] = get_build_identity()
+            data["next"] = {"reuse_cached_result": True}
         emit_success(
             context,
             command="capabilities",
@@ -566,7 +951,11 @@ def capabilities_command(
         return
 
     if effective_view == "catalog":
-        items = list_resource_catalog(command, resource=resource)
+        items = list_resource_catalog(
+            command,
+            resource=resource,
+            resource_exact=resource_exact,
+        )
         summary: dict[str, object] = {
             "resources": len(items),
             "commands": len(full_items),
@@ -582,10 +971,21 @@ def capabilities_command(
                 f"（{item['available_count']}/{item['command_count']} 个可用命令）",
             )
     elif effective_view == "commands":
-        items = list_capability_cards(
-            command,
-            resource=resource,
-            contract_revisions=contract_revisions,
+        items = (
+            search_capability_cards(
+                normalized_query or "",
+                resource=resource,
+                resource_exact=resource_exact,
+                limit=limit or 8,
+                contract_revisions=contract_revisions,
+            )
+            if query is not None
+            else list_capability_cards(
+                command,
+                resource=resource,
+                resource_exact=resource_exact,
+                contract_revisions=contract_revisions,
+            )
         )
         summary = {
             "commands": len(items),
@@ -606,6 +1006,7 @@ def capabilities_command(
                 f"- [{item['availability']}] {item['command']}: {item['summary']} "
                 f"(风险 {risk_level})",
             )
+        items = _select_capability_card_fields(items, selected_fields)
     else:
         items = full_items
         summary = {
@@ -628,18 +1029,19 @@ def capabilities_command(
     data = {
         "catalog_version": CAPABILITY_CATALOG_VERSION,
         "catalog_revision": catalog_revision,
-        "build": get_build_identity(),
         "scope": scope,
         "scope_revision": scope_revision,
         "view": effective_view,
         "items": items,
         "summary": summary,
-        "next": {
+    }
+    if not minimal:
+        data["build"] = get_build_identity()
+        data["next"] = {
             "list_commands": "auto-email-sender --format json capabilities --resource <resource>",
             "describe_command": "auto-email-sender --format json describe --command <command>",
             "verify_installation": "auto-email-sender --format json doctor",
-        },
-    }
+        }
     if since is not None:
         data["cache"] = {"status": "stale", "refresh_required": True}
     emit_success(
@@ -649,7 +1051,7 @@ def capabilities_command(
         human_text="\n".join(human_lines),
         warnings=(
             ["当前 CLI 构建来自未提交工作区；正式 Agent 安装请使用已发布构建。"]
-            if bool(get_build_identity()["dirty"])
+            if not minimal and bool(get_build_identity()["dirty"])
             else []
         ),
     )
@@ -872,7 +1274,16 @@ def status_command(ctx: typer.Context) -> None:
 
 
 @app.command("doctor")
-def doctor_command(ctx: typer.Context) -> None:
+def doctor_command(
+    ctx: typer.Context,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="任一诊断检查未通过时，在输出完整结果后返回非零退出码。",
+        ),
+    ] = False,
+) -> None:
     context = _context(ctx)
     _validate_system_context(context, "doctor")
     command_path = shutil.which("auto-email-sender")
@@ -1014,6 +1425,8 @@ def doctor_command(ctx: typer.Context) -> None:
         human_text="\n".join(human_lines),
         warnings=[] if healthy else ["部分检查未通过。"],
     )
+    if strict and not healthy:
+        raise typer.Exit(1)
 
 
 def _paths_resolve_to_same_file(left: str | None, right: str) -> bool:

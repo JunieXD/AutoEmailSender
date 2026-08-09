@@ -75,8 +75,13 @@ _MAX_INLINE_STRUCTURAL_ITEMS = 100
 _MAX_OMITTED_PATHS = 32
 _MAX_INLINE_NESTED_BYTES = 8 * 1024
 _MAX_INLINE_ITEM_BYTES = 4 * 1024
-_MAX_DEFAULT_RESULT_BYTES = 64 * 1024
-_DEFAULT_RESULT_TARGET_BYTES = 60 * 1024
+DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
+MIN_MAX_OUTPUT_BYTES = 1024
+HARD_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
+DEFAULT_MAX_OUTPUT_ITEMS = 10_000
+HARD_MAX_OUTPUT_ITEMS = 10_000
+MAX_EXPANDED_PATHS = 32
+MAX_EXPAND_SELECTOR_CHARS = 512
 _SMALL_STRUCTURAL_ARRAY_FIELDS = frozenset(
     {
         "selected_fields",
@@ -103,6 +108,8 @@ def prepare_result_data(
     command: str,
     projection: str = "summary",
     expanded_paths: Sequence[str] = (),
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    max_items: int = DEFAULT_MAX_OUTPUT_ITEMS,
     continuation_input: Mapping[str, object] | None = None,
     invoke_input: Mapping[str, object] | None = None,
 ) -> Any:
@@ -116,12 +123,29 @@ def prepare_result_data(
 
     if not is_business_result(command) or not isinstance(data, dict):
         return data
+    if (
+        not isinstance(max_output_bytes, int)
+        or isinstance(max_output_bytes, bool)
+        or not MIN_MAX_OUTPUT_BYTES <= max_output_bytes <= HARD_MAX_OUTPUT_BYTES
+    ):
+        raise ValueError("max_output_bytes is outside the supported safety range")
+    if (
+        not isinstance(max_items, int)
+        or isinstance(max_items, bool)
+        or not 1 <= max_items <= HARD_MAX_OUTPUT_ITEMS
+    ):
+        raise ValueError("max_items is outside the supported safety range")
     normalized_projection = "full" if projection == "full" else "summary"
     selectors = tuple(
         selector.strip()
         for selector in expanded_paths
         if isinstance(selector, str) and selector.strip()
     )
+    if len(selectors) > MAX_EXPANDED_PATHS or any(
+        len(selector) > MAX_EXPAND_SELECTOR_CHARS
+        for selector in selectors
+    ):
+        raise ValueError("expanded_paths exceeds the supported safety range")
     preserve_collection_items = frozenset(
         {"/items"}
         if isinstance(data.get("items"), list)
@@ -132,6 +156,10 @@ def prepare_result_data(
         data,
         projection=normalized_projection,
     )
+    projection_input, item_limit_omitted, original_item_count = _enforce_item_limit(
+        projection_input,
+        max_items=max_items,
+    )
     summarized, omitted_paths = _summarize_value(
         projection_input,
         path="",
@@ -140,10 +168,10 @@ def prepare_result_data(
         preserve_collection_items=preserve_collection_items,
     )
     assert isinstance(summarized, dict)
-    summarized, budget_omitted_paths, budget_compacted = _enforce_result_budget(
+    omitted_paths.extend(item_limit_omitted)
+    summarized, budget_omitted_paths, budget_compacted, budget_input_bytes = _enforce_result_budget(
         summarized,
-        projection=normalized_projection,
-        selectors=selectors,
+        max_output_bytes=max_output_bytes,
     )
     omitted_paths.extend(budget_omitted_paths)
     limit = _result_limit(summarized)
@@ -158,15 +186,26 @@ def prepare_result_data(
         omitted_paths.append("/items/*")
     omitted_paths, omitted_paths_total = _compact_omitted_paths(omitted_paths)
     result: dict[str, object] = dict(summarized)
+    item_limit_compacted = original_item_count is not None
     if omitted_paths or selectors or normalized_projection == "full":
         result["projection"] = {
             "version": RESULT_PROTOCOL_VERSION,
             "mode": normalized_projection,
             "expanded_paths": list(selectors),
+            "budget_bytes": max_output_bytes,
         }
         if budget_compacted:
-            result["projection"]["budget_bytes"] = _MAX_DEFAULT_RESULT_BYTES
             result["projection"]["budget_compacted"] = True
+            result["projection"]["input_bytes"] = budget_input_bytes
+        if item_limit_compacted:
+            result["projection"]["max_items"] = max_items
+            result["projection"]["input_items"] = original_item_count
+        if budget_compacted or item_limit_compacted:
+            result["projection"]["recovery"] = (
+                "add --output-file <path>.jsonl for complete collection records"
+                if isinstance(result.get("items"), list)
+                else "increase --max-output-bytes or request a narrower --expand path"
+            )
     if limit is not None:
         result["limit"] = limit
     if continuation is not None:
@@ -176,6 +215,9 @@ def prepare_result_data(
         result["omitted_paths"] = omitted_paths
         if omitted_paths_total > len(omitted_paths):
             result["omitted_paths_total"] = omitted_paths_total
+    if budget_compacted or item_limit_compacted:
+        _set_stable_output_bytes(result)
+        _fit_final_result_to_budget(result, max_output_bytes=max_output_bytes)
     return result
 
 
@@ -331,6 +373,23 @@ def _drop_redundant_collection_aliases(
     return result
 
 
+def _enforce_item_limit(
+    data: Mapping[str, object],
+    *,
+    max_items: int,
+) -> tuple[dict[str, object], list[str], int | None]:
+    """Bound a top-level collection before recursively shaping every item."""
+
+    result = dict(data)
+    items = result.get("items")
+    if not isinstance(items, list) or len(items) <= max_items:
+        return result, [], None
+    result["items"] = items[:max_items]
+    if isinstance(result.get("records"), list) and result["records"] == items:
+        result["records"] = result["items"]
+    return result, ["/items/*"], len(items)
+
+
 def _is_expanded(key: str, path: str, selectors: tuple[str, ...]) -> bool:
     for selector in selectors:
         if selector == key or selector == path:
@@ -413,29 +472,39 @@ def _path_has_expanded_ancestor(path: str, selectors: tuple[str, ...]) -> bool:
 def _enforce_result_budget(
     data: dict[str, object],
     *,
-    projection: str,
-    selectors: tuple[str, ...],
-) -> tuple[dict[str, object], list[str], bool]:
-    if projection == "full" or selectors or _json_size(data) <= _MAX_DEFAULT_RESULT_BYTES:
-        return data, [], False
+    max_output_bytes: int,
+) -> tuple[dict[str, object], list[str], bool, int]:
+    input_bytes = _json_size(data)
+    if input_bytes <= max_output_bytes:
+        return data, [], False, input_bytes
 
     result = dict(data)
     omitted: list[str] = []
+    # Leave room for projection/truncation metadata added by
+    # ``prepare_result_data``. The final fitting pass handles pathological
+    # path names or expansion selectors without ever exceeding the hard
+    # caller-visible budget.
+    reserve = min(2 * 1024, max(384, max_output_bytes // 5))
+    target_bytes = max(256, max_output_bytes - reserve)
     items = result.get("items")
     if isinstance(items, list) and all(isinstance(item, dict) for item in items):
         compact_items: list[object] = []
+        per_item_bytes = min(
+            _MAX_INLINE_ITEM_BYTES,
+            max(128, target_bytes // max(1, min(len(items), 32))),
+        )
         for index, item in enumerate(items):
             assert isinstance(item, dict)
             compact, item_omitted = _compact_item_to_budget(
                 item,
                 path=f"/items/{index}",
-                max_bytes=_MAX_INLINE_ITEM_BYTES,
+                max_bytes=per_item_bytes,
             )
             compact_items.append(compact)
             omitted.extend(item_omitted)
         result["items"] = compact_items
 
-        if _json_size(result) > _DEFAULT_RESULT_TARGET_BYTES:
+        if _json_size(result) > target_bytes:
             for fields in (
                 _collection_identity_fields(compact_items, include_names=True),
                 _collection_identity_fields(compact_items, include_names=False),
@@ -447,10 +516,10 @@ def _enforce_result_budget(
                 )
                 result["items"] = projected
                 omitted.extend(projected_omitted)
-                if _json_size(result) <= _DEFAULT_RESULT_TARGET_BYTES:
+                if _json_size(result) <= target_bytes:
                     break
 
-    if _json_size(result) > _DEFAULT_RESULT_TARGET_BYTES:
+    if _json_size(result) > target_bytes:
         protected = {
             "id",
             "task_id",
@@ -473,9 +542,55 @@ def _enforce_result_budget(
         for _savings, key, summary in sorted(candidates, reverse=True):
             result[key] = summary
             omitted.append(f"/{key}")
-            if _json_size(result) <= _DEFAULT_RESULT_TARGET_BYTES:
+            if _json_size(result) <= target_bytes:
                 break
-    return result, omitted, True
+
+    if _json_size(result) > target_bytes and isinstance(result.get("items"), list):
+        current_items = result["items"]
+        assert isinstance(current_items, list)
+        retained = _largest_fitting_item_prefix(
+            result,
+            items=current_items,
+            max_bytes=target_bytes,
+        )
+        if retained < len(current_items):
+            result["items"] = current_items[:retained]
+            omitted.append("/items/*")
+
+    if _json_size(result) > target_bytes:
+        # A single oversized identifier or an unusual top-level envelope can
+        # still exceed the target. Summarize the largest remaining values as a
+        # last content-level fallback; protocol metadata is attached later.
+        candidates = []
+        for key, value in result.items():
+            summary = _budget_summary(value, path=f"/{key}")
+            savings = _json_size(value) - _json_size(summary)
+            if savings > 0:
+                candidates.append((savings, key, summary))
+        for _savings, key, summary in sorted(candidates, reverse=True):
+            result[key] = summary
+            omitted.append(f"/{_escape_pointer(key)}")
+            if _json_size(result) <= target_bytes:
+                break
+    return result, omitted, True, input_bytes
+
+
+def _largest_fitting_item_prefix(
+    envelope: Mapping[str, object],
+    *,
+    items: list[object],
+    max_bytes: int,
+) -> int:
+    low = 0
+    high = len(items)
+    while low < high:
+        middle = (low + high + 1) // 2
+        candidate = {**envelope, "items": items[:middle]}
+        if _json_size(candidate) <= max_bytes:
+            low = middle
+        else:
+            high = middle - 1
+    return low
 
 
 def _compact_item_to_budget(
@@ -491,9 +606,13 @@ def _compact_item_to_budget(
     omitted: list[str] = []
     for key in priority:
         candidate = {**result, key: item[key]}
-        if not result or _json_size(candidate) <= max_bytes:
+        if _json_size(candidate) <= max_bytes:
             result[key] = item[key]
         else:
+            summarized_value = _summary(item[key], path=_join_path(path, key))
+            summarized_candidate = {**result, key: summarized_value}
+            if not result and _json_size(summarized_candidate) <= max_bytes:
+                result[key] = summarized_value
             omitted.append(_join_path(path, key))
     for key in item:
         if key not in result and _join_path(path, key) not in omitted:
@@ -585,6 +704,114 @@ def _json_size(value: object) -> int:
     )
 
 
+def _set_stable_output_bytes(result: dict[str, object]) -> None:
+    projection = result.get("projection")
+    if not isinstance(projection, dict):
+        return
+    projection["output_bytes"] = 0
+    for _ in range(6):
+        current = _json_size(result)
+        if projection.get("output_bytes") == current:
+            return
+        projection["output_bytes"] = current
+
+
+def _fit_final_result_to_budget(
+    result: dict[str, object],
+    *,
+    max_output_bytes: int,
+) -> None:
+    """Keep result-protocol metadata inside the same advertised byte budget."""
+
+    _set_stable_output_bytes(result)
+    omitted_paths = result.get("omitted_paths")
+    if isinstance(omitted_paths, list):
+        while len(omitted_paths) > 1 and _json_size(result) > max_output_bytes:
+            omitted_paths[:] = omitted_paths[: max(1, len(omitted_paths) // 2)]
+
+    projection = result.get("projection")
+    if isinstance(projection, dict):
+        expanded_paths = projection.get("expanded_paths")
+        if isinstance(expanded_paths, list):
+            original_expanded_count = len(expanded_paths)
+            while len(expanded_paths) > 1 and _json_size(result) > max_output_bytes:
+                expanded_paths[:] = expanded_paths[: max(1, len(expanded_paths) // 2)]
+            if len(expanded_paths) < original_expanded_count:
+                projection["expanded_paths_total"] = original_expanded_count
+        if _json_size(result) > max_output_bytes:
+            projection.pop("recovery", None)
+
+    protocol_keys = RESULT_PROTOCOL_FIELDS | {"projection"}
+    if _json_size(result) > max_output_bytes:
+        candidates: list[tuple[int, str, dict[str, object]]] = []
+        for key, value in result.items():
+            if key in protocol_keys:
+                continue
+            summary = _summary(value, path=f"/{key}")
+            savings = _json_size(value) - _json_size(summary)
+            if savings > 0:
+                candidates.append((savings, key, summary))
+        final_omissions: list[str] = []
+        for _savings, key, summary in sorted(candidates, reverse=True):
+            result[key] = summary
+            final_omissions.append(f"/{_escape_pointer(key)}")
+            if _json_size(result) <= max_output_bytes:
+                break
+        if final_omissions:
+            paths = result.get("omitted_paths")
+            if isinstance(paths, list):
+                paths.extend(path for path in final_omissions if path not in paths)
+                if _json_size(result) > max_output_bytes:
+                    paths[:] = ["/*"]
+                    result.pop("omitted_paths_total", None)
+
+    if _json_size(result) > max_output_bytes and isinstance(projection, dict):
+        minimal_projection = {
+            "version": projection.get("version", RESULT_PROTOCOL_VERSION),
+            "mode": projection.get("mode", "summary"),
+            "budget_bytes": max_output_bytes,
+            "budget_compacted": True,
+        }
+        if isinstance(projection.get("input_bytes"), int):
+            minimal_projection["input_bytes"] = projection["input_bytes"]
+        result["projection"] = minimal_projection
+        projection = minimal_projection
+
+    if _json_size(result) > max_output_bytes:
+        identity_fields = (
+            "id",
+            "task_id",
+            "job_id",
+            "plan_id",
+            "status",
+        )
+        minimal: dict[str, object] = {
+            "projection": {
+                "version": RESULT_PROTOCOL_VERSION,
+                "mode": (
+                    projection.get("mode", "summary")
+                    if isinstance(projection, dict)
+                    else "summary"
+                ),
+                "budget_bytes": max_output_bytes,
+                "budget_compacted": True,
+            },
+            "truncated": True,
+            "omitted_paths": ["/*"],
+        }
+        for key in identity_fields:
+            value = result.get(key)
+            if value is None or isinstance(value, dict | list):
+                continue
+            candidate = {**minimal, key: value}
+            if _json_size(candidate) <= max_output_bytes:
+                minimal[key] = value
+        result.clear()
+        result.update(minimal)
+
+    _set_stable_output_bytes(result)
+
+
 def _summary(value: Any, *, path: str) -> dict[str, object]:
     if isinstance(value, str):
         max_chars = (
@@ -613,6 +840,22 @@ def _summary(value: Any, *, path: str) -> dict[str, object]:
             "truncated": bool(value),
         }
     return {"kind": "value_summary", "type": type(value).__name__, "truncated": False}
+
+
+def _budget_summary(value: Any, *, path: str) -> dict[str, object]:
+    if isinstance(value, dict) and isinstance(value.get("kind"), str):
+        kind = value["kind"]
+        if kind == "text_summary" and isinstance(value.get("preview"), str):
+            preview = value["preview"][:80]
+            return {
+                **value,
+                "preview": preview,
+                "truncated": bool(value.get("truncated")) or len(value["preview"]) > len(preview),
+            }
+        if kind == "object_summary" and isinstance(value.get("keys"), list):
+            return {**value, "keys": value["keys"][:6]}
+        return dict(value)
+    return _summary(value, path=path)
 
 
 def _is_collection_path(path: str) -> bool:

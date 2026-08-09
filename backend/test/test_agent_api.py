@@ -1000,6 +1000,88 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(len(second_page["items"]), 1)
         self.assertIn("tags", detail)
 
+    def test_agent_collection_filter_and_field_pushdown_are_additive_and_bounded(self) -> None:
+        selected_id = self._create_professor(email="selected@example.edu")
+        self._create_professor(email="other@example.edu")
+
+        response = self._agent_get(
+            "/api/agent/v1/professors",
+            params={
+                "professor_id": selected_id,
+                "fields": "id,name",
+                "limit": 500,
+            },
+        )
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(set(payload["items"][0]), {"id", "name"})
+        self.assertEqual(payload["items"][0]["id"], selected_id)
+        self.assertFalse(payload["has_more"])
+
+        malformed = self.client.get(
+            "/api/agent/v1/professors",
+            params={"fields": "id,not-valid!"},
+            headers=self._agent_headers(),
+        )
+        self.assertEqual(malformed.status_code, 422)
+        self.assertEqual(malformed.json()["error"]["code"], "INVALID_FIELD_SELECTION")
+
+    def test_agent_safe_identity_and_model_filters_match_serialized_dto_fields(self) -> None:
+        identity_id = self._create_identity(email="pushdown-identity@example.edu")
+        profile_id = self._create_llm_profile(name="Pushdown model")
+
+        identities = self._agent_get(
+            "/api/agent/v1/identities",
+            params={
+                "identity_id": identity_id,
+                "smtp_configured": True,
+                "imap_configured": True,
+                "is_default": True,
+                "fields": "id,email_address,smtp_configured,imap_configured",
+            },
+        ).json()
+        self.assertEqual(
+            identities["items"],
+            [
+                {
+                    "id": identity_id,
+                    "email_address": "pushdown-identity@example.edu",
+                    "smtp_configured": True,
+                    "imap_configured": True,
+                },
+            ],
+        )
+        not_configured = self._agent_get(
+            "/api/agent/v1/identities",
+            params={"identity_id": identity_id, "imap_configured": False},
+        ).json()
+        self.assertEqual(not_configured["items"], [])
+
+        profiles = self._agent_get(
+            "/api/agent/v1/llm-profiles",
+            params={
+                "profile_id": profile_id,
+                "provider": "openai",
+                "model_name": "test-model",
+                "is_default": True,
+                "fields": "id,name,provider,model_name",
+            },
+        ).json()
+        self.assertEqual(len(profiles["items"]), 1)
+        self.assertEqual(set(profiles["items"][0]), {"id", "name", "provider", "model_name"})
+        self.assertEqual(profiles["items"][0]["id"], profile_id)
+
+        usage = self._agent_get(
+            "/api/agent/v1/usage/records",
+            params={"fields": "id,feature_type"},
+        ).json()
+        self.assertIn("records", usage)
+        self.assertIn("summary", usage)
+        self.assertTrue(
+            all(set(record) <= {"id", "feature_type"} for record in usage["records"]),
+        )
+
     def test_agent_can_export_active_professors_without_ui_token(self) -> None:
         self._create_professor(email="export-agent@example.edu")
 
@@ -1012,6 +1094,25 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertIn("export-agent@example.edu", response.content.decode("utf-8-sig"))
         self.assertIn("attachment", response.headers.get("content-disposition", ""))
+
+    def test_agent_can_download_professor_import_templates(self) -> None:
+        csv_response = self.client.get(
+            "/api/agent/v1/professors/import-template",
+            headers=self._agent_headers(),
+            params={"format": "csv"},
+        )
+        xlsx_response = self.client.get(
+            "/api/agent/v1/professors/import-template",
+            headers=self._agent_headers(),
+            params={"format": "xlsx"},
+        )
+
+        self.assertEqual(csv_response.status_code, 200, msg=csv_response.text)
+        self.assertEqual(xlsx_response.status_code, 200, msg=xlsx_response.text)
+        self.assertIn("姓名", csv_response.content.decode("utf-8-sig"))
+        self.assertTrue(xlsx_response.content.startswith(b"PK"))
+        self.assertIn("professors_import_template.csv", csv_response.headers["content-disposition"])
+        self.assertIn("professors_import_template.xlsx", xlsx_response.headers["content-disposition"])
 
     def test_agent_can_manage_professors_with_idempotent_safe_writes(self) -> None:
         tag_response = self.client.post(
@@ -4873,6 +4974,196 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(resumed.json()["result"]["delivery_item_ids"], [item_id])
         campaign = self._agent_get(f"/api/agent/v1/campaigns/{campaign_id}").json()
         self.assertEqual(campaign["status"], "running")
+
+    def test_agent_can_read_and_approve_campaign_drafts_without_sending(self) -> None:
+        campaign_id, item_id = self._create_template_campaign(key_suffix="approve-one")
+        thread = self._agent_get(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/thread",
+        )
+        self.assertEqual(thread.status_code, 200, msg=thread.text)
+        self.assertEqual(thread.json()["current_task"]["id"], item_id)
+        draft = self._agent_get(f"/api/agent/v1/drafts/{item_id}").json()
+        headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-campaign-approve-one",
+            "If-Revision": draft["revision"],
+        }
+        payload = {
+            "subject": "最终主题",
+            "body_text": "最终正文",
+            "body_html": "<p>最终正文</p>",
+            "attachment_material_ids": draft["attachment_material_ids"],
+        }
+        approved = self.client.post(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft",
+            headers=headers,
+            json=payload,
+        )
+        replayed = self.client.post(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft",
+            headers=headers,
+            json=payload,
+        )
+
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(replayed.status_code, 200, msg=replayed.text)
+        self.assertEqual(approved.json()["current_task"]["status"], "approved")
+        self.assertIsNone(approved.json()["current_task"]["scheduled_at"])
+        self.assertEqual(replayed.json(), approved.json())
+
+        other_campaign_id, other_item_id = self._create_template_campaign(
+            key_suffix="approve-bulk",
+        )
+        bulk_headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-campaign-approve-bulk",
+        }
+        bulk = self.client.post(
+            f"/api/agent/v1/campaigns/{other_campaign_id}/approve-drafts",
+            headers=bulk_headers,
+            json={"item_ids": [other_item_id]},
+        )
+        bulk_replay = self.client.post(
+            f"/api/agent/v1/campaigns/{other_campaign_id}/approve-drafts",
+            headers=bulk_headers,
+            json={"item_ids": [other_item_id]},
+        )
+        wrong_scope = self.client.get(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{other_item_id}/thread",
+            headers=self._agent_headers(),
+        )
+
+        self.assertEqual(bulk.status_code, 200, msg=bulk.text)
+        self.assertEqual(bulk_replay.status_code, 200, msg=bulk_replay.text)
+        self.assertEqual(bulk.json()["approved_count"], 1)
+        self.assertEqual(bulk.json()["campaign"]["approved_count"], 1)
+        self.assertEqual(bulk_replay.json(), bulk.json())
+        self.assertEqual(wrong_scope.status_code, 404, msg=wrong_scope.text)
+        self.assertEqual(wrong_scope.json()["error"]["code"], "CAMPAIGN_ITEM_NOT_FOUND")
+
+    def test_agent_can_approve_a_single_draft_without_sending(self) -> None:
+        draft = self._create_template_draft()
+        task_id = int(draft["task_id"])
+        headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-draft-approve-only",
+            "If-Revision": str(draft["revision"]),
+        }
+        payload = {
+            "subject": "批准主题",
+            "body_text": "批准正文",
+            "body_html": "<p>批准正文</p>",
+            "attachment_material_ids": draft["attachment_material_ids"],
+        }
+        approved = self.client.post(
+            f"/api/agent/v1/tasks/{task_id}/approve-draft",
+            headers=headers,
+            json=payload,
+        )
+        replayed = self.client.post(
+            f"/api/agent/v1/tasks/{task_id}/approve-draft",
+            headers=headers,
+            json=payload,
+        )
+        stale = self.client.post(
+            f"/api/agent/v1/tasks/{task_id}/approve-draft",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-draft-approve-stale",
+                "If-Revision": str(draft["revision"]),
+            },
+            json=payload,
+        )
+
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(replayed.status_code, 200, msg=replayed.text)
+        self.assertEqual(approved.json()["current_task"]["status"], "approved")
+        self.assertIsNone(approved.json()["current_task"]["scheduled_at"])
+        self.assertEqual(replayed.json(), approved.json())
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
+
+    def test_agent_can_list_and_concurrency_protect_delivery_rescheduling(self) -> None:
+        draft = self._create_template_draft()
+        task_id = int(draft["task_id"])
+        initial_schedule = datetime.now(UTC) + timedelta(hours=2)
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'scheduled', approved_at = ?, scheduled_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    datetime.now(UTC).isoformat(),
+                    initial_schedule.isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    task_id,
+                ),
+            )
+            connection.commit()
+
+        listed = self.client.get(
+            "/api/agent/v1/deliveries",
+            headers=self._agent_headers(),
+            params={"view": "upcoming", "task_id": task_id, "page_size": 1},
+        )
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        listed_payload = listed.json()
+        self.assertEqual([item["id"] for item in listed_payload["items"]], [task_id])
+        self.assertEqual(listed_payload["pagination_mode"], "page")
+        expected_updated_at = listed_payload["items"][0]["expected_updated_at"]
+        next_schedule = datetime.now(UTC) + timedelta(hours=3)
+        headers = {
+            **self._agent_headers(),
+            "Idempotency-Key": "agent-delivery-reschedule",
+        }
+        payload = {
+            "scheduled_at": next_schedule.isoformat(),
+            "expected_updated_at": expected_updated_at,
+        }
+        changed = self.client.patch(
+            f"/api/agent/v1/deliveries/{task_id}/schedule",
+            headers=headers,
+            json=payload,
+        )
+        replayed = self.client.patch(
+            f"/api/agent/v1/deliveries/{task_id}/schedule",
+            headers=headers,
+            json=payload,
+        )
+        stale = self.client.patch(
+            f"/api/agent/v1/deliveries/{task_id}/schedule",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-delivery-reschedule-stale",
+            },
+            json=payload,
+        )
+        refreshed = self.client.get(
+            "/api/agent/v1/deliveries",
+            headers=self._agent_headers(),
+            params={"view": "upcoming", "task_id": task_id},
+        ).json()["items"][0]
+        too_soon = self.client.patch(
+            f"/api/agent/v1/deliveries/{task_id}/schedule",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-delivery-reschedule-too-soon",
+            },
+            json={
+                "scheduled_at": datetime.now(UTC).isoformat(),
+                "expected_updated_at": refreshed["expected_updated_at"],
+            },
+        )
+
+        self.assertEqual(changed.status_code, 200, msg=changed.text)
+        self.assertEqual(replayed.status_code, 200, msg=replayed.text)
+        self.assertEqual(replayed.json(), changed.json())
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "DELIVERY_RESCHEDULE_REJECTED")
+        self.assertEqual(too_soon.status_code, 422, msg=too_soon.text)
+        self.assertEqual(too_soon.json()["error"]["code"], "DELIVERY_RESCHEDULE_REJECTED")
 
     def _create_template_draft(self) -> dict[str, object]:
         identity_id = self._create_identity()

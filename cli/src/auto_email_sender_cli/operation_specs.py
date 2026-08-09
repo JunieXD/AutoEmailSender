@@ -537,6 +537,18 @@ _CAMPAIGN_TRANSITIONS: Final = (
     StateTransition("approved|scheduled", "awaiting_confirmation", "prepare-send"),
     StateTransition("sending", "sent|failed|stopped", "observe|stop"),
 )
+_DELIVERY_TRANSITIONS: Final = (
+    StateTransition(
+        "waiting_scheduled|send_failed|schedule_missed",
+        "waiting_scheduled",
+        "reschedule",
+    ),
+    StateTransition(
+        "send_asap|batch_paused|sending|sent|replied|canceled_schedule|canceled_send",
+        "unchanged",
+        "observe",
+    ),
+)
 _CRAWLER_TRANSITIONS: Final = (
     StateTransition("queued", "running|canceled|failed", "create|resume|retry"),
     StateTransition("running", "paused|review_required|succeeded|failed|canceled", "observe"),
@@ -625,6 +637,16 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         _READ_ERRORS,
         (),
         ("先读取活动和逐项状态；不要把 queued 或 running 视为完成。",),
+        _NO_RETRY,
+    ),
+    "observe_delivery": OperationProfile(
+        _READ_EFFECT,
+        _APP_REQUIRED,
+        _UNTRUSTED_DATA,
+        _DELIVERY_TRANSITIONS,
+        _READ_ERRORS,
+        (),
+        ("使用 can_reschedule 和 expected_updated_at 决定是否安全改期。",),
         _NO_RETRY,
     ),
     "observe_crawler": OperationProfile(
@@ -940,6 +962,7 @@ _bind(
     "professors.tags.list",
     "professors.tags.usage",
     "professors.export",
+    "professors.download-template",
     "identities.list",
     "identities.get",
     "llm-profiles.list",
@@ -975,9 +998,10 @@ _bind(
     "diagnostics.export",
     "diagnostics.crawler-debug",
 )
+_bind("observe_delivery", "deliveries.list")
 _bind("observe_job", "matching.jobs.list", "matching.jobs.get", "matching.jobs.items")
 _bind("observe_job", "enrichment.jobs.list", "enrichment.jobs.get", "enrichment.jobs.items")
-_bind("observe_draft", "drafts.get", "workspaces.get")
+_bind("observe_draft", "drafts.get", "workspaces.get", "campaigns.item-thread")
 _bind(
     "observe_campaign",
     "campaigns.list",
@@ -1034,6 +1058,10 @@ _bind(
 _bind(
     "write_draft",
     "drafts.save",
+    "drafts.approve",
+    "campaigns.approve-item-draft",
+    "campaigns.approve-drafts",
+    "deliveries.reschedule",
     "workspaces.ensure-task",
     "tasks.cancel-schedule",
     "tasks.continue-manually",
@@ -1185,6 +1213,16 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
     "campaigns.restore": (_action("campaigns.get", "确认活动已恢复"),),
     "campaigns.remove-item": (_action("campaigns.get", "确认活动项已移除"),),
     "campaigns.cancel-item-send": (_action("campaigns.get", "确认活动项发送已取消"),),
+    "campaigns.approve-item-draft": (
+        _action("campaigns.item-thread", "重新读取活动项的批准状态和最终正文"),
+        _action("campaigns.get", "读取活动批准数量"),
+    ),
+    "campaigns.approve-drafts": (
+        _action("campaigns.get", "确认活动的待审核和已批准数量"),
+        _action("campaigns.items", "读取逐项批准状态"),
+    ),
+    "drafts.approve": (_action("drafts.get", "重新读取已批准草稿和 revision"),),
+    "deliveries.reschedule": (_action("deliveries.list", "确认最新发送时间和状态"),),
     "tasks.cancel-schedule": (_action("drafts.get", "重新读取回到审核状态的草稿"),),
     "tasks.continue-manually": (_action("drafts.get", "读取新建的手动草稿"),),
     "tasks.start-follow-up": (_action("drafts.get", "读取新建的跟进草稿"),),

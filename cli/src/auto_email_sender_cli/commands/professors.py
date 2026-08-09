@@ -60,15 +60,17 @@ def list_professors(
     )
 
 
-@professors_app.command("export")
-def export_professors(
+def _download_professor_file(
     ctx: typer.Context,
-    output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。")],
-    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    *,
+    command: str,
+    path: str,
+    output: Path,
+    format_name: str,
+    force: bool,
+    human_label: str,
 ) -> None:
     context = cli_context(ctx)
-    command = "professors.export"
     try:
         validate_context_options(
             context,
@@ -79,8 +81,8 @@ def export_professors(
         destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=360.0)
         content = client.download_bytes(
-            "/api/agent/v1/professors/export",
-            params={"format": format},
+            path,
+            params={"format": format_name},
         )
         try:
             with destination.open("wb" if force else "xb") as file:
@@ -103,15 +105,54 @@ def export_professors(
             command=command,
             data={
                 "output": destination.as_posix(),
-                "format": format,
+                "format": format_name,
                 "size_bytes": len(content),
             },
-            human_text=f"已导出导师表到：\n{destination}",
+            human_text=f"{human_label}：\n{destination}",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
         emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
+
+
+@professors_app.command("export")
+def export_professors(
+    ctx: typer.Context,
+    output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。")],
+    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+) -> None:
+    _download_professor_file(
+        ctx,
+        command="professors.export",
+        path="/api/agent/v1/professors/export",
+        output=output,
+        format_name=format,
+        force=force,
+        human_label="已导出导师表到",
+    )
+
+
+@professors_app.command("download-template")
+def download_professor_template(
+    ctx: typer.Context,
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="空白导入模板保存位置。"),
+    ],
+    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+) -> None:
+    _download_professor_file(
+        ctx,
+        command="professors.download-template",
+        path="/api/agent/v1/professors/import-template",
+        output=output,
+        format_name=format,
+        force=force,
+        human_label="已下载导师导入模板到",
+    )
 
 
 @professors_app.command("import")

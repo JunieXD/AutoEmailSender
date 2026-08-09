@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autoemailsender.com/contracts/agent-support-manifest.schema.json",
+  "title": "Auto Email Sender Agent Support Installation Manifest",
+  "type": "object",
+  "x-current-version": 5,
+  "x-supported-versions": [4, 5],
+  "x-version-semantics": {
+    "4": {
+      "cli_sha256": "SHA-256 of cli_source and the copied cli_target executable"
+    },
+    "5": {
+      "cli_sha256": "Canonical directory fingerprint of the onedir bundle containing cli_source",
+      "cli_target": "A symlink to cli_source on macOS or a managed command launcher on Windows"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [4, 5]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "prompt_dismissed": {
+      "type": "boolean"
+    },
+    "app_version": {
+      "type": ["string", "null"]
+    },
+    "cli_source": {
+      "type": ["string", "null"]
+    },
+    "skill_source": {
+      "type": ["string", "null"]
+    },
+    "cli_target": {
+      "type": "string"
+    },
+    "cli_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "path_managed": {
+      "type": "boolean"
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "skill_target": {
+            "type": "string"
+          },
+          "skill_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["skill_target", "skill_sha256"],
+        "additionalProperties": false
+      }
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "enabled",
+    "prompt_dismissed",
+    "app_version",
+    "cli_source",
+    "skill_source",
+    "cli_target",
+    "cli_sha256",
+    "path_managed",
+    "agents",
+    "updated_at"
+  ],
+  "additionalProperties": false
+}

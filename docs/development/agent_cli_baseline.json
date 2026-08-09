@@ -2,13 +2,13 @@
   "schema_version": 1,
   "protocol_version": "3",
   "source": "cli/src/auto_email_sender_cli/capabilities.py",
-  "generated_at": "2026-08-08",
+  "generated_at": "2026-08-09",
   "counts": {
-    "available_leaf_commands": 149,
-    "write_commands": 86,
+    "available_leaf_commands": 156,
+    "write_commands": 90,
     "high_risk_commands": 32,
-    "paged_collection_commands": 21,
-    "stateful_commands": 65,
+    "paged_collection_commands": 22,
+    "stateful_commands": 71,
     "gui_business_api_modules": 22,
     "critical_concurrency_objects": 8
   },
@@ -36,6 +36,7 @@
     "professors.tags.prepare-delete",
     "professors.import",
     "professors.export",
+    "professors.download-template",
     "professors.community.catalog",
     "professors.community.records",
     "professors.community.preview",
@@ -86,6 +87,7 @@
     "drafts.get",
     "drafts.generate",
     "drafts.save",
+    "drafts.approve",
     "drafts.regenerate",
     "drafts.rewrite",
     "drafts.prepare-send",
@@ -93,6 +95,9 @@
     "campaigns.get",
     "campaigns.resend-context",
     "campaigns.items",
+    "campaigns.item-thread",
+    "campaigns.approve-item-draft",
+    "campaigns.approve-drafts",
     "campaigns.create",
     "campaigns.start-drafts",
     "campaigns.pause",
@@ -153,6 +158,8 @@
     "workspaces.get",
     "workspaces.ensure-task",
     "workspaces.refresh-replies",
+    "deliveries.list",
+    "deliveries.reschedule",
     "tasks.cancel-schedule",
     "tasks.continue-manually",
     "tasks.start-follow-up",
@@ -200,9 +207,12 @@
     "matching.jobs.restore",
     "drafts.generate",
     "drafts.save",
+    "drafts.approve",
     "drafts.regenerate",
     "drafts.rewrite",
     "drafts.prepare-send",
+    "campaigns.approve-item-draft",
+    "campaigns.approve-drafts",
     "campaigns.create",
     "campaigns.start-drafts",
     "campaigns.pause",
@@ -242,6 +252,7 @@
     "settings.update",
     "workspaces.ensure-task",
     "workspaces.refresh-replies",
+    "deliveries.reschedule",
     "tasks.cancel-schedule",
     "tasks.continue-manually",
     "tasks.start-follow-up",
@@ -306,7 +317,8 @@
     "enrichment.jobs.list",
     "enrichment.jobs.items",
     "usage.records",
-    "diagnostics.logs"
+    "diagnostics.logs",
+    "deliveries.list"
   ],
   "stateful_commands": [
     "wait",
@@ -321,6 +333,7 @@
     "drafts.get",
     "drafts.generate",
     "drafts.save",
+    "drafts.approve",
     "drafts.regenerate",
     "drafts.rewrite",
     "drafts.prepare-send",
@@ -328,6 +341,9 @@
     "campaigns.get",
     "campaigns.resend-context",
     "campaigns.items",
+    "campaigns.item-thread",
+    "campaigns.approve-item-draft",
+    "campaigns.approve-drafts",
     "campaigns.create",
     "campaigns.start-drafts",
     "campaigns.pause",
@@ -368,6 +384,8 @@
     "workspaces.get",
     "workspaces.ensure-task",
     "workspaces.refresh-replies",
+    "deliveries.list",
+    "deliveries.reschedule",
     "tasks.cancel-schedule",
     "tasks.continue-manually",
     "tasks.start-follow-up",
@@ -410,11 +428,13 @@
     "lib/api/workspacesApi.ts"
   ],
   "performance_baseline": {
-    "status": "release_certification_pending",
-    "scope": "Windows x64 and macOS Apple Silicon package/runtime smoke tests are independent of G1-G10",
+    "status": "packaged_gate_implemented_release_certification_pending",
+    "scope": "Every macOS/Windows CLI build now runs a cold-process latency and multilingual intent-routing gate; signed release-machine certification remains independent of G1-G10",
+    "benchmark_command": "python scripts/quality/benchmark_agent_cli.py --executable <packaged-auto-email-sender>",
     "p95_threshold_ms": {
       "capabilities": 1000,
-      "describe": 1000
+      "describe": 1000,
+      "intent_routing": 1000
     },
     "measurements": [
       {
@@ -424,6 +444,16 @@
         "capabilities_p95_ms": 44.17,
         "describe_p95_ms": 90.11,
         "recorded_at": "2026-08-05"
+      },
+      {
+        "environment": "local macOS Apple Silicon development executable",
+        "sample_count": 5,
+        "method": "fresh OS process per sample; five Chinese/English/typo intent cases use 25 additional samples",
+        "capabilities_p95_ms": 110.21,
+        "describe_p95_ms": 152.57,
+        "intent_routing_p95_ms": 161.31,
+        "intent_routing_accuracy": 1.0,
+        "recorded_at": "2026-08-09"
       }
     ]
   }

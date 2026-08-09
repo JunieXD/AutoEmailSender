@@ -42,7 +42,9 @@ from auto_email_sender_cli.commands.common import (
     augment_state_metadata,
     apply_structured_filter,
     fetch_all_pages,
+    fetch_filtered_pages,
     normalize_collection_response,
+    server_field_params,
     server_filter_params,
 )
 from auto_email_sender_cli.commands.wait import _available_actions
@@ -225,7 +227,7 @@ class ContractTests(unittest.TestCase):
                         default=str,
                     ).encode("utf-8"),
                 ),
-                1_501,
+                4_001,
                 capability.command,
             )
             self.assertEqual(
@@ -276,9 +278,11 @@ class ContractTests(unittest.TestCase):
                 "filter_field_types": all(
                     isinstance(field_schema, dict)
                     and field_schema.get("type") not in (None, "unknown")
-                    and set(field_schema.get("operators", [])) == set(advertised["filter_operators"])
+                    and "operators" not in field_schema
                     for field_schema in description["output"]["filter_contract"]["fields"].values()
                 ),
+                "filter_operators": set(description["output"]["filter_contract"]["operators"])
+                == set(advertised["filter_operators"]),
             }
             failures.extend(
                 f"{capability.command}:{name}"
@@ -1299,7 +1303,131 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(invalid_type.exit_code, 2, msg=invalid_type.output)
         self.assertEqual(json.loads(invalid_type.stdout)["error"]["code"], "INVALID_FILTER")
 
+    def test_local_filter_streams_pages_and_limits_matching_not_scanned_items(self) -> None:
+        class PagedClient:
+            descriptor = type("Descriptor", (), {"app_version": "test"})()
+
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                params = dict(kwargs.get("params", {}))
+                self.calls.append(params)
+                cursor = int(params.get("cursor", 0))
+                pages = {
+                    0: {
+                        "items": [{"id": 1, "name": "A"}, {"id": 2, "name": "A"}],
+                        "next_cursor": "2",
+                        "has_more": True,
+                    },
+                    2: {
+                        "items": [{"id": 3, "name": "A"}, {"id": 4, "name": "B"}],
+                        "next_cursor": None,
+                        "has_more": False,
+                    },
+                }
+                return pages[cursor]
+
+        client = PagedClient()
+        filtered = fetch_filtered_pages(
+            client,
+            "/api/agent/v1/professors",
+            params={"limit": 2},
+            expression='{"name":{"eq":"B"}}',
+            command="professors.list",
+            max_items=1,
+            max_bytes=1024,
+        )
+
+        self.assertEqual([item["id"] for item in filtered["items"]], [4])
+        self.assertEqual(filtered["filtered_count"], 1)
+        self.assertEqual(filtered["scanned_item_count"], 4)
+        self.assertEqual(len(client.calls), 2)
+
+        none = fetch_filtered_pages(
+            PagedClient(),
+            "/api/agent/v1/professors",
+            params={"limit": 2},
+            expression='{"name":{"eq":"missing"}}',
+            command="professors.list",
+            max_items=1,
+            max_bytes=1024,
+        )
+        self.assertEqual(none["items"], [])
+        self.assertEqual(none["filtered_count"], 0)
+
+        with self.assertRaises(CliError) as all_matches:
+            fetch_filtered_pages(
+                PagedClient(),
+                "/api/agent/v1/professors",
+                params={"limit": 2},
+                expression='{"name":{"contains":""}}',
+                command="professors.list",
+                max_items=1,
+                max_bytes=1024,
+            )
+        self.assertEqual(all_matches.exception.code, "RESULT_TOO_LARGE")
+        self.assertIn("--output-file", all_matches.exception.suggested_command or "")
+
+    def test_streaming_filter_and_pagination_fail_closed_at_safety_boundaries(self) -> None:
+        class LoopClient:
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                return {
+                    "items": [{"id": 1, "name": "A"}],
+                    "next_cursor": "1",
+                    "has_more": True,
+                }
+
+        with self.assertRaises(CliError) as loop_error:
+            fetch_all_pages(LoopClient(), "/items")
+        self.assertEqual(loop_error.exception.code, "PAGINATION_LOOP")
+
+        with self.assertRaises(CliError) as scan_error:
+            fetch_all_pages(
+                _FakeClient(),
+                "/items",
+                page_consumer=lambda page: 0,
+                max_scanned_items=1,
+                max_scanned_bytes=1024,
+            )
+        self.assertEqual(scan_error.exception.code, "FILTER_SCAN_LIMIT_EXCEEDED")
+
+        with self.assertRaises(CliError) as consumer_error:
+            fetch_all_pages(
+                _FakeClient(),
+                "/items",
+                page_consumer=lambda page: -1,
+            )
+        self.assertEqual(consumer_error.exception.code, "INVALID_PAGE_CONSUMER")
+
     def test_native_filter_pushdown_reduces_backend_work_with_local_fallback(self) -> None:
+        self.assertEqual(
+            server_field_params(
+                "id,name",
+                expression='{"email":{"contains":"example.edu"}}',
+                command="professors.list",
+                include_revisions=False,
+            ),
+            {"fields": "id,name,email"},
+        )
+        self.assertEqual(
+            server_field_params(
+                "id,revision",
+                expression=None,
+                command="professors.list",
+                include_revisions=True,
+            ),
+            {},
+        )
+        self.assertEqual(
+            server_field_params(
+                "id,status",
+                expression=None,
+                command="crawler.jobs.list",
+                include_revisions=False,
+            ),
+            {},
+        )
         self.assertEqual(
             server_filter_params(
                 '{"status":"needs_review","llm_profile_id":3,'
@@ -1344,6 +1472,34 @@ class ContractTests(unittest.TestCase):
             ),
             {},
         )
+        self.assertEqual(
+            server_filter_params(
+                '{"id":9,"identity_id":3,"material_type":"cv"}',
+                command="materials.list",
+            ),
+            {"material_id": 9, "identity_id": 3, "material_type": "cv"},
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"feature_type":"crawl","model_name":"model-a"}',
+                command="usage.records",
+            ),
+            {"feature_type": "crawl", "model_name": "model-a"},
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"feature_type":"invented"}',
+                command="usage.records",
+            ),
+            {},
+        )
+        self.assertEqual(
+            server_filter_params(
+                '{"source":"invented","status":"invented"}',
+                command="deliveries.list",
+            ),
+            {},
+        )
 
         class RecordingClient:
             descriptor = type("Descriptor", (), {"app_version": "test"})()
@@ -1384,6 +1540,35 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(client.calls[0]["identity_id"], 7)
         items = json.loads(result.stdout)["data"]["items"]
         self.assertEqual([item["identity_id"] for item in items], [7])
+
+        class ProjectionClient(RecordingClient):
+            calls: list[dict[str, object]] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                self.calls.append(dict(kwargs.get("params", {})))
+                # Simulate an older backend that ignores fields. The final
+                # local projection must still be authoritative.
+                return {
+                    "items": [{"id": 1, "name": "A", "email": "a@example.edu"}],
+                    "next_cursor": None,
+                    "has_more": False,
+                }
+
+        projection_client = ProjectionClient()
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=projection_client,
+        ):
+            projected = CliRunner().invoke(
+                app,
+                ["--format", "json", "professors", "list", "--fields", "id,name"],
+            )
+        self.assertEqual(projected.exit_code, 0, msg=projected.output)
+        self.assertEqual(projection_client.calls[0]["fields"], "id,name")
+        self.assertEqual(
+            json.loads(projected.stdout)["data"]["items"],
+            [{"id": 1, "name": "A"}],
+        )
 
     def test_revision_precedes_derived_action_metadata(self) -> None:
         record = {"id": 9, "status": "partially_completed", "name": "Campaign"}
@@ -1583,6 +1768,8 @@ class ContractTests(unittest.TestCase):
         }
         self.assertEqual(task_actions["prepare-send"]["command"], "drafts.prepare-send")
         self.assertEqual(task_actions["prepare-send"]["arguments"], {"task_id": 8})
+        self.assertEqual(task_actions["approve"]["command"], "drafts.approve")
+        self.assertEqual(task_actions["approve"]["required_input"], ["body_text"])
 
         campaign_item = augment_state_metadata(
             {"id": 99, "campaign_id": 42, "status": "review_required"},
@@ -1601,6 +1788,33 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(prepare_send["produces_confirmation_plan"])
         self.assertEqual(prepare_send["plan_role"], "producer")
         self.assertNotIn("blocked_reason", prepare_send)
+        approve = item_actions["approve"]
+        self.assertEqual(approve["command"], "campaigns.approve-item-draft")
+        self.assertEqual(
+            approve["arguments"],
+            {"campaign_id": 42, "item_id": 99},
+        )
+        self.assertEqual(approve["required_input"], ["body_text"])
+
+        delivery = augment_state_metadata(
+            {
+                "id": 17,
+                "status": "waiting_scheduled",
+                "can_reschedule": True,
+                "expected_updated_at": "2026-08-09T09:00:00.123456+00:00",
+            },
+            command="deliveries.list",
+        )
+        delivery_action = delivery["available_actions"][0]
+        self.assertEqual(delivery_action["command"], "deliveries.reschedule")
+        self.assertEqual(
+            delivery_action["arguments"],
+            {
+                "task_id": 17,
+                "expected_updated_at": "2026-08-09T09:00:00.123456+00:00",
+            },
+        )
+        self.assertEqual(delivery_action["required_input"], ["scheduled_at"])
 
         running_campaign = augment_state_metadata(
             {"id": 42, "status": "running"},

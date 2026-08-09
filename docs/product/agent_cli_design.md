@@ -5,7 +5,7 @@
 - 日期：2026-08-03
 - 适用项目：Auto Email Sender
 - 目标平台：Windows x64、macOS Apple Silicon
-- 当前实现：已完成安全读取、完整回信导出、草稿、单草稿发送计划、桌面启用/修复以及跨平台打包链路；业务命令要求用户先手动打开桌面软件；完整命令地图中的其余业务能力继续分阶段覆盖
+- 当前实现：已完成 156 个可用叶子命令、GUI 高价值动作补齐、安全输出预算、流式筛选/导出、意图搜索、桌面启用/修复以及跨平台打包与性能门禁；业务命令要求用户先手动打开桌面软件
 
 > 下一阶段的通用、Agent-first 接口演进目标、实施顺序与验收标准见 [Agent-first 通用 CLI 演进路线](../development/agent_cli_evolution_plan.md)。该路线补充本文的实现阶段，不改变本文已经确认的安全和产品边界。
 
@@ -274,6 +274,8 @@ agent/runtime.json
 8. 大结果支持分页、JSONL 和输出到文件。
 9. stdout 在 JSON 模式下只输出机器可解析内容；诊断文字进入 stderr。
 10. 每个错误都有稳定错误码、是否可重试以及建议动作。
+11. `--projection full` 与 `--expand` 不能绕过 UTF-8 字节预算；Agent 可用 `--max-output-bytes` 和 `--max-items` 明确收紧或在硬上限内放宽 stdout。
+12. `--filter` 与 `--fields` 的本地校验始终权威；兼容后端可以下推等值筛选和 DTO 字段以减少数据库、序列化与传输开销。
 
 ### 8.2 不提供的“万能命令”
 
@@ -760,6 +762,14 @@ auto-email-sender --format json plans execute plan_01J... --confirm
 
 HTTP 状态码不能直接作为 CLI 退出码。
 
+### 15.5 有界结果协议
+
+- 业务 `data` 默认使用 65536 UTF-8 字节预算，允许范围为 1024–16777216；集合 stdout 最多 10000 项。
+- `projection` 在触发预算压缩时返回 `budget_bytes`、`input_bytes`、`output_bytes`、`budget_compacted` 和恢复提示。
+- `truncated` 与 `omitted_paths` 明确指出被摘要或省略的路径；分页仍可继续时同时返回可执行 `continuation`。
+- 完整大集合通过 `--output-file <path>.jsonl` 逐页写入临时文件并原子发布；筛选也逐页执行，只在内存保留匹配记录。
+- 根选项可以位于叶子命令前后；`describe` 会声明每个全局选项的支持状态、类型、默认值和范围。
+
 ## 16. 自描述能力与说明书
 
 ### 16.1 不使用“第一次执行”
@@ -780,6 +790,7 @@ agent_has_read_guide = true
 替代方案是无状态、渐进披露的自描述协议：
 
 - `capabilities` 默认只返回资源目录，避免首次发现污染上下文。
+- 已知自然语言意图可用 `capabilities --query <intent>` 直接检索；中文、英文和常见错拼按确定性规则排序。
 - `capabilities --resource <resource>` 返回精简命令卡；`--view full` 是显式的完整清单逃生口。
 - `describe --command <command>` 返回执行卡；只有 `--section` 或 `--view full` 才展开完整 JSON Schema。
 - 高风险计划在命令结果中直接返回确认要求、影响和过期状态；不依赖说明书复述规则。
@@ -789,6 +800,7 @@ agent_has_read_guide = true
 
 ```text
 auto-email-sender --format json capabilities
+auto-email-sender --format json capabilities --query "修改发送时间" --limit 1 --minimal
 auto-email-sender --format json capabilities --resource drafts
 auto-email-sender --format json describe --command drafts.prepare-send
 auto-email-sender --format json describe --command drafts.prepare-send --section output
@@ -1325,6 +1337,8 @@ Agent：
 - stderr 诊断。
 - 错误码和退出码。
 - 分页和 JSONL。
+- tiny/maximum UTF-8 字节预算、全投影、单个超大条目和条目硬上限。
+- 筛选零命中、全命中、末页命中、重复/畸形游标及扫描上限。
 - Windows/macOS 路径。
 - 大量 ID 文件输入。
 - 名称歧义。
@@ -1381,6 +1395,7 @@ Agent：
 6. 系统没有保存临时语义分类。
 7. Agent 正确区分参考材料和附件。
 8. 创建草稿不会发信。
+9. Windows/macOS 打包产物逐样本启动新进程运行 `capabilities`、`describe` 与中英文/错拼意图路由，p95 均不超过 1000 ms 且路由准确率为 100%。
 9. 未确认计划不能发信。
 10. 确认后发送，重试不会重复投递。
 11. 密码和 API Key 在所有 CLI 输出、错误和日志中均不存在。

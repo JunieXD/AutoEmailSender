@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
+from difflib import SequenceMatcher
 from typing import Final, Literal
 
 from auto_email_sender_cli.operation_specs import effect_has_external_action, get_operation_spec
@@ -44,7 +45,57 @@ _DISCOVERY_RESOURCE_SUMMARIES: Final[dict[str, str]] = {
     "settings": "不含凭据的运行设置",
     "workspaces": "单位导师的邮件工作区",
     "tasks": "单封任务的状态和写信设置",
+    "deliveries": "统一发送计划、异常项和安全改期",
     "plans": "高风险操作的确认计划",
+}
+
+_DISCOVERY_RESOURCE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "system": ("系统", "版本", "状态", "健康检查", "安装诊断"),
+    "professors": ("导师", "教授", "mentor", "faculty", "联系人"),
+    "professors.tags": ("导师标签", "教授标签", "分类"),
+    "professors.community": ("社区导师", "共享导师", "社区目录"),
+    "communications": ("邮件", "回信", "收件", "发件", "会话", "线程", "email", "reply", "inbox"),
+    "templates": ("模板", "邮件模板", "文案模板"),
+    "materials": ("材料", "附件", "简历", "reference"),
+    "identities": ("发件身份", "邮箱账号", "smtp", "imap"),
+    "llm-profiles": ("模型", "大模型", "llm", "api key"),
+    "matching": ("匹配", "导师匹配", "匹配度", "match"),
+    "enrichment": ("补全", "资料补全", "信息完善"),
+    "drafts": ("草稿", "写信", "改写", "单封邮件", "email draft", "write email"),
+    "campaigns": ("批量", "群发", "批量草稿", "批量活动", "email campaign"),
+    "crawler": ("抓取", "爬虫", "网页采集", "crawl"),
+    "communication-groups": ("通信组", "历史共享", "身份共享"),
+    "test-email": ("测试邮件", "给自己发", "试发"),
+    "dashboard": ("仪表盘", "概览", "工作概览"),
+    "usage": ("token", "用量", "费用统计"),
+    "diagnostics": ("诊断", "日志", "调试", "debug"),
+    "settings": ("设置", "运行设置", "偏好"),
+    "workspaces": ("工作区", "导师工作区", "邮件工作区"),
+    "tasks": ("任务", "单封任务", "跟进", "排程"),
+    "deliveries": ("发送计划", "邮件排程", "改期", "delivery", "reschedule"),
+    "plans": ("计划", "确认计划", "发送计划", "高风险确认"),
+}
+
+_DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "professors.import": ("导入导师", "导入教授", "excel 导入", "xlsx 导入"),
+    "professors.export": ("导出导师", "导师表格", "导出 excel"),
+    "professors.download-template": ("下载导师模板", "空白导入表", "import template"),
+    "communications.threads.list": ("查看回信", "查看邮件线程", "谁回复了"),
+    "communications.messages.list": ("邮件记录", "收发记录", "邮件正文"),
+    "drafts.generate": ("生成草稿", "给导师写信", "写邮件"),
+    "drafts.approve": ("批准草稿", "审核通过", "只批准不发送"),
+    "drafts.prepare-send": ("发送单封邮件", "排程单封邮件", "准备发送"),
+    "campaigns.create": ("创建批量任务", "批量写信", "群发草稿"),
+    "campaigns.approve-drafts": ("批量批准草稿", "全部审核通过", "只批准不群发"),
+    "campaigns.prepare-send": ("批量发送", "群发邮件", "批量排程"),
+    "crawler.jobs.create": ("抓取导师", "爬学校官网", "采集教授"),
+    "matching.jobs.create": ("计算匹配度", "批量匹配", "分析导师匹配"),
+    "enrichment.jobs.create": ("补全导师资料", "完善导师信息"),
+    "tasks.cancel-schedule": ("取消定时发送", "取消排程"),
+    "deliveries.list": ("查看发送计划", "查看待发送邮件", "异常邮件"),
+    "deliveries.reschedule": ("修改发送时间", "邮件改期", "重新排程"),
+    "plans.show": ("查看发送计划", "查看确认计划", "影响预览"),
+    "plans.execute": ("确认执行计划", "确认发送", "执行发送计划"),
 }
 
 _SYSTEM_DISCOVERY_COMMANDS: Final[frozenset[str]] = frozenset(
@@ -80,6 +131,7 @@ _PAGED_COLLECTION_COMMANDS: Final[frozenset[str]] = frozenset(
         "campaigns.items",
         "usage.records",
         "diagnostics.logs",
+        "deliveries.list",
     },
 )
 
@@ -160,6 +212,8 @@ _IF_REVISION_COMMANDS: Final[frozenset[str]] = frozenset(
         "drafts.save",
         "drafts.regenerate",
         "drafts.rewrite",
+        "drafts.approve",
+        "campaigns.approve-item-draft",
     },
 )
 
@@ -370,6 +424,7 @@ _COLLECTION_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
     "communication-groups.list": frozenset({"id", "revision", "members", "match_source_identity_id", "created_at", "updated_at"}),
     "campaigns.list": frozenset({"id", "name", "status", "generation_mode", "schedule_type", "target_count", "pending_generation_count", "generating_draft_count", "draft_failed_count", "review_required_count", "approved_count", "scheduled_count", "sending_count", "sent_count", "failed_count", "canceled_count", "canceled_send_count", "can_start_draft_generation", "created_at", "updated_at"}),
     "campaigns.items": frozenset({"id", "campaign_id", "professor_id", "professor_name", "professor_email", "status", "generation_mode", "subject", "has_final_content", "attachment_material_ids", "scheduled_at", "send_canceled_at", "sent_at", "last_error", "can_remove", "can_cancel_send", "can_restore_send", "can_retry_draft", "updated_at"}),
+    "deliveries.list": frozenset({"id", "source", "batch_task_id", "batch_task_name", "batch_task_status", "professor_id", "professor_name", "professor_email", "identity_id", "identity_name", "sender_email", "subject", "attachment_count", "attachment_size_bytes", "status", "status_label", "status_description", "scheduled_at", "last_scheduled_at", "schedule_canceled_at", "batch_send_canceled_at", "approved_at", "last_send_attempt_at", "sent_at", "last_error", "retry_count", "created_at", "updated_at", "expected_updated_at", "can_reschedule", "can_cancel", "can_send_now", "can_restore", "can_edit"}),
     "usage.records": frozenset({"id", "feature_type", "feature_label", "title", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "model_name", "identity_name", "created_at", "status"}),
     "diagnostics.logs": frozenset({"id", "request_id", "category", "event_name", "level", "message", "entity_type", "entity_id", "metadata", "created_at"}),
 }
@@ -513,6 +568,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability(
         "professors.export",
         "导出导师表格",
+        "L0",
+        "available",
+    ),
+    Capability(
+        "professors.download-template",
+        "下载 CSV 或 XLSX 空白导师导入模板",
         "L0",
         "available",
     ),
@@ -851,6 +912,14 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         guide_topic="drafts",
     ),
     Capability(
+        "drafts.approve",
+        "批准一封最终草稿并保留在待发送状态；不会发送或排程",
+        "L1",
+        "available",
+        mutates=True,
+        guide_topic="drafts",
+    ),
+    Capability(
         "drafts.regenerate",
         "按当前模板配置重新渲染或调用 AI 改写草稿；不会发送",
         "L1",
@@ -890,6 +959,29 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         guide_topic="campaigns",
     ),
     Capability("campaigns.items", "分页读取活动中的导师、草稿状态和主题", "L0", "available", guide_topic="campaigns"),
+    Capability(
+        "campaigns.item-thread",
+        "按活动和活动项 ID 读取完整工作区线程与最终草稿",
+        "L0",
+        "available",
+        guide_topic="campaigns",
+    ),
+    Capability(
+        "campaigns.approve-item-draft",
+        "批准一个活动项的最终草稿；不会发送或创建发送计划",
+        "L1",
+        "available",
+        mutates=True,
+        guide_topic="campaigns",
+    ),
+    Capability(
+        "campaigns.approve-drafts",
+        "按明确活动项 ID 批量批准待审核草稿；不会发送",
+        "L1",
+        "available",
+        mutates=True,
+        guide_topic="campaigns",
+    ),
     Capability(
         "campaigns.create",
         "生成暂停批量草稿活动的影响预览和确认计划",
@@ -1384,6 +1476,21 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         guide_topic="workspaces",
     ),
     Capability(
+        "deliveries.list",
+        "分页读取待发送、异常和历史邮件计划及可执行状态",
+        "L0",
+        "available",
+        guide_topic="tasks",
+    ),
+    Capability(
+        "deliveries.reschedule",
+        "使用最新 expected_updated_at 将尚未发送的单封邮件改期；不会立即发送",
+        "L1",
+        "available",
+        mutates=True,
+        guide_topic="tasks",
+    ),
+    Capability(
         "tasks.cancel-schedule",
         "取消单封任务的定时状态并回到待审核草稿",
         "L1",
@@ -1467,6 +1574,7 @@ def list_capabilities(
     command: str | None = None,
     *,
     resource: str | None = None,
+    resource_exact: bool = False,
     contract_revisions: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
     """Return the complete records for an explicit full-capability request.
@@ -1477,7 +1585,11 @@ def list_capabilities(
     """
 
     records: list[dict[str, object]] = []
-    for item in _select_capabilities(command, resource=resource):
+    for item in _select_capabilities(
+        command,
+        resource=resource,
+        resource_exact=resource_exact,
+    ):
         record = item.to_dict()
         revision = _contract_revision_for(item, contract_revisions)
         if revision is not None:
@@ -1490,13 +1602,18 @@ def list_capability_cards(
     command: str | None = None,
     *,
     resource: str | None = None,
+    resource_exact: bool = False,
     contract_revisions: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
     """Return compact command cards suitable for routine Agent discovery."""
 
     return [
         _capability_card(item, contract_revision=_contract_revision_for(item, contract_revisions))
-        for item in _select_capabilities(command, resource=resource)
+        for item in _select_capabilities(
+            command,
+            resource=resource,
+            resource_exact=resource_exact,
+        )
     ]
 
 
@@ -1504,10 +1621,15 @@ def list_resource_catalog(
     command: str | None = None,
     *,
     resource: str | None = None,
+    resource_exact: bool = False,
 ) -> list[dict[str, object]]:
     """Return a bounded resource index without enumerating every operation."""
 
-    selected = _select_capabilities(command, resource=resource)
+    selected = _select_capabilities(
+        command,
+        resource=resource,
+        resource_exact=resource_exact,
+    )
     selected_resources = {
         discovery_resource(item.command)
         for item in selected
@@ -1530,6 +1652,7 @@ def capability_catalog_revision(
     *,
     commands: Iterable[str] | None = None,
     view: str | None = None,
+    scope: Mapping[str, object] | None = None,
 ) -> str:
     """Return a stable short revision for a catalog or selected discovery scope.
 
@@ -1566,6 +1689,7 @@ def capability_catalog_revision(
             "contract_version": CONTRACT_VERSION,
             "build": get_build_identity(),
             "view": view,
+            "scope": dict(scope) if scope is not None else None,
             "items": snapshot,
         },
         ensure_ascii=False,
@@ -1579,6 +1703,7 @@ def _select_capabilities(
     command: str | None = None,
     *,
     resource: str | None = None,
+    resource_exact: bool = False,
 ) -> tuple[Capability, ...]:
     items = CAPABILITIES
     if command:
@@ -1595,10 +1720,117 @@ def _select_capabilities(
             for item in items
             if (
                 discovery_resource(item.command) == normalized_resource
-                or discovery_resource(item.command).startswith(f"{normalized_resource}.")
+                or (
+                    not resource_exact
+                    and discovery_resource(item.command).startswith(f"{normalized_resource}.")
+                )
             )
         )
     return items
+
+
+def search_capabilities(
+    query: str,
+    *,
+    resource: str | None = None,
+    resource_exact: bool = False,
+    limit: int = 8,
+) -> tuple[Capability, ...]:
+    """Rank capability cards with deterministic multilingual text matching."""
+
+    normalized_query = _normalize_search_text(query)
+    if not normalized_query:
+        return ()
+    candidates = _select_capabilities(
+        resource=resource,
+        resource_exact=resource_exact,
+    )
+    ranked: list[tuple[int, float, int, Capability]] = []
+    for index, capability in enumerate(candidates):
+        score, similarity = _capability_search_score(capability, normalized_query)
+        # A single common Chinese bigram can otherwise pull unrelated system
+        # commands into the tail of a result.  Keep direct/token matches and
+        # genuine fuzzy command matches, but discard that low-signal noise.
+        if score >= 100 or similarity >= 0.55:
+            ranked.append((score, similarity, -index, capability))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return tuple(item[3] for item in ranked[:limit])
+
+
+def search_capability_cards(
+    query: str,
+    *,
+    resource: str | None = None,
+    resource_exact: bool = False,
+    limit: int = 8,
+    contract_revisions: Mapping[str, str] | None = None,
+) -> list[dict[str, object]]:
+    return [
+        _capability_card(
+            item,
+            contract_revision=_contract_revision_for(item, contract_revisions),
+        )
+        for item in search_capabilities(
+            query,
+            resource=resource,
+            resource_exact=resource_exact,
+            limit=limit,
+        )
+    ]
+
+
+def _capability_search_score(
+    capability: Capability,
+    normalized_query: str,
+) -> tuple[int, float]:
+    command = _normalize_search_text(capability.command.replace(".", " "))
+    resource = discovery_resource(capability.command)
+    aliases = (
+        *_DISCOVERY_RESOURCE_ALIASES.get(resource, ()),
+        *_DISCOVERY_COMMAND_ALIASES.get(capability.command, ()),
+    )
+    document = _normalize_search_text(
+        " ".join(
+            (
+                capability.command,
+                capability.summary,
+                _DISCOVERY_RESOURCE_SUMMARIES.get(resource, ""),
+                *aliases,
+            ),
+        ),
+    )
+    compact_query = normalized_query.replace(" ", "")
+    compact_document = document.replace(" ", "")
+    score = 0
+    if normalized_query == command or normalized_query == capability.command:
+        score += 10_000
+    if normalized_query in document:
+        score += 1_000
+    if compact_query and compact_query in compact_document:
+        score += 700
+    for token in _search_tokens(normalized_query):
+        if token in command:
+            score += 180
+        elif token in document:
+            score += 70
+    similarity = SequenceMatcher(None, normalized_query, command).ratio()
+    if similarity >= 0.55:
+        score += round(similarity * 100)
+    return score, similarity
+
+
+def _normalize_search_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower().replace("_", " ").replace("-", " "))
+
+
+def _search_tokens(value: str) -> tuple[str, ...]:
+    tokens: list[str] = re.findall(r"[a-z0-9]+", value)
+    for chinese in re.findall(r"[\u3400-\u9fff]+", value):
+        if len(chinese) <= 2:
+            tokens.append(chinese)
+        else:
+            tokens.extend(chinese[index : index + 2] for index in range(len(chinese) - 1))
+    return tuple(dict.fromkeys(token for token in tokens if token))
 
 
 def _capability_card(
@@ -1877,11 +2109,15 @@ def suggest_capabilities(command: str, limit: int = 5) -> list[str]:
     normalized = normalize_capability_command(command)
     if not normalized:
         return [item.command for item in CAPABILITIES[:limit]]
-    tokens = set(normalized.replace("-", ".").split("."))
-    matches = [
-        item.command
-        for item in CAPABILITIES
-        if normalized in item.command
-        or any(token and token in item.command.replace("-", ".") for token in tokens)
-    ]
-    return matches[:limit]
+    tokens = {token for token in normalized.replace("-", ".").split(".") if token}
+    ranked: list[tuple[int, float, int, str]] = []
+    for index, item in enumerate(CAPABILITIES):
+        candidate = item.command.replace("-", ".")
+        candidate_tokens = set(candidate.split("."))
+        shared = len(tokens & candidate_tokens)
+        prefix = 1 if candidate.startswith(normalized) or normalized.startswith(candidate) else 0
+        similarity = SequenceMatcher(None, normalized, candidate).ratio()
+        score = prefix * 1_000 + shared * 200 + round(similarity * 100)
+        ranked.append((score, similarity, -index, item.command))
+    ranked.sort(reverse=True)
+    return [item[3] for item in ranked[:limit]]

@@ -33,19 +33,19 @@
       ],
       "action_overrides": {
         "getBatchTaskItemThread": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "CLI 尚无按活动项 ID 直接读取完整工作区线程的等价动作。"
+          "status": "available",
+          "required_capabilities": ["campaigns.item-thread"],
+          "reason": "CLI 可按活动和活动项 ID 读取完整、安全裁剪后的工作区线程。"
         },
         "approveAllBatchTaskDrafts": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "CLI 的批量审核当前与发送计划绑定，尚无只批准而不生成发送计划的独立动作。"
+          "status": "available",
+          "required_capabilities": ["campaigns.approve-drafts"],
+          "reason": "CLI 可按明确活动项 ID 批量批准草稿，且不会发送或生成发送计划。"
         },
         "approveBatchTaskItemDraft": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "CLI 尚无单独批准活动草稿且不进入发送计划的动作。"
+          "status": "available",
+          "required_capabilities": ["campaigns.approve-item-draft"],
+          "reason": "CLI 可提交最终正文并只批准一个活动项草稿，不会进入发送流程。"
         }
       },
       "status": "available",
@@ -203,9 +203,9 @@
           "reason": "Agent 可通过发送计划协议确认并立即发送已完成草稿。"
         }
       },
-      "status": "planned",
-      "required_capabilities": [],
-      "reason": "统一发送计划列表和已排程任务改期尚无对应的 Agent 读取与修改合同。"
+      "status": "available",
+      "required_capabilities": ["deliveries.list", "deliveries.reschedule"],
+      "reason": "统一发送计划可分页、筛选和字段裁剪；单封邮件改期要求最新 expected_updated_at 并提供幂等回执。"
     },
     {
       "id": "email-tasks",
@@ -228,9 +228,9 @@
       ],
       "action_overrides": {
         "approveDraft": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "CLI 可保存草稿或生成发送计划，但尚无只批准草稿的独立状态动作。"
+          "status": "available",
+          "required_capabilities": ["drafts.approve"],
+          "reason": "CLI 可提交最终正文并只批准草稿，不会发送、排程或创建发送计划。"
         }
       },
       "status": "available",
@@ -503,9 +503,9 @@
           "reason": "旧的一键抓取入口没有稳定输入合同；Agent 应使用 crawler.jobs.create。"
         },
         "downloadProfessorTemplate": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "CLI 尚未开放空白导入模板下载。"
+          "status": "available",
+          "required_capabilities": ["professors.download-template"],
+          "reason": "CLI 可下载 CSV 或 XLSX 空白导入模板，并安全拒绝意外覆盖。"
         }
       },
       "status": "available",
@@ -525,6 +525,7 @@
         "professors.tags.prepare-delete",
         "professors.import",
         "professors.export",
+        "professors.download-template",
         "professors.community.catalog",
         "professors.community.records",
         "professors.community.preview",

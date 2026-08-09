@@ -14,9 +14,15 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+import auto_email_sender_cli.main as cli_main
 from auto_email_sender_cli.main import app
 from auto_email_sender_cli.commands.common import augment_state_metadata
-from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
+from auto_email_sender_cli.agent_installation import (
+    AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION,
+    SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS,
+    _sha256_directory,
+    inspect_agent_skill_installation,
+)
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
     list_capabilities,
@@ -972,6 +978,142 @@ class CliTests(unittest.TestCase):
         missing_payload = json.loads(missing.stdout)
         self.assertIn("drafts.generate", missing_payload["error"]["details"]["suggestions"])
 
+    def test_capabilities_search_ranks_multilingual_intents_and_typos(self) -> None:
+        cases = (
+            ("导入导师", "professors.import"),
+            ("查看回信", "communications.threads.list"),
+            ("generate email draft", "drafts.generate"),
+            ("professers improt", "professors.import"),
+        )
+        for query, expected in cases:
+            with self.subTest(query=query):
+                result = self.runner.invoke(
+                    app,
+                    ["--format", "json", "capabilities", "--query", query],
+                )
+                self.assertEqual(result.exit_code, 0, msg=result.output)
+                payload = json.loads(result.stdout)["data"]
+                self.assertEqual(payload["view"], "commands")
+                self.assertEqual(payload["items"][0]["command"], expected)
+                self.assertLessEqual(len(payload["items"]), 8)
+
+    def test_capabilities_exact_resource_select_and_minimal_output(self) -> None:
+        exact = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "capabilities",
+                "--resource",
+                "professors",
+                "--resource-exact",
+                "--select",
+                "command,summary,risk",
+                "--minimal",
+            ],
+        )
+        self.assertEqual(exact.exit_code, 0, msg=exact.output)
+        payload = json.loads(exact.stdout)["data"]
+        self.assertEqual(len(payload["items"]), 10)
+        self.assertTrue(all(set(item) <= {"command", "summary", "risk"} for item in payload["items"]))
+        self.assertTrue(all(not item["command"].startswith("professors.tags.") for item in payload["items"]))
+        self.assertIn("scope_revision", payload)
+        self.assertIn("summary", payload)
+        self.assertNotIn("build", payload)
+        self.assertNotIn("next", payload)
+        self.assertNotIn("warnings", json.loads(exact.stdout).get("_meta", {}))
+
+    def test_unchanged_contract_revisions_are_reused_in_process(self) -> None:
+        with (
+            patch.dict(cli_main._COMMAND_CONTRACT_REVISION_CACHE, {}, clear=True),
+            patch.object(
+                cli_main,
+                "describe_command_revisions",
+                wraps=cli_main.describe_command_revisions,
+            ) as describe_revisions,
+        ):
+            first = cli_main._current_command_contract_revisions(["professors.list"])
+            second = cli_main._current_command_contract_revisions(["professors.list"])
+
+        self.assertEqual(first, second)
+        describe_revisions.assert_called_once_with(app, ["professors.list"])
+
+    def test_capabilities_search_options_fail_closed_when_conflicting(self) -> None:
+        cases = (
+            (["--query", "导师", "--command", "professors.list"], "--query 与 --command"),
+            (["--limit", "2", "--resource", "professors"], "--limit 只能"),
+            (["--resource-exact"], "--resource-exact 必须"),
+            (["--query", "导师", "--view", "full"], "--query 返回"),
+            (["--select", "missing", "--resource", "professors"], "未知命令卡字段"),
+            (["--select", "command"], "--select 只能"),
+        )
+        for arguments, message in cases:
+            with self.subTest(arguments=arguments):
+                result = self.runner.invoke(app, ["--format", "json", "capabilities", *arguments])
+                self.assertEqual(result.exit_code, 2, msg=result.output)
+                error = json.loads(result.stdout)["error"]
+                self.assertEqual(error["code"], "INVALID_ARGUMENT")
+                self.assertIn(message, error["message"])
+
+    def test_global_options_work_after_leaf_commands_without_stealing_leaf_options(self) -> None:
+        version = self.runner.invoke(app, ["version", "--format", "json"])
+        self.assertEqual(version.exit_code, 0, msg=version.output)
+        self.assertTrue(json.loads(version.stdout)["ok"])
+
+        invalid_filter = self.runner.invoke(
+            app,
+            [
+                "professors",
+                "list",
+                "--filter",
+                '{"not_a_field":{"eq":1}}',
+                "--format",
+                "json",
+            ],
+        )
+        self.assertEqual(invalid_filter.exit_code, 2, msg=invalid_filter.output)
+        self.assertEqual(json.loads(invalid_filter.stdout)["error"]["code"], "INVALID_FILTER")
+
+        export = self.runner.invoke(
+            app,
+            [
+                "professors",
+                "export",
+                "--output",
+                "unused.csv",
+                "--format",
+                "csv",
+                "--json",
+            ],
+        )
+        self.assertEqual(export.exit_code, 7, msg=export.output)
+        self.assertEqual(json.loads(export.stdout)["error"]["code"], "APP_UNAVAILABLE")
+
+        diagnostics = self.runner.invoke(
+            app,
+            [
+                "diagnostics",
+                "logs",
+                "--request-id",
+                "log-filter",
+                "--operation-id",
+                "operation-id",
+                "--format",
+                "json",
+            ],
+        )
+        self.assertEqual(diagnostics.exit_code, 7, msg=diagnostics.output)
+        self.assertEqual(json.loads(diagnostics.stdout)["_meta"]["request_id"], "operation-id")
+
+    def test_usage_errors_offer_structured_argument_corrections(self) -> None:
+        result = self.runner.invoke(
+            app,
+            ["professors", "get", "--profesor-id", "1", "--format", "json"],
+        )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertIn("--professor-id", payload["error"]["details"]["suggestions"])
+
     def test_describe_returns_machine_readable_command_contract_without_runtime(self) -> None:
         result = self.runner.invoke(
             app,
@@ -990,10 +1132,20 @@ class CliTests(unittest.TestCase):
             ["template", "ai_rewrite", "manual"],
         )
         self.assertNotIn("parameters", payload)
+        self.assertIn("template_id", payload["input"]["optional_contracts"])
+        self.assertIsNone(payload["input"]["optional_contracts"]["template_id"]["default"])
+        generation_mode = payload["input"]["required"]["generation_mode"]
+        self.assertIn("--generation-mode", generation_mode["flags"])
+        self.assertEqual(generation_mode["enum"], ["template", "ai_rewrite", "manual"])
+        self.assertIn("global_option_contracts", payload["input"])
+        byte_budget = payload["input"]["global_option_contracts"]["max_output_bytes"]
+        self.assertEqual(byte_budget["default"], 64 * 1024)
+        self.assertEqual(byte_budget["minimum"], 1024)
+        self.assertEqual(byte_budget["maximum"], 16 * 1024 * 1024)
         self.assertTrue(payload["details_available"])
         self.assertLess(
             len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
-            1_500,
+            4_000,
         )
 
     def test_describe_expands_only_requested_contract_sections(self) -> None:
@@ -1025,6 +1177,26 @@ class CliTests(unittest.TestCase):
         self.assertIn("parameters", full_payload)
         self.assertIn("output", full_payload)
         self.assertLess(len(result.stdout.encode("utf-8")), len(full.stdout.encode("utf-8")))
+
+        input_section = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "describe",
+                "--command",
+                "professors.list",
+                "--section",
+                "input",
+            ],
+        )
+        self.assertEqual(input_section.exit_code, 0, msg=input_section.output)
+        input_contract = json.loads(input_section.stdout)["data"]["details"]["input"]
+        self.assertIn("schema", input_contract)
+        self.assertIn("global_options", input_contract)
+        self.assertNotIn("parameters", input_contract)
+        self.assertTrue(input_contract["global_options"]["filter"]["supported"])
+        self.assertTrue(input_contract["global_options"]["output_file"]["supported"])
 
     def test_compact_describe_exposes_contract_revision_and_bounds_default_output(self) -> None:
         result = self.runner.invoke(
@@ -1166,6 +1338,116 @@ class CliTests(unittest.TestCase):
         self.assertEqual(healthy["items"][0]["state"], "installed")
         self.assertFalse(outdated["ok"])
         self.assertEqual(outdated["items"][0]["state"], "needs_update")
+
+    def test_agent_support_manifest_versions_match_the_shared_contract(self) -> None:
+        contract_path = (
+            Path(__file__).resolve().parents[2]
+            / "contracts"
+            / "agent-support-manifest.schema.json"
+        )
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION,
+            contract["x-current-version"],
+        )
+        self.assertEqual(
+            SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS,
+            frozenset(contract["x-supported-versions"]),
+        )
+
+    def test_schema_v5_installation_verifies_onedir_bundle_and_macos_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "cli-bundle"
+            internal = bundle / "_internal"
+            internal.mkdir(parents=True)
+            source = bundle / "auto-email-sender"
+            source.write_bytes(b"official cli executable")
+            (internal / "base_library.zip").write_bytes(b"runtime")
+            target = root / "bin" / "auto-email-sender"
+            target.parent.mkdir()
+            target.symlink_to(source)
+            expected_hash = _sha256_directory(bundle)
+            assert expected_hash is not None
+            manifest_path = root / "installation.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 5,
+                        "enabled": True,
+                        "cli_source": source.as_posix(),
+                        "cli_target": target.as_posix(),
+                        "cli_sha256": expected_hash,
+                        "agents": {},
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()},
+            ):
+                healthy = inspect_agent_skill_installation()
+                (internal / "base_library.zip").write_bytes(b"modified runtime")
+                outdated = inspect_agent_skill_installation()
+
+        self.assertTrue(healthy["ok"])
+        self.assertTrue(healthy["cli"]["ok"])
+        self.assertEqual(healthy["cli"]["hash_kind"], "canonical_directory_v1")
+        self.assertFalse(outdated["cli"]["ok"])
+        failed_checks = {
+            check["id"]
+            for check in outdated["cli"]["checks"]
+            if not check["ok"]
+        }
+        self.assertEqual(failed_checks, {"cli_bundle_sha256"})
+
+    def test_schema_v5_installation_accepts_managed_windows_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "cli-bundle"
+            internal = bundle / "_internal"
+            internal.mkdir(parents=True)
+            source = bundle / "auto-email-sender.exe"
+            source.write_bytes(b"official cli executable")
+            (internal / "python312.dll").write_bytes(b"runtime")
+            target = root / "bin" / "auto-email-sender.cmd"
+            target.parent.mkdir()
+            escaped_source = str(source.resolve()).replace("%", "%%")
+            target.write_bytes(
+                f'@echo off\r\n"{escaped_source}" %*\r\nexit /b %ERRORLEVEL%\r\n'.encode(),
+            )
+            expected_hash = _sha256_directory(bundle)
+            assert expected_hash is not None
+            manifest_path = root / "installation.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 5,
+                        "enabled": True,
+                        "cli_source": source.as_posix(),
+                        "cli_target": target.as_posix(),
+                        "cli_sha256": expected_hash,
+                        "agents": {},
+                    },
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()},
+            ):
+                healthy = inspect_agent_skill_installation()
+                target.write_text("user modified launcher", encoding="utf-8")
+                outdated = inspect_agent_skill_installation()
+
+        self.assertTrue(healthy["cli"]["ok"])
+        self.assertEqual(
+            healthy["cli"]["checks"][-1]["binding_type"],
+            "windows_launcher",
+        )
+        self.assertFalse(outdated["cli"]["ok"])
 
     def test_skill_inspection_does_not_treat_malformed_agent_manifest_as_healthy(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1313,6 +1595,39 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertIn("手动打开", payload["data"]["recommended_action"])
         self.assertIsNone(payload["data"]["repair_command"])
+
+    def test_doctor_strict_emits_the_same_result_and_fails_when_unhealthy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path = Path(temp_dir) / "runtime.json"
+            with (
+                patch(
+                    "auto_email_sender_cli.main.get_runtime_file_path",
+                    return_value=runtime_path,
+                ),
+                patch(
+                    "auto_email_sender_cli.main.inspect_agent_skill_installation",
+                    return_value={
+                        "ok": False,
+                        "state": "needs_update",
+                        "message": "安装清单需要更新。",
+                        "items": [],
+                        "cli": {
+                            "ok": False,
+                            "state": "needs_update",
+                            "message": "安装清单需要更新。",
+                        },
+                    },
+                ),
+            ):
+                result = self.runner.invoke(
+                    app,
+                    ["--format", "json", "doctor", "--strict"],
+                )
+
+        self.assertEqual(result.exit_code, 1, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["data"]["healthy"])
 
     def test_jsonl_has_meta_item_and_summary_records(self) -> None:
         with patch(
@@ -1556,14 +1871,200 @@ class CliTests(unittest.TestCase):
             command="plans.show",
             expanded_paths=("/summary/items",),
         )
+        expanded_with_budget = prepare_result_data(
+            data,
+            command="plans.show",
+            expanded_paths=("/summary/items",),
+            max_output_bytes=256 * 1024,
+        )
 
         self.assertEqual(projected["summary"]["items"]["kind"], "array_summary")
         self.assertEqual(projected["summary"]["items"]["item_count"], 5_000)
         self.assertIn("/summary/items", projected["omitted_paths"])
         self.assertTrue(projected["truncated"])
         self.assertLess(len(json.dumps(projected, ensure_ascii=False).encode("utf-8")), 2_000)
-        self.assertEqual(len(expanded["summary"]["items"]), 5_000)
-        self.assertNotIn("omitted_paths", expanded)
+        self.assertTrue(expanded["truncated"])
+        self.assertTrue(expanded["projection"]["budget_compacted"])
+        self.assertLessEqual(
+            len(json.dumps(expanded, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+            64 * 1024,
+        )
+        self.assertEqual(len(expanded_with_budget["summary"]["items"]), 5_000)
+        self.assertNotIn("omitted_paths", expanded_with_budget)
+
+    def test_full_and_expanded_results_cannot_bypass_explicit_byte_budget(self) -> None:
+        body = "完整中文正文" * 20_000
+        full = prepare_result_data(
+            {"task_id": 7, "body_text": body},
+            command="drafts.get",
+            projection="full",
+            max_output_bytes=1024,
+        )
+        expanded = prepare_result_data(
+            {"task_id": 7, "body_text": body},
+            command="drafts.get",
+            expanded_paths=("body_text",),
+            max_output_bytes=1024,
+        )
+
+        for result in (full, expanded):
+            with self.subTest(mode=result["projection"]["mode"]):
+                encoded = json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                self.assertLessEqual(len(encoded), 1024)
+                self.assertEqual(result["projection"]["budget_bytes"], 1024)
+                self.assertEqual(result["projection"]["output_bytes"], len(encoded))
+                self.assertTrue(result["projection"]["budget_compacted"])
+                self.assertTrue(result["truncated"])
+                self.assertIn("/body_text", result["omitted_paths"])
+                self.assertNotIn(body, encoded.decode("utf-8"))
+
+        maximum_budget = prepare_result_data(
+            {"task_id": 7, "body_text": body},
+            command="drafts.get",
+            projection="full",
+            max_output_bytes=16 * 1024 * 1024,
+        )
+        self.assertEqual(maximum_budget["body_text"], body)
+        self.assertFalse(maximum_budget["projection"].get("budget_compacted", False))
+
+    def test_single_oversized_collection_item_is_summarized_with_utf8_byte_count(self) -> None:
+        projected = prepare_result_data(
+            {
+                "items": [{"id": 1, "message": "中文" * 100_000}],
+                "next_cursor": None,
+                "has_more": False,
+            },
+            command="diagnostics.logs",
+            projection="full",
+            max_output_bytes=1024,
+        )
+        encoded = json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+        self.assertLessEqual(len(encoded), 1024)
+        self.assertEqual(projected["projection"]["output_bytes"], len(encoded))
+        self.assertEqual(projected["items"][0]["id"], 1)
+        self.assertNotEqual(projected["items"][0].get("message"), "中文" * 100_000)
+        self.assertIn("/items/0/message", projected["omitted_paths"])
+
+    def test_root_output_budget_options_work_after_leaf_and_fail_closed(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/professors": {
+                    "items": [
+                        {"id": 1, "name": "A", "personal_note": "中文" * 2_000},
+                        {"id": 2, "name": "B", "personal_note": "中文" * 2_000},
+                    ],
+                    "next_cursor": None,
+                    "has_more": False,
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            result = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "professors",
+                    "list",
+                    "--projection",
+                    "full",
+                    "--max-output-bytes",
+                    "1024",
+                    "--max-items",
+                    "1",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        data = json.loads(result.stdout)["data"]
+        encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.assertLessEqual(len(encoded), 1024)
+        self.assertEqual(len(data["items"]), 1)
+        self.assertEqual(data["projection"]["max_items"], 1)
+        self.assertEqual(fake_client.calls[0][2]["limit"], 1)
+
+        for arguments in (
+            ["--max-output-bytes", "0", "professors", "list"],
+            ["--max-output-bytes", str(16 * 1024 * 1024 + 1), "professors", "list"],
+            ["--max-items", "0", "professors", "list"],
+            ["--max-items", "1", "professors", "get", "1"],
+            ["--expand", "x" * 513, "professors", "list"],
+        ):
+            with self.subTest(arguments=arguments):
+                invalid = self.runner.invoke(app, ["--format", "json", *arguments])
+                self.assertEqual(invalid.exit_code, 2, msg=invalid.output)
+                self.assertFalse(json.loads(invalid.stdout)["ok"])
+
+    def test_jsonl_obeys_stdout_budget_while_file_export_preserves_full_records(self) -> None:
+        note = "完整导师备注" * 10_000
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/professors": {
+                    "items": [{"id": 1, "name": "A", "personal_note": note}],
+                    "next_cursor": None,
+                    "has_more": False,
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            jsonl = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "jsonl",
+                    "--projection",
+                    "full",
+                    "--max-output-bytes",
+                    "1024",
+                    "professors",
+                    "list",
+                ],
+            )
+
+        self.assertEqual(jsonl.exit_code, 0, msg=jsonl.output)
+        rows = [json.loads(line) for line in jsonl.stdout.splitlines()]
+        self.assertTrue(rows[0]["result"]["projection"]["budget_compacted"])
+        self.assertNotIn(note, jsonl.stdout)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            destination = Path(temporary_directory) / "professors.jsonl"
+            with patch(
+                "auto_email_sender_cli.commands.common.AgentApiClient",
+                return_value=fake_client,
+            ):
+                exported = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "--projection",
+                        "full",
+                        "--max-output-bytes",
+                        "1024",
+                        "--output-file",
+                        destination.as_posix(),
+                        "professors",
+                        "list",
+                        "--all",
+                    ],
+                )
+            self.assertEqual(exported.exit_code, 0, msg=exported.output)
+            exported_rows = [
+                json.loads(line)
+                for line in destination.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(exported_rows[0]["personal_note"], note)
 
     def test_default_projection_enforces_byte_budget_on_rich_collection_items(self) -> None:
         items = [
@@ -2071,6 +2572,254 @@ class CliTests(unittest.TestCase):
                 "attachment_material_ids": [3],
             },
         )
+
+    def test_approve_only_commands_use_scoped_agent_routes_without_sending(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/tasks/17/approve-draft": {
+                    "current_task": {"id": 17, "status": "approved"},
+                },
+                "/api/agent/v1/campaigns/8/items/19/thread": {
+                    "current_task": {"id": 19, "status": "review_required"},
+                },
+                "/api/agent/v1/campaigns/8/items/19/approve-draft": {
+                    "current_task": {"id": 19, "status": "approved"},
+                },
+                "/api/agent/v1/campaigns/8/approve-drafts": {
+                    "approved_count": 2,
+                    "campaign": {"id": 8, "status": "paused", "approved_count": 2},
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            draft = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--if-revision",
+                    "draft-revision",
+                    "drafts",
+                    "approve",
+                    "17",
+                    "--subject",
+                    "最终主题",
+                    "--body-text",
+                    "最终正文",
+                    "--attachment-material-id",
+                    "3",
+                ],
+            )
+            thread = self.runner.invoke(
+                app,
+                ["--format", "json", "campaigns", "item-thread", "8", "19"],
+            )
+            item = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "campaigns",
+                    "approve-item-draft",
+                    "8",
+                    "19",
+                    "--body-text",
+                    "活动正文",
+                ],
+            )
+            bulk = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "campaigns",
+                    "approve-drafts",
+                    "8",
+                    "--item-id",
+                    "19",
+                    "--item-id",
+                    "20",
+                ],
+            )
+
+        for result in (draft, thread, item, bulk):
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(
+            [call[:2] for call in fake_client.calls],
+            [
+                ("POST", "/api/agent/v1/tasks/17/approve-draft"),
+                ("GET", "/api/agent/v1/campaigns/8/items/19/thread"),
+                ("POST", "/api/agent/v1/campaigns/8/items/19/approve-draft"),
+                ("POST", "/api/agent/v1/campaigns/8/approve-drafts"),
+            ],
+        )
+        self.assertEqual(
+            fake_client.json_bodies[0],
+            {
+                "subject": "最终主题",
+                "body_text": "最终正文",
+                "body_html": None,
+                "attachment_material_ids": [3],
+            },
+        )
+        self.assertEqual(fake_client.json_bodies[3], {"item_ids": [19, 20]})
+
+        duplicate = self.runner.invoke(
+            app,
+            [
+                "--format",
+                "json",
+                "campaigns",
+                "approve-drafts",
+                "8",
+                "--item-id",
+                "19",
+                "--item-id",
+                "19",
+            ],
+        )
+        self.assertEqual(duplicate.exit_code, 2, msg=duplicate.output)
+
+    def test_delivery_commands_preserve_page_filters_and_concurrency_token(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/deliveries": {
+                    "items": [
+                        {
+                            "id": 17,
+                            "status": "waiting_scheduled",
+                            "expected_updated_at": "2026-08-09T09:00:00.123456+00:00",
+                        },
+                    ],
+                    "next_cursor": "3",
+                    "has_more": True,
+                    "pagination_mode": "page",
+                    "total": 5,
+                },
+                "/api/agent/v1/deliveries/17/schedule": {
+                    "ok": True,
+                    "task_id": 17,
+                    "message": "发送时间已更新",
+                },
+            },
+        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            listed = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "deliveries",
+                    "list",
+                    "--view",
+                    "attention",
+                    "--page",
+                    "2",
+                    "--page-size",
+                    "1",
+                    "--source",
+                    "manual",
+                    "--search-field",
+                    "recipient_name",
+                    "--query",
+                    "张老师",
+                ],
+            )
+            changed = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "deliveries",
+                    "reschedule",
+                    "17",
+                    "--scheduled-at",
+                    "2026-08-10T09:00:00+08:00",
+                    "--expected-updated-at",
+                    "2026-08-09T09:00:00.123456+00:00",
+                ],
+            )
+
+        self.assertEqual(listed.exit_code, 0, msg=listed.output)
+        self.assertEqual(changed.exit_code, 0, msg=changed.output)
+        self.assertEqual(fake_client.calls[0][0:2], ("GET", "/api/agent/v1/deliveries"))
+        self.assertEqual(
+            fake_client.calls[0][2],
+            {
+                "view": "attention",
+                "page": 2,
+                "page_size": 1,
+                "source": "manual",
+                "search_fields": "recipient_name",
+                "query": "张老师",
+            },
+        )
+        self.assertEqual(
+            fake_client.calls[1][0:2],
+            ("PATCH", "/api/agent/v1/deliveries/17/schedule"),
+        )
+        self.assertEqual(
+            fake_client.json_bodies[1],
+            {
+                "scheduled_at": "2026-08-10T09:00:00+08:00",
+                "expected_updated_at": "2026-08-09T09:00:00.123456+00:00",
+            },
+        )
+
+    def test_professor_template_download_refuses_accidental_overwrite(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/professors/import-template": b"template-bytes"},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "professors.csv"
+            with patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                return_value=fake_client,
+            ):
+                downloaded = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "download-template",
+                        "--output",
+                        output.as_posix(),
+                        "--format",
+                        "csv",
+                    ],
+                )
+                existing = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "download-template",
+                        "--output",
+                        output.as_posix(),
+                        "--format",
+                        "csv",
+                    ],
+                )
+
+            self.assertEqual(downloaded.exit_code, 0, msg=downloaded.output)
+            self.assertEqual(output.read_bytes(), b"template-bytes")
+            self.assertEqual(existing.exit_code, 2, msg=existing.output)
+            self.assertEqual(json.loads(existing.stdout)["error"]["code"], "OUTPUT_EXISTS")
+            self.assertEqual(
+                fake_client.download_calls,
+                [
+                    "/api/agent/v1/professors/import-template",
+                    "/api/agent/v1/professors/import-template",
+                ],
+            )
 
     def test_professor_bulk_tags_command_creates_change_plan(self) -> None:
         fake_client = _FakeAgentClient(

@@ -4,6 +4,7 @@ from auto_email_sender_cli.commands.campaigns import campaigns_app
 from auto_email_sender_cli.commands.crawler import crawler_app
 from auto_email_sender_cli.commands.diagnostics import diagnostics_app
 from auto_email_sender_cli.commands.drafts import drafts_app
+from auto_email_sender_cli.commands.deliveries import deliveries_app
 from auto_email_sender_cli.commands.enrichment import enrichment_app
 from auto_email_sender_cli.commands.insights import dashboard_app, usage_app
 from auto_email_sender_cli.commands.matching import matching_app
@@ -28,6 +29,7 @@ __all__ = [
     "dashboard_app",
     "diagnostics_app",
     "drafts_app",
+    "deliveries_app",
     "enrichment_app",
     "identities_app",
     "llm_profiles_app",

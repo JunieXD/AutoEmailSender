@@ -50,3 +50,7 @@ uv run pyinstaller \
 CliExecutable="$CliDir/dist/auto-email-sender/auto-email-sender"
 uv run python "$RepoRoot/scripts/build/verify_cli_binary.py" \
   --executable "$CliExecutable"
+uv run python "$RepoRoot/scripts/quality/benchmark_agent_cli.py" \
+  --executable "$CliExecutable" \
+  --samples 5 \
+  --warmup 1

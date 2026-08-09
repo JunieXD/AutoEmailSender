@@ -378,6 +378,18 @@ class AgentCampaignCreateRequest(ApiSchema):
         return self
 
 
+class AgentCampaignApproveDraftsRequest(ApiSchema):
+    item_ids: list[int] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_item_ids(self) -> "AgentCampaignApproveDraftsRequest":
+        if any(item_id < 1 for item_id in self.item_ids):
+            raise ValueError("item_ids 必须是正整数")
+        if len(set(self.item_ids)) != len(self.item_ids):
+            raise ValueError("item_ids 不能包含重复的活动项 ID")
+        return self
+
+
 class AgentCampaignSendRequest(ApiSchema):
     item_ids: list[int] = Field(min_length=1)
 
