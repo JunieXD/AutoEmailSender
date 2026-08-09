@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TasksPage } from "@/pages/TasksPage";
@@ -431,6 +431,35 @@ describe("TasksPage layout", () => {
     expect(await screen.findByText("批量邮件任务 9")).toBeInTheDocument();
     expect(screen.queryByText("批量邮件任务 1")).not.toBeInTheDocument();
     expect(screen.getByText("显示 9-9 / 9 个任务")).toBeInTheDocument();
+  });
+
+  it("keeps the batch task list mounted during background refresh", async () => {
+    let runBatchRefresh: (() => void) | undefined;
+    const refresh = new Promise<typeof runningTask[]>(() => undefined);
+    const setIntervalSpy = vi.spyOn(window, "setInterval").mockImplementation(
+      ((handler: TimerHandler, timeout?: number) => {
+        if (timeout === 10000 && typeof handler === "function") {
+          runBatchRefresh = handler;
+        }
+        return 1;
+      }) as typeof window.setInterval,
+    );
+    vi.mocked(listBatchTasks).mockResolvedValue([runningTask]);
+
+    try {
+      renderPage();
+
+      expect(await screen.findByText(runningTask.name)).toBeInTheDocument();
+      expect(runBatchRefresh).toBeTypeOf("function");
+      vi.mocked(listBatchTasks).mockReturnValue(refresh);
+
+      act(() => runBatchRefresh?.());
+
+      expect(screen.getByText(runningTask.name)).toBeInTheDocument();
+      expect(screen.queryByText("正在加载任务列表...")).not.toBeInTheDocument();
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
   });
 
   it("closes batch task details when clicking the backdrop", async () => {

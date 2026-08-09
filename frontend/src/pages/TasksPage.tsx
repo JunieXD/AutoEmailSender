@@ -1839,7 +1839,7 @@ export const TasksPage = () => {
     taskListViews,
   ]);
 
-  const loadTasks = useCallback(async () => {
+  const loadTasks = useCallback(async (options?: { showLoading?: boolean }) => {
     if (!tasksRequestKey || !selectedIdentityId) {
       latestTasksRequestIdRef.current += 1;
       activeTasksRequestKeyRef.current = null;
@@ -1853,7 +1853,9 @@ export const TasksPage = () => {
     const requestId = latestTasksRequestIdRef.current + 1;
     latestTasksRequestIdRef.current = requestId;
     activeTasksRequestKeyRef.current = tasksRequestKey;
-    setLoading(true);
+    if (options?.showLoading ?? true) {
+      setLoading(true);
+    }
     try {
       const data = await listBatchTasks({
         identityId: selectedIdentityId,
@@ -1897,7 +1899,8 @@ export const TasksPage = () => {
     } finally {
       if (
         latestTasksRequestIdRef.current === requestId &&
-        activeTasksRequestKeyRef.current === tasksRequestKey
+        activeTasksRequestKeyRef.current === tasksRequestKey &&
+        (options?.showLoading ?? true)
       ) {
         setLoading(false);
       }
@@ -2504,7 +2507,7 @@ export const TasksPage = () => {
     }
     void loadTasks();
     const timer = window.setInterval(() => {
-      void loadTasks();
+      void loadTasks({ showLoading: false });
     }, 10000);
     return () => window.clearInterval(timer);
   }, [activeTab, loadTasks, taskCenterSection]);
