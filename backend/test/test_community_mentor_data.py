@@ -24,9 +24,11 @@ from app.models import Base, Professor, ProfessorCommunityLink
 from app.modules.community.public import (
     CommunityImportPayload,
     CommunityImportItemPayload,
+    CommunityLifecycleWarningStatus,
     CommunityMentorComparisonRead,
     CommunityMentorRecord,
     CommunityPreviewPayload,
+    CommunityRelocationRecord,
     CommunityRevocationRecord,
 )
 from app.modules.community.public import (
@@ -277,6 +279,26 @@ def _import_item(
     }
     payload.update(overrides)
     return CommunityImportItemPayload.model_validate(payload)
+
+
+class CommunityPublicContractTests(unittest.TestCase):
+    def test_public_facade_exports_relocation_contracts(self) -> None:
+        relocation = CommunityRelocationRecord.model_validate(
+            {
+                "kind": "relocation",
+                "id": "relocation_example0001",
+                "community_record_id": "mentor_example0001",
+                "status": "relocated",
+                "from_organization_id": "org_example_old",
+                "to_organization_id": "org_example_new",
+                "reason": "导师主要任职已调动",
+                "source_url": "https://example.edu/source",
+                "observed_at": GENERATED_AT,
+            }
+        )
+        status: CommunityLifecycleWarningStatus = relocation.status
+
+        self.assertEqual(status, "relocated")
 
 
 class CommunitySelectionLimitTests(unittest.TestCase):
