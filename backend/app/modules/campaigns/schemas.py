@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,6 +27,7 @@ class CreateBatchTaskRequest(BaseModel):
     outreach_template_body_html: str | None = None
     outreach_template_id: int | None = None
     resend_source_batch_task_id: int | None = Field(default=None, gt=0)
+    resend_content_strategy: Literal["reuse", "template", "llm"] | None = None
 
 
 class BatchTaskCardRead(ApiSchema):

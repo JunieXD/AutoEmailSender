@@ -48,14 +48,17 @@ describe('batchTaskResendPrefill', () => {
     expect(readBatchResendPrefillContext()).toBeNull();
   });
 
-  it('clears context without regeneration metadata', () => {
-    const invalidContext = { ...context } as Partial<typeof context>;
-    delete invalidContext.requiresRegeneration;
+  it('defaults older context without regeneration metadata to requiring generation', () => {
+    const legacyContext = { ...context } as Partial<typeof context>;
+    delete legacyContext.requiresRegeneration;
     window.sessionStorage.setItem(
       BATCH_RESEND_PREFILL_CONTEXT_KEY,
-      JSON.stringify(invalidContext),
+      JSON.stringify(legacyContext),
     );
-    expect(readBatchResendPrefillContext()).toBeNull();
+    expect(readBatchResendPrefillContext()).toEqual({
+      ...context,
+      requiresRegeneration: true,
+    });
   });
 
   it('clears resend prefill context', () => {

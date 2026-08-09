@@ -82,4 +82,26 @@ describe("ConfirmDialog", () => {
       screen.getByRole("button", { name: "确认删除" }),
     ).toBeInTheDocument();
   });
+
+  it("renders an accessible optional confirmation checkbox", () => {
+    const onConfirmationCheckboxChange = vi.fn();
+
+    render(
+      <ConfirmDialog
+        open
+        title="附件超过 1 MB"
+        confirmationCheckboxLabel="我已知晓，不再提示"
+        confirmationCheckboxChecked={false}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+        onConfirmationCheckboxChange={onConfirmationCheckboxChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "我已知晓，不再提示" }),
+    );
+
+    expect(onConfirmationCheckboxChange).toHaveBeenCalledWith(true);
+  });
 });

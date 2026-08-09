@@ -1680,7 +1680,7 @@ describe("TasksPage batch draft review", () => {
     });
     expect(within(resendDialog).getByText("机器人方向申请模板")).toBeInTheDocument();
     expect(within(resendDialog).getByText("AI 辅助写信")).toBeInTheDocument();
-    expect(within(resendDialog).getByText("可直接沿用 1 封 · 需要重新生成 0 封")).toBeInTheDocument();
+    expect(within(resendDialog).getByText("有可沿用内容 1 封 · 没有可沿用内容 0 封")).toBeInTheDocument();
     expect(within(resendDialog).getByText("沿用上次已批准内容")).toBeInTheDocument();
 
     fireEvent.click(

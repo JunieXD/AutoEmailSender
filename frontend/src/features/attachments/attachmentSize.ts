@@ -4,6 +4,34 @@ import { formatFileSize } from '@/lib/formatFileSize';
 export { formatFileSize } from '@/lib/formatFileSize';
 
 export const RECOMMENDED_ATTACHMENT_TOTAL_BYTES = 1024 * 1024;
+export const LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL = '我已知晓，不再提示';
+export const LARGE_ATTACHMENT_WARNING_SUPPRESSION_KEY =
+  'large_attachment_warning_suppressed';
+
+export const isLargeAttachmentWarningSuppressed = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(LARGE_ATTACHMENT_WARNING_SUPPRESSION_KEY) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const suppressLargeAttachmentWarnings = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LARGE_ATTACHMENT_WARNING_SUPPRESSION_KEY, 'true');
+  } catch {
+    // A blocked storage backend should not prevent the confirmed action.
+  }
+};
+
+export const shouldPromptForLargeAttachments = () =>
+  !isLargeAttachmentWarningSuppressed();
 
 export const getSelectedAttachmentTotalBytes = (
   materials: Pick<IdentityMaterialDTO, 'id' | 'size_bytes'>[],

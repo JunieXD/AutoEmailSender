@@ -12,7 +12,9 @@ import {
   buildLargeAttachmentWarning,
   formatFileSize,
   getSelectedAttachmentTotalBytes,
-  isAttachmentTotalOverRecommendedLimit,
+  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+  shouldPromptForLargeAttachments,
+  suppressLargeAttachmentWarnings,
 } from '@/features/attachments/attachmentSize';
 import { getEmailSendFailureMessage } from '@/features/email/client/getEmailSendFailureMessage';
 import { getWorkspaceNextStep } from '@/features/workspace/client/getWorkspaceNextStep';
@@ -1084,9 +1086,10 @@ export const WorkspacePage = () => {
     }
 
     void (async () => {
-      const attachmentWarning = buildLargeAttachmentWarning(selectedAttachmentTotalBytes);
-      const attachmentOverRecommendedLimit =
-        isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes);
+      const attachmentWarning = shouldPromptForLargeAttachments()
+        ? buildLargeAttachmentWarning(selectedAttachmentTotalBytes)
+        : null;
+      const attachmentOverRecommendedLimit = Boolean(attachmentWarning);
       const confirmed = await confirm({
         title: attachmentOverRecommendedLimit
           ? '附件超过 1 MB，仍要发送吗？'
@@ -1099,6 +1102,12 @@ export const WorkspacePage = () => {
           .join('\n'),
         confirmLabel: attachmentOverRecommendedLimit ? '仍然发送' : '确认发送',
         cancelLabel: attachmentOverRecommendedLimit ? '返回调整' : '再检查一下',
+        confirmationCheckbox: attachmentWarning
+          ? {
+              label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+              onConfirmChecked: suppressLargeAttachmentWarnings,
+            }
+          : undefined,
         tone: 'danger',
       });
       if (!confirmed) {

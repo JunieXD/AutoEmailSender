@@ -15,6 +15,7 @@ import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
 import { WorkspaceDraftGuardProvider } from '@/context/WorkspaceDraftGuardContext';
+import { usePreventNumberInputWheelChange } from '@/lib/usePreventNumberInputWheelChange';
 
 const CreateTaskPage = lazy(() =>
   import('@/pages/CreateTaskPage').then((module) => ({ default: module.CreateTaskPage })),
@@ -106,6 +107,7 @@ const routes = [
 ];
 
 function App() {
+  usePreventNumberInputWheelChange();
   const router = window.autoEmailSender
     ? createHashRouter(routes)
     : createBrowserRouter(routes);

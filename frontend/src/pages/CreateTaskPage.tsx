@@ -28,7 +28,9 @@ import {
   buildLargeAttachmentWarning,
   formatFileSize,
   getSelectedAttachmentTotalBytes,
-  isAttachmentTotalOverRecommendedLimit,
+  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+  shouldPromptForLargeAttachments,
+  suppressLargeAttachmentWarnings,
 } from '@/features/attachments/attachmentSize';
 import {
   hasFutureScheduleWindow,
@@ -37,6 +39,7 @@ import {
 import { useConfirmDialog } from '@/lib/useConfirmDialog';
 import {
   MATERIAL_TYPE_LABELS,
+  type BatchTaskResendContentStrategy,
   type IdentityMaterialDTO,
   type OutreachGenerationMode,
   type OutreachTemplateDTO,
@@ -70,6 +73,28 @@ const MODE_OPTIONS: Array<{
   ...getTaskModeCopy(value),
 }));
 
+const RESEND_STRATEGY_OPTIONS: Array<{
+  value: BatchTaskResendContentStrategy;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: 'reuse',
+    title: '沿用上次内容',
+    description: '保留每位老师上次已有的邮件；未批准或缺失的内容仍需处理。',
+  },
+  {
+    value: 'template',
+    title: '重新套用模板',
+    description: '忽略上次邮件正文，用本页当前模板重新生成并直接进入发送计划。',
+  },
+  {
+    value: 'llm',
+    title: 'AI 重新改写',
+    description: '忽略上次邮件正文，为全部老师重新生成 AI 草稿并逐封审核。',
+  },
+];
+
 export const CreateTaskPage = () => {
   const navigate = useNavigate();
   const { notifyError, notifyFormErrors } = useNotification();
@@ -94,6 +119,8 @@ export const CreateTaskPage = () => {
   const [body, setBody] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
   const [taskMode, setTaskMode] = useState<OutreachGenerationMode>('llm');
+  const [resendContentStrategy, setResendContentStrategy] =
+    useState<BatchTaskResendContentStrategy>('reuse');
   const [templateSubject, setTemplateSubject] = useState('');
   const [templateBodyText, setTemplateBodyText] = useState('');
   const [templateBodyHtml, setTemplateBodyHtml] = useState('');
@@ -120,7 +147,9 @@ export const CreateTaskPage = () => {
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
   const requiresDraftGeneration =
-    !isResendPrefillActive || resendPrefillContext?.requiresRegeneration !== false;
+    !isResendPrefillActive ||
+    resendContentStrategy !== 'reuse' ||
+    resendPrefillContext?.requiresRegeneration !== false;
   const professorsRequestKey =
     selectedIdentityId && selectedProfessorIds.length > 0
       ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
@@ -221,6 +250,7 @@ export const CreateTaskPage = () => {
       setPrimaryMaterialId(null);
       setSelectedMaterialIds([]);
       setTaskMode('llm');
+      setResendContentStrategy('reuse');
       setSubject('');
       setBody('');
       setBodyHtml('');
@@ -251,11 +281,14 @@ export const CreateTaskPage = () => {
     if (isResendPrefillActive && resendPrefillContext) {
       setTaskName('重新发起 - ' + resendPrefillContext.sourceTaskName);
       const mode = resendPrefillContext.defaults.outreach_generation_mode ?? selectedIdentity.outreach_generation_mode ?? 'llm';
+      const defaultResendStrategy: BatchTaskResendContentStrategy =
+        mode === 'template' ? 'template' : 'reuse';
       const subjectValue = resendPrefillContext.defaults.outreach_template_subject ?? '';
       const bodyTextValue = resendPrefillContext.defaults.outreach_template_body_text ?? '';
       const bodyHtmlValue = resendPrefillContext.defaults.outreach_template_body_html ?? (bodyTextValue ? textToEmailHtml(bodyTextValue) : '');
       const materialIds = new Set(selectedIdentity.materials.map((material) => material.id));
       setTaskMode(mode);
+      setResendContentStrategy(defaultResendStrategy);
       setSubject(subjectValue);
       setBody(bodyTextValue);
       setBodyHtml(bodyHtmlValue);
@@ -294,12 +327,33 @@ export const CreateTaskPage = () => {
     if (isResendPrefillActive && resendPrefillContext) {
       const snapshotTemplateId =
         resendPrefillContext.defaults.outreach_template_id ?? null;
+      const snapshotTemplate =
+        snapshotTemplateId === null
+          ? null
+          : outreachTemplates.find(
+              (template) => template.id === snapshotTemplateId,
+            ) ?? null;
       setSelectedOutreachTemplateId(
-        snapshotTemplateId !== null &&
-          outreachTemplates.some((template) => template.id === snapshotTemplateId)
+        snapshotTemplate
           ? snapshotTemplateId
           : null,
       );
+      if (
+        resendPrefillContext.defaults.outreach_generation_mode === 'template' &&
+        snapshotTemplate &&
+        !snapshotTemplate.archived_at
+      ) {
+        const nextBodyText = snapshotTemplate.body_text ?? '';
+        const nextBodyHtml =
+          snapshotTemplate.body_html ??
+          (nextBodyText ? textToEmailHtml(nextBodyText) : '');
+        setSubject(snapshotTemplate.subject ?? '');
+        setBody(nextBodyText);
+        setBodyHtml(nextBodyHtml);
+        setTemplateSubject(snapshotTemplate.subject ?? '');
+        setTemplateBodyText(nextBodyText);
+        setTemplateBodyHtml(nextBodyHtml);
+      }
       return;
     }
 
@@ -348,13 +402,54 @@ export const CreateTaskPage = () => {
     const nextBodyText = template.body_text ?? '';
     const nextBodyHtml =
       template.body_html ?? (nextBodyText ? textToEmailHtml(nextBodyText) : '');
-    setTaskMode(template.recommended_generation_mode);
+    setTaskMode(
+      isResendPrefillActive && resendContentStrategy !== 'reuse'
+        ? resendContentStrategy
+        : template.recommended_generation_mode,
+    );
     setSubject(template.subject ?? '');
     setBody(nextBodyText);
     setBodyHtml(nextBodyHtml);
     setTemplateSubject(template.subject ?? '');
     setTemplateBodyText(nextBodyText);
     setTemplateBodyHtml(nextBodyHtml);
+  };
+
+  const handleSelectResendContentStrategy = (
+    strategy: BatchTaskResendContentStrategy,
+  ) => {
+    if (
+      strategy !== 'reuse' &&
+      resendContentStrategy === 'reuse' &&
+      !requiresDraftGeneration
+    ) {
+      const selectedTemplate = outreachTemplates.find(
+        (template) =>
+          template.id === selectedOutreachTemplateId && !template.archived_at,
+      );
+      if (selectedTemplate) {
+        const nextBodyText = selectedTemplate.body_text ?? '';
+        const nextBodyHtml =
+          selectedTemplate.body_html ??
+          (nextBodyText ? textToEmailHtml(nextBodyText) : '');
+        setSubject(selectedTemplate.subject ?? '');
+        setBody(nextBodyText);
+        setBodyHtml(nextBodyHtml);
+        setTemplateSubject(selectedTemplate.subject ?? '');
+        setTemplateBodyText(nextBodyText);
+        setTemplateBodyHtml(nextBodyHtml);
+      }
+    }
+    setResendContentStrategy(strategy);
+    if (strategy === 'reuse') {
+      setTaskMode(
+        resendPrefillContext?.defaults.outreach_generation_mode ??
+          selectedIdentity?.outreach_generation_mode ??
+          'llm',
+      );
+      return;
+    }
+    setTaskMode(strategy);
   };
 
   const primaryMaterialOptions = useMemo(
@@ -399,6 +494,51 @@ export const CreateTaskPage = () => {
     outreachTemplates.find(
       (template) => template.id === selectedOutreachTemplateId,
     ) ?? null;
+  const resendTemplateName = selectedOutreachTemplate?.name ?? '当前模板内容';
+  const resendOutcomeDescription = isResendPrefillActive
+    ? resendContentStrategy === 'template'
+      ? `${professors.length} 封邮件将重新套用「${resendTemplateName}」，无需逐封审核，创建后${
+          scheduleType === 'scheduled' ? '进入定时发送计划' : '进入发送流程'
+        }。`
+      : resendContentStrategy === 'llm'
+        ? `${professors.length} 封邮件将全部由 AI 重新改写，旧邮件内容不会沿用；改写完成后需要逐封审核。`
+        : resendPrefillContext?.requiresRegeneration
+          ? `${professors.length} 封邮件将优先沿用上次内容；没有可复用内容的邮件会按当前写信方式重新生成，未批准内容仍需审核。`
+          : `${professors.length} 封邮件将沿用上次内容；其中未批准的内容仍需审核。`
+    : null;
+  const templateSelectionPanel = (
+    <div className="rounded-[28px] border border-stone-200 bg-stone-50/80 p-4">
+      <NativeSelectField
+        label="本次任务使用的发信模板"
+        value={selectedOutreachTemplateId === null ? '' : String(selectedOutreachTemplateId)}
+        disabled={loadingOutreachTemplates}
+        onChange={(event) =>
+          applySelectedOutreachTemplate(
+            event.target.value ? Number(event.target.value) : null,
+          )
+        }
+      >
+        <option value="">不关联模板库（使用下方当前内容）</option>
+        {selectedOutreachTemplate?.archived_at ? (
+          <option value={selectedOutreachTemplate.id} disabled>
+            {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
+          </option>
+        ) : null}
+        {activeOutreachTemplates.map((template) => (
+          <option key={template.id} value={template.id}>
+            {template.name}{template.is_default ? ' · 全局默认' : ''}{template.is_ready ? '' : ' · 内容待完善'}
+          </option>
+        ))}
+      </NativeSelectField>
+      <p className="mt-2 text-xs leading-6 text-stone-500">
+        {loadingOutreachTemplates
+          ? '正在加载模板库…'
+          : selectedOutreachTemplate
+            ? `已带入“${selectedOutreachTemplate.name}”。下方修改只属于本次任务，不会改动模板库。`
+            : '可直接编辑下方内容；创建后会独立保存到任务中。'}
+      </p>
+    </div>
+  );
 
   const handleSubmit = async () => {
     const validationErrors: string[] = [];
@@ -458,17 +598,20 @@ export const CreateTaskPage = () => {
     const confirmTemplateName =
       selectedOutreachTemplate?.name ??
       (selectedOutreachTemplateId !== null ? '当前已选模板' : null);
-    const baseConfirmDescription = buildBatchCreateConfirmDescription(
-      taskMode,
-      scheduleType,
-      confirmTemplateName,
-    );
-    const attachmentWarning = buildLargeAttachmentWarning(
-      selectedAttachmentTotalBytes,
-      { repeatedPerMessage: true },
-    );
-    const attachmentOverRecommendedLimit =
-      isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes);
+    const baseConfirmDescription =
+      resendOutcomeDescription ??
+      buildBatchCreateConfirmDescription(
+        taskMode,
+        scheduleType,
+        confirmTemplateName,
+      );
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildLargeAttachmentWarning(
+          selectedAttachmentTotalBytes,
+          { repeatedPerMessage: true },
+        )
+      : null;
+    const attachmentOverRecommendedLimit = Boolean(attachmentWarning);
     const confirmDescription = [baseConfirmDescription, attachmentWarning]
       .filter(Boolean)
       .join('\n');
@@ -482,6 +625,12 @@ export const CreateTaskPage = () => {
       description: confirmDescription,
       confirmLabel: attachmentOverRecommendedLimit ? '仍然创建' : '继续创建',
       cancelLabel: attachmentOverRecommendedLimit ? '返回调整' : '再检查一下',
+      confirmationCheckbox: attachmentWarning
+        ? {
+            label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+            onConfirmChecked: suppressLargeAttachmentWarnings,
+          }
+        : undefined,
       tone: 'danger',
     });
     if (!confirmed) {
@@ -532,7 +681,10 @@ export const CreateTaskPage = () => {
         outreach_template_body_html: taskTemplateBodyHtml,
         outreach_template_id: selectedOutreachTemplateId,
         ...(isResendPrefillActive && resendPrefillContext
-          ? { resend_source_batch_task_id: resendPrefillContext.sourceTaskId }
+          ? {
+              resend_source_batch_task_id: resendPrefillContext.sourceTaskId,
+              resend_content_strategy: resendContentStrategy,
+            }
           : {}),
       });
       safeRecordUserAction({
@@ -595,7 +747,7 @@ export const CreateTaskPage = () => {
           </p>
           {isResendPrefillActive && resendPrefillContext ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师。系统会优先沿用每位老师上次已审核或 AI 改写后的邮件；当前模板和模型只用于没有可复用草稿的邮件。发送时间需要重新设置。
+              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师。请选择本次如何生成邮件内容；发送时间需要重新设置。
               {resendPrefillContext.warnings.map((warning) => (
                 <span key={warning} className="mt-1 block text-xs text-amber-800">{warning}</span>
               ))}
@@ -621,90 +773,95 @@ export const CreateTaskPage = () => {
                 />
               </label>
 
-              <div className="rounded-[28px] border border-stone-200 bg-stone-50/80 p-4">
-                <NativeSelectField
-                  label="本次任务使用的发信模板"
-                  value={selectedOutreachTemplateId === null ? '' : String(selectedOutreachTemplateId)}
-                  disabled={loadingOutreachTemplates}
-                  onChange={(event) =>
-                    applySelectedOutreachTemplate(
-                      event.target.value ? Number(event.target.value) : null,
-                    )
-                  }
-                >
-                  <option value="">
-                    {isResendPrefillActive
-                      ? '保留原任务内容'
-                      : '不关联模板库（保留当前内容）'}
-                  </option>
-                  {selectedOutreachTemplate?.archived_at ? (
-                    <option value={selectedOutreachTemplate.id} disabled>
-                      {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
-                    </option>
-                  ) : null}
-                  {activeOutreachTemplates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}{template.is_default ? ' · 全局默认' : ''}{template.is_ready ? '' : ' · 内容待完善'}
-                    </option>
-                  ))}
-                </NativeSelectField>
-                <p className="mt-2 text-xs leading-6 text-stone-500">
-                  {loadingOutreachTemplates
-                    ? '正在加载模板库…'
-                    : selectedOutreachTemplate
-                      ? `已带入“${selectedOutreachTemplate.name}”。下方修改只属于本次任务，不会改动模板库。`
-                      : isResendPrefillActive
-                        ? '继续使用原任务中保存的内容；原模板后续修改或删除都不会改变任务内容。'
-                        : '可直接编辑下方内容；创建后会独立保存到任务中。'}
-                </p>
-              </div>
+              {!isResendPrefillActive ? templateSelectionPanel : null}
 
               <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(180deg,rgba(255,248,240,0.72),rgba(255,255,255,0.96))] p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-sm font-semibold text-stone-900">发信模式</div>
+                    <div className="text-sm font-semibold text-stone-900">
+                      {isResendPrefillActive ? '重发内容' : '发信模式'}
+                    </div>
                     <p className="mt-1 text-xs leading-6 text-stone-500">
-                      选择本次任务的写信方式。
+                      {isResendPrefillActive
+                        ? '选择这次重新发起时要使用的内容。'
+                        : '选择本次任务的写信方式。'}
                     </p>
                   </div>
                   <span className="rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-[11px] font-semibold text-primary">
                     本次任务
                   </span>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {MODE_OPTIONS.map((option) => {
-                    const active = taskMode === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setTaskMode(option.value)}
-                        className={[
-                          'rounded-[24px] border px-4 py-4 text-left transition',
-                          active
-                            ? 'border-primary bg-primary text-white shadow-[0_18px_30px_-22px_rgba(154,52,18,0.65)]'
-                            : 'border-stone-200 bg-white text-stone-800 hover:border-primary/35 hover:bg-primary/5',
-                        ].join(' ')}
-                      >
-                        <div className="text-sm font-semibold">{option.title}</div>
-                        <div className={active ? 'mt-2 text-xs leading-6 text-white/80' : 'mt-2 text-xs leading-6 text-stone-500'}>
-                          {option.description}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                {isResendPrefillActive ? (
+                  <div
+                    role="radiogroup"
+                    aria-label="重发内容策略"
+                    className="mt-4 grid gap-3 md:grid-cols-3"
+                  >
+                    {RESEND_STRATEGY_OPTIONS.map((option) => {
+                      const active = resendContentStrategy === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => handleSelectResendContentStrategy(option.value)}
+                          className={[
+                            'rounded-[24px] border px-4 py-4 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+                            active
+                              ? 'border-primary bg-primary text-white shadow-[0_18px_30px_-22px_rgba(154,52,18,0.65)]'
+                              : 'border-stone-200 bg-white text-stone-800 hover:border-primary/35 hover:bg-primary/5',
+                          ].join(' ')}
+                        >
+                          <div className="text-sm font-semibold">{option.title}</div>
+                          <div className={active ? 'mt-2 text-xs leading-6 text-white/80' : 'mt-2 text-xs leading-6 text-stone-500'}>
+                            {option.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {MODE_OPTIONS.map((option) => {
+                      const active = taskMode === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setTaskMode(option.value)}
+                          className={[
+                            'rounded-[24px] border px-4 py-4 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+                            active
+                              ? 'border-primary bg-primary text-white shadow-[0_18px_30px_-22px_rgba(154,52,18,0.65)]'
+                              : 'border-stone-200 bg-white text-stone-800 hover:border-primary/35 hover:bg-primary/5',
+                          ].join(' ')}
+                        >
+                          <div className="text-sm font-semibold">{option.title}</div>
+                          <div className={active ? 'mt-2 text-xs leading-6 text-white/80' : 'mt-2 text-xs leading-6 text-stone-500'}>
+                            {option.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="mt-3 text-xs leading-6 text-stone-500">
                   本页设置只影响本次任务。
                 </div>
                 <div className="mt-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-stone-700">
-                  {taskMode === 'template'
+                  {resendOutcomeDescription ?? (taskMode === 'template'
                     ? scheduleType === 'scheduled'
                       ? '模板内容会直接进入待发送队列，并按批量定时窗口自动发送。'
                       : '模板内容会直接进入发送流程。'
-                    : 'AI 改写完成后仍需逐封审核通过，再进入发送流程。'}
+                    : 'AI 改写完成后仍需逐封审核通过，再进入发送流程。')}
                 </div>
               </div>
+
+              {isResendPrefillActive && requiresDraftGeneration
+                ? templateSelectionPanel
+                : null}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <NativeSelectField
@@ -769,56 +926,58 @@ export const CreateTaskPage = () => {
                 </div>
               )}
 
-              {taskMode === 'llm' ? (
-                <div className="space-y-5 rounded-3xl border border-stone-200 bg-stone-50/80 p-4">
-                  <div>
-                    <div className="text-sm font-semibold text-stone-900">套磁信模板（必填）</div>
-                    <p className="mt-1 text-xs leading-6 text-stone-500">
-                      AI 基于这份模板生成个性化草稿。
-                    </p>
-                  </div>
-                  <SubjectTemplateInput
-                    label="模板主题"
-                    value={subject}
-                    onChange={setSubject}
-                    placeholder="例如：申请与{{name}}老师交流科研方向"
-                  />
+              {requiresDraftGeneration ? (
+                taskMode === 'llm' ? (
+                  <div className="space-y-5 rounded-3xl border border-stone-200 bg-stone-50/80 p-4">
+                    <div>
+                      <div className="text-sm font-semibold text-stone-900">套磁信模板（必填）</div>
+                      <p className="mt-1 text-xs leading-6 text-stone-500">
+                        AI 基于这份模板生成个性化草稿。
+                      </p>
+                    </div>
+                    <SubjectTemplateInput
+                      label="模板主题"
+                      value={subject}
+                      onChange={setSubject}
+                      placeholder="例如：申请与{{name}}老师交流科研方向"
+                    />
 
-                  <EmailTemplateEditor
-                    label="模板正文"
-                    html={bodyHtml || (body ? textToEmailHtml(body) : '')}
-                    onChange={({ html, text }) => {
-                      setBodyHtml(html);
-                      setBody(text);
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-5 rounded-3xl border border-primary/15 bg-[linear-gradient(180deg,rgba(154,52,18,0.04),rgba(255,255,255,0.95))] p-4">
-                  <div>
-                    <div className="text-sm font-semibold text-stone-900">直接套用模板</div>
-                    <p className="mt-1 text-xs leading-6 text-stone-500">
-                      本次任务使用的模板内容。
-                    </p>
+                    <EmailTemplateEditor
+                      label="模板正文"
+                      html={bodyHtml || (body ? textToEmailHtml(body) : '')}
+                      onChange={({ html, text }) => {
+                        setBodyHtml(html);
+                        setBody(text);
+                      }}
+                    />
                   </div>
-                  <SubjectTemplateInput
-                    label="模板主题"
-                    value={templateSubject}
-                    onChange={setTemplateSubject}
-                    placeholder="例如：申请与{{name}}老师交流科研方向"
-                  />
-                  <EmailTemplateEditor
-                    label="模板正文"
-                    html={templateBodyHtml || (templateBodyText ? textToEmailHtml(templateBodyText) : '')}
-                    onChange={({ html, text }) => {
-                      setTemplateBodyHtml(html);
-                      setTemplateBodyText(text);
-                    }}
-                  />
-                </div>
-              )}
+                ) : (
+                  <div className="space-y-5 rounded-3xl border border-primary/15 bg-[linear-gradient(180deg,rgba(154,52,18,0.04),rgba(255,255,255,0.95))] p-4">
+                    <div>
+                      <div className="text-sm font-semibold text-stone-900">直接套用模板</div>
+                      <p className="mt-1 text-xs leading-6 text-stone-500">
+                        本次任务使用的模板内容。
+                      </p>
+                    </div>
+                    <SubjectTemplateInput
+                      label="模板主题"
+                      value={templateSubject}
+                      onChange={setTemplateSubject}
+                      placeholder="例如：申请与{{name}}老师交流科研方向"
+                    />
+                    <EmailTemplateEditor
+                      label="模板正文"
+                      html={templateBodyHtml || (templateBodyText ? textToEmailHtml(templateBodyText) : '')}
+                      onChange={({ html, text }) => {
+                        setTemplateBodyHtml(html);
+                        setTemplateBodyText(text);
+                      }}
+                    />
+                  </div>
+                )
+              ) : null}
 
-              {taskMode === 'llm' ? (
+              {requiresDraftGeneration && taskMode === 'llm' ? (
                 <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
                   <div className="text-sm font-medium text-stone-900">AI 写信参考材料</div>
                   <p className="mt-1 text-xs text-stone-500">AI 会基于这份主材料生成或改写草稿。</p>

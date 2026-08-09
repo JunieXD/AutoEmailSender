@@ -13,7 +13,9 @@ import {
   buildLargeAttachmentWarning,
   formatFileSize,
   getSelectedAttachmentTotalBytes,
-  isAttachmentTotalOverRecommendedLimit,
+  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+  shouldPromptForLargeAttachments,
+  suppressLargeAttachmentWarnings,
 } from "@/features/attachments/attachmentSize";
 import {
   generateTestComposeDraft,
@@ -245,13 +247,19 @@ export const TestComposePage = () => {
     );
 
   const sendMessage = async () => {
-    if (isAttachmentTotalOverRecommendedLimit(selectedAttachmentTotalBytes)) {
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildLargeAttachmentWarning(selectedAttachmentTotalBytes)
+      : null;
+    if (attachmentWarning) {
       const confirmed = await confirm({
         title: "附件超过 1 MB，仍要发送测试邮件吗？",
-        description:
-          buildLargeAttachmentWarning(selectedAttachmentTotalBytes) ?? undefined,
+        description: attachmentWarning,
         confirmLabel: "仍然发送",
         cancelLabel: "返回调整",
+        confirmationCheckbox: {
+          label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+          onConfirmChecked: suppressLargeAttachmentWarnings,
+        },
       });
       if (!confirmed) {
         return;

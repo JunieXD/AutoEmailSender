@@ -177,6 +177,17 @@ async def create_batch_task(
 ) -> BatchTaskCardRead:
     if not payload.professor_ids:
         raise HTTPException(status_code=400, detail="请至少选择一位导师")
+    if (
+        payload.resend_content_strategy is not None
+        and payload.resend_source_batch_task_id is None
+    ):
+        raise HTTPException(status_code=400, detail="重发内容策略只能用于重新发起任务")
+
+    resend_content_strategy = (
+        payload.resend_content_strategy or "reuse"
+        if payload.resend_source_batch_task_id is not None
+        else None
+    )
 
     try:
         scheduled_dates = normalize_scheduled_dates(payload.scheduled_dates)
@@ -256,9 +267,13 @@ async def create_batch_task(
             resend_source_items[source_item.professor_id] = source_item
         if set(resend_source_items) != requested_professor_ids:
             raise HTTPException(status_code=400, detail="部分导师不属于原任务的可重新发起项")
-    resend_requires_regeneration = not resend_source_items or any(
-        classify_resend_content(item) == "regenerate"
-        for item in resend_source_items.values()
+    resend_requires_generation = (
+        not resend_source_items
+        or resend_content_strategy in {"template", "llm"}
+        or any(
+            classify_resend_content(item) == "regenerate"
+            for item in resend_source_items.values()
+        )
     )
 
     scheduled_at_values: list[datetime | None] = [None] * len(professors)
@@ -293,7 +308,7 @@ async def create_batch_task(
 
     selected_template = None
     if payload.outreach_template_id is not None:
-        allow_archived_provenance = not resend_requires_regeneration or bool(
+        allow_archived_provenance = not resend_requires_generation or bool(
             {
                 "outreach_template_subject",
                 "outreach_template_body_text",
@@ -336,6 +351,8 @@ async def create_batch_task(
             or "llm"
         ).strip().lower()
     )
+    if resend_content_strategy in {"template", "llm"}:
+        requested_generation_mode = resend_content_strategy
     outreach_config = resolve_outreach_template_config(
         identity,
         template=selected_template,
@@ -348,8 +365,13 @@ async def create_batch_task(
         outreach_config.subject_template,
         outreach_config.body_text_template,
     )
-    if detail and resend_requires_regeneration:
+    if detail and resend_requires_generation:
         raise HTTPException(status_code=400, detail=detail)
+    if (
+        resend_content_strategy == "llm"
+        and primary_material_id is None
+    ):
+        raise HTTPException(status_code=400, detail="AI 写信参考材料为必选项")
 
     batch_task = BatchTask(
         identity_id=payload.identity_id,
@@ -406,7 +428,11 @@ async def create_batch_task(
         source_item = resend_source_items.get(professor.id)
         reuse_kind = classify_resend_content(source_item) if source_item is not None else "regenerate"
 
-        if source_item is not None and reuse_kind != "regenerate":
+        if (
+            resend_content_strategy == "reuse"
+            and source_item is not None
+            and reuse_kind != "regenerate"
+        ):
             if source_item.outreach_template_snapshot_version is not None:
                 item_outreach_template_id = source_item.outreach_template_id
                 item_outreach_generation_mode = source_item.outreach_generation_mode
@@ -531,16 +557,24 @@ async def create_batch_task(
             "outreach_template_name_snapshot": batch_task.outreach_template_name_snapshot,
             "outreach_generation_mode": batch_task.outreach_generation_mode,
             "resend_source_batch_task_id": payload.resend_source_batch_task_id,
+            "resend_content_strategy": resend_content_strategy,
             "reused_approved_count": sum(
-                1 for item in resend_source_items.values() if classify_resend_content(item) == "approved"
+                1
+                for item in resend_source_items.values()
+                if resend_content_strategy == "reuse"
+                and classify_resend_content(item) == "approved"
             ),
             "reused_generated_count": sum(
                 1
                 for item in resend_source_items.values()
-                if classify_resend_content(item) in {"generated", "rewrite_source"}
+                if resend_content_strategy == "reuse"
+                and classify_resend_content(item) in {"generated", "rewrite_source"}
             ),
             "regenerated_count": sum(
-                1 for item in resend_source_items.values() if classify_resend_content(item) == "regenerate"
+                1
+                for item in resend_source_items.values()
+                if resend_content_strategy != "reuse"
+                or classify_resend_content(item) == "regenerate"
             ),
         },
     )

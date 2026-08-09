@@ -14,6 +14,10 @@ from app.models import (
     IdentityMaterial,
     IdentityProfile,
 )
+from app.modules.identities.public import material_can_be_primary
+from app.services.rich_text import normalize_email_html
+
+from .drafts.fallback import DRAFT_GENERATION_SOURCE_TEMPLATE
 from .schemas import (
     BatchTaskResendContextRead,
     BatchTaskResendContextTaskRead,
@@ -21,8 +25,6 @@ from .schemas import (
     BatchTaskResendItemRead,
     BatchTaskResendSummaryRead,
 )
-from app.modules.identities.public import material_can_be_primary
-from app.services.rich_text import normalize_email_html
 
 SUCCESS_STATUSES = {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
 EXCLUDED_RUNNING_STATUSES = {EmailTaskStatus.SENDING.value}
@@ -122,6 +124,11 @@ def reused_content_requires_review(email_task: EmailTask) -> bool:
         EmailTaskStatus.SCHEDULED.value,
         EmailTaskStatus.SEND_FAILED.value,
     }:
+        return False
+    if (
+        email_task.approved_at is not None
+        and email_task.draft_generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE
+    ):
         return False
     return True
 

@@ -10,10 +10,15 @@ type ConfirmOptions = {
   confirmLabel?: string;
   secondaryLabel?: string;
   cancelLabel?: string | null;
+  confirmationCheckbox?: {
+    label: string;
+    onConfirmChecked: () => void;
+  };
   tone?: ConfirmDialogTone;
 };
 
 type ConfirmState = ConfirmOptions & {
+  confirmationCheckboxChecked: boolean;
   open: boolean;
 };
 
@@ -22,7 +27,14 @@ export const useConfirmDialog = () => {
   const resolverRef = useRef<((value: boolean) => void) | null>(null);
   const actionResolverRef = useRef<((value: string) => void) | null>(null);
 
-  const closeActionDialog = useCallback((value: string) => {
+  const closeActionDialog = useCallback((
+    value: string,
+    confirmationCheckboxChecked = false,
+    confirmationCheckbox?: ConfirmOptions["confirmationCheckbox"],
+  ) => {
+    if (value === "confirm" && confirmationCheckboxChecked) {
+      confirmationCheckbox?.onConfirmChecked();
+    }
     resolverRef.current?.(value === "confirm");
     resolverRef.current = null;
     actionResolverRef.current?.(value);
@@ -36,6 +48,7 @@ export const useConfirmDialog = () => {
       actionResolverRef.current = null;
       setState({
         ...options,
+        confirmationCheckboxChecked: false,
         open: true,
       });
     });
@@ -47,6 +60,7 @@ export const useConfirmDialog = () => {
       actionResolverRef.current = resolve;
       setState({
         ...options,
+        confirmationCheckboxChecked: false,
         open: true,
       });
     });
@@ -60,9 +74,22 @@ export const useConfirmDialog = () => {
       confirmLabel={state.confirmLabel}
       secondaryLabel={state.secondaryLabel}
       cancelLabel={state.cancelLabel}
+      confirmationCheckboxLabel={state.confirmationCheckbox?.label}
+      confirmationCheckboxChecked={state.confirmationCheckboxChecked}
       tone={state.tone}
       onCancel={() => closeActionDialog("cancel")}
-      onConfirm={() => closeActionDialog("confirm")}
+      onConfirm={() =>
+        closeActionDialog(
+          "confirm",
+          state.confirmationCheckboxChecked,
+          state.confirmationCheckbox,
+        )
+      }
+      onConfirmationCheckboxChange={(checked) =>
+        setState((current) =>
+          current ? { ...current, confirmationCheckboxChecked: checked } : current,
+        )
+      }
       onSecondary={
         state.secondaryLabel
           ? () => closeActionDialog("secondary")

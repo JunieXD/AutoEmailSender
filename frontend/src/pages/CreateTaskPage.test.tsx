@@ -454,12 +454,19 @@ describe("CreateTaskPage", () => {
     expect(await screen.findByText("张明")).toBeInTheDocument();
     expect(screen.getByText(/已从「过期任务」带入 1 位老师/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("重新发起 - 过期任务")).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /重新套用模板/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByText(/1 封邮件将重新套用.*无需逐封审核/),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
 
     await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
     expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
       llm_profile_id: selectedLlmProfile.id,
       resend_source_batch_task_id: 12,
+      resend_content_strategy: "template",
       outreach_generation_mode: "template",
       outreach_template_subject: "重发主题 {{name}}",
       outreach_template_body_text: "重发正文",
@@ -471,6 +478,104 @@ describe("CreateTaskPage", () => {
       window_end_time: null,
       emails_per_window: null,
     }));
+  });
+
+  it("reapplies the current library version for a template resend", async () => {
+    listOutreachTemplatesMock.mockResolvedValue([
+      {
+        id: 55,
+        name: "当前模板",
+        recommended_generation_mode: "template",
+        subject: "当前主题 {{name}}",
+        body_text: "当前正文 {{name}}",
+        body_html: "<p>当前正文 {{name}}</p>",
+        is_ready: true,
+        is_default: false,
+        archived_at: null,
+        created_at: "2026-05-01T00:00:00Z",
+        updated_at: "2026-05-02T00:00:00Z",
+      },
+    ]);
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "旧模板任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_template_id: 55,
+        outreach_template_name_snapshot: "当前模板",
+        outreach_generation_mode: "template",
+        outreach_template_subject: "旧快照主题",
+        outreach_template_body_text: "旧快照正文",
+        outreach_template_body_html: "<p>旧快照正文</p>",
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("模板主题")).toHaveTextContent(
+        "当前主题 导师姓名",
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      resend_content_strategy: "template",
+      outreach_template_id: 55,
+      outreach_template_subject: "当前主题 {{name}}",
+      outreach_template_body_text: "当前正文 {{name}}",
+      outreach_template_body_html: "<p>当前正文 {{name}}</p>",
+    }));
+  });
+
+  it("validates template resend content before creating the task", async () => {
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "空模板任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "template",
+        outreach_template_subject: null,
+        outreach_template_body_text: null,
+        outreach_template_body_html: null,
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    expect(notifyMock.notifyFormErrors).toHaveBeenCalledWith(
+      "请检查表单",
+      expect.arrayContaining([
+        "直接套用模板需要填写模板主题",
+        "直接套用模板需要填写模板纯文本正文",
+      ]),
+    );
+    expect(createBatchTaskMock).not.toHaveBeenCalled();
   });
 
   it("clears resend prefill context after creating task", async () => {
@@ -563,8 +668,106 @@ describe("CreateTaskPage", () => {
       outreach_template_body_text: null,
       primary_material_id: null,
       resend_source_batch_task_id: 12,
+      resend_content_strategy: "reuse",
     }));
   });
+
+  it("switches resend strategies explicitly and submits AI regeneration", async () => {
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "AI 原任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "llm",
+        outreach_template_subject: "AI 主题",
+        outreach_template_body_text: "AI 正文",
+        outreach_template_body_html: "<p>AI 正文</p>",
+        primary_material_id: 7,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    const reuseOption = screen.getByRole("radio", { name: /沿用上次内容/ });
+    const templateOption = screen.getByRole("radio", { name: /重新套用模板/ });
+    const llmOption = screen.getByRole("radio", { name: /AI 重新改写/ });
+    expect(reuseOption).toBeChecked();
+    expect(screen.queryByText("AI 写信参考材料")).not.toBeInTheDocument();
+
+    fireEvent.click(templateOption);
+    expect(templateOption).toBeChecked();
+    expect(screen.getByText("直接套用模板")).toBeInTheDocument();
+
+    fireEvent.click(reuseOption);
+    expect(reuseOption).toBeChecked();
+    expect(screen.queryByText("直接套用模板")).not.toBeInTheDocument();
+
+    fireEvent.click(llmOption);
+    expect(llmOption).toBeChecked();
+    expect(screen.getByText("AI 写信参考材料")).toBeInTheDocument();
+    expect(screen.getByText(/旧邮件内容不会沿用/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("旧邮件内容不会沿用"),
+      }),
+    );
+    expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      resend_source_batch_task_id: 12,
+      resend_content_strategy: "llm",
+      outreach_generation_mode: "llm",
+      primary_material_id: 7,
+    }));
+  });
+
+  it("requires a primary material when switching a resend to AI regeneration", async () => {
+    window.sessionStorage.setItem("batch_resend_prefill_context", JSON.stringify({
+      sourceTaskId: 12,
+      sourceTaskName: "AI 原任务",
+      identityId: selectedIdentity.id,
+      professorIds: [selectedProfessor.id],
+      requiresRegeneration: false,
+      defaults: {
+        identity_id: selectedIdentity.id,
+        outreach_generation_mode: "llm",
+        outreach_template_subject: "AI 主题",
+        outreach_template_body_text: "AI 正文",
+        outreach_template_body_html: "<p>AI 正文</p>",
+        primary_material_id: null,
+        selected_material_ids: [],
+      },
+      warnings: [],
+    }));
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /AI 重新改写/ }));
+    fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
+
+    expect(notifyMock.notifyFormErrors).toHaveBeenCalledWith(
+      "请检查表单",
+      expect.arrayContaining(["AI 写信参考材料为必选项"]),
+    );
+    expect(createBatchTaskMock).not.toHaveBeenCalled();
+  });
+
   it("explains that scheduled AI rewritten drafts still need manual review", () => {
     expect(buildBatchCreateConfirmDescription("llm", "scheduled")).toContain(
       "AI 改写完成后仍需逐封审核通过",

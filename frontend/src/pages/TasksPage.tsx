@@ -84,7 +84,9 @@ import {
   buildLargeAttachmentWarning,
   formatFileSize,
   getSelectedAttachmentTotalBytes,
-  isAttachmentTotalOverRecommendedLimit,
+  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+  shouldPromptForLargeAttachments,
+  suppressLargeAttachmentWarnings,
 } from "@/features/attachments/attachmentSize";
 import {
   cancelMatchAnalysisJob,
@@ -3785,15 +3787,19 @@ export const TasksPage = () => {
     if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
       return;
     }
-    const attachmentWarning = buildLargeAttachmentWarning(
-      batchReviewAttachmentTotalBytes,
-    );
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildLargeAttachmentWarning(batchReviewAttachmentTotalBytes)
+      : null;
     if (attachmentWarning) {
       const confirmed = await confirm({
         title: "附件超过 1 MB，仍要通过审核吗？",
         description: attachmentWarning,
         confirmLabel: "仍然通过",
         cancelLabel: "返回调整",
+        confirmationCheckbox: {
+          label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+          onConfirmChecked: suppressLargeAttachmentWarnings,
+        },
       });
       if (!confirmed) {
         return;
@@ -3852,11 +3858,13 @@ export const TasksPage = () => {
     const fallbackCount = reviewRequiredBatchTaskItems.filter(
       (item) => item.draft_generation_source === "template_fallback",
     ).length;
-    const attachmentWarning = buildBulkLargeAttachmentWarning(
-      reviewRequiredBatchTaskItems.map(
-        (item) => item.selected_attachment_size_bytes ?? 0,
-      ),
-    );
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildBulkLargeAttachmentWarning(
+          reviewRequiredBatchTaskItems.map(
+            (item) => item.selected_attachment_size_bytes ?? 0,
+          ),
+        )
+      : null;
     const deliveryDescription =
       selectedBatchTask.status === "paused"
         ? selectedBatchTask.schedule_type === "scheduled"
@@ -3885,6 +3893,12 @@ export const TasksPage = () => {
         .join("\n"),
       confirmLabel: attachmentWarning ? "仍然全部通过" : "确认全部通过",
       cancelLabel: "继续逐封审核",
+      confirmationCheckbox: attachmentWarning
+        ? {
+            label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+            onConfirmChecked: suppressLargeAttachmentWarnings,
+          }
+        : undefined,
       tone: "danger",
     });
     if (!confirmed) {
@@ -3980,11 +3994,10 @@ export const TasksPage = () => {
     if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
       return;
     }
-    const attachmentWarning = buildLargeAttachmentWarning(
-      batchReviewAttachmentTotalBytes,
-    );
-    const attachmentOverRecommendedLimit =
-      isAttachmentTotalOverRecommendedLimit(batchReviewAttachmentTotalBytes);
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildLargeAttachmentWarning(batchReviewAttachmentTotalBytes)
+      : null;
+    const attachmentOverRecommendedLimit = Boolean(attachmentWarning);
     const confirmed = await confirm({
       title: attachmentOverRecommendedLimit
         ? "附件超过 1 MB，仍要发送吗？"
@@ -3999,6 +4012,12 @@ export const TasksPage = () => {
         .join("\n"),
       confirmLabel: attachmentOverRecommendedLimit ? "仍然发送" : "确认发送",
       cancelLabel: attachmentOverRecommendedLimit ? "返回调整" : "再检查一下",
+      confirmationCheckbox: attachmentWarning
+        ? {
+            label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+            onConfirmChecked: suppressLargeAttachmentWarnings,
+          }
+        : undefined,
       tone: "danger",
     });
     if (!confirmed) {
@@ -4108,9 +4127,9 @@ export const TasksPage = () => {
     if (!selectedBatchTask) {
       return;
     }
-    const attachmentWarning = buildLargeAttachmentWarning(
-      item.selected_attachment_size_bytes ?? 0,
-    );
+    const attachmentWarning = shouldPromptForLargeAttachments()
+      ? buildLargeAttachmentWarning(item.selected_attachment_size_bytes ?? 0)
+      : null;
     if (attachmentWarning) {
       const confirmed = await confirm({
         title: "附件超过 1 MB，仍要恢复发送吗？",
@@ -4120,6 +4139,10 @@ export const TasksPage = () => {
         ].join("\n"),
         confirmLabel: "仍然恢复",
         cancelLabel: "保持取消",
+        confirmationCheckbox: {
+          label: LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+          onConfirmChecked: suppressLargeAttachmentWarnings,
+        },
       });
       if (!confirmed) {
         return;
@@ -4400,10 +4423,10 @@ export const TasksPage = () => {
     const confirmed = await confirm({
       title: "确认重新发起这批老师？",
       description: [
-        "将自动切换到原任务身份，并优先沿用每位老师上次已审核或 AI 改写后的邮件。",
+        "将自动切换到原任务身份；下一步可选择沿用上次内容、重新套用模板或让 AI 重新改写。",
         `发信模板：${resendTemplateLabel}`,
         `写信方式：${resendGenerationModeLabel}`,
-        "当前模板和模型只用于没有可复用草稿的邮件；发送日期和时间窗口需要重新设置。",
+        "发送日期和时间窗口需要重新设置。",
       ].join("\n"),
       confirmLabel: "去创建新任务",
       cancelLabel: "继续选择",

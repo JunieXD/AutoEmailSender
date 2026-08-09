@@ -85,10 +85,10 @@ export const BatchTaskResendDialog = ({
                 </div>
               </dl>
               <p className="mt-3 text-xs leading-5 text-stone-600">
-                将优先沿用每位老师上次已审核或 AI 改写后的邮件。当前模板和模型只用于没有可复用草稿的邮件。
+                下一步可选择沿用上次内容、重新套用模板，或让 AI 重新改写；此处只确定本次重新发起的老师。
               </p>
               <p className="mt-2 text-xs font-medium text-stone-700">
-                可直接沿用 {reusableCount} 封 · 需要重新生成 {regenerateCount} 封
+                有可沿用内容 {reusableCount} 封 · 没有可沿用内容 {regenerateCount} 封
               </p>
             </section>
           ) : null}

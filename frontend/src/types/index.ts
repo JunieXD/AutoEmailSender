@@ -407,6 +407,7 @@ export interface CreateBatchTaskRequestDTO {
   outreach_template_body_html: string | null;
   outreach_template_id?: number | null;
   resend_source_batch_task_id?: number | null;
+  resend_content_strategy?: BatchTaskResendContentStrategy;
 }
 
 export type MatchAnalysisJobStatus =
@@ -726,6 +727,8 @@ export interface BatchTaskResendContextDTO {
   summary: BatchTaskResendSummaryDTO;
   warnings: string[];
 }
+
+export type BatchTaskResendContentStrategy = 'reuse' | 'template' | 'llm';
 
 export interface BatchTaskResendPrefillContextDTO {
   sourceTaskId: number;

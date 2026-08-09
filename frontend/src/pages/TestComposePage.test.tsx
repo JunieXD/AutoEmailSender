@@ -105,6 +105,7 @@ const thread: TestComposeThreadDTO = {
 describe('TestComposePage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     apiMocks.getTestComposeThread.mockResolvedValue(thread);
     apiMocks.listOutreachTemplates.mockResolvedValue([]);
     confirmMock.mockResolvedValue(false);
@@ -123,16 +124,39 @@ describe('TestComposePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送测试邮件' }));
 
     await waitFor(() => {
-      expect(confirmMock).toHaveBeenCalledWith({
+      expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
         title: '附件超过 1 MB，仍要发送测试邮件吗？',
         description: expect.stringContaining(
           '建议不超过 1 MB，以减少被邮箱提供商限流的概率。',
         ),
         confirmLabel: '仍然发送',
         cancelLabel: '返回调整',
-      });
+        confirmationCheckbox: expect.objectContaining({
+          label: '我已知晓，不再提示',
+          onConfirmChecked: expect.any(Function),
+        }),
+      }));
     });
     expect(confirmMock.mock.calls[0][0].description).not.toContain('云盘');
     expect(apiMocks.sendTestComposeMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not prompt again after the large attachment warning was suppressed', async () => {
+    window.localStorage.setItem('large_attachment_warning_suppressed', 'true');
+    apiMocks.sendTestComposeMessage.mockResolvedValue(thread);
+
+    render(
+      <MemoryRouter>
+        <TestComposePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('large-portfolio.pdf')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '发送测试邮件' }));
+
+    await waitFor(() => {
+      expect(apiMocks.sendTestComposeMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 });

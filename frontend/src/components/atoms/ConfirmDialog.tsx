@@ -15,9 +15,12 @@ type ConfirmDialogProps = {
   confirmLabel?: string;
   secondaryLabel?: string;
   cancelLabel?: string | null;
+  confirmationCheckboxLabel?: string;
+  confirmationCheckboxChecked?: boolean;
   tone?: ConfirmDialogTone;
   onCancel: () => void;
   onConfirm: () => void;
+  onConfirmationCheckboxChange?: (checked: boolean) => void;
   onSecondary?: () => void;
 };
 
@@ -28,9 +31,12 @@ export const ConfirmDialog = ({
   confirmLabel = "确认",
   secondaryLabel,
   cancelLabel,
+  confirmationCheckboxLabel,
+  confirmationCheckboxChecked = false,
   tone = "neutral",
   onCancel,
   onConfirm,
+  onConfirmationCheckboxChange,
   onSecondary,
 }: ConfirmDialogProps) => {
   const titleId = useId();
@@ -113,6 +119,20 @@ export const ConfirmDialog = ({
               <X className="h-4 w-4" />
             </button>
           </div>
+
+          {confirmationCheckboxLabel ? (
+            <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-stone-200 bg-white/80 px-4 py-3 text-sm text-stone-700">
+              <input
+                type="checkbox"
+                checked={confirmationCheckboxChecked}
+                onChange={(event) =>
+                  onConfirmationCheckboxChange?.(event.target.checked)
+                }
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              />
+              <span className="leading-5">{confirmationCheckboxLabel}</span>
+            </label>
+          ) : null}
 
           <div className="mt-6 flex flex-wrap justify-end gap-3">
             {showCancelButton ? (
