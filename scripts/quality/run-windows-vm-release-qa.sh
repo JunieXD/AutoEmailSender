@@ -28,6 +28,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 vm_name="${AUTO_EMAIL_SENDER_WINDOWS_VM_NAME:-Windows 11}"
 guest_checkout="${AUTO_EMAIL_SENDER_WINDOWS_QA_CHECKOUT:-C:\Users\junie\Projects\AutoEmailSender-Windows-QA}"
+host_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR:-$HOME/Parallels Shared}"
+guest_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR:-Z:}"
+guest_transfer_dir="${guest_transfer_dir//\\//}"
+guest_transfer_dir="${guest_transfer_dir%/}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This host runner requires macOS with Parallels Desktop." >&2
@@ -44,24 +48,53 @@ if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --q
   exit 1
 fi
 
+if [[ ! -d "$host_transfer_dir" || ! -w "$host_transfer_dir" ]]; then
+  echo "The Parallels transfer directory is missing or not writable: $host_transfer_dir" >&2
+  echo "Configure the shared folder or set AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR." >&2
+  exit 1
+fi
+
+if [[ -z "$guest_transfer_dir" ]]; then
+  echo "AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR must not be empty." >&2
+  exit 1
+fi
+
+transfer_id="$$"
+bundle_name="AutoEmailSender-Windows-QA-$transfer_id.bundle"
+runner_name="run-windows-release-qa-$transfer_id.ps1"
+probe_name=".auto-email-sender-windows-qa-$transfer_id.probe"
+bundle_path="$host_transfer_dir/$bundle_name"
+runner_path="$host_transfer_dir/$runner_name"
+probe_path="$host_transfer_dir/$probe_name"
+guest_runner_path="$guest_transfer_dir/$runner_name"
+guest_bundle_path="$guest_transfer_dir/$bundle_name"
+guest_probe_path="$guest_transfer_dir/$probe_name"
+
+cleanup() {
+  rm -f -- "$bundle_path" "$runner_path" "$probe_path"
+}
+trap cleanup EXIT
+
 vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
 if [[ "$vm_status" != *"running"* ]]; then
   echo "Starting Parallels VM: $vm_name"
   prlctl start "$vm_name"
 fi
 
-desktop_dir="$HOME/Desktop"
-transfer_id="$$"
-bundle_name="AutoEmailSender-Windows-QA-$transfer_id.bundle"
-runner_name="run-windows-release-qa-$transfer_id.ps1"
-bundle_path="$desktop_dir/$bundle_name"
-runner_path="$desktop_dir/$runner_name"
-target_revision="$(git -C "$repo_root" rev-parse HEAD)"
+touch "$probe_path"
+if ! prlctl exec "$vm_name" --current-user powershell.exe \
+  -NoLogo \
+  -NoProfile \
+  -Command "if (-not (Test-Path -LiteralPath '$guest_probe_path')) { exit 1 }"
+then
+  echo "The Parallels shared-folder mapping is unavailable." >&2
+  echo "Host path: $host_transfer_dir" >&2
+  echo "Guest path: $guest_transfer_dir" >&2
+  echo "Configure the mapping or set the AUTO_EMAIL_SENDER_WINDOWS_QA_*_TRANSFER_DIR variables." >&2
+  exit 1
+fi
 
-cleanup() {
-  rm -f -- "$bundle_path" "$runner_path"
-}
-trap cleanup EXIT
+target_revision="$(git -C "$repo_root" rev-parse HEAD)"
 
 guest_revision="$({
   prlctl exec "$vm_name" --current-user powershell.exe \
@@ -88,13 +121,13 @@ guest_args=(
   -NoLogo
   -NoProfile
   -ExecutionPolicy Bypass
-  -File "Z:/Desktop/$runner_name"
+  -File "$guest_runner_path"
   -CheckoutPath "$guest_checkout"
   -ExpectedRevision "$target_revision"
   -Mode "$qa_mode"
 )
 if [[ -f "$bundle_path" ]]; then
-  guest_args+=(-BundlePath "Z:/Desktop/$bundle_name")
+  guest_args+=(-BundlePath "$guest_bundle_path")
 fi
 if [[ -n "$guest_revision" && "$guest_revision" != "$target_revision" ]]; then
   guest_args+=(-PreviousRevision "$guest_revision")

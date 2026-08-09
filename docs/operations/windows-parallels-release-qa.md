@@ -11,9 +11,11 @@
 - 本机仓库：`/Users/junie/Programs/AutoEmailSender`
 - VM 内 NTFS 仓库：`C:\Users\junie\Projects\AutoEmailSender-Windows-QA`
 - Parallels 命令：`/usr/local/bin/prlctl`
-- 共享传输目录：Mac 的 `~/Desktop` 对应 Windows 的 `Z:\Desktop`
+- 共享传输目录：Mac 的 `/Users/junie/Parallels Shared` 对应 Windows 的 `Z:\`（`\\Mac\Parallels Shared`）
 
 不要直接在 `Z:` 共享盘上安装依赖或构建。Node、Python、SQLite 和打包工具应在 VM 的 NTFS 工作区中运行；共享盘只传输 Git bundle 和临时启动脚本。
+
+宿主 runner 在传输前会创建临时探针，确认上述 Mac 目录和 Windows 路径确实指向同一共享目录。若以后修改共享名称或盘符，可分别通过 `AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR` 和 `AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR` 覆盖默认值，不需要修改脚本。Parallels 只需共享这个专用目录，不需要开启桌面、文稿、下载目录或整个 Mac 用户目录共享。
 
 VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\DevTools\uv\uv.exe`、uv 管理的 Python 3.12，以及 Microsoft Visual C++ x64 Runtime。发布 QA 固定使用 `C:\Users\junie\DevTools\node-v24.19.0-win-x64`，使 Node、Python、Electron 和发布目标都按 x64 Windows 包验证；系统另有 ARM64 Node，但 runner 不使用它。Windows 打包会下载、校验微软签名并把官方 x64 Redistributable 放入 NSIS，由安装程序负责安装；VM 中预装运行库只用于开发工具链，不能替代安装包检查。
 

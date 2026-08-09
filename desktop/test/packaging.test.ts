@@ -216,6 +216,11 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("skipping Git bundle transfer");
     expect(hostRunner).toContain("Creating incremental Git bundle");
     expect(hostRunner).toContain('-PreviousRevision "$guest_revision"');
+    expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR");
+    expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR");
+    expect(hostRunner).toContain("Test-Path -LiteralPath '$guest_probe_path'");
+    expect(hostRunner).not.toContain('$HOME/Desktop');
+    expect(hostRunner).not.toContain("Z:/Desktop");
     expect(guestRunner).toContain("[switch]$ForceFull");
     expect(guestRunner).toContain('[ValidateSet("release", "quick")]');
     expect(guestRunner).toContain('[string]$Mode = "release"');
