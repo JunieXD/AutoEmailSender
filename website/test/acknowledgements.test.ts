@@ -9,7 +9,7 @@ describe("acknowledgements page", () => {
     const page = readWebsiteFile("acknowledgements.md");
 
     expect(page).toContain(
-      "Auto Email Sender 的持续开发离不开各位同学的支持。此处用于记录每一位贡献者的帮助，也感谢每一位提交反馈、完善数据和参与测试的用户。",
+      "感谢每一位提供额度、提交反馈、完善数据和参与测试的朋友。这里记录大家对项目的帮助。",
     );
     expect(page).toContain("羽华丶");
     expect(page).toContain("<dt>支持</dt>");

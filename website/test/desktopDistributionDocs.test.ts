@@ -15,9 +15,9 @@ describe("desktop distribution documentation", () => {
   it("uses cross-platform installation labels and current artifact names", () => {
     expect(config).toContain('text: "安装桌面版"');
     expect(docsIndex).toContain("[安装桌面版](./install)");
-    expect(developer).toContain("普通用户请直接下载桌面版");
+    expect(developer).toContain("普通用户请直接[安装桌面版](./install)");
     expect(install).toContain("`AutoEmailSender-Setup-x.y.z.exe`");
-    expect(gettingStarted).toContain("`AutoEmailSender-Setup-x.y.z.exe`");
+    expect(gettingStarted).toContain("详细步骤和安全提示见[安装桌面版](./install)");
 
     const currentDocs = [config, developer, docsIndex, gettingStarted, install].join("\n");
     expect(currentDocs).not.toContain("安装 Windows 版");

@@ -140,20 +140,20 @@ function goToPage(page: number): void {
     <section class="benchmark-hero">
       <div class="benchmark-hero-copy">
         <span class="benchmark-eyebrow"><i></i> 真实高校官网 · 持续更新</span>
-        <h1>智能抓取效果展示</h1>
+        <h1>智能抓取实测</h1>
         <p>
-          我们将不同高校官网的实际抓取结果整理为公开汇总，用候选数量、字段覆盖率和处理耗时呈现系统在真实页面中的表现。
+          这里汇总真实高校官网的抓取结果，包括候选数量、字段覆盖率和耗时。
         </p>
         <div class="benchmark-hero-actions">
           <a class="benchmark-primary-action" :href="withBase('/docs/getting-started')">开始使用</a>
-          <a class="benchmark-secondary-action" href="#school-results">查看学校结果</a>
+          <a class="benchmark-secondary-action" href="#school-results">查看各校结果</a>
         </div>
         <small>数据更新于 {{ formatBenchmarkDate(crawlBenchmarkPayload.generatedAt) }}</small>
       </div>
 
       <div class="benchmark-hero-visual" aria-label="字段覆盖率概览">
         <div class="hero-visual-header">
-          <span>综合字段覆盖</span>
+          <span>总体字段覆盖率</span>
           <strong>{{ summary.verifiedTargetCount }} 个目标已实测</strong>
         </div>
         <div class="hero-coverage-item">
@@ -179,17 +179,17 @@ function goToPage(page: number): void {
         <small>来自真实学校官网</small>
       </article>
       <article>
-        <span>学院与研究机构</span>
+        <span>学院/机构</span>
         <strong>{{ summary.targetCount }}</strong>
-        <small>默认展示最新测试</small>
+        <small>每个目标仅计最新结果</small>
       </article>
       <article>
-        <span>识别候选导师</span>
+        <span>候选导师</span>
         <strong>{{ formatBenchmarkNumber(summary.candidateCount) }}</strong>
-        <small>按最新结果汇总</small>
+        <small>按最新结果统计</small>
       </article>
       <article>
-        <span>邮箱字段覆盖</span>
+        <span>邮箱覆盖率</span>
         <strong>{{ formatCoverage(summary.emailCoverage) }}</strong>
         <small>候选记录中的非空比例</small>
       </article>
@@ -199,9 +199,9 @@ function goToPage(page: number): void {
       <div class="benchmark-section-heading">
         <div>
           <span>版本观察</span>
-          <h2>持续记录每次迭代的真实表现</h2>
+          <h2>查看各版本实测结果</h2>
         </div>
-        <p>版本统计仅使用明确记录了软件版本的历史运行；新任务会自动保存版本快照。</p>
+        <p>仅统计带版本号的记录；新测试会自动记录版本。</p>
       </div>
       <div class="version-card-grid">
         <article v-for="version in versionStats" :key="version.version" class="version-card">
@@ -226,9 +226,9 @@ function goToPage(page: number): void {
       <div class="benchmark-section-heading results-heading">
         <div>
           <span>学校实测</span>
-          <h2>查看每个学院的最新抓取情况</h2>
+          <h2>各学院最新抓取结果</h2>
         </div>
-        <p>点击官网入口可核对测试来源；有多次记录的学院可展开查看历史变化。</p>
+        <p>可打开官网核对来源；有历史记录的学院可展开对比。</p>
       </div>
 
       <div class="benchmark-toolbar" role="search">
@@ -258,7 +258,7 @@ function goToPage(page: number): void {
       </div>
 
       <div class="benchmark-result-count">
-        <span>共 <strong>{{ filteredRecords.length }}</strong> 个学院或研究机构</span>
+        <span>共 <strong>{{ filteredRecords.length }}</strong> 个学院/机构</span>
         <span v-if="filteredRecords.length">第 {{ currentPage }} / {{ totalPages }} 页</span>
       </div>
 
@@ -294,7 +294,7 @@ function goToPage(page: number): void {
                 v-if="record.enrichmentSucceededCount !== null"
                 :title="enrichmentDetailLabel(record) ?? undefined"
               >
-                补全 {{ formatBenchmarkNumber(record.enrichmentSucceededCount) }}/{{ formatBenchmarkNumber(record.candidateCount) }}
+                已补全 {{ formatBenchmarkNumber(record.enrichmentSucceededCount) }}/{{ formatBenchmarkNumber(record.candidateCount) }} 位
               </span>
             </small>
           </div>
@@ -329,7 +329,7 @@ function goToPage(page: number): void {
           </footer>
 
           <details v-if="historyFor(record).length > 1" class="school-history">
-            <summary>{{ historyFor(record).length }} 次历史实测</summary>
+            <summary>{{ historyFor(record).length }} 次实测记录</summary>
             <div class="history-list">
               <div v-for="history in historyFor(record)" :key="history.recordId">
                 <span>{{ history.appVersion ? `v${history.appVersion}` : formatBenchmarkDate(history.testedAt) }}</span>
@@ -375,15 +375,14 @@ function goToPage(page: number): void {
       </nav>
 
       <div v-if="!filteredRecords.length" class="benchmark-empty-state">
-        <strong>没有找到符合条件的学校</strong>
-        <span>可以清空搜索内容或调整筛选条件。</span>
+        <strong>没有符合条件的结果</strong>
+        <span>请清空搜索或调整筛选条件。</span>
       </div>
     </section>
 
     <section class="benchmark-methodology">
       <div>
-        <span>如何理解这些数据</span>
-        <h2>数据来源和统计说明</h2>
+        <h2>数据说明</h2>
       </div>
       <div class="methodology-grid">
         <article>

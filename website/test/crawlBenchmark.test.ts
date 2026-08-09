@@ -240,7 +240,7 @@ describe("crawl benchmark website entry points", () => {
     const homepage = readWebsiteFile("index.md");
     const benchmarkPage = readWebsiteFile("crawl-benchmark.md");
 
-    expect(config).toContain('{ text: "实测数据", link: "/crawl-benchmark" }');
+    expect(config).toContain('{ text: "抓取实测", link: "/crawl-benchmark" }');
     expect(homepage).toContain("import CrawlBenchmarkPromo");
     expect(homepage).toContain("<CrawlBenchmarkPromo />");
     expect(benchmarkPage).toContain("layout: page");
@@ -267,11 +267,11 @@ describe("crawl benchmark website entry points", () => {
     expect(component).not.toContain('<div v-else class="benchmark-empty-state">');
     expect(customFilter).toContain('role="combobox"');
     expect(customFilter).toContain('role="listbox"');
-    expect(component).toContain("<h1>智能抓取效果展示</h1>");
-    expect(component).toContain("<h2>数据来源和统计说明</h2>");
+    expect(component).toContain("<h1>智能抓取实测</h1>");
+    expect(component).toContain("<h2>数据说明</h2>");
     expect(component).toContain("已发起 ${formatBenchmarkNumber(record.enrichmentSelectedCount ?? 0)} 位");
     expect(component).toContain("formatBenchmarkNumber(record.candidateCount)");
     expect(component).not.toContain("公开、克制，也经得起追溯");
-    expect(benchmarkPage).toContain("title: 智能抓取效果展示");
+    expect(benchmarkPage).toContain("title: 智能抓取实测");
   });
 });

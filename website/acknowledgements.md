@@ -5,7 +5,7 @@ description: 感谢为 Auto Email Sender 开发与测试提供支持的社区伙
 
 # 致谢
 
-Auto Email Sender 的持续开发离不开各位同学的支持。此处用于记录每一位贡献者的帮助，也感谢每一位提交反馈、完善数据和参与测试的用户。
+感谢每一位提供额度、提交反馈、完善数据和参与测试的朋友。这里记录大家对项目的帮助。
 
 <section class="supporter-list" aria-label="社区支持记录">
   <article class="supporter-entry" aria-labelledby="supporter-yuhua">
