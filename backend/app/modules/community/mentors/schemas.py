@@ -303,6 +303,13 @@ class CommunityMentorRecord(CommunityDatasetSchema):
             raise ValueError("社区记录包含重复邮箱")
         if len(affiliation_ids) != len(set(affiliation_ids)):
             raise ValueError("社区记录包含重复任职 ID")
+        affiliation_id_set = set(affiliation_ids)
+        if any(
+            item.affiliation_id is not None
+            and item.affiliation_id not in affiliation_id_set
+            for item in self.contacts
+        ):
+            raise ValueError("社区联系方式引用了不存在的任职 ID")
         if len(contributor_ids) != len(set(contributor_ids)):
             raise ValueError("社区记录包含重复贡献者")
         if any(item.status != "current" for item in self.affiliations):

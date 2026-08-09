@@ -1654,6 +1654,12 @@ async def import_community_records(
             if comparison.local_professor_id is not None
             else None
         )
+        if comparison.local_professor_id is not None and professor is None:
+            raise CommunityDataError(
+                f"导师 {comparison.record.name} 的本地记录在预览后已不存在；"
+                "请关闭当前预览并重新预览后再导入",
+                code="COMMUNITY_DATA_PREVIEW_STALE",
+            )
         if professor is not None:
             await session.refresh(professor)
             local_values = professor_values(professor)
