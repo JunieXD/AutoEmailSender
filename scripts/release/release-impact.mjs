@@ -22,6 +22,12 @@ const CHECKS = {
 };
 
 const RELEASE_NOTE_PATTERN = /^(?:docs\/releases\/v[^/]+\.md|desktop\/release-notes\.md)$/;
+const CLI_BUILD_TOOLING_PATTERNS = [
+  /^scripts\/build-cli\.(?:ps1|sh)$/,
+  /^scripts\/build\/build-cli\.(?:ps1|sh)$/,
+  /^scripts\/build\/(?:generate_cli_build_identity|verify_cli_binary)\.py$/,
+  /^scripts\/quality\/benchmark_agent_cli\.py$/,
+];
 const WINDOWS_PACKAGING_PATTERNS = [
   /^desktop\/electron-builder\.yml$/,
   /^desktop\/build\//,
@@ -69,6 +75,13 @@ export function planReleaseImpact(changedFiles, { candidate = false } = {}) {
           required.add("cli-frozen-build");
           required.add("windows-quick-qa");
         }
+      }
+
+      if (matchesAny(file, CLI_BUILD_TOOLING_PATTERNS)) {
+        categories.add("cli-product");
+        required.add("cli-suite");
+        required.add("cli-frozen-build");
+        required.add("windows-quick-qa");
       }
 
       if (file.startsWith("backend/")) {

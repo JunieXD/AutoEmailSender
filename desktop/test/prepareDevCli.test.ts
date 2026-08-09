@@ -19,6 +19,7 @@ async function createRepositoryFixture(): Promise<string> {
   temporaryDirectories.push(repoRoot);
   await mkdir(path.join(repoRoot, "cli", "src", "auto_email_sender_cli"), { recursive: true });
   await mkdir(path.join(repoRoot, "scripts", "build"), { recursive: true });
+  await mkdir(path.join(repoRoot, "scripts", "quality"), { recursive: true });
   await writeFile(path.join(repoRoot, "cli", "pyproject.toml"), "[project]\nname='fixture'\n", "utf8");
   await writeFile(path.join(repoRoot, "cli", "uv.lock"), "version = 1\n", "utf8");
   await writeFile(
@@ -46,6 +47,11 @@ async function createRepositoryFixture(): Promise<string> {
   await writeFile(
     path.join(repoRoot, "scripts", "build", "verify_cli_binary.py"),
     "# binary verifier\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(repoRoot, "scripts", "quality", "benchmark_agent_cli.py"),
+    "# CLI benchmark\n",
     "utf8",
   );
   return repoRoot;
@@ -101,6 +107,14 @@ describe("development CLI preparation", () => {
     );
     await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
     expect(runBuild).toHaveBeenCalledTimes(4);
+
+    await writeFile(
+      path.join(repoRoot, "scripts", "quality", "benchmark_agent_cli.py"),
+      "# updated CLI benchmark\n",
+      "utf8",
+    );
+    await expect(prepareDevelopmentCli(options)).resolves.toMatchObject({ state: "built" });
+    expect(runBuild).toHaveBeenCalledTimes(5);
   });
 
   it("calculates a fingerprint from the current repository topology", async () => {

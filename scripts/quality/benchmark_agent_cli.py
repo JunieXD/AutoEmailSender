@@ -167,6 +167,7 @@ def run_benchmark(
 
 
 def main() -> int:
+    _configure_standard_stream_encoding()
     args = _parser().parse_args()
     try:
         result = run_benchmark(
@@ -201,6 +202,14 @@ def main() -> int:
         result["failures"] = failures
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if args.skip_thresholds or not failures else 1
+
+
+def _configure_standard_stream_encoding() -> None:
+    """Keep human-readable JSON portable across redirected Windows consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
 
 
 if __name__ == "__main__":

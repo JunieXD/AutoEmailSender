@@ -375,7 +375,13 @@ if (-not $frontendVerified) {
   Save-VerifiedStage -Name "frontend" -Fingerprint $frontendFingerprint
 }
 
-$cliBuildInputs = @("cli", "scripts/build/build-cli.ps1", "scripts/build/generate_cli_build_identity.py", "scripts/build/verify_cli_binary.py")
+$cliBuildInputs = @(
+  "cli",
+  "scripts/build/build-cli.ps1",
+  "scripts/build/generate_cli_build_identity.py",
+  "scripts/build/verify_cli_binary.py",
+  "scripts/quality/benchmark_agent_cli.py"
+)
 $cliTestFingerprint = Get-StageFingerprint -Paths @("cli") -AdditionalValues @(
   $toolchainFingerprint,
   "command=python -m unittest discover test"
@@ -384,7 +390,8 @@ $cliContractFingerprint = Get-StageFingerprint -Paths @(
   "cli/test/test_build_scripts.py",
   "scripts/build/build-cli.ps1",
   "scripts/build/generate_cli_build_identity.py",
-  "scripts/build/verify_cli_binary.py"
+  "scripts/build/verify_cli_binary.py",
+  "scripts/quality/benchmark_agent_cli.py"
 ) -AdditionalValues @($toolchainFingerprint, "command=test.test_build_scripts")
 $cliEnvironment = Join-Path $CheckoutPath "cli\.venv\Scripts\python.exe"
 $cliSuiteVerified = Test-VerifiedStage -Name "cli-suite" -Fingerprint $cliTestFingerprint -RequiredPaths @($cliEnvironment)

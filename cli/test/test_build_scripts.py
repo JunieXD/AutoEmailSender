@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import runpy
@@ -45,6 +46,49 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertEqual(measurements["describe"]["p95_ms"], 12.5)
         self.assertEqual(measurements["intent_routing"]["accuracy"], 1.0)
         self.assertTrue(all(item["correct"] for item in measurements["intent_routing"]["cases"]))
+
+    def test_agent_cli_benchmark_forces_utf8_for_redirected_json(self) -> None:
+        namespace = runpy.run_path(
+            (QUALITY_SCRIPTS_ROOT / "benchmark_agent_cli.py").as_posix(),
+        )
+        main = namespace["main"]
+        result = {
+            "schema_version": "1",
+            "measurements": {
+                "capabilities": {"p95_ms": 1.0},
+                "describe": {"p95_ms": 1.0},
+                "intent_routing": {
+                    "p95_ms": 1.0,
+                    "accuracy": 1.0,
+                    "cases": [{"query": "导入导师", "correct": True}],
+                },
+            },
+        }
+        raw_output = io.BytesIO()
+        redirected_stdout = io.TextIOWrapper(raw_output, encoding="cp1252")
+
+        with (
+            patch.object(sys, "stdout", redirected_stdout),
+            patch.object(
+                sys,
+                "argv",
+                ["benchmark_agent_cli.py", "--executable", "auto-email-sender.exe"],
+            ),
+            patch.dict(
+                main.__globals__,
+                {"run_benchmark": lambda *_args, **_kwargs: result},
+            ),
+        ):
+            return_code = main()
+            redirected_stdout.flush()
+            encoded_output = raw_output.getvalue()
+
+        self.assertEqual(return_code, 0)
+        payload = json.loads(encoded_output.decode("utf-8"))
+        self.assertEqual(
+            payload["measurements"]["intent_routing"]["cases"][0]["query"],
+            "导入导师",
+        )
 
     def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.sh")

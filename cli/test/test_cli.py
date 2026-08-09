@@ -1074,34 +1074,45 @@ class CliTests(unittest.TestCase):
         self.assertEqual(invalid_filter.exit_code, 2, msg=invalid_filter.output)
         self.assertEqual(json.loads(invalid_filter.stdout)["error"]["code"], "INVALID_FILTER")
 
-        export = self.runner.invoke(
-            app,
-            [
-                "professors",
-                "export",
-                "--output",
-                "unused.csv",
-                "--format",
-                "csv",
-                "--json",
-            ],
-        )
+        with (
+            tempfile.TemporaryDirectory() as temporary_directory,
+            patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                side_effect=RuntimeUnavailableError("测试服务不可用。"),
+            ),
+        ):
+            export = self.runner.invoke(
+                app,
+                [
+                    "professors",
+                    "export",
+                    "--output",
+                    (Path(temporary_directory) / "unused.csv").as_posix(),
+                    "--format",
+                    "csv",
+                    "--json",
+                ],
+            )
         self.assertEqual(export.exit_code, 7, msg=export.output)
         self.assertEqual(json.loads(export.stdout)["error"]["code"], "APP_UNAVAILABLE")
 
-        diagnostics = self.runner.invoke(
-            app,
-            [
-                "diagnostics",
-                "logs",
-                "--request-id",
-                "log-filter",
-                "--operation-id",
-                "operation-id",
-                "--format",
-                "json",
-            ],
-        )
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            side_effect=RuntimeUnavailableError("测试服务不可用。"),
+        ):
+            diagnostics = self.runner.invoke(
+                app,
+                [
+                    "diagnostics",
+                    "logs",
+                    "--request-id",
+                    "log-filter",
+                    "--operation-id",
+                    "operation-id",
+                    "--format",
+                    "json",
+                ],
+            )
         self.assertEqual(diagnostics.exit_code, 7, msg=diagnostics.output)
         self.assertEqual(json.loads(diagnostics.stdout)["_meta"]["request_id"], "operation-id")
 

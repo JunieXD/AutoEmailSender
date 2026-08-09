@@ -14,6 +14,7 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/benchmark_agent_cli.py"
       - ".github/workflows/cli-binaries.yml"
   pull_request:
     paths:
@@ -26,6 +27,7 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/benchmark_agent_cli.py"
       - ".github/workflows/cli-binaries.yml"
   workflow_dispatch:
 
@@ -45,15 +47,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Build and verify frozen CLI (macOS)
         if: runner.os == 'macOS'

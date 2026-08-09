@@ -28,7 +28,7 @@ export type PrepareDevelopmentCliResult = {
   executablePath: string | null;
 };
 
-const FINGERPRINT_SCHEMA = "auto-email-sender-development-cli-v2";
+const FINGERPRINT_SCHEMA = "auto-email-sender-development-cli-v3";
 
 export async function prepareDevelopmentCli(
   options: PrepareDevelopmentCliOptions,
@@ -130,6 +130,7 @@ export async function calculateDevelopmentCliFingerprint(
   const cliDirectory = path.join(repoRoot, "cli");
   const scriptsDirectory = path.join(repoRoot, "scripts");
   const buildScriptsDirectory = path.join(scriptsDirectory, "build");
+  const qualityScriptsDirectory = path.join(scriptsDirectory, "quality");
   const buildScript = platform === "win32" ? "build-cli.ps1" : "build-cli.sh";
   const inputPaths = [
     path.join(cliDirectory, "pyproject.toml"),
@@ -138,6 +139,7 @@ export async function calculateDevelopmentCliFingerprint(
     path.join(buildScriptsDirectory, buildScript),
     path.join(buildScriptsDirectory, "generate_cli_build_identity.py"),
     path.join(buildScriptsDirectory, "verify_cli_binary.py"),
+    path.join(qualityScriptsDirectory, "benchmark_agent_cli.py"),
     ...await collectInputFiles(path.join(cliDirectory, "src")),
   ].sort((left, right) => left.localeCompare(right));
   const hash = createHash("sha256");
