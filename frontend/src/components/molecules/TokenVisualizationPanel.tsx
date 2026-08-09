@@ -255,7 +255,7 @@ export const TokenVisualizationPanel = () => {
       if (recordsRequestIdRef.current !== requestId) {
         return;
       }
-      setRecordsError(loadError instanceof Error ? loadError.message : '加载 Token 消耗记录失败');
+      setRecordsError(loadError instanceof Error ? loadError.message : '加载 Token 明细失败');
     } finally {
       if (recordsRequestIdRef.current === requestId) {
         setRecordsLoading(false);
@@ -316,7 +316,7 @@ export const TokenVisualizationPanel = () => {
           <div>
             <h2 className="text-xl font-semibold text-stone-950">Token 消耗可视化</h2>
             <p className="mt-1 text-sm text-stone-500">
-              按时间范围查看 Token 趋势、来源和最近消耗记录。
+              查看 Token 趋势、来源和明细。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -363,7 +363,7 @@ export const TokenVisualizationPanel = () => {
       {showInitialLoading ? (
         <div className="flex items-center justify-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-12 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载 Token 可视化数据...
+          正在加载 Token 可视化数据…
         </div>
       ) : error ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
@@ -460,14 +460,14 @@ function SummaryGrid({ data }: { data: TokenUsageVisualizationDTO }) {
     {
       label: '输入 Token',
       value: formatSummaryTokenValue(data.summary.input_tokens),
-      helper: 'Prompt / 输入消耗',
+      helper: '模型输入',
       icon: <Download className="h-5 w-5" />,
       tone: 'sky' as const,
     },
     {
       label: '输出 Token',
       value: formatSummaryTokenValue(data.summary.output_tokens),
-      helper: 'Completion / 输出消耗',
+      helper: '模型输出',
       icon: <Upload className="h-5 w-5" />,
       tone: 'violet' as const,
     },
@@ -610,12 +610,12 @@ function TokenTrendChart({ chart }: { chart: TokenUsageChartDTO }) {
   );
 
   if (chart.buckets.length === 0 || !hasData) {
-    return <PanelCard title="输入 / 输出 / 缓存趋势"><EmptyState>当前时间范围暂无 Token 消耗数据</EmptyState></PanelCard>;
+    return <PanelCard title="Token 趋势"><EmptyState>当前时段暂无 Token 数据</EmptyState></PanelCard>;
   }
 
   return (
     <PanelCard
-      title="输入 / 输出 / 缓存趋势"
+      title="Token 趋势"
       meta={chart.granularity === 'hour' ? '按小时' : '按天'}
     >
       <div className="mb-4 flex flex-wrap gap-3 text-xs text-stone-500">
@@ -632,13 +632,13 @@ function TokenTrendChart({ chart }: { chart: TokenUsageChartDTO }) {
 
 function FeatureDistributionCard({ items }: { items: TokenUsageFeatureDistributionDTO[] }) {
   return (
-    <PanelCard title="功能消耗分布">
+    <PanelCard title="按功能分布">
       {items.length === 0 ? (
         <EmptyState>暂无功能消耗数据</EmptyState>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
           <DistributionPieChart
-            title="功能消耗分布"
+            title="按功能分布"
             data={items.map((item) => ({
               key: item.feature_type,
               label: item.feature_label,
@@ -664,7 +664,7 @@ function FeatureDistributionCard({ items }: { items: TokenUsageFeatureDistributi
 function ModelRankingCard({ items }: { items: TokenUsageModelRankingDTO[] }) {
   const max = Math.max(...items.map((item) => item.total_tokens), 1);
   return (
-    <PanelCard title="模型消耗排行">
+    <PanelCard title="模型用量排行">
       {items.length === 0 ? (
         <EmptyState>暂无模型消耗数据</EmptyState>
       ) : (
@@ -739,7 +739,7 @@ function RecentRecordsTable({
       <div>{error}</div>
       {loaded && records.length > 0 ? (
         <div className="mt-1 text-xs text-rose-600">
-          以下保留上次成功加载的记录。
+          当前显示上次加载的记录。
         </div>
       ) : null}
       <button type="button" onClick={onRetry} className="ui-btn-secondary mt-3 px-3 py-2 text-xs">
@@ -749,7 +749,7 @@ function RecentRecordsTable({
   ) : null;
 
   return (
-    <PanelCard title="Token 消耗记录">
+    <PanelCard title="Token 明细">
       <TokenRecordFilters
         featureType={featureType}
         modelName={modelName}
@@ -766,20 +766,20 @@ function RecentRecordsTable({
       {loading && !loaded ? (
         <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-8 text-sm text-stone-500">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载 Token 消耗记录...
+          正在加载 Token 明细…
         </div>
       ) : error && !loaded ? (
         errorNotice
       ) : records.length === 0 ? (
         <div className="mt-4">
-          {errorNotice ?? <EmptyState>暂无 Token 消耗记录</EmptyState>}
+          {errorNotice ?? <EmptyState>暂无 Token 记录</EmptyState>}
         </div>
       ) : (
         <div
           ref={recordsStartRef}
           role="region"
           tabIndex={-1}
-          aria-label="Token 消耗记录列表"
+          aria-label="Token 明细列表"
           className="mt-4 scroll-mt-24 focus:outline-none"
         >
           {errorNotice}
@@ -828,9 +828,9 @@ function RecentRecordsTable({
             pageSize={pageSize}
             totalCount={pagination.total_records}
             onChange={onPaginationChange}
-            ariaLabel="Token 消耗记录分页"
+            ariaLabel="Token 明细分页"
             unitLabel="条"
-            summary={`共 ${pagination.total_records} 条记录，当前第 ${safeCurrentPage} / ${totalPages} 页`}
+            summary={`${pagination.total_records} 条 · ${safeCurrentPage}/${totalPages} 页`}
             focusTargetRef={recordsStartRef}
             disabled={loading}
             className="mt-4 border-t border-stone-100 pt-4"
@@ -873,8 +873,8 @@ function TokenRecordFilters({
   return (
     <div className="grid min-w-0 gap-3 rounded-xl border border-stone-200 bg-stone-50/70 p-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
       <NativeSelectField
-        label="功能筛选"
-        ariaLabel="Token 记录功能筛选"
+        label="功能"
+        ariaLabel="Token 功能"
         value={featureType}
         wrapperClassName="block"
         shellClassName="h-10"
@@ -887,8 +887,8 @@ function TokenRecordFilters({
         <option value="draft_generation">AI 草稿</option>
       </NativeSelectField>
       <NativeSelectField
-        label="模型筛选"
-        ariaLabel="Token 记录模型筛选"
+        label="模型"
+        ariaLabel="Token 模型"
         value={modelName ?? ''}
         wrapperClassName="block"
         shellClassName="h-10"
@@ -922,7 +922,7 @@ function TokenRecordFilters({
       <div className="flex min-w-0 flex-wrap items-end gap-2 md:col-span-2 xl:col-span-1">
         <button type="button" onClick={onSearch} className="ui-btn-primary h-10 px-3 text-sm">
           <Search className="h-4 w-4" />
-          查询记录
+          查询
         </button>
         <button type="button" onClick={onReset} className="ui-btn-secondary h-10 px-3 text-sm">
           <RotateCcw className="h-4 w-4" />

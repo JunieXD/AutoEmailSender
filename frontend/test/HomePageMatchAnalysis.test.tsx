@@ -197,10 +197,7 @@ describe("HomePage match analysis", () => {
     fireEvent.click(await screen.findByRole("button", { name: "分析匹配度" }));
 
     await waitFor(() => {
-      expect(mockedNotifyWarning).toHaveBeenCalledWith(
-        "已跳过匹配分析",
-        "该导师已有匹配分，未重新计算。",
-      );
+      expect(mockedNotifyWarning).toHaveBeenCalledWith("已保留现有匹配分");
     });
     expect(mockedEnsureWorkspaceTask).not.toHaveBeenCalled();
     expect(mockedCalculateMatch).not.toHaveBeenCalled();
@@ -375,7 +372,7 @@ describe("HomePage match analysis", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "选择 王教授" }));
     expect(
-      await screen.findByText("匹配分析将统一使用 申请身份 A 的默认材料。"),
+      await screen.findByText("统一使用 申请身份 A 的默认材料"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "分析匹配度" })[0]);
 

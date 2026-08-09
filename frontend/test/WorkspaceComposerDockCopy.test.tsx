@@ -308,12 +308,12 @@ describe("WorkspaceComposerDock copy", () => {
         canSubmitDraft={true}
         hasDraftBody={true}
         composerExpanded={false}
-        nextStepTitle="选择 AI 写信参考材料"
+        nextStepTitle="选择 AI 参考材料"
         nextStepDescription="检查主题、正文和附件后发送。"
       />,
     );
 
-    expect(screen.getByText("请选择 AI 写信参考材料。")).toBeInTheDocument();
+    expect(screen.getByText("请选择 AI 参考材料。")).toBeInTheDocument();
     expect(screen.queryByText("请选择用于匹配的材料。")).not.toBeInTheDocument();
   });
 
@@ -377,13 +377,13 @@ describe("WorkspaceComposerDock copy", () => {
         canStartFollowUp={false}
         canSubmitDraft={false}
         composerExpanded={true}
-        nextStepTitle="作为单独联系继续"
+        nextStepTitle="单独联系"
         nextStepDescription="从这条批量任务记录中拆出一条单独联系继续推进。"
       />,
     );
 
     expect(
-      screen.getAllByRole("button", { name: "作为单独联系继续" }).length,
+      screen.getAllByRole("button", { name: "单独联系" }).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "立即发送" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "定时发送" })).not.toBeInTheDocument();

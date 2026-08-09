@@ -214,7 +214,7 @@ describe("HomePage onboarding", () => {
 
     const card = await screen.findByTestId("onboarding-checklist-card");
 
-    expect(within(card).getByRole("link", { name: "继续配置" })).toHaveAttribute(
+    expect(within(card).getByRole("link", { name: "继续设置" })).toHaveAttribute(
       "href",
       "/profile",
     );
@@ -236,7 +236,7 @@ describe("HomePage onboarding", () => {
     renderPage();
 
     expect(await screen.findByTestId("onboarding-checklist-card")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "继续配置" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "继续设置" })).toHaveAttribute(
       "href",
       "/professors",
     );
@@ -338,7 +338,7 @@ describe("HomePage onboarding", () => {
     expect(selectButton).toHaveClass("h-6", "w-6");
     expect(
       screen
-        .getByRole("button", { name: "选择全部筛选结果" })
+        .getByRole("button", { name: "全选当前结果" })
         .closest("section"),
     ).toHaveClass("overflow-hidden");
     expect(
@@ -387,7 +387,7 @@ describe("HomePage onboarding", () => {
     expect(screen.getByRole("option", { name: "已排程" })).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "已联系" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
@@ -432,7 +432,7 @@ describe("HomePage onboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "School of Medicine" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
@@ -442,7 +442,7 @@ describe("HomePage onboarding", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "学校：全部学校" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "MIT" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));

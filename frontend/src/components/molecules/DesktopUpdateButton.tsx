@@ -63,7 +63,7 @@ function formatUpdateCheckErrorMessage(message: string): string {
   if (!CONNECTION_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern))) {
     return cleanedMessage;
   }
-  return "暂时无法连接更新服务器，请检查网络或系统代理后重试。";
+  return "无法连接更新服务器，请检查网络或代理后重试。";
 }
 
 function getUpdateStatusKey(status: DesktopUpdateStatus): string {
@@ -299,7 +299,7 @@ function DesktopUpdateButtonInner() {
           ) : null}
           {!hasPendingUpdate && isBusy ? (
             <span className="shrink-0 rounded-full border border-stone-200 bg-stone-50 px-2 py-0.5 text-[10px] font-medium text-stone-500">
-              ...
+              …
             </span>
           ) : null}
         </button>
@@ -363,10 +363,10 @@ function DesktopUpdateReleaseNotesDialog({
         <div className="flex items-start justify-between gap-4 border-b border-stone-100 px-6 py-5">
           <div>
             <h3 id="desktop-update-release-title" className="text-lg font-semibold text-stone-900">
-              发现新版本 v{status.nextVersion}
+              发现 v{status.nextVersion}
             </h3>
             <p className="mt-1 text-sm text-stone-500">
-              当前 v{status.version} -&gt; v{status.nextVersion}
+              当前 v{status.version}
             </p>
           </div>
           <button
@@ -506,14 +506,14 @@ function DesktopUpdateStatusBar({
           {titleLabel}：总计 {formatBytes(status.totalBytes)}
         </span>
         {status.fallbackFromDifferential ? (
-          <span className="mt-1 text-amber-700">差量更新不可用，已自动改用全量下载。</span>
+          <span className="mt-1 text-amber-700">增量更新不可用，已改为完整下载。</span>
         ) : null}
         <span className="h-1.5 overflow-hidden rounded-full bg-stone-100">
           <span className="block h-full bg-primary" style={{ width: `${status.percent}%` }} />
         </span>
         <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-          <span>{modeLabel}：已下载 {formatBytes(status.transferredBytes)}</span>
-          <span>{modeLabel}：剩余 {formatBytes(status.remainingBytes)}</span>
+          <span>已下载 {formatBytes(status.transferredBytes)}</span>
+          <span>剩余 {formatBytes(status.remainingBytes)}</span>
           <span>{formatBytes(status.bytesPerSecond)}/s</span>
           <span>{formatEta(status.remainingSeconds)}</span>
         </span>
@@ -539,7 +539,7 @@ function DesktopUpdateStatusBar({
   if (status.state === "downloaded_pending_install") {
     return (
       <span className="inline-flex min-h-[2.8rem] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-        <span>v{status.nextVersion} 已下载，可稍后安装；再次检查更新会直接安装。</span>
+        <span>v{status.nextVersion} 已下载，可立即或稍后安装。</span>
         <button
           type="button"
           onClick={onInstall}

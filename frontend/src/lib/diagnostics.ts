@@ -346,7 +346,7 @@ function sanitizeDiagnosticString(value: string): string {
     );
 
     return withoutSensitiveKeyValues.length > maxDiagnosticStringLength
-      ? `${withoutSensitiveKeyValues.slice(0, maxDiagnosticStringLength)}...`
+      ? `${withoutSensitiveKeyValues.slice(0, maxDiagnosticStringLength)}…`
       : withoutSensitiveKeyValues;
   } catch {
     return unserializableValue;

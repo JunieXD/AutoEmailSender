@@ -209,7 +209,7 @@ export const CommunicationSharingPanel = () => {
       setSelectedMatchSourceIdentityId(null);
       notifySuccess(
         editorId === 'new' ? '共享组已创建' : '共享组已更新',
-        '组内身份现在共享通信记录；匹配度显示方式已应用到首页、工作区和统计面板。',
+        '已共享通信记录并应用匹配度设置。',
       );
     } catch (error) {
       notifyError(
@@ -225,7 +225,7 @@ export const CommunicationSharingPanel = () => {
     const confirmed = await confirm({
       title: `解散“${getGroupLabel(group)}”共享组？`,
       description:
-        '解散只会停止共享通信记录和匹配度显示关联，不会删除任何身份、任务或通信记录。',
+        '停止共享关联，不会删除身份、任务或通信记录。',
       confirmLabel: '解散共享组',
       cancelLabel: '取消',
       tone: 'danger',
@@ -273,7 +273,7 @@ export const CommunicationSharingPanel = () => {
               </span>
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-600">
-              将多个发件身份组成共享组：组内共享真实收发记录，并可统一显示某个身份的匹配度结果；邮箱配置和任务仍各自独立。
+              共享收发记录，可统一匹配度；邮箱和任务仍各自独立。
             </p>
           </div>
           <ChevronDown
@@ -374,7 +374,7 @@ export const CommunicationSharingPanel = () => {
                           {editingGroup ? '编辑共享组' : '新建共享组'}
                         </h3>
                         <p className="mt-1 text-xs leading-5 text-stone-500">
-                          选择共享成员，并设置组内匹配度的显示方式。选择其他组成员时，保存前会要求确认合并。
+                          选择成员和匹配度显示方式；跨组成员会合并。
                         </p>
                       </div>
                       <button
@@ -433,7 +433,7 @@ export const CommunicationSharingPanel = () => {
                         匹配度显示方式
                       </legend>
                       <p className="mt-1 text-xs leading-5 text-stone-500">
-                        统一后，组内所有身份都会显示所选身份的匹配分数、分析理由和建议。
+                        组内统一显示所选身份的匹配结果。
                       </p>
                       <div className="mt-3 grid gap-2">
                         <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 bg-white px-3 py-3 transition hover:bg-stone-50">
@@ -450,7 +450,7 @@ export const CommunicationSharingPanel = () => {
                               各自显示自己的匹配度
                             </span>
                             <span className="mt-0.5 block text-xs leading-5 text-stone-500">
-                              每个身份显示使用自己默认材料生成的分数、分析理由和建议。
+                              每个身份显示各自的匹配结果。
                             </span>
                           </span>
                         </label>

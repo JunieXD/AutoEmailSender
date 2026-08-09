@@ -91,7 +91,7 @@ describe("HomePage page size", () => {
     expect(screen.getByText("导师 10")).toBeInTheDocument();
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 2 页，已选择 0 位"),
+      screen.getByText("12 位 · 1/2 页 · 已选 0 位"),
     ).toBeInTheDocument();
   });
 
@@ -106,7 +106,7 @@ describe("HomePage page size", () => {
     expect(screen.getByText("导师 11")).toBeInTheDocument();
     expect(screen.getByText("导师 12")).toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 1 页，已选择 0 位"),
+      screen.getByText("12 位 · 1/1 页 · 已选 0 位"),
     ).toBeInTheDocument();
     expect(localStorage.getItem("home-dashboard:page-size")).toBe("20");
   });

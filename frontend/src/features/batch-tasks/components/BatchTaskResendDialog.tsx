@@ -85,7 +85,7 @@ export const BatchTaskResendDialog = ({
                 </div>
               </dl>
               <p className="mt-3 text-xs leading-5 text-stone-600">
-                下一步可选择沿用上次内容、重新套用模板，或让 AI 重新改写；此处只确定本次重新发起的老师。
+                选择导师，下一步再选内容策略。
               </p>
               <p className="mt-2 text-xs font-medium text-stone-700">
                 有可沿用内容 {reusableCount} 封 · 没有可沿用内容 {regenerateCount} 封
@@ -95,11 +95,11 @@ export const BatchTaskResendDialog = ({
           {loading ? (
             <div className="flex items-center justify-center gap-2 rounded-2xl border border-stone-200 px-6 py-12 text-sm text-stone-500">
               <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载可重新发起项...
+              正在加载可重新发起项…
             </div>
           ) : selectableItems.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-6 text-center text-sm text-stone-500">
-              当前任务没有可重新发起的老师。
+              当前任务没有可重新发起的导师。
             </p>
           ) : (
             <div className="space-y-3">
@@ -126,7 +126,7 @@ export const BatchTaskResendDialog = ({
                     className="flex cursor-pointer items-start gap-3 rounded-2xl border border-stone-100 px-4 py-3 transition hover:border-primary/25 hover:bg-primary/5"
                   >
                     <SelectionToggleButton
-                      label={`选择老师 ${item.professor_name}`}
+                      label={`选择导师 ${item.professor_name}`}
                       selected={checked}
                       semantics="checkbox"
                       size="sm"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type TransitionEvent } from "react";
+import { useCallback, useEffect, useState, type TransitionEvent } from "react";
 import clsx from "clsx";
 import { ChevronDown, Loader2, Power, Save, Settings } from "lucide-react";
 
@@ -33,8 +33,8 @@ const numberFields: Array<{
 }> = [
   {
     key: "draft_max_tokens",
-    label: "AI 草稿输出 token 上限",
-    hint: "LLM 生成邮件草稿时传给模型的 max tokens，全局生效。",
+    label: "AI 草稿输出 Token 上限",
+    hint: "AI 草稿的最大输出长度，全局生效。",
     min: 256,
     max: 32000,
     defaultValue: 6000,
@@ -42,7 +42,7 @@ const numberFields: Array<{
   {
     key: "match_analysis_job_item_concurrency",
     label: "每个匹配任务同时分析导师数",
-    hint: "控制一个批量匹配任务里，最多同时分析几位导师；数值越大越快，也会占用更多 LLM 请求。保存后下一轮任务生效。",
+    hint: "越高速度越快，但请求更多。下个任务生效。",
     min: 1,
     max: 20,
     defaultValue: 5,
@@ -50,7 +50,7 @@ const numberFields: Array<{
   {
     key: "batch_draft_generation_concurrency",
     label: "同时生成草稿数",
-    hint: "批量生成邮件草稿时，最多同时生成几封。数值越大越快，也会占用更多 LLM 请求。保存后下一轮任务生效。",
+    hint: "越高速度越快，但请求更多。下个任务生效。",
     min: 1,
     max: 20,
     defaultValue: 5,
@@ -58,7 +58,7 @@ const numberFields: Array<{
   {
     key: "match_analysis_job_interval_seconds",
     label: "批量匹配轮询间隔",
-    hint: "后端检查待处理批量匹配任务的间隔秒数。",
+    hint: "检查待处理匹配任务的间隔秒数。",
     min: 1,
     max: 300,
     defaultValue: 10,
@@ -67,7 +67,7 @@ const numberFields: Array<{
   {
     key: "match_analysis_job_worker_count",
     label: "同时处理的匹配任务数",
-    hint: "控制后台最多同时跑几个批量匹配任务。通常保持 1；只有经常排队多个批量任务时再调高。保存后需重启生效。",
+    hint: "建议保持为 1。",
     min: 1,
     max: 8,
     defaultValue: 1,
@@ -76,7 +76,7 @@ const numberFields: Array<{
   {
     key: "crawler_worker_count",
     label: "同时运行的抓取任务数",
-    hint: "最多同时运行几个不同的智能抓取任务。默认串行更稳妥；调高后会增加网站访问和 LLM 请求压力。保存后下一轮调度生效。",
+    hint: "越高速度越快，但网站访问和模型请求更多。下个任务生效。",
     min: 1,
     max: 8,
     defaultValue: 1,
@@ -84,7 +84,7 @@ const numberFields: Array<{
   {
     key: "crawler_profile_enrichment_concurrency",
     label: "同时补全导师详情页数",
-    hint: "控制智能抓取和导师管理页信息补全合计最多同时处理几位导师。数值越大越快，也更容易触发网站限制。保存后下一轮调度生效。",
+    hint: "越高速度越快，但更易触发网站限制。下个任务生效。",
     min: 1,
     max: 20,
     defaultValue: 3,
@@ -92,7 +92,7 @@ const numberFields: Array<{
   {
     key: "crawler_host_concurrency",
     label: "同一网站同时抓取页数",
-    hint: "限制同一个网站最多同时抓取几个页面。建议保持 1，避免访问过快被目标网站限制。",
+    hint: "建议保持为 1，降低网站限流风险。",
     min: 1,
     max: 8,
     defaultValue: 1,
@@ -179,15 +179,6 @@ export function OtherSettingsCard() {
     void loadStartupStatus();
   }, [loadStartupStatus, open, startupLoading, startupStatus]);
 
-  const summary = useMemo(() => {
-    const matchConcurrency = form.match_analysis_job_item_concurrency || "5";
-    const crawlConcurrency = form.crawler_profile_enrichment_concurrency || "3";
-    const draftMaxTokens = form.draft_max_tokens || "6000";
-    const draftConcurrency = form.batch_draft_generation_concurrency || "5";
-    const intendedDirection = form.intended_research_direction.trim() ? "意向方向 已设置" : "意向方向 未填写";
-    return `草稿 ${draftMaxTokens} / 同时生成草稿 ${draftConcurrency} / ${intendedDirection} / 匹配导师 ${matchConcurrency} / 补全详情页 ${crawlConcurrency}`;
-  }, [form]);
-
   const toggleOpen = () => {
     setOpen((current) => {
       const next = !current;
@@ -220,7 +211,7 @@ export function OtherSettingsCard() {
       const saved = await updateRuntimeSettings(payload);
       setForm(toFormState(saved));
       setUpdatedAt(saved.updated_at);
-      notifySuccess("设置已保存", "其他设置已更新。");
+      notifySuccess("设置已保存");
     } catch (saveError) {
       notifyError(
         "保存其他设置失败",
@@ -276,11 +267,11 @@ export function OtherSettingsCard() {
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold text-stone-900">其他设置</h2>
             <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600">
-              {summary}
+              写信偏好、匹配方向与运行参数
             </span>
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-600">
-            调整 AI 草稿上限、补充要求、意向研究方向，以及批量匹配、草稿生成和智能抓取的同时处理数量。
+            调整 AI、匹配与抓取参数。
           </p>
         </div>
         <ChevronDown
@@ -302,7 +293,7 @@ export function OtherSettingsCard() {
             {loading ? (
               <div className="mt-5 flex items-center justify-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-8 text-sm text-stone-500">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                正在加载其他设置...
+                正在加载其他设置…
               </div>
             ) : (
               <>
@@ -338,14 +329,7 @@ export function OtherSettingsCard() {
                   </div>
 
                   <div className="space-y-4 border-t border-stone-200 pt-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-base font-semibold text-stone-900">草稿改写偏好</h3>
-                        <p className="mt-1 text-sm leading-6 text-stone-600">
-                          补充 AI 润色模板时需要额外注意的写作要求。
-                        </p>
-                      </div>
-                    </div>
+                    <h3 className="text-base font-semibold text-stone-900">草稿改写偏好</h3>
 
                     <label className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
                       <span className="text-sm font-semibold text-stone-900">
@@ -363,7 +347,7 @@ export function OtherSettingsCard() {
                       />
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
                         <span className="text-xs leading-5 text-stone-500">
-                          这段内容会作为补充要求注入到系统提示词中，不会覆盖模板保护、输出格式和安全约束。
+                          作为 AI 改写的附加要求，不覆盖系统规则。
                         </span>
                         <span className="shrink-0 text-xs leading-5 text-stone-500">
                           {form.draft_custom_instruction.length}/2000
@@ -373,12 +357,7 @@ export function OtherSettingsCard() {
                   </div>
 
                   <div className="space-y-4 border-t border-stone-200 pt-5">
-                    <div>
-                      <h3 className="text-base font-semibold text-stone-900">匹配分析偏好</h3>
-                      <p className="mt-1 text-sm leading-6 text-stone-600">
-                        补充你希望优先匹配的研究方向。
-                      </p>
-                    </div>
+                    <h3 className="text-base font-semibold text-stone-900">匹配分析偏好</h3>
 
                     <label className="block rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
                       <span className="text-sm font-semibold text-stone-900">意向研究方向</span>
@@ -394,7 +373,7 @@ export function OtherSettingsCard() {
                       />
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
                         <span className="text-xs leading-5 text-stone-500">
-                          填写后会作为匹配度计算参考；当导师方向与意向相近时会提高匹配度，不填写则按默认材料和导师信息计算。
+                          用于匹配分析；留空则只参考材料和导师信息。
                         </span>
                         <div className="text-xs leading-5 text-stone-500">
                           {form.intended_research_direction.length}/2000
@@ -404,12 +383,7 @@ export function OtherSettingsCard() {
                   </div>
 
                   <div className="space-y-3 border-t border-stone-200 pt-5">
-                    <div>
-                      <h3 className="text-base font-semibold text-stone-900">系统设置</h3>
-                      <p className="mt-1 text-sm leading-6 text-stone-600">
-                        控制桌面端与系统集成相关的选项。
-                      </p>
-                    </div>
+                    <h3 className="text-base font-semibold text-stone-900">系统设置</h3>
                     <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
                       <SelectionToggleButton
                         label="开机自启动"
@@ -429,11 +403,11 @@ export function OtherSettingsCard() {
                         <span className="block text-sm font-semibold text-stone-900">开机自启动</span>
                         <span className="mt-1 block text-xs leading-5 text-stone-500">
                           {startupLoading
-                            ? "正在读取开机自启动状态..."
+                            ? "正在读取开机自启动状态…"
                             : startupSaving
-                              ? "正在保存开机自启动设置..."
+                              ? "正在保存开机自启动设置…"
                               : startupStatus?.message ??
-                                "开启后，Auto Email Sender 会在 Windows 登录后自动启动并停留在托盘。"}
+                                "登录 Windows 后自动启动并驻留托盘。"}
                         </span>
                       </span>
                     </label>
@@ -442,7 +416,7 @@ export function OtherSettingsCard() {
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-stone-900">退出桌面应用</div>
                           <div className="mt-1 text-xs leading-5 text-stone-500">
-                            托盘菜单不可用时，可从这里关闭桌面端和后台服务。
+                            托盘不可用时从此退出。
                           </div>
                         </div>
                         <button
@@ -502,7 +476,7 @@ export function OtherSettingsCard() {
                       ) : (
                         <Save className="h-4 w-4" />
                       )}
-                      保存全部设置
+                      保存设置
                     </button>
                   </div>
                 ) : null}

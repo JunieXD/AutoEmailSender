@@ -84,12 +84,12 @@ export function AgentSupportOnboarding() {
           启用命令行与 Agent 支持？
         </h2>
         <p className="mt-3 text-sm leading-6 text-stone-600">
-          启用后，Codex、Claude Code、Cursor 等本地 Agent 可以按照你的要求查询数据、生成草稿并操作 Auto Email Sender。真实发送仍必须先展示计划并得到你的明确确认。
+          让本地 Agent 查询数据、生成草稿并操作软件；发送前仍需确认。
         </p>
         <p className="mt-3 text-sm leading-6 text-stone-500">
           {canInstallCodex
-            ? "已检测到 Codex。保持下方选项开启，即可在启用命令行的同时完成接入。"
-            : "软件会先安装命令行。随后可在个人中心选择要接入的 Agent；已安装的官方使用说明会随软件升级自动更新。"}
+            ? "已检测到 Codex，可同时完成接入。"
+            : "先安装命令行，再到个人中心选择 Agent。"}
         </p>
         {canInstallCodex ? (
           <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-primary/20 bg-primary/[0.045] px-4 py-3.5 transition hover:border-primary/35 hover:bg-primary/[0.07]">
@@ -110,13 +110,13 @@ export function AgentSupportOnboarding() {
                 </span>
               </span>
               <span className="mt-1 block text-xs leading-5 text-stone-500">
-                安装官方 Skill，让 Codex 可以按你的指令操作 Auto Email Sender。
+                安装官方 Skill，让 Codex 按你的指令操作软件。
               </span>
             </span>
           </label>
         ) : codexDetected && codex?.state === "conflict" ? (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-            已检测到 Codex，但 Skill 目录中已有其他文件。软件不会覆盖它；启用命令行后可在个人中心查看详情。
+            Codex 的 Skill 目录已有其他文件，不会自动覆盖；可在个人中心查看。
           </div>
         ) : null}
         {error ? (

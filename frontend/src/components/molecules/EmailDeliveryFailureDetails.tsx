@@ -4,7 +4,7 @@ interface EmailDeliveryFailureDetailsProps {
 }
 
 const UNKNOWN_CAUSE =
-  "暂未能判断具体原因。请根据原始报错检查邮箱配置和收件地址；若持续失败，请联系邮箱服务商。";
+  "未找到失败原因。请检查邮箱设置和收件地址；仍失败时联系邮箱服务商。";
 
 const getRawErrorText = (rawError?: string | null) =>
   rawError && rawError.trim() ? rawError : "服务商未返回原始报错";

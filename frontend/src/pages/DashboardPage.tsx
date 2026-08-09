@@ -169,7 +169,7 @@ const DashboardLoadingSkeleton = () => (
     </div>
     <div className="mt-6 flex items-center justify-center gap-2 text-sm text-stone-500">
       <Loader2 className="h-4 w-4 animate-spin" />
-      正在加载统计数据...
+      正在加载统计数据…
     </div>
   </main>
 );
@@ -261,7 +261,7 @@ const MatchDistributionChart = ({
   const analyzedPercentage = Math.min(100, Math.max(0, analyzedRate * 100));
 
   if (total === 0) {
-    return <EmptyState>暂无匹配分数数据</EmptyState>;
+    return <EmptyState>暂无匹配分析数据</EmptyState>;
   }
 
   return (
@@ -301,7 +301,7 @@ const MatchDistributionChart = ({
 
       <section data-testid="match-score-distribution">
         <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-          <span className="font-medium text-stone-600">已分析导师的分数分布</span>
+          <span className="font-medium text-stone-600">匹配分分布</span>
           <span className="whitespace-nowrap text-stone-500">共 {formatNumber(analyzedCount)} 位</span>
         </div>
         {analyzedCount === 0 ? (
@@ -645,7 +645,7 @@ const OutreachCoverageRanking = ({
             const percentage = Math.min(100, Math.max(0, activeRate * 100));
             const replyDescription = hasReplySample
               ? `已回复 ${item.replied_professor_count} / ${item.contacted_professor_count} 位导师，回复率 ${formatPercent(item.reply_rate)}`
-              : '暂无联系样本，回复率无法计算';
+              : '尚无联系记录，无法计算回复率。';
             const handleSelect = () => {
               if (level === 'university') {
                 onSelectUniversity(item.university);
@@ -735,9 +735,9 @@ const ReplyWaitDistribution = ({
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-testid="reply-wait-distribution">
         <p className="mb-3 text-xs leading-5 text-stone-500">
-          {dateLabel} · 首次收到回复的导师 · 从首次成功发送开始计算
+          统计首次发送至首次回复的用时 · {dateLabel}
         </p>
-        <EmptyState>当前范围暂无可计算的首次回复用时</EmptyState>
+        <EmptyState>当前范围暂无回复用时数据</EmptyState>
       </div>
     );
   }
@@ -746,7 +746,7 @@ const ReplyWaitDistribution = ({
     <div className="flex min-h-0 flex-1 flex-col" data-testid="reply-wait-distribution">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <p className="text-xs leading-5 text-stone-500">
-          {dateLabel} · 首次收到回复的导师 · 从首次成功发送开始计算
+          统计首次发送至首次回复的用时 · {dateLabel}
         </p>
         {data.sample_count < 5 ? (
           <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">样本较少</span>
@@ -1314,9 +1314,9 @@ export const DashboardPage = () => {
       <main className="mx-auto max-w-5xl px-6 py-8">
         <section className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-8 text-center shadow-sm">
           <h1 className="text-2xl font-semibold text-stone-950">统计面板</h1>
-          <p className="mt-3 text-sm text-stone-500">请先选择身份。</p>
+          <p className="mt-3 text-sm text-stone-500">选择身份后查看统计。</p>
           <Link to="/profile" data-interactive="button" className="ui-btn-primary mt-5">
-            去个人中心配置
+            设置身份
           </Link>
         </section>
       </main>
@@ -1367,7 +1367,7 @@ export const DashboardPage = () => {
             >
               <ModuleHeader
                 title="导师概览"
-                description="导师池规模、资料质量和高价值待推进导师"
+                description="导师规模、资料与匹配度"
                 icon={<GraduationCap className="h-5 w-5" />}
               />
               <div
@@ -1443,7 +1443,7 @@ export const DashboardPage = () => {
             >
               <ModuleHeader
                 title="联系进展"
-                description="联系进度、院校表现、回复效率和发送趋势"
+                description="发送、回复与院校表现"
                 icon={<ClipboardCheck className="h-5 w-5" />}
               />
               {communicationIdentityIds.length > 1 ? (

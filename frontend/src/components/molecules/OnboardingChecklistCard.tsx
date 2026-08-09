@@ -28,7 +28,7 @@ export const OnboardingChecklistCard = ({
   >
     <div className="max-w-3xl">
       <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
-        首次上手引导
+        新手引导
       </div>
       <h1 className="mt-4 text-3xl font-semibold text-stone-900">{title}</h1>
       <p className="mt-3 text-sm leading-6 text-stone-600">{description}</p>

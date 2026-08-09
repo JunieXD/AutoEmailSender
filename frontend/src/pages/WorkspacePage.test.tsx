@@ -560,8 +560,7 @@ describe("WorkspacePage draft saving", () => {
       });
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
-      "模板已重新套用",
-      "已套用“研究申请模板（最新版）”的模板库当前内容。",
+      "已套用“研究申请模板（最新版）”",
     );
     expect(screen.getByLabelText("邮件主题")).toHaveValue(
       "最新版主题 保存草稿导师",
@@ -803,7 +802,6 @@ describe("WorkspacePage draft saving", () => {
     expect(apiMocks.approveAndSend).not.toHaveBeenCalled();
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       "草稿已保存",
-      "工作区草稿已更新。",
     );
   });
 
@@ -870,7 +868,7 @@ describe("WorkspacePage draft saving", () => {
     });
     expect(
       within(dialog).getByText(
-        /建议不超过 1 MB，以减少被邮箱提供商限流的概率。/,
+        /建议不超过 1 MB，以降低限流风险。/,
       ),
     ).toBeInTheDocument();
     expect(within(dialog).queryByText(/云盘/)).not.toBeInTheDocument();
@@ -1141,7 +1139,6 @@ describe("WorkspacePage draft saving", () => {
     await waitFor(() => {
       expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
         "草稿已保存",
-        "工作区草稿已更新。",
       );
       expect(screen.getByLabelText("邮件主题")).not.toBeDisabled();
     });
@@ -1459,7 +1456,7 @@ describe("WorkspacePage draft saving", () => {
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       "已加入发送计划",
-      "邮件将在设定时间发送，可前往任务中心统一查看或修改。",
+      "将在设定时间发送，可在任务中心修改。",
     );
   });
 });

@@ -304,7 +304,7 @@ const HomePageLoadingSkeleton = () => (
 
     <div className="mt-4 flex items-center justify-center gap-2 text-sm text-stone-500">
       <Loader2 className="h-4 w-4 animate-spin" />
-      正在连接后端并加载首页数据...
+      正在加载首页…
     </div>
   </main>
 );
@@ -514,7 +514,7 @@ export const HomePage = () => {
             : item,
         ),
       );
-      notifySuccess("标签已更新", `已更新“${updatedProfessor.name}”的导师标签。`);
+      notifySuccess(`已更新“${updatedProfessor.name}”的标签`);
       return true;
     } catch (saveError) {
       const message =
@@ -541,7 +541,7 @@ export const HomePage = () => {
         ),
       );
       setNoteEditorProfessor(null);
-      notifySuccess("备注已更新", `已更新“${noteEditorProfessor.name}”的个人备注。`);
+      notifySuccess(`已更新“${noteEditorProfessor.name}”的备注`);
     } catch (saveError) {
       const message =
         saveError instanceof Error ? saveError.message : "保存备注失败";
@@ -558,7 +558,7 @@ export const HomePage = () => {
     try {
       const createdTag = await createProfessorTag(payload);
       setProfessorTags((previous) => [...previous, createdTag]);
-      notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+      notifySuccess(`已创建标签“${createdTag.name}”`);
       return createdTag;
     } catch (createError) {
       const message =
@@ -1038,14 +1038,14 @@ export const HomePage = () => {
       professor?.match_score !== undefined
     ) {
       const action = await choose({
-        title: "该导师已有匹配分",
-        description: `${professor.name} 当前匹配分为 ${professor.match_score}。请选择跳过本次分析，或重新计算匹配分。`,
-        confirmLabel: "重算",
-        secondaryLabel: "跳过",
+        title: `${professor.name} 当前为 ${professor.match_score} 分`,
+        description: "要重新计算吗？",
+        confirmLabel: "重新计算",
+        secondaryLabel: "保留现有",
         cancelLabel: "取消",
       });
       if (action === "secondary") {
-        notifyWarning("已跳过匹配分析", "该导师已有匹配分，未重新计算。");
+        notifyWarning("已保留现有匹配分");
         return;
       }
       if (action !== "confirm") {
@@ -1116,10 +1116,10 @@ export const HomePage = () => {
     );
     if (scoredProfessors.length > 0) {
       const action = await choose({
-        title: "已选导师中有匹配分",
-        description: `已选导师中有 ${scoredProfessors.length} 位已经计算过匹配分。请选择跳过这些导师，或重新计算他们的匹配分。`,
-        confirmLabel: "重算",
-        secondaryLabel: "跳过",
+        title: `${scoredProfessors.length} 位导师已有匹配分`,
+        description: "要重新计算还是保留现有结果？",
+        confirmLabel: "重新计算",
+        secondaryLabel: "保留现有",
         cancelLabel: "取消",
       });
       if (action === "secondary") {
@@ -1175,10 +1175,10 @@ export const HomePage = () => {
             className="mx-auto max-w-6xl px-6 py-8"
           >
           <OnboardingChecklistCard
-            title="完成首次配置"
+            title={onboardingState.title}
             description={onboardingState.description}
             nextActionHref={onboardingState.nextActionHref}
-            nextActionLabel="继续配置"
+            nextActionLabel="继续设置"
             items={[
               { label: "创建发件身份", done: Boolean(selectedIdentity) },
               { label: "配置 AI 模型", done: Boolean(selectedLlmProfile) },
@@ -1539,8 +1539,8 @@ export const HomePage = () => {
                 type="button"
                 aria-label={
                   allFilteredProfessorsSelected
-                    ? "取消选择全部筛选结果"
-                    : "选择全部筛选结果"
+                    ? "取消全选"
+                    : "全选当前结果"
                 }
                 aria-pressed={allFilteredProfessorsSelected}
                 onClick={handleToggleFilteredProfessors}
@@ -1556,8 +1556,8 @@ export const HomePage = () => {
                   <Square className="h-4 w-4" />
                 )}
                 {allFilteredProfessorsSelected
-                  ? "取消选择全部筛选结果"
-                  : "选择全部筛选结果"}
+                  ? "取消全选"
+                  : "全选当前结果"}
               </button>
             ) : null}
             <div className="text-sm text-stone-600">
@@ -1568,11 +1568,11 @@ export const HomePage = () => {
           {loading ? (
             <div className="flex items-center justify-center gap-2 px-6 py-14 text-sm text-stone-500">
               <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载导师列表...
+              正在加载导师列表…
             </div>
           ) : visibleProfessors.length === 0 ? (
             <div className="px-6 py-14 text-center text-sm text-stone-500">
-              <div>暂无可用导师。可在导师管理页导入或新增。</div>
+              <div>暂无导师</div>
               <Link
                 to="/professors"
                 data-interactive="button"
@@ -1620,7 +1620,7 @@ export const HomePage = () => {
               ariaLabel="导师看板分页"
               unitLabel="位"
               itemLabel="位导师"
-              summary={`共 ${visibleProfessors.length} 位符合筛选条件，当前第 ${safeCurrentPage} / ${totalPages} 页，已选择 ${selectedIds.size} 位`}
+              summary={`${visibleProfessors.length} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
               focusTargetRef={professorListStartRef}
               className="border-t border-stone-100 px-6 py-4"
             />
@@ -1636,8 +1636,8 @@ export const HomePage = () => {
                 </div>
                 <div className="mt-1 text-xs text-stone-500">
                   {matchUsesGroupSource
-                    ? `匹配分析将统一使用 ${matchSourceName} 的默认材料。`
-                    : "可批量分析匹配度，或创建批量任务。"}
+                    ? `统一使用 ${matchSourceName} 的默认材料`
+                    : "批量操作"}
                 </div>
               </div>
               <div className="flex flex-wrap justify-center gap-3">

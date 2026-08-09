@@ -296,7 +296,7 @@ export const MultiSelectFilter = ({
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-100 px-3 py-2">
               <span aria-live="polite" className="text-xs font-medium text-stone-500">
-                当前 {visibleOptions.length} 项 / 已选 {activeDraftValues.length} 项
+                {visibleOptions.length} 项 · 已选 {activeDraftValues.length} 项
               </span>
               <button
                 type="button"
@@ -345,7 +345,7 @@ export const MultiSelectFilter = ({
                 className="rounded-xl px-2 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-default disabled:opacity-40"
               >
                 {allVisibleOptionsSelected
-                  ? "取消全选当前结果"
+                  ? "取消全选"
                   : "全选当前结果"}
               </button>
               <button
@@ -354,7 +354,7 @@ export const MultiSelectFilter = ({
                 disabled={visibleOptions.length === 0}
                 className="rounded-xl px-2 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-default disabled:opacity-40"
               >
-                反选当前结果
+                反选
               </button>
             </div>
 

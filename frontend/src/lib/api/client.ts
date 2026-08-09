@@ -304,7 +304,7 @@ function sanitizeDiagnosticMessage(message: string): string {
     );
 
     return withoutSensitiveKeyValues.length > 300
-      ? `${withoutSensitiveKeyValues.slice(0, 300)}...`
+      ? `${withoutSensitiveKeyValues.slice(0, 300)}…`
       : withoutSensitiveKeyValues;
   } catch {
     return "[Unserializable]";

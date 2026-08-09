@@ -51,7 +51,7 @@ const buildPreview = (content: string, contentHtml: string | null) => {
 
 const getMessageLabel = (message: WorkspaceMessageDTO) => {
   if (message.direction === 'received') {
-    return '老师回复';
+    return '导师回复';
   }
   return isFailedSentMessage(message) ? '发送失败' : '已发送';
 };

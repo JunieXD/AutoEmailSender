@@ -136,7 +136,7 @@ describe("MultiSelectFilter", () => {
   it("renders an unrestricted filter as every option selected", () => {
     renderFilter();
 
-    expect(screen.getByText("当前 3 项 / 已选 3 项")).toBeInTheDocument();
+    expect(screen.getByText("3 项 · 已选 3 项")).toBeInTheDocument();
     options.forEach((option) => {
       expect(screen.getByRole("option", { name: option })).toHaveAttribute(
         "aria-selected",
@@ -144,7 +144,7 @@ describe("MultiSelectFilter", () => {
       );
     });
     expect(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -159,15 +159,15 @@ describe("MultiSelectFilter", () => {
     expect(
       screen.queryByRole("option", { name: "示例大学" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("当前 1 项 / 已选 3 项")).toBeInTheDocument();
+    expect(screen.getByText("1 项 · 已选 3 项")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "反选当前结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "反选" }));
 
     expect(screen.getByRole("option", { name: "第二大学" })).toHaveAttribute(
       "aria-selected",
       "false",
     );
-    expect(screen.getByText("当前 1 项 / 已选 2 项")).toBeInTheDocument();
+    expect(screen.getByText("1 项 · 已选 2 项")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith(["示例大学", "第三学院"]);
@@ -177,7 +177,7 @@ describe("MultiSelectFilter", () => {
     const onChange = renderFilter();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
 
     expect(screen.getByText("至少保留一项")).toBeInTheDocument();
@@ -227,7 +227,7 @@ describe("MultiSelectFilter", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
       target: { value: "第二" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "反选当前结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "反选" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith(["示例大学", "第二大学"]);
@@ -236,7 +236,7 @@ describe("MultiSelectFilter", () => {
   it("discards draft changes when cancelled", () => {
     const onChange = renderFilter();
 
-    fireEvent.click(screen.getByRole("button", { name: "反选当前结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "反选" }));
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
     expect(onChange).not.toHaveBeenCalled();
@@ -261,7 +261,7 @@ describe("MultiSelectFilter", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "搜索标签选项" }), {
       target: { value: "重点" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "反选当前结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "反选" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith(["22"]);

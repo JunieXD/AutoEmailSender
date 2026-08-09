@@ -87,7 +87,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     expect(
@@ -151,7 +151,7 @@ describe("ProfessorsPage crawler job entry", () => {
         }),
       ]),
     );
-    expect(await screen.findByText("任务中心会继续后台抓取，请到任务中心的教师抓取页签查看进度。")).toBeInTheDocument();
+    expect(await screen.findByText("可在任务中心查看抓取进度。")).toBeInTheDocument();
   });
 
   it("expands pasted multiline crawler urls into separate rows", async () => {
@@ -161,7 +161,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     fireEvent.change(within(dialog).getByLabelText("学校"), {
@@ -212,7 +212,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     fireEvent.click(within(dialog).getByRole("button", { name: "添加页面 URL" }));
@@ -229,7 +229,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     const firstUrlInput = within(dialog).getByLabelText("页面 URL");
@@ -256,7 +256,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     fireEvent.click(within(dialog).getByRole("radio", { name: "详情页" }));
@@ -304,7 +304,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     fireEvent.change(within(dialog).getByLabelText("学校"), {
@@ -332,7 +332,7 @@ describe("ProfessorsPage crawler job entry", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始抓取" }));
 
     const dialog = screen.getByRole("dialog", { name: "创建抓取任务" });
     fireEvent.change(within(dialog).getByLabelText("学校"), {

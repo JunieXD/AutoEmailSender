@@ -102,10 +102,7 @@ export const StatisticsSectionNav = ({
                       >
                         <Icon className="h-4 w-4 stroke-[1.8]" />
                       </span>
-                      <span>
-                        <span className="block font-semibold text-stone-900">{item.label}</span>
-                        <span className="mt-0.5 block text-stone-500">{active ? "当前版块" : "点击跳转"}</span>
-                      </span>
+                      <span className="font-semibold text-stone-900">{item.label}</span>
                     </div>
                   </div>
                 ) : null}

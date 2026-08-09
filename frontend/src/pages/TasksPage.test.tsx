@@ -433,14 +433,13 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "取消抓取" }));
 
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          description:
-            "取消后本次抓取不会继续。如需重新抓取，请点击“重新抓取”。",
+          description: "停止抓取并保留已有结果。",
         }),
       );
     });
@@ -456,13 +455,13 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "重新抓取" }));
 
     await waitFor(() => {
       expect(notificationMocks.notifyError).toHaveBeenCalledWith(
         "请先选择模型配置",
-        "请选择一个 LLM Profile 后再继续操作。",
+        "选择模型后再继续。",
       );
     });
     expect(confirmMock).not.toHaveBeenCalled();
@@ -481,13 +480,13 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "继续抓取" }));
 
     await waitFor(() => {
       expect(notificationMocks.notifyError).toHaveBeenCalledWith(
         "请先选择模型配置",
-        "请选择一个 LLM Profile 后再继续操作。",
+        "选择模型后再继续。",
       );
     });
     expect(apiMocks.resumeCrawlJob).not.toHaveBeenCalled();
@@ -504,7 +503,7 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "重新抓取" }));
 
     await waitFor(() => {
@@ -534,7 +533,7 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "继续抓取" }));
 
     await waitFor(() => {
@@ -1505,7 +1504,7 @@ describe("TasksPage crawl job monitor", () => {
         view: "current",
       });
     });
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     expect(await screen.findByText("江西财经大学 / 计算机与人工智能学院")).toBeInTheDocument();
 
     selectionMock.selectedIdentityId = 2;
@@ -1564,7 +1563,7 @@ describe("TasksPage crawl job monitor", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /教师抓取/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /智能抓取/ }));
     expect(await screen.findByText("江西财经大学 / 计算机与人工智能学院")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
 
@@ -1598,7 +1597,7 @@ describe("TasksPage batch draft review", () => {
     expect(within(dialog).getByText("强化学习博士申请")).toBeInTheDocument();
     expect(within(dialog).getByText("AI 辅助写信")).toBeInTheDocument();
     expect(
-      within(dialog).getByText("内容以创建任务时编辑器中的版本为准，不随模板库后续修改。"),
+      within(dialog).getByText("使用任务创建时的模板快照。"),
     ).toBeInTheDocument();
   });
 
@@ -1775,7 +1774,7 @@ describe("TasksPage batch draft review", () => {
     });
     expect(confirmMock).toHaveBeenCalledWith({
       title: "取消给王老师的本次发送？",
-      description: expect.stringContaining("不影响批次中的其他导师。之后可在原卡片上恢复。"),
+      description: expect.stringContaining("不影响其他导师，可稍后恢复。"),
       confirmLabel: "确认取消发送",
       cancelLabel: "保留发送",
       tone: "danger",
@@ -1800,7 +1799,7 @@ describe("TasksPage batch draft review", () => {
       expect.objectContaining({
         title: "附件超过 1 MB，仍要恢复发送吗？",
         description: expect.stringContaining(
-          "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
+            "建议不超过 1 MB，以降低限流风险。",
         ),
         confirmLabel: "仍然恢复",
         cancelLabel: "保持取消",
@@ -1874,7 +1873,7 @@ describe("TasksPage batch draft review", () => {
     expect(await screen.findByText("已发送导师 1")).toBeInTheDocument();
     expect(screen.getByText("已发送导师 20")).toBeInTheDocument();
     expect(screen.queryByText("已发送导师 21")).not.toBeInTheDocument();
-    expect(screen.getByText("显示 1-20 / 2000 个任务")).toBeInTheDocument();
+    expect(screen.getByText("1-20 / 2000")).toBeInTheDocument();
 
     const pagination = screen.getByRole("navigation", {
       name: "已发送导师分页",
@@ -1975,7 +1974,7 @@ describe("TasksPage batch draft review", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "下一页" }));
     expect(await within(dialog).findByText("已发送导师 21")).toBeInTheDocument();
-    expect(within(dialog).getByText("显示 21-21 / 21 个任务")).toBeInTheDocument();
+    expect(within(dialog).getByText("21-21 / 21")).toBeInTheDocument();
 
     rerender(
       <MemoryRouter>
@@ -2000,7 +1999,7 @@ describe("TasksPage batch draft review", () => {
     });
     expect(within(restoredDialog).getByText(selectedTask.name)).toBeInTheDocument();
     expect(within(restoredDialog).getByText("已发送导师 21")).toBeInTheDocument();
-    expect(within(restoredDialog).getByText("显示 21-21 / 21 个任务")).toBeInTheDocument();
+    expect(within(restoredDialog).getByText("21-21 / 21")).toBeInTheDocument();
   });
 
   it("opens the generated draft inside the existing batch detail panel", async () => {
@@ -2056,7 +2055,7 @@ describe("TasksPage batch draft review", () => {
 
     const attachmentCard = screen.getByRole("region", { name: "随信附件" });
     const reviewCard = screen.getByRole("region", { name: "审核操作" });
-    const professorCard = screen.getByRole("region", { name: "老师详情" });
+    const professorCard = screen.getByRole("region", { name: "导师详情" });
     const matchCard = screen.getByRole("region", { name: "匹配摘要" });
     expect(attachmentCard.nextElementSibling).toBe(reviewCard);
     expect(reviewCard.nextElementSibling).toBe(professorCard);
@@ -2140,7 +2139,7 @@ describe("TasksPage batch draft review", () => {
     expect(await screen.findByText(task.name)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
     expect(
-      await screen.findByText(/其中 1 封因导师缺少研究方向/),
+      await screen.findByText(/其中 1 封未进行 AI 改写/),
     ).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
     expect(await screen.findByText("未进行 AI 改写")).toBeInTheDocument();
@@ -2149,7 +2148,7 @@ describe("TasksPage batch draft review", () => {
       name: "未进行 AI 改写提示",
     });
     expect(fallbackNotice).toHaveTextContent(
-      "该导师缺少研究方向，系统已直接使用「博士申请模板」模板生成草稿",
+      "因缺少研究方向，已直接套用「博士申请模板」模板",
     );
     expect(fallbackNotice).toHaveTextContent(
       "模板中的研究方向变量为空，请重点检查相关语句",
@@ -2279,7 +2278,7 @@ describe("TasksPage batch draft review", () => {
     fireEvent.click(within(editDialog).getByRole("button", { name: "保存导师" }));
 
     expect(
-      await within(fallbackNotice).findByText(/导师资料现已补充/),
+      await within(fallbackNotice).findByText(/资料已补充/),
     ).toBeInTheDocument();
     expect(
       within(fallbackNotice).queryByRole("button", { name: "补充资料" }),
@@ -2388,7 +2387,7 @@ describe("TasksPage batch draft review", () => {
     await waitFor(() => {
       expect(apiMocks.getBatchTaskItemThread).toHaveBeenLastCalledWith(task.id, 12);
     });
-    expect(screen.queryByText("正在加载草稿...")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在加载草稿…")).not.toBeInTheDocument();
     expect(screen.getByLabelText("邮件主题")).toHaveValue("第一封主题");
     expect(screen.getByLabelText("邮件正文")).toHaveValue("<p>第一封正文</p>");
     expect(screen.getByText(`${task.name} · 第一位导师`)).toBeInTheDocument();
@@ -2406,7 +2405,7 @@ describe("TasksPage batch draft review", () => {
     expect(within(attachmentCard).getByText("第二位导师附件.pdf")).toBeInTheDocument();
     expect(within(attachmentCard).getByRole("checkbox")).toBeChecked();
 
-    const professorCard = screen.getByRole("region", { name: "老师详情" });
+    const professorCard = screen.getByRole("region", { name: "导师详情" });
     expect(within(professorCard).getByText("Second University")).toBeInTheDocument();
     expect(within(professorCard).getByText("Second School")).toBeInTheDocument();
     expect(within(professorCard).getByText("Second Department")).toBeInTheDocument();
@@ -2504,7 +2503,7 @@ describe("TasksPage batch draft review", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
     fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
 
-    const professorCard = await screen.findByRole("region", { name: "老师详情" });
+    const professorCard = await screen.findByRole("region", { name: "导师详情" });
     expect(within(professorCard).queryByText("主页链接")).not.toBeInTheDocument();
 
     confirmMock.mockResolvedValueOnce(false);
@@ -2678,13 +2677,13 @@ describe("TasksPage batch draft review", () => {
       );
     });
     expect(confirmMock.mock.calls[0][0].description).toContain(
-      "生成中或生成失败的邮件不会被处理",
+      "生成中或失败项不受影响",
     );
     expect(confirmMock.mock.calls[0][0].description).toContain(
-      "其中 1 封因导师缺少研究方向",
+      "其中 1 封因导师缺少研究方向，直接使用模板生成，未进行 AI 改写",
     );
     expect(confirmMock.mock.calls[0][0].description).toContain(
-      "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
+      "建议不超过 1 MB，以降低限流风险。",
     );
     await waitFor(() => {
       expect(apiMocks.approveAllBatchTaskDrafts).toHaveBeenCalledWith(

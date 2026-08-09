@@ -17,7 +17,7 @@ export const getWorkspaceNextStep = (
   input: WorkspaceNextStepInput,
 ): WorkspaceNextStep => {
   if (input.canContinueManually) {
-    return { title: "作为单独联系继续" };
+    return { title: "单独联系" };
   }
 
   if (input.canWriteFollowUp) {
@@ -33,7 +33,7 @@ export const getWorkspaceNextStep = (
   }
 
   if (!input.hasPrimaryMaterial) {
-    return { title: "选择 AI 写信参考材料" };
+    return { title: "选择 AI 参考材料" };
   }
 
   if (!input.hasDraft) {

@@ -65,7 +65,7 @@ const ArchiveCard = ({ thread }: WorkspaceSidebarProps) => {
             </div>
             <div className="min-w-0">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-                老师档案
+                导师档案
               </div>
               <h2 className="mt-1 text-xl font-semibold tracking-[0.01em] text-stone-950">
                 {professor.name}

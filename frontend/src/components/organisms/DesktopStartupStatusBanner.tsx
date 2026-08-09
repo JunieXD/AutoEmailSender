@@ -36,7 +36,7 @@ export const DesktopStartupStatusBanner = () => {
           <div>
             <div className="font-medium">系统准备失败</div>
             <div className="mt-1 text-red-800">
-              应用启动时未能完成本地数据检查。请重启应用后再试；如果问题仍然存在，请导出诊断日志反馈。
+              请重启应用；若仍失败，请导出诊断日志。
             </div>
           </div>
         </div>
@@ -52,7 +52,7 @@ export const DesktopStartupStatusBanner = () => {
           <div>
             <div className="font-medium">正在重启系统服务</div>
             <div className="mt-1 text-amber-900">
-              本地服务正在恢复连接，完成后会自动继续。
+              恢复后将自动继续。
             </div>
           </div>
         </div>
@@ -61,10 +61,10 @@ export const DesktopStartupStatusBanner = () => {
   }
 
   const secondary = status.verySlowStartup
-    ? "如果长时间停留在此状态，可以重启应用；若仍无法恢复，请导出诊断日志反馈。"
+    ? "长时间无进展？请重启应用或导出诊断日志。"
     : status.slowStartup
-      ? "首次启动或版本升级时可能会稍慢，这不是配置错误。请保持应用打开，完成后会自动恢复。"
-      : "新版首次启动可能需要检查或升级本地数据库，通常需要 1-3 分钟。请保持应用打开。";
+      ? "首次启动或升级可能较慢，请保持应用打开。"
+      : "首次启动或升级约需 1–3 分钟，请保持应用打开。";
 
   return (
     <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-950">

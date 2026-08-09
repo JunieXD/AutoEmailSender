@@ -31,11 +31,11 @@ export const buildBulkTagConfirmDescription = ({
     tagNames.length > 0 ? tagNames.join("、") : "不选择任何标签";
 
   if (mode === "replace" && tagNames.length === 0) {
-    return `将清空选中的 ${selectedCount} 位导师的全部标签。原来的标签将会被替换。`;
+    return `将清空 ${selectedCount} 位导师的全部标签。`;
   }
 
   if (mode === "replace") {
-    return `将“${tagDescription}”覆盖选中的 ${selectedCount} 位导师，原来的标签将会被替换。`;
+    return `用“${tagDescription}”覆盖 ${selectedCount} 位导师的现有标签。`;
   }
 
   if (mode === "remove") {

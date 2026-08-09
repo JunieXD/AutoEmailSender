@@ -50,12 +50,12 @@ const renderPage = () =>
   );
 
 const getWorkbenchRegion = () =>
-  screen.getByRole("region", { name: "导师档案管理" });
+  screen.getByRole("region", { name: "导师管理" });
 
 const openImportModal = () => {
   const button =
-    within(getWorkbenchRegion()).queryByRole("button", { name: "模板导入" }) ??
-    screen.getByRole("button", { name: "模板导入" });
+    within(getWorkbenchRegion()).queryByRole("button", { name: "选择文件" }) ??
+    screen.getByRole("button", { name: "选择文件" });
   fireEvent.click(button);
 };
 

@@ -427,7 +427,7 @@ describe('EmailDeliveryPlan', () => {
     fireEvent.click(screen.getByRole('button', { name: /即将发送\s*250/ }));
 
     expect((await screen.findAllByText('已缓存的即将发送邮件')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('正在加载发送计划...')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在加载发送计划…')).not.toBeInTheDocument();
     unmount();
   });
 

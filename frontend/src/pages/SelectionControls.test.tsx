@@ -353,7 +353,7 @@ describe("selection controls", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByRole("button", { name: "选择全部筛选结果" });
+    await screen.findByRole("button", { name: "全选当前结果" });
     expect(listProfessors).toHaveBeenCalledTimes(1);
 
     Object.assign(selectionContextValue, {
@@ -377,7 +377,7 @@ describe("selection controls", () => {
     );
 
     const selectFilteredResults = await screen.findByRole("button", {
-      name: "选择全部筛选结果",
+      name: "全选当前结果",
     });
 
     expect(
@@ -404,7 +404,7 @@ describe("selection controls", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "取消选择全部筛选结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
 
     expect(screen.queryByText("已选中 11 位导师")).not.toBeInTheDocument();
@@ -423,7 +423,7 @@ describe("selection controls", () => {
     expect(await screen.findByText("导师 11")).toBeInTheDocument();
     expect(screen.getByText("导师 20")).toBeInTheDocument();
     expect(screen.queryByText("导师 21")).not.toBeInTheDocument();
-    expect(screen.getByText(/第 1 \/ 2 页/)).toBeInTheDocument();
+    expect(screen.getByText(/1\/2 页/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
 
@@ -693,7 +693,7 @@ describe("selection controls", () => {
 
     const tableHeader = await screen.findByTestId("professor-table-header");
     const selectFilteredResults = within(tableHeader).getByRole("button", {
-      name: "选择全部筛选结果",
+      name: "全选当前结果",
     });
 
     expect(screen.getByText("导师 11")).toBeInTheDocument();
@@ -782,7 +782,7 @@ describe("selection controls", () => {
       screen.getByRole("button", { name: "学校：全部学校" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "示例大学" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
@@ -870,7 +870,7 @@ describe("selection controls", () => {
       screen.getByRole("button", { name: "学校：全部学校" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "示例大学" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
@@ -1461,6 +1461,6 @@ describe("selection controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "覆盖标签" }));
 
     expect(await screen.findByText("确认覆盖标签？")).toBeInTheDocument();
-    expect(screen.getByText(/原来的标签将会被替换/)).toBeInTheDocument();
+    expect(screen.getByText(/覆盖 .* 位导师的现有标签/)).toBeInTheDocument();
   });
 });

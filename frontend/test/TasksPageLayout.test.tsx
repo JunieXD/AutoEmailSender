@@ -317,7 +317,7 @@ describe("TasksPage layout", () => {
 
     expect(pageShell).toHaveClass("max-w-7xl");
     expect(screen.getByRole("button", { name: "批量邮件" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "教师抓取" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "智能抓取" })).toBeInTheDocument();
   });
 
   it("preloads match analysis count before the match tab is opened", async () => {

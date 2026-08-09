@@ -121,7 +121,7 @@ describe("DesktopUpdateButton", () => {
     render(<DesktopUpdateButton />);
     fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
 
-    expect(await screen.findByRole("dialog", { name: /发现新版本 v2\.1\.6/ })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /发现 v2\.1\.6/ })).toBeInTheDocument();
     expect(screen.getByText("更新内容")).toBeInTheDocument();
     expect(screen.getByText("修复公告弹窗高度")).toBeInTheDocument();
     expect(screen.getByTestId("desktop-update-release-notes")).toHaveClass("max-h-[50vh]", "overflow-y-auto");
@@ -145,8 +145,8 @@ describe("DesktopUpdateButton", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
 
-    const dialog = await screen.findByRole("dialog", { name: /发现新版本 v2\.1\.6/ });
-    expect(container).not.toHaveTextContent("发现新版本 v2.1.6");
+    const dialog = await screen.findByRole("dialog", { name: /发现 v2\.1\.6/ });
+    expect(container).not.toContainElement(dialog);
     expect(document.body).toContainElement(dialog);
   });
 
@@ -164,7 +164,7 @@ describe("DesktopUpdateButton", () => {
     render(<DesktopUpdateButton />);
     fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
 
-    const dialog = await screen.findByRole("dialog", { name: /发现新版本 v2\.1\.6/ });
+    const dialog = await screen.findByRole("dialog", { name: /发现 v2\.1\.6/ });
     const releaseNotes = within(dialog).getByTestId("desktop-update-release-notes");
     const markdown = releaseNotes.querySelector("article");
     expect(markdown).toHaveClass("space-y-4", "break-words");
@@ -216,13 +216,13 @@ describe("DesktopUpdateButton", () => {
 
     render(<DesktopUpdateButton />);
     fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
-    const dialog = await screen.findByRole("dialog", { name: /发现新版本/ });
+    const dialog = await screen.findByRole("dialog", { name: /发现 v/ });
     fireEvent.click(within(dialog).getByRole("button", { name: /全量下载/ }));
 
     await waitFor(() => {
       expect(downloadUpdate).toHaveBeenCalledWith({ mode: "full" });
     });
-    expect(screen.queryByRole("dialog", { name: /发现新版本/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /发现 v/ })).not.toBeInTheDocument();
   });
 
   it("uses fallback release notes and keeps the pending marker when users dismiss the dialog", async () => {
@@ -239,7 +239,7 @@ describe("DesktopUpdateButton", () => {
     expect(await screen.findByText("新版本已发布，更新内容暂不可用。")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /稍后/ }));
-    expect(screen.queryByRole("dialog", { name: /发现新版本/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /发现 v/ })).not.toBeInTheDocument();
     expect(await screen.findByText("NEW")).toBeInTheDocument();
   });
 
@@ -267,8 +267,8 @@ describe("DesktopUpdateButton", () => {
     });
 
     expect(await screen.findByText(/差量包：总计 20.0 MB/)).toBeInTheDocument();
-    expect(screen.getByText(/差量包：已下载 10.0 MB/)).toBeInTheDocument();
-    expect(screen.getByText(/差量包：剩余 10.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/已下载 10.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/剩余 10.0 MB/)).toBeInTheDocument();
     expect(screen.getByText(/512.0 KB\/s/)).toBeInTheDocument();
     expect(screen.getByText(/预计 20 秒/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -299,8 +299,8 @@ describe("DesktopUpdateButton", () => {
     });
 
     expect(await screen.findByText(/已切换全量包：总计 266.0 MB/)).toBeInTheDocument();
-    expect(screen.getByText("差量更新不可用，已自动改用全量下载。")).toBeInTheDocument();
-    expect(screen.getByText(/全量包：已下载 100.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText("增量更新不可用，已改为完整下载。")).toBeInTheDocument();
+    expect(screen.getByText(/已下载 100.0 MB/)).toBeInTheDocument();
     expect(screen.queryByText(/差量包：总计 266.0 MB/)).not.toBeInTheDocument();
   });
 
@@ -323,7 +323,7 @@ describe("DesktopUpdateButton", () => {
 
     render(<DesktopUpdateButton />);
     fireEvent.click(await screen.findByRole("button", { name: /检查更新/ }));
-    const dialog = await screen.findByRole("dialog", { name: /发现新版本/ });
+    const dialog = await screen.findByRole("dialog", { name: /发现 v/ });
     fireEvent.click(within(dialog).getByRole("button", { name: /全量下载/ }));
 
     await waitFor(() => {
@@ -436,7 +436,7 @@ describe("DesktopUpdateButton", () => {
     await waitFor(() => {
       expect(notifyError).toHaveBeenCalledWith(
         "检查更新失败",
-        "暂时无法连接更新服务器，请检查网络或系统代理后重试。",
+        "无法连接更新服务器，请检查网络或代理后重试。",
       );
     });
   });
@@ -461,7 +461,7 @@ describe("DesktopUpdateButton", () => {
     await waitFor(() => expect(notifyError).toHaveBeenCalledTimes(1));
     expect(notifyError).toHaveBeenCalledWith(
       "检查更新失败",
-      "暂时无法连接更新服务器，请检查网络或系统代理后重试。",
+      "无法连接更新服务器，请检查网络或代理后重试。",
     );
   });
 });

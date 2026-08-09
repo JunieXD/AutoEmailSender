@@ -81,17 +81,17 @@ const RESEND_STRATEGY_OPTIONS: Array<{
   {
     value: 'reuse',
     title: '沿用上次内容',
-    description: '保留每位老师上次已有的邮件；未批准或缺失的内容仍需处理。',
+    description: '保留已有邮件；缺失或未审核的仍需处理。',
   },
   {
     value: 'template',
     title: '重新套用模板',
-    description: '忽略上次邮件正文，用本页当前模板重新生成并直接进入发送计划。',
+    description: '用当前模板替换旧正文，直接进入发送计划。',
   },
   {
     value: 'llm',
     title: 'AI 重新改写',
-    description: '忽略上次邮件正文，为全部老师重新生成 AI 草稿并逐封审核。',
+    description: '重新生成全部草稿，并逐封审核。',
   },
 ];
 
@@ -497,19 +497,19 @@ export const CreateTaskPage = () => {
   const resendTemplateName = selectedOutreachTemplate?.name ?? '当前模板内容';
   const resendOutcomeDescription = isResendPrefillActive
     ? resendContentStrategy === 'template'
-      ? `${professors.length} 封邮件将重新套用「${resendTemplateName}」，无需逐封审核，创建后${
-          scheduleType === 'scheduled' ? '进入定时发送计划' : '进入发送流程'
+      ? `${professors.length} 封将套用「${resendTemplateName}」，${
+          scheduleType === 'scheduled' ? '按计划自动发送' : '进入发送流程'
         }。`
       : resendContentStrategy === 'llm'
-        ? `${professors.length} 封邮件将全部由 AI 重新改写，旧邮件内容不会沿用；改写完成后需要逐封审核。`
+        ? `${professors.length} 封将由 AI 重新改写并逐封审核。`
         : resendPrefillContext?.requiresRegeneration
-          ? `${professors.length} 封邮件将优先沿用上次内容；没有可复用内容的邮件会按当前写信方式重新生成，未批准内容仍需审核。`
-          : `${professors.length} 封邮件将沿用上次内容；其中未批准的内容仍需审核。`
+          ? `${professors.length} 封优先沿用上次内容；缺失内容将重新生成。`
+          : `${professors.length} 封沿用上次内容；未审核内容仍需处理。`
     : null;
   const templateSelectionPanel = (
     <div className="rounded-[28px] border border-stone-200 bg-stone-50/80 p-4">
       <NativeSelectField
-        label="本次任务使用的发信模板"
+        label="选择模板"
         value={selectedOutreachTemplateId === null ? '' : String(selectedOutreachTemplateId)}
         disabled={loadingOutreachTemplates}
         onChange={(event) =>
@@ -518,7 +518,7 @@ export const CreateTaskPage = () => {
           )
         }
       >
-        <option value="">不关联模板库（使用下方当前内容）</option>
+        <option value="">不选模板，直接编辑</option>
         {selectedOutreachTemplate?.archived_at ? (
           <option value={selectedOutreachTemplate.id} disabled>
             {selectedOutreachTemplate.name} · 已删除（仅保留历史来源）
@@ -534,8 +534,8 @@ export const CreateTaskPage = () => {
         {loadingOutreachTemplates
           ? '正在加载模板库…'
           : selectedOutreachTemplate
-            ? `已带入“${selectedOutreachTemplate.name}”。下方修改只属于本次任务，不会改动模板库。`
-            : '可直接编辑下方内容；创建后会独立保存到任务中。'}
+            ? `已带入“${selectedOutreachTemplate.name}”；本次修改不影响模板库。`
+            : '本次内容将独立保存。'}
       </p>
     </div>
   );
@@ -551,13 +551,13 @@ export const CreateTaskPage = () => {
       validationErrors.push('任务名称不能为空');
     }
     if (professors.length === 0) {
-      validationErrors.push('当前没有可执行的导师');
+      validationErrors.push('没有可创建任务的导师');
     }
     if (scheduleType === 'scheduled' && normalizedScheduledDates.length === 0) {
-      validationErrors.push('定时发送请至少选择一个发送日期');
+      validationErrors.push('请选择发送日期');
     }
     if (scheduleType === 'scheduled' && (!startTime || !endTime || !emailsPerWindow)) {
-      validationErrors.push('定时发送需要填写发送时间窗口和窗口内发送数量');
+      validationErrors.push('请填写发送时段和每日发送上限');
     }
     if (
       scheduleType === 'scheduled' &&
@@ -565,22 +565,22 @@ export const CreateTaskPage = () => {
       normalizedScheduledDates.length > 0 &&
       !hasFutureScheduleWindow(normalizedScheduledDates, endTime)
     ) {
-      validationErrors.push('当前定时发送窗口已全部过期，请重新选择发送日期或结束时间');
+      validationErrors.push('所选发送时段已过期，请重新选择日期或结束时间');
     }
     if (requiresDraftGeneration && taskMode === 'template' && !templateSubject.trim()) {
-      validationErrors.push('直接套用模板需要填写模板主题');
+      validationErrors.push('请填写模板主题');
     }
     if (requiresDraftGeneration && taskMode === 'template' && !templateBodyText.trim()) {
-      validationErrors.push('直接套用模板需要填写模板纯文本正文');
+      validationErrors.push('请填写模板正文');
     }
     if (requiresDraftGeneration && taskMode === 'llm' && !subject.trim()) {
-      validationErrors.push('AI 辅助写信需要填写套磁信模板主题');
+      validationErrors.push('请填写邮件模板主题');
     }
     if (requiresDraftGeneration && taskMode === 'llm' && !body.trim()) {
-      validationErrors.push('AI 辅助写信需要填写套磁信模板正文');
+      validationErrors.push('请填写邮件模板正文');
     }
     if (requiresDraftGeneration && taskMode === 'llm' && primaryMaterialId === null) {
-      validationErrors.push('AI 写信参考材料为必选项');
+      validationErrors.push('请选择 AI 参考材料');
     }
 
     if (validationErrors.length > 0) {
@@ -747,7 +747,7 @@ export const CreateTaskPage = () => {
           </p>
           {isResendPrefillActive && resendPrefillContext ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位老师。请选择本次如何生成邮件内容；发送时间需要重新设置。
+              已从「{resendPrefillContext.sourceTaskName}」带入 {resendPrefillContext.professorIds.length} 位导师；请重新选择内容策略和发送时间。
               {resendPrefillContext.warnings.map((warning) => (
                 <span key={warning} className="mt-1 block text-xs text-amber-800">{warning}</span>
               ))}
@@ -758,7 +758,7 @@ export const CreateTaskPage = () => {
         {loading ? (
           <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
             <Loader2 className="h-4 w-4 animate-spin" />
-            正在加载已选导师...
+            正在加载已选导师…
           </div>
         ) : (
           <div className="mt-6 grid gap-6 lg:grid-cols-[1.45fr,0.85fr]">
@@ -779,17 +779,14 @@ export const CreateTaskPage = () => {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="text-sm font-semibold text-stone-900">
-                      {isResendPrefillActive ? '重发内容' : '发信模式'}
+                      {isResendPrefillActive ? '重发内容' : '写信方式'}
                     </div>
-                    <p className="mt-1 text-xs leading-6 text-stone-500">
-                      {isResendPrefillActive
-                        ? '选择这次重新发起时要使用的内容。'
-                        : '选择本次任务的写信方式。'}
-                    </p>
+                    {isResendPrefillActive ? (
+                      <p className="mt-1 text-xs leading-6 text-stone-500">
+                        选择这次重新发起时要使用的内容。
+                      </p>
+                    ) : null}
                   </div>
-                  <span className="rounded-full border border-primary/15 bg-primary/8 px-3 py-1 text-[11px] font-semibold text-primary">
-                    本次任务
-                  </span>
                 </div>
                 {isResendPrefillActive ? (
                   <div
@@ -847,15 +844,12 @@ export const CreateTaskPage = () => {
                     })}
                   </div>
                 )}
-                <div className="mt-3 text-xs leading-6 text-stone-500">
-                  本页设置只影响本次任务。
-                </div>
                 <div className="mt-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-stone-700">
                   {resendOutcomeDescription ?? (taskMode === 'template'
                     ? scheduleType === 'scheduled'
-                      ? '模板内容会直接进入待发送队列，并按批量定时窗口自动发送。'
-                      : '模板内容会直接进入发送流程。'
-                    : 'AI 改写完成后仍需逐封审核通过，再进入发送流程。')}
+                      ? '套用模板后按计划自动发送。'
+                      : '套用模板后进入发送流程。'
+                    : '生成 AI 草稿，审核后进入发送流程。')}
                 </div>
               </div>
 
@@ -875,7 +869,7 @@ export const CreateTaskPage = () => {
 
                 {scheduleType === 'scheduled' && (
                   <label className="block">
-                    <div className="mb-2 text-sm font-medium text-stone-800">窗口内发送数量</div>
+                    <div className="mb-2 text-sm font-medium text-stone-800">每日发送上限</div>
                     <input
                       type="number"
                       min="1"
@@ -889,8 +883,8 @@ export const CreateTaskPage = () => {
 
               <p className="text-sm leading-6 text-stone-500">
                 {scheduleType === 'scheduled'
-                  ? '定时发送：在指定时间窗口内按数量发送。'
-                  : '立即发送：任务创建后即可进入发送流程。'}
+                  ? '按所选时间窗口和数量发送。'
+                  : '创建后立即进入发送流程。'}
               </p>
 
               {scheduleType === 'scheduled' && (
@@ -920,8 +914,8 @@ export const CreateTaskPage = () => {
                     </label>
                   </div>
                   <p className="text-xs leading-6 text-stone-500">
-                    已选 {normalizeScheduledDates(scheduledDates).length} 天，将在 {startTime || '--:--'} 至{' '}
-                    {endTime || '--:--'} 之间动态发送，每天最多 {emailsPerWindow || 0} 封。
+                    已选 {normalizeScheduledDates(scheduledDates).length} 天 · 每天 {startTime || '--:--'}–
+                    {endTime || '--:--'} 发送 · 最多 {emailsPerWindow || 0} 封
                   </p>
                 </div>
               )}
@@ -930,7 +924,7 @@ export const CreateTaskPage = () => {
                 taskMode === 'llm' ? (
                   <div className="space-y-5 rounded-3xl border border-stone-200 bg-stone-50/80 p-4">
                     <div>
-                      <div className="text-sm font-semibold text-stone-900">套磁信模板（必填）</div>
+                      <div className="text-sm font-semibold text-stone-900">邮件模板（必填）</div>
                       <p className="mt-1 text-xs leading-6 text-stone-500">
                         AI 基于这份模板生成个性化草稿。
                       </p>
@@ -956,7 +950,7 @@ export const CreateTaskPage = () => {
                     <div>
                       <div className="text-sm font-semibold text-stone-900">直接套用模板</div>
                       <p className="mt-1 text-xs leading-6 text-stone-500">
-                        本次任务使用的模板内容。
+                        可直接编辑模板内容。
                       </p>
                     </div>
                     <SubjectTemplateInput
@@ -979,11 +973,11 @@ export const CreateTaskPage = () => {
 
               {requiresDraftGeneration && taskMode === 'llm' ? (
                 <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
-                  <div className="text-sm font-medium text-stone-900">AI 写信参考材料</div>
+                  <div className="text-sm font-medium text-stone-900">AI 参考材料</div>
                   <p className="mt-1 text-xs text-stone-500">AI 会基于这份主材料生成或改写草稿。</p>
                   {primaryMaterialOptions.length === 0 ? (
                     <p className="mt-3 text-sm text-stone-500">
-                      暂无可用参考材料，请先在身份中设置可用于 AI 写信的主材料。
+                      暂无参考材料，请先为身份设置主材料。
                     </p>
                   ) : (
                     <div className="mt-3 space-y-2">
@@ -1013,7 +1007,6 @@ export const CreateTaskPage = () => {
 
               <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
                 <div className="text-sm font-medium text-stone-900">随信附件</div>
-                <p className="mt-1 text-xs text-stone-500">随邮件一起发送。</p>
                 {selectedIdentity.materials.length === 0 ? (
                   <p className="mt-3 text-sm text-stone-500">暂无可选材料。</p>
                 ) : (
