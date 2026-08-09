@@ -177,9 +177,13 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
         self.assertEqual(payload["affected_count"], 2)
+        self.assertNotIn("professors", payload)
         tags_by_id = {
-            item["id"]: [tag["id"] for tag in item["tags"]]
-            for item in payload["professors"]
+            professor_id: [
+                tag["id"]
+                for tag in self.client.get(f"/api/professors/{professor_id}").json()["tags"]
+            ]
+            for professor_id in (first["id"], second["id"])
         }
         self.assertEqual(tags_by_id[first["id"]], [first_tag_id, second_tag_id])
         self.assertEqual(tags_by_id[second["id"]], [second_tag_id])
@@ -207,8 +211,9 @@ class ProfessorTagsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
+        refreshed = self.client.get(f"/api/professors/{professor['id']}").json()
         self.assertEqual(
-            [tag["id"] for tag in response.json()["professors"][0]["tags"]],
+            [tag["id"] for tag in refreshed["tags"]],
             [second_tag_id],
         )
 
@@ -234,7 +239,105 @@ class ProfessorTagsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.json()["professors"][0]["tags"], [])
+        refreshed = self.client.get(f"/api/professors/{professor['id']}").json()
+        self.assertEqual(refreshed["tags"], [])
+
+    def test_bulk_archive_supports_more_than_sqlite_parameter_limit(self) -> None:
+        professor_ids = self._seed_scale_professors(1_005, prefix="bulk-archive")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute(
+                "UPDATE professors SET archived_at = updated_at WHERE id = ?",
+                (professor_ids[-1],),
+            )
+            connection.commit()
+
+        response = self.client.post(
+            "/api/professors/bulk-archive",
+            json={"ids": professor_ids},
+        )
+        repeated = self.client.post(
+            "/api/professors/bulk-archive",
+            json={"ids": professor_ids},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["affected_count"], 1_004)
+        self.assertEqual(repeated.status_code, 200, msg=repeated.text)
+        self.assertEqual(repeated.json()["affected_count"], 0)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            archived_count = connection.execute(
+                "SELECT count(*) FROM professors WHERE archived_at IS NOT NULL",
+            ).fetchone()[0]
+            log_metadata = connection.execute(
+                """
+                SELECT metadata
+                FROM operation_logs
+                WHERE event_name = 'professor.bulk_archived'
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+            ).fetchone()[0]
+        self.assertEqual(archived_count, 1_005)
+        self.assertIn('"ids_truncated": true', log_metadata)
+
+    def test_bulk_tags_supports_more_than_sqlite_parameter_limit(self) -> None:
+        professor_ids = self._seed_scale_professors(1_005, prefix="bulk-tags")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            tag_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM professor_tags ORDER BY id ASC LIMIT 2",
+                )
+            ]
+            connection.executemany(
+                """
+                INSERT INTO professor_tag_links(professor_id, tag_id, sort_order)
+                VALUES (?, ?, 0)
+                """,
+                ((professor_id, tag_ids[0]) for professor_id in professor_ids[:501]),
+            )
+            connection.commit()
+
+        response = self.client.post(
+            "/api/professors/bulk-tags",
+            json={
+                "professor_ids": professor_ids,
+                "mode": "add",
+                "tag_ids": [tag_ids[1]],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["affected_count"], 1_005)
+        self.assertNotIn("professors", response.json())
+        self.assertLess(len(response.content), 512)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            first_tag_count = connection.execute(
+                "SELECT count(*) FROM professor_tag_links WHERE tag_id = ?",
+                (tag_ids[0],),
+            ).fetchone()[0]
+            second_tag_count = connection.execute(
+                "SELECT count(*) FROM professor_tag_links WHERE tag_id = ?",
+                (tag_ids[1],),
+            ).fetchone()[0]
+            existing_sort_order = connection.execute(
+                """
+                SELECT sort_order FROM professor_tag_links
+                WHERE professor_id = ? AND tag_id = ?
+                """,
+                (professor_ids[0], tag_ids[1]),
+            ).fetchone()[0]
+            new_sort_order = connection.execute(
+                """
+                SELECT sort_order FROM professor_tag_links
+                WHERE professor_id = ? AND tag_id = ?
+                """,
+                (professor_ids[-1], tag_ids[1]),
+            ).fetchone()[0]
+        self.assertEqual(first_tag_count, 501)
+        self.assertEqual(second_tag_count, 1_005)
+        self.assertEqual(existing_sort_order, 1)
+        self.assertEqual(new_sort_order, 0)
 
     def test_bulk_tags_rejects_empty_add_without_partial_update(self) -> None:
         tags = self.client.get("/api/professors/tags").json()
@@ -519,6 +622,105 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in refreshed["tags"]], [tag["id"]])
         self.assertIsNone(inserted["personal_note"])
         self.assertEqual(inserted["tags"], [])
+
+    def test_import_upsert_supports_more_than_sqlite_parameter_limit(self) -> None:
+        existing_ids = self._seed_scale_professors(505, prefix="bulk-import")
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.execute(
+                "UPDATE professors SET archived_at = updated_at WHERE id = ?",
+                (existing_ids[0],),
+            )
+            connection.commit()
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(PROFESSOR_TEMPLATE_COLUMNS)
+        for index in range(1_005):
+            writer.writerow(
+                [
+                    f"更新后导师 {index}",
+                    f"bulk-import-{index:04d}@example.edu",
+                    "教授",
+                    "规模大学",
+                    "计算机学院",
+                    "软件系",
+                    f"数据库系统 {index}",
+                    f"Paper {index}",
+                    f"https://example.edu/professors/{index}",
+                    "https://example.edu/faculty",
+                    "规模标签",
+                    f"导入备注 {index}",
+                ],
+            )
+
+        response = self.client.post(
+            "/api/professors/import-file",
+            files={
+                "file": (
+                    "bulk-professors.csv",
+                    buffer.getvalue().encode("utf-8-sig"),
+                    "text/csv",
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["inserted_count"], 500)
+        self.assertEqual(response.json()["updated_count"], 505)
+        self.assertEqual(response.json()["failed_count"], 0)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            professor_count = connection.execute(
+                "SELECT count(*) FROM professors",
+            ).fetchone()[0]
+            archived_count = connection.execute(
+                "SELECT count(*) FROM professors WHERE archived_at IS NOT NULL",
+            ).fetchone()[0]
+            first_row = connection.execute(
+                """
+                SELECT name, personal_note FROM professors
+                WHERE email = 'bulk-import-0000@example.edu'
+                """,
+            ).fetchone()
+            tagged_count = connection.execute(
+                """
+                SELECT count(*)
+                FROM professor_tag_links AS links
+                JOIN professor_tags AS tags ON tags.id = links.tag_id
+                WHERE tags.name = '规模标签'
+                """,
+            ).fetchone()[0]
+        self.assertEqual(professor_count, 1_005)
+        self.assertEqual(archived_count, 0)
+        self.assertEqual(first_row, ("更新后导师 0", "导入备注 0"))
+        self.assertEqual(tagged_count, 1_005)
+
+    def _seed_scale_professors(self, count: int, *, prefix: str) -> list[int]:
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            connection.executemany(
+                """
+                INSERT INTO professors(
+                    name, email, research_direction, recent_papers,
+                    crawl_status, communication_sync_version, created_at, updated_at
+                ) VALUES (?, ?, ?, '[]', 'discovered', 1, ?, ?)
+                """,
+                (
+                    (
+                        f"规模导师 {index}",
+                        f"{prefix}-{index:04d}@example.edu",
+                        f"研究方向 {index}",
+                        "2026-08-09 00:00:00.000000",
+                        "2026-08-09 00:00:00.000000",
+                    )
+                    for index in range(count)
+                ),
+            )
+            connection.commit()
+            return [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM professors ORDER BY id ASC",
+                )
+            ]
 
 
 if __name__ == "__main__":

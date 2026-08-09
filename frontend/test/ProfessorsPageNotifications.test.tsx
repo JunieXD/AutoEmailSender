@@ -17,6 +17,31 @@ vi.mock("@/context/SelectionContext", () => ({
 vi.mock("@/entities/professor/api/professors", () => ({
   listProfessorTags,
   listProfessorsForManagement,
+  searchManagementProfessors: async (payload: {
+    archived: "active" | "archived" | "all";
+    page: number;
+    page_size: number;
+  }) => {
+    const allItems = await listProfessorsForManagement(payload.archived);
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: allItems.slice(start, start + payload.page_size),
+      total_count: allItems.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(allItems.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: {
+        universities: [], schools: [], departments: [], titles: [], tags: [],
+      },
+    };
+  },
+  searchManagementProfessorIds: async (payload: {
+    archived: "active" | "archived" | "all";
+  }) => {
+    const items = await listProfessorsForManagement(payload.archived);
+    return { ids: items.map((item: { id: number }) => item.id), total_count: items.length };
+  },
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   createProfessor: vi.fn(),

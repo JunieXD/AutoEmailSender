@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.core.query_chunks import chunked_values
 from app.core.time import utc_now
 
 from sqlalchemy import select
@@ -604,16 +605,16 @@ async def _validate_selected_material_ids(
 ) -> None:
     if not material_ids:
         return
-    materials = list(
-        (
-            await session.execute(
+    materials: list[int] = []
+    for material_id_chunk in chunked_values(set(material_ids)):
+        materials.extend(
+            await session.scalars(
                 select(IdentityMaterial.id).where(
                     IdentityMaterial.identity_id == identity_id,
-                    IdentityMaterial.id.in_(material_ids),
+                    IdentityMaterial.id.in_(material_id_chunk),
                 ),
-            )
-        ).scalars()
-    )
+            ),
+        )
     if len(set(materials)) != len(set(material_ids)):
         raise ValueError("存在不属于当前身份的随信材料")
 
@@ -626,13 +627,15 @@ async def _resolve_selected_materials(
     if not material_ids:
         return []
 
-    result = await session.execute(
-        select(IdentityMaterial).where(
-            IdentityMaterial.identity_id == identity_id,
-            IdentityMaterial.id.in_(material_ids),
-        ),
-    )
-    materials = {material.id: material for material in result.scalars()}
+    materials: dict[int, IdentityMaterial] = {}
+    for material_id_chunk in chunked_values(set(material_ids)):
+        result = await session.execute(
+            select(IdentityMaterial).where(
+                IdentityMaterial.identity_id == identity_id,
+                IdentityMaterial.id.in_(material_id_chunk),
+            ),
+        )
+        materials.update({material.id: material for material in result.scalars()})
     attachments: list[MailAttachment] = []
     for material_id in material_ids:
         material = materials.get(material_id)

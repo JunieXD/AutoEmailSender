@@ -13,6 +13,7 @@ class SettingsTests(unittest.TestCase):
         os.environ.pop("CRAWLER_DEBUG", None)
         os.environ.pop("SQLITE_BUSY_TIMEOUT_MS", None)
         os.environ.pop("SQLITE_ENABLE_WAL", None)
+        os.environ.pop("SQLITE_SYNCHRONOUS", None)
 
         from app.core.config import get_settings
 
@@ -26,6 +27,7 @@ class SettingsTests(unittest.TestCase):
         os.environ.pop("CRAWLER_DEBUG", None)
         os.environ.pop("SQLITE_BUSY_TIMEOUT_MS", None)
         os.environ.pop("SQLITE_ENABLE_WAL", None)
+        os.environ.pop("SQLITE_SYNCHRONOUS", None)
         self.temp_dir.cleanup()
 
     def test_crawler_debug_defaults_to_enabled(self) -> None:
@@ -46,6 +48,11 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.sqlite_busy_timeout_ms, 5000)
         self.assertTrue(settings.sqlite_wal_enabled)
+        self.assertTrue(settings.sqlite_foreign_keys_enabled)
+        self.assertEqual(settings.sqlite_synchronous, "NORMAL")
+        self.assertEqual(settings.sqlite_cache_size_mib, 64)
+        self.assertEqual(settings.sqlite_mmap_size_mib, 256)
+        self.assertEqual(settings.sqlite_slow_query_ms, 250)
 
     def test_sqlite_lock_settings_can_be_overridden_by_env(self) -> None:
         from app.core.config import get_settings
@@ -68,6 +75,14 @@ class SettingsTests(unittest.TestCase):
         settings = get_settings()
 
         self.assertEqual(settings.sqlite_busy_timeout_ms, 0)
+
+    def test_sqlite_synchronous_rejects_unknown_value(self) -> None:
+        from app.core.config import get_settings
+
+        os.environ["SQLITE_SYNCHRONOUS"] = "unsafe-value"
+        get_settings.cache_clear()
+
+        self.assertEqual(get_settings().sqlite_synchronous, "NORMAL")
 
 
 if __name__ == "__main__":

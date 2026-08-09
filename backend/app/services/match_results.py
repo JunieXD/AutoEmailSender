@@ -9,6 +9,7 @@ from sqlalchemy import Text, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import utc_now
 from app.models import (
     EmailTask,
@@ -152,13 +153,15 @@ async def load_resolved_match_results(
         active_identity_id=active_identity_id,
         match_source_identity_id=match_source_identity_id,
     )
-    unique_professor_ids = tuple(dict.fromkeys(int(item) for item in professor_ids))
+    unique_professor_ids = unique_positive_ids(professor_ids)
     if not unique_professor_ids:
         return ResolvedMatchResults(scope=scope, by_professor_id={})
 
-    canonical_rows = list(
-        (
-            await session.execute(
+    canonical_rows: list[Mapping[str, Any]] = []
+    for professor_id_chunk in chunked_values(unique_professor_ids):
+        canonical_rows.extend(
+            (
+                await session.execute(
                 select(
                     IdentityProfessorMatchResult.id.label("result_id"),
                     IdentityProfessorMatchResult.identity_id,
@@ -194,12 +197,12 @@ async def load_resolved_match_results(
                     IdentityProfessorMatchResult.identity_id
                     == scope.source_identity_id,
                     IdentityProfessorMatchResult.professor_id.in_(
-                        unique_professor_ids
+                        professor_id_chunk,
                     ),
                 )
             )
-        ).mappings(),
-    )
+            ).mappings(),
+        )
     result_by_professor: dict[int, MatchResultView] = {}
     for row in canonical_rows:
         view = _view_from_canonical_result(row)
@@ -213,9 +216,11 @@ async def load_resolved_match_results(
             if professor_id not in result_by_professor
         ]
         if missing_professor_ids:
-            legacy_rows = list(
-                (
-                    await session.execute(
+            legacy_rows: list[Mapping[str, Any]] = []
+            for professor_id_chunk in chunked_values(missing_professor_ids):
+                legacy_rows.extend(
+                    (
+                        await session.execute(
                         select(
                             EmailTask.id.label("task_id"),
                             EmailTask.identity_id,
@@ -241,7 +246,7 @@ async def load_resolved_match_results(
                         )
                         .where(
                             EmailTask.identity_id == scope.source_identity_id,
-                            EmailTask.professor_id.in_(missing_professor_ids),
+                            EmailTask.professor_id.in_(professor_id_chunk),
                             EmailTask.match_score.is_not(None),
                             EmailTask.batch_send_canceled_at.is_(None),
                             (
@@ -266,8 +271,8 @@ async def load_resolved_match_results(
                             EmailTask.id.desc(),
                         ),
                     )
-                ).mappings()
-            )
+                    ).mappings(),
+                )
             for task in legacy_rows:
                 professor_id = task["professor_id"]
                 if professor_id in result_by_professor:

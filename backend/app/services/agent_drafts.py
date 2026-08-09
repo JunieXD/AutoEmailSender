@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
+from app.core.query_chunks import chunked_values
 from app.models import (
     EmailTask,
     EmailTaskStatus,
@@ -350,14 +351,16 @@ async def _validate_attachment_material_ids(
     if not material_ids:
         return
     unique_ids = set(material_ids)
-    found = set(
-        await session.scalars(
-            select(IdentityMaterial.id).where(
-                IdentityMaterial.identity_id == identity_id,
-                IdentityMaterial.id.in_(unique_ids),
+    found: set[int] = set()
+    for material_id_chunk in chunked_values(unique_ids):
+        found.update(
+            await session.scalars(
+                select(IdentityMaterial.id).where(
+                    IdentityMaterial.identity_id == identity_id,
+                    IdentityMaterial.id.in_(material_id_chunk),
+                ),
             ),
-        ),
-    )
+        )
     if found != unique_ids:
         raise ValueError("存在不属于当前身份的随信附件")
 

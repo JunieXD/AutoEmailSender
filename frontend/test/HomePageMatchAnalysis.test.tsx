@@ -10,6 +10,7 @@ const mockedListProfessors = vi.hoisted(() => vi.fn());
 const mockedListProfessorTags = vi.hoisted(() => vi.fn());
 const mockedCalculateMatch = vi.hoisted(() => vi.fn());
 const mockedCreateMatchAnalysisJob = vi.hoisted(() => vi.fn());
+const mockedGetMatchAnalysisSelectionSummary = vi.hoisted(() => vi.fn());
 const mockedEnsureWorkspaceTask = vi.hoisted(() => vi.fn());
 const mockedChoose = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
@@ -29,6 +30,32 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors: mockedListProfessors,
+  searchDashboardProfessors: async (payload: {
+    identity_id: number;
+    page: number;
+    page_size: number;
+  }) => {
+    const allItems = await mockedListProfessors({ identityId: payload.identity_id });
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: allItems.slice(start, start + payload.page_size),
+      total_count: allItems.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(allItems.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: {
+        universities: [], schools: [], departments: [], titles: [], tags: [],
+      },
+    };
+  },
+  searchDashboardProfessorIds: async (payload: { identity_id: number }) => {
+    const items = await mockedListProfessors({ identityId: payload.identity_id });
+    return {
+      ids: items.map((item: ProfessorDashboardItemDTO) => item.id),
+      total_count: items.length,
+    };
+  },
   listProfessorTags: mockedListProfessorTags,
 }));
 
@@ -38,6 +65,7 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
 
 vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   createMatchAnalysisJob: mockedCreateMatchAnalysisJob,
+  getMatchAnalysisSelectionSummary: mockedGetMatchAnalysisSelectionSummary,
 }));
 
 vi.mock("@/lib/api/workspacesApi", () => ({
@@ -139,10 +167,12 @@ const renderPage = () =>
 
 describe("HomePage match analysis", () => {
   beforeEach(() => {
+    window.localStorage.removeItem("home-dashboard:page-size");
     mockedListProfessors.mockReset();
     mockedListProfessorTags.mockReset();
     mockedCalculateMatch.mockReset();
     mockedCreateMatchAnalysisJob.mockReset();
+    mockedGetMatchAnalysisSelectionSummary.mockReset();
     mockedEnsureWorkspaceTask.mockReset();
     mockedChoose.mockReset();
     mockedNotifyError.mockReset();
@@ -159,6 +189,32 @@ describe("HomePage match analysis", () => {
       createProfessor(101, "王教授"),
       createProfessor(102, "李教授"),
     ]);
+    mockedGetMatchAnalysisSelectionSummary.mockImplementation(
+      async (payload: { identity_id: number; professor_ids: number[] }) => {
+        const items = (await mockedListProfessors({
+          identityId: payload.identity_id,
+        })) as ProfessorDashboardItemDTO[];
+        const selected = items.filter((item) =>
+          payload.professor_ids.includes(item.id),
+        );
+        const analyzable = selected.filter(
+          (item) =>
+            Boolean(item.research_direction?.trim()) ||
+            item.recent_papers.length > 0,
+        );
+        const alreadyScored = analyzable.filter(
+          (item) => item.match_score !== null,
+        );
+        return {
+          selected_count: selected.length,
+          analyzable_count: analyzable.length,
+          missing_evidence_count: selected.length - analyzable.length,
+          already_scored_count: alreadyScored.length,
+          unscored_analyzable_count:
+            analyzable.length - alreadyScored.length,
+        };
+      },
+    );
     mockedListProfessorTags.mockResolvedValue([]);
     mockedEnsureWorkspaceTask.mockImplementation(async (professorId: number) => ({
       current_task: { id: professorId + 1000 },
@@ -270,8 +326,55 @@ describe("HomePage match analysis", () => {
       expect(mockedCreateMatchAnalysisJob).toHaveBeenCalledWith({
         identity_id: 1,
         llm_profile_id: 1,
-        professor_ids: [102],
+        professor_ids: [101, 102],
         name: null,
+        skip_existing: true,
+      });
+    });
+  });
+
+  it("uses the server summary when a scored selected professor is off the current page", async () => {
+    const professors = Array.from({ length: 11 }, (_, index) =>
+      createProfessor(
+        101 + index,
+        index === 10 ? "跨页已有分导师" : `导师 ${index + 1}`,
+        index === 10 ? { match_score: 91 } : {},
+      ),
+    );
+    mockedListProfessors.mockResolvedValue(professors);
+    mockedChoose.mockResolvedValue("secondary");
+    mockedCreateMatchAnalysisJob.mockResolvedValue({
+      id: 1,
+      target_count: 10,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("导师 1")).toBeInTheDocument();
+    expect(screen.queryByText("跨页已有分导师")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "全选当前结果" }),
+    );
+    expect(await screen.findByText("已选中 11 位导师")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "批量分析匹配度" }));
+
+    await waitFor(() => {
+      expect(mockedGetMatchAnalysisSelectionSummary).toHaveBeenCalledWith({
+        identity_id: 1,
+        professor_ids: professors.map((professor) => professor.id),
+      });
+      expect(mockedChoose).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "1 位导师已有匹配分",
+          description: "要重新计算还是保留现有结果？",
+        }),
+      );
+      expect(mockedCreateMatchAnalysisJob).toHaveBeenCalledWith({
+        identity_id: 1,
+        llm_profile_id: 1,
+        professor_ids: professors.map((professor) => professor.id),
+        name: null,
+        skip_existing: true,
       });
     });
   });

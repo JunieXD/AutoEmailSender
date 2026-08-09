@@ -26,6 +26,7 @@ from app.core.agent_runtime_descriptor import (
 from app.core.agent_revisions import ensure_revision, revision_for
 from app.core.config import get_settings
 from app.core.database import get_async_session, get_session_factory
+from app.core.query_chunks import chunked_values
 from app.core.time import utc_now
 from app.models import (
     CrawlJob,
@@ -843,11 +844,13 @@ async def export_agent_community_share_package(
             code="PROFESSOR_IDS_INVALID",
             message=str(exc),
         ) from exc
-    professors = list(
-        (
-            await session.execute(select(Professor).where(Professor.id.in_(ids)))
-        ).scalars(),
-    )
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(Professor.id.in_(professor_id_chunk)),
+            ),
+        )
     professors_by_id = {professor.id: professor for professor in professors}
     missing_ids = [professor_id for professor_id in ids if professor_id not in professors_by_id]
     if missing_ids:

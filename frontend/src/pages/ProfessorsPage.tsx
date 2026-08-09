@@ -49,9 +49,7 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
-  getPageItems,
   getStoredPageSize,
-  getTotalPages,
   setStoredPageSize,
   type PaginationChange,
 } from "@/lib/pagination";
@@ -89,7 +87,8 @@ import {
   importProfessorsFromFile,
   getProfessorTagUsage,
   listProfessorTags,
-  listProfessorsForManagement,
+  searchManagementProfessors,
+  searchManagementProfessorIds,
   restoreProfessor,
   updateProfessor,
   updateProfessorNote,
@@ -101,21 +100,19 @@ import type {
   ProfessorInformationEnrichmentJobDTO,
   ProfessorManagementItemDTO,
   ProfessorBulkTagModeDTO,
+  ProfessorFilterOptionsDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 import {
   MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
-  buildManagementFilterOptions,
   createDefaultManagementFilters,
-  filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
   getManagementKeywordSearchPlaceholder,
   normalizeManagementKeywordSearchScopes,
   NO_FIELD_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
-  pruneManagementFilters,
   type ProfessorManagementKeywordSearchScope,
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
@@ -126,7 +123,6 @@ import {
 import {
   DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
-  sortManagementProfessors,
   type ProfessorManagementSortDirection,
   type ProfessorManagementSortKey,
 } from "@/features/professor-management/client/sortManagementProfessors";
@@ -764,14 +760,29 @@ export const ProfessorsPage = () => {
     getStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY),
   );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectingAllProfessors, setSelectingAllProfessors] = useState(false);
+  const [selectedAllQueryKey, setSelectedAllQueryKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
+  const [totalProfessorCount, setTotalProfessorCount] = useState(0);
+  const [totalProfessorPages, setTotalProfessorPages] = useState(1);
+  const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
+    universities: [],
+    schools: [],
+    departments: [],
+    titles: [],
+    tags: [],
+  });
   const isRefreshingProfessors = hasLoadedProfessors && loading;
   const shouldShowProfessorIntakePanel =
     isRefreshingProfessors ||
     archiveFilter === "archived" ||
     professors.length > 0;
   const latestProfessorsRequestIdRef = useRef(0);
+  const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
+  const cursorQueryKeyRef = useRef("");
+  const selectedAllIdsRef = useRef<number[]>([]);
+  const selectionRequestIdRef = useRef(0);
   const professorListStartRef = useRef<HTMLElement | null>(null);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
   const [editingProfessor, setEditingProfessor] =
@@ -811,6 +822,25 @@ export const ProfessorsPage = () => {
     setCrawlerUrlFocusIndex(null);
   }, [crawlerUrlFocusIndex, crawlerFormState.start_urls.length]);
 
+  const managementFilterQueryKey = JSON.stringify({
+    archiveFilter,
+    keyword: filters.keyword,
+    keywordSearchScopes: filters.keywordSearchScopes,
+    universities: filters.universities,
+    schools: filters.schools,
+    departments: filters.departments,
+    titles: filters.titles,
+    tagIds: filters.tagIds,
+  });
+  const managementPageQueryKey = JSON.stringify({
+    managementFilterQueryKey,
+    sortKey,
+    sortDirection: sortDirections[sortKey],
+    pageSize,
+  });
+  const managementFilterQueryKeyRef = useRef(managementFilterQueryKey);
+  managementFilterQueryKeyRef.current = managementFilterQueryKey;
+
   useEffect(() => {
     if (!linkedKeyword) {
       return;
@@ -818,6 +848,8 @@ export const ProfessorsPage = () => {
     setArchiveFilter("active");
     setCurrentPage(1);
     setSelectedIds(new Set());
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
     setAdvancedFiltersOpen(false);
     setSortKey("latest");
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
@@ -829,29 +861,41 @@ export const ProfessorsPage = () => {
     }, { replace: true });
   }, [linkedKeyword, setSearchParams]);
   const loadProfessors = useCallback(
-    async (filter: ArchiveFilter = archiveFilter) => {
+    async () => {
       const requestId = latestProfessorsRequestIdRef.current + 1;
       latestProfessorsRequestIdRef.current = requestId;
       setLoading(true);
       try {
-        const data = await listProfessorsForManagement(filter);
+        if (cursorQueryKeyRef.current !== managementPageQueryKey) {
+          cursorQueryKeyRef.current = managementPageQueryKey;
+          cursorByPageRef.current = new Map([[1, null]]);
+        }
+        const data = await searchManagementProfessors({
+          archived: archiveFilter,
+          page: currentPage,
+          page_size: pageSize,
+          cursor: cursorByPageRef.current.get(currentPage),
+          keyword: filters.keyword,
+          keyword_search_scopes: filters.keywordSearchScopes,
+          universities: filters.universities,
+          schools: filters.schools,
+          departments: filters.departments,
+          titles: filters.titles,
+          tag_ids: filters.tagIds,
+          sort_key: sortKey,
+          sort_direction: sortDirections[sortKey],
+        });
         if (latestProfessorsRequestIdRef.current !== requestId) {
           return;
         }
-        setProfessors(data);
+        setProfessors(data.items);
+        setTotalProfessorCount(data.total_count);
+        setTotalProfessorPages(data.total_pages);
+        setFilterOptions(data.filter_options);
+        if (data.next_cursor) {
+          cursorByPageRef.current.set(data.page + 1, data.next_cursor);
+        }
         setHasLoadedProfessors(true);
-        setSelectedIds((previous) => {
-          const next = new Set<number>();
-          data.forEach((item) => {
-            if (item.archived_at) {
-              return;
-            }
-            if (previous.has(item.id)) {
-              next.add(item.id);
-            }
-          });
-          return next;
-        });
       } catch (loadError) {
         if (latestProfessorsRequestIdRef.current !== requestId) {
           return;
@@ -865,7 +909,16 @@ export const ProfessorsPage = () => {
         }
       }
     },
-    [archiveFilter, notifyError, setSelectedIds],
+    [
+      archiveFilter,
+      currentPage,
+      filters,
+      managementPageQueryKey,
+      notifyError,
+      pageSize,
+      sortDirections,
+      sortKey,
+    ],
   );
 
   const loadProfessorTags = useCallback(async () => {
@@ -1009,13 +1062,6 @@ export const ProfessorsPage = () => {
   }, [handleSingleInformationEnrichmentFinished, singleInformationEnrichments]);
 
   useEffect(() => {
-    if (professors.length === 0) {
-      return;
-    }
-    setFilters((previous) => pruneManagementFilters(professors, previous));
-  }, [professors]);
-
-  useEffect(() => {
     writeStoredProfessorManagementState({
       archiveFilter,
       filters,
@@ -1033,14 +1079,6 @@ export const ProfessorsPage = () => {
     sortKey,
   ]);
 
-  const filterOptions = useMemo(
-    () =>
-      buildManagementFilterOptions(professors, {
-        universities: filters.universities,
-        schools: filters.schools,
-      }),
-    [filters.schools, filters.universities, professors],
-  );
   const activeAdvancedFilterCount = useMemo(
     () => getActiveManagementAdvancedFilterCount(filters),
     [filters],
@@ -1062,20 +1100,8 @@ export const ProfessorsPage = () => {
       ),
     [tagFilterEntries],
   );
-  const filteredProfessors = useMemo(
-    () => filterManagementProfessors(professors, filters),
-    [filters, professors],
-  );
   const currentSortDirection = sortDirections[sortKey];
-  const visibleProfessors = useMemo(
-    () =>
-      sortManagementProfessors(
-        filteredProfessors,
-        sortKey,
-        currentSortDirection,
-      ),
-    [currentSortDirection, filteredProfessors, sortKey],
-  );
+  const visibleProfessors = professors;
 
   const updateFilters = (nextFilters: Partial<ProfessorManagementFilterState>) => {
     setCurrentPage(1);
@@ -1098,15 +1124,27 @@ export const ProfessorsPage = () => {
     nextValues: string[],
   ) => {
     setCurrentPage(1);
+    if (key === "universities") {
+      setFilterOptions((previous) => ({
+        ...previous,
+        schools: [],
+        departments: [],
+      }));
+    } else if (key === "schools") {
+      setFilterOptions((previous) => ({ ...previous, departments: [] }));
+    }
     setFilters((previous) => {
-      if (key === "universities" || key === "schools") {
-        const nextFilters = {
+      if (key === "universities") {
+        return {
           ...previous,
-          [key]: nextValues,
+          universities: nextValues,
+          schools: [],
+          departments: [],
         };
-        return pruneManagementFilters(professors, nextFilters);
       }
-
+      if (key === "schools") {
+        return { ...previous, schools: nextValues, departments: [] };
+      }
       return { ...previous, [key]: nextValues };
     });
   };
@@ -1130,18 +1168,12 @@ export const ProfessorsPage = () => {
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
   };
 
-  const totalPages = useMemo(
-    () => getTotalPages(visibleProfessors.length, pageSize),
-    [pageSize, visibleProfessors.length],
-  );
+  const totalPages = totalProfessorPages;
   const safeCurrentPage = Math.min(currentPage, totalPages);
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
-  const paginatedProfessors = useMemo(
-    () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
-    [pageSize, safeCurrentPage, visibleProfessors],
-  );
+  const paginatedProfessors = visibleProfessors;
   const isProfessorSelectable = useCallback(
     (professor: ProfessorManagementItemDTO) =>
       archiveFilter === "archived"
@@ -1149,21 +1181,10 @@ export const ProfessorsPage = () => {
         : !professor.archived_at,
     [archiveFilter],
   );
-  const filteredSelectableIds = useMemo(
-    () =>
-      visibleProfessors
-        .filter(isProfessorSelectable)
-        .map((professor) => professor.id),
-    [isProfessorSelectable, visibleProfessors],
-  );
-  const filteredSelectedCount = useMemo(
-    () => filteredSelectableIds.filter((id) => selectedIds.has(id)).length,
-    [filteredSelectableIds, selectedIds],
-  );
-  const someFilteredSelected = filteredSelectedCount > 0;
+  const someFilteredSelected = selectedIds.size > 0;
   const allFilteredSelected =
-    filteredSelectableIds.length > 0 &&
-    filteredSelectedCount === filteredSelectableIds.length;
+    selectedAllIdsRef.current.length > 0 &&
+    selectedAllQueryKey === managementFilterQueryKey;
   const openCreateModal = () => {
     setEditingProfessor(null);
     setFormState(emptyProfessorForm());
@@ -1176,20 +1197,63 @@ export const ProfessorsPage = () => {
     setStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY, change.pageSize);
   };
 
-  const handleToggleFilteredSelection = () => {
-    setSelectedIds((previous) => {
-      const next = new Set(previous);
-      const allSelected =
-        filteredSelectableIds.length > 0 &&
-        filteredSelectableIds.every((id) => previous.has(id));
+  const handleToggleFilteredSelection = async () => {
+    if (selectingAllProfessors) {
+      return;
+    }
+    if (allFilteredSelected) {
+      const selectedAllIds = new Set(selectedAllIdsRef.current);
+      setSelectedIds((previous) => {
+        const next = new Set(previous);
+        selectedAllIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      selectedAllIdsRef.current = [];
+      setSelectedAllQueryKey(null);
+      return;
+    }
 
-      if (allSelected) {
-        filteredSelectableIds.forEach((id) => next.delete(id));
-      } else {
-        filteredSelectableIds.forEach((id) => next.add(id));
+    const requestId = selectionRequestIdRef.current + 1;
+    selectionRequestIdRef.current = requestId;
+    const requestQueryKey = managementFilterQueryKey;
+    setSelectingAllProfessors(true);
+    try {
+      const result = await searchManagementProfessorIds({
+        archived: archiveFilter,
+        page: 1,
+        page_size: pageSize,
+        keyword: filters.keyword,
+        keyword_search_scopes: filters.keywordSearchScopes,
+        universities: filters.universities,
+        schools: filters.schools,
+        departments: filters.departments,
+        titles: filters.titles,
+        tag_ids: filters.tagIds,
+        sort_key: sortKey,
+        sort_direction: currentSortDirection,
+      });
+      if (
+        selectionRequestIdRef.current !== requestId ||
+        managementFilterQueryKeyRef.current !== requestQueryKey
+      ) {
+        return;
       }
-      return next;
-    });
+      selectedAllIdsRef.current = result.ids;
+      setSelectedIds((previous) => new Set([...previous, ...result.ids]));
+      setSelectedAllQueryKey(result.ids.length > 0 ? requestQueryKey : null);
+    } catch (selectionError) {
+      if (selectionRequestIdRef.current !== requestId) {
+        return;
+      }
+      notifyError(
+        "选择筛选结果失败",
+        getActionErrorMessage(selectionError, "无法选择全部筛选结果"),
+      );
+    } finally {
+      if (selectionRequestIdRef.current === requestId) {
+        setSelectingAllProfessors(false);
+      }
+    }
   };
   const openEditModal = (professor: ProfessorManagementItemDTO) => {
     setEditingProfessor(professor);
@@ -1639,15 +1703,7 @@ export const ProfessorsPage = () => {
         mode,
         tag_ids: tagIds,
       });
-      const tagsByProfessorId = new Map(
-        result.professors.map((professor) => [professor.id, professor.tags]),
-      );
-      setProfessors((previous) =>
-        previous.map((professor) => {
-          const tags = tagsByProfessorId.get(professor.id);
-          return tags ? { ...professor, tags } : professor;
-        }),
-      );
+      await loadProfessors();
       notifySuccess(
         "标签已更新",
         `已更新 ${result.affected_count} 位导师的标签。`,
@@ -1776,6 +1832,8 @@ export const ProfessorsPage = () => {
     try {
       const result = await bulkArchiveProfessors({ ids: [...selectedIds] });
       setSelectedIds(new Set());
+      setSelectedAllQueryKey(null);
+      selectedAllIdsRef.current = [];
       notifySuccess("操作成功", result.message);
       await loadProfessors();
     } catch (archiveError) {
@@ -1821,6 +1879,8 @@ export const ProfessorsPage = () => {
       notifyError("批量恢复失败", "所选导师均未恢复成功，请稍后重试。");
     }
     setSelectedIds(new Set());
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
     await loadProfessors();
   };
 
@@ -2214,6 +2274,8 @@ export const ProfessorsPage = () => {
                     setArchiveFilter(item);
                     setCurrentPage(1);
                     setSelectedIds(new Set());
+                    setSelectedAllQueryKey(null);
+                    selectedAllIdsRef.current = [];
                   }}
                   className={clsx(
                     "rounded-2xl px-4 py-2 text-sm font-medium transition",
@@ -2449,9 +2511,9 @@ export const ProfessorsPage = () => {
       >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
-            {visibleProfessors.length} 位 · {safeCurrentPage}/{totalPages} 页 · 每页 {pageSize} 位
+            {totalProfessorCount} 位 · {safeCurrentPage}/{totalPages} 页 · 每页 {pageSize} 位
           </div>
-          {filteredSelectableIds.length > 0 ? (
+          {totalProfessorCount > 0 ? (
             <button
               type="button"
               aria-label={
@@ -2460,17 +2522,24 @@ export const ProfessorsPage = () => {
                   : "全选当前结果"
               }
               aria-pressed={allFilteredSelected}
-              onClick={handleToggleFilteredSelection}
-              className="inline-flex min-h-10 w-fit items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700 transition hover:border-primary/40 hover:bg-white hover:text-primary lg:hidden"
+              onClick={() => void handleToggleFilteredSelection()}
+              disabled={selectingAllProfessors}
+              className="inline-flex min-h-10 w-fit items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700 transition hover:border-primary/40 hover:bg-white hover:text-primary disabled:cursor-wait disabled:opacity-60 lg:hidden"
             >
-              {allFilteredSelected ? (
+              {selectingAllProfessors ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
               ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
               ) : (
                 <Square className="h-4 w-4" />
               )}
-              {allFilteredSelected ? "取消全选" : "全选当前结果"}
+              {selectingAllProfessors
+                ? "正在全选"
+                : allFilteredSelected
+                  ? "取消全选"
+                  : "全选当前结果"}
             </button>
           ) : null}
         </div>
@@ -2497,8 +2566,8 @@ export const ProfessorsPage = () => {
                   : "全选当前结果"
               }
               aria-pressed={allFilteredSelected}
-              onClick={handleToggleFilteredSelection}
-              disabled={filteredSelectableIds.length === 0}
+              onClick={() => void handleToggleFilteredSelection()}
+              disabled={selectingAllProfessors || totalProfessorCount === 0}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-45"
               title={
                 allFilteredSelected
@@ -2506,7 +2575,9 @@ export const ProfessorsPage = () => {
                   : "全选当前结果"
               }
             >
-              {allFilteredSelected ? (
+              {selectingAllProfessors ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
               ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
@@ -2524,7 +2595,7 @@ export const ProfessorsPage = () => {
           <div className="flex justify-center text-center">操作</div>
         </div>
 
-        {visibleProfessors.length === 0 ? (
+        {totalProfessorCount === 0 ? (
           <div className="px-6 py-16 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-stone-100 text-stone-400">
               <Users className="h-6 w-6" />
@@ -2632,6 +2703,8 @@ export const ProfessorsPage = () => {
                   selectable={selectable}
                   tableColumns={managementTableColumns}
                   onToggleSelection={() => {
+                    setSelectedAllQueryKey(null);
+                    selectedAllIdsRef.current = [];
                     setSelectedIds((previous) => {
                       const next = new Set(previous);
                       if (next.has(professor.id)) {
@@ -2656,16 +2729,16 @@ export const ProfessorsPage = () => {
           </div>
         )}
 
-        {visibleProfessors.length > 0 ? (
+        {totalProfessorCount > 0 ? (
           <Pagination
             page={safeCurrentPage}
             pageSize={pageSize}
-            totalCount={visibleProfessors.length}
+            totalCount={totalProfessorCount}
             onChange={handlePaginationChange}
             ariaLabel="导师管理分页"
             unitLabel="位"
             itemLabel="位导师"
-            summary={`${visibleProfessors.length} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
+            summary={`${totalProfessorCount} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
             focusTargetRef={professorListStartRef}
             className="border-t border-stone-100 px-6 py-4"
           />
@@ -2699,7 +2772,11 @@ export const ProfessorsPage = () => {
             <div className="flex max-w-full flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => setSelectedIds(new Set())}
+                onClick={() => {
+                  setSelectedIds(new Set());
+                  setSelectedAllQueryKey(null);
+                  selectedAllIdsRef.current = [];
+                }}
                 className="ui-btn-secondary"
               >
                 清空选择

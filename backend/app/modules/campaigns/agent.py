@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.agent_api_errors import AgentApiError
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import as_utc_aware, local_now, serialize_api_datetime, utc_now
 from app.models import (
     BatchTask,
@@ -958,16 +959,18 @@ async def _resolve_campaign_create_context(
             code="CAMPAIGN_LLM_PROFILE_NOT_FOUND",
             message="未找到模型配置。",
         )
-    professors = list(
-        await session.scalars(
-            select(Professor)
-            .where(
-                Professor.id.in_(payload.professor_ids),
-                Professor.archived_at.is_(None),
-            )
-            .order_by(Professor.id.asc()),
-        ),
-    )
+    professor_ids = unique_positive_ids(payload.professor_ids)
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(professor_ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(
+                    Professor.id.in_(professor_id_chunk),
+                    Professor.archived_at.is_(None),
+                ),
+            ),
+        )
+    professors.sort(key=lambda professor: professor.id)
     if len(professors) != len(payload.professor_ids):
         raise AgentApiError(
             status_code=404,
@@ -1795,8 +1798,12 @@ async def _campaign_task_summaries(
         ).label(f"status_{task_status}")
         for task_status in statuses
     ]
-    rows = await session.execute(
-        select(
+    rows = []
+    for campaign_id_chunk in chunked_values(unique_positive_ids(campaign_ids)):
+        rows.extend(
+            (
+                await session.execute(
+                    select(
             EmailTask.batch_task_id,
             *status_columns,
             func.sum(
@@ -1841,10 +1848,12 @@ async def _campaign_task_summaries(
                 ),
             ).label("has_ai_pending"),
         )
-        .where(EmailTask.batch_task_id.in_(campaign_ids))
-        .group_by(EmailTask.batch_task_id),
-    )
-    for row in rows.mappings():
+                    .where(EmailTask.batch_task_id.in_(campaign_id_chunk))
+                    .group_by(EmailTask.batch_task_id),
+                )
+            ).mappings(),
+        )
+    for row in rows:
         campaign_id = int(row["batch_task_id"])
         summaries[campaign_id] = CampaignTaskSummary(
             counts=Counter(
@@ -1981,14 +1990,16 @@ async def _sanitize_campaign_material_references_before_restore(
         material_ids.add(campaign.primary_material_id)
     if not material_ids:
         return
-    existing_material_ids = set(
-        await session.scalars(
-            select(IdentityMaterial.id).where(
-                IdentityMaterial.identity_id == campaign.identity_id,
-                IdentityMaterial.id.in_(material_ids),
+    existing_material_ids: set[int] = set()
+    for material_id_chunk in chunked_values(material_ids):
+        existing_material_ids.update(
+            await session.scalars(
+                select(IdentityMaterial.id).where(
+                    IdentityMaterial.identity_id == campaign.identity_id,
+                    IdentityMaterial.id.in_(material_id_chunk),
+                ),
             ),
-        ),
-    )
+        )
     updated = False
     if (
         campaign.primary_material_id is not None

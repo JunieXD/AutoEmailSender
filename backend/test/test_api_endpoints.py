@@ -748,6 +748,71 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(len(restored_dashboard.json()), 1)
         self.assertEqual(restored_dashboard.json()[0]["name"], "张教授")
 
+    def test_professor_search_endpoints_and_invalid_cursor_contract(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        for name, email in (
+            ("分页导师甲", "professor-page-a@example.edu"),
+            ("分页导师乙", "professor-page-b@example.edu"),
+        ):
+            created = self.client.post(
+                "/api/professors",
+                json={
+                    "name": name,
+                    "email": email,
+                    "university": "分页大学",
+                    "school": "计算机学院",
+                    "research_direction": "数据库系统",
+                },
+            )
+            self.assertEqual(created.status_code, 201, msg=created.text)
+
+        management = self.client.post(
+            "/api/professors/search/management",
+            json={"page_size": 1, "keyword": "分页大学"},
+        )
+        self.assertEqual(management.status_code, 200, msg=management.text)
+        self.assertEqual(management.json()["total_count"], 2)
+        self.assertEqual(len(management.json()["items"]), 1)
+        self.assertIsNotNone(management.json()["next_cursor"])
+
+        selection = self.client.post(
+            "/api/professors/search/management/ids",
+            json={"keyword": "分页大学"},
+        )
+        self.assertEqual(selection.status_code, 200, msg=selection.text)
+        self.assertEqual(selection.json()["total_count"], 2)
+        self.assertEqual(len(selection.json()["ids"]), 2)
+
+        dashboard = self.client.post(
+            "/api/professors/search/dashboard",
+            json={"identity_id": identity_id, "page_size": 1},
+        )
+        self.assertEqual(dashboard.status_code, 200, msg=dashboard.text)
+        self.assertEqual(dashboard.json()["total_count"], 2)
+        self.assertEqual(len(dashboard.json()["items"]), 1)
+
+        dashboard_selection = self.client.post(
+            "/api/professors/search/dashboard/ids",
+            json={"identity_id": identity_id},
+        )
+        self.assertEqual(
+            dashboard_selection.status_code,
+            200,
+            msg=dashboard_selection.text,
+        )
+        self.assertEqual(dashboard_selection.json()["total_count"], 2)
+
+        invalid_cursor = self.client.post(
+            "/api/professors/search/management",
+            json={
+                "page": 2,
+                "page_size": 1,
+                "cursor": "W10",
+            },
+        )
+        self.assertEqual(invalid_cursor.status_code, 422, msg=invalid_cursor.text)
+        self.assertIn("分页游标无效", invalid_cursor.json()["detail"])
+
     def test_professor_personal_note_create_list_update_and_clear(self) -> None:
         create_response = self.client.post(
             "/api/professors",

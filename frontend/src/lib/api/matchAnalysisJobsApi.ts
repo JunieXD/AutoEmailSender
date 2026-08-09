@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
   CreateMatchAnalysisJobRequestDTO,
+  MatchAnalysisSelectionSummaryDTO,
   MatchAnalysisJobDTO,
   MatchAnalysisJobItemsPageDTO,
   TaskListView,
@@ -28,6 +29,18 @@ export const createMatchAnalysisJob = (
     method: 'POST',
     body: JSON.stringify(payload),
   });
+
+export const getMatchAnalysisSelectionSummary = (payload: {
+  identity_id: number;
+  professor_ids: number[];
+}) =>
+  apiFetch<MatchAnalysisSelectionSummaryDTO>(
+    '/api/match-analysis-jobs/selection-summary',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 
 export const listMatchAnalysisJobItems = (
   jobId: number,

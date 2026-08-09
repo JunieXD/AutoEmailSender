@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
+from app.core.query_chunks import chunked_values
 from app.models import Professor
 from .schemas import (
     CommunityCatalogRead,
@@ -189,13 +190,13 @@ async def export_community_share_package(
         ids = _parse_professor_ids(professor_ids)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    professors = list(
-        (
-            await session.execute(
-                select(Professor).where(Professor.id.in_(ids)),
-            )
-        ).scalars(),
-    )
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(Professor.id.in_(professor_id_chunk)),
+            ),
+        )
     professors_by_id = {professor.id: professor for professor in professors}
     missing_ids = [professor_id for professor_id in ids if professor_id not in professors_by_id]
     if missing_ids:

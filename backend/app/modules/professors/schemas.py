@@ -17,6 +17,40 @@ ProfessorDashboardStatus = Literal[
     "replied",
     "failed",
 ]
+ProfessorDashboardFilterStatus = Literal[
+    "not_contacted",
+    "preparing",
+    "ready_to_send",
+    "contacted",
+    "replied",
+    "failed",
+    "scheduled",
+]
+ProfessorKeywordSearchScope = Literal[
+    "name",
+    "email",
+    "university",
+    "school",
+    "department",
+    "title",
+    "researchDirection",
+    "tag",
+]
+ProfessorSortDirection = Literal["asc", "desc"]
+ProfessorDashboardSortKey = Literal[
+    "latest",
+    "matchScoreDesc",
+    "sentCountDesc",
+    "nameAsc",
+    "lastSentAt",
+    "lastRepliedAt",
+]
+ProfessorManagementSortKey = Literal[
+    "latest",
+    "updatedAtDesc",
+    "nameAsc",
+    "universityAsc",
+]
 MAX_PERSONAL_NOTE_LENGTH = 10_000
 
 
@@ -95,6 +129,117 @@ class ProfessorDashboardItemRead(ApiSchema):
     last_replied_at: datetime | None = None
     personal_note: str | None = None
     tags: list[ProfessorTagRead] = Field(default_factory=list)
+
+
+class ProfessorFilterOptionTagRead(ApiSchema):
+    id: int
+    name: str
+
+
+class ProfessorFilterOptionsRead(ApiSchema):
+    universities: list[str] = Field(default_factory=list)
+    schools: list[str] = Field(default_factory=list)
+    departments: list[str] = Field(default_factory=list)
+    titles: list[str] = Field(default_factory=list)
+    tags: list[ProfessorFilterOptionTagRead] = Field(default_factory=list)
+
+
+class ProfessorPageRequestBase(BaseModel):
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=100)
+    cursor: str | None = Field(default=None, max_length=2_000)
+    keyword: str = Field(default="", max_length=500)
+    keyword_search_scopes: list[ProfessorKeywordSearchScope] = Field(
+        default_factory=list,
+    )
+    universities: list[str] = Field(default_factory=list, max_length=200)
+    schools: list[str] = Field(default_factory=list, max_length=200)
+    departments: list[str] = Field(default_factory=list, max_length=200)
+    titles: list[str] = Field(default_factory=list, max_length=200)
+    tag_ids: list[str] = Field(default_factory=list, max_length=200)
+    sort_direction: ProfessorSortDirection = "desc"
+
+    @field_validator(
+        "universities",
+        "schools",
+        "departments",
+        "titles",
+        "tag_ids",
+        mode="after",
+    )
+    @classmethod
+    def _deduplicate_filter_values(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+    @field_validator("keyword", mode="after")
+    @classmethod
+    def _strip_keyword(cls, value: str) -> str:
+        return value.strip()
+
+
+class ProfessorDashboardPageRequest(ProfessorPageRequestBase):
+    identity_id: int = Field(ge=1)
+    keyword_search_scopes: list[ProfessorKeywordSearchScope] = Field(
+        default_factory=lambda: [
+            "name",
+            "university",
+            "school",
+            "department",
+            "title",
+            "researchDirection",
+            "tag",
+        ],
+    )
+    statuses: list[ProfessorDashboardFilterStatus] = Field(
+        default_factory=list,
+        max_length=7,
+    )
+    min_match_score: int | None = Field(default=None, ge=0, le=100)
+    max_match_score: int | None = Field(default=None, ge=0, le=100)
+    match_score_missing: bool = False
+    sort_key: ProfessorDashboardSortKey = "latest"
+
+
+class ProfessorManagementPageRequest(ProfessorPageRequestBase):
+    archived: Literal["active", "archived", "all"] = "active"
+    keyword_search_scopes: list[ProfessorKeywordSearchScope] = Field(
+        default_factory=lambda: [
+            "name",
+            "email",
+            "university",
+            "school",
+            "department",
+            "title",
+            "researchDirection",
+            "tag",
+        ],
+    )
+    sort_key: ProfessorManagementSortKey = "latest"
+
+
+class ProfessorDashboardPageRead(ApiSchema):
+    items: list[ProfessorDashboardItemRead] = Field(default_factory=list)
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    next_cursor: str | None = None
+    filter_options: ProfessorFilterOptionsRead
+
+
+class ProfessorManagementPageRead(ApiSchema):
+    items: list[ProfessorManagementItemRead] = Field(default_factory=list)
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    next_cursor: str | None = None
+    filter_options: ProfessorFilterOptionsRead
+
+
+class ProfessorIdSelectionRead(ApiSchema):
+    ids: list[int] = Field(default_factory=list)
+    total_count: int
 
 
 class ProfessorImportResult(ApiSchema):
@@ -220,7 +365,6 @@ class ProfessorBulkTagsPayload(BaseModel):
 class ProfessorBulkTagsResult(ApiSchema):
     ok: bool
     affected_count: int
-    professors: list[ProfessorManagementItemRead]
     message: str
 
 

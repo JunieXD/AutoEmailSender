@@ -7,11 +7,12 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, inspect, or_, select, update
+from sqlalchemy import func, insert, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import NO_VALUE
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.sqlite_diagnostics import sqlite_lock_user_message
 from app.core.time import local_now, utc_now
 from app.core.config import get_settings
@@ -25,10 +26,17 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
-from app.services.match_results import resolve_identity_match_scope
+from app.services.match_results import (
+    load_resolved_match_results,
+    resolve_identity_match_scope,
+)
 from app.services.operation_logs import record_operation_log
 
-from .schemas import MatchAnalysisJobItemRead, MatchAnalysisJobRead
+from .schemas import (
+    MatchAnalysisJobItemRead,
+    MatchAnalysisJobRead,
+    MatchAnalysisSelectionSummaryRead,
+)
 from .task_analysis import (
     MatchAnalysisAlreadyRunningError,
     MatchCalculationCanceledError,
@@ -62,6 +70,7 @@ async def create_match_analysis_job(
     llm_profile_id: int,
     professor_ids: list[int],
     name: str | None = None,
+    skip_existing: bool = False,
 ) -> MatchAnalysisJob:
     async with session_factory() as session:
         job = await create_match_analysis_job_record(
@@ -70,6 +79,7 @@ async def create_match_analysis_job(
             llm_profile_id=llm_profile_id,
             professor_ids=professor_ids,
             name=name,
+            skip_existing=skip_existing,
         )
         await session.commit()
         await session.refresh(job)
@@ -86,10 +96,11 @@ async def create_match_analysis_job_record(
     match_source_identity_id: int | None = None,
     event_name: str = "match_analysis_job.created",
     actor: str | None = None,
+    skip_existing: bool = False,
 ) -> MatchAnalysisJob:
     """Create a job in the caller's transaction without committing it."""
 
-    unique_professor_ids = list(dict.fromkeys(professor_ids))
+    unique_professor_ids = unique_positive_ids(professor_ids)
     if not unique_professor_ids:
         raise ValueError("请选择要分析匹配度的导师")
 
@@ -108,18 +119,33 @@ async def create_match_analysis_job_record(
     if llm_profile is None:
         raise ValueError("LLM 配置不存在")
 
-    professors = list(
-        await session.scalars(
-            select(Professor)
-            .where(
-                Professor.id.in_(unique_professor_ids),
-                Professor.archived_at.is_(None),
-            )
-            .order_by(Professor.id.asc()),
-        ),
+    professors = await _load_active_match_analysis_professors(
+        session,
+        unique_professor_ids,
     )
     if not professors:
         raise ValueError("没有可分析的导师")
+
+    skipped_existing_count = 0
+    if skip_existing:
+        resolved_matches = await load_resolved_match_results(
+            session,
+            active_identity_id=identity_id,
+            match_source_identity_id=match_scope.source_identity_id,
+            professor_ids=[professor.id for professor in professors],
+        )
+        scored_professor_ids = set(resolved_matches.by_professor_id)
+        skipped_existing_count = sum(
+            professor.id in scored_professor_ids
+            for professor in professors
+        )
+        professors = [
+            professor
+            for professor in professors
+            if professor.id not in scored_professor_ids
+        ]
+        if not professors:
+            raise ValueError("已选导师都已有匹配分，无需重复分析")
 
     has_evidence = {
         professor.id: _has_professor_match_evidence(professor)
@@ -146,30 +172,32 @@ async def create_match_analysis_job_record(
 
     queued_count = 0
     skipped_count = 0
+    item_rows: list[dict[str, object]] = []
     for professor in professors:
         if has_evidence[professor.id]:
-            item = MatchAnalysisJobItem(
-                job_id=job.id,
-                professor_id=professor.id,
-                email_task_id=None,
-                status=MatchAnalysisJobItemStatus.QUEUED.value,
-                created_at=now,
-                updated_at=now,
-            )
+            item_status = MatchAnalysisJobItemStatus.QUEUED.value
+            skip_reason = None
+            finished_at = None
             queued_count += 1
         else:
-            item = MatchAnalysisJobItem(
-                job_id=job.id,
-                professor_id=professor.id,
-                email_task_id=None,
-                status=MatchAnalysisJobItemStatus.SKIPPED.value,
-                skip_reason="缺少研究方向或近期论文",
-                finished_at=now,
-                created_at=now,
-                updated_at=now,
-            )
+            item_status = MatchAnalysisJobItemStatus.SKIPPED.value
+            skip_reason = "缺少研究方向或近期论文"
+            finished_at = now
             skipped_count += 1
-        session.add(item)
+        item_rows.append(
+            {
+                "job_id": job.id,
+                "professor_id": professor.id,
+                "email_task_id": None,
+                "status": item_status,
+                "skip_reason": skip_reason,
+                "finished_at": finished_at,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+    for item_row_chunk in chunked_values(item_rows):
+        await session.execute(insert(MatchAnalysisJobItem), list(item_row_chunk))
 
     job.target_count = queued_count
     job.skipped_count = skipped_count
@@ -181,6 +209,7 @@ async def create_match_analysis_job_record(
         "selected_count": len(professors),
         "target_count": queued_count,
         "skipped_count": skipped_count,
+        "skipped_existing_count": skipped_existing_count,
     }
     if actor is not None:
         metadata["actor"] = actor
@@ -193,6 +222,60 @@ async def create_match_analysis_job_record(
         metadata=metadata,
     )
     return job
+
+
+async def summarize_match_analysis_selection(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    professor_ids: list[int],
+) -> MatchAnalysisSelectionSummaryRead:
+    unique_professor_ids = unique_positive_ids(professor_ids)
+    professors = await _load_active_match_analysis_professors(
+        session,
+        unique_professor_ids,
+    )
+    resolved_matches = await load_resolved_match_results(
+        session,
+        active_identity_id=identity_id,
+        professor_ids=[professor.id for professor in professors],
+    )
+    analyzable_professor_ids = {
+        professor.id
+        for professor in professors
+        if _has_professor_match_evidence(professor)
+    }
+    already_scored_count = len(
+        analyzable_professor_ids.intersection(
+            resolved_matches.by_professor_id,
+        ),
+    )
+    analyzable_count = len(analyzable_professor_ids)
+    return MatchAnalysisSelectionSummaryRead(
+        selected_count=len(professors),
+        analyzable_count=analyzable_count,
+        missing_evidence_count=len(professors) - analyzable_count,
+        already_scored_count=already_scored_count,
+        unscored_analyzable_count=analyzable_count - already_scored_count,
+    )
+
+
+async def _load_active_match_analysis_professors(
+    session: AsyncSession,
+    professor_ids: list[int],
+) -> list[Professor]:
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(professor_ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(
+                    Professor.id.in_(professor_id_chunk),
+                    Professor.archived_at.is_(None),
+                ),
+            ),
+        )
+    professors.sort(key=lambda professor: professor.id)
+    return professors
 
 
 def serialize_match_analysis_job(job: MatchAnalysisJob) -> MatchAnalysisJobRead:
@@ -340,19 +423,20 @@ async def _finalize_cancel_requested_match_analysis_jobs(
             )
         )
         if job_ids:
-            await session.execute(
-                update(MatchAnalysisJobItem)
-                .where(
-                    MatchAnalysisJobItem.job_id.in_(job_ids),
-                    MatchAnalysisJobItem.status
-                    == MatchAnalysisJobItemStatus.QUEUED.value,
+            for job_id_chunk in chunked_values(job_ids):
+                await session.execute(
+                    update(MatchAnalysisJobItem)
+                    .where(
+                        MatchAnalysisJobItem.job_id.in_(job_id_chunk),
+                        MatchAnalysisJobItem.status
+                        == MatchAnalysisJobItemStatus.QUEUED.value,
+                    )
+                    .values(
+                        status=MatchAnalysisJobItemStatus.CANCELED.value,
+                        finished_at=now,
+                        updated_at=now,
+                    )
                 )
-                .values(
-                    status=MatchAnalysisJobItemStatus.CANCELED.value,
-                    finished_at=now,
-                    updated_at=now,
-                )
-            )
             await session.commit()
     for job_id in job_ids:
         await _refresh_match_analysis_job_summary(session_factory, job_id)

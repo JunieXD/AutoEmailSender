@@ -10,6 +10,10 @@ import type {
   ProfessorImportFileResultDTO,
   ProfessorImportResultDTO,
   ProfessorManagementItemDTO,
+  ProfessorDashboardPageRequestDTO,
+  ProfessorManagementPageRequestDTO,
+  ProfessorIdSelectionDTO,
+  ProfessorPageDTO,
   ProfessorNoteUpdateDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
@@ -33,6 +37,44 @@ export const listProfessors = (params?: {
 export const listProfessorsForManagement = (archived: 'active' | 'archived' | 'all') =>
   apiFetch<ProfessorManagementItemDTO[]>('/api/professors/management', undefined, {
     archived,
+  });
+
+export const searchDashboardProfessors = (
+  payload: ProfessorDashboardPageRequestDTO,
+) =>
+  apiFetch<ProfessorPageDTO<ProfessorDashboardItemDTO>>(
+    '/api/professors/search/dashboard',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+
+export const searchManagementProfessors = (
+  payload: ProfessorManagementPageRequestDTO,
+) =>
+  apiFetch<ProfessorPageDTO<ProfessorManagementItemDTO>>(
+    '/api/professors/search/management',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+
+export const searchDashboardProfessorIds = (
+  payload: ProfessorDashboardPageRequestDTO,
+) =>
+  apiFetch<ProfessorIdSelectionDTO>('/api/professors/search/dashboard/ids', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const searchManagementProfessorIds = (
+  payload: ProfessorManagementPageRequestDTO,
+) =>
+  apiFetch<ProfessorIdSelectionDTO>('/api/professors/search/management/ids', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 
 export const getProfessor = (professorId: number) =>

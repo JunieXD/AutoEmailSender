@@ -7,6 +7,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import local_now, utc_now
 from app.models import (
     CrawlCandidate,
@@ -126,7 +127,7 @@ async def create_professor_information_enrichment_job_record(
 ) -> CrawlJob:
     """Create an enrichment job in the caller's transaction without committing it."""
 
-    requested_ids = list(dict.fromkeys(int(item) for item in professor_ids if int(item) > 0))
+    requested_ids = unique_positive_ids(professor_ids)
     if not requested_ids:
         raise ValueError("请至少选择一位导师")
     if trigger_mode not in {
@@ -141,11 +142,13 @@ async def create_professor_information_enrichment_job_record(
     if llm_profile is None:
         raise ValueError("所选模型配置不存在")
 
-    professors = list(
-        await session.scalars(
-            select(Professor).where(Professor.id.in_(requested_ids)),
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(requested_ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(Professor.id.in_(professor_id_chunk)),
+            ),
         )
-    )
     professors_by_id = {professor.id: professor for professor in professors}
     missing_ids = [item for item in requested_ids if item not in professors_by_id]
     if missing_ids:
@@ -201,6 +204,8 @@ async def create_professor_information_enrichment_job_record(
 
     queued_count = 0
     skipped_count = 0
+    candidates: list[CrawlCandidate] = []
+    skip_reasons: list[str | None] = []
     for professor in ordered_professors:
         skip_reason_definition = _batch_skip_reason(
             professor,
@@ -212,14 +217,24 @@ async def create_professor_information_enrichment_job_record(
             else None
         )
         candidate = _build_candidate(job.id, professor)
-        session.add(candidate)
-        await session.flush()
+        candidates.append(candidate)
+        skip_reasons.append(skip_reason)
+    session.add_all(candidates)
+    await session.flush()
+
+    tasks: list[CrawlCandidateEnrichmentTask] = []
+    for professor, candidate, skip_reason in zip(
+        ordered_professors,
+        candidates,
+        skip_reasons,
+        strict=True,
+    ):
         task_status = (
             CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
             if skip_reason is not None
             else CrawlCandidateEnrichmentTaskStatus.PENDING.value
         )
-        session.add(
+        tasks.append(
             CrawlCandidateEnrichmentTask(
                 job_id=job.id,
                 candidate_id=candidate.id,
@@ -234,6 +249,7 @@ async def create_professor_information_enrichment_job_record(
             queued_count += 1
         else:
             skipped_count += 1
+    session.add_all(tasks)
 
     metadata: dict[str, object] = {
         "trigger_mode": trigger_mode,
@@ -241,7 +257,8 @@ async def create_professor_information_enrichment_job_record(
         "target_count": len(ordered_professors),
         "queued_count": queued_count,
         "skipped_count": skipped_count,
-        "professor_ids": requested_ids,
+        "professor_ids": requested_ids[:1_000],
+        "professor_ids_truncated": len(requested_ids) > 1_000,
     }
     if actor is not None:
         metadata["actor"] = actor
@@ -1033,17 +1050,20 @@ async def _get_information_enrichment_job(
 
 
 async def _active_professor_ids(session: AsyncSession, professor_ids: list[int]) -> set[int]:
-    return set(
-        await session.scalars(
-            select(CrawlCandidateEnrichmentTask.professor_id)
-            .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
-            .where(
-                CrawlJob.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value,
-                CrawlJob.status.in_(ACTIVE_JOB_STATUSES),
-                CrawlCandidateEnrichmentTask.professor_id.in_(professor_ids),
-            )
+    active_professor_ids: set[int] = set()
+    for professor_id_chunk in chunked_values(unique_positive_ids(professor_ids)):
+        active_professor_ids.update(
+            await session.scalars(
+                select(CrawlCandidateEnrichmentTask.professor_id)
+                .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
+                .where(
+                    CrawlJob.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+                    CrawlJob.status.in_(ACTIVE_JOB_STATUSES),
+                    CrawlCandidateEnrichmentTask.professor_id.in_(professor_id_chunk),
+                )
+            ),
         )
-    )
+    return active_professor_ids
 
 
 def _validate_single_professor(professor: Professor, *, active: bool) -> None:

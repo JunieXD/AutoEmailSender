@@ -112,6 +112,71 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_professor_scale_search_migration_round_trip_preserves_data(self) -> None:
+        database_path = Path(self.temp_dir.name) / "professor_scale_search.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260808_crawl_llm_snapshot"
+        migration_revision = "20260809_professor_scale_search"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO professors(name, email, research_direction)
+                VALUES ('迁移导师', 'migration-scale@example.edu', '数据库优化')
+                """,
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            indexes = {
+                row[1]
+                for row in connection.execute("PRAGMA index_list('professors')")
+            }
+            fts_names = connection.execute(
+                """
+                SELECT name FROM professors_fts
+                WHERE professors_fts MATCH '数据库优化'
+                """,
+            ).fetchall()
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        self.assertEqual(version, migration_revision)
+        self.assertIn("ix_professors_archived_updated_id", indexes)
+        self.assertEqual(fts_names, [("迁移导师",)])
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            remaining_indexes = {
+                row[1]
+                for row in connection.execute("PRAGMA index_list('professors')")
+            }
+            fts_table = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name = 'professors_fts'
+                """,
+            ).fetchone()
+            professor = connection.execute(
+                "SELECT name FROM professors WHERE email = 'migration-scale@example.edu'",
+            ).fetchone()
+        self.assertNotIn("ix_professors_archived_updated_id", remaining_indexes)
+        self.assertIsNone(fts_table)
+        self.assertEqual(professor, ("迁移导师",))
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            rebuilt_fts = connection.execute(
+                """
+                SELECT name FROM professors_fts
+                WHERE professors_fts MATCH '数据库优化'
+                """,
+            ).fetchall()
+        self.assertEqual(rebuilt_fts, [("迁移导师",)])
+
     def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(self) -> None:
         database_path = Path(self.temp_dir.name) / "match_task_decoupling.db"
         env = os.environ.copy()

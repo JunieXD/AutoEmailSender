@@ -14,6 +14,10 @@ import {
   getProfessorTagUsage,
   listProfessors,
   listProfessorsForManagement,
+  searchDashboardProfessorIds,
+  searchDashboardProfessors,
+  searchManagementProfessorIds,
+  searchManagementProfessors,
   updateProfessorTags,
 } from "@/entities/professor/api/professors";
 import type {
@@ -223,6 +227,10 @@ vi.mock("@/entities/professor/api/professors", () => ({
   ]),
   listProfessors: vi.fn(async () => dashboardProfessors),
   listProfessorsForManagement: vi.fn(async () => managementProfessors),
+  searchDashboardProfessorIds: vi.fn(),
+  searchDashboardProfessors: vi.fn(),
+  searchManagementProfessorIds: vi.fn(),
+  searchManagementProfessors: vi.fn(),
   restoreProfessor: vi.fn(),
   updateProfessorTags: vi.fn(async (_professorId: number, tagIds: number[]) => ({
     ...managementProfessors[0],
@@ -246,6 +254,177 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
 vi.mock("@/lib/api/workspacesApi", () => ({
   ensureWorkspaceTask: vi.fn(),
 }));
+
+type DashboardSearchPayload = Parameters<typeof searchDashboardProfessors>[0];
+type ManagementSearchPayload = Parameters<typeof searchManagementProfessors>[0];
+
+const textMatches = (value: string | null | undefined, keyword: string) =>
+  Boolean(value?.toLocaleLowerCase().includes(keyword));
+
+const filterDashboardProfessors = <Item extends ProfessorDashboardItemDTO>(
+  items: Item[],
+  payload: DashboardSearchPayload,
+): Item[] => {
+  const keyword = payload.keyword.trim().toLocaleLowerCase();
+  const scopes = new Set(payload.keyword_search_scopes);
+  const includeAllScopes = scopes.size === 0;
+  const scopedTextMatches = (item: ProfessorDashboardItemDTO) => {
+    if (!keyword) {
+      return true;
+    }
+    const values = {
+      name: [item.name],
+      email: [item.email],
+      university: [item.university],
+      school: [item.school],
+      department: [item.department],
+      title: [item.title],
+      researchDirection: [item.research_direction, ...item.recent_papers],
+      tag: item.tags.map((tag) => tag.name),
+    };
+    return Object.entries(values).some(([scope, candidates]) =>
+      (includeAllScopes || scopes.has(scope as keyof typeof values)) &&
+      candidates.some((candidate) => textMatches(candidate, keyword)),
+    );
+  };
+  const filtered = items.filter(
+    (item) =>
+      scopedTextMatches(item) &&
+      (!payload.universities.length ||
+        (item.university !== null && payload.universities.includes(item.university))) &&
+      (!payload.schools.length ||
+        (item.school !== null && payload.schools.includes(item.school))) &&
+      (!payload.departments.length ||
+        (item.department !== null && payload.departments.includes(item.department))) &&
+      (!payload.titles.length ||
+        (item.title !== null && payload.titles.includes(item.title))) &&
+      (!payload.statuses.length || payload.statuses.includes(item.status)) &&
+      (!payload.tag_ids.length ||
+        item.tags.some((tag) => payload.tag_ids.includes(String(tag.id)))) &&
+      (!payload.match_score_missing || item.match_score === null) &&
+      (payload.match_score_missing ||
+        payload.min_match_score === null ||
+        (item.match_score !== null && item.match_score >= payload.min_match_score)) &&
+      (payload.match_score_missing ||
+        payload.max_match_score === null ||
+        (item.match_score !== null && item.match_score <= payload.max_match_score)),
+  );
+  const direction = payload.sort_direction === "asc" ? 1 : -1;
+  if (payload.sort_key === "nameAsc") {
+    filtered.sort((left, right) =>
+      direction * left.name.localeCompare(right.name) || left.id - right.id,
+    );
+  } else if (payload.sort_key === "matchScoreDesc") {
+    filtered.sort((left, right) => {
+      if (left.match_score === null) return 1;
+      if (right.match_score === null) return -1;
+      return direction * (left.match_score - right.match_score) || left.id - right.id;
+    });
+  } else if (payload.sort_key === "sentCountDesc") {
+    filtered.sort(
+      (left, right) =>
+        direction * (left.sent_count - right.sent_count) || left.id - right.id,
+    );
+  } else if (
+    payload.sort_key === "lastSentAt" ||
+    payload.sort_key === "lastRepliedAt"
+  ) {
+    const field =
+      payload.sort_key === "lastSentAt" ? "last_sent_at" : "last_replied_at";
+    filtered.sort((left, right) => {
+      const leftValue = left[field];
+      const rightValue = right[field];
+      if (leftValue === null || leftValue === undefined) return 1;
+      if (rightValue === null || rightValue === undefined) return -1;
+      return direction * leftValue.localeCompare(rightValue) || left.id - right.id;
+    });
+  }
+  return filtered;
+};
+
+const filterManagementProfessors = (
+  items: ProfessorManagementItemDTO[],
+  payload: ManagementSearchPayload,
+) => {
+  const keyword = payload.keyword.trim().toLocaleLowerCase();
+  const scopes = new Set(payload.keyword_search_scopes);
+  const includeAllScopes = scopes.size === 0;
+  const scopedTextMatches = (item: ProfessorManagementItemDTO) => {
+    if (!keyword) {
+      return true;
+    }
+    const values = {
+      name: [item.name],
+      email: [item.email],
+      university: [item.university],
+      school: [item.school],
+      department: [item.department],
+      title: [item.title],
+      researchDirection: [item.research_direction, ...item.recent_papers],
+      tag: item.tags.map((tag) => tag.name),
+    };
+    return Object.entries(values).some(([scope, candidates]) =>
+      (includeAllScopes || scopes.has(scope as keyof typeof values)) &&
+      candidates.some((candidate) => textMatches(candidate, keyword)),
+    );
+  };
+  const filtered = items.filter(
+    (item) =>
+      scopedTextMatches(item) &&
+      (!payload.universities.length ||
+        (item.university !== null && payload.universities.includes(item.university))) &&
+      (!payload.schools.length ||
+        (item.school !== null && payload.schools.includes(item.school))) &&
+      (!payload.departments.length ||
+        (item.department !== null && payload.departments.includes(item.department))) &&
+      (!payload.titles.length ||
+        (item.title !== null && payload.titles.includes(item.title))) &&
+      (!payload.tag_ids.length ||
+        item.tags.some((tag) => payload.tag_ids.includes(String(tag.id)))),
+  );
+  if (payload.sort_key === "universityAsc") {
+    const direction = payload.sort_direction === "asc" ? 1 : -1;
+    filtered.sort((left, right) =>
+      direction * (left.university ?? "").localeCompare(right.university ?? "") ||
+      left.name.localeCompare(right.name) ||
+      left.id - right.id,
+    );
+  } else if (payload.sort_key === "updatedAtDesc") {
+    const direction = payload.sort_direction === "asc" ? 1 : -1;
+    filtered.sort((left, right) =>
+      direction * left.updated_at.localeCompare(right.updated_at) || left.id - right.id,
+    );
+  } else if (payload.sort_key === "nameAsc") {
+    const direction = payload.sort_direction === "asc" ? 1 : -1;
+    filtered.sort((left, right) =>
+      direction * left.name.localeCompare(right.name) || left.id - right.id,
+    );
+  }
+  return filtered;
+};
+
+const buildFilterOptions = (
+  items: Array<ProfessorDashboardItemDTO | ProfessorManagementItemDTO>,
+) => ({
+  universities: Array.from(
+    new Set(items.map((item) => item.university).filter((value): value is string => Boolean(value))),
+  ),
+  schools: Array.from(
+    new Set(items.map((item) => item.school).filter((value): value is string => Boolean(value))),
+  ),
+  departments: Array.from(
+    new Set(items.map((item) => item.department).filter((value): value is string => Boolean(value))),
+  ),
+  titles: Array.from(
+    new Set(items.map((item) => item.title).filter((value): value is string => Boolean(value))),
+  ),
+  tags: Array.from(
+    new Map(items.flatMap((item) => item.tags).map((tag) => [tag.id, tag])).values(),
+  ),
+});
+
+const pageItems = <Item,>(items: Item[], page: number, pageSize: number) =>
+  items.slice((page - 1) * pageSize, page * pageSize);
 
 describe("selection controls", () => {
   beforeEach(() => {
@@ -279,6 +458,42 @@ describe("selection controls", () => {
     });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
+    vi.mocked(searchDashboardProfessors).mockImplementation(async (payload) => {
+      const source = await listProfessors({ identityId: payload.identity_id });
+      const items = filterDashboardProfessors([...source], payload);
+      return {
+        items: pageItems(items, payload.page, payload.page_size),
+        total_count: items.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+    vi.mocked(searchDashboardProfessorIds).mockImplementation(async (payload) => {
+      const source = await listProfessors({ identityId: payload.identity_id });
+      const items = filterDashboardProfessors([...source], payload);
+      return { ids: items.map((item) => item.id), total_count: items.length };
+    });
+    vi.mocked(searchManagementProfessors).mockImplementation(async (payload) => {
+      const source = await listProfessorsForManagement(payload.archived);
+      const items = filterManagementProfessors([...source], payload);
+      return {
+        items: pageItems(items, payload.page, payload.page_size),
+        total_count: items.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+    vi.mocked(searchManagementProfessorIds).mockImplementation(async (payload) => {
+      const source = await listProfessorsForManagement(payload.archived);
+      const items = filterManagementProfessors([...source], payload);
+      return { ids: items.map((item) => item.id), total_count: items.length };
+    });
     vi.mocked(updateProfessorTags).mockResolvedValue({
       ...managementProfessors[0],
       tags: [
@@ -294,19 +509,6 @@ describe("selection controls", () => {
       ok: true,
       affected_count: 1,
       message: "已更新 1 位导师的标签",
-      professors: [
-        {
-          ...managementProfessors[0],
-          tags: [
-            {
-              id: 1,
-              name: "高意愿",
-              text_color: "#166534",
-              background_color: "#dcfce7",
-            },
-          ],
-        },
-      ],
     });
     Object.assign(selectionContextValue, {
       identities: [selectedIdentity],
@@ -1329,21 +1531,6 @@ describe("selection controls", () => {
       ok: true,
       affected_count: 1,
       message: "已更新 1 位导师的标签",
-      professors: [
-        {
-          ...managementProfessors[0],
-          id: 11,
-          name: "导师 11",
-          tags: [
-            {
-              id: 1,
-              name: "高意愿",
-              text_color: "#166534",
-              background_color: "#dcfce7",
-            },
-          ],
-        },
-      ],
     });
 
     render(
@@ -1406,21 +1593,6 @@ describe("selection controls", () => {
       ok: true,
       affected_count: 1,
       message: "已更新 1 位导师的标签",
-      professors: [
-        {
-          ...managementProfessors[0],
-          id: 11,
-          name: "导师 11",
-          tags: [
-            {
-              id: 2,
-              name: "已联系",
-              text_color: "#1d4ed8",
-              background_color: "#dbeafe",
-            },
-          ],
-        },
-      ],
     });
 
     render(

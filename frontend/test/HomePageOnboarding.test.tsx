@@ -24,6 +24,64 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/entities/professor/api/professors", () => ({
   listProfessors: mockedListProfessors,
+  searchDashboardProfessors: async (payload: {
+    identity_id: number;
+    page: number;
+    page_size: number;
+    keyword: string;
+    keyword_search_scopes: string[];
+    universities: string[];
+    schools: string[];
+    departments: string[];
+    titles: string[];
+    statuses: string[];
+    tag_ids: string[];
+    min_match_score: number | null;
+    max_match_score: number | null;
+    match_score_missing: boolean;
+    sort_key: string;
+    sort_direction: "asc" | "desc";
+  }) => {
+    const allItems = await mockedListProfessors({ identityId: payload.identity_id });
+    const filtersModule = await import(
+      "@/features/home-dashboard/client/filterDashboardProfessors"
+    );
+    const sortModule = await import(
+      "@/features/home-dashboard/client/sortDashboardProfessors"
+    );
+    const filtered = filtersModule.filterDashboardProfessors(allItems, {
+      keyword: payload.keyword,
+      keywordSearchScopes: payload.keyword_search_scopes,
+      universities: payload.universities,
+      schools: payload.schools,
+      departments: payload.departments,
+      titles: payload.titles,
+      statuses: payload.statuses,
+      tagIds: payload.tag_ids,
+      minMatchScore: payload.match_score_missing
+        ? filtersModule.NO_MATCH_SCORE_FILTER_VALUE
+        : payload.min_match_score?.toString() ?? "",
+      maxMatchScore: payload.max_match_score?.toString() ?? "",
+    });
+    const sorted = sortModule.sortDashboardProfessors(
+      filtered,
+      payload.sort_key,
+      payload.sort_direction,
+    );
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: sorted.slice(start, start + payload.page_size),
+      total_count: sorted.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: filtersModule.buildDashboardFilterOptions(allItems, {
+        universities: payload.universities,
+        schools: payload.schools,
+      }),
+    };
+  },
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
@@ -447,19 +505,25 @@ describe("HomePage onboarding", () => {
     fireEvent.click(screen.getByRole("option", { name: "MIT" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
+    await waitFor(() => {
+      expect(screen.getByText(/共 2 位导师/)).toBeInTheDocument();
+    });
+
     expect(
       screen.getByRole("button", { name: "学院：全部学院" }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
 
-    expect(screen.getByRole("option", { name: "AI Institute" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "School of Engineering" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: "School of Medicine" }),
-    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "AI Institute" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("option", { name: "School of Engineering" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("option", { name: "School of Medicine" }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("keeps dashboard filters after leaving the home route and returning", async () => {
@@ -488,8 +552,10 @@ describe("HomePage onboarding", () => {
       { target: { value: "王教授" } },
     );
 
-    expect(screen.getByText("王教授")).toBeInTheDocument();
-    expect(screen.queryByText("李教授")).not.toBeInTheDocument();
+    expect(await screen.findByText("王教授")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("李教授")).not.toBeInTheDocument();
+    });
 
     fireEvent.click(screen.getByRole("link", { name: "管理导师" }));
     expect(screen.getByText("导师管理页")).toBeInTheDocument();
@@ -500,7 +566,7 @@ describe("HomePage onboarding", () => {
     expect(
       screen.getByPlaceholderText("姓名、学校、学院、系所、职称、研究方向、标签"),
     ).toHaveValue("王教授");
-    expect(screen.getByText("王教授")).toBeInTheDocument();
+    expect(await screen.findByText("王教授")).toBeInTheDocument();
     expect(screen.queryByText("李教授")).not.toBeInTheDocument();
   });
 });

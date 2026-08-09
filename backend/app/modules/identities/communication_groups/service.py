@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.agent_revisions import revision_for
+from app.core.query_chunks import chunked_values
 from app.core.time import utc_now
 from app.models import IdentityCommunicationGroup, IdentityProfile
 from app.services.operation_logs import record_operation_log
@@ -210,13 +211,16 @@ async def _load_selected_identities(
             message="通信共享组至少需要两个身份",
         )
 
-    identities = list(
-        await session.scalars(
-            select(IdentityProfile)
-            .where(IdentityProfile.id.in_(identity_ids))
-            .order_by(IdentityProfile.id.asc()),
-        ),
-    )
+    identities: list[IdentityProfile] = []
+    for identity_id_chunk in chunked_values(identity_ids):
+        identities.extend(
+            await session.scalars(
+                select(IdentityProfile).where(
+                    IdentityProfile.id.in_(identity_id_chunk),
+                ),
+            ),
+        )
+    identities.sort(key=lambda identity: identity.id)
     found_ids = {identity.id for identity in identities}
     missing_ids = sorted(set(identity_ids) - found_ids)
     if missing_ids:
@@ -254,10 +258,10 @@ async def _expand_conflicting_group_members(
     conflicting_group_ids: set[int],
 ) -> list[IdentityProfile]:
     members_by_id = {identity.id: identity for identity in selected}
-    if conflicting_group_ids:
+    for group_id_chunk in chunked_values(conflicting_group_ids):
         group_members = await session.scalars(
             select(IdentityProfile).where(
-                IdentityProfile.communication_group_id.in_(conflicting_group_ids),
+                IdentityProfile.communication_group_id.in_(group_id_chunk),
             ),
         )
         for identity in group_members:
@@ -269,13 +273,16 @@ async def _raise_group_conflict(
     session: AsyncSession,
     group_ids: set[int],
 ) -> None:
-    members = list(
-        await session.scalars(
-            select(IdentityProfile)
-            .where(IdentityProfile.communication_group_id.in_(group_ids))
-            .order_by(IdentityProfile.id.asc()),
-        ),
-    )
+    members: list[IdentityProfile] = []
+    for group_id_chunk in chunked_values(group_ids):
+        members.extend(
+            await session.scalars(
+                select(IdentityProfile).where(
+                    IdentityProfile.communication_group_id.in_(group_id_chunk),
+                ),
+            ),
+        )
+    members.sort(key=lambda identity: identity.id)
     raise CommunicationGroupMutationError(
         status_code=409,
         code="COMMUNICATION_GROUP_MERGE_CONFIRMATION_REQUIRED",

@@ -370,6 +370,7 @@
       "exported_actions": [
         "listMatchAnalysisJobs",
         "createMatchAnalysisJob",
+        "getMatchAnalysisSelectionSummary",
         "listMatchAnalysisJobItems",
         "getMatchAnalysisJob",
         "cancelMatchAnalysisJob",
@@ -377,6 +378,13 @@
         "deleteMatchAnalysisJob",
         "restoreMatchAnalysisJob"
       ],
+      "action_overrides": {
+        "getMatchAnalysisSelectionSummary": {
+          "status": "planned",
+          "required_capabilities": [],
+          "reason": "CLI 创建任务时会执行同类校验，但尚未开放独立的批量选择摘要预览。"
+        }
+      },
       "status": "available",
       "required_capabilities": [
         "matching.jobs.list",
@@ -472,6 +480,10 @@
       "exported_actions": [
         "listProfessors",
         "listProfessorsForManagement",
+        "searchDashboardProfessors",
+        "searchManagementProfessors",
+        "searchDashboardProfessorIds",
+        "searchManagementProfessorIds",
         "getProfessor",
         "listProfessorTags",
         "createProfessorTag",

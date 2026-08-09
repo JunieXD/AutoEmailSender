@@ -8,6 +8,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
 from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from app.modules.communications.public import load_communication_events
@@ -33,7 +34,7 @@ async def build_contact_status_by_professor(
     if not professor_ids:
         return {}
 
-    unique_professor_ids = list(dict.fromkeys(professor_ids))
+    unique_professor_ids = unique_positive_ids(professor_ids)
     resolved_tasks_by_professor = (
         tasks_by_professor
         if tasks_by_professor is not None
@@ -55,31 +56,32 @@ async def build_contact_status_by_professor(
             (EmailLog.direction == EmailDirection.SENT.value)
             & (func.trim(func.coalesce(EmailLog.failure_summary, "")) == "")
         )
-        log_rows = await session.execute(
-            select(
-                EmailLog.professor_id,
-                func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
-                func.max(
-                    case((successful_sent_log, EmailLog.created_at), else_=None),
-                ).label("last_sent_at"),
-                func.max(
-                    case(
-                        (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
-                        else_=None,
-                    ),
-                ).label("last_replied_at"),
+        for professor_id_chunk in chunked_values(unique_professor_ids):
+            log_rows = await session.execute(
+                select(
+                    EmailLog.professor_id,
+                    func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
+                    func.max(
+                        case((successful_sent_log, EmailLog.created_at), else_=None),
+                    ).label("last_sent_at"),
+                    func.max(
+                        case(
+                            (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
+                            else_=None,
+                        ),
+                    ).label("last_replied_at"),
+                )
+                .where(
+                    EmailLog.identity_id == resolved_identity_ids[0],
+                    EmailLog.professor_id.in_(professor_id_chunk),
+                    EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
+                )
+                .group_by(EmailLog.professor_id),
             )
-            .where(
-                EmailLog.identity_id == resolved_identity_ids[0],
-                EmailLog.professor_id.in_(unique_professor_ids),
-                EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
-            )
-            .group_by(EmailLog.professor_id),
-        )
-        for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
-            sent_count_by_professor[professor_id] = int(sent_count or 0)
-            _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
-            _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
+            for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
+                sent_count_by_professor[professor_id] = int(sent_count or 0)
+                _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
+                _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
     else:
         communication_events = await load_communication_events(
             session,
@@ -174,29 +176,30 @@ async def _load_tasks_by_professor(
     identity_id: int,
     professor_ids: list[int],
 ) -> dict[int, list[EmailTask]]:
-    rows = await session.scalars(
-        select(EmailTask)
-        .options(
-            load_only(
-                EmailTask.professor_id,
-                EmailTask.status,
-                EmailTask.created_at,
-                EmailTask.sent_at,
-                EmailTask.is_replied,
-                EmailTask.updated_at,
-            ),
-        )
-        .where(
-            EmailTask.identity_id == identity_id,
-            EmailTask.professor_id.in_(professor_ids),
-            EmailTask.batch_send_canceled_at.is_(None),
-            email_task_is_not_user_removed_expression(),
-        )
-        .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
-    )
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
-    for task in rows:
-        tasks_by_professor[task.professor_id].append(task)
+    for professor_id_chunk in chunked_values(unique_positive_ids(professor_ids)):
+        rows = await session.scalars(
+            select(EmailTask)
+            .options(
+                load_only(
+                    EmailTask.professor_id,
+                    EmailTask.status,
+                    EmailTask.created_at,
+                    EmailTask.sent_at,
+                    EmailTask.is_replied,
+                    EmailTask.updated_at,
+                ),
+            )
+            .where(
+                EmailTask.identity_id == identity_id,
+                EmailTask.professor_id.in_(professor_id_chunk),
+                EmailTask.batch_send_canceled_at.is_(None),
+                email_task_is_not_user_removed_expression(),
+            )
+            .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
+        )
+        for task in rows:
+            tasks_by_professor[task.professor_id].append(task)
     return tasks_by_professor
 
 

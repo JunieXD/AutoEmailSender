@@ -9,6 +9,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import CrawlCandidate, CrawlCandidateIdentityKey
 from app.modules.crawler.pages.domain_policy import is_same_registrable_domain
 from app.modules.crawler.v2.url_utils import normalize_url
@@ -727,12 +728,13 @@ async def rebuild_candidate_identity_keys(
             component.append(row)
 
     component_ids = [row.id for row in component]
-    await session.execute(
-        delete(CrawlCandidateIdentityKey).where(
-            CrawlCandidateIdentityKey.job_id == root.job_id,
-            CrawlCandidateIdentityKey.candidate_id.in_(component_ids),
+    for component_id_chunk in chunked_values(component_ids):
+        await session.execute(
+            delete(CrawlCandidateIdentityKey).where(
+                CrawlCandidateIdentityKey.job_id == root.job_id,
+                CrawlCandidateIdentityKey.candidate_id.in_(component_id_chunk),
+            )
         )
-    )
     identities = {
         identity
         for row in component
@@ -758,17 +760,19 @@ async def canonicalize_candidate_ids(
     job_id: int,
     candidate_ids: Iterable[int],
 ) -> tuple[list[CrawlCandidate], list[int]]:
-    requested_ids = list(dict.fromkeys(int(candidate_id) for candidate_id in candidate_ids))
+    requested_ids = unique_positive_ids(candidate_ids)
     if not requested_ids:
         return [], []
-    rows = list(
-        await session.scalars(
-            select(CrawlCandidate).where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.id.in_(requested_ids),
-            )
+    rows: list[CrawlCandidate] = []
+    for candidate_id_chunk in chunked_values(requested_ids):
+        rows.extend(
+            await session.scalars(
+                select(CrawlCandidate).where(
+                    CrawlCandidate.job_id == job_id,
+                    CrawlCandidate.id.in_(candidate_id_chunk),
+                )
+            ),
         )
-    )
     rows_by_id = {candidate.id: candidate for candidate in rows}
     missing_ids = [candidate_id for candidate_id in requested_ids if candidate_id not in rows_by_id]
     canonical_by_id: dict[int, CrawlCandidate] = {}

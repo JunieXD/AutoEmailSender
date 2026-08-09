@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
+from app.core.query_chunks import chunked_values
 from app.core.time import as_utc_aware, utc_now
 from app.models import (
     EmailDirection,
@@ -2407,16 +2408,16 @@ async def _process_sent_imap_fetched_messages(
         return 0
 
     async with session_factory() as session:
-        professors = list(
-            (
-                await session.execute(
+        professors: list[Professor] = []
+        for email_chunk in chunked_values(all_recipient_emails):
+            professors.extend(
+                await session.scalars(
                     select(Professor).where(
                         Professor.archived_at.is_(None),
-                        func.lower(Professor.email).in_(all_recipient_emails),
+                        func.lower(Professor.email).in_(email_chunk),
                     ),
-                )
-            ).scalars(),
-        )
+                ),
+            )
         professors_by_email: dict[str, list[Professor]] = {}
         for professor in professors:
             normalized_email = normalize_email_address(professor.email)
@@ -2577,20 +2578,30 @@ async def _find_reply_target(
     normalized_from_email = normalize_email_address(message.from_email)
     reference_ids = extract_message_ids(message.in_reply_to, message.references)
     if reference_ids:
-        matched_log = await session.scalar(
-            select(EmailLog)
-            .join(Professor, EmailLog.professor_id == Professor.id)
-            .where(
-                EmailLog.identity_id == identity_id,
-                EmailLog.direction == EmailDirection.SENT.value,
-                Professor.archived_at.is_(None),
-                func.lower(Professor.email) == normalized_from_email,
-                or_(
-                    func.lower(EmailLog.rfc_message_id).in_(reference_ids),
-                    EmailLog.normalized_message_id.in_(reference_ids),
-                ),
+        matched_logs: list[EmailLog] = []
+        for reference_id_chunk in chunked_values(reference_ids):
+            matched_log = await session.scalar(
+                select(EmailLog)
+                .join(Professor, EmailLog.professor_id == Professor.id)
+                .where(
+                    EmailLog.identity_id == identity_id,
+                    EmailLog.direction == EmailDirection.SENT.value,
+                    Professor.archived_at.is_(None),
+                    func.lower(Professor.email) == normalized_from_email,
+                    or_(
+                        func.lower(EmailLog.rfc_message_id).in_(reference_id_chunk),
+                        EmailLog.normalized_message_id.in_(reference_id_chunk),
+                    ),
+                )
+                .order_by(EmailLog.created_at.desc())
+                .limit(1),
             )
-            .order_by(EmailLog.created_at.desc()),
+            if matched_log is not None:
+                matched_logs.append(matched_log)
+        matched_log = max(
+            matched_logs,
+            key=lambda item: item.created_at,
+            default=None,
         )
         if matched_log and matched_log.email_task_id:
             return await _load_email_task(session, matched_log.email_task_id)

@@ -30,6 +30,61 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/entities/professor/api/professors", () => ({
   listProfessorsForManagement,
+  searchManagementProfessors: async (payload: {
+    archived: "active" | "archived" | "all";
+    page: number;
+    page_size: number;
+    keyword: string;
+    keyword_search_scopes: string[];
+    universities: string[];
+    schools: string[];
+    departments: string[];
+    titles: string[];
+    tag_ids: string[];
+    sort_key: string;
+    sort_direction: "asc" | "desc";
+  }) => {
+    const allItems = await listProfessorsForManagement(payload.archived);
+    const filtersModule = await import(
+      "@/features/professor-management/client/filterManagementProfessors"
+    );
+    const sortModule = await import(
+      "@/features/professor-management/client/sortManagementProfessors"
+    );
+    const filtered = filtersModule.filterManagementProfessors(allItems, {
+      keyword: payload.keyword,
+      keywordSearchScopes: payload.keyword_search_scopes,
+      universities: payload.universities,
+      schools: payload.schools,
+      departments: payload.departments,
+      titles: payload.titles,
+      tagIds: payload.tag_ids,
+    });
+    const sorted = sortModule.sortManagementProfessors(
+      filtered,
+      payload.sort_key,
+      payload.sort_direction,
+    );
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: sorted.slice(start, start + payload.page_size),
+      total_count: sorted.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: filtersModule.buildManagementFilterOptions(allItems, {
+        universities: payload.universities,
+        schools: payload.schools,
+      }),
+    };
+  },
+  searchManagementProfessorIds: async (payload: {
+    archived: "active" | "archived" | "all";
+  }) => {
+    const items = await listProfessorsForManagement(payload.archived);
+    return { ids: items.map((item: { id: number }) => item.id), total_count: items.length };
+  },
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   createProfessor: vi.fn(),
@@ -1050,6 +1105,11 @@ describe("ProfessorsPage layout", () => {
     );
     fireEvent.click(screen.getByRole("option", { name: "样例大学" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText("1 位 · 1/1 页 · 每页 10 位"),
+      ).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
     fireEvent.click(
       screen.getByRole("button", { name: "取消全选" }),
@@ -1057,11 +1117,13 @@ describe("ProfessorsPage layout", () => {
     fireEvent.click(screen.getByRole("option", { name: "生命科学学院" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
-    expect(screen.queryByText("李教授")).not.toBeInTheDocument();
-    expect(screen.getByText("王教授")).toBeInTheDocument();
-    expect(
-      screen.getByText("1 位 · 1/1 页 · 每页 10 位"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("李教授")).not.toBeInTheDocument();
+      expect(screen.getByText("王教授")).toBeInTheDocument();
+      expect(
+        screen.getByText("1 位 · 1/1 页 · 每页 10 位"),
+      ).toBeInTheDocument();
+    });
 
     const resetButton = screen.getByRole("button", { name: "重置" });
     expect(resetButton).toHaveClass("ui-btn-secondary");
@@ -1102,8 +1164,10 @@ describe("ProfessorsPage layout", () => {
 
     fireEvent.click(resetButton);
 
-    expect(screen.getByText("李教授")).toBeInTheDocument();
-    expect(screen.getByText("王教授")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("李教授")).toBeInTheDocument();
+      expect(screen.getByText("王教授")).toBeInTheDocument();
+    });
   });
   it("changes and stores the independent management page size", async () => {
     listProfessorsForManagement.mockResolvedValue(
@@ -1124,11 +1188,13 @@ describe("ProfessorsPage layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "每页数量" }));
     fireEvent.click(screen.getByRole("option", { name: "20" }));
 
-    expect(screen.getByText("导师 11")).toBeInTheDocument();
-    expect(screen.getByText("导师 12")).toBeInTheDocument();
-    expect(
-      screen.getByText("12 位 · 1/1 页 · 每页 20 位"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("导师 11")).toBeInTheDocument();
+      expect(screen.getByText("导师 12")).toBeInTheDocument();
+      expect(
+        screen.getByText("12 位 · 1/1 页 · 每页 20 位"),
+      ).toBeInTheDocument();
+    });
     expect(localStorage.getItem("professors-management:page-size")).toBe("20");
     expect(localStorage.getItem("home-dashboard:page-size")).toBeNull();
   });

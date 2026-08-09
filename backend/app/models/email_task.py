@@ -69,6 +69,21 @@ class EmailTask(Base):
             "id",
         ),
         Index(
+            "ix_email_tasks_identity_root_active_status",
+            "identity_id",
+            "parent_task_id",
+            "batch_send_canceled_at",
+            "status",
+            "professor_id",
+        ),
+        Index(
+            "ix_email_tasks_identity_status_scheduled_professor",
+            "identity_id",
+            "status",
+            "scheduled_at",
+            "professor_id",
+        ),
+        Index(
             "ix_email_tasks_dispatch_ready",
             "approved_at",
             "created_at",

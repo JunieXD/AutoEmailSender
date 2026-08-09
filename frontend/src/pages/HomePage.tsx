@@ -33,15 +33,12 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
   DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS,
-  buildDashboardFilterOptions,
   createDefaultDashboardFilters,
-  filterDashboardProfessors,
   getActiveDashboardFilterCount,
   getDashboardKeywordSearchPlaceholder,
   normalizeDashboardKeywordSearchScopes,
   NO_FIELD_FILTER_VALUE,
   NO_MATCH_SCORE_FILTER_VALUE,
-  pruneDashboardFilters,
   NO_TAG_FILTER_VALUE,
   type DashboardFilterState,
   type DashboardKeywordSearchScope,
@@ -53,7 +50,6 @@ import {
 import {
   DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS,
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
-  sortDashboardProfessors,
   type ProfessorDashboardSortDirection,
   type ProfessorDashboardSortKey,
 } from "@/features/home-dashboard/client/sortDashboardProfessors";
@@ -68,7 +64,10 @@ import {
 } from "@/features/match-analysis/client/tokenUsage";
 import { ApiError } from "@/lib/api/client";
 import { calculateMatch } from "@/lib/api/emailTasksApi";
-import { createMatchAnalysisJob } from "@/lib/api/matchAnalysisJobsApi";
+import {
+  createMatchAnalysisJob,
+  getMatchAnalysisSelectionSummary,
+} from "@/lib/api/matchAnalysisJobsApi";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import {
   bulkUpdateProfessorTags,
@@ -76,16 +75,15 @@ import {
   deleteProfessorTag,
   getProfessorTagUsage,
   listProfessorTags,
-  listProfessors,
+  searchDashboardProfessorIds,
+  searchDashboardProfessors,
   updateProfessorNote,
   updateProfessorTags as updateProfessorTagsRequest,
 } from "@/entities/professor/api/professors";
 import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import { parseApiDateTime } from "@/lib/dateTime";
 import {
-  getPageItems,
   getStoredPageSize,
-  getTotalPages,
   setStoredPageSize,
   type PaginationChange,
 } from "@/lib/pagination";
@@ -93,6 +91,8 @@ import type {
   ProfessorDashboardFilterStatus,
   ProfessorDashboardItemDTO,
   ProfessorBulkTagModeDTO,
+  ProfessorFilterOptionsDTO,
+  MatchAnalysisSelectionSummaryDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
 } from "@/types";
@@ -343,6 +343,15 @@ export const HomePage = () => {
     getStoredPageSize(HOME_PAGE_SIZE_STORAGE_KEY),
   );
   const [loading, setLoading] = useState(false);
+  const [totalProfessorCount, setTotalProfessorCount] = useState(0);
+  const [totalProfessorPages, setTotalProfessorPages] = useState(1);
+  const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
+    universities: [],
+    schools: [],
+    departments: [],
+    titles: [],
+    tags: [],
+  });
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const [bulkScoring, setBulkScoring] = useState(false);
   const [scoringProfessorIds, setScoringProfessorIds] = useState<Set<number>>(
@@ -359,18 +368,30 @@ export const HomePage = () => {
   const [creatingProfessorTag, setCreatingProfessorTag] = useState(false);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
   const [savingBulkTags, setSavingBulkTags] = useState(false);
+  const [selectingAllProfessors, setSelectingAllProfessors] = useState(false);
+  const [selectedAllQueryKey, setSelectedAllQueryKey] = useState<string | null>(null);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const professorListStartRef = useRef<HTMLElement | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
   const filtersSessionKeyRef = useRef(dashboardFiltersSessionKey);
   const skipNextFiltersPersistRef = useRef(false);
+  const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
+  const selectedAllIdsRef = useRef<number[]>([]);
   const professorsRequestKey =
     selectedIdentityId
       ? `${selectedIdentityId}:${communicationScopeKey || selectedIdentityId}:${
           matchScopeKey || selectedIdentityId
         }`
       : null;
+  const professorPageQueryKey = JSON.stringify({
+    professorsRequestKey,
+    filters,
+    sortKey,
+    sortDirection: sortDirections[sortKey],
+    pageSize,
+  });
+  const cursorQueryKeyRef = useRef(professorPageQueryKey);
 
   useEffect(() => {
     if (filtersSessionKeyRef.current === dashboardFiltersSessionKey) {
@@ -398,7 +419,11 @@ export const HomePage = () => {
       loadedProfessorsKeyRef.current = null;
       setHasLoadedProfessors(false);
       setProfessors([]);
+      setTotalProfessorCount(0);
+      setTotalProfessorPages(1);
       setSelectedIds(new Set());
+      setSelectedAllQueryKey(null);
+      selectedAllIdsRef.current = [];
       setLoading(false);
       return;
     }
@@ -410,8 +435,37 @@ export const HomePage = () => {
     activeProfessorsRequestKeyRef.current = professorsRequestKey;
     setLoading(true);
     try {
-      const data = await listProfessors({
-        identityId: selectedIdentityId,
+      if (cursorQueryKeyRef.current !== professorPageQueryKey) {
+        cursorQueryKeyRef.current = professorPageQueryKey;
+        cursorByPageRef.current = new Map([[1, null]]);
+      }
+      const matchScoreMissing =
+        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE;
+      const minMatchScore =
+        !matchScoreMissing && filters.minMatchScore.trim()
+          ? Number(filters.minMatchScore)
+          : null;
+      const maxMatchScore = filters.maxMatchScore.trim()
+        ? Number(filters.maxMatchScore)
+        : null;
+      const data = await searchDashboardProfessors({
+        identity_id: selectedIdentityId,
+        page: currentPage,
+        page_size: pageSize,
+        cursor: cursorByPageRef.current.get(currentPage),
+        keyword: filters.keyword,
+        keyword_search_scopes: filters.keywordSearchScopes,
+        universities: filters.universities,
+        schools: filters.schools,
+        departments: filters.departments,
+        titles: filters.titles,
+        statuses: filters.statuses,
+        tag_ids: filters.tagIds,
+        min_match_score: Number.isFinite(minMatchScore) ? minMatchScore : null,
+        max_match_score: Number.isFinite(maxMatchScore) ? maxMatchScore : null,
+        match_score_missing: matchScoreMissing,
+        sort_key: sortKey,
+        sort_direction: sortDirections[sortKey],
       });
       if (
         latestProfessorsRequestIdRef.current !== requestId ||
@@ -420,18 +474,18 @@ export const HomePage = () => {
         return;
       }
       const previousLoadedKey = loadedProfessorsKeyRef.current;
-      setProfessors(data);
+      setProfessors(data.items);
+      setTotalProfessorCount(data.total_count);
+      setTotalProfessorPages(data.total_pages);
+      setFilterOptions(data.filter_options);
+      if (data.next_cursor) {
+        cursorByPageRef.current.set(data.page + 1, data.next_cursor);
+      }
       setSelectedIds((previous) => {
         if (previousLoadedKey !== professorsRequestKey) {
           return new Set();
         }
-        const next = new Set<number>();
-        data.forEach((item) => {
-          if (previous.has(item.id)) {
-            next.add(item.id);
-          }
-        });
-        return next;
+        return previous;
       });
       loadedProfessorsKeyRef.current = professorsRequestKey;
       setHasLoadedProfessors(true);
@@ -445,6 +499,8 @@ export const HomePage = () => {
       if (loadedProfessorsKeyRef.current !== professorsRequestKey) {
         setProfessors([]);
         setSelectedIds(new Set());
+        setSelectedAllQueryKey(null);
+        selectedAllIdsRef.current = [];
       }
       const message =
         loadError instanceof Error ? loadError.message : "加载导师列表失败";
@@ -459,8 +515,14 @@ export const HomePage = () => {
     }
   }, [
     notifyError,
+    currentPage,
+    filters,
+    pageSize,
+    professorPageQueryKey,
     professorsRequestKey,
     selectedIdentityId,
+    sortDirections,
+    sortKey,
   ]);
 
   useEffect(() => {
@@ -488,14 +550,6 @@ export const HomePage = () => {
       active = false;
     };
   }, [notifyError]);
-
-  useEffect(() => {
-    if (professors.length === 0) {
-      return;
-    }
-
-    setFilters((previous) => pruneDashboardFilters(professors, previous));
-  }, [professors]);
 
   const saveProfessorTags = async (
     professor: ProfessorDashboardItemDTO,
@@ -680,15 +734,7 @@ export const HomePage = () => {
         mode,
         tag_ids: tagIds,
       });
-      const tagsByProfessorId = new Map(
-        result.professors.map((professor) => [professor.id, professor.tags]),
-      );
-      setProfessors((previous) =>
-        previous.map((professor) => {
-          const tags = tagsByProfessorId.get(professor.id);
-          return tags ? { ...professor, tags } : professor;
-        }),
-      );
+      await loadProfessors();
       notifySuccess(
         "标签已更新",
         `已更新 ${result.affected_count} 位导师的标签。`,
@@ -729,14 +775,6 @@ export const HomePage = () => {
     }
   };
 
-  const filterOptions = useMemo(
-    () =>
-      buildDashboardFilterOptions(professors, {
-        universities: filters.universities,
-        schools: filters.schools,
-      }),
-    [filters.schools, filters.universities, professors],
-  );
   const activeAdvancedFilterCount = useMemo(
     () => getActiveDashboardFilterCount(filters),
     [filters],
@@ -776,21 +814,27 @@ export const HomePage = () => {
     key: "universities" | "schools" | "departments" | "titles" | "tagIds",
     nextValues: string[],
   ) => {
+    if (key === "universities") {
+      setFilterOptions((previous) => ({
+        ...previous,
+        schools: [],
+        departments: [],
+      }));
+    } else if (key === "schools") {
+      setFilterOptions((previous) => ({ ...previous, departments: [] }));
+    }
     setFilters((previous) => {
       if (key === "universities") {
-        return pruneDashboardFilters(professors, {
+        return {
           ...previous,
           universities: nextValues,
-        });
+          schools: [],
+          departments: [],
+        };
       }
-
       if (key === "schools") {
-        return pruneDashboardFilters(professors, {
-          ...previous,
-          schools: nextValues,
-        });
+        return { ...previous, schools: nextValues, departments: [] };
       }
-
       return { ...previous, [key]: nextValues };
     });
   };
@@ -839,58 +883,73 @@ export const HomePage = () => {
   };
 
   const currentSortDirection = sortDirections[sortKey];
-  const filteredProfessors = useMemo(
-    () => filterDashboardProfessors(professors, filters),
-    [filters, professors],
-  );
-  const visibleProfessors = useMemo(
-    () =>
-      sortDashboardProfessors(
-        filteredProfessors,
-        sortKey,
-        currentSortDirection,
-      ),
-    [currentSortDirection, filteredProfessors, sortKey],
-  );
-  const totalPages = useMemo(
-    () => getTotalPages(visibleProfessors.length, pageSize),
-    [pageSize, visibleProfessors.length],
-  );
+  const visibleProfessors = professors;
+  const totalPages = totalProfessorPages;
   const safeCurrentPage = Math.min(currentPage, totalPages);
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
-  const pagedProfessors = useMemo(
-    () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
-    [pageSize, safeCurrentPage, visibleProfessors],
-  );
-  const filteredProfessorIds = useMemo(
-    () => visibleProfessors.map((item) => item.id),
-    [visibleProfessors],
-  );
-  const filteredSelectedCount = useMemo(
-    () => filteredProfessorIds.filter((id) => selectedIds.has(id)).length,
-    [filteredProfessorIds, selectedIds],
-  );
+  const pagedProfessors = visibleProfessors;
   const allFilteredProfessorsSelected =
-    filteredProfessorIds.length > 0 &&
-    filteredSelectedCount === filteredProfessorIds.length;
+    totalProfessorCount > 0 && selectedAllQueryKey === professorPageQueryKey;
 
-  const handleToggleFilteredProfessors = () => {
-    setSelectedIds((previous) => {
-      const next = new Set(previous);
-      const allFilteredSelected =
-        filteredProfessorIds.length > 0 &&
-        filteredProfessorIds.every((id) => previous.has(id));
-
-      if (allFilteredSelected) {
-        filteredProfessorIds.forEach((id) => next.delete(id));
-      } else {
-        filteredProfessorIds.forEach((id) => next.add(id));
-      }
-
-      return next;
-    });
+  const handleToggleFilteredProfessors = async () => {
+    if (selectingAllProfessors || !selectedIdentityId) {
+      return;
+    }
+    if (allFilteredProfessorsSelected) {
+      const selectedAllIds = new Set(selectedAllIdsRef.current);
+      setSelectedIds((previous) => {
+        const next = new Set(previous);
+        selectedAllIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      selectedAllIdsRef.current = [];
+      setSelectedAllQueryKey(null);
+      return;
+    }
+    setSelectingAllProfessors(true);
+    try {
+      const matchScoreMissing =
+        filters.minMatchScore === NO_MATCH_SCORE_FILTER_VALUE;
+      const minMatchScore =
+        !matchScoreMissing && filters.minMatchScore.trim()
+          ? Number(filters.minMatchScore)
+          : null;
+      const maxMatchScore = filters.maxMatchScore.trim()
+        ? Number(filters.maxMatchScore)
+        : null;
+      const result = await searchDashboardProfessorIds({
+        identity_id: selectedIdentityId,
+        page: 1,
+        page_size: pageSize,
+        keyword: filters.keyword,
+        keyword_search_scopes: filters.keywordSearchScopes,
+        universities: filters.universities,
+        schools: filters.schools,
+        departments: filters.departments,
+        titles: filters.titles,
+        statuses: filters.statuses,
+        tag_ids: filters.tagIds,
+        min_match_score: Number.isFinite(minMatchScore) ? minMatchScore : null,
+        max_match_score: Number.isFinite(maxMatchScore) ? maxMatchScore : null,
+        match_score_missing: matchScoreMissing,
+        sort_key: sortKey,
+        sort_direction: currentSortDirection,
+      });
+      selectedAllIdsRef.current = result.ids;
+      setSelectedIds((previous) => new Set([...previous, ...result.ids]));
+      setSelectedAllQueryKey(professorPageQueryKey);
+    } catch (selectionError) {
+      notifyError(
+        "选择筛选结果失败",
+        selectionError instanceof Error
+          ? selectionError.message
+          : "无法选择全部筛选结果",
+      );
+    } finally {
+      setSelectingAllProfessors(false);
+    }
   };
 
   const prevPageResetDepsRef = useRef<{
@@ -928,6 +987,8 @@ export const HomePage = () => {
   };
 
   const toggleSelection = (professorId: number) => {
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
     setSelectedIds((previous) => {
       const next = new Set(previous);
       if (next.has(professorId)) {
@@ -1097,12 +1158,23 @@ export const HomePage = () => {
       return;
     }
 
-    const selectedProfessors = professors.filter((item) =>
-      selectedIds.has(item.id),
-    );
-    const analyzableProfessors = selectedProfessors.filter(hasMatchEvidence);
+    let selectionSummary: MatchAnalysisSelectionSummaryDTO;
+    try {
+      selectionSummary = await getMatchAnalysisSelectionSummary({
+        identity_id: selectedIdentityId,
+        professor_ids: Array.from(selectedIds),
+      });
+    } catch (summaryError) {
+      notifyError(
+        "检查批量匹配条件失败",
+        summaryError instanceof Error
+          ? summaryError.message
+          : "无法检查所选导师的匹配条件",
+      );
+      return;
+    }
 
-    if (analyzableProfessors.length === 0) {
+    if (selectionSummary.analyzable_count === 0) {
       notifyWarning(
         "缺少研究信息",
         "已选导师都缺少研究方向或近期论文，暂不能分析匹配度。",
@@ -1110,29 +1182,25 @@ export const HomePage = () => {
       return;
     }
 
-    let professorIdsForJob = Array.from(selectedIds);
-    const scoredProfessors = analyzableProfessors.filter(
-      (professor) => professor.match_score !== null,
-    );
-    if (scoredProfessors.length > 0) {
+    const professorIdsForJob = Array.from(selectedIds);
+    let skipExisting = false;
+    if (selectionSummary.already_scored_count > 0) {
       const action = await choose({
-        title: `${scoredProfessors.length} 位导师已有匹配分`,
+        title: `${selectionSummary.already_scored_count} 位导师已有匹配分`,
         description: "要重新计算还是保留现有结果？",
         confirmLabel: "重新计算",
         secondaryLabel: "保留现有",
         cancelLabel: "取消",
       });
       if (action === "secondary") {
-        professorIdsForJob = analyzableProfessors
-          .filter((professor) => professor.match_score === null)
-          .map((professor) => professor.id);
-        if (professorIdsForJob.length === 0) {
+        if (selectionSummary.unscored_analyzable_count === 0) {
           notifyWarning(
             "没有需要分析的导师",
             "已选导师都已有匹配分，本次已按你的选择跳过。",
           );
           return;
         }
+        skipExisting = true;
       } else if (action !== "confirm") {
         return;
       }
@@ -1145,6 +1213,7 @@ export const HomePage = () => {
         llm_profile_id: selectedLlmProfileId,
         professor_ids: professorIdsForJob,
         name: null,
+        ...(skipExisting ? { skip_existing: true } : {}),
       });
       trackMatchAnalysisJob(job);
       notifySuccess(
@@ -1152,6 +1221,13 @@ export const HomePage = () => {
         `任务中心会继续后台分析 ${job.target_count} 位导师。`,
       );
       setSelectedIds(new Set());
+      setSelectedAllQueryKey(null);
+      selectedAllIdsRef.current = [];
+    } catch (createError) {
+      notifyError(
+        "创建批量匹配任务失败",
+        createError instanceof Error ? createError.message : "创建任务失败",
+      );
     } finally {
       setBulkScoring(false);
     }
@@ -1534,7 +1610,7 @@ export const HomePage = () => {
           className="mt-6 scroll-mt-24 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
         >
           <div className="flex flex-wrap items-center gap-3 border-b border-stone-100 px-6 py-4">
-            {visibleProfessors.length > 0 ? (
+            {totalProfessorCount > 0 ? (
               <button
                 type="button"
                 aria-label={
@@ -1543,25 +1619,30 @@ export const HomePage = () => {
                     : "全选当前结果"
                 }
                 aria-pressed={allFilteredProfessorsSelected}
-                onClick={handleToggleFilteredProfessors}
+                disabled={selectingAllProfessors}
+                onClick={() => void handleToggleFilteredProfessors()}
                 className={`inline-flex min-h-10 items-center gap-2 rounded-2xl border px-3 text-sm font-medium transition hover:border-primary/40 hover:bg-white hover:text-primary ${
                   allFilteredProfessorsSelected
                     ? "border-primary/30 bg-primary/5 text-primary"
                     : "border-stone-200 bg-stone-50 text-stone-700"
                 }`}
               >
-                {allFilteredProfessorsSelected ? (
+                {selectingAllProfessors ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : allFilteredProfessorsSelected ? (
                   <SquareCheck className="h-4 w-4" />
                 ) : (
                   <Square className="h-4 w-4" />
                 )}
-                {allFilteredProfessorsSelected
+                {selectingAllProfessors
+                  ? "正在全选"
+                  : allFilteredProfessorsSelected
                   ? "取消全选"
                   : "全选当前结果"}
               </button>
             ) : null}
             <div className="text-sm text-stone-600">
-              共 {visibleProfessors.length} 位导师，已选择 {selectedIds.size} 位
+              共 {totalProfessorCount} 位导师，已选择 {selectedIds.size} 位
             </div>
           </div>
 
@@ -1570,7 +1651,7 @@ export const HomePage = () => {
               <Loader2 className="h-4 w-4 animate-spin" />
               正在加载导师列表…
             </div>
-          ) : visibleProfessors.length === 0 ? (
+          ) : totalProfessorCount === 0 ? (
             <div className="px-6 py-14 text-center text-sm text-stone-500">
               <div>暂无导师</div>
               <Link
@@ -1611,16 +1692,16 @@ export const HomePage = () => {
               ))}
             </div>
           )}
-          {!loading && visibleProfessors.length > 0 ? (
+          {!loading && totalProfessorCount > 0 ? (
             <Pagination
               page={safeCurrentPage}
               pageSize={pageSize}
-              totalCount={visibleProfessors.length}
+              totalCount={totalProfessorCount}
               onChange={handlePaginationChange}
               ariaLabel="导师看板分页"
               unitLabel="位"
               itemLabel="位导师"
-              summary={`${visibleProfessors.length} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
+              summary={`${totalProfessorCount} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
               focusTargetRef={professorListStartRef}
               className="border-t border-stone-100 px-6 py-4"
             />
@@ -1643,7 +1724,11 @@ export const HomePage = () => {
               <div className="flex flex-wrap justify-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setSelectedIds(new Set())}
+                  onClick={() => {
+                    setSelectedIds(new Set());
+                    setSelectedAllQueryKey(null);
+                    selectedAllIdsRef.current = [];
+                  }}
                   className="ui-btn-secondary"
                 >
                   清空选择

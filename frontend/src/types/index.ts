@@ -431,6 +431,15 @@ export interface CreateMatchAnalysisJobRequestDTO {
   llm_profile_id: number;
   professor_ids: number[];
   name?: string | null;
+  skip_existing?: boolean;
+}
+
+export interface MatchAnalysisSelectionSummaryDTO {
+  selected_count: number;
+  analyzable_count: number;
+  missing_evidence_count: number;
+  already_scored_count: number;
+  unscored_analyzable_count: number;
 }
 
 export interface MatchAnalysisJobDTO {

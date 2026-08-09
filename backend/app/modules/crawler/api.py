@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     CrawlCandidate,
     CrawlCandidateReviewStatus,
@@ -1115,15 +1116,19 @@ async def _build_crawl_job_summaries(
 
     job_ids = [job.id for job in jobs]
     page_counts = await _count_unique_crawl_pages_by_job_id(session, job_ids)
-    candidate_count_rows = await session.execute(
-        select(CrawlCandidate.job_id, func.count())
-        .where(
-            CrawlCandidate.job_id.in_(job_ids),
-            canonical_candidate_clause(),
+    candidate_counts: dict[int, int] = {}
+    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
+        candidate_count_rows = await session.execute(
+            select(CrawlCandidate.job_id, func.count())
+            .where(
+                CrawlCandidate.job_id.in_(job_id_chunk),
+                canonical_candidate_clause(),
+            )
+            .group_by(CrawlCandidate.job_id)
         )
-        .group_by(CrawlCandidate.job_id)
-    )
-    candidate_counts = dict(candidate_count_rows.all())
+        candidate_counts.update(
+            {int(job_id): int(count) for job_id, count in candidate_count_rows},
+        )
 
     return [
         CrawlJobSummaryRead.model_validate(job).model_copy(
@@ -1148,27 +1153,34 @@ async def _count_by_job_id(
     job_id_column: object,
     job_ids: list[int],
 ) -> dict[int, int]:
-    rows = (
-        await session.execute(
-            select(job_id_column, func.count())
-            .where(job_id_column.in_(job_ids))
-            .group_by(job_id_column),
-        )
-    ).all()
-    return {int(job_id): int(count) for job_id, count in rows}
+    counts: dict[int, int] = {}
+    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
+        rows = (
+            await session.execute(
+                select(job_id_column, func.count())
+                .where(job_id_column.in_(job_id_chunk))
+                .group_by(job_id_column),
+            )
+        ).all()
+        counts.update({int(job_id): int(count) for job_id, count in rows})
+    return counts
 
 
 async def _count_unique_crawl_pages_by_job_id(
     session: AsyncSession,
     job_ids: list[int],
 ) -> dict[int, int]:
-    rows = (
-        await session.execute(
-            select(CrawlPage.job_id, CrawlPage.url)
-            .where(CrawlPage.job_id.in_(job_ids))
-            .distinct(),
+    rows = []
+    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
+        rows.extend(
+            (
+                await session.execute(
+                    select(CrawlPage.job_id, CrawlPage.url)
+                    .where(CrawlPage.job_id.in_(job_id_chunk))
+                    .distinct(),
+                )
+            ).all(),
         )
-    ).all()
     urls_by_job: dict[int, set[str]] = {}
     for job_id, url in rows:
         urls_by_job.setdefault(int(job_id), set()).add(_crawl_page_normalized_url(str(url)))

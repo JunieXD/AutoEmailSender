@@ -7,6 +7,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload
 
+from app.core.query_chunks import chunked_values
 from app.core.time import as_utc_aware, utc_now
 from app.models import (
     BatchTask,
@@ -394,15 +395,20 @@ async def list_email_deliveries(
         for material_id in (task.selected_material_ids or [])
     }
     material_sizes: dict[int, int] = {}
-    if material_ids:
+    for material_id_chunk in chunked_values(material_ids):
         rows = (
             await session.execute(
                 select(IdentityMaterial.id, IdentityMaterial.size_bytes).where(
-                    IdentityMaterial.id.in_(material_ids),
+                    IdentityMaterial.id.in_(material_id_chunk),
                 ),
             )
         ).all()
-        material_sizes = {material_id: max(0, size_bytes) for material_id, size_bytes in rows}
+        material_sizes.update(
+            {
+                material_id: max(0, size_bytes)
+                for material_id, size_bytes in rows
+            },
+        )
 
     return EmailDeliveryListRead(
         items=[_serialize_delivery(task, material_sizes=material_sizes) for task in tasks],
