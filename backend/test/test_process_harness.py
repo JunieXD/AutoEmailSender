@@ -22,6 +22,7 @@ from test.process_harness import (
     FakeImapMessage,
     FaultController,
     TestClockController,
+    _ensure_loopback_proxy_bypass,
     _prepare_managed_process_launch,
     fetch_json,
     open_loopback_url,
@@ -31,6 +32,20 @@ from test.process_harness import (
 
 
 class FaultInjectionInfrastructureTests(unittest.TestCase):
+    def test_managed_process_proxy_bypass_preserves_existing_hosts(self) -> None:
+        environment = {
+            "NO_PROXY": "existing.example,127.0.0.1",
+            "no_proxy": "second.example",
+        }
+
+        _ensure_loopback_proxy_bypass(environment)
+
+        expected = (
+            "existing.example,127.0.0.1,second.example,localhost,::1"
+        )
+        self.assertEqual(environment["NO_PROXY"], expected)
+        self.assertEqual(environment["no_proxy"], expected)
+
     def test_windows_managed_python_launch_tracks_the_real_venv_runtime(self) -> None:
         original_env = {"EXISTING": "preserved"}
         command, environment = _prepare_managed_process_launch(

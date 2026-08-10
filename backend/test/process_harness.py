@@ -60,6 +60,22 @@ def open_loopback_url(
     return opener.open(request, timeout=timeout_seconds)
 
 
+def _ensure_loopback_proxy_bypass(environment: dict[str, str]) -> None:
+    entries: list[str] = []
+    for variable_name in ("NO_PROXY", "no_proxy"):
+        entries.extend(
+            value.strip()
+            for value in environment.get(variable_name, "").split(",")
+            if value.strip()
+        )
+    for loopback_host in ("127.0.0.1", "localhost", "::1"):
+        if loopback_host not in entries:
+            entries.append(loopback_host)
+    bypass_value = ",".join(dict.fromkeys(entries))
+    environment["NO_PROXY"] = bypass_value
+    environment["no_proxy"] = bypass_value
+
+
 def reserve_tcp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -1251,6 +1267,7 @@ class DesktopBackendProcess:
         if self.role == "worker":
             env["AUTO_EMAIL_SENDER_WORKER_GENERATION"] = self.worker_generation
         env.update(self.extra_env)
+        _ensure_loopback_proxy_bypass(env)
         self.managed = spawn_managed_process(
             [
                 sys.executable,
