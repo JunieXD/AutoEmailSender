@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（现有 Goal 为 active；B0～B3 已完成，当前阶段为 B4）
+- 状态：执行中（现有 Goal 为 active；B0～B4 已完成，当前阶段为 B5）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -43,9 +43,9 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 
 - Goal 系统当前将 `019fe582-2dea-7e42-bd2e-684bae191421` 报告为 `active`。因此不创建第二个
   相互冲突的 Goal；本次从既有 B2 工作区继续，已通过的 B0/B1 不重做。
-- 当前本地分支为 `beta/desktop-api-worker`，B3 收口提交为
-  `fd7ecb5c4dc6895c2db9c9f1f64a748f409cc7f9`。该分支名只描述本次开发工作，不会成为
-  通用测试版发布条件。
+- 当前本地分支为 `beta/desktop-api-worker`。B3 收口提交为 `fd7ecb5`；最新
+  `origin/master@a4062f80ad75ed5661ab1362aaa8cf9681ebe1e6` 已在 B4 通过 `ab30799` 合入。
+  该分支名只描述本次开发工作，不会成为通用测试版发布条件。
 - B2 已完成 Electron/Python 有界记录器、设置页/托盘/启动失败导出、API 宕机 partial ZIP、
   单包/多包安全 analyzer、恶意 ZIP 防护和最终 ZIP 跨语言 canary 零泄漏门禁。最终证据为
   Desktop 239/239、Frontend 完整 962/962 且最终聚焦 18/18、Backend 115/115、analyzer
@@ -56,8 +56,11 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - Windows VM 在精确 `fd7ecb5` 上完成 quick QA：Backend 1933/1933（7 skip）、冻结后端三角色与
   文档自检通过、Desktop 35 files / 237 tests（11 skip）通过。quick 模式未执行 NSIS 和安装后
   lifecycle，因此只关闭 B3，不替代 B5/B6 候选证据。
-- 下一步 B4 先刷新并语义化合入届时最新 `origin/master`，再执行连续两次完整全仓和连续
-  20 次 split 集成；任何首次失败都继续保留并精确重放。
+- B4 已在合入最新 master 后完成连续两次完整全仓，结果均为 0 failures；Backend 每轮
+  1937/1937、CLI 每轮 225/225，Frontend/Desktop/Website 全部通过。split 模式切换集成
+  连续 20/20 轮通过，总计 420 次后端启动、400 次模式切换和 805.148 秒。
+- 下一步 B5 先准备本地开发候选并完成不会冒充正式候选证据的安全 smoke。需要 push、远端
+  Certify workflow 或 exact candidate 资产时必须停在独立人工批准门。
 - 当前没有获得 push、远端 workflow、tag、GitHub Prerelease、合回 `master` 或稳定版发布授权。
 
 ### 1.4 授权边界
@@ -224,8 +227,8 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B1 | Electron 模式设置、UI、安全重启与页面外回退 | **已完成**：AC-MODE 全部通过；combined/split 同库回归和 macOS 隔离真机故障回退通过 |
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
-| B4 | 合并后的全仓与重复专项回归 | **执行中**：刷新最新 master 后，完整全仓连续 2 次通过；split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | 两平台 lifecycle、2h normal、1h chaos 和诊断重建通过 |
+| B4 | 合并后的全仓与重复专项回归 | **已完成**：最新 master 已合入；完整全仓连续 2 次、split 集成连续 20 次通过 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先做本地候选安全 smoke；两平台 lifecycle、2h normal、1h chaos 和诊断重建通过 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -236,9 +239,9 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 2. **B3 已完成**：把 Release Skill、POSIX/PowerShell 入口、workflow、候选 manifest、恢复规则和
    合同测试一起改为“稳定版 + 通用 prerelease”双状态机。通用入口只认显式
    `source_branch + release_sha + version + channel`，不得绑定当前分支名。
-3. **正在执行 B4**：合入届时最新 `origin/master` 后，运行连续两次全仓和连续 20 次 split 集成；
+3. **B4 已完成**：合入届时最新 `origin/master` 后，运行连续两次全仓和连续 20 次 split 集成；
    首次失败与修复原样记入验收报告。
-4. **执行 B5**：先构建本地开发候选并完成安全 smoke；获得远端候选授权后，两平台只使用同一
+4. **正在执行 B5**：先构建本地开发候选并完成安全 smoke；获得远端候选授权后，两平台只使用同一
    精确 SHA 对应的候选资产完成覆盖升级、lifecycle、2h normal 和 1h seeded chaos。
 5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
    才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。

@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 验收记录
 
-- 状态：执行中（Goal active；B0～B3 已完成，当前阶段为 B4）
+- 状态：执行中（Goal active；B0～B4 已完成，当前阶段为 B5）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 计划：[`desktop-api-worker-beta-goal-plan.md`](../architecture/desktop-api-worker-beta-goal-plan.md)
 - 前置证据：[`desktop_api_worker_goal_acceptance.md`](./desktop_api_worker_goal_acceptance.md)
@@ -32,8 +32,8 @@
 | B1：模式设置与安全重启 | 已完成 | Desktop 208/208；Frontend 956/956；后端聚焦 27/27；20 次切换；macOS 隔离 UI、初始启动失败及 group-restart 原生回退实测 |
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
-| B4：完整与重复回归 | 执行中 | 待刷新最新 `origin/master` 后执行连续 2 次全仓与连续 20 次 split 集成 |
-| B5：Mac/Windows 内部 Beta | 待执行 | — |
+| B4：完整与重复回归 | 已完成 | `origin/master@a4062f8` 合入为 `ab30799`；全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
+| B5：Mac/Windows 内部 Beta | 执行中 | 先准备本地开发候选与安全 smoke；exact-package 和长稳仍受远端候选批准门约束 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -43,7 +43,7 @@
 
 | AC 组 | 当前状态 | 关闭要求 |
 | --- | --- | --- |
-| AC-BRANCH | 部分通过 | AC-BRANCH-01/03 已通过；AC-BRANCH-02 在 B0 对当时 master 通过，B4 仍须对届时最新 `origin/master` 刷新证据 |
+| AC-BRANCH | 已通过 | 具名分支保护、最新 `origin/master@a4062f8` 语义合入、通用 source branch + exact SHA 合同均有证据 |
 | AC-MODE | 已通过 | 原子设置、UI 当前/下次状态、20 次同库切换、发送窗口硬阻断、初始与运行中 split 故障原生回退 |
 | AC-OBS | 已通过 | Electron/API/Worker/combined 有界记录、六类工作摘要、API 宕机 partial ZIP、三类页面外导出入口和单包/多包 analyzer 均有自动化证据；B5 将用 exact package 重复故障注入 |
 | AC-PRIV | 已通过 | allowlist、固定自由文本标签、最终 ZIP canary 零命中、恶意 ZIP 拒绝和无远程上传源码合同均通过 |
@@ -418,3 +418,58 @@ quick QA 明确跳过 VC++ installer preparation、NSIS 和安装后 packaged li
 
 B3 完成。当前没有 push、tag、workflow dispatch、GitHub Release、稳定 feed 修改或合回
 `master`；B4 从刷新最新 `origin/master`、连续两次全仓和连续 20 次 split 集成开始。
+
+### B4：最新 master 集成、双全仓与 split 重复回归
+
+#### master 刷新与语义合并
+
+- 原 SSH 22 端口 fetch 首次等待后超时，错误为连接 `20.205.243.166:22` 超时；工作树和远端
+  配置均未改变。随后使用 GitHub 官方 `ssh.github.com:443` 临时 URL 成功 fetch，没有修改
+  `origin` 的 fetch/push 地址。
+- 刷新后最新 master 为 `a4062f80ad75ed5661ab1362aaa8cf9681ebe1e6`，包含社区导师完整导出、
+  Agent CLI 搜索/批量计划安全、批量任务模板应用和作用域修复共 4 个提交。
+- merge 只有 `backend/test/test_agent_api.py` 一个文本冲突。语义合并同时保留 master 新增的
+  `confirmed_fingerprint` 不匹配 409 断言，以及本分支 at-most-once 路径的
+  `send_prepared_email` mock；没有退回旧 `send_email` 发送函数。merge commit 为 `ab30799`。
+- merge 前后聚焦验证：Backend Agent/API/社区影响面 359/359；CLI 225/225；Frontend
+  Tasks/Professors 影响面 132/132；相关 Python Ruff 全部通过。
+
+#### 连续两次完整全仓
+
+同一代码提交 `ab30799` 串行执行两次，未并行争抢资源：
+
+```bash
+rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py
+```
+
+| 套件 | 第 1 轮 | 第 2 轮 |
+| --- | --- | --- |
+| Backend | 1937/1937，11m18s | 1937/1937，10m28s |
+| CLI | 225/225，16s | 225/225，16s |
+| Frontend | PASS，21s | PASS，24s |
+| Desktop | PASS，39s | PASS，38s |
+| Website | PASS，<1s | PASS，<1s |
+| 合计 | 12m37s，0 failures | 11m48s，0 failures |
+
+两轮之间工作树保持干净；第 2 轮不是失败后的重试，而是计划要求的独立连续成功证据。
+
+#### split 集成连续 20 轮
+
+以下命令使用 20 个相互独立的 Vitest 进程逐轮执行，任一非零退出立即停止；未使用 Vitest
+`--retry`，也没有放宽测试自身的 180 秒上界：
+
+```bash
+rtk env AUTO_EMAIL_SENDER_MODE_SWITCH_QA=1 \
+  npm run test -- backendModeSwitch.integration.test.ts
+```
+
+- 20/20 轮连续通过，总时长 805.148 秒；单轮 39.794～40.873 秒。
+- 每轮对一个全新隔离 userData 和同一数据库完成 21 次启动、20 次 combined↔split 双向切换，
+  因此累计 420 次后端启动、400 次模式切换。
+- 每次停止均等待所有累计 API/Worker PID 退出并确认 `runtime/worker.json` 删除；每轮最终数据库
+  均为 `integrity_check=ok`、`foreign_key_check=0`、`journal_mode=wal`。
+- 临时重复驱动位于 `/tmp`，完成后已删除；未把一次性测试文件带入仓库或候选内容。
+
+B4 完成，AC-BRANCH 全部关闭。当前仍没有 push、tag、workflow dispatch、GitHub Release、
+稳定 feed 修改或合回 `master`。B5 从本地开发候选和安全 smoke 开始；需要远端 exact candidate
+时必须停在独立人工批准门。
