@@ -3475,6 +3475,8 @@ export const TasksPage = () => {
     setCancelingInformationEnrichmentJobId(jobId);
     try {
       const result = await cancelProfessorInformationEnrichmentJob(jobId);
+      latestInformationEnrichmentJobsRequestIdRef.current += 1;
+      setInformationEnrichmentJobsLoading(false);
       setInformationEnrichmentJobs((currentJobs) =>
         currentJobs.map((job) => (job.id === jobId ? result.job : job)),
       );

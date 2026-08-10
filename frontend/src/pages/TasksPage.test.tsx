@@ -1559,13 +1559,22 @@ describe("TasksPage information enrichment", () => {
       canceled_count: 0,
       last_error: null,
     });
-    apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([runningJob]);
-    apiMocks.cancelProfessorInformationEnrichmentJob.mockResolvedValue({
-      ok: true,
-      job: canceledJob,
+    let listedJobs = [runningJob];
+    apiMocks.listProfessorInformationEnrichmentJobs.mockImplementation(() =>
+      Promise.resolve(listedJobs),
+    );
+    apiMocks.cancelProfessorInformationEnrichmentJob.mockImplementation(async () => {
+      listedJobs = [canceledJob];
+      return {
+        ok: true,
+        job: canceledJob,
+      };
     });
-    apiMocks.retryFailedProfessorInformationEnrichmentJob.mockResolvedValue(
-      retriedJob,
+    apiMocks.retryFailedProfessorInformationEnrichmentJob.mockImplementation(
+      async () => {
+        listedJobs = [retriedJob, ...listedJobs];
+        return retriedJob;
+      },
     );
 
     render(
@@ -1600,6 +1609,79 @@ describe("TasksPage information enrichment", () => {
     expect(
       backgroundTaskNotificationMocks.trackInformationEnrichmentJob,
     ).toHaveBeenCalledWith(retriedJob);
+  });
+
+  it("keeps the canceled information enrichment state after an older list request resolves", async () => {
+    const runningJob = buildInformationEnrichmentJob({
+      status: "running",
+      completed_count: 1,
+      running_count: 1,
+      failed_count: 0,
+      skipped_count: 0,
+      last_error: null,
+    });
+    const canceledJob = buildInformationEnrichmentJob({
+      status: "canceled",
+      canceled_count: 2,
+      failed_count: 0,
+      last_error: null,
+    });
+    let resolveInitialList: (
+      jobs: ProfessorInformationEnrichmentJobDTO[],
+    ) => void = () => undefined;
+    const initialList = new Promise<ProfessorInformationEnrichmentJobDTO[]>(
+      (resolve) => {
+        resolveInitialList = resolve;
+      },
+    );
+    let resolveStaleList: (
+      jobs: ProfessorInformationEnrichmentJobDTO[],
+    ) => void = () => undefined;
+    const staleList = new Promise<ProfessorInformationEnrichmentJobDTO[]>(
+      (resolve) => {
+        resolveStaleList = resolve;
+      },
+    );
+    apiMocks.listProfessorInformationEnrichmentJobs
+      .mockReturnValueOnce(initialList)
+      .mockReturnValue(staleList);
+    apiMocks.cancelProfessorInformationEnrichmentJob.mockResolvedValue({
+      ok: true,
+      job: canceledJob,
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.listProfessorInformationEnrichmentJobs).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      resolveInitialList([runningJob]);
+      await initialList;
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+    await waitFor(() => {
+      expect(apiMocks.listProfessorInformationEnrichmentJobs).toHaveBeenCalledTimes(2);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "取消" }));
+    expect(
+      await screen.findByRole("button", { name: "重试失败项" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveStaleList([runningJob]);
+      await staleList;
+    });
+
+    expect(
+      screen.getByRole("button", { name: "重试失败项" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消" })).not.toBeInTheDocument();
   });
 });
 
