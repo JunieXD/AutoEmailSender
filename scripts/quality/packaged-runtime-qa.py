@@ -748,12 +748,26 @@ class WorkloadHarness:
         ):
             violations.append("matching terminal state is incomplete or duplicated")
         for name, state in (("incremental", incremental), ("history", history)):
-            if (
-                state["email_log_count"] != 1
-                or state["distinct_imap_location_count"] != 1
-                or state["identity_claim_id"] is not None
+            imap_violations: list[str] = []
+            if state["email_log_count"] != 1:
+                imap_violations.append(f"email_log_count={state['email_log_count']!r}")
+            if state["distinct_imap_location_count"] != 1:
+                imap_violations.append(
+                    "distinct_imap_location_count="
+                    f"{state['distinct_imap_location_count']!r}"
+                )
+            if state["identity_claim_id"] is not None:
+                imap_violations.append("identity claim was not released")
+            if name == "history" and (
+                state["history_claim_id"] is not None
+                or state["history_lease_expires_at"] is not None
             ):
-                violations.append(f"IMAP {name} terminal state is incomplete or duplicated")
+                imap_violations.append("history claim was not released")
+            if imap_violations:
+                violations.append(
+                    f"IMAP {name} terminal state is incomplete or duplicated: "
+                    + ", ".join(imap_violations)
+                )
         if (
             crawler["worker_id"] is not None
             or crawler["lease_expires_at"] is not None
@@ -808,6 +822,13 @@ class WorkloadHarness:
             professor_id=professor_id,
         )
         if state["email_log_count"] != 1:
+            return None
+        # The mailbox cursor and received log commit before the outer identity
+        # lease is released.  Treating that intermediate state as terminal makes
+        # the invariant check race the Worker, especially after Windows network
+        # recovery.  Wait for the lease release while still reporting duplicate
+        # logs/locations as a real terminal violation below.
+        if state["identity_claim_id"] is not None:
             return None
         if workload == "incremental":
             return state if state["incremental_cursor"] == 11 else None

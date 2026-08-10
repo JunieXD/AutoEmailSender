@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,7 +121,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260809_professor_scale_search"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             connection.execute(
                 """
                 INSERT INTO professors(name, email, research_direction)
@@ -130,7 +131,7 @@ class MigrationScriptTests(unittest.TestCase):
             connection.commit()
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             indexes = {
                 row[1]
                 for row in connection.execute("PRAGMA index_list('professors')")
@@ -149,7 +150,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(fts_names, [("迁移导师",)])
 
         self._run_alembic(env, "downgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             remaining_indexes = {
                 row[1]
                 for row in connection.execute("PRAGMA index_list('professors')")
@@ -168,7 +169,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(professor, ("迁移导师",))
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             rebuilt_fts = connection.execute(
                 """
                 SELECT name FROM professors_fts

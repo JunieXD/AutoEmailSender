@@ -33,6 +33,37 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_imap_terminal_state_waits_for_identity_claim_release(self) -> None:
+        harness = runner.WorkloadHarness.__new__(runner.WorkloadHarness)
+        state = {
+            "email_log_count": 1,
+            "distinct_imap_location_count": 1,
+            "identity_claim_id": "still-owned",
+            "incremental_cursor": 11,
+            "history_status": None,
+            "history_cursor": None,
+            "history_claim_id": None,
+            "history_lease_expires_at": None,
+        }
+        harness.database_path = Path("ignored.db")
+        harness.support = mock.Mock()
+        harness.support.imap_tests._read_state.return_value = state
+        cycle = mock.Mock(
+            imap_incremental_identity_id=1,
+            imap_incremental_professor_id=2,
+            imap_history_identity_id=3,
+            imap_history_professor_id=4,
+        )
+
+        self.assertIsNone(
+            harness._imap_terminal_state(cycle, workload="incremental")
+        )
+        state["identity_claim_id"] = None
+        self.assertIs(
+            harness._imap_terminal_state(cycle, workload="incremental"),
+            state,
+        )
+
     def test_workload_harness_completes_all_six_real_worker_workloads(self) -> None:
         runner._load_workload_support()
         process_harness = sys.modules["test.process_harness"]
