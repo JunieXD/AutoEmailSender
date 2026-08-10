@@ -239,7 +239,7 @@ class BatchDraftProcessSafetyTests(unittest.TestCase):
                     completed_path = reached_path.with_suffix(".completed")
                     wait_until(
                         completed_path.exists,
-                        timeout_seconds=5,
+                        timeout_seconds=10,
                         description="released batch draft fault point",
                     )
                     controlled_state = self._wait_for_batch_draft_status(

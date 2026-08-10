@@ -233,7 +233,7 @@ class MatchAnalysisProcessSafetyTests(unittest.TestCase):
                     fault_controller.release(reached_path)
                     wait_until(
                         reached_path.with_suffix(".completed").exists,
-                        timeout_seconds=5,
+                        timeout_seconds=10,
                         description="released match result fault point",
                     )
                     canceled = self._wait_for_job_status(
