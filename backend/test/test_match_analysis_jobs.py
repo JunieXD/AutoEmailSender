@@ -861,11 +861,14 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                         item_concurrency=2,
                     ),
                 )
-                await asyncio.wait_for(warmup_started.wait(), timeout=1)
+                # These waits are deadlock watchdogs, not latency budgets. A loaded
+                # Windows VM can take more than one second to schedule this mocked
+                # coroutine after the scale suite has run.
+                await asyncio.wait_for(warmup_started.wait(), timeout=5)
                 await asyncio.sleep(0.02)
                 remaining_started_before_warmup_finished = remaining_started.is_set()
                 release_warmup.set()
-                processed = await asyncio.wait_for(worker, timeout=2)
+                processed = await asyncio.wait_for(worker, timeout=5)
 
             return (
                 remaining_started_before_warmup_finished,
