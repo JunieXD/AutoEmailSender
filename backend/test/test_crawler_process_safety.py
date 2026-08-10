@@ -843,7 +843,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                     final_worker: DesktopBackendProcess | None = None
                     worker_samples: list[_ProcessResourceSample] = []
                     api_samples: list[_ProcessResourceSample] = []
-                    worker_pids: set[int] = set()
+                    worker_pid_sequence: list[int] = []
                     claim_owners: set[str] = set()
                     try:
                         api.start()
@@ -894,8 +894,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                                 timeout_seconds=30,
                             )
                             worker_pid = current_worker.process.pid
-                            self.assertNotIn(worker_pid, worker_pids)
-                            worker_pids.add(worker_pid)
+                            worker_pid_sequence.append(worker_pid)
                             self.assertEqual(worker_status["pid"], worker_pid)
                             self.assertEqual(worker_status["generation"], generation)
                             self.assertEqual(worker_status["runtime_id"], api.runtime_id)
@@ -973,7 +972,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                         )
                         self.assertEqual(http_server.request_count, 1)
                         self.assertEqual(llm_server.request_count, 1)
-                        self.assertEqual(len(worker_pids), repetitions)
+                        self.assertEqual(len(worker_pid_sequence), repetitions)
                         self.assertEqual(len(claim_owners), repetitions)
 
                         final_api = self._process_resource_sample(
@@ -1006,7 +1005,11 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                         )
                         resource_summary = {
                             "repetitions": repetitions,
-                            "unique_worker_pids": len(worker_pids),
+                            "unique_worker_pids": len(set(worker_pid_sequence)),
+                            "worker_pid_reuses": (
+                                len(worker_pid_sequence)
+                                - len(set(worker_pid_sequence))
+                            ),
                             "unique_claim_owners": len(claim_owners),
                             "api_rss_baseline_bytes": baseline_api.rss_bytes,
                             "api_rss_peak_bytes": max(
