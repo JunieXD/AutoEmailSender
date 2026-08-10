@@ -84,10 +84,10 @@ GPL-3.0
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=JunieXD%2FAutoEmailSender&type=date&legend=top-left">
+<a href="https://www.star-history.com/">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&theme=dark&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=j-U7ERD8ZvkWZ-pMmPYWRYfrH9PrtKje1b6tDOQIjX8VneS8yycq6bHCU6RMRx1fbHTn7PTsbSDldjzCO_9TQPqPWfFAPW952tDvN7ixyqW1QmmdmM4XQ9y1c1_oh6gmAW5W-EE8rsFYmPJGRdp3hlgewFNtnmbxlWmF8SkUdRzkudl1Vxw7Q_fXePXZ" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&theme=dark&legend=top-left&sealed_token=xQN4NTyRjKuKYpjssLWpx_McJlHJe9s0mXmYmQNRrHYQxlq42KhQO8eOJoQTOoUvzxupHrY21TS9FVPsvpIRGboRX2_YEJ7DzXwvpVVDQWNGST4xKVGTSRCCMgPgJJ3i5MKjSv6LLZhC3-TQqfFZNUIdsvwZpaFvtoPPcjEaA19zdgH55LvDIyaOQyJ-" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=xQN4NTyRjKuKYpjssLWpx_McJlHJe9s0mXmYmQNRrHYQxlq42KhQO8eOJoQTOoUvzxupHrY21TS9FVPsvpIRGboRX2_YEJ7DzXwvpVVDQWNGST4xKVGTSRCCMgPgJJ3i5MKjSv6LLZhC3-TQqfFZNUIdsvwZpaFvtoPPcjEaA19zdgH55LvDIyaOQyJ-" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=JunieXD/AutoEmailSender&type=date&legend=top-left&sealed_token=xQN4NTyRjKuKYpjssLWpx_McJlHJe9s0mXmYmQNRrHYQxlq42KhQO8eOJoQTOoUvzxupHrY21TS9FVPsvpIRGboRX2_YEJ7DzXwvpVVDQWNGST4xKVGTSRCCMgPgJJ3i5MKjSv6LLZhC3-TQqfFZNUIdsvwZpaFvtoPPcjEaA19zdgH55LvDIyaOQyJ-" />
  </picture>
 </a>
