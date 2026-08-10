@@ -138,7 +138,7 @@ const SectionHeading = ({
 }: {
   icon: ReactNode;
   title: string;
-  description: string;
+  description?: string;
 }) => (
   <div className="flex items-start gap-3">
     <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm shadow-primary/20">
@@ -146,7 +146,9 @@ const SectionHeading = ({
     </span>
     <div className="min-w-0">
       <div className="text-sm font-semibold text-stone-950">{title}</div>
-      <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div>
+      {description ? (
+        <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div>
+      ) : null}
     </div>
   </div>
 );
@@ -208,7 +210,7 @@ const buildDraftTokenSummary = (task: WorkspaceTaskSummaryDTO) => {
     task.last_draft_completion_tokens != null ||
     task.last_draft_total_tokens != null
   ) {
-    return `上次消耗：输入 ${formatTokenCount(task.last_draft_prompt_tokens)} / 输出 ${formatTokenCount(task.last_draft_completion_tokens)} / 总计 ${formatTokenCount(task.last_draft_total_tokens)}`;
+    return `上次消耗：输入 ${formatTokenCount(task.last_draft_prompt_tokens)} · 输出 ${formatTokenCount(task.last_draft_completion_tokens)} · 共 ${formatTokenCount(task.last_draft_total_tokens)} Token`;
   }
 
   if (
@@ -216,10 +218,10 @@ const buildDraftTokenSummary = (task: WorkspaceTaskSummaryDTO) => {
     task.estimated_completion_tokens_upper_bound != null ||
     task.estimated_total_tokens_upper_bound != null
   ) {
-    return `预计上限：输入 ${formatTokenCount(task.estimated_prompt_tokens)} / 输出最多 ${formatTokenCount(task.estimated_completion_tokens_upper_bound)} / 总计最多 ${formatTokenCount(task.estimated_total_tokens_upper_bound)}`;
+    return `预计最多：输入 ${formatTokenCount(task.estimated_prompt_tokens)} · 输出 ${formatTokenCount(task.estimated_completion_tokens_upper_bound)} · 共 ${formatTokenCount(task.estimated_total_tokens_upper_bound)} Token`;
   }
 
-  return 'AI 改写会在执行后记录 token';
+  return '改写后显示 Token 消耗';
 };
 
 const DRAFT_SOURCE_LABELS: Record<WorkspaceDraftSourceDTO, string> = {
@@ -315,16 +317,16 @@ export const WorkspaceComposerDock = ({
       : '先写入正文或配置默认模板后再使用 AI 改写。';
   const limitationHint =
     !hasDraftBody
-      ? '先写入正文或配置默认模板后再使用 AI 改写。'
+      ? null
       : !currentTask.primary_material_id
-        ? '请选择 AI 写信参考材料。'
+        ? '请选择 AI 参考材料。'
         : !hasProfessorResearchDirection
           ? '请先补充导师研究方向，再使用 AI 改写。'
           : null;
   const draftStateLabel = isRewriting ? 'AI 改写中' : hasDraftBody ? '草稿可编辑' : '空草稿';
   const collapsedTitle = isRewriting ? 'AI 正在改写' : hasDraftBody ? '继续写信' : '写第一封信';
   const collapsedDescription = isRewriting
-    ? '当前草稿已锁定，完成后会自动显示新版本。'
+    ? '改写完成后自动显示新版本。'
     : hasDraftBody
       ? '可直接编辑、保存或发送，也可以让 AI 改写。'
       : '先写入正文或配置默认模板后再使用 AI 改写。';
@@ -441,11 +443,6 @@ export const WorkspaceComposerDock = ({
                             <span className="shrink-0 rounded-lg border border-stone-200 bg-stone-50 px-2 py-0.5 text-[11px] font-medium text-stone-600">
                               当前草稿：{draftSourceLabel}
                             </span>
-                          </div>
-                          <div className="mt-1 text-xs leading-5 text-stone-500">
-                            {selectedOutreachTemplateId !== null
-                              ? '当前草稿基于此模板创建。'
-                              : '当前草稿没有来源模板。'}
                           </div>
                         </div>
                         <NativeSelectField
@@ -599,7 +596,6 @@ export const WorkspaceComposerDock = ({
                 <SectionHeading
                   icon={<PenLine className="h-4 w-4" />}
                   title="正文编辑"
-                  description="主题、正文和占位符都在这里处理。"
                 />
 
                 <div className="mt-5 space-y-4">
@@ -608,7 +604,7 @@ export const WorkspaceComposerDock = ({
                     value={subject}
                     disabled={editorDisabled}
                     onChange={onSubjectChange}
-                    placeholder="给老师的邮件主题"
+                    placeholder="给导师的邮件主题"
                   />
 
                   <EmailTemplateEditor
@@ -649,7 +645,7 @@ export const WorkspaceComposerDock = ({
                         disabled={actionDisabled}
                         className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        作为单独联系继续
+                        单独联系
                       </button>
                     ) : null}
                     {canStartFollowUp ? (
@@ -760,7 +756,7 @@ export const WorkspaceComposerDock = ({
                   disabled={actionDisabled}
                   className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  作为单独联系继续
+                  单独联系
                 </button>
               ) : null}
               {canStartFollowUp ? (

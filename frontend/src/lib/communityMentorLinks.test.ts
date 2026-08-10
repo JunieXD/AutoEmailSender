@@ -164,7 +164,7 @@ describe('community mentor GitHub helpers', () => {
     expect(value.length).toBeLessThanOrEqual(COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH);
     expect(currentValue).not.toContain('研究方向：');
     expect(currentValue).toContain('邮箱：zhang@example.edu');
-    expect(currentValue).toContain('高校官网详情页：https://example.edu/profile');
+    expect(currentValue).toContain('导师主页：https://example.edu/profile');
     expect(url.searchParams.get('record_id')).toBe('mentor_example0001');
   });
 });

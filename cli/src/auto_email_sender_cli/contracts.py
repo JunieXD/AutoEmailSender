@@ -27,7 +27,15 @@ from auto_email_sender_cli.capabilities import (
     supports_dynamic_action_links,
 )
 from auto_email_sender_cli.operation_specs import get_operation_spec
-from auto_email_sender_cli.result_protocol import RESULT_PROTOCOL_FIELDS, is_business_result
+from auto_email_sender_cli.result_protocol import (
+    DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_OUTPUT_ITEMS,
+    HARD_MAX_OUTPUT_BYTES,
+    HARD_MAX_OUTPUT_ITEMS,
+    MIN_MAX_OUTPUT_BYTES,
+    RESULT_PROTOCOL_FIELDS,
+    is_business_result,
+)
 
 
 CONTRACT_REQUIRED_KEYS = (
@@ -248,23 +256,25 @@ def _input_contract(
         "parameters": parameters,
         "global_options": {
             "request_id": {
-                "flags": ["--request-id"],
+                "flags": ["--request-id", "--operation-id"],
                 "type": "string",
                 "required": False,
-                "position": "before_command",
+                "supported": True,
+                "position": "anywhere",
                 "description": "可复用的本地操作标识；重试同一请求不会重复本地副作用。",
             },
             "format": {
                 "flags": ["--format", "--json"],
                 "values": ["table", "json", "jsonl"],
                 "required": False,
-                "position": "before_command",
+                "supported": True,
+                "position": "anywhere",
             },
             "if_revision": {
                 "flags": ["--if-revision"],
                 "type": "string",
                 "required": False,
-                "position": "before_command",
+                "position": "anywhere",
                 "supported": supports_if_revision(command),
                 "description": "仅支持版本保护的写入命令；只在对象版本未变化时执行写入。",
             },
@@ -272,20 +282,23 @@ def _input_contract(
                 "flags": ["--output-file"],
                 "type": "path",
                 "required": False,
-                "position": "before_command",
+                "supported": supports_file_export(command),
+                "position": "anywhere",
                 "description": "集合结果写入 JSONL；stdout 返回路径、数量和游标摘要。",
             },
             "force_output": {
                 "flags": ["--force-output"],
                 "type": "boolean",
                 "required": False,
-                "position": "before_command",
+                "supported": supports_file_export(command),
+                "position": "anywhere",
             },
             "filter": {
                 "flags": ["--filter"],
                 "type": "object-json",
                 "required": False,
-                "position": "before_command",
+                "supported": supports_structured_filter(command),
+                "position": "anywhere",
                 "description": "对集合应用白名单结构化筛选；不接受 SQL 或任意表达式。",
             },
             "projection": {
@@ -294,7 +307,7 @@ def _input_contract(
                 "values": ["summary", "full"],
                 "required": False,
                 "supported": True,
-                "position": "before_command",
+                "position": "anywhere",
                 "description": "summary 默认摘要正文、日志和网页证据；full 仅在明确需要完整内容时使用。",
             },
             "expand": {
@@ -303,15 +316,37 @@ def _input_contract(
                 "multiple": True,
                 "required": False,
                 "supported": True,
-                "position": "before_command",
+                "position": "anywhere",
                 "description": "在 summary 中按字段名或 JSON Pointer 显式展开内容；可重复。",
+            },
+            "max_output_bytes": {
+                "flags": ["--max-output-bytes"],
+                "type": "integer",
+                "minimum": MIN_MAX_OUTPUT_BYTES,
+                "maximum": HARD_MAX_OUTPUT_BYTES,
+                "default": DEFAULT_MAX_OUTPUT_BYTES,
+                "required": False,
+                "supported": is_business_result(command),
+                "position": "anywhere",
+                "description": "限制业务 data 的 UTF-8 字节数；full 和 expand 仍受该安全预算约束。",
+            },
+            "max_items": {
+                "flags": ["--max-items"],
+                "type": "integer",
+                "minimum": 1,
+                "maximum": HARD_MAX_OUTPUT_ITEMS,
+                "default": DEFAULT_MAX_OUTPUT_ITEMS,
+                "required": False,
+                "supported": supports_pagination(command),
+                "position": "anywhere",
+                "description": "限制 stdout 集合条目；文件流式导出仍读取完整集合。",
             },
             "include_revisions": {
                 "flags": ["--include-revisions"],
                 "type": "boolean",
                 "required": False,
                 "supported": supports_pagination(command),
-                "position": "before_command",
+                "position": "anywhere",
                 "description": "集合默认省略 revision；准备逐项并发保护写入时显式启用。",
             },
         },
@@ -325,7 +360,7 @@ def _input_contract(
             "target": "--command 指向 capabilities 中的已发布叶子命令，不能递归调用 invoke。",
             "input": "--input 使用 JSON 对象；键名和类型以目标命令 describe --section input 返回的 input.schema 为准。",
             "stdin": "--input - 从 stdin 读取 JSON。",
-            "global_options": "--request-id、--if-revision、--projection 和 --expand 保持为 invoke 之前的根选项，不写入 JSON 对象。",
+            "global_options": "--request-id/--operation-id、--if-revision、--projection、--expand、--max-output-bytes 和 --max-items 是根选项，可放在命令前后，但不写入 JSON 对象。",
             "execution": "复用目标命令的 Click/Typer 解析、业务校验、确认计划和幂等保护。",
         }
     return contract
@@ -426,7 +461,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         "filter_contract": {
             "supported": supports_structured_filter(command),
             "fields": {
-                field: {**_field_schema(field), "operators": list(collection_filter_operators(command))}
+                field: _field_schema(field)
                 for field in sorted(collection_filter_fields(command))
             },
             "operators": list(collection_filter_operators(command)),
@@ -481,7 +516,14 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths", "omitted_paths_total"],
             "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
-            "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据。",
+            "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据；所有视图仍受 --max-output-bytes 约束。",
+            "budgets": {
+                "default_bytes": DEFAULT_MAX_OUTPUT_BYTES,
+                "maximum_bytes": HARD_MAX_OUTPUT_BYTES,
+                "default_items": DEFAULT_MAX_OUTPUT_ITEMS,
+                "maximum_items": HARD_MAX_OUTPUT_ITEMS,
+                "byte_measurement": "compact JSON UTF-8 bytes of data",
+            },
         }
         if is_business_result(command)
         else None,
@@ -654,6 +696,7 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "templates.import-file": frozenset({"subject", "body_text", "body_html", "format_name", "trust_level"}),
     "crawler.candidates.update": frozenset({"id", "revision", "job_id", "professor_id", "name", "email", "title", "university", "school", "department", "research_direction", "recent_papers", "profile_url", "source_url", "confidence", "field_confidence", "evidence", "review_status", "created_at", "updated_at", "trust_level"}),
     "professors.export": frozenset({"output", "format", "size_bytes"}),
+    "professors.download-template": frozenset({"output", "format", "size_bytes"}),
     "professors.community.export-package": frozenset({"output", "professor_ids", "size_bytes"}),
     "professors.community.catalog": frozenset({"schema_version", "dataset_version", "generated_at", "record_count", "universities", "source", "stale", "warning", "verified_at", "lifecycle_warnings"}),
     "professors.community.records": frozenset({"dataset_version", "source", "stale", "warning", "records", "lifecycle_warnings", "record", "comparison_token", "category", "local_professor_id", "local_professor_name", "local_archived", "linked", "identity_conflict", "match_reason", "import_blocked", "import_blocked_reason", "fields"}),
@@ -664,6 +707,11 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "diagnostics.crawler-debug": frozenset({"job_id", "output", "size_bytes"}),
     "campaigns.get": frozenset({"id", "name", "status", "identity", "llm_profile", "generation_mode", "template", "reference_material", "attachment_material_ids", "schedule_type", "window_start_time", "window_end_time", "emails_per_window", "scheduled_dates", "target_count", "pending_generation_count", "generating_draft_count", "draft_failed_count", "review_required_count", "approved_count", "scheduled_count", "sending_count", "sent_count", "failed_count", "canceled_count", "canceled_send_count", "can_start_draft_generation", "created_at", "updated_at"}),
     "campaigns.resend-context": frozenset({"task", "defaults", "items", "summary", "warnings"}),
+    "campaigns.item-thread": _SPECIAL_OUTPUT_FIELDS["workspaces"],
+    "campaigns.approve-item-draft": _SPECIAL_OUTPUT_FIELDS["workspaces"],
+    "campaigns.approve-drafts": frozenset({"approved_count", "campaign", "mutation_receipt"}),
+    "drafts.approve": _SPECIAL_OUTPUT_FIELDS["workspaces"],
+    "deliveries.reschedule": frozenset({"ok", "task_id", "message", "mutation_receipt"}),
 }
 
 _PLAN_OUTPUT_COMMANDS = frozenset(

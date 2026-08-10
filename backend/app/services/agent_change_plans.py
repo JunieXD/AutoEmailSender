@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.agent_api_errors import AgentApiError
+from app.core.query_chunks import chunked_values
 from app.core.time import as_utc_aware, serialize_api_datetime, utc_now
 from app.models import (
     AgentChangePlan,
@@ -1220,7 +1221,7 @@ async def _execute_professor_bulk_tags(
         raise _bulk_tags_plan_stale_error()
 
     try:
-        professors = await bulk_update_professor_tags_record(
+        result = await bulk_update_professor_tags_record(
             session,
             payload,
             event_name="agent_cli.professor.bulk_tags_updated",
@@ -1233,9 +1234,9 @@ async def _execute_professor_bulk_tags(
     return {
         "outcome": "tags_updated",
         "mode": payload.mode,
-        "affected_count": len(professors),
+        "affected_count": result.affected_count,
         "changed_count": changed_count,
-        "professor_ids": [professor.id for professor in professors],
+        "professor_ids": result.professor_ids,
     }
 
 
@@ -2012,9 +2013,13 @@ async def _prepare_crawl_candidate_approval_snapshot(
     )
     professors_by_email: dict[str, Professor] = {}
     if valid_emails:
-        professors = list(
-            await session.scalars(select(Professor).where(Professor.email.in_(valid_emails))),
-        )
+        professors: list[Professor] = []
+        for email_chunk in chunked_values(valid_emails):
+            professors.extend(
+                await session.scalars(
+                    select(Professor).where(Professor.email.in_(email_chunk)),
+                ),
+            )
         professors_by_email = {professor.email: professor for professor in professors if professor.email}
 
     planned_professors: dict[str, dict[str, object]] = {

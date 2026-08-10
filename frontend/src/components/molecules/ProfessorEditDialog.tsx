@@ -272,7 +272,7 @@ export const ProfessorEditDialog = ({
     <DialogShell
       open={open}
       title={title}
-      description="直接在当前任务页补充导师资料。保存后会回到批量任务，不需要重新打开导师管理页。"
+      description="保存后返回批量任务。"
       onClose={handleClose}
     >
       {loading || !professor ? (
@@ -356,7 +356,7 @@ export const ProfessorEditDialog = ({
                 value={form.recent_papers_text}
                 onChange={(event) => setForm((current) => ({ ...current, recent_papers_text: event.target.value }))}
                 className="min-h-32 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
-                placeholder={"一行一篇，例如：\nScaling Agents with...\nReasoning for Scientific Discovery..."}
+              placeholder={"一行一篇，例如：\nScaling Agents with…\nReasoning for Scientific Discovery…"}
               />
             </label>
             <label className="block md:col-span-2">
@@ -372,10 +372,10 @@ export const ProfessorEditDialog = ({
             </label>
             <UrlInput
               id="task-professor-profile-url"
-              label="高校官网详情页"
+              label="导师主页"
               value={form.profile_url}
               placeholder="示例：https://example.edu/faculty/zhang"
-              openLabel="打开高校官网详情页"
+              openLabel="打开导师主页"
               onChange={(value) => setForm((current) => ({ ...current, profile_url: value }))}
             />
             <UrlInput

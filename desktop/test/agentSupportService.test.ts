@@ -5,6 +5,7 @@ import { mkdtemp } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addManagedZshPathBlock,
+  AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION,
   addPathEntry,
   createAgentSupportService,
   removeManagedZshPathBlock,
@@ -70,6 +71,17 @@ afterEach(async () => {
 });
 
 describe("Agent support installation", () => {
+  it("uses the schema version declared by the shared manifest contract", async () => {
+    const contractPath = path.resolve(
+      import.meta.dirname,
+      "../../contracts/agent-support-manifest.schema.json",
+    );
+    const contract = JSON.parse(await readFile(contractPath, "utf8"));
+
+    expect(AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION).toBe(contract["x-current-version"]);
+    expect(contract["x-supported-versions"]).toContain(AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION);
+  });
+
   it("explains how to recover missing development assets without asking for an installer", async () => {
     const { options, paths } = await createFixture("darwin", false);
     await rm(paths.cliSource, { force: true });
@@ -146,6 +158,25 @@ describe("Agent support installation", () => {
     });
     await service.uninstallAgentSkill("cursor");
     expect(await exists(paths.agentSkillTargets.cursor)).toBe(false);
+  });
+
+  it("rolls back a newly installed Skill when the manifest cannot be committed", async () => {
+    const { options, paths } = await createFixture(portableInstallPlatform);
+    const service = createAgentSupportService(options);
+    await service.enable();
+    const failingService = createAgentSupportService({
+      ...options,
+      writeManifest: async () => {
+        throw new Error("manifest unavailable");
+      },
+    });
+
+    await expect(failingService.installAgentSkill("codex")).rejects.toThrow(
+      "manifest unavailable",
+    );
+    expect(await exists(paths.agentSkillTargets.codex)).toBe(false);
+    const manifest = JSON.parse(await readFile(paths.manifestPath, "utf8"));
+    expect(manifest.agents).toEqual({});
   });
 
   it("detects Codex from its local application data", async () => {

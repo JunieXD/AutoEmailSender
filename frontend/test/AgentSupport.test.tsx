@@ -81,8 +81,8 @@ describe("Agent support UI", () => {
 
     expect(await screen.findByText("未启用")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /命令行与 Agent/ }));
-    expect(screen.getByText(/找出回信中表示没名额的导师/)).toBeInTheDocument();
-    expect(screen.getByText("Agent 可以根据当前 CLI 提供的能力操控软件。")).toBeInTheDocument();
+    expect(screen.getByText(/可分析回信、生成重发草稿/)).toBeInTheDocument();
+    expect(screen.getByText("Agent 操作说明")).toBeInTheDocument();
     expect(screen.queryByText(/每次 CLI 响应/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "启用命令行" }));
 
@@ -90,7 +90,7 @@ describe("Agent support UI", () => {
       expect(window.autoEmailSender?.enableAgentSupport).toHaveBeenCalledOnce();
       expect(screen.getByText("已启用")).toBeInTheDocument();
     });
-    expect(screen.getByText(/新建一个 Agent 对话/)).toBeInTheDocument();
+    expect(screen.getByText(/新建对话或重启后再使用/)).toBeInTheDocument();
   });
 
   it("filters Agent rows and installs a selected Agent without stretching the card", async () => {

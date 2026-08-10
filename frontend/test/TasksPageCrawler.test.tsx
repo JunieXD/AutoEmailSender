@@ -154,7 +154,7 @@ const selectAllCandidatesWithoutEmail = (dialog: HTMLElement) => {
   );
   fireEvent.click(within(dialog).getByRole("option", { name: "无邮箱" }));
   fireEvent.click(
-    within(dialog).getByRole("button", { name: "选择全部筛选结果" }),
+    within(dialog).getByRole("button", { name: "全选当前结果" }),
   );
 };
 
@@ -254,12 +254,12 @@ describe("TasksPage crawler jobs tab", () => {
     });
 
     const crawlerSummaryCard =
-      screen.getAllByText("教师抓取")[0].closest("div")?.parentElement;
+      screen.getAllByText("智能抓取")[0].closest("div")?.parentElement;
     await waitFor(() => {
       expect(crawlerSummaryCard).toHaveTextContent("1");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     await waitFor(() => {
       expect(listCrawlJobs).toHaveBeenCalled();
@@ -289,8 +289,8 @@ describe("TasksPage crawler jobs tab", () => {
     });
 
     expect(screen.getByRole("heading", { name: "任务中心" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "教师抓取" })).toHaveTextContent("1");
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    expect(screen.getByRole("button", { name: "智能抓取" })).toHaveTextContent("1");
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     expect(await screen.findByText("示例大学 / 计算机学院")).toBeInTheDocument();
     expect(listBatchTasks).not.toHaveBeenCalled();
     expect(listMatchAnalysisJobs).not.toHaveBeenCalled();
@@ -299,7 +299,7 @@ describe("TasksPage crawler jobs tab", () => {
   it("opens and closes the crawl job log dialog", async () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     const logButton = await screen.findByRole("button", { name: "查看详情" });
     fireEvent.click(logButton);
@@ -374,7 +374,7 @@ describe("TasksPage crawler jobs tab", () => {
     ]);
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -438,7 +438,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -473,7 +473,7 @@ describe("TasksPage crawler jobs tab", () => {
     expect(await within(candidateDialog).findByText("zhang@example.edu")).toBeInTheDocument();
     expect(notifySuccess).toHaveBeenCalledWith(
       "导师信息已保存",
-      "后续补全只会填写仍然缺失的可补全字段，不会覆盖本次保存的内容。",
+      "后续补全仅填写空缺字段。",
     );
 
     fireEvent.click(
@@ -543,7 +543,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -641,7 +641,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -720,7 +720,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -785,7 +785,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -851,7 +851,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -919,7 +919,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -951,7 +951,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const crawlDialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -981,7 +981,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1040,7 +1040,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1085,7 +1085,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
     expect(await within(dialog).findByText("候选导师 1")).toBeInTheDocument();
@@ -1114,7 +1114,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     expect(await screen.findByText("示例大学 1 / 计算机学院")).toBeInTheDocument();
     expect(screen.getByText("示例大学 8 / 计算机学院")).toBeInTheDocument();
@@ -1131,7 +1131,7 @@ describe("TasksPage crawler jobs tab", () => {
   it("closes the crawl job details dialog when clicking the backdrop", async () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
@@ -1146,7 +1146,7 @@ describe("TasksPage crawler jobs tab", () => {
   it("cancels a running crawl job from the crawler tab", async () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
 
     const cancelButton = await screen.findByRole("button", { name: "取消抓取" });
     fireEvent.click(cancelButton);
@@ -1203,7 +1203,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1264,7 +1264,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1334,7 +1334,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     expect(await screen.findByText("部分已导入")).toBeInTheDocument();
     const crawlJobCard = screen
       .getByText("示例大学 / 计算机学院")
@@ -1370,7 +1370,7 @@ describe("TasksPage crawler jobs tab", () => {
       within(dialog).getByTestId("crawl-candidate-information-filters"),
     ).toBeInTheDocument();
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "选择全部筛选结果" }),
+      within(dialog).getByRole("button", { name: "全选当前结果" }),
     );
     fireEvent.click(
       within(dialog).getByRole("button", { name: "审核通过并导入" }),
@@ -1477,7 +1477,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1509,7 +1509,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
@@ -1546,7 +1546,7 @@ describe("TasksPage crawler jobs tab", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
 
     const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });

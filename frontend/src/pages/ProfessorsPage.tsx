@@ -49,9 +49,7 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
-  getPageItems,
   getStoredPageSize,
-  getTotalPages,
   setStoredPageSize,
   type PaginationChange,
 } from "@/lib/pagination";
@@ -89,7 +87,8 @@ import {
   importProfessorsFromFile,
   getProfessorTagUsage,
   listProfessorTags,
-  listProfessorsForManagement,
+  searchManagementProfessors,
+  searchManagementProfessorIds,
   restoreProfessor,
   updateProfessor,
   updateProfessorNote,
@@ -101,21 +100,19 @@ import type {
   ProfessorInformationEnrichmentJobDTO,
   ProfessorManagementItemDTO,
   ProfessorBulkTagModeDTO,
+  ProfessorFilterOptionsDTO,
   ProfessorTagDTO,
   ProfessorTagPayloadDTO,
   ProfessorUpsertPayloadDTO,
 } from "@/types";
 import {
   MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
-  buildManagementFilterOptions,
   createDefaultManagementFilters,
-  filterManagementProfessors,
   getActiveManagementAdvancedFilterCount,
   getManagementKeywordSearchPlaceholder,
   normalizeManagementKeywordSearchScopes,
   NO_FIELD_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
-  pruneManagementFilters,
   type ProfessorManagementKeywordSearchScope,
   type ProfessorManagementFilterState,
 } from "@/features/professor-management/client/filterManagementProfessors";
@@ -126,7 +123,6 @@ import {
 import {
   DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
-  sortManagementProfessors,
   type ProfessorManagementSortDirection,
   type ProfessorManagementSortKey,
 } from "@/features/professor-management/client/sortManagementProfessors";
@@ -169,7 +165,7 @@ const managementTableColumns =
 
 const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
-  archived: "已删除",
+  archived: "回收站",
   all: "全部",
 };
 
@@ -764,14 +760,29 @@ export const ProfessorsPage = () => {
     getStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY),
   );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectingAllProfessors, setSelectingAllProfessors] = useState(false);
+  const [selectedAllQueryKey, setSelectedAllQueryKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
+  const [totalProfessorCount, setTotalProfessorCount] = useState(0);
+  const [totalProfessorPages, setTotalProfessorPages] = useState(1);
+  const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
+    universities: [],
+    schools: [],
+    departments: [],
+    titles: [],
+    tags: [],
+  });
   const isRefreshingProfessors = hasLoadedProfessors && loading;
   const shouldShowProfessorIntakePanel =
     isRefreshingProfessors ||
     archiveFilter === "archived" ||
     professors.length > 0;
   const latestProfessorsRequestIdRef = useRef(0);
+  const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
+  const cursorQueryKeyRef = useRef("");
+  const selectedAllIdsRef = useRef<number[]>([]);
+  const selectionRequestIdRef = useRef(0);
   const professorListStartRef = useRef<HTMLElement | null>(null);
   const [upsertModalOpen, setUpsertModalOpen] = useState(false);
   const [editingProfessor, setEditingProfessor] =
@@ -811,6 +822,25 @@ export const ProfessorsPage = () => {
     setCrawlerUrlFocusIndex(null);
   }, [crawlerUrlFocusIndex, crawlerFormState.start_urls.length]);
 
+  const managementFilterQueryKey = JSON.stringify({
+    archiveFilter,
+    keyword: filters.keyword,
+    keywordSearchScopes: filters.keywordSearchScopes,
+    universities: filters.universities,
+    schools: filters.schools,
+    departments: filters.departments,
+    titles: filters.titles,
+    tagIds: filters.tagIds,
+  });
+  const managementPageQueryKey = JSON.stringify({
+    managementFilterQueryKey,
+    sortKey,
+    sortDirection: sortDirections[sortKey],
+    pageSize,
+  });
+  const managementFilterQueryKeyRef = useRef(managementFilterQueryKey);
+  managementFilterQueryKeyRef.current = managementFilterQueryKey;
+
   useEffect(() => {
     if (!linkedKeyword) {
       return;
@@ -818,6 +848,8 @@ export const ProfessorsPage = () => {
     setArchiveFilter("active");
     setCurrentPage(1);
     setSelectedIds(new Set());
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
     setAdvancedFiltersOpen(false);
     setSortKey("latest");
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
@@ -829,29 +861,41 @@ export const ProfessorsPage = () => {
     }, { replace: true });
   }, [linkedKeyword, setSearchParams]);
   const loadProfessors = useCallback(
-    async (filter: ArchiveFilter = archiveFilter) => {
+    async () => {
       const requestId = latestProfessorsRequestIdRef.current + 1;
       latestProfessorsRequestIdRef.current = requestId;
       setLoading(true);
       try {
-        const data = await listProfessorsForManagement(filter);
+        if (cursorQueryKeyRef.current !== managementPageQueryKey) {
+          cursorQueryKeyRef.current = managementPageQueryKey;
+          cursorByPageRef.current = new Map([[1, null]]);
+        }
+        const data = await searchManagementProfessors({
+          archived: archiveFilter,
+          page: currentPage,
+          page_size: pageSize,
+          cursor: cursorByPageRef.current.get(currentPage),
+          keyword: filters.keyword,
+          keyword_search_scopes: filters.keywordSearchScopes,
+          universities: filters.universities,
+          schools: filters.schools,
+          departments: filters.departments,
+          titles: filters.titles,
+          tag_ids: filters.tagIds,
+          sort_key: sortKey,
+          sort_direction: sortDirections[sortKey],
+        });
         if (latestProfessorsRequestIdRef.current !== requestId) {
           return;
         }
-        setProfessors(data);
+        setProfessors(data.items);
+        setTotalProfessorCount(data.total_count);
+        setTotalProfessorPages(data.total_pages);
+        setFilterOptions(data.filter_options);
+        if (data.next_cursor) {
+          cursorByPageRef.current.set(data.page + 1, data.next_cursor);
+        }
         setHasLoadedProfessors(true);
-        setSelectedIds((previous) => {
-          const next = new Set<number>();
-          data.forEach((item) => {
-            if (item.archived_at) {
-              return;
-            }
-            if (previous.has(item.id)) {
-              next.add(item.id);
-            }
-          });
-          return next;
-        });
       } catch (loadError) {
         if (latestProfessorsRequestIdRef.current !== requestId) {
           return;
@@ -865,7 +909,16 @@ export const ProfessorsPage = () => {
         }
       }
     },
-    [archiveFilter, notifyError, setSelectedIds],
+    [
+      archiveFilter,
+      currentPage,
+      filters,
+      managementPageQueryKey,
+      notifyError,
+      pageSize,
+      sortDirections,
+      sortKey,
+    ],
   );
 
   const loadProfessorTags = useCallback(async () => {
@@ -1009,13 +1062,6 @@ export const ProfessorsPage = () => {
   }, [handleSingleInformationEnrichmentFinished, singleInformationEnrichments]);
 
   useEffect(() => {
-    if (professors.length === 0) {
-      return;
-    }
-    setFilters((previous) => pruneManagementFilters(professors, previous));
-  }, [professors]);
-
-  useEffect(() => {
     writeStoredProfessorManagementState({
       archiveFilter,
       filters,
@@ -1033,14 +1079,6 @@ export const ProfessorsPage = () => {
     sortKey,
   ]);
 
-  const filterOptions = useMemo(
-    () =>
-      buildManagementFilterOptions(professors, {
-        universities: filters.universities,
-        schools: filters.schools,
-      }),
-    [filters.schools, filters.universities, professors],
-  );
   const activeAdvancedFilterCount = useMemo(
     () => getActiveManagementAdvancedFilterCount(filters),
     [filters],
@@ -1062,20 +1100,8 @@ export const ProfessorsPage = () => {
       ),
     [tagFilterEntries],
   );
-  const filteredProfessors = useMemo(
-    () => filterManagementProfessors(professors, filters),
-    [filters, professors],
-  );
   const currentSortDirection = sortDirections[sortKey];
-  const visibleProfessors = useMemo(
-    () =>
-      sortManagementProfessors(
-        filteredProfessors,
-        sortKey,
-        currentSortDirection,
-      ),
-    [currentSortDirection, filteredProfessors, sortKey],
-  );
+  const visibleProfessors = professors;
 
   const updateFilters = (nextFilters: Partial<ProfessorManagementFilterState>) => {
     setCurrentPage(1);
@@ -1098,15 +1124,27 @@ export const ProfessorsPage = () => {
     nextValues: string[],
   ) => {
     setCurrentPage(1);
+    if (key === "universities") {
+      setFilterOptions((previous) => ({
+        ...previous,
+        schools: [],
+        departments: [],
+      }));
+    } else if (key === "schools") {
+      setFilterOptions((previous) => ({ ...previous, departments: [] }));
+    }
     setFilters((previous) => {
-      if (key === "universities" || key === "schools") {
-        const nextFilters = {
+      if (key === "universities") {
+        return {
           ...previous,
-          [key]: nextValues,
+          universities: nextValues,
+          schools: [],
+          departments: [],
         };
-        return pruneManagementFilters(professors, nextFilters);
       }
-
+      if (key === "schools") {
+        return { ...previous, schools: nextValues, departments: [] };
+      }
       return { ...previous, [key]: nextValues };
     });
   };
@@ -1130,18 +1168,12 @@ export const ProfessorsPage = () => {
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
   };
 
-  const totalPages = useMemo(
-    () => getTotalPages(visibleProfessors.length, pageSize),
-    [pageSize, visibleProfessors.length],
-  );
+  const totalPages = totalProfessorPages;
   const safeCurrentPage = Math.min(currentPage, totalPages);
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
-  const paginatedProfessors = useMemo(
-    () => getPageItems(visibleProfessors, safeCurrentPage, pageSize),
-    [pageSize, safeCurrentPage, visibleProfessors],
-  );
+  const paginatedProfessors = visibleProfessors;
   const isProfessorSelectable = useCallback(
     (professor: ProfessorManagementItemDTO) =>
       archiveFilter === "archived"
@@ -1149,21 +1181,10 @@ export const ProfessorsPage = () => {
         : !professor.archived_at,
     [archiveFilter],
   );
-  const filteredSelectableIds = useMemo(
-    () =>
-      visibleProfessors
-        .filter(isProfessorSelectable)
-        .map((professor) => professor.id),
-    [isProfessorSelectable, visibleProfessors],
-  );
-  const filteredSelectedCount = useMemo(
-    () => filteredSelectableIds.filter((id) => selectedIds.has(id)).length,
-    [filteredSelectableIds, selectedIds],
-  );
-  const someFilteredSelected = filteredSelectedCount > 0;
+  const someFilteredSelected = selectedIds.size > 0;
   const allFilteredSelected =
-    filteredSelectableIds.length > 0 &&
-    filteredSelectedCount === filteredSelectableIds.length;
+    selectedAllIdsRef.current.length > 0 &&
+    selectedAllQueryKey === managementFilterQueryKey;
   const openCreateModal = () => {
     setEditingProfessor(null);
     setFormState(emptyProfessorForm());
@@ -1176,20 +1197,63 @@ export const ProfessorsPage = () => {
     setStoredPageSize(PROFESSORS_PAGE_SIZE_STORAGE_KEY, change.pageSize);
   };
 
-  const handleToggleFilteredSelection = () => {
-    setSelectedIds((previous) => {
-      const next = new Set(previous);
-      const allSelected =
-        filteredSelectableIds.length > 0 &&
-        filteredSelectableIds.every((id) => previous.has(id));
+  const handleToggleFilteredSelection = async () => {
+    if (selectingAllProfessors) {
+      return;
+    }
+    if (allFilteredSelected) {
+      const selectedAllIds = new Set(selectedAllIdsRef.current);
+      setSelectedIds((previous) => {
+        const next = new Set(previous);
+        selectedAllIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      selectedAllIdsRef.current = [];
+      setSelectedAllQueryKey(null);
+      return;
+    }
 
-      if (allSelected) {
-        filteredSelectableIds.forEach((id) => next.delete(id));
-      } else {
-        filteredSelectableIds.forEach((id) => next.add(id));
+    const requestId = selectionRequestIdRef.current + 1;
+    selectionRequestIdRef.current = requestId;
+    const requestQueryKey = managementFilterQueryKey;
+    setSelectingAllProfessors(true);
+    try {
+      const result = await searchManagementProfessorIds({
+        archived: archiveFilter,
+        page: 1,
+        page_size: pageSize,
+        keyword: filters.keyword,
+        keyword_search_scopes: filters.keywordSearchScopes,
+        universities: filters.universities,
+        schools: filters.schools,
+        departments: filters.departments,
+        titles: filters.titles,
+        tag_ids: filters.tagIds,
+        sort_key: sortKey,
+        sort_direction: currentSortDirection,
+      });
+      if (
+        selectionRequestIdRef.current !== requestId ||
+        managementFilterQueryKeyRef.current !== requestQueryKey
+      ) {
+        return;
       }
-      return next;
-    });
+      selectedAllIdsRef.current = result.ids;
+      setSelectedIds((previous) => new Set([...previous, ...result.ids]));
+      setSelectedAllQueryKey(result.ids.length > 0 ? requestQueryKey : null);
+    } catch (selectionError) {
+      if (selectionRequestIdRef.current !== requestId) {
+        return;
+      }
+      notifyError(
+        "选择筛选结果失败",
+        getActionErrorMessage(selectionError, "无法选择全部筛选结果"),
+      );
+    } finally {
+      if (selectionRequestIdRef.current === requestId) {
+        setSelectingAllProfessors(false);
+      }
+    }
   };
   const openEditModal = (professor: ProfessorManagementItemDTO) => {
     setEditingProfessor(professor);
@@ -1232,10 +1296,10 @@ export const ProfessorsPage = () => {
       const payload = toProfessorPayload(formState);
       if (editingProfessor) {
         await updateProfessor(editingProfessor.id, payload);
-        notifySuccess("保存成功", `已更新导师“${payload.name}”。`);
+        notifySuccess(`已更新导师“${payload.name}”`);
       } else {
         await createProfessor(payload);
-        notifySuccess("保存成功", `已新增导师“${payload.name}”。`);
+        notifySuccess(`已新增导师“${payload.name}”`);
       }
       setUpsertModalOpen(false);
       await loadProfessors();
@@ -1268,7 +1332,7 @@ export const ProfessorsPage = () => {
     if (prefill.exceedsSafeLength) {
       notifyWarning(
         "导师基本信息过长",
-        "即使不带研究方向和代表论文，投稿链接仍超过 GitHub 可可靠处理的长度。请先缩短异常过长的基本字段。",
+        "基本字段过长，无法生成可靠的 GitHub 预填链接，请先缩短。",
       );
       return;
     }
@@ -1276,10 +1340,10 @@ export const ProfessorsPage = () => {
       field === "research_direction" ? "研究方向" : "代表论文",
     );
     const prefillDescription = missingLabels.length > 0
-      ? `软件会把当前已有信息直接填入 GitHub 表单，无需复制粘贴。提交前还需补全：${missingLabels.join("、")}。`
-      : "软件会把当前信息直接填入 GitHub 表单，无需复制粘贴。打开后核对内容、勾选投稿确认并提交即可。";
+      ? `已预填现有信息；提交前请补全：${missingLabels.join("、")}。`
+      : "已预填现有信息；提交前请核对。";
     const lengthDescription = omittedLabels.length > 0
-      ? `由于内容过长，${omittedLabels.join("和")}不会自动带入；投稿仍可正常提交。如需完整保留，请关闭窗口后在导师列表勾选这位导师，再用批量“贡献到社区”上传共享包。`
+      ? `${omittedLabels.join("和")}因过长未带入；完整投稿请使用批量“贡献到社区”。`
       : null;
     const confirmed = await confirm({
       title: `贡献“${payload.name || "这位导师"}”到社区？`,
@@ -1294,8 +1358,8 @@ export const ProfessorsPage = () => {
     notifySuccess(
       "已打开预填投稿表",
       omittedLabels.length > 0
-        ? `基本信息已经填好；${omittedLabels.join("和")}因过长未自动带入。如需完整投稿，请改用导师列表中的批量“贡献到社区”。`
-        : "现有导师信息已经填好，请在 GitHub 中核对、补全空项并提交。",
+        ? `${omittedLabels.join("和")}因过长未带入；完整投稿请使用批量“贡献到社区”。`
+        : "请在 GitHub 中核对并提交。",
     );
   };
 
@@ -1335,8 +1399,8 @@ export const ProfessorsPage = () => {
       }
       openExternalHttpUrl(buildCommunityBatchContributionUrl(selectedProfessors));
       notifySuccess(
-        "共享包已保存，批量投稿表已打开",
-        `把刚保存的、包含 ${selectedProfessors.length} 位导师的 XLSX 拖入 GitHub 表单；个人备注、标签、任务和通信数据不会导出。`,
+        "共享包已保存",
+        `请将包含 ${selectedProfessors.length} 位导师的 XLSX 拖入已打开的 GitHub 表单；私有数据未导出。`,
       );
     } catch (error) {
       notifyError(
@@ -1402,7 +1466,7 @@ export const ProfessorsPage = () => {
     const confirmed = await confirm({
       title: `补全选中的 ${selectedIds.size} 位导师信息？`,
       description:
-        "将访问已保存的高校官网详情页补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+        "将访问导师主页补全空缺信息，不覆盖现有内容，并消耗 Token。",
       confirmLabel: "开始补全",
       cancelLabel: "取消",
     });
@@ -1441,7 +1505,7 @@ export const ProfessorsPage = () => {
           item.id === updatedProfessor.id ? updatedProfessor : item,
         ),
       );
-      notifySuccess("标签已置顶", `已将“${updatedProfessor.name}”的标签排序更新。`);
+      notifySuccess(`已更新“${updatedProfessor.name}”的标签排序`);
     } catch (saveError) {
       notifyError(
         "保存标签排序失败",
@@ -1516,7 +1580,7 @@ export const ProfessorsPage = () => {
           item.id === updatedProfessor.id ? updatedProfessor : item,
         ),
       );
-      notifySuccess("标签已更新", `已更新“${updatedProfessor.name}”的导师标签。`);
+      notifySuccess(`已更新“${updatedProfessor.name}”的标签`);
       setTagEditorProfessor(null);
       setTagEditorSelectedIds([]);
     } catch (saveError) {
@@ -1548,7 +1612,7 @@ export const ProfessorsPage = () => {
         ),
       );
       setNoteEditorProfessor(null);
-      notifySuccess("备注已更新", `已更新“${noteEditorProfessor.name}”的个人备注。`);
+      notifySuccess(`已更新“${noteEditorProfessor.name}”的备注`);
     } catch (saveError) {
       notifyError(
         "保存备注失败",
@@ -1565,7 +1629,7 @@ export const ProfessorsPage = () => {
     try {
       const createdTag = await createProfessorTag(payload);
       setProfessorTags((previous) => [...previous, createdTag]);
-      notifySuccess("创建标签成功", `已新增标签“${createdTag.name}”。`);
+      notifySuccess(`已创建标签“${createdTag.name}”`);
       return createdTag;
     } catch (createError) {
       notifyError(
@@ -1639,15 +1703,7 @@ export const ProfessorsPage = () => {
         mode,
         tag_ids: tagIds,
       });
-      const tagsByProfessorId = new Map(
-        result.professors.map((professor) => [professor.id, professor.tags]),
-      );
-      setProfessors((previous) =>
-        previous.map((professor) => {
-          const tags = tagsByProfessorId.get(professor.id);
-          return tags ? { ...professor, tags } : professor;
-        }),
-      );
+      await loadProfessors();
       notifySuccess(
         "标签已更新",
         `已更新 ${result.affected_count} 位导师的标签。`,
@@ -1776,6 +1832,8 @@ export const ProfessorsPage = () => {
     try {
       const result = await bulkArchiveProfessors({ ids: [...selectedIds] });
       setSelectedIds(new Set());
+      setSelectedAllQueryKey(null);
+      selectedAllIdsRef.current = [];
       notifySuccess("操作成功", result.message);
       await loadProfessors();
     } catch (archiveError) {
@@ -1821,6 +1879,8 @@ export const ProfessorsPage = () => {
       notifyError("批量恢复失败", "所选导师均未恢复成功，请稍后重试。");
     }
     setSelectedIds(new Set());
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
     await loadProfessors();
   };
 
@@ -1972,7 +2032,7 @@ export const ProfessorsPage = () => {
       setCrawlerFormState(emptyCrawlerJobForm());
       notifySuccess(
         "抓取任务已创建",
-        "任务中心会继续后台抓取，请到任务中心的教师抓取页签查看进度。",
+        "可在任务中心查看抓取进度。",
       );
     } catch (crawlerError) {
       safeRecordUserAction({
@@ -2065,7 +2125,7 @@ export const ProfessorsPage = () => {
                   按学校/学院批量贡献
                 </h2>
                 <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-600">
-                  先把该学校或学院的导师抓取或导入本地，再使用学校/学院筛选，点击表头“选择全部筛选结果”。选择完成后，在页面底部点击“贡献到社区”。
+                  筛选并全选目标学校或学院，再点击底部“贡献到社区”。
                 </p>
               </div>
             </div>
@@ -2106,7 +2166,7 @@ export const ProfessorsPage = () => {
                 id="professors-workbench-title"
                 className="text-3xl font-semibold tracking-[0.01em] text-stone-900"
               >
-                导师档案管理
+                导师管理
               </h1>
             </div>
           </div>
@@ -2149,7 +2209,7 @@ export const ProfessorsPage = () => {
                 </IntakeActionCard>
 
                 <IntakeActionCard
-                  label="模板批量新增"
+                  label="表格导入"
                   icon={<FileSpreadsheet className="h-5 w-5" />}
                   tone="amber"
                 >
@@ -2163,12 +2223,12 @@ export const ProfessorsPage = () => {
                     className="ui-btn-secondary h-10 w-full rounded-2xl"
                   >
                     <Upload className="h-4 w-4" />
-                    模板导入
+                    选择文件
                   </button>
                 </IntakeActionCard>
 
                 <IntakeActionCard
-                  label="单个新增"
+                  label="手动添加"
                   icon={<Plus className="h-5 w-5" />}
                   tone="stone"
                 >
@@ -2178,7 +2238,7 @@ export const ProfessorsPage = () => {
                     className="ui-btn-secondary h-10 w-full rounded-2xl"
                   >
                     <Plus className="h-4 w-4" />
-                    新增导师
+                    添加导师
                   </button>
                 </IntakeActionCard>
 
@@ -2214,6 +2274,8 @@ export const ProfessorsPage = () => {
                     setArchiveFilter(item);
                     setCurrentPage(1);
                     setSelectedIds(new Set());
+                    setSelectedAllQueryKey(null);
+                    selectedAllIdsRef.current = [];
                   }}
                   className={clsx(
                     "rounded-2xl px-4 py-2 text-sm font-medium transition",
@@ -2449,28 +2511,35 @@ export const ProfessorsPage = () => {
       >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           <div className="text-sm text-stone-600">
-            共 {visibleProfessors.length} 位符合筛选条件，当前第 {safeCurrentPage} / {totalPages} 页，每页最多 {pageSize} 位
+            {totalProfessorCount} 位 · {safeCurrentPage}/{totalPages} 页 · 每页 {pageSize} 位
           </div>
-          {filteredSelectableIds.length > 0 ? (
+          {totalProfessorCount > 0 ? (
             <button
               type="button"
               aria-label={
                 allFilteredSelected
-                  ? "取消选择全部筛选结果"
-                  : "选择全部筛选结果"
+                  ? "取消全选"
+                  : "全选当前结果"
               }
               aria-pressed={allFilteredSelected}
-              onClick={handleToggleFilteredSelection}
-              className="inline-flex min-h-10 w-fit items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700 transition hover:border-primary/40 hover:bg-white hover:text-primary lg:hidden"
+              onClick={() => void handleToggleFilteredSelection()}
+              disabled={selectingAllProfessors}
+              className="inline-flex min-h-10 w-fit items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700 transition hover:border-primary/40 hover:bg-white hover:text-primary disabled:cursor-wait disabled:opacity-60 lg:hidden"
             >
-              {allFilteredSelected ? (
+              {selectingAllProfessors ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
               ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
               ) : (
                 <Square className="h-4 w-4" />
               )}
-              {allFilteredSelected ? "取消选择全部筛选结果" : "选择全部筛选结果"}
+              {selectingAllProfessors
+                ? "正在全选"
+                : allFilteredSelected
+                  ? "取消全选"
+                  : "全选当前结果"}
             </button>
           ) : null}
         </div>
@@ -2493,20 +2562,22 @@ export const ProfessorsPage = () => {
               type="button"
               aria-label={
                 allFilteredSelected
-                  ? "取消选择全部筛选结果"
-                  : "选择全部筛选结果"
+                  ? "取消全选"
+                  : "全选当前结果"
               }
               aria-pressed={allFilteredSelected}
-              onClick={handleToggleFilteredSelection}
-              disabled={filteredSelectableIds.length === 0}
+              onClick={() => void handleToggleFilteredSelection()}
+              disabled={selectingAllProfessors || totalProfessorCount === 0}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-45"
               title={
                 allFilteredSelected
-                  ? "取消选择全部筛选结果"
-                  : "选择全部筛选结果"
+                  ? "取消全选"
+                  : "全选当前结果"
               }
             >
-              {allFilteredSelected ? (
+              {selectingAllProfessors ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : allFilteredSelected ? (
                 <SquareCheck className="h-4 w-4" />
               ) : someFilteredSelected ? (
                 <SquareMinus className="h-4 w-4" />
@@ -2524,7 +2595,7 @@ export const ProfessorsPage = () => {
           <div className="flex justify-center text-center">操作</div>
         </div>
 
-        {visibleProfessors.length === 0 ? (
+        {totalProfessorCount === 0 ? (
           <div className="px-6 py-16 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-stone-100 text-stone-400">
               <Users className="h-6 w-6" />
@@ -2533,14 +2604,14 @@ export const ProfessorsPage = () => {
               暂无导师
             </h2>
             <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-stone-500">
-              选择一种方式建立导师库，后续可继续筛选、编辑和归档。
+              选择一种方式建立导师库。
             </p>
             <div
               data-testid="professor-empty-intake"
               className="mx-auto mt-6 grid max-w-4xl gap-3 text-left lg:grid-cols-3"
             >
               <article
-                data-testid="professor-empty-intake-单个新增"
+                data-testid="professor-empty-intake-手动添加"
                 className="flex min-h-full flex-col justify-between rounded-[28px] border border-stone-200 bg-white p-4 shadow-sm"
               >
                 <div>
@@ -2548,11 +2619,8 @@ export const ProfessorsPage = () => {
                     <Plus className="h-5 w-5" />
                   </div>
                   <h3 className="mt-3 text-base font-semibold text-stone-900">
-                    单个新增
+                    手动添加
                   </h3>
-                  <p className="mt-2 text-sm leading-6 text-stone-500">
-                    手动创建一条导师档案，适合临时补充或精修记录。
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -2560,11 +2628,11 @@ export const ProfessorsPage = () => {
                   className="ui-btn-primary mt-4 w-full justify-center"
                 >
                   <Plus className="h-4 w-4" />
-                  新增导师
+                  添加导师
                 </button>
               </article>
               <article
-                data-testid="professor-empty-intake-模板导入"
+                data-testid="professor-empty-intake-表格导入"
                 className="flex min-h-full flex-col justify-between rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,#fffbeb,#ffffff)] p-4 shadow-sm"
               >
                 <div>
@@ -2572,10 +2640,10 @@ export const ProfessorsPage = () => {
                     <FileSpreadsheet className="h-5 w-5" />
                   </div>
                   <h3 className="mt-3 text-base font-semibold text-stone-900">
-                    模板导入
+                    表格导入
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-stone-500">
-                    下载模板后批量导入导师信息，适合已有名单或表格。
+                    从 CSV 或 XLSX 导入。
                   </p>
                 </div>
                 <button
@@ -2588,7 +2656,7 @@ export const ProfessorsPage = () => {
                   className="ui-btn-secondary mt-4 w-full justify-center"
                 >
                   <Upload className="h-4 w-4" />
-                  模板导入
+                  选择文件
                 </button>
               </article>
               <article
@@ -2603,7 +2671,7 @@ export const ProfessorsPage = () => {
                     智能抓取
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-stone-500">
-                    从学院页面自动发现导师，抓取结果进入候选审核。
+                    从学院页面抓取并审核。
                   </p>
                 </div>
                 <button
@@ -2617,7 +2685,7 @@ export const ProfessorsPage = () => {
                   className="ui-btn-primary mt-4 w-full justify-center"
                 >
                   <Bot className="h-4 w-4" />
-                  智能抓取
+                  开始抓取
                 </button>
               </article>
             </div>
@@ -2635,6 +2703,8 @@ export const ProfessorsPage = () => {
                   selectable={selectable}
                   tableColumns={managementTableColumns}
                   onToggleSelection={() => {
+                    setSelectedAllQueryKey(null);
+                    selectedAllIdsRef.current = [];
                     setSelectedIds((previous) => {
                       const next = new Set(previous);
                       if (next.has(professor.id)) {
@@ -2659,16 +2729,16 @@ export const ProfessorsPage = () => {
           </div>
         )}
 
-        {visibleProfessors.length > 0 ? (
+        {totalProfessorCount > 0 ? (
           <Pagination
             page={safeCurrentPage}
             pageSize={pageSize}
-            totalCount={visibleProfessors.length}
+            totalCount={totalProfessorCount}
             onChange={handlePaginationChange}
             ariaLabel="导师管理分页"
             unitLabel="位"
             itemLabel="位导师"
-            summary={`共 ${visibleProfessors.length} 位符合筛选条件，当前第 ${safeCurrentPage} / ${totalPages} 页，已选中 ${selectedIds.size} 位`}
+            summary={`${totalProfessorCount} 位 · ${safeCurrentPage}/${totalPages} 页 · 已选 ${selectedIds.size} 位`}
             focusTargetRef={professorListStartRef}
             className="border-t border-stone-100 px-6 py-4"
           />
@@ -2682,7 +2752,7 @@ export const ProfessorsPage = () => {
           >
             <div className="flex items-center gap-2 rounded-full border border-stone-200 bg-white/95 px-4 py-2 text-sm text-stone-600 shadow-sm">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              正在更新导师列表...
+              正在更新导师列表…
             </div>
           </div>
         ) : null}
@@ -2695,16 +2765,18 @@ export const ProfessorsPage = () => {
               <div className="text-sm font-medium text-stone-900">
                 已选中 {selectedIds.size} 位导师
               </div>
-              <div className="mt-1 text-xs text-stone-500">
-                {archiveFilter === "archived"
-                  ? "这些导师会被恢复到正常列表，可重新参与筛选与任务。"
-                  : "可批量改标签、智能补全、移入回收站，或贡献到社区。"}
-              </div>
+              {archiveFilter === "archived" ? (
+                <div className="mt-1 text-xs text-stone-500">恢复后可继续使用</div>
+              ) : null}
             </div>
             <div className="flex max-w-full flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => setSelectedIds(new Set())}
+                onClick={() => {
+                  setSelectedIds(new Set());
+                  setSelectedAllQueryKey(null);
+                  selectedAllIdsRef.current = [];
+                }}
                 className="ui-btn-secondary"
               >
                 清空选择
@@ -2775,7 +2847,7 @@ export const ProfessorsPage = () => {
         title={
           editingProfessor ? `编辑导师：${editingProfessor.name}` : "新增导师"
         }
-        description="手动维护一位导师的核心信息。保存后会立刻出现在导师管理页，并可在首页参与筛选与建任务。"
+        description="保存后可立即用于筛选和创建任务。"
         onClose={closeUpsertModal}
         headerAction={
           editingProfessor ? (
@@ -2929,7 +3001,7 @@ export const ProfessorsPage = () => {
               }
               className="min-h-32 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
               placeholder={
-                "一行一篇，例如：\nScaling Agents with...\nReasoning for Scientific Discovery..."
+                    "一行一篇，例如：\nScaling Agents with…\nReasoning for Scientific Discovery…"
               }
             />
           </label>
@@ -2951,10 +3023,10 @@ export const ProfessorsPage = () => {
           </label>
           <UrlInputField
             id="professor-profile-url"
-            label="高校官网详情页"
+            label="导师主页"
             value={formState.profile_url}
             placeholder="示例：https://example.edu/faculty/zhang"
-            openLabel="打开高校官网详情页"
+            openLabel="打开导师主页"
             onChange={(value) =>
               setFormState((previous) => ({
                 ...previous,
@@ -3016,7 +3088,7 @@ export const ProfessorsPage = () => {
       <ModalShell
         open={importModalOpen}
         title="导入导师文件"
-        description="下载模板并按列填写。导入时按邮箱覆盖记录，回收站记录会自动恢复。"
+        description="按邮箱匹配并更新；回收站记录会自动恢复。"
         onClose={() => {
           if (importingFile) {
             return;
@@ -3030,7 +3102,7 @@ export const ProfessorsPage = () => {
               先下载模板
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-500">
-              支持 csv 和 xlsx。下载后按模板里的说明填写即可。
+              支持 CSV 和 XLSX。
             </p>
             <div className="mt-4 flex flex-wrap gap-3">
               <button
@@ -3061,13 +3133,10 @@ export const ProfessorsPage = () => {
               用 Codex / Claude Code 从导师官网生成导入表
             </button>
             <ul className="mt-5 space-y-2 text-sm leading-6 text-stone-600">
-              <li>模板内已包含字段说明和示例行，下载后可直接照着填写。</li>
+              <li>必填列为 name 和 email；格式错误的行会跳过。</li>
               <li>
-                Skill 默认生成安全的 10 列 XLSX；省略标签和个人备注列时，
-                更新已有导师会保留这两项。
+                省略标签或个人备注列时，已有内容不会被清空。
               </li>
-              <li>说明行和示例行可以保留，导入时会自动忽略。</li>
-              <li>导入时如果邮箱相同，会更新表格中包含的导师信息。</li>
               <li>
                 <span className="font-mono text-xs">research_direction</span>{" "}
                 多个方向用中文分号；分隔。
@@ -3084,7 +3153,7 @@ export const ProfessorsPage = () => {
               上传并导入
             </div>
             <p className="mt-2 text-sm leading-6 text-stone-500">
-              必填列是 name 和 email。格式错误的行会跳过；同邮箱记录会覆盖更新。
+              同邮箱记录将更新；新邮箱将新增。
             </p>
             <label
               onClick={handleImportDropZoneClick}
@@ -3159,7 +3228,7 @@ export const ProfessorsPage = () => {
       <ModalShell
         open={exportModalOpen}
         title="导出导师信息"
-        description="将全部正常导师导出为表格文件。字段顺序与导入模板保持一致，便于备份、外部整理或修改后再次导入。"
+        description="导出全部正常导师，格式与导入模板一致。"
         onClose={() => setExportModalOpen(false)}
       >
         <div className="mt-6 rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm">
@@ -3167,7 +3236,7 @@ export const ProfessorsPage = () => {
             选择导出格式
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-500">
-            推荐使用 XLSX 直接在表格软件中查看；CSV 适合脚本处理和跨工具交换。
+            XLSX 适合表格软件，CSV 适合脚本处理。
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <button
@@ -3188,11 +3257,8 @@ export const ProfessorsPage = () => {
             </button>
           </div>
           <ul className="mt-5 space-y-2 text-sm leading-6 text-stone-600">
-            <li>导出范围：全部正常导师，不包含回收站导师。</li>
-            <li>当前搜索、筛选、分页和勾选状态不会影响导出结果。</li>
-            <li>字段顺序与导入模板一致，未修改即可重新导入系统。</li>
+            <li>包含全部正常导师，不包含回收站导师。</li>
             <li>导出文件包含个人备注，请谨慎分享。</li>
-            <li>空值会保留为空单元格，CSV 使用 UTF-8 编码。</li>
           </ul>
         </div>
       </ModalShell>
@@ -3200,7 +3266,7 @@ export const ProfessorsPage = () => {
       <ModalShell
         open={crawlerModalOpen}
         title="创建抓取任务"
-        description="填写学校、学院和页面 URL，系统会创建抓取任务，抓取结果进入候选审核。"
+        description="填写学校、学院和页面 URL；结果进入候选审核。"
         onClose={closeCrawlerModal}
         maxWidthClassName="max-w-2xl"
       >
@@ -3245,12 +3311,12 @@ export const ProfessorsPage = () => {
                   {
                     value: "list",
                     label: "列表页",
-                    hint: "学院教师列表或师资队伍页面",
+                    hint: "学院师资列表页",
                   },
                   {
                     value: "profile",
                     label: "详情页",
-                    hint: "单个导师的高校官网详情页",
+                    hint: "导师个人主页",
                   },
                 ] satisfies Array<{
                   value: CrawlJobEntryTypeDTO;

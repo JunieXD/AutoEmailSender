@@ -293,7 +293,7 @@ describe("ProfilePage onboarding", () => {
     renderPage();
 
     expect(
-      await screen.findByRole("heading", { name: "首次配置建议" }),
+      await screen.findByRole("heading", { name: "首次配置" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /1\. 发件身份/ })).toHaveTextContent(
       "已完成",
@@ -337,13 +337,13 @@ describe("ProfilePage onboarding", () => {
       );
     });
     expect(
-      screen.queryByRole("heading", { name: "首次配置建议" }),
+      screen.queryByRole("heading", { name: "首次配置" }),
     ).not.toBeInTheDocument();
 
     resolveTestComposeStatus({ completed: false });
 
     expect(
-      await screen.findByRole("heading", { name: "首次配置建议" }),
+      await screen.findByRole("heading", { name: "首次配置" }),
     ).toBeInTheDocument();
   });
 
@@ -368,7 +368,7 @@ describe("ProfilePage onboarding", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByRole("heading", { name: "首次配置建议" }),
+        screen.queryByRole("heading", { name: "首次配置" }),
       ).not.toBeInTheDocument();
     });
   });
@@ -464,7 +464,7 @@ describe("ProfilePage onboarding", () => {
       "aria-expanded",
       "false",
     );
-    expect(screen.queryByLabelText("配置名称")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("身份名称")).not.toBeInTheDocument();
 
     fireEvent.click(
       await screen.findByRole("button", { name: /1\. 发件身份/ }),
@@ -474,7 +474,7 @@ describe("ProfilePage onboarding", () => {
       "aria-expanded",
       "true",
     );
-    expect(await screen.findByLabelText("配置名称")).toHaveValue("博士申请配置");
+    expect(await screen.findByLabelText("身份名称")).toHaveValue("博士申请配置");
     expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
@@ -483,7 +483,7 @@ describe("ProfilePage onboarding", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^发件身份/ }));
 
-    const content = await screen.findByLabelText("配置名称").then(() =>
+    const content = await screen.findByLabelText("身份名称").then(() =>
       document.getElementById("identity-setup-content"),
     );
 
@@ -518,7 +518,7 @@ describe("ProfilePage onboarding", () => {
     renderPage();
     openSetupSection("发件身份");
 
-    expect(await screen.findByLabelText("配置名称")).toHaveValue("博士申请配置");
+    expect(await screen.findByLabelText("身份名称")).toHaveValue("博士申请配置");
     expect(screen.getByLabelText("发件人姓名")).toHaveValue("王同学");
     expect(screen.queryByLabelText("匹配阈值")).not.toBeInTheDocument();
     expect(screen.queryByText(/匹配阈值/)).not.toBeInTheDocument();
@@ -609,7 +609,7 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("发件身份");
 
     const passwordInput = screen.getByLabelText(/邮箱授权码/);
-    const smtpPortInput = screen.getByLabelText(/SMTP Port/);
+    const smtpPortInput = screen.getByLabelText(/SMTP 端口/);
     expectToAppearBefore(passwordInput, smtpPortInput);
     expect(passwordInput).toHaveAttribute("type", "password");
 
@@ -755,7 +755,7 @@ describe("ProfilePage onboarding", () => {
 
     renderPage();
     openSetupSection("模型配置");
-    fireEvent.change(screen.getByLabelText(/API Base URL/), {
+    fireEvent.change(screen.getByLabelText(/API 地址/), {
       target: { value: testedBaseUrl },
     });
     fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
@@ -798,7 +798,7 @@ describe("ProfilePage onboarding", () => {
 
     renderPage();
     openSetupSection("模型配置");
-    fireEvent.change(screen.getByLabelText(/API Base URL/), {
+    fireEvent.change(screen.getByLabelText(/API 地址/), {
       target: { value: "https://invalid.example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
@@ -860,7 +860,7 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("测试写信");
 
     const finishSection = screen.getByRole("heading", { name: "测试写信" });
-    const entryLink = screen.getByRole("link", { name: "进入测试写信页" });
+    const entryLink = screen.getByRole("link", { name: "开始测试" });
 
     expect(screen.queryByText("第四步：测试写信")).not.toBeInTheDocument();
     expectToAppearBefore(finishSection, entryLink);
@@ -872,7 +872,7 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("材料与模板");
     openSetupSection("测试写信");
 
-    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模板" }));
 
     expect(
       await screen.findByRole("textbox", { name: "模板正文" }),
@@ -908,11 +908,11 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("材料与模板");
     openSetupSection("测试写信");
 
-    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模板" }));
 
     expect(
       await screen.findByText(
-        "可在主题或正文编辑器中通过“占位符”按钮插入个性化信息，例如插入“导师姓名”后，发送时会替换为对应导师的姓名。",
+        "用“占位符”插入导师姓名等变量，发送时自动替换。",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("{{name}} 导师姓名")).not.toBeInTheDocument();

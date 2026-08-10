@@ -54,6 +54,12 @@ class IdentityProfessorMatchResult(Base):
             "updated_at",
             "id",
         ),
+        Index(
+            "ix_identity_professor_match_results_identity_score_professor",
+            "identity_id",
+            "match_score",
+            "professor_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -291,7 +291,7 @@ describe("CreateTaskPage", () => {
 
     expect(await screen.findByText("张明")).toBeInTheDocument();
     expect(
-      await screen.findByText("可直接编辑下方内容；创建后会独立保存到任务中。"),
+      await screen.findByText("本次内容将独立保存。"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建任务" }));
 
@@ -332,7 +332,7 @@ describe("CreateTaskPage", () => {
       expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /AI 辅助写信/ }));
 
-      expect(screen.getByText("AI 写信参考材料")).toBeInTheDocument();
+      expect(screen.getByText("AI 参考材料")).toBeInTheDocument();
       expect(screen.getByRole("radio")).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
 
@@ -411,7 +411,7 @@ describe("CreateTaskPage", () => {
           expect.objectContaining({
             title: "附件超过 1 MB，仍要创建批量任务吗？",
             description: expect.stringContaining(
-              "建议不超过 1 MB，以减少被邮箱提供商限流的概率。",
+              "建议不超过 1 MB，以降低限流风险。",
             ),
             confirmLabel: "仍然创建",
             cancelLabel: "返回调整",
@@ -452,13 +452,13 @@ describe("CreateTaskPage", () => {
     );
 
     expect(await screen.findByText("张明")).toBeInTheDocument();
-    expect(screen.getByText(/已从「过期任务」带入 1 位老师/)).toBeInTheDocument();
+    expect(screen.getByText(/已从「过期任务」带入 1 位导师/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("重新发起 - 过期任务")).toBeInTheDocument();
     expect(
       screen.getByRole("radio", { name: /重新套用模板/ }),
     ).toBeChecked();
     expect(
-      screen.getByText(/1 封邮件将重新套用.*无需逐封审核/),
+      screen.getByText(/1 封将套用.*进入发送流程/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
 
@@ -571,8 +571,8 @@ describe("CreateTaskPage", () => {
     expect(notifyMock.notifyFormErrors).toHaveBeenCalledWith(
       "请检查表单",
       expect.arrayContaining([
-        "直接套用模板需要填写模板主题",
-        "直接套用模板需要填写模板纯文本正文",
+        "请填写模板主题",
+        "请填写模板正文",
       ]),
     );
     expect(createBatchTaskMock).not.toHaveBeenCalled();
@@ -702,7 +702,7 @@ describe("CreateTaskPage", () => {
     const templateOption = screen.getByRole("radio", { name: /重新套用模板/ });
     const llmOption = screen.getByRole("radio", { name: /AI 重新改写/ });
     expect(reuseOption).toBeChecked();
-    expect(screen.queryByText("AI 写信参考材料")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI 参考材料")).not.toBeInTheDocument();
 
     fireEvent.click(templateOption);
     expect(templateOption).toBeChecked();
@@ -714,14 +714,14 @@ describe("CreateTaskPage", () => {
 
     fireEvent.click(llmOption);
     expect(llmOption).toBeChecked();
-    expect(screen.getByText("AI 写信参考材料")).toBeInTheDocument();
-    expect(screen.getByText(/旧邮件内容不会沿用/)).toBeInTheDocument();
+    expect(screen.getByText("AI 参考材料")).toBeInTheDocument();
+    expect(screen.getByText(/将由 AI 重新改写并逐封审核/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /创建任务/ }));
 
     await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
     expect(confirmMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        description: expect.stringContaining("旧邮件内容不会沿用"),
+        description: expect.stringContaining("将由 AI 重新改写并逐封审核"),
       }),
     );
     expect(createBatchTaskMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -763,14 +763,14 @@ describe("CreateTaskPage", () => {
 
     expect(notifyMock.notifyFormErrors).toHaveBeenCalledWith(
       "请检查表单",
-      expect.arrayContaining(["AI 写信参考材料为必选项"]),
+      expect.arrayContaining(["请选择 AI 参考材料"]),
     );
     expect(createBatchTaskMock).not.toHaveBeenCalled();
   });
 
   it("explains that scheduled AI rewritten drafts still need manual review", () => {
     expect(buildBatchCreateConfirmDescription("llm", "scheduled")).toContain(
-      "AI 改写完成后仍需逐封审核通过",
+      "将生成 AI 草稿；审核后按计划发送",
     );
   });
 

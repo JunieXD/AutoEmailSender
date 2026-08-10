@@ -15,13 +15,13 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
   <section class="home-benchmark-promo">
     <div class="home-benchmark-copy">
       <span>真实高校官网实测</span>
-      <h2>抓取效果，不只停留在功能介绍里</h2>
-      <p>公开展示不同学院的导师识别数量、字段覆盖率和处理耗时，持续记录每次版本迭代。</p>
-      <a :href="withBase('/crawl-benchmark')">查看智能抓取实测数据 <i>→</i></a>
+      <h2>真实官网抓取效果</h2>
+      <p>查看各学院的候选数量、字段覆盖率、耗时和版本变化。</p>
+      <a :href="withBase('/crawl-benchmark')">查看实测数据 <i>→</i></a>
     </div>
     <div class="home-benchmark-metrics">
       <div><strong>{{ summary.universityCount }}</strong><span>所高校</span></div>
-      <div><strong>{{ summary.targetCount }}</strong><span>个学院与机构</span></div>
+      <div><strong>{{ summary.targetCount }}</strong><span>个学院/机构</span></div>
       <div><strong>{{ formatBenchmarkNumber(summary.candidateCount) }}</strong><span>位候选导师</span></div>
       <div><strong>{{ formatCoverage(summary.emailCoverage) }}</strong><span>邮箱字段覆盖</span></div>
     </div>

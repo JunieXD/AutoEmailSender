@@ -125,6 +125,8 @@ def _resolve_target(
         )
     if source.startswith("campaigns."):
         return _campaign_target(source, action, item)
+    if source.startswith("deliveries."):
+        return _delivery_target(action, item)
     return None
 
 
@@ -162,6 +164,8 @@ def _draft_target(
         return "drafts.regenerate", arguments, [], "invoke"
     if action == "rewrite":
         return "drafts.rewrite", arguments, ["body_text"], "invoke"
+    if action == "approve":
+        return "drafts.approve", arguments, ["body_text"], "invoke"
     if action == "prepare-send":
         return "drafts.prepare-send", arguments, [], "invoke"
     if action == "cancel":
@@ -237,7 +241,12 @@ def _campaign_target(
     campaign_arguments = {"campaign_id": campaign_id}
     if action == "read":
         if item_id is not None:
-            return "campaigns.items", campaign_arguments, [], "invoke"
+            return (
+                "campaigns.item-thread",
+                {**campaign_arguments, "item_id": item_id},
+                [],
+                "invoke",
+            )
         return "campaigns.get", campaign_arguments, [], "invoke"
     if action == "wait":
         return "wait", {"resource": "campaigns", "resource_id": [campaign_id]}, [], "invoke"
@@ -282,11 +291,41 @@ def _campaign_target(
             [],
             "invoke",
         )
+    if action == "approve" and item_id is not None:
+        return (
+            "campaigns.approve-item-draft",
+            {**campaign_arguments, "item_id": item_id},
+            ["body_text"],
+            "invoke",
+        )
     if action == "prepare-send":
         arguments: dict[str, object] = dict(campaign_arguments)
         if item_id is not None:
             arguments["item_ids"] = [item_id]
         return "campaigns.prepare-send", arguments, [], "invoke"
+    return None
+
+
+def _delivery_target(
+    action: str,
+    item: Mapping[str, object],
+) -> tuple[str, dict[str, object], list[str], str] | None:
+    task_id = _positive_integer(item.get("task_id")) or _positive_integer(item.get("id"))
+    if task_id is None:
+        return None
+    if action == "reschedule":
+        expected_updated_at = _string_identifier(item.get("expected_updated_at"))
+        if expected_updated_at is None:
+            return None
+        return (
+            "deliveries.reschedule",
+            {
+                "task_id": task_id,
+                "expected_updated_at": expected_updated_at,
+            },
+            ["scheduled_at"],
+            "invoke",
+        )
     return None
 
 

@@ -228,21 +228,21 @@ const buildCrawlJobResult = (job: CrawlJobSummaryDTO): ResultNotification => {
   if (job.status === "needs_review") {
     return {
       level: "success",
-      title: "教师抓取完成，等待审核",
+      title: "智能抓取完成，等待审核",
       description: `${jobName}：${summary}请前往任务中心审核。`,
     };
   }
   if (job.status === "partially_completed") {
     return {
       level: "warning",
-      title: "教师抓取部分完成",
+      title: "智能抓取部分完成",
       description: `${jobName}：${summary}`,
     };
   }
   if (job.status === "failed") {
     return {
       level: "error",
-      title: "教师抓取失败",
+      title: "智能抓取失败",
       description:
         job.error_message ?? job.latest_event_message ?? `${jobName}抓取失败。`,
     };
@@ -250,13 +250,13 @@ const buildCrawlJobResult = (job: CrawlJobSummaryDTO): ResultNotification => {
   if (job.status === "canceled") {
     return {
       level: "warning",
-      title: "教师抓取已取消",
+      title: "智能抓取已取消",
       description: `${jobName}：已保留当前抓取结果。`,
     };
   }
   return {
     level: "success",
-    title: "教师抓取完成",
+    title: "智能抓取完成",
     description: `${jobName}：${summary}`,
   };
 };

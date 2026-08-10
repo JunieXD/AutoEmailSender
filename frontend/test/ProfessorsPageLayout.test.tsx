@@ -30,6 +30,61 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/entities/professor/api/professors", () => ({
   listProfessorsForManagement,
+  searchManagementProfessors: async (payload: {
+    archived: "active" | "archived" | "all";
+    page: number;
+    page_size: number;
+    keyword: string;
+    keyword_search_scopes: string[];
+    universities: string[];
+    schools: string[];
+    departments: string[];
+    titles: string[];
+    tag_ids: string[];
+    sort_key: string;
+    sort_direction: "asc" | "desc";
+  }) => {
+    const allItems = await listProfessorsForManagement(payload.archived);
+    const filtersModule = await import(
+      "@/features/professor-management/client/filterManagementProfessors"
+    );
+    const sortModule = await import(
+      "@/features/professor-management/client/sortManagementProfessors"
+    );
+    const filtered = filtersModule.filterManagementProfessors(allItems, {
+      keyword: payload.keyword,
+      keywordSearchScopes: payload.keyword_search_scopes,
+      universities: payload.universities,
+      schools: payload.schools,
+      departments: payload.departments,
+      titles: payload.titles,
+      tagIds: payload.tag_ids,
+    });
+    const sorted = sortModule.sortManagementProfessors(
+      filtered,
+      payload.sort_key,
+      payload.sort_direction,
+    );
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: sorted.slice(start, start + payload.page_size),
+      total_count: sorted.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: filtersModule.buildManagementFilterOptions(allItems, {
+        universities: payload.universities,
+        schools: payload.schools,
+      }),
+    };
+  },
+  searchManagementProfessorIds: async (payload: {
+    archived: "active" | "archived" | "all";
+  }) => {
+    const items = await listProfessorsForManagement(payload.archived);
+    return { ids: items.map((item: { id: number }) => item.id), total_count: items.length };
+  },
   archiveProfessor: vi.fn(),
   bulkArchiveProfessors: vi.fn(),
   createProfessor: vi.fn(),
@@ -254,7 +309,7 @@ describe("ProfessorsPage layout", () => {
     expect(
       within(guide).getByRole("heading", { name: "按学校/学院批量贡献" }),
     ).toBeInTheDocument();
-    expect(within(guide).getByText(/选择全部筛选结果/)).toBeInTheDocument();
+    expect(within(guide).getByText(/筛选并全选目标学校或学院/)).toBeInTheDocument();
     expect(within(guide).getByText(/贡献到社区/)).toBeInTheDocument();
 
     fireEvent.click(within(guide).getByRole("button", { name: "关闭提示" }));
@@ -619,7 +674,7 @@ describe("ProfessorsPage layout", () => {
     const confirmation = await screen.findByRole("dialog", {
       name: "贡献“李教授”到社区？",
     });
-    expect(confirmation).toHaveTextContent("无需复制粘贴");
+    expect(confirmation).toHaveTextContent("已预填现有信息；提交前请核对");
     fireEvent.click(
       within(confirmation).getByRole("button", { name: "打开已预填的投稿表" }),
     );
@@ -668,8 +723,8 @@ describe("ProfessorsPage layout", () => {
     const confirmation = await screen.findByRole("dialog", {
       name: "贡献“李教授”到社区？",
     });
-    expect(confirmation).toHaveTextContent("研究方向不会自动带入");
-    expect(confirmation).toHaveTextContent("批量“贡献到社区”上传共享包");
+    expect(confirmation).toHaveTextContent("研究方向因过长未带入");
+    expect(confirmation).toHaveTextContent("完整投稿请使用批量“贡献到社区”");
     fireEvent.click(
       within(confirmation).getByRole("button", { name: "打开已预填的投稿表" }),
     );
@@ -689,7 +744,7 @@ describe("ProfessorsPage layout", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    fireEvent.change(screen.getByLabelText("高校官网详情页"), {
+    fireEvent.change(screen.getByLabelText("导师主页"), {
       target: { value: "https://example.edu/not-saved-yet" },
     });
     fireEvent.click(screen.getByRole("button", { name: "智能补全" }));
@@ -806,7 +861,7 @@ describe("ProfessorsPage layout", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "将访问已保存的高校官网详情页补全缺失信息，不会覆盖已有内容，并计入 Token 消耗。",
+        "将访问导师主页补全空缺信息，不覆盖现有内容，并消耗 Token。",
       ),
     ).toBeInTheDocument();
     expect(createProfessorInformationEnrichmentJob).not.toHaveBeenCalled();
@@ -853,11 +908,11 @@ describe("ProfessorsPage layout", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
 
-    const profileInput = screen.getByLabelText("高校官网详情页");
+    const profileInput = screen.getByLabelText("导师主页");
     fireEvent.change(profileInput, {
       target: { value: " https://example.edu/li-updated " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "打开高校官网详情页" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开导师主页" }));
     fireEvent.click(screen.getByRole("button", { name: "打开发现来源页" }));
 
     expect(openExternalUrl).toHaveBeenCalledWith("https://example.edu/li-updated");
@@ -884,7 +939,7 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    fireEvent.click(screen.getByRole("button", { name: "打开高校官网详情页" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开导师主页" }));
 
     await waitFor(() => {
       expect(openWindow).toHaveBeenCalledWith(
@@ -906,19 +961,21 @@ describe("ProfessorsPage layout", () => {
 
     expect(screen.getByRole("heading", { name: "暂无导师" })).toBeInTheDocument();
     expect(
-      screen.getByText("选择一种方式建立导师库，后续可继续筛选、编辑和归档。"),
+      screen.getByText("选择一种方式建立导师库。"),
     ).toBeInTheDocument();
 
     const emptyState = screen.getByTestId("professor-empty-intake");
     expect(emptyState).toHaveClass("grid", "lg:grid-cols-3");
     [
-      ["单个新增", "手动创建一条导师档案，适合临时补充或精修记录。", "新增导师"],
-      ["模板导入", "下载模板后批量导入导师信息，适合已有名单或表格。", "模板导入"],
-      ["智能抓取", "从学院页面自动发现导师，抓取结果进入候选审核。", "智能抓取"],
+      ["手动添加", null, "添加导师"],
+      ["表格导入", "从 CSV 或 XLSX 导入。", "选择文件"],
+      ["智能抓取", "从学院页面抓取并审核。", "开始抓取"],
     ].forEach(([title, description, buttonName]) => {
       const card = within(emptyState).getByTestId(`professor-empty-intake-${title}`);
       expect(within(card).getByRole("heading", { name: title })).toBeInTheDocument();
-      expect(within(card).getByText(description)).toBeInTheDocument();
+      if (description) {
+        expect(within(card).getByText(description)).toBeInTheDocument();
+      }
       expect(within(card).getByRole("button", { name: buttonName })).toBeInTheDocument();
     });
   });
@@ -934,7 +991,7 @@ describe("ProfessorsPage layout", () => {
     });
 
     const intakePanel = screen.getByTestId("professor-intake-panel");
-    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "回收站" }));
 
     await waitFor(() => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("archived");
@@ -943,8 +1000,8 @@ describe("ProfessorsPage layout", () => {
     expect(screen.getByTestId("professor-intake-panel")).toBe(intakePanel);
     expect(within(intakePanel).getByText("导师导入与导出方式")).toBeInTheDocument();
     expect(within(intakePanel).getByRole("button", { name: "智能抓取" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("button", { name: "模板导入" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("button", { name: "新增导师" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "选择文件" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("button", { name: "添加导师" })).toBeInTheDocument();
     expect(within(intakePanel).getByRole("button", { name: "导出导师信息" })).toBeInTheDocument();
   });
 
@@ -962,7 +1019,7 @@ describe("ProfessorsPage layout", () => {
 
     expect(await screen.findByText("李教授")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "回收站" }));
 
     await waitFor(() => {
       expect(listProfessorsForManagement).toHaveBeenLastCalledWith("archived");
@@ -970,7 +1027,7 @@ describe("ProfessorsPage layout", () => {
 
     expect(screen.getByText("李教授")).toBeInTheDocument();
     expect(screen.getByTestId("professor-list-refreshing")).toHaveTextContent(
-      "正在更新导师列表...",
+      "正在更新导师列表…",
     );
     expect(screen.queryByText("正在加载导师列表...")).not.toBeInTheDocument();
 
@@ -1001,7 +1058,7 @@ describe("ProfessorsPage layout", () => {
     renderPage();
 
     expect(await screen.findByText("李教授")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "已删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "回收站" }));
     expect(
       await screen.findByRole("heading", { name: "暂无导师" }),
     ).toBeInTheDocument();
@@ -1038,28 +1095,35 @@ describe("ProfessorsPage layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
     fireEvent.click(screen.getByRole("button", { name: "职称 / 导师资格：全部职称 / 导师资格" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "Professor" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
     fireEvent.click(screen.getByRole("button", { name: "学校：全部学校" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "样例大学" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText("1 位 · 1/1 页 · 每页 10 位"),
+      ).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "学院：全部学院" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "取消全选当前结果" }),
+      screen.getByRole("button", { name: "取消全选" }),
     );
     fireEvent.click(screen.getByRole("option", { name: "生命科学学院" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
-    expect(screen.queryByText("李教授")).not.toBeInTheDocument();
-    expect(screen.getByText("王教授")).toBeInTheDocument();
-    expect(
-      screen.getByText("共 1 位符合筛选条件，当前第 1 / 1 页，每页最多 10 位"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("李教授")).not.toBeInTheDocument();
+      expect(screen.getByText("王教授")).toBeInTheDocument();
+      expect(
+        screen.getByText("1 位 · 1/1 页 · 每页 10 位"),
+      ).toBeInTheDocument();
+    });
 
     const resetButton = screen.getByRole("button", { name: "重置" });
     expect(resetButton).toHaveClass("ui-btn-secondary");
@@ -1068,8 +1132,8 @@ describe("ProfessorsPage layout", () => {
     expect(intakePanel).not.toHaveClass("rounded-[30px]", "border", "shadow-sm");
     expect(within(intakePanel).getByText("导师导入与导出方式")).toBeInTheDocument();
     expect(within(intakePanel).getByRole("heading", { name: "智能抓取" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("heading", { name: "模板批量新增" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("heading", { name: "单个新增" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("heading", { name: "表格导入" })).toBeInTheDocument();
+    expect(within(intakePanel).getByRole("heading", { name: "手动添加" })).toBeInTheDocument();
     expect(within(intakePanel).queryByText("按数据来源选择入口，系统会统一沉淀到导师档案库。")).not.toBeInTheDocument();
     [
       "从学院页面自动发现导师，抓取结果进入候选审核。",
@@ -1078,14 +1142,14 @@ describe("ProfessorsPage layout", () => {
     ].forEach((description) => {
       expect(within(intakePanel).queryByText(description)).not.toBeInTheDocument();
     });
-    ["智能抓取", "模板批量新增", "单个新增", "导出导师信息"].forEach((label) => {
+    ["智能抓取", "表格导入", "手动添加", "导出导师信息"].forEach((label) => {
       expect(within(intakePanel).getByTestId(`professor-intake-${label}`)).toHaveClass(
         "rounded-[24px]",
         "border",
         "min-h-[7.5rem]",
       );
     });
-    ["模板导入", "智能抓取", "新增导师"].forEach((name) => {
+    ["选择文件", "智能抓取", "添加导师"].forEach((name) => {
       expect(within(intakePanel).getByRole("button", { name })).toBeInTheDocument();
     });
     expect(within(intakePanel).queryByText("导出全部正常导师，字段与导入模板一致。")).not.toBeInTheDocument();
@@ -1094,14 +1158,16 @@ describe("ProfessorsPage layout", () => {
     expect(within(intakePanel).queryByRole("button", { name: "下载模板" })).not.toBeInTheDocument();
     expect(within(intakePanel).queryByRole("button", { name: "导入文件" })).not.toBeInTheDocument();
     expectToAppearBefore(intakePanel, screen.getByRole("button", { name: "正常" }));
-    expectToAppearBefore(screen.getByRole("heading", { name: "导师档案管理" }), intakePanel);
+    expectToAppearBefore(screen.getByRole("heading", { name: "导师管理" }), intakePanel);
     expect(screen.queryByText("样例导入与智能抓取")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "导入样例导师" })).not.toBeInTheDocument();
 
     fireEvent.click(resetButton);
 
-    expect(screen.getByText("李教授")).toBeInTheDocument();
-    expect(screen.getByText("王教授")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("李教授")).toBeInTheDocument();
+      expect(screen.getByText("王教授")).toBeInTheDocument();
+    });
   });
   it("changes and stores the independent management page size", async () => {
     listProfessorsForManagement.mockResolvedValue(
@@ -1116,17 +1182,19 @@ describe("ProfessorsPage layout", () => {
     expect(screen.getByText("导师 10")).toBeInTheDocument();
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 2 页，每页最多 10 位"),
+      screen.getByText("12 位 · 1/2 页 · 每页 10 位"),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "每页数量" }));
     fireEvent.click(screen.getByRole("option", { name: "20" }));
 
-    expect(screen.getByText("导师 11")).toBeInTheDocument();
-    expect(screen.getByText("导师 12")).toBeInTheDocument();
-    expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 1 页，每页最多 20 位"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("导师 11")).toBeInTheDocument();
+      expect(screen.getByText("导师 12")).toBeInTheDocument();
+      expect(
+        screen.getByText("12 位 · 1/1 页 · 每页 20 位"),
+      ).toBeInTheDocument();
+    });
     expect(localStorage.getItem("professors-management:page-size")).toBe("20");
     expect(localStorage.getItem("home-dashboard:page-size")).toBeNull();
   });
@@ -1169,7 +1237,7 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(within(screen.getByTestId("professor-intake-模板批量新增")).getByRole("button", { name: "模板导入" }));
+    fireEvent.click(within(screen.getByTestId("professor-intake-表格导入")).getByRole("button", { name: "选择文件" }));
 
     fireEvent.click(screen.getByRole("button", { name: "下载 XLSX 模板" }));
 
@@ -1184,7 +1252,7 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    fireEvent.click(within(screen.getByTestId("professor-intake-模板批量新增")).getByRole("button", { name: "模板导入" }));
+    fireEvent.click(within(screen.getByTestId("professor-intake-表格导入")).getByRole("button", { name: "选择文件" }));
     fireEvent.click(
       screen.getByRole("button", {
         name: "用 Codex / Claude Code 从导师官网生成导入表",
@@ -1197,7 +1265,7 @@ describe("ProfessorsPage layout", () => {
       "noopener,noreferrer",
     );
     expect(
-      screen.getByText(/Skill 默认生成安全的 10 列 XLSX/),
+      screen.getByText(/省略标签或个人备注列时，已有内容不会被清空/),
     ).toBeInTheDocument();
   });
 
@@ -1211,11 +1279,7 @@ describe("ProfessorsPage layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "导出导师信息" }));
 
     expect(screen.getByRole("dialog", { name: "导出导师信息" })).toBeInTheDocument();
-    expect(screen.getByText("导出范围：全部正常导师，不包含回收站导师。")).toBeInTheDocument();
-    expect(
-      screen.getByText("当前搜索、筛选、分页和勾选状态不会影响导出结果。"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("字段顺序与导入模板一致，未修改即可重新导入系统。")).toBeInTheDocument();
+    expect(screen.getByText("包含全部正常导师，不包含回收站导师。")).toBeInTheDocument();
     expect(screen.getByText("导出文件包含个人备注，请谨慎分享。")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "导出 XLSX" }));

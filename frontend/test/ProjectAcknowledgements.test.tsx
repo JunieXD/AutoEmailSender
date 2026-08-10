@@ -15,7 +15,7 @@ describe("ProjectAcknowledgements", () => {
     expect(screen.queryByText("关于与致谢")).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "感谢为项目提供模型额度与开发支持的同学们，完整名单与贡献记录见官网。",
+        "感谢所有提供模型额度和开发支持的贡献者。",
       ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("支持名单：羽华丶")).toBeInTheDocument();

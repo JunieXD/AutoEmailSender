@@ -156,7 +156,7 @@ const buildCommunityReportCurrentValue = (
     ...(includeResearchDirection
       ? [`研究方向：${valueOrEmpty(record.research_direction)}`]
       : []),
-    `高校官网详情页：${valueOrEmpty(record.profile_url)}`,
+    `导师主页：${valueOrEmpty(record.profile_url)}`,
     `发现来源页：${record.source_url}`,
   ].join('\n');
 

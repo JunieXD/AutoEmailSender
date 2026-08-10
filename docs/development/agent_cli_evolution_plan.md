@@ -1,10 +1,10 @@
 # Agent-first 通用 CLI 演进路线
 
 - 文档状态：Goal 执行合同（G1–G10 已按第 10.5 节验收通过）
-- 日期：2026-08-05
+- 日期：2026-08-09
 - 适用项目：Auto Email Sender
 - 关联基线：[Agent 通用 CLI 产品与技术设计](../product/agent_cli_design.md)
-- 当前快照：CLI 协议 v2；当前注册表显示 148 项能力，其中 146 项可用、2 项因凭据安全限制仅桌面端可用。该数字会随版本变化，实际能力始终以 `auto-email-sender --format json capabilities` 为准。
+- 当前快照：CLI 协议 v3；当前注册表显示 158 项能力，其中 156 项可用、2 项因凭据安全限制仅桌面端可用。22 个分页集合已统一支持字段选择、结构化筛选与文件导出；该数字会随版本变化，实际能力始终以 `auto-email-sender --format json capabilities` 为准。
 - 本次验收报告：[agent_cli_goal_acceptance.md](agent_cli_goal_acceptance.md)
 
 ## 1. 本文档解决什么问题

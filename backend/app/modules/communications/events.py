@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import EmailDirection, EmailLog, IdentityProfile
 
 
@@ -29,7 +30,7 @@ async def load_communication_events(
     include_source_identities: bool = True,
     include_professors: bool = True,
 ) -> list[CommunicationEvent]:
-    normalized_identity_ids = tuple(dict.fromkeys(identity_ids))
+    normalized_identity_ids = unique_positive_ids(identity_ids)
     if not normalized_identity_ids:
         return []
 
@@ -54,24 +55,35 @@ async def load_communication_events(
     if include_professors:
         load_options.append(selectinload(EmailLog.professor))
 
-    statement = (
-        select(EmailLog)
-        .options(*load_options)
-        .where(
-            EmailLog.identity_id.in_(normalized_identity_ids),
-            EmailLog.direction.in_(
-                [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
-            ),
-        )
-        .order_by(EmailLog.created_at.asc(), EmailLog.id.asc())
-    )
+    normalized_professor_ids: list[int] | None = None
     if professor_ids is not None:
-        normalized_professor_ids = tuple(dict.fromkeys(professor_ids))
+        normalized_professor_ids = unique_positive_ids(professor_ids)
         if not normalized_professor_ids:
             return []
-        statement = statement.where(EmailLog.professor_id.in_(normalized_professor_ids))
 
-    logs = list(await session.scalars(statement))
+    logs: list[EmailLog] = []
+    professor_id_chunks: list[tuple[int, ...] | None] = (
+        list(chunked_values(normalized_professor_ids))
+        if normalized_professor_ids is not None
+        else [None]
+    )
+    for identity_id_chunk in chunked_values(normalized_identity_ids):
+        for professor_id_chunk in professor_id_chunks:
+            statement = (
+                select(EmailLog)
+                .options(*load_options)
+                .where(
+                    EmailLog.identity_id.in_(identity_id_chunk),
+                    EmailLog.direction.in_(
+                        [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
+                    ),
+                )
+            )
+            if professor_id_chunk is not None:
+                statement = statement.where(
+                    EmailLog.professor_id.in_(professor_id_chunk),
+                )
+            logs.extend(await session.scalars(statement))
     return collapse_communication_logs(
         logs,
         prefer_message_content=include_message_content,

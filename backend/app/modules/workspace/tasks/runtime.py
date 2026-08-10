@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 import app.modules.llm.public as llm_runtime
 from app.core.fault_injection import wait_at_fault_point
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import utc_now
 from app.models import (
     BatchTask,
@@ -1045,23 +1046,25 @@ async def approve_generated_batch_drafts(
         raise BatchDraftApprovalConflictError("请至少选择一封待审核草稿。")
 
     async with session_factory() as session:
-        tasks = list(
-            (
-                await session.execute(
+        requested_item_ids = unique_positive_ids(item_ids)
+        tasks: list[EmailTask] = []
+        for item_id_chunk in chunked_values(requested_item_ids):
+            tasks.extend(
+                (
+                    await session.execute(
                     select(EmailTask)
                     .options(selectinload(EmailTask.batch_task))
                     .where(
-                        EmailTask.id.in_(item_ids),
+                        EmailTask.id.in_(item_id_chunk),
                         EmailTask.batch_task_id == batch_task_id,
                         EmailTask.source == EmailTaskSource.BATCH.value,
                     )
                     .order_by(EmailTask.id.asc())
                     .with_for_update(),
-                )
+                    )
+                ).scalars().unique(),
             )
-            .scalars()
-            .unique()
-        )
+        tasks.sort(key=lambda task: task.id)
         if len(tasks) != len(item_ids):
             raise BatchDraftApprovalConflictError(
                 "待审核草稿列表已发生变化，请刷新后重新确认。",
@@ -1453,16 +1456,16 @@ async def _validate_selected_material_ids(
 ) -> None:
     if not material_ids:
         return
-    materials = list(
-        (
-            await session.execute(
+    materials: list[int] = []
+    for material_id_chunk in chunked_values(material_ids):
+        materials.extend(
+            await session.scalars(
                 select(IdentityMaterial.id).where(
                     IdentityMaterial.identity_id == identity_id,
-                    IdentityMaterial.id.in_(material_ids),
+                    IdentityMaterial.id.in_(material_id_chunk),
                 ),
-            )
-        ).scalars()
-    )
+            ),
+        )
     if len(set(materials)) != len(set(material_ids)):
         raise ValueError("存在不属于当前身份的随信材料")
 

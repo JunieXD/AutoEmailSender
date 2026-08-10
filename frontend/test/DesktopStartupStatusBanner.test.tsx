@@ -28,7 +28,7 @@ describe("DesktopStartupStatusBanner", () => {
     );
 
     expect(await screen.findByText("正在检查和升级本地数据")).toBeInTheDocument();
-    expect(screen.getByText(/新版首次启动可能需要检查或升级本地数据库/)).toBeInTheDocument();
+    expect(screen.getByText(/首次启动或升级约需 1–3 分钟/)).toBeInTheDocument();
   });
 
   it("hides the startup banner after the desktop backend is ready", async () => {

@@ -222,11 +222,11 @@ const VIEW_EMPTY_COPY: Record<
 > = {
   upcoming: {
     title: '暂无待发送邮件',
-    description: '在导师工作区完成草稿后，可以选择定时发送。',
+    description: '在工作区完成草稿并设置发送时间。',
   },
   attention: {
-    title: '当前没有需要处理的发送问题',
-    description: '发送失败或错过计划的邮件会出现在这里。',
+    title: '暂无发送问题',
+    description: '发送失败或错过计划的邮件会显示在这里。',
   },
   history: {
     title: '暂无发送历史',
@@ -652,8 +652,8 @@ export const EmailDeliveryPlan = ({
       title: item.source === 'manual' ? '取消这封定时邮件？' : '取消这位导师的发送？',
       description:
         item.source === 'manual'
-          ? `将取消给 ${item.professor_name} 的定时发送。邮件草稿和附件仍保留在工作区，可以稍后重新安排。`
-          : `只取消给 ${item.professor_name} 的发送，不会停止所属批量任务。`,
+          ? `取消给 ${item.professor_name} 的定时发送；草稿和附件仍保留。`
+          : `仅取消给 ${item.professor_name} 的发送，不停止所属批次。`,
       confirmLabel: item.source === 'manual' ? '确认取消定时' : '确认取消发送',
       cancelLabel: '继续保留',
       tone: 'danger',
@@ -740,8 +740,8 @@ export const EmailDeliveryPlan = ({
   const statusOptions = DELIVERY_STATUS_OPTIONS[view];
   const emptyCopy = activeFilters
     ? {
-        title: '没有符合当前条件的发送项',
-        description: '调整搜索内容或清除筛选后重试。',
+        title: '没有符合筛选条件的邮件',
+        description: '调整或清除筛选。',
       }
     : VIEW_EMPTY_COPY[view];
 
@@ -757,7 +757,7 @@ export const EmailDeliveryPlan = ({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-stone-900">任务中心</h1>
-            <p className="mt-1 text-sm text-stone-500">统一查看邮件发送与后台任务</p>
+            <p className="mt-1 text-sm text-stone-500">查看发送计划和后台任务</p>
           </div>
           <TaskCenterSectionSwitch
             activeSection="delivery"
@@ -1037,7 +1037,7 @@ export const EmailDeliveryPlan = ({
       <div className="mt-4 flex flex-col gap-4">
         {locatedTaskId ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-stone-700">
-            <span>已从工作区定位到这封邮件，暂时忽略其他筛选条件。</span>
+            <span>已定位到这封邮件，其他筛选暂不生效。</span>
             <button type="button" onClick={clearFilters} className="ui-btn-secondary shadow-none">
               返回完整列表
             </button>
@@ -1054,7 +1054,7 @@ export const EmailDeliveryPlan = ({
         {loading ? (
           <div className="flex items-center justify-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-16 text-sm text-stone-500 shadow-sm">
             <Loader2 className="h-4 w-4 animate-spin" />
-            正在加载发送计划...
+            正在加载发送计划…
           </div>
         ) : data.items.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-stone-300 bg-white px-6 py-16 text-center shadow-sm">

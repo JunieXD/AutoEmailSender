@@ -1,6 +1,6 @@
 # 文档
 
-Auto Email Sender 的安装、使用和开发说明。
+查找 Auto Email Sender 的安装、使用和开发说明。
 
 ## 交流与反馈
 
@@ -11,17 +11,14 @@ Auto Email Sender 的安装、使用和开发说明。
 ## 开始使用
 
 - [快速开始](./getting-started)
-- [交流与反馈](./feedback)
 - [安装桌面版](./install)
 - [首次配置](./first-run)
-
-## 基础配置
-
-- [个人配置](./profile)
+- [个人中心](./profile)
 
 ## 日常使用
 
-- [首页](./dashboard)
+- [应用首页](./dashboard)
+- [统计面板](./statistics)
 - [导师管理](./mentors)
 - [社区导师库](./community-mentors)
 - [导师抓取 Skill](./mentor-crawler-skill)

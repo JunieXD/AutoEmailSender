@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.core.database import get_async_session
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     EmailTask,
     EmailTaskCancellationReason,
@@ -26,9 +27,14 @@ from .schemas import (
     ProfessorBulkTagsPayload,
     ProfessorBulkTagsResult,
     ProfessorDashboardItemRead,
+    ProfessorDashboardPageRead,
+    ProfessorDashboardPageRequest,
     ProfessorImportFileResult,
     ProfessorImportResult,
+    ProfessorIdSelectionRead,
     ProfessorManagementItemRead,
+    ProfessorManagementPageRead,
+    ProfessorManagementPageRequest,
     ProfessorNoteUpdatePayload,
     ProfessorNoteUpdateRead,
     ProfessorRead,
@@ -38,6 +44,12 @@ from .schemas import (
     ProfessorTagUsageProfessorRead,
     ProfessorTagUsageRead,
     ProfessorUpsertPayload,
+)
+from .query import (
+    list_dashboard_professor_ids,
+    list_dashboard_professor_page,
+    list_management_professor_ids,
+    list_management_professor_page,
 )
 from app.services.contact_status import build_contact_status_by_professor
 from app.modules.identities.public import resolve_identity_communication_scope
@@ -58,6 +70,7 @@ from .management import (
 from .mutations import (
     ProfessorMutationError,
     archive_professor_record,
+    bulk_archive_professor_records,
     bulk_update_professor_tags_record,
     create_professor_record,
     create_professor_tag_record,
@@ -85,13 +98,28 @@ async def list_professors(
         .where(Professor.archived_at.is_(None))
         .order_by(Professor.created_at.desc(), Professor.id.asc())
     )
-    if ids:
-        professor_ids = [int(item) for item in ids.split(",") if item.strip()]
-        if not professor_ids:
-            return []
-        statement = statement.where(Professor.id.in_(professor_ids))
-
-    professors = list((await session.execute(statement)).scalars())
+    requested_professor_ids = (
+        unique_positive_ids(
+            int(item) for item in ids.split(",") if item.strip()
+        )
+        if ids
+        else []
+    )
+    if ids and not requested_professor_ids:
+        return []
+    if requested_professor_ids:
+        professors = []
+        for professor_id_chunk in chunked_values(requested_professor_ids):
+            professors.extend(
+                (
+                    await session.scalars(
+                        statement.where(Professor.id.in_(professor_id_chunk)),
+                    )
+                ).unique(),
+            )
+        professors.sort(key=lambda item: (-item.created_at.timestamp(), item.id))
+    else:
+        professors = list((await session.execute(statement)).scalars())
     if not professors:
         return []
 
@@ -109,29 +137,30 @@ async def list_professors(
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        task_result = await session.execute(
-            select(EmailTask)
-            .options(
-                load_only(
-                    EmailTask.professor_id,
-                    EmailTask.status,
-                    EmailTask.match_score,
-                    EmailTask.created_at,
-                    EmailTask.sent_at,
-                    EmailTask.is_replied,
-                    EmailTask.updated_at,
-                ),
+        for professor_id_chunk in chunked_values(professor_ids):
+            task_result = await session.execute(
+                select(EmailTask)
+                .options(
+                    load_only(
+                        EmailTask.professor_id,
+                        EmailTask.status,
+                        EmailTask.match_score,
+                        EmailTask.created_at,
+                        EmailTask.sent_at,
+                        EmailTask.is_replied,
+                        EmailTask.updated_at,
+                    ),
+                )
+                .where(
+                    EmailTask.identity_id == identity_id,
+                    EmailTask.professor_id.in_(professor_id_chunk),
+                    EmailTask.batch_send_canceled_at.is_(None),
+                    email_task_is_not_user_removed_expression(),
+                )
+                .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
             )
-            .where(
-                EmailTask.identity_id == identity_id,
-                EmailTask.professor_id.in_(professor_ids),
-                EmailTask.batch_send_canceled_at.is_(None),
-                email_task_is_not_user_removed_expression(),
-            )
-            .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
-        )
-        for task in task_result.scalars():
-            tasks_by_professor[task.professor_id].append(task)
+            for task in task_result.scalars():
+                tasks_by_professor[task.professor_id].append(task)
         contact_status_by_professor = await build_contact_status_by_professor(
             session,
             identity_id=identity_id,
@@ -217,6 +246,54 @@ async def list_professors_for_management(
     statement = _apply_archived_filter(statement, archived)
     professors = list((await session.execute(statement)).scalars())
     return [_serialize_management_professor(professor) for professor in professors]
+
+
+@router.post("/search/dashboard", response_model=ProfessorDashboardPageRead)
+async def search_dashboard_professors(
+    payload: ProfessorDashboardPageRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorDashboardPageRead:
+    try:
+        return await list_dashboard_professor_page(session, payload)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "身份" in detail and "未找到" in detail else 422
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@router.post("/search/management", response_model=ProfessorManagementPageRead)
+async def search_management_professors(
+    payload: ProfessorManagementPageRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorManagementPageRead:
+    try:
+        return await list_management_professor_page(session, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/search/dashboard/ids", response_model=ProfessorIdSelectionRead)
+async def search_dashboard_professor_ids(
+    payload: ProfessorDashboardPageRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorIdSelectionRead:
+    try:
+        return await list_dashboard_professor_ids(session, payload)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if "身份" in detail and "未找到" in detail else 422
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@router.post("/search/management/ids", response_model=ProfessorIdSelectionRead)
+async def search_management_professor_ids(
+    payload: ProfessorManagementPageRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorIdSelectionRead:
+    try:
+        return await list_management_professor_ids(session, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/template")
@@ -542,37 +619,17 @@ async def bulk_archive_professors(
     payload: ProfessorBulkArchivePayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorActionResult:
-    if not payload.ids:
-        raise HTTPException(status_code=400, detail="请至少选择一位导师")
-
-    professors = list(
-        (
-            await session.execute(
-                select(Professor).where(Professor.id.in_(payload.ids)),
-            )
-        ).scalars()
-    )
-
-    affected_count = 0
-    archive_time = utc_now()
-    for professor in professors:
-        if professor.archived_at is None:
-            professor.archived_at = archive_time
-            professor.updated_at = archive_time
-            affected_count += 1
-
-    await record_operation_log(
-        session,
-        category="user_action",
-        event_name="professor.bulk_archived",
-        entity_type="professor",
-        metadata={
-            "requested_count": len(payload.ids),
-            "affected_count": affected_count,
-            "ids": payload.ids,
-        },
-    )
+    try:
+        result = await bulk_archive_professor_records(
+            session,
+            payload.ids,
+            event_name="professor.bulk_archived",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
+    affected_count = int(result["affected_count"])
     return ProfessorActionResult(
         ok=True,
         affected_count=affected_count,
@@ -586,7 +643,7 @@ async def bulk_update_professor_tags(
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorBulkTagsResult:
     try:
-        ordered_professors = await bulk_update_professor_tags_record(
+        result = await bulk_update_professor_tags_record(
             session,
             payload,
             event_name="professor.bulk_tags_updated",
@@ -597,12 +654,8 @@ async def bulk_update_professor_tags(
     await session.commit()
     return ProfessorBulkTagsResult(
         ok=True,
-        affected_count=len(ordered_professors),
-        professors=[
-            _serialize_management_professor(professor)
-            for professor in ordered_professors
-        ],
-        message=f"已更新 {len(ordered_professors)} 位导师的标签",
+        affected_count=result.affected_count,
+        message=f"已更新 {result.affected_count} 位导师的标签",
     )
 
 

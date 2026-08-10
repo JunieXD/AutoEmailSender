@@ -432,7 +432,7 @@ describe("DashboardPage", () => {
     expect(within(matchCoverage).getByRole("progressbar", { name: /匹配分析覆盖率 67%/ }))
       .toHaveAttribute("aria-valuenow", "67");
     const matchScoreDistribution = screen.getByTestId("match-score-distribution");
-    expect(matchScoreDistribution).toHaveTextContent("已分析导师的分数分布");
+    expect(matchScoreDistribution).toHaveTextContent("匹配分分布");
     expect(matchScoreDistribution).toHaveTextContent("共 2 位");
     expect(screen.getByTestId("match-score-row-80_89")).toHaveTextContent(/80-89\s*1 位 · 50%/);
     expect(screen.getByTestId("match-score-bar-80_89")).toHaveStyle({ width: "50%" });
@@ -740,7 +740,7 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("当前范围暂无可计算的首次回复用时")).toBeInTheDocument();
+    expect(await screen.findByText("当前范围暂无回复用时数据")).toBeInTheDocument();
   });
 
   it("renders email sending trend as an index-hover line chart", async () => {
@@ -1159,6 +1159,6 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("请先选择身份。")).toBeInTheDocument();
+    expect(screen.getByText("选择身份后查看统计。")).toBeInTheDocument();
   });
 });

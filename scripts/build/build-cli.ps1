@@ -65,6 +65,11 @@ try {
   uv run python (Join-Path $RepoRoot "scripts\build\verify_cli_binary.py") `
     --executable $CliExecutable
   Assert-NativeSuccess "frozen CLI verification"
+  uv run python (Join-Path $RepoRoot "scripts\quality\benchmark_agent_cli.py") `
+    --executable $CliExecutable `
+    --samples 5 `
+    --warmup 1
+  Assert-NativeSuccess "frozen CLI performance and intent benchmark"
 } finally {
   Pop-Location
 }

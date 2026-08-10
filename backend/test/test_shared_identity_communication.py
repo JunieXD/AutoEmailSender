@@ -4,12 +4,14 @@ import asyncio
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from math import ceil
 from pathlib import Path
 from unittest.mock import patch
 
 from sqlalchemy import event, insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.query_chunks import DEFAULT_SQL_IN_CHUNK_SIZE
 from app.modules.workspace.api import refresh_workspace_replies
 from app.modules.workspace.thread import build_workspace_thread
 from app.models import (
@@ -566,7 +568,10 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
 
         self.assertEqual(len(statuses), 1000)
         self.assertTrue(all(status.sent_count == 1 for status in statuses.values()))
-        self.assertEqual(len(email_log_queries), 1)
+        self.assertEqual(
+            len(email_log_queries),
+            ceil(len(statuses) / DEFAULT_SQL_IN_CHUNK_SIZE),
+        )
 
     @staticmethod
     def _identity(

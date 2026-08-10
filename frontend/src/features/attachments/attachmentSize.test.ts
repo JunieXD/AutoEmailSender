@@ -43,7 +43,7 @@ describe('attachmentSize', () => {
       RECOMMENDED_ATTACHMENT_TOTAL_BYTES + 1,
     );
     expect(warning).toContain('建议不超过 1 MB');
-    expect(warning).toContain('减少被邮箱提供商限流的概率');
+    expect(warning).toContain('以降低限流风险');
     expect(warning).not.toContain('云盘');
   });
 
@@ -54,7 +54,7 @@ describe('attachmentSize', () => {
       1024,
     ]);
 
-    expect(warning).toContain('其中 2 封邮件');
+    expect(warning).toContain('2 封附件超过 1 MB');
     expect(warning).not.toContain('云盘');
   });
 });

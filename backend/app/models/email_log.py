@@ -83,6 +83,14 @@ class EmailLog(Base):
             sqlite_where=text("delivery_attempt_id IS NOT NULL"),
             postgresql_where=text("delivery_attempt_id IS NOT NULL"),
         ),
+        Index(
+            "ix_email_logs_identity_direction_professor_created",
+            "identity_id",
+            "direction",
+            "professor_id",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

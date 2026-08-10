@@ -206,7 +206,7 @@ export const DiagnosticLogPanel = () => {
           exported_at: null,
           items: [],
           total: 0,
-          error: getErrorMessage(error, "后端诊断日志导出失败"),
+          error: getErrorMessage(error, "后端日志导出失败"),
         };
       }
 
@@ -289,14 +289,14 @@ export const DiagnosticLogPanel = () => {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold text-stone-900">
-              开发诊断日志
+              诊断日志
             </h2>
             <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600">
               本地 {frontendEvents.length} 条
             </span>
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-600">
-            排查问题时导出给开发者使用，不作为普通用户内容展示。
+            遇到问题时，可导出日志交给开发者排查。
           </p>
         </div>
         <ChevronDown
@@ -337,7 +337,7 @@ export const DiagnosticLogPanel = () => {
                     id="diagnostic-log-export-heading"
                     className="text-sm font-semibold text-stone-900"
                   >
-                    诊断日志导出
+                    应用日志
                   </h3>
                   <button
                     type="button"
@@ -366,8 +366,8 @@ export const DiagnosticLogPanel = () => {
                     />
                   </label>
                   <NativeSelectField
-                    label="Level"
-                    ariaLabel="Level"
+                    label="级别"
+                    ariaLabel="级别"
                     wrapperClassName="min-w-0 max-w-48 flex-1 basis-36"
                     shellClassName="h-10 min-w-0"
                     menuPlacement="floating-up"
@@ -382,8 +382,8 @@ export const DiagnosticLogPanel = () => {
                     ))}
                   </NativeSelectField>
                   <NativeSelectField
-                    label="Category"
-                    ariaLabel="Category"
+                    label="分类"
+                    ariaLabel="分类"
                     wrapperClassName="min-w-0 max-w-56 flex-1 basis-44"
                     shellClassName="h-10 min-w-0"
                     menuPlacement="floating-up"
@@ -408,7 +408,7 @@ export const DiagnosticLogPanel = () => {
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
-                    导出诊断日志
+                    导出
                   </button>
                 </div>
               </div>

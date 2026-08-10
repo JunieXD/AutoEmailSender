@@ -213,6 +213,41 @@ class AgentApiClientTests(unittest.TestCase):
         self.assertEqual(len(transport.requests), 2)
         self.assertIs(client._http_client, http_client)
 
+    def test_runtime_handshake_and_business_request_share_one_http_client(self) -> None:
+        descriptor = _descriptor()
+        http_client, transport = _http_client(
+            httpx.Response(
+                200,
+                json={
+                    "runtime_id": descriptor.runtime_id,
+                    "protocol_version": descriptor.protocol_version,
+                    "app_version": descriptor.app_version,
+                    "backend_pid": descriptor.backend_pid,
+                    "desktop_pid": descriptor.desktop_pid,
+                    "state": "ready",
+                },
+            ),
+            httpx.Response(200, json={"items": []}),
+        )
+        with (
+            patch(
+                "auto_email_sender_cli.runtime.load_runtime_descriptor",
+                return_value=descriptor,
+            ),
+            patch(
+                "auto_email_sender_cli.runtime.process_is_running",
+                return_value=True,
+            ),
+        ):
+            client = AgentApiClient(http_client=http_client)
+            result = client.request("GET", "/api/agent/v1/professors")
+
+        self.assertEqual(result, {"items": []})
+        self.assertEqual(len(transport.requests), 2)
+        self.assertTrue(transport.requests[0].url.path.endswith("/api/agent/v1/runtime"))
+        self.assertTrue(transport.requests[1].url.path.endswith("/api/agent/v1/professors"))
+        self.assertIs(client._http_client, http_client)
+
     def test_request_timeout_overrides_the_client_default(self) -> None:
         http_client, transport = _http_client(httpx.Response(200, json={"status": "ok"}))
         client = AgentApiClient(_descriptor(), timeout=30.0, http_client=http_client)

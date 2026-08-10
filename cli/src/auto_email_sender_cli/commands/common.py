@@ -24,14 +24,27 @@ from auto_email_sender_cli.capabilities import (
 )
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import CliContext, OutputFormat, emit_error, emit_success
+from auto_email_sender_cli.result_protocol import (
+    MAX_EXPANDED_PATHS,
+    MAX_EXPAND_SELECTOR_CHARS,
+)
 
 
 HumanFormatter = Callable[[Any], str]
 _MAX_FETCH_PAGES = 10_000
 _MAX_STDOUT_ALL_ITEMS = 10_000
 _MAX_STDOUT_ALL_BYTES = 16 * 1024 * 1024
+_MAX_FILTER_SCAN_ITEMS = 1_000_000
+_MAX_FILTER_SCAN_BYTES = 512 * 1024 * 1024
 
 _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
+    "professors.list": {
+        "id": "professor_id",
+    },
+    "professors.tags.list": {
+        "id": "tag_id",
+        "name": "name",
+    },
     "campaigns.list": {
         "identity_id": "identity_id",
         "status": "status",
@@ -64,6 +77,31 @@ _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
         "professor_id": "professor_id",
         "direction": "direction",
     },
+    "templates.list": {
+        "id": "template_id",
+        "is_default": "is_default",
+    },
+    "materials.list": {
+        "id": "material_id",
+        "identity_id": "identity_id",
+        "material_type": "material_type",
+    },
+    "identities.list": {
+        "id": "identity_id",
+        "is_default": "is_default",
+        "smtp_configured": "smtp_configured",
+        "imap_configured": "imap_configured",
+    },
+    "llm-profiles.list": {
+        "id": "profile_id",
+        "provider": "provider",
+        "model_name": "model_name",
+        "is_default": "is_default",
+    },
+    "communication-groups.list": {
+        "id": "group_id",
+        "match_source_identity_id": "match_source_identity_id",
+    },
     "diagnostics.logs": {
         "level": "level",
         "category": "category",
@@ -73,9 +111,31 @@ _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
         "entity_id": "entity_id",
     },
     "usage.records": {
+        "feature_type": "feature_type",
         "model_name": "model_name",
     },
+    "deliveries.list": {
+        "identity_id": "identity_id",
+        "source": "source",
+        "status": "status",
+    },
 }
+
+_SERVER_FIELD_PROJECTION_COMMANDS = frozenset(
+    {
+        "professors.list",
+        "professors.tags.list",
+        "communications.threads.list",
+        "communications.messages.list",
+        "templates.list",
+        "materials.list",
+        "identities.list",
+        "llm-profiles.list",
+        "communication-groups.list",
+        "usage.records",
+        "diagnostics.logs",
+    },
+)
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -133,8 +193,28 @@ def validate_context_options(
             message="--include-revisions 只能用于集合读取命令。",
             exit_code=2,
         )
+    if len(context.expand) > MAX_EXPANDED_PATHS or any(
+        len(selector) > MAX_EXPAND_SELECTOR_CHARS
+        for selector in context.expand
+    ):
+        raise CliError(
+            code="INVALID_EXPANSION",
+            message=(
+                f"--expand 最多重复 {MAX_EXPANDED_PATHS} 次，"
+                f"每个选择器最多 {MAX_EXPAND_SELECTOR_CHARS} 个字符。"
+            ),
+            exit_code=2,
+        )
+    if "max_items" in context.specified_options and not supports_filter:
+        raise CliError(
+            code="MAX_ITEMS_REQUIRES_COLLECTION",
+            message="--max-items 只能用于集合读取命令。",
+            exit_code=2,
+        )
     if not supports_projection and (
-        "projection" in context.specified_options or context.expand
+        "projection" in context.specified_options
+        or context.expand
+        or "max_output_bytes" in context.specified_options
     ):
         raise CliError(
             code="PROJECTION_NOT_SUPPORTED",
@@ -165,6 +245,21 @@ def run_read_command(
             supports_if_revision=False,
         )
         request_params = _without_none(params)
+        request_params = _cap_request_page_size(request_params, context)
+        if fields:
+            # Validate against the locally published DTO contract before any
+            # runtime discovery or network request. A projected backend
+            # response may be empty and cannot be used to infer field names.
+            project_fields({"items": []}, fields, command=command)
+            request_params = _merge_server_filter_params(
+                request_params,
+                server_field_params(
+                    fields,
+                    expression=context.filter_expression,
+                    command=command,
+                    include_revisions=_collection_revisions_requested(context, fields),
+                ),
+            )
         if context.filter_expression:
             # Filter syntax and the command's field/operator whitelist are
             # fully local contracts. Validate them before runtime discovery or
@@ -208,19 +303,31 @@ def run_read_command(
                 continuation_input=_without_none(params),
             )
             return data
+        streamed_filter = bool(context.filter_expression) and fetch_everything
         data = (
-            fetch_all_pages(
+            fetch_filtered_pages(
                 client,
                 path,
                 params=request_params,
-                max_items=_MAX_STDOUT_ALL_ITEMS,
+                expression=context.filter_expression or "",
+                command=command,
+                max_items=context.max_items,
+                max_bytes=_MAX_STDOUT_ALL_BYTES,
+            )
+            if streamed_filter
+            else fetch_all_pages(
+                client,
+                path,
+                params=request_params,
+                max_items=min(context.max_items, _MAX_STDOUT_ALL_ITEMS),
                 max_bytes=_MAX_STDOUT_ALL_BYTES,
             )
             if fetch_everything
             else client.request("GET", path, params=request_params)
         )
         data = normalize_collection_response(data, command=command)
-        data = apply_structured_filter(data, context.filter_expression, command=command)
+        if not streamed_filter:
+            data = apply_structured_filter(data, context.filter_expression, command=command)
         # Compute the optimistic-concurrency token from the complete record
         # before applying a caller's field projection.  Otherwise
         # ``--fields id,name`` would produce a different revision from the
@@ -235,7 +342,7 @@ def run_read_command(
         data = project_fields(data, fields, command=command)
         data = annotate_collection_limit(
             data,
-            params=params,
+            params=request_params,
             fetched_all=fetch_everything,
         )
         data, exported_file = export_collection_if_requested(data, context)
@@ -337,6 +444,8 @@ def fetch_all_pages(
     page_consumer: Callable[[dict[str, object]], int] | None = None,
     max_items: int | None = None,
     max_bytes: int | None = None,
+    max_scanned_items: int | None = None,
+    max_scanned_bytes: int | None = None,
 ) -> dict[str, object]:
     request_params = _without_none(params)
     page_mode = "page" in request_params or "page_size" in request_params
@@ -372,6 +481,8 @@ def fetch_all_pages(
     pagination_mode: str | None = None
     consumed_item_count = 0
     accumulated_bytes = 0
+    scanned_item_count = 0
+    scanned_bytes = 0
     while True:
         page_count += 1
         if page_count > _MAX_FETCH_PAGES:
@@ -410,13 +521,44 @@ def fetch_all_pages(
             had_records_alias = True
         if isinstance(payload.get("pagination_mode"), str):
             pagination_mode = str(payload["pagination_mode"])
+        encoded_item_sizes: list[int] | None = None
+        if page_consumer is None or max_scanned_bytes is not None:
+            encoded_item_sizes = [
+                len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                for item in payload["items"]
+            ]
+        scanned_item_count += len(payload["items"])
+        if encoded_item_sizes is not None:
+            scanned_bytes += sum(encoded_item_sizes)
+        if (
+            (max_scanned_items is not None and scanned_item_count > max_scanned_items)
+            or (max_scanned_bytes is not None and scanned_bytes > max_scanned_bytes)
+        ):
+            raise CliError(
+                code="FILTER_SCAN_LIMIT_EXCEEDED",
+                message="本地筛选扫描量超过安全上限，已停止继续读取。",
+                exit_code=8,
+                details={
+                    "max_scanned_items": max_scanned_items,
+                    "max_scanned_bytes": max_scanned_bytes,
+                    "observed_items": scanned_item_count,
+                    "observed_bytes": scanned_bytes,
+                },
+                suggested_command="优先使用可下推的等值筛选，或缩小查询范围后重试",
+            )
         if page_consumer is not None:
-            consumed_item_count += page_consumer(payload)
-        else:
-            for item in payload["items"]:
-                accumulated_bytes += len(
-                    json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+            consumed = page_consumer(payload)
+            if not isinstance(consumed, int) or isinstance(consumed, bool) or consumed < 0:
+                raise CliError(
+                    code="INVALID_PAGE_CONSUMER",
+                    message="分页消费器返回了无效的条目计数。",
+                    exit_code=8,
                 )
+            consumed_item_count += consumed
+        else:
+            assert encoded_item_sizes is not None
+            for item, item_bytes in zip(payload["items"], encoded_item_sizes, strict=True):
+                accumulated_bytes += item_bytes
                 if (
                     (max_items is not None and len(items) + 1 > max_items)
                     or (max_bytes is not None and accumulated_bytes > max_bytes)
@@ -500,6 +642,9 @@ def fetch_all_pages(
     }
     if page_consumer is not None:
         result["item_count"] = consumed_item_count
+        result["scanned_item_count"] = scanned_item_count
+        if max_scanned_bytes is not None:
+            result["scanned_bytes"] = scanned_bytes
     if had_records_alias:
         # Keep the legacy alias useful after an all-pages fetch instead of
         # returning only the first page's records array.
@@ -508,6 +653,94 @@ def fetch_all_pages(
         result["pagination_mode"] = pagination_mode
     if total is not None:
         result["total"] = total
+    return result
+
+
+def fetch_filtered_pages(
+    client: AgentApiClient,
+    path: str,
+    *,
+    params: dict[str, object] | None,
+    expression: str,
+    command: str,
+    max_items: int,
+    max_bytes: int,
+) -> dict[str, object]:
+    """Filter one page at a time and retain only bounded matching records."""
+
+    filtered_items: list[object] = []
+    filtered_bytes = 0
+    parsed_filter: object | None = None
+    usage_summary = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_tokens": 0,
+        "total_tokens": 0,
+        "record_count": 0,
+    }
+
+    def consume_page(page: dict[str, object]) -> int:
+        nonlocal filtered_bytes, parsed_filter
+        transformed = apply_structured_filter(page, expression, command=command)
+        parsed_filter = transformed.get("filter")
+        page_items = transformed.get("items")
+        if not isinstance(page_items, list):
+            raise CliError(
+                code="INVALID_API_RESPONSE",
+                message="本地服务返回了无法识别的分页结果。",
+                exit_code=8,
+            )
+        for item in page_items:
+            filtered_bytes += len(
+                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+            )
+            if len(filtered_items) + 1 > max_items or filtered_bytes > max_bytes:
+                raise CliError(
+                    code="RESULT_TOO_LARGE",
+                    message="筛选结果超过 stdout 安全上限；请使用 --output-file <path>.jsonl 逐页导出。",
+                    exit_code=8,
+                    details={
+                        "max_items": max_items,
+                        "max_bytes": max_bytes,
+                        "observed_items": len(filtered_items) + 1,
+                        "observed_bytes": filtered_bytes,
+                    },
+                    suggested_command="在原命令的根选项中添加 --output-file <path>.jsonl",
+                )
+            filtered_items.append(item)
+        if command == "usage.records":
+            page_summary = transformed.get("summary")
+            if isinstance(page_summary, dict):
+                for key in usage_summary:
+                    value = page_summary.get(key)
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        usage_summary[key] += value
+        return len(page_items)
+
+    pagination = fetch_all_pages(
+        client,
+        path,
+        params=params,
+        page_consumer=consume_page,
+        max_scanned_items=_MAX_FILTER_SCAN_ITEMS,
+        max_scanned_bytes=_MAX_FILTER_SCAN_BYTES,
+    )
+    result = {
+        **pagination,
+        "items": filtered_items,
+        "next_cursor": None,
+        "has_more": False,
+        "fetched_all": True,
+        "filter": parsed_filter,
+        "filtered_count": len(filtered_items),
+    }
+    if isinstance(pagination.get("records"), list):
+        result["records"] = filtered_items
+    result["summary"] = (
+        usage_summary
+        if command == "usage.records"
+        else {"record_count": len(filtered_items)}
+    )
     return result
 
 
@@ -746,13 +979,90 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
     return result
 
 
+def server_field_params(
+    fields: str | None,
+    *,
+    expression: str | None,
+    command: str,
+    include_revisions: bool,
+) -> dict[str, object]:
+    """Request a safe DTO projection while retaining local fallback inputs."""
+
+    if (
+        not fields
+        or command not in _SERVER_FIELD_PROJECTION_COMMANDS
+        or include_revisions
+        or supports_dynamic_action_links(command)
+    ):
+        return {}
+    selected = [field.strip() for field in fields.split(",") if field.strip()]
+    if not selected or "revision" in selected:
+        return {}
+    try:
+        parsed_filter = json.loads(expression) if expression else {}
+    except (TypeError, json.JSONDecodeError):
+        parsed_filter = {}
+    if isinstance(parsed_filter, dict):
+        selected.extend(
+            field
+            for field in parsed_filter
+            if isinstance(field, str) and field not in selected
+        )
+    if command == "usage.records":
+        selected.extend(
+            field
+            for field in (
+                "input_tokens",
+                "output_tokens",
+                "cached_tokens",
+                "total_tokens",
+            )
+            if field not in selected
+        )
+    # Keep deterministic ordering for cache keys and request recordings.
+    return {"fields": ",".join(dict.fromkeys(selected))}
+
+
 def _server_filter_value_is_safe(command: str, field: str, value: object) -> bool:
-    if field in {"identity_id", "llm_profile_id", "professor_id"}:
+    if field == "id" or field.endswith("_id"):
         return isinstance(value, int) and not isinstance(value, bool) and value > 0
-    if field in {"has_sent", "has_reply"}:
+    if field in {
+        "has_sent",
+        "has_reply",
+        "is_default",
+        "smtp_configured",
+        "imap_configured",
+    }:
         return isinstance(value, bool)
     if command == "communications.messages.list" and field == "direction":
         return value in {"sent", "received", "draft"}
+    if command == "usage.records" and field == "feature_type":
+        return value in {
+            "crawl",
+            "information_enrichment",
+            "match_analysis",
+            "draft_generation",
+        }
+    if command == "campaigns.list" and field == "status":
+        return value in {"running", "paused", "stopped", "completed", "expired"}
+    if command == "deliveries.list" and field == "source":
+        return value in {"manual", "batch"}
+    if command == "deliveries.list" and field == "status":
+        return value in {
+            "waiting_scheduled",
+            "send_asap",
+            "batch_paused",
+            "sending",
+            "send_failed",
+            "schedule_missed",
+            "draft_failed",
+            "batch_stopped",
+            "schedule_expired",
+            "sent",
+            "replied",
+            "canceled_schedule",
+            "canceled_send",
+        }
     return isinstance(value, str) and bool(value.strip())
 
 
@@ -1222,6 +1532,12 @@ def _state_actions_for_item(
     normalized = command.lower()
     if "plan_id" in item:
         return _plan_state_actions(status)
+    if normalized.startswith("deliveries."):
+        if item.get("can_reschedule") is True:
+            return ["reschedule"], {}
+        return [], {
+            "reschedule": "当前发送项状态或来源不允许改期",
+        }
     if normalized.startswith(("drafts.", "tasks.", "workspaces.")) or any(
         key in item for key in ("task_id", "approved_body_text", "generated_body_text")
     ):
@@ -1266,7 +1582,7 @@ def _state_actions_for_item(
         if normalized.startswith("crawler.jobs."):
             actions.extend(["resume-review", "approve", "enrich"])
         if normalized.startswith("campaigns."):
-            actions.append("prepare-send")
+            actions.extend(["approve", "prepare-send"])
         return actions, {
             "wait": "对象正在等待人工审核，不是后台执行中",
             "cancel": "请使用该资源声明的取消动作",
@@ -1287,10 +1603,11 @@ def _draft_state_actions(status: str, item: dict[str, object]) -> tuple[list[str
             "save": "草稿正在生成，不能同时保存",
             "regenerate": "草稿正在生成，不能重复生成",
             "rewrite": "草稿正在生成，不能同时改写",
+            "approve": "草稿尚未生成完成，不能批准",
             "prepare-send": "草稿尚未完成，不能准备发送计划",
         }
     if status in {"discovered", "matched", "draft_failed", "review_required"}:
-        actions = ["read", "save", "regenerate", "rewrite"]
+        actions = ["read", "save", "regenerate", "rewrite", "approve"]
         if item.get("approved_body_text") or item.get("approved_body_html"):
             actions.append("prepare-send")
         return actions, {
@@ -1302,18 +1619,21 @@ def _draft_state_actions(status: str, item: dict[str, object]) -> tuple[list[str
             "save": "已批准或排程的草稿需先取消排程再编辑",
             "regenerate": "已批准或排程的草稿需先回到审核状态",
             "rewrite": "已批准或排程的草稿需先回到审核状态",
+            "approve": "草稿已经批准，无需重复批准",
         }
     if status in {"sending", "sent", "reply_detected", "send_failed", "canceled"}:
         return ["read"], {
             "save": "当前任务已进入发送或结束状态，不能作为草稿修改",
             "regenerate": "当前任务已进入发送或结束状态，不能重新生成",
             "rewrite": "当前任务已进入发送或结束状态，不能改写",
+            "approve": "当前任务已进入发送或结束状态，不能批准草稿",
             "prepare-send": "当前任务不处于可准备发送计划的状态",
         }
     return ["read"], {
         "save": f"状态 {status} 不允许保存草稿",
         "regenerate": f"状态 {status} 不允许重新生成",
         "rewrite": f"状态 {status} 不允许 AI 改写",
+        "approve": f"状态 {status} 不允许批准草稿",
         "prepare-send": f"状态 {status} 不允许准备发送计划",
     }
 
@@ -1373,6 +1693,24 @@ def _without_none(params: dict[str, object] | None) -> dict[str, object]:
         for key, value in (params or {}).items()
         if value is not None
     }
+
+
+def _cap_request_page_size(
+    params: dict[str, object],
+    context: CliContext,
+) -> dict[str, object]:
+    """Push an explicit stdout item cap into the current backend page."""
+
+    if "max_items" not in context.specified_options:
+        return params
+    result = dict(params)
+    parameter = "page_size" if "page_size" in result or "page" in result else "limit"
+    current = result.get(parameter)
+    if isinstance(current, int) and not isinstance(current, bool):
+        result[parameter] = min(current, context.max_items)
+    else:
+        result[parameter] = context.max_items
+    return result
 
 
 def add_mutation_receipt(
@@ -1557,6 +1895,12 @@ def stream_collection_pages_to_file(
                 path,
                 params=params,
                 page_consumer=consume_page,
+                max_scanned_items=(
+                    _MAX_FILTER_SCAN_ITEMS if context.filter_expression else None
+                ),
+                max_scanned_bytes=(
+                    _MAX_FILTER_SCAN_BYTES if context.filter_expression else None
+                ),
             )
 
         _publish_export_temporary(temporary, destination, force=context.force_output)

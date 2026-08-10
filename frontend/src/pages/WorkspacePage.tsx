@@ -91,7 +91,7 @@ const buildDraftGenerationSuccessDescription = (
 ) =>
   `输入 ${formatTokenValue(task?.last_draft_prompt_tokens)} / 输出 ${formatTokenValue(
     task?.last_draft_completion_tokens,
-  )} / 总计 ${formatTokenValue(task?.last_draft_total_tokens)} token，耗时 ${formatElapsedSeconds(
+  )} / 总计 ${formatTokenValue(task?.last_draft_total_tokens)} Token，耗时 ${formatElapsedSeconds(
     elapsedMs,
   )}`;
 
@@ -183,10 +183,10 @@ const getStatusLabel = (
 
 const getWorkspaceNextStepDescription = (title: string) => {
   switch (title) {
-    case '作为单独联系继续':
-      return '从这条批量任务记录中拆出一条单独联系继续推进。';
+    case '单独联系':
+      return '从批量任务中拆出，继续联系。';
     case '写跟进邮件':
-      return '基于当前沟通记录起草下一封跟进邮件。';
+      return '根据沟通记录起草跟进邮件。';
     case '查看失败原因并重试':
       return '检查失败原因，修正后重试。';
     case '重新安排发送时间':
@@ -194,7 +194,7 @@ const getWorkspaceNextStepDescription = (title: string) => {
     case '选择分析材料':
       return '选择材料后可分析匹配度。';
     case '生成邮件草稿':
-      return '用 AI 改写当前草稿后再人工检查。';
+      return '让 AI 改写当前草稿，完成后检查。';
     case '确认发送时间':
       return '确认发送时间，或改为立即发送。';
     default:
@@ -695,7 +695,7 @@ export const WorkspacePage = () => {
         const latestReceived = newReceivedMessages[newReceivedMessages.length - 1];
         setNewReceivedCount((current) => current + newReceivedMessages.length);
         notifySuccess(
-          '收到老师回复',
+          '收到导师回复',
           buildNewReplyNotificationDescription(workspaceData.professor.name, latestReceived),
         );
       }
@@ -959,7 +959,7 @@ export const WorkspacePage = () => {
       '保存草稿失败',
       '保存草稿失败',
       () => {
-        notifySuccess('草稿已保存', '工作区草稿已更新。');
+        notifySuccess('草稿已保存');
       },
     );
   }, [notifySuccess, runAction, saveCurrentDraft]);
@@ -1021,7 +1021,7 @@ export const WorkspacePage = () => {
         if (hasUnsavedChanges || replacesExistingDraft) {
           const confirmed = await confirm({
             title: '用模板替换当前草稿？',
-            description: `将读取模板库中“${selectedTemplateSummary.name}”的当前内容，替换当前主题和正文，并清除现有 AI 改写或已保存草稿。`,
+            description: `将用“${selectedTemplateSummary.name}”的最新内容替换当前主题和正文，现有草稿不会保留。`,
             confirmLabel: '套用并替换',
             cancelLabel: '取消',
             tone: 'danger',
@@ -1059,10 +1059,7 @@ export const WorkspacePage = () => {
           '套用模板失败',
           '重新套用模板失败',
           () => {
-            notifySuccess(
-              '模板已重新套用',
-              `已套用“${appliedTemplate?.name ?? selectedTemplateSummary.name}”的模板库当前内容。`,
-            );
+            notifySuccess(`已套用“${appliedTemplate?.name ?? selectedTemplateSummary.name}”`);
           },
         );
       })();
@@ -1129,7 +1126,7 @@ export const WorkspacePage = () => {
             return;
           }
           setComposerExpanded(false);
-          notifySuccess('邮件已发送', `已成功发送给 ${data.professor.email}。`);
+          notifySuccess(`已发送给 ${data.professor.email}`);
         },
       );
     })();
@@ -1180,7 +1177,7 @@ export const WorkspacePage = () => {
         setComposerExpanded(false);
         notifySuccess(
           '已加入发送计划',
-          '邮件将在设定时间发送，可前往任务中心统一查看或修改。',
+          '将在设定时间发送，可在任务中心修改。',
         );
       },
     );
@@ -1300,7 +1297,7 @@ export const WorkspacePage = () => {
   const confirmDirtyDraftExit = useCallback(async () => {
     const action = await choose({
       title: '保存草稿修改？',
-      description: '你编辑了工作区草稿。离开前可以保存修改，或不保存直接离开。',
+      description: '离开后，未保存的修改将丢失。',
       confirmLabel: '保存并离开',
       secondaryLabel: '不保存离开',
       cancelLabel: '继续编辑',
@@ -1317,7 +1314,7 @@ export const WorkspacePage = () => {
 
     await saveCurrentDraft();
     composerDirtyRef.current = false;
-    notifySuccess('草稿已保存', '工作区草稿已更新。');
+    notifySuccess('草稿已保存');
     return true;
   }, [choose, notifySuccess, saveCurrentDraft]);
 
@@ -1359,7 +1356,7 @@ export const WorkspacePage = () => {
     }
 
     if (acting || draftSaving) {
-      notifyError('操作正在进行', '请等待当前操作完成后再离开工作区。');
+      notifyError('操作正在进行', '操作未完成，请稍后离开工作区。');
       blocker.reset();
       return;
     }
@@ -1392,7 +1389,7 @@ export const WorkspacePage = () => {
         return true;
       }
       if (acting || draftSaving) {
-        notifyError('草稿正在保存', '请等待当前操作完成后再切换身份或模型。');
+        notifyError('草稿正在保存', '草稿未保存，请稍后切换身份或模型。');
         return false;
       }
 
@@ -1415,8 +1412,7 @@ export const WorkspacePage = () => {
       <>
         <main className="mx-auto max-w-4xl px-6 py-10">
           <div className="rounded-3xl border border-dashed border-stone-300 bg-[#fcfbf8] p-10 text-center">
-            <h1 className="text-2xl font-semibold text-stone-900">选择身份和模型</h1>
-            <p className="mt-3 text-sm text-stone-600">工作区使用顶部选择的身份和模型。</p>
+            <h1 className="text-2xl font-semibold text-stone-900">请先在顶部选择身份和模型</h1>
           </div>
         </main>
         {confirmDialog}
@@ -1429,7 +1425,7 @@ export const WorkspacePage = () => {
       <main className="mx-auto max-w-7xl px-6 py-8">
         <div className="flex items-center justify-center gap-2 rounded-[32px] border border-stone-200 bg-white px-6 py-16 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在打开老师档案...
+          正在打开工作区…
         </div>
       </main>
     );
@@ -1439,7 +1435,7 @@ export const WorkspacePage = () => {
     return (
       <main className="mx-auto max-w-7xl px-6 py-8">
         <div className="rounded-[32px] border border-dashed border-stone-300 bg-white px-6 py-16 text-center text-sm text-stone-500 shadow-sm">
-          {loadFailed ? '工作区数据暂时不可用，请返回上一页后重试。' : '未找到工作区数据'}
+          {loadFailed ? '暂时无法打开工作区，请返回后重试。' : '未找到工作区数据'}
         </div>
       </main>
     );
@@ -1587,10 +1583,10 @@ export const WorkspacePage = () => {
                 />
                 <div className="border-t border-stone-200 bg-stone-50/70 px-5 py-5 text-center">
                   <div className="text-sm font-semibold text-stone-900">
-                    当前身份还没有任务
+                    当前身份暂无任务
                   </div>
                   <p className="mt-1 text-xs leading-5 text-stone-500">
-                    共享通信记录仍可查看；创建当前身份任务后即可编辑和发送。
+                    创建任务后即可写信；通信记录仍可查看。
                   </p>
                 </div>
               </>

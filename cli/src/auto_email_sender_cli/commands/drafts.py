@@ -139,6 +139,36 @@ def regenerate_draft(
     )
 
 
+@drafts_app.command("approve")
+def approve_draft(
+    ctx: typer.Context,
+    task_id: Annotated[int, typer.Argument(min=1)],
+    body_text: Annotated[
+        str,
+        typer.Option("--body-text", help="最终纯文本正文；即使为空也必须明确提供。"),
+    ],
+    subject: Annotated[str | None, typer.Option("--subject")] = None,
+    body_html: Annotated[str | None, typer.Option("--body-html")] = None,
+    attachment_material_ids: Annotated[
+        list[int] | None,
+        typer.Option("--attachment-material-id", min=1),
+    ] = None,
+) -> None:
+    run_write_command(
+        ctx,
+        command="drafts.approve",
+        path=f"/api/agent/v1/tasks/{task_id}/approve-draft",
+        json_body={
+            "subject": subject,
+            "body_text": body_text,
+            "body_html": body_html,
+            "attachment_material_ids": attachment_material_ids or [],
+        },
+        guide_topic="drafts",
+        human_formatter=format_detail,
+    )
+
+
 @drafts_app.command("rewrite")
 def rewrite_draft(
     ctx: typer.Context,

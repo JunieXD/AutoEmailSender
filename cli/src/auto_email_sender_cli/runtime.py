@@ -223,11 +223,13 @@ def probe_runtime_descriptor(
     descriptor: RuntimeDescriptor,
     *,
     timeout: float = 1.0,
+    http_client: httpx.Client | None = None,
 ) -> RuntimeProbe:
     desktop_running = process_is_running(descriptor.desktop_pid)
     backend_running = process_is_running(descriptor.backend_pid)
     try:
-        response = httpx.get(
+        request = http_client.get if http_client is not None else httpx.get
+        response = request(
             f"{descriptor.base_url.rstrip('/')}/api/agent/v1/runtime",
             headers={"Authorization": f"Bearer {descriptor.access_token}"},
             timeout=timeout,
@@ -275,14 +277,17 @@ def probe_runtime_descriptor(
     )
 
 
-def ensure_runtime_descriptor() -> RuntimeDescriptor:
+def ensure_runtime_descriptor(
+    *,
+    http_client: httpx.Client | None = None,
+) -> RuntimeDescriptor:
     """Return an authenticated, ready runtime published by the desktop app."""
 
     descriptor = ensure_runtime_protocol_compatible(load_runtime_descriptor())
     if _environment_runtime_configured():
         return descriptor
 
-    probe = probe_runtime_descriptor(descriptor)
+    probe = probe_runtime_descriptor(descriptor, http_client=http_client)
     if not probe.desktop_process_running:
         raise RuntimeUnavailableError(
             "Auto Email Sender 桌面进程已停止，运行信息已过期。请重新打开软件后重试。",

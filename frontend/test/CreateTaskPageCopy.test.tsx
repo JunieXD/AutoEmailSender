@@ -163,7 +163,7 @@ describe("CreateTaskPage copy", () => {
       expect(mockedConfirm).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "确认创建真实发送任务？",
-          description: expect.stringMatching(/AI 改写完成后仍需逐封审核通过/),
+          description: expect.stringMatching(/将生成 AI 草稿；审核后手动发送/),
         }),
       );
     });
@@ -187,7 +187,7 @@ describe("CreateTaskPage copy", () => {
     await waitFor(() => {
       expect(mockedConfirm).toHaveBeenCalledWith(
         expect.objectContaining({
-          description: expect.stringMatching(/直接套用模板.*创建后会按立即发送策略发送/),
+          description: expect.stringMatching(/将套用模板并进入发送流程/),
         }),
       );
     });

@@ -27,6 +27,25 @@ class Professor(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_professors_archived_updated_id",
+            "archived_at",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_professors_archived_name_id",
+            "archived_at",
+            "name",
+            "id",
+        ),
+        Index(
+            "ix_professors_archived_university_name_id",
+            "archived_at",
+            "university",
+            "name",
+            "id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -120,6 +139,11 @@ class ProfessorTagLink(Base):
             "professor_id",
             "tag_id",
             name="uq_professor_tag_links_professor_tag",
+        ),
+        Index(
+            "ix_professor_tag_links_tag_professor",
+            "tag_id",
+            "professor_id",
         ),
     )
 

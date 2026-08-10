@@ -8,9 +8,10 @@ import type {
   ProfessorManagementItemDTO,
 } from "@/types";
 
-const getPageItemsSpy = vi.hoisted(() => vi.fn());
 const listProfessors = vi.hoisted(() => vi.fn());
 const listProfessorsForManagement = vi.hoisted(() => vi.fn());
+const searchDashboardProfessors = vi.hoisted(() => vi.fn());
+const searchManagementProfessors = vi.hoisted(() => vi.fn());
 const notificationMock = vi.hoisted(() => ({
   notifyError: vi.fn(),
   notifySuccess: vi.fn(),
@@ -40,20 +41,6 @@ const selectionContextValue = vi.hoisted(() => ({
   setSelectedLlmProfileId: vi.fn(),
   refreshSelections: vi.fn(),
 }));
-
-vi.mock("@/lib/pagination", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/pagination")>(
-    "@/lib/pagination",
-  );
-
-  return {
-    ...actual,
-    getPageItems: <T,>(items: T[], page: number, pageSize?: number) => {
-      getPageItemsSpy(items, page, pageSize);
-      return actual.getPageItems(items, page, pageSize);
-    },
-  };
-});
 
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMock,
@@ -96,6 +83,10 @@ vi.mock("@/entities/professor/api/professors", () => ({
   listProfessorTags: vi.fn(async () => []),
   listProfessors,
   listProfessorsForManagement,
+  searchDashboardProfessorIds: vi.fn(),
+  searchDashboardProfessors,
+  searchManagementProfessorIds: vi.fn(),
+  searchManagementProfessors,
   restoreProfessor: vi.fn(),
   triggerCrawler: vi.fn(),
   updateProfessor: vi.fn(),
@@ -183,6 +174,44 @@ describe("large list memoization", () => {
         buildManagementProfessor(index + 1),
       ),
     );
+    searchDashboardProfessors.mockImplementation(async (payload) => {
+      const items = await listProfessors({ identityId: payload.identity_id });
+      const start = (payload.page - 1) * payload.page_size;
+      return {
+        items: items.slice(start, start + payload.page_size),
+        total_count: items.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: {
+          universities: [],
+          schools: [],
+          departments: [],
+          titles: [],
+          tags: [],
+        },
+      };
+    });
+    searchManagementProfessors.mockImplementation(async (payload) => {
+      const items = await listProfessorsForManagement(payload.archived);
+      const start = (payload.page - 1) * payload.page_size;
+      return {
+        items: items.slice(start, start + payload.page_size),
+        total_count: items.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: {
+          universities: [],
+          schools: [],
+          departments: [],
+          titles: [],
+          tags: [],
+        },
+      };
+    });
   });
 
   it("does not recalculate home page pagination when only selection changes", async () => {
@@ -196,13 +225,13 @@ describe("large list memoization", () => {
     });
     await flushPendingRender();
 
-    getPageItemsSpy.mockClear();
+    searchDashboardProfessors.mockClear();
     fireEvent.click(selectButton);
 
     await waitFor(() => {
       expect(selectButton).toHaveAttribute("aria-pressed", "true");
     });
-    expect(getPageItemsSpy).not.toHaveBeenCalled();
+    expect(searchDashboardProfessors).not.toHaveBeenCalled();
   });
 
   it("does not recalculate management page pagination when only selection changes", async () => {
@@ -216,12 +245,12 @@ describe("large list memoization", () => {
     });
     await flushPendingRender();
 
-    getPageItemsSpy.mockClear();
+    searchManagementProfessors.mockClear();
     fireEvent.click(selectButton);
 
     await waitFor(() => {
       expect(selectButton).toHaveAttribute("aria-pressed", "true");
     });
-    expect(getPageItemsSpy).not.toHaveBeenCalled();
+    expect(searchManagementProfessors).not.toHaveBeenCalled();
   });
 });

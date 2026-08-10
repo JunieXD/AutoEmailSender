@@ -46,6 +46,15 @@ class Settings:
     operation_log_retention_days: int
     sqlite_busy_timeout_ms: int
     sqlite_wal_enabled: bool
+    sqlite_foreign_keys_enabled: bool
+    sqlite_synchronous: str
+    sqlite_cache_size_mib: int
+    sqlite_mmap_size_mib: int
+    sqlite_wal_autocheckpoint_pages: int
+    sqlite_journal_size_limit_mib: int
+    sqlite_slow_query_ms: int
+    sqlite_maintenance_interval_seconds: int
+    sqlite_incremental_vacuum_pages: int
     enable_background_workers: bool
     crawler_debug_enabled: bool
 
@@ -97,6 +106,9 @@ def get_settings() -> Settings:
     database_url = _normalize_database_url(
         os.getenv("DATABASE_URL", _build_default_database_url(data_dir)),
     )
+    sqlite_synchronous = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
+    if sqlite_synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
+        sqlite_synchronous = "NORMAL"
     return Settings(
         project_root=PROJECT_ROOT,
         data_dir=data_dir,
@@ -162,6 +174,30 @@ def get_settings() -> Settings:
         operation_log_retention_days=_get_int_env("OPERATION_LOG_RETENTION_DAYS", 30),
         sqlite_busy_timeout_ms=max(0, _get_int_env("SQLITE_BUSY_TIMEOUT_MS", 5000)),
         sqlite_wal_enabled=_get_bool_env("SQLITE_ENABLE_WAL", True),
+        sqlite_foreign_keys_enabled=_get_bool_env(
+            "SQLITE_ENABLE_FOREIGN_KEYS",
+            True,
+        ),
+        sqlite_synchronous=sqlite_synchronous,
+        sqlite_cache_size_mib=max(1, _get_int_env("SQLITE_CACHE_SIZE_MIB", 64)),
+        sqlite_mmap_size_mib=max(0, _get_int_env("SQLITE_MMAP_SIZE_MIB", 256)),
+        sqlite_wal_autocheckpoint_pages=max(
+            1,
+            _get_int_env("SQLITE_WAL_AUTOCHECKPOINT_PAGES", 1000),
+        ),
+        sqlite_journal_size_limit_mib=max(
+            1,
+            _get_int_env("SQLITE_JOURNAL_SIZE_LIMIT_MIB", 64),
+        ),
+        sqlite_slow_query_ms=max(0, _get_int_env("SQLITE_SLOW_QUERY_MS", 250)),
+        sqlite_maintenance_interval_seconds=max(
+            300,
+            _get_int_env("SQLITE_MAINTENANCE_INTERVAL_SECONDS", 21600),
+        ),
+        sqlite_incremental_vacuum_pages=max(
+            0,
+            _get_int_env("SQLITE_INCREMENTAL_VACUUM_PAGES", 2000),
+        ),
         enable_background_workers=_get_bool_env("ENABLE_BACKGROUND_WORKERS", True),
         crawler_debug_enabled=_get_bool_env("CRAWLER_DEBUG", True),
     )

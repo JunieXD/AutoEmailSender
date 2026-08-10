@@ -258,7 +258,7 @@ const TaskStarters = () => {
         开始批量匹配
       </button>
       <button type="button" onClick={() => trackCrawlJob(runningCrawlJob)}>
-        开始教师抓取
+        开始智能抓取
       </button>
       <button
         type="button"
@@ -359,10 +359,10 @@ describe("BackgroundTaskNotificationProvider", () => {
     apiMocks.getCrawlJob.mockResolvedValue(reviewCrawlJob);
     renderWithProviders(<TaskStarters />);
 
-    fireEvent.click(screen.getByRole("button", { name: "开始教师抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始智能抓取" }));
 
     expect(
-      await screen.findByText("教师抓取完成，等待审核"),
+      await screen.findByText("智能抓取完成，等待审核"),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/测试大学 · 计算机学院：发现 34 位候选，处理 12 个页面/),

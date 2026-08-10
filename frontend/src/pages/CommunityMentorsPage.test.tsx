@@ -219,7 +219,7 @@ describe('CommunityMentorsPage', () => {
       screen.getByRole('link', { name: '批量贡献第一所学校/学院' }),
     ).toHaveAttribute('href', '/professors?community_contribution=batch');
     expect(
-      screen.getByRole('link', { name: '批量贡献学校/学院' }),
+      screen.getByRole('link', { name: '贡献院校数据' }),
     ).toHaveAttribute('href', '/professors?community_contribution=batch');
     expect(screen.queryByRole('button', { name: '贡献一位导师' })).not.toBeInTheDocument();
     expect(apiMocks.getCatalog).toHaveBeenCalledWith(false);
@@ -240,7 +240,7 @@ describe('CommunityMentorsPage', () => {
     renderPage();
 
     expect(
-      await screen.findByText('当前显示的是上次验证成功的数据'),
+      await screen.findByText('正在使用缓存数据'),
     ).toBeInTheDocument();
     expect(screen.getByText(/网络刷新失败/)).toBeInTheDocument();
     expect(apiMocks.getCatalog).toHaveBeenNthCalledWith(1, false);
@@ -293,7 +293,7 @@ describe('CommunityMentorsPage', () => {
 
     const firstRender = renderPage();
     fireEvent.click(await screen.findByLabelText(/选择 示例大学 计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
     fireEvent.change(screen.getByLabelText('搜索导师'), {
       target: { value: '张老师' },
@@ -317,7 +317,7 @@ describe('CommunityMentorsPage', () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText('搜索导入预览导师')).toHaveValue('张老师');
     expect(screen.getByLabelText('搜索导师')).toHaveValue('张老师');
-    expect(screen.getByText(/已加载 1 位，已选择 1\/2000/)).toBeInTheDocument();
+    expect(screen.getByText(/已加载 1 位 · 已选 1 位/)).toBeInTheDocument();
     expect(apiMocks.listRecords).toHaveBeenCalledTimes(1);
     expect(apiMocks.preview).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(document.body.style.overflow).toBe('hidden'));
@@ -336,7 +336,7 @@ describe('CommunityMentorsPage', () => {
     expect(layout).toHaveClass('space-y-6');
     expect(layout).not.toHaveClass('lg:grid-cols-[21rem,minmax(0,1fr)]');
     expect(selector.className).not.toMatch(/sticky|top-/);
-    expect(screen.getByText('先在上方选择学校和学院')).toBeInTheDocument();
+    expect(screen.getByText('选择学院后查看导师')).toBeInTheDocument();
     expect(screen.queryByText('先从左侧选择学院')).not.toBeInTheDocument();
   });
 
@@ -431,13 +431,13 @@ describe('CommunityMentorsPage', () => {
     renderPage();
 
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     expect(await screen.findByText('zhang@example.edu')).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
     expect(await screen.findByRole('dialog', { name: '社区导师导入预览' })).toBeInTheDocument();
-    expect(screen.getByText('本地没有这位导师，将按社区资料新增。')).toBeInTheDocument();
+    expect(screen.getByText('将按社区资料新增到本地。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '采用社区姓名' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', {
       name: '当前筛选的姓名全部保留本地',
@@ -478,7 +478,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
     fireEvent.click(screen.getByRole('button', { name: /反馈错误/ }));
 
@@ -493,7 +493,7 @@ describe('CommunityMentorsPage', () => {
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
       '反馈页面已打开',
-      '导师和当前信息已自动填写，请选择问题并补充正确内容和新的官网证据。',
+      '已自动填入导师信息。请选择问题，并补充正确信息和官网来源。',
     );
   });
 
@@ -512,14 +512,14 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(catalogSchoolFilter);
 
     fireEvent.click(screen.getByLabelText(/选择 示例大学 计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
 
     expect(screen.getAllByLabelText('学校：全部学校')).toHaveLength(2);
     expect(screen.getAllByLabelText('学院：全部学院')).toHaveLength(2);
     expect(screen.getByLabelText('系所：全部系所')).toBeInTheDocument();
     expect(screen.getByLabelText('职称：全部职称')).toBeInTheDocument();
-    expect(screen.getByLabelText('与本地的关系：全部情况')).toBeInTheDocument();
+    expect(screen.getByLabelText('本地状态：全部情况')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /搜索范围：选择字段：全部字段/ }),
     ).toBeInTheDocument();
@@ -555,7 +555,7 @@ describe('CommunityMentorsPage', () => {
     renderPage();
 
     const selectFiltered = await screen.findByRole('button', {
-      name: '选择当前筛选结果（学院）',
+      name: '全选当前学院',
     });
     fireEvent.click(selectFiltered);
     expect(selectFiltered).toHaveAttribute('aria-pressed', 'true');
@@ -563,7 +563,7 @@ describe('CommunityMentorsPage', () => {
 
     fireEvent.click(selectFiltered);
     expect(selectFiltered).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByText(/已选 0\/20 个学院/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 0 个学院/)).toBeInTheDocument();
   });
 
   it('opens a read-only detail dialog and links contributors to GitHub', async () => {
@@ -572,7 +572,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/选择 示例大学 计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
 
     expect(screen.getByRole('link', { name: '@example-user' })).toHaveAttribute(
@@ -583,7 +583,7 @@ describe('CommunityMentorsPage', () => {
 
     const detail = await screen.findByRole('dialog', { name: '导师详情：张老师' });
     expect(detail).toHaveTextContent('Example Paper');
-    expect(detail).toHaveTextContent('近期或代表论文');
+    expect(detail).toHaveTextContent('代表论文');
     expect(detail).not.toHaveTextContent('保存');
     fireEvent.click(screen.getByRole('button', { name: '关闭导师详情' }));
     expect(screen.queryByRole('dialog', { name: '导师详情：张老师' })).not.toBeInTheDocument();
@@ -629,7 +629,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('张老师');
     const searchInput = screen.getByLabelText('搜索导师');
 
@@ -673,7 +673,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     expect(await screen.findByText('导师0001')).toBeInTheDocument();
     expect(screen.queryByText('导师0101')).not.toBeInTheDocument();
 
@@ -681,16 +681,16 @@ describe('CommunityMentorsPage', () => {
     expect(await screen.findByText('导师0101')).toBeInTheDocument();
 
     const recordList = screen.getByTestId('community-mentor-record-list');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     expect(recordList).toHaveClass('is-bulk-selecting');
     await waitFor(() => {
-      const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
+      const selectAll = screen.getByRole('button', { name: '取消全选导师' });
       expect(selectAll).toHaveAttribute('aria-pressed', 'true');
     });
     expect(screen.getByText(/已选 101\/101/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '取消全选导师' }));
     await waitFor(() => {
-      const selectAll = screen.getByRole('button', { name: '选择当前筛选结果' });
+      const selectAll = screen.getByRole('button', { name: '全选当前导师' });
       expect(selectAll).toHaveAttribute('aria-pressed', 'false');
     });
     await waitFor(() => expect(recordList).not.toHaveClass('is-bulk-selecting'));
@@ -720,20 +720,20 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('导师0001');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 30/ }));
 
     const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
     expect(within(preview).getByText('导师0001')).toBeInTheDocument();
     expect(within(preview).queryByText('导师0026')).not.toBeInTheDocument();
-    expect(within(preview).getByText(/当前显示第 1–25 位/)).toBeInTheDocument();
+    expect(within(preview).getByText(/1\/2 页 · 1–25 \/ 30 位/)).toBeInTheDocument();
 
     fireEvent.click(within(preview).getByRole('button', { name: '下一页导入预览' }));
     expect(within(preview).queryByText('导师0001')).not.toBeInTheDocument();
     expect(within(preview).getByText('导师0026')).toBeInTheDocument();
-    expect(within(preview).getByText(/当前显示第 26–30 位/)).toBeInTheDocument();
+    expect(within(preview).getByText(/2\/2 页 · 26–30 \/ 30 位/)).toBeInTheDocument();
 
     fireEvent.change(within(preview).getByLabelText('搜索导入预览导师'), {
       target: { value: '导师0030' },
@@ -796,9 +796,9 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('导师甲');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
 
     const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
@@ -810,7 +810,7 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(within(preview).getByRole('button', { name: '清除全部筛选' }));
 
     fireEvent.click(within(preview).getByLabelText('差异类型：全部差异'));
-    fireEvent.click(within(preview).getByRole('button', { name: '取消全选当前结果' }));
+    fireEvent.click(within(preview).getByRole('button', { name: '取消全选' }));
     fireEvent.click(within(preview).getByRole('option', { name: '内容不同' }));
     fireEvent.click(within(preview).getByRole('button', { name: '应用' }));
 
@@ -874,9 +874,9 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('导师甲');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
 
     const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
@@ -929,9 +929,9 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('导师0001');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 30/ }));
 
     const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
@@ -975,9 +975,9 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('待确认导师');
-    fireEvent.click(screen.getByRole('button', { name: '选择当前筛选结果' }));
+    fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 2/ }));
 
     const preview = await screen.findByRole('dialog', { name: '社区导师导入预览' });
@@ -989,7 +989,7 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(within(preview).getByRole('button', { name: '确认导入 2 位' }));
 
     expect(await within(preview).findByText('待确认导师')).toBeInTheDocument();
-    expect(within(preview).getByLabelText('只看尚未确认身份'))
+    expect(within(preview).getByLabelText('只看待确认导师'))
       .toHaveAttribute('aria-pressed', 'true');
     expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
       '请确认导师身份',
@@ -1035,7 +1035,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));
@@ -1129,15 +1129,15 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByLabelText(/人工智能研究院/));
 
     expect(
-      await screen.findByText(/当前列表来自上一次加载/),
+      await screen.findByText(/学院选择已变化，请重新加载导师/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/已选择 1\/2000/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 1 位/)).toBeInTheDocument();
     const previewButton = screen.getByRole('button', { name: /预览并导入 1/ });
     expect(previewButton).toBeDisabled();
     fireEvent.click(previewButton);
@@ -1162,7 +1162,7 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
     fireEvent.click(await screen.findByLabelText(/计算机学院/));
-    fireEvent.click(screen.getByRole('button', { name: '加载所选学院' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看导师' }));
     await screen.findByText('zhang@example.edu');
     fireEvent.click(screen.getByLabelText('选择 张老师'));
     fireEvent.click(screen.getByRole('button', { name: /预览并导入 1/ }));

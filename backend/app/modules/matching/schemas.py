@@ -7,10 +7,24 @@ from pydantic import BaseModel, Field
 from app.schemas.base import ApiSchema
 
 class CreateMatchAnalysisJobRequest(BaseModel):
-    identity_id: int
-    llm_profile_id: int
+    identity_id: int = Field(ge=1)
+    llm_profile_id: int = Field(ge=1)
     professor_ids: list[int] = Field(min_length=1)
     name: str | None = None
+    skip_existing: bool = False
+
+
+class MatchAnalysisSelectionSummaryRequest(BaseModel):
+    identity_id: int = Field(ge=1)
+    professor_ids: list[int] = Field(min_length=1)
+
+
+class MatchAnalysisSelectionSummaryRead(ApiSchema):
+    selected_count: int
+    analyzable_count: int
+    missing_evidence_count: int
+    already_scored_count: int
+    unscored_analyzable_count: int
 
 
 class MatchAnalysisJobRead(ApiSchema):

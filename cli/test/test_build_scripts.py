@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import runpy
@@ -14,9 +15,81 @@ from unittest.mock import patch
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "build"
+QUALITY_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "quality"
 
 
 class CliBuildScriptTests(unittest.TestCase):
+    def test_agent_cli_benchmark_measures_cold_commands_and_intent_accuracy(self) -> None:
+        namespace = runpy.run_path(
+            (QUALITY_SCRIPTS_ROOT / "benchmark_agent_cli.py").as_posix(),
+        )
+        run_benchmark = namespace["run_benchmark"]
+        intent_cases = dict(namespace["INTENT_CASES"])
+
+        def fake_invoke(_executable: Path, arguments: list[str]):
+            query = arguments[arguments.index("--query") + 1] if "--query" in arguments else None
+            data = (
+                {"items": [{"command": intent_cases[query]}]}
+                if query is not None
+                else {}
+            )
+            return 12.5, {"ok": True, "data": data}, 256
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            executable = Path(temporary_directory) / "auto-email-sender"
+            executable.touch()
+            with patch.dict(run_benchmark.__globals__, {"_invoke": fake_invoke}):
+                result = run_benchmark(executable, samples=2, warmup=1)
+
+        measurements = result["measurements"]
+        self.assertEqual(measurements["capabilities"]["p95_ms"], 12.5)
+        self.assertEqual(measurements["describe"]["p95_ms"], 12.5)
+        self.assertEqual(measurements["intent_routing"]["accuracy"], 1.0)
+        self.assertTrue(all(item["correct"] for item in measurements["intent_routing"]["cases"]))
+
+    def test_agent_cli_benchmark_forces_utf8_for_redirected_json(self) -> None:
+        namespace = runpy.run_path(
+            (QUALITY_SCRIPTS_ROOT / "benchmark_agent_cli.py").as_posix(),
+        )
+        main = namespace["main"]
+        result = {
+            "schema_version": "1",
+            "measurements": {
+                "capabilities": {"p95_ms": 1.0},
+                "describe": {"p95_ms": 1.0},
+                "intent_routing": {
+                    "p95_ms": 1.0,
+                    "accuracy": 1.0,
+                    "cases": [{"query": "导入导师", "correct": True}],
+                },
+            },
+        }
+        raw_output = io.BytesIO()
+        redirected_stdout = io.TextIOWrapper(raw_output, encoding="cp1252")
+
+        with (
+            patch.object(sys, "stdout", redirected_stdout),
+            patch.object(
+                sys,
+                "argv",
+                ["benchmark_agent_cli.py", "--executable", "auto-email-sender.exe"],
+            ),
+            patch.dict(
+                main.__globals__,
+                {"run_benchmark": lambda *_args, **_kwargs: result},
+            ),
+        ):
+            return_code = main()
+            redirected_stdout.flush()
+            encoded_output = raw_output.getvalue()
+
+        self.assertEqual(return_code, 0)
+        payload = json.loads(encoded_output.decode("utf-8"))
+        self.assertEqual(
+            payload["measurements"]["intent_routing"]["cases"][0]["query"],
+            "导入导师",
+        )
+
     def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.sh")
 
@@ -29,6 +102,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn('--runtime-hook "$BuildIdentityHook"', script)
         self.assertIn("verify_cli_binary.py", script)
         self.assertIn('--executable "$CliExecutable"', script)
+        self.assertIn("benchmark_agent_cli.py", script)
 
     def test_windows_build_creates_one_directory_cli_and_self_checks(self) -> None:
         script = _read_script("build-cli.ps1")
@@ -44,6 +118,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--runtime-hook $BuildIdentityHook", script)
         self.assertIn("verify_cli_binary.py", script)
         self.assertIn("--executable $CliExecutable", script)
+        self.assertIn("benchmark_agent_cli.py", script)
 
     def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(self) -> None:
         namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())

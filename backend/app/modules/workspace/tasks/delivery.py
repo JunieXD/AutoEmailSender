@@ -18,6 +18,7 @@ from app.core.fault_injection import wait_at_fault_point
 from app.core.process_liveness import process_is_running
 from app.core.runtime_group import read_runtime_process_status
 from app.core.time import as_utc_aware, local_now as get_local_now, utc_now
+from app.core.query_chunks import chunked_values
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -1457,13 +1458,15 @@ async def _resolve_selected_materials(
     if not material_ids:
         return []
 
-    result = await session.execute(
-        select(IdentityMaterial).where(
-            IdentityMaterial.identity_id == identity_id,
-            IdentityMaterial.id.in_(material_ids),
-        ),
-    )
-    materials = {material.id: material for material in result.scalars()}
+    materials: dict[int, IdentityMaterial] = {}
+    for material_id_chunk in chunked_values(material_ids):
+        result = await session.execute(
+            select(IdentityMaterial).where(
+                IdentityMaterial.identity_id == identity_id,
+                IdentityMaterial.id.in_(material_id_chunk),
+            ),
+        )
+        materials.update({material.id: material for material in result.scalars()})
     attachments: list[MailAttachment] = []
     for material_id in material_ids:
         material = materials.get(material_id)

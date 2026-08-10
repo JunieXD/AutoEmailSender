@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, insert, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import serialize_api_datetime, utc_now
 from app.models import Professor, ProfessorTag, ProfessorTagLink
 from .schemas import (
@@ -43,6 +46,12 @@ class ProfessorImportMutationResult:
     updated_count: int
     created_tag_count: int
     failed_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProfessorBulkTagsMutationResult:
+    professor_ids: list[int]
+    affected_count: int
 
 
 async def get_or_create_professor_by_email(
@@ -367,7 +376,7 @@ async def bulk_archive_professor_records(
             "actor": actor,
             "requested_count": len(ordered_ids),
             "affected_count": len(affected_ids),
-            "ids": ordered_ids,
+            **_ids_metadata(ordered_ids),
         },
     )
     return {
@@ -468,7 +477,7 @@ async def bulk_update_professor_tags_record(
     *,
     event_name: str,
     actor: str,
-) -> list[Professor]:
+) -> ProfessorBulkTagsMutationResult:
     """Apply a validated bulk tag update without committing the transaction."""
 
     professor_ids, professors, target_tags = await _resolve_bulk_tag_update(
@@ -478,28 +487,39 @@ async def bulk_update_professor_tags_record(
     target_tag_ids = [tag.id for tag in target_tags]
     professors_by_id = {professor.id: professor for professor in professors}
     now = utc_now()
+    next_tag_ids_by_professor: dict[int, list[int]] = {}
     for professor_id in professor_ids:
         professor = professors_by_id[professor_id]
-        next_tag_ids = _next_bulk_tag_ids(
+        next_tag_ids_by_professor[professor_id] = _next_bulk_tag_ids(
             [tag.id for tag in professor.tags],
             mode=payload.mode,
             target_tag_ids=target_tag_ids,
         )
-        await sync_professor_tags(session, professor, next_tag_ids)
         professor.updated_at = now
 
+    for professor_id_chunk in chunked_values(professor_ids):
+        await session.execute(
+            delete(ProfessorTagLink).where(
+                ProfessorTagLink.professor_id.in_(professor_id_chunk),
+            ),
+        )
+    link_rows = [
+        {
+            "professor_id": professor_id,
+            "tag_id": tag_id,
+            "sort_order": sort_order,
+        }
+        for professor_id in professor_ids
+        for sort_order, tag_id in enumerate(
+            next_tag_ids_by_professor[professor_id],
+        )
+    ]
+    for row_chunk in chunked_values(link_rows):
+        await session.execute(insert(ProfessorTagLink), list(row_chunk))
+
     await session.flush()
-    refreshed_professors = list(
-        (
-            await session.scalars(
-                select(Professor)
-                .options(selectinload(Professor.tags))
-                .where(Professor.id.in_(professor_ids)),
-            )
-        ).unique(),
-    )
-    refreshed_by_id = {professor.id: professor for professor in refreshed_professors}
-    ordered_professors = [refreshed_by_id[professor_id] for professor_id in professor_ids]
+    for professor in professors:
+        session.expire(professor, ["tags"])
     await record_operation_log(
         session,
         category="user_action",
@@ -508,13 +528,16 @@ async def bulk_update_professor_tags_record(
         metadata={
             "actor": actor,
             "requested_count": len(professor_ids),
-            "affected_count": len(ordered_professors),
-            "ids": professor_ids,
+            "affected_count": len(professor_ids),
+            **_ids_metadata(professor_ids),
             "mode": payload.mode,
             "tag_ids": target_tag_ids,
         },
     )
-    return ordered_professors
+    return ProfessorBulkTagsMutationResult(
+        professor_ids=professor_ids,
+        affected_count=len(professor_ids),
+    )
 
 
 async def prepare_professor_import_snapshot(
@@ -527,11 +550,13 @@ async def prepare_professor_import_snapshot(
 
     existing_by_email = await _load_existing_import_professors(session, parsed)
     tag_names = _collect_import_tag_names(parsed)
-    existing_tags = list(
-        await session.scalars(
-            select(ProfessorTag).where(ProfessorTag.name.in_(tag_names)),
-        ),
-    ) if tag_names else []
+    existing_tags: list[ProfessorTag] = []
+    for name_chunk in chunked_values(tag_names):
+        existing_tags.extend(
+            await session.scalars(
+                select(ProfessorTag).where(ProfessorTag.name.in_(name_chunk)),
+            ),
+        )
     existing_tag_names = {tag.name for tag in existing_tags}
 
     inserted_count = 0
@@ -618,55 +643,75 @@ async def import_professor_records(
 ) -> ProfessorImportMutationResult:
     """Apply parsed import data with the same merge rules used by the desktop UI."""
 
-    existing_by_email = await _load_existing_import_professors(session, parsed)
-    inserted_count = 0
-    updated_count = 0
-    created_tag_count = 0
+    existing_professor_ids_by_email = await _load_existing_import_professor_ids(
+        session,
+        parsed.data.keys(),
+    )
+    inserted_count = len(parsed.data) - len(existing_professor_ids_by_email)
+    updated_count = len(existing_professor_ids_by_email)
+    tag_names = _collect_import_tag_names(parsed)
+    tags_by_name, created_tag_count = await _ensure_import_tags(
+        session,
+        tag_names,
+    )
     personal_note_column_present = any(
         bool(payload.get("has_personal_note_column"))
         for payload in parsed.data.values()
     )
-    for email, payload in parsed.data.items():
-        professor = existing_by_email.get(email)
-        if professor is None:
-            professor_data = {
-                key: value
-                for key, value in payload.items()
-                if key not in {"tag_names", "has_personal_note_column"}
-            }
-            professor = Professor(**professor_data)
-            session.add(professor)
-            await session.flush()
-            created_tag_count += await sync_professor_tags_by_names(
-                session,
-                professor,
-                [str(tag_name) for tag_name in payload["tag_names"]],
-            )
-            inserted_count += 1
-            continue
+    now = utc_now()
+    rows_by_personal_note_presence: dict[bool, list[dict[str, object]]] = {
+        False: [],
+        True: [],
+    }
+    for payload in parsed.data.values():
+        has_personal_note_column = bool(payload.get("has_personal_note_column"))
+        row = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"tag_names", "has_personal_note_column"}
+            and (key != "personal_note" or has_personal_note_column)
+        }
+        row.update(
+            {
+                "archived_at": None,
+                "updated_at": now,
+            },
+        )
+        rows_by_personal_note_presence[has_personal_note_column].append(row)
 
-        professor.name = payload["name"]
-        professor.email = payload["email"]
-        professor.title = payload["title"]
-        professor.university = payload["university"]
-        professor.school = payload["school"]
-        professor.department = payload["department"]
-        professor.research_direction = payload["research_direction"]
-        professor.recent_papers = payload["recent_papers"]
-        professor.profile_url = payload["profile_url"]
-        professor.source_url = payload["source_url"]
-        if payload.get("has_personal_note_column"):
-            professor.personal_note = payload["personal_note"]
-        tag_names = [str(tag_name) for tag_name in payload["tag_names"]]
-        if tag_names:
-            created_tag_count += await sync_professor_tags_by_names(
-                session,
-                professor,
-                tag_names,
-            )
-        professor.archived_at = None
-        professor.updated_at = utc_now()
-        updated_count += 1
+    for update_personal_note, rows in rows_by_personal_note_presence.items():
+        if not rows:
+            continue
+        statement = _professor_import_upsert_statement(
+            update_personal_note=update_personal_note,
+        )
+        for row_chunk in chunked_values(rows):
+            await session.execute(statement, list(row_chunk))
+
+    professor_ids_by_email = await _load_existing_import_professor_ids(
+        session,
+        parsed.data.keys(),
+    )
+    replace_tags_by_professor_id: dict[int, list[int]] = {}
+    for email, payload in parsed.data.items():
+        imported_tag_names = [
+            str(tag_name).strip()
+            for tag_name in payload["tag_names"]
+            if str(tag_name).strip()
+        ]
+        if email in existing_professor_ids_by_email and not imported_tag_names:
+            continue
+        replace_tags_by_professor_id[professor_ids_by_email[email]] = [
+            tags_by_name[tag_name].id
+            for tag_name in dict.fromkeys(imported_tag_names)
+        ]
+    await _replace_professor_tag_links(
+        session,
+        replace_tags_by_professor_id,
+    )
+    for instance in list(session.identity_map.values()):
+        if isinstance(instance, Professor):
+            session.expire(instance)
 
     await record_operation_log(
         session,
@@ -690,6 +735,103 @@ async def import_professor_records(
         created_tag_count=created_tag_count,
         failed_count=parsed.failed_count,
     )
+
+
+def _professor_import_upsert_statement(*, update_personal_note: bool):
+    statement = sqlite_insert(Professor)
+    excluded = statement.excluded
+    update_values: dict[str, object] = {
+        "name": excluded.name,
+        "email": excluded.email,
+        "title": excluded.title,
+        "university": excluded.university,
+        "school": excluded.school,
+        "department": excluded.department,
+        "research_direction": excluded.research_direction,
+        "recent_papers": excluded.recent_papers,
+        "profile_url": excluded.profile_url,
+        "source_url": excluded.source_url,
+        "archived_at": None,
+        "updated_at": excluded.updated_at,
+        "communication_sync_version": case(
+            (
+                Professor.archived_at.is_not(None),
+                Professor.communication_sync_version + 1,
+            ),
+            else_=Professor.communication_sync_version,
+        ),
+    }
+    if update_personal_note:
+        update_values["personal_note"] = excluded.personal_note
+    return statement.on_conflict_do_update(
+        index_elements=[Professor.email],
+        set_=update_values,
+    )
+
+
+async def _ensure_import_tags(
+    session: AsyncSession,
+    tag_names: list[str],
+) -> tuple[dict[str, ProfessorTag], int]:
+    if not tag_names:
+        return {}, 0
+    existing_tags: list[ProfessorTag] = []
+    for name_chunk in chunked_values(tag_names):
+        existing_tags.extend(
+            await session.scalars(
+                select(ProfessorTag).where(ProfessorTag.name.in_(name_chunk)),
+            ),
+        )
+    existing_names = {tag.name for tag in existing_tags}
+    missing_names = [name for name in tag_names if name not in existing_names]
+    if missing_names:
+        statement = sqlite_insert(ProfessorTag).on_conflict_do_nothing(
+            index_elements=[ProfessorTag.name],
+        )
+        rows = [
+            {
+                "name": name,
+                "text_color": DEFAULT_IMPORTED_TAG_TEXT_COLOR,
+                "background_color": DEFAULT_IMPORTED_TAG_BACKGROUND_COLOR,
+            }
+            for name in missing_names
+        ]
+        for row_chunk in chunked_values(rows):
+            await session.execute(statement, list(row_chunk))
+    loaded_tags: list[ProfessorTag] = []
+    for name_chunk in chunked_values(tag_names):
+        loaded_tags.extend(
+            await session.scalars(
+                select(ProfessorTag).where(ProfessorTag.name.in_(name_chunk)),
+            ),
+        )
+    return {tag.name: tag for tag in loaded_tags}, len(missing_names)
+
+
+async def _replace_professor_tag_links(
+    session: AsyncSession,
+    tag_ids_by_professor_id: dict[int, list[int]],
+) -> None:
+    if not tag_ids_by_professor_id:
+        return
+    professor_ids = list(tag_ids_by_professor_id)
+    for professor_id_chunk in chunked_values(professor_ids):
+        await session.execute(
+            delete(ProfessorTagLink).where(
+                ProfessorTagLink.professor_id.in_(professor_id_chunk),
+            ),
+        )
+    rows = [
+        {
+            "professor_id": professor_id,
+            "tag_id": tag_id,
+            "sort_order": sort_order,
+        }
+        for professor_id, tag_ids in tag_ids_by_professor_id.items()
+        for sort_order, tag_id in enumerate(tag_ids)
+    ]
+    for row_chunk in chunked_values(rows):
+        await session.execute(insert(ProfessorTagLink), list(row_chunk))
 
 
 async def create_professor_tag_record(
@@ -765,13 +907,13 @@ async def load_tags_by_ids(
         return []
     if len(set(tag_ids)) != len(tag_ids):
         raise ProfessorMutationError(400, "TAG_IDS_DUPLICATE", "标签不能重复")
-    tags = list(
-        await session.scalars(
-            select(ProfessorTag)
-            .where(ProfessorTag.id.in_(tag_ids))
-            .order_by(ProfessorTag.name.asc()),
-        ),
-    )
+    tags: list[ProfessorTag] = []
+    for tag_id_chunk in chunked_values(tag_ids):
+        tags.extend(
+            await session.scalars(
+                select(ProfessorTag).where(ProfessorTag.id.in_(tag_id_chunk)),
+            ),
+        )
     tags_by_id = {tag.id: tag for tag in tags}
     missing = [tag_id for tag_id in tag_ids if tag_id not in tags_by_id]
     if missing:
@@ -812,8 +954,9 @@ async def _resolve_bulk_professor_archive(
     if len(set(professor_ids)) != len(professor_ids):
         raise ProfessorMutationError(400, "PROFESSOR_IDS_DUPLICATE", "导师 ID 不能重复")
     ordered_ids = list(professor_ids)
-    professors = list(
-        await session.scalars(select(Professor).where(Professor.id.in_(ordered_ids))),
+    professors = await _load_professors_by_ids(
+        session,
+        ordered_ids,
     )
     found_ids = {professor.id for professor in professors}
     if any(professor_id not in found_ids for professor_id in ordered_ids):
@@ -831,14 +974,10 @@ async def _resolve_bulk_tag_update(
         raise ProfessorMutationError(400, "TAG_IDS_REQUIRED", "请选择要追加或移除的标签")
 
     professor_ids = list(dict.fromkeys(payload.professor_ids))
-    professors = list(
-        (
-            await session.scalars(
-                select(Professor)
-                .options(selectinload(Professor.tags))
-                .where(Professor.id.in_(professor_ids)),
-            )
-        ).unique(),
+    professors = await _load_professors_by_ids(
+        session,
+        professor_ids,
+        include_tags=True,
     )
     professors_by_id = {professor.id: professor for professor in professors}
     if any(professor_id not in professors_by_id for professor_id in professor_ids):
@@ -897,11 +1036,13 @@ async def load_or_create_tags_by_names(
     normalized_names = list(dict.fromkeys(name.strip() for name in tag_names if name.strip()))
     if not normalized_names:
         return [], 0
-    existing_tags = list(
-        await session.scalars(
-            select(ProfessorTag).where(ProfessorTag.name.in_(normalized_names)),
-        ),
-    )
+    existing_tags: list[ProfessorTag] = []
+    for name_chunk in chunked_values(normalized_names):
+        existing_tags.extend(
+            await session.scalars(
+                select(ProfessorTag).where(ProfessorTag.name.in_(name_chunk)),
+            ),
+        )
     tags_by_name = {tag.name: tag for tag in existing_tags}
     created_count = 0
     for name in normalized_names:
@@ -925,20 +1066,50 @@ async def _load_existing_import_professors(
 ) -> dict[str, Professor]:
     if not parsed.data:
         return {}
-    professors = list(
-        (
-            await session.scalars(
-                select(Professor)
-                .options(selectinload(Professor.tags))
-                .where(Professor.email.in_(list(parsed.data.keys()))),
-            )
-        ).unique(),
-    )
+    professors: list[Professor] = []
+    for email_chunk in chunked_values(parsed.data.keys()):
+        professors.extend(
+            (
+                await session.scalars(
+                    select(Professor)
+                    .options(selectinload(Professor.tags))
+                    .where(Professor.email.in_(email_chunk)),
+                )
+            ).unique(),
+        )
     return {
         professor.email.lower(): professor
         for professor in professors
         if professor.email
     }
+
+
+async def _load_existing_import_professor_ids(
+    session: AsyncSession,
+    emails: Iterable[object],
+) -> dict[str, int]:
+    normalized_emails = list(
+        dict.fromkeys(
+            str(email).strip().lower()
+            for email in emails
+            if str(email).strip()
+        ),
+    )
+    professor_ids_by_email: dict[str, int] = {}
+    for email_chunk in chunked_values(normalized_emails):
+        rows = await session.execute(
+            select(Professor.email, Professor.id).where(
+                Professor.email.in_(email_chunk),
+            ),
+        )
+        professor_ids_by_email.update(
+            {
+                str(email).lower(): int(professor_id)
+                for email, professor_id in rows
+                if email
+            },
+        )
+    return professor_ids_by_email
 
 
 def _collect_import_tag_names(parsed: ParsedProfessorImport) -> list[str]:
@@ -950,6 +1121,29 @@ def _collect_import_tag_names(parsed: ParsedProfessorImport) -> list[str]:
             if str(tag_name).strip()
         },
     )
+
+
+async def _load_professors_by_ids(
+    session: AsyncSession,
+    professor_ids: list[int],
+    *,
+    include_tags: bool = False,
+) -> list[Professor]:
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(unique_positive_ids(professor_ids)):
+        statement = select(Professor).where(Professor.id.in_(professor_id_chunk))
+        if include_tags:
+            statement = statement.options(selectinload(Professor.tags))
+        professors.extend((await session.scalars(statement)).unique())
+    return professors
+
+
+def _ids_metadata(professor_ids: list[int]) -> dict[str, object]:
+    metadata_limit = 1_000
+    return {
+        "ids": professor_ids[:metadata_limit],
+        "ids_truncated": len(professor_ids) > metadata_limit,
+    }
 
 
 def _serialize_import_professor_state(professor: Professor | None) -> dict[str, object] | None:

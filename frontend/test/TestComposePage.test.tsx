@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TestComposePage } from "@/pages/TestComposePage";
@@ -100,11 +100,10 @@ describe("TestComposePage", () => {
     expect(screen.getByRole("button", { name: "主题占位符菜单" })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "邮件正文" })).toHaveTextContent("测试正文");
     expect(await screen.findByRole("button", { name: "插入表格" })).toBeInTheDocument();
-    expect(screen.getAllByText("sender@example.com").length).toBeGreaterThan(0);
-    expect(screen.getByText("测试收件邮箱")).toBeInTheDocument();
-    expect(
-      screen.getByText((_, element) => element?.textContent === "模型 / 测试模型"),
-    ).toBeInTheDocument();
+    const sendingInfo = screen.getByRole("heading", { name: "发送信息" }).closest("section");
+    expect(sendingInfo).not.toBeNull();
+    expect(within(sendingInfo!).getByText("sender@example.com")).toBeInTheDocument();
+    expect(within(sendingInfo!).getByText("测试模型")).toBeInTheDocument();
     expect(screen.getByText("{{name}} 测试时显示为「测试收件人」")).toBeInTheDocument();
     expect(screen.getByText("发件人姓名：王同学")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "测试写信操作" })).toBeInTheDocument();

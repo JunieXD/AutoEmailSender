@@ -57,7 +57,7 @@ export const buildLargeAttachmentWarning = (
   }
 
   return [
-    `附件总大小为 ${formatFileSize(totalSizeBytes)}，建议不超过 1 MB，以减少被邮箱提供商限流的概率。`,
+    `附件共 ${formatFileSize(totalSizeBytes)}；建议不超过 1 MB，以降低限流风险。`,
     options.repeatedPerMessage ? '这些附件将随每封邮件发送。' : null,
   ]
     .filter(Boolean)
@@ -76,9 +76,9 @@ export const buildBulkLargeAttachmentWarning = (totalSizesBytes: number[]) => {
     totalSizesBytes.length > 0 &&
     totalSizesBytes.every((total) => total === totalSizesBytes[0]);
   if (allTotalsMatch) {
-    return `每封邮件的附件总大小均为 ${formatFileSize(oversizedTotals[0])}，建议不超过 1 MB，以减少被邮箱提供商限流的概率。`;
+    return `每封附件均为 ${formatFileSize(oversizedTotals[0])}；建议不超过 1 MB，以降低限流风险。`;
   }
 
   const maximumTotal = Math.max(...oversizedTotals);
-  return `其中 ${oversizedTotals.length} 封邮件的附件总大小超过 1 MB，最大为 ${formatFileSize(maximumTotal)}。建议将每封邮件的附件总大小控制在 1 MB 以内，以减少被邮箱提供商限流的概率。`;
+  return `${oversizedTotals.length} 封附件超过 1 MB，最大 ${formatFileSize(maximumTotal)}；建议压缩以降低限流风险。`;
 };

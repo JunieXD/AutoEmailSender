@@ -30,7 +30,7 @@ export const AttachmentSizeSummary = ({
         已选 {selectedCount} 个附件，共 {formatFileSize(totalSizeBytes)}
       </span>
       {overRecommendedLimit ? (
-        <span>建议不超过 1 MB，以减少被邮箱提供商限流的概率。</span>
+        <span>建议不超过 1 MB，发送更稳定。</span>
       ) : null}
     </div>
   );

@@ -10,6 +10,8 @@ import type {
   ProfessorDashboardItemDTO,
 } from "@/types";
 
+const mockedListProfessors = vi.hoisted(() => vi.fn());
+
 vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
   useBackgroundTaskNotification: () => ({
     trackMatchAnalysisJob: vi.fn(),
@@ -36,7 +38,26 @@ vi.mock("@/context/SelectionContext", () => ({
 }));
 
 vi.mock("@/entities/professor/api/professors", () => ({
-  listProfessors: vi.fn(),
+  listProfessors: mockedListProfessors,
+  searchDashboardProfessors: async (payload: {
+    identity_id: number;
+    page: number;
+    page_size: number;
+  }) => {
+    const allItems = await mockedListProfessors({ identityId: payload.identity_id });
+    const start = (payload.page - 1) * payload.page_size;
+    return {
+      items: allItems.slice(start, start + payload.page_size),
+      total_count: allItems.length,
+      page: payload.page,
+      page_size: payload.page_size,
+      total_pages: Math.max(1, Math.ceil(allItems.length / payload.page_size)),
+      next_cursor: null,
+      filter_options: {
+        universities: [], schools: [], departments: [], titles: [], tags: [],
+      },
+    };
+  },
 }));
 
 vi.mock("@/lib/api/workspacesApi", () => ({
@@ -91,7 +112,7 @@ describe("HomePage page size", () => {
     expect(screen.getByText("导师 10")).toBeInTheDocument();
     expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
     expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 2 页，已选择 0 位"),
+      screen.getByText("12 位 · 1/2 页 · 已选 0 位"),
     ).toBeInTheDocument();
   });
 
@@ -103,11 +124,13 @@ describe("HomePage page size", () => {
     fireEvent.click(screen.getByRole("button", { name: "每页数量" }));
     fireEvent.click(screen.getByRole("option", { name: "20" }));
 
-    expect(screen.getByText("导师 11")).toBeInTheDocument();
-    expect(screen.getByText("导师 12")).toBeInTheDocument();
-    expect(
-      screen.getByText("共 12 位符合筛选条件，当前第 1 / 1 页，已选择 0 位"),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("导师 11")).toBeInTheDocument();
+      expect(screen.getByText("导师 12")).toBeInTheDocument();
+      expect(
+        screen.getByText("12 位 · 1/1 页 · 已选 0 位"),
+      ).toBeInTheDocument();
+    });
     expect(localStorage.getItem("home-dashboard:page-size")).toBe("20");
   });
 });

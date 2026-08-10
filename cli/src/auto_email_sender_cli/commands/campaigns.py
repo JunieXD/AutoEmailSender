@@ -212,6 +212,79 @@ def prepare_campaign_create(
     )
 
 
+@campaigns_app.command("item-thread")
+def get_campaign_item_thread(
+    ctx: typer.Context,
+    campaign_id: Annotated[int, typer.Argument(min=1)],
+    item_id: Annotated[int, typer.Argument(min=1)],
+) -> None:
+    run_read_command(
+        ctx,
+        command="campaigns.item-thread",
+        path=f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/thread",
+        guide_topic="campaigns",
+        human_formatter=format_detail,
+    )
+
+
+@campaigns_app.command("approve-item-draft")
+def approve_campaign_item_draft(
+    ctx: typer.Context,
+    campaign_id: Annotated[int, typer.Argument(min=1)],
+    item_id: Annotated[int, typer.Argument(min=1)],
+    body_text: Annotated[
+        str,
+        typer.Option("--body-text", help="最终纯文本正文；即使为空也必须明确提供。"),
+    ],
+    subject: Annotated[str | None, typer.Option("--subject")] = None,
+    body_html: Annotated[str | None, typer.Option("--body-html")] = None,
+    attachment_material_ids: Annotated[
+        list[int] | None,
+        typer.Option("--attachment-material-id", min=1),
+    ] = None,
+) -> None:
+    run_write_command(
+        ctx,
+        command="campaigns.approve-item-draft",
+        path=(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft"
+        ),
+        json_body={
+            "subject": subject,
+            "body_text": body_text,
+            "body_html": body_html,
+            "attachment_material_ids": attachment_material_ids or [],
+        },
+        guide_topic="campaigns",
+        human_formatter=format_detail,
+    )
+
+
+@campaigns_app.command("approve-drafts")
+def approve_campaign_drafts(
+    ctx: typer.Context,
+    campaign_id: Annotated[int, typer.Argument(min=1)],
+    item_ids: Annotated[
+        list[int],
+        typer.Option(
+            "--item-id",
+            min=1,
+            help="可重复指定当前处于 review_required 的活动项；只批准，不发送。",
+        ),
+    ],
+) -> None:
+    if len(item_ids) != len(set(item_ids)):
+        raise typer.BadParameter("--item-id 不能重复。", param_hint="--item-id")
+    run_write_command(
+        ctx,
+        command="campaigns.approve-drafts",
+        path=f"/api/agent/v1/campaigns/{campaign_id}/approve-drafts",
+        json_body={"item_ids": item_ids},
+        guide_topic="campaigns",
+        human_formatter=format_detail,
+    )
+
+
 @campaigns_app.command("start-drafts")
 def start_campaign_drafts(
     ctx: typer.Context,

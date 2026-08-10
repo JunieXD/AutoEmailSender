@@ -34,7 +34,8 @@ DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
     "idempotency",
     "lifecycle",
 )
-_MAX_COMPACT_DESCRIPTION_BYTES: Final = 1_500
+_MAX_COMPACT_DESCRIPTION_BYTES: Final = 4_000
+_CLICK_ROOT_CACHE: dict[int, tuple[typer.Typer, Command]] = {}
 
 _DESCRIPTION_SECTION_KEYS: Final[dict[str, str]] = {
     "input": "input",
@@ -90,7 +91,7 @@ def describe_command(app: typer.Typer, requested_command: str) -> CommandDescrip
     capability = get_capability(normalized)
     if capability is not None and capability.availability != "available":
         return _describe_unavailable_capability(capability)
-    return _describe_command_from_root(get_command(app), normalized)
+    return _describe_command_from_root(_click_root(app), normalized)
 
 
 def describe_commands(
@@ -108,7 +109,7 @@ def describe_commands(
             descriptions[requested_command] = _describe_unavailable_capability(capability)
             continue
         if root is None:
-            root = get_command(app)
+            root = _click_root(app)
         description = _describe_command_from_root(root, normalized)
         if description is not None:
             descriptions[requested_command] = description
@@ -133,6 +134,16 @@ def describe_command_revisions(
         if isinstance(revision, str):
             revisions[command] = revision
     return revisions
+
+
+def _click_root(app: typer.Typer) -> Command:
+    cache_key = id(app)
+    cached = _CLICK_ROOT_CACHE.get(cache_key)
+    if cached is not None and cached[0] is app:
+        return cached[1]
+    root = get_command(app)
+    _CLICK_ROOT_CACHE[cache_key] = (app, root)
+    return root
 
 
 def _describe_command_from_root(
@@ -237,6 +248,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     parameters = description.get("parameters")
     required_parameters: dict[str, object] = {}
     optional_parameters: list[str] = []
+    optional_parameter_contracts: dict[str, object] = {}
     if isinstance(parameters, list):
         for parameter in parameters:
             if not isinstance(parameter, dict):
@@ -248,10 +260,12 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                 required_parameters[name] = _compact_parameter(parameter)
             else:
                 optional_parameters.append(name)
+                optional_parameter_contracts[name] = _compact_parameter(parameter)
 
     unavailable = description.get("kind") == "unavailable"
     input_contract = description.get("input")
     global_options: list[str] = []
+    global_option_contracts: dict[str, object] = {}
     if isinstance(input_contract, dict) and not unavailable:
         raw_global_options = input_contract.get("global_options")
         if isinstance(raw_global_options, dict):
@@ -260,6 +274,7 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                     continue
                 if name in {"request_id", "format"} or bool(option.get("supported")):
                     global_options.append(name)
+                    global_option_contracts[name] = _compact_global_option(option)
 
     output_contract = description.get("output")
     if not isinstance(output_contract, dict):
@@ -270,7 +285,9 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     input_summary: dict[str, object] = {
         "required": required_parameters,
         "optional": optional_parameters,
+        "optional_contracts": optional_parameter_contracts,
         "global_options": global_options,
+        "global_option_contracts": global_option_contracts,
     }
     if description.get("input_file_examples"):
         input_summary["file_input"] = True
@@ -314,7 +331,13 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
         summary["next_commands"] = next_commands
     if isinstance(description.get("unavailability"), dict):
         summary["unavailability"] = description["unavailability"]
-        summary["input"] = {"required": {}, "optional": [], "global_options": []}
+        summary["input"] = {
+            "required": {},
+            "optional": [],
+            "optional_contracts": {},
+            "global_options": [],
+            "global_option_contracts": {},
+        }
         summary["output"] = {"key_fields": []}
     trust = description.get("trust")
     if isinstance(trust, dict) and trust.get("external_content") != "none":
@@ -383,7 +406,18 @@ def description_sections(
         if key is None:
             invalid.append(requested)
             continue
-        selected[normalized] = description.get(key)
+        value = description.get(key)
+        if normalized == "input" and isinstance(value, dict):
+            # ``parameters`` is the legacy parser projection of the same
+            # information already represented by ``schema``.  Keep it in the
+            # full view for compatibility, but do not repeat it in an
+            # explicitly requested input section.
+            value = {
+                item_key: item_value
+                for item_key, item_value in value.items()
+                if item_key != "parameters"
+            }
+        selected[normalized] = value
     return selected, invalid
 
 
@@ -403,6 +437,27 @@ def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
                 result[key] = type_info[key]
     if bool(parameter.get("multiple")):
         result["multiple"] = True
+    if parameter.get("required") is not True and "default" in parameter:
+        result["default"] = parameter.get("default")
+    nargs = parameter.get("nargs")
+    if isinstance(nargs, int) and nargs != 1:
+        result["nargs"] = nargs
+    return result
+
+
+def _compact_global_option(option: dict[str, object]) -> dict[str, object]:
+    result: dict[str, object] = {
+        "flags": option.get("flags", []),
+        "type": option.get("type", "string"),
+    }
+    values = option.get("values")
+    if isinstance(values, list):
+        result["enum"] = values
+    if option.get("multiple") is True:
+        result["multiple"] = True
+    for key in ("minimum", "maximum", "default"):
+        if key in option:
+            result[key] = option[key]
     return result
 
 

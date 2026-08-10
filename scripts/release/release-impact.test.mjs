@@ -35,6 +35,25 @@ test("CLI product changes require frozen and quick Windows validation", () => {
   assert.deepEqual(requiredIds(plan), ["cli-suite", "cli-frozen-build", "windows-quick-qa"]);
 });
 
+test("CLI build tooling changes invalidate frozen and Windows validation", () => {
+  const benchmarkPlan = planReleaseImpact(["scripts/quality/benchmark_agent_cli.py"]);
+
+  assert.deepEqual(benchmarkPlan.categories, ["cli-product"]);
+  assert.deepEqual(requiredIds(benchmarkPlan), [
+    "cli-suite",
+    "cli-frozen-build",
+    "windows-quick-qa",
+  ]);
+
+  const windowsBuildPlan = planReleaseImpact(["scripts/build/build-cli.ps1"]);
+  assert.deepEqual(windowsBuildPlan.categories, ["cli-product", "windows-packaging"]);
+  assert.deepEqual(requiredIds(windowsBuildPlan), [
+    "cli-suite",
+    "cli-frozen-build",
+    "windows-formal-qa",
+  ]);
+});
+
 test("release orchestration changes run contracts without rebuilding installers", () => {
   const plan = planReleaseImpact([
     ".github/workflows/release.yml",

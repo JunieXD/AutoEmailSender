@@ -54,7 +54,7 @@ const agentStateStyles: Record<DesktopAgentIntegrationStatus["state"], string> =
 const unsupportedStatus: DesktopAgentSupportStatus = {
   supported: false,
   state: "unsupported",
-  message: "命令行与 Agent 支持仅在安装后的 Windows 或 Apple 芯片 Mac 桌面版中可用。",
+  message: "仅支持 Windows 和 Apple 芯片 Mac 桌面版。",
   onboardingPending: false,
   cliCommand: "auto-email-sender",
   cliPath: "",
@@ -212,7 +212,7 @@ export function AgentSupportCard() {
             </span>
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-600">
-            让 Codex、Claude Code、Cursor 等本地 Agent 按你的自然语言要求操作软件。
+            让本地 Agent 按你的要求操作软件。
           </p>
         </div>
         <ChevronDown
@@ -231,6 +231,12 @@ export function AgentSupportCard() {
           className="collapsible-card-content"
         >
           <div className="collapsible-card-body min-h-0 px-6">
+            {!displayStatus.supported ? (
+              <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4 text-sm text-stone-600">
+                {displayStatus.message}
+              </div>
+            ) : (
+              <>
             <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr,0.9fr]">
               <div className="rounded-2xl border border-stone-200 bg-[#fcfbf8] p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
@@ -238,10 +244,7 @@ export function AgentSupportCard() {
                   它能做什么
                 </div>
                 <p className="mt-3 text-sm leading-6 text-stone-600">
-                  举例来说，你可以让 Agent 读取全部回信，找出回信中表示没名额的导师，选择模板和附件生成草稿再次发送邮件。真正发送前，它会先展示一次性发送计划，并等你明确确认。
-                </p>
-                <p className="mt-3 text-sm leading-6 text-stone-500">
-                  Agent 可以根据当前 CLI 提供的能力操控软件。
+                  可分析回信、生成重发草稿；发送前仍需确认。
                 </p>
               </div>
 
@@ -256,9 +259,9 @@ export function AgentSupportCard() {
                     <dd className="mt-1 font-mono text-xs text-stone-800">{displayStatus.cliCommand}</dd>
                   </div>
                   <div>
-                    <dt className="text-stone-500">Agent 使用说明（Skill）</dt>
+                    <dt className="text-stone-500">Agent 操作说明</dt>
                     <dd className="mt-1 text-xs leading-5 text-stone-700">
-                      在下方选择 Agent 后安装。软件升级时，已安装的官方 Skill 会自动更新。
+                      选择 Agent 后安装；软件升级时自动更新。
                     </dd>
                   </div>
                 </dl>
@@ -288,8 +291,8 @@ export function AgentSupportCard() {
             <div className="mt-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-stone-900">Agent 接入</h3>
-                  <p className="mt-1 text-xs leading-5 text-stone-500">选择要让其自动读取官方 Skill 的 Agent。</p>
+                  <h3 className="text-sm font-semibold text-stone-900">选择 Agent</h3>
+                  <p className="mt-1 text-xs leading-5 text-stone-500">为所选 Agent 安装操作说明。</p>
                 </div>
                 <label className="relative block w-full sm:w-56">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
@@ -343,7 +346,7 @@ export function AgentSupportCard() {
 
             {displayStatus.state === "enabled" && displayStatus.requiresAgentRestart ? (
               <p className="mt-3 text-xs leading-5 text-stone-500">
-                如果 Agent 在启用前已经打开，请新建一个 Agent 对话或重启 Agent，让新的 PATH 和 Skill 生效。
+                若 Agent 已打开，请新建对话或重启后再使用。
               </p>
             ) : null}
 
@@ -383,13 +386,15 @@ export function AgentSupportCard() {
                 </button>
               ) : null}
             </div>
+              </>
+            )}
           </div>
         </div>
       ) : null}
       <ConfirmDialog
         open={disableConfirmationOpen}
         title="关闭命令行与 Agent 支持？"
-        description="这会移除命令行工具，并卸载全部已安装的官方 Agent 使用说明。已打开的 Agent 对话可能需要新建或重启后才会停止使用它。"
+        description="将卸载命令行和官方 Skill；已打开的 Agent 可能需重启后失效。"
         confirmLabel="确认关闭"
         tone="danger"
         onCancel={() => setDisableConfirmationOpen(false)}

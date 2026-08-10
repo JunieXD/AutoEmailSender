@@ -180,10 +180,10 @@ const openTemplateModal = async () => {
   renderProfilePage();
   fireEvent.click(
     screen.getByRole("button", {
-      name: /材料与模板\s*任务准备\s*准备默认模板和常用材料/,
+      name: /材料与模板\s*管理材料和模板/,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+  fireEvent.click(screen.getByRole("button", { name: "管理模板" }));
   await screen.findByDisplayValue("现有模板");
 };
 
@@ -299,7 +299,7 @@ describe("ProfilePage default template import", () => {
     });
     expect(mockedNotifySuccess).toHaveBeenCalledWith(
       "模板导入成功",
-      expect.stringContaining("已导入 DOCX 模板文件"),
+      expect.stringContaining("已导入 DOCX 并生成纯文本正文"),
     );
   });
 
@@ -335,10 +335,10 @@ describe("ProfilePage default template import", () => {
     renderProfilePage();
     fireEvent.click(
       screen.getByRole("button", {
-        name: /材料与模板\s*任务准备\s*准备默认模板和常用材料/,
+        name: /材料与模板\s*管理材料和模板/,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "管理模板库" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理模板" }));
     await screen.findByText("未保存");
     const nameInput = await screen.findByRole("textbox", { name: /模板名称/ });
     fireEvent.change(nameInput, { target: { value: "稍后补充的模板" } });
@@ -474,7 +474,7 @@ describe("ProfilePage default template import", () => {
     expect(screen.getByLabelText("模板列表")).toHaveTextContent("保留模板");
     expect(mockedNotifySuccess).toHaveBeenCalledWith(
       "模板已删除",
-      "模板已从模板库移除，已创建任务和邮件内容保持不变。",
+      "已创建任务不受影响。",
     );
   });
 

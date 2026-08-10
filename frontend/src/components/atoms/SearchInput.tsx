@@ -13,7 +13,7 @@ interface SearchInputProps {
 export const SearchInput: React.FC<SearchInputProps> = ({ 
   value, 
   onChange, 
-  placeholder = "搜索姓名、学校...",
+  placeholder = "搜索姓名、学校…",
   ariaLabel = "搜索",
   variant = 'compact',
   className,

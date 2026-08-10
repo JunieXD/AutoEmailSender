@@ -27,7 +27,7 @@ export function ProjectAcknowledgements() {
             致谢
           </h2>
           <p className="mt-1 text-sm leading-6 text-stone-600">
-            感谢为项目提供模型额度与开发支持的同学们，完整名单与贡献记录见官网。
+            感谢所有提供模型额度和开发支持的贡献者。
           </p>
           <div
             className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs leading-5"

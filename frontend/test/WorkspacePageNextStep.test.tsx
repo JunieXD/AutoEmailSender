@@ -487,7 +487,7 @@ describe("WorkspacePage next-step", () => {
 
     await waitFor(() => {
       expect(mockedNotificationApi.notifySuccess).toHaveBeenCalledWith(
-        "收到老师回复",
+        "收到导师回复",
         "王教授回复了：Re: 测试主题",
       );
       expect(screen.getByText("new-replies:1")).toBeInTheDocument();
@@ -524,7 +524,7 @@ describe("WorkspacePage next-step", () => {
 
     await waitFor(() => {
       expect(mockedNotificationApi.notifySuccess).toHaveBeenCalledWith(
-        "收到老师回复",
+        "收到导师回复",
         "王教授回复了：欢迎继续交流 后续联系",
       );
     });
@@ -871,7 +871,7 @@ describe("WorkspacePage next-step", () => {
     await waitFor(() => {
       expect(mockedNotificationApi.notifySuccess).toHaveBeenCalledWith(
         "AI 改写已完成",
-        expect.stringMatching(/^输入 6,114 \/ 输出 1,363 \/ 总计 7,477 token，耗时 \d+\.\d 秒$/),
+        expect.stringMatching(/^输入 6,114 \/ 输出 1,363 \/ 总计 7,477 Token，耗时 \d+\.\d 秒$/),
       );
     });
   });

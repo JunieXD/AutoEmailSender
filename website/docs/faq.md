@@ -2,15 +2,13 @@
 
 ## 如何更新
 
-应用会检查 GitHub Releases 的新版本。Windows 版继续使用内置更新流程；macOS Apple Silicon 版由 Sparkle 显示原生更新窗口，确认后自动下载、替换并重启应用。Intel Mac 暂未提供安装包。
+应用会自动检查更新。Windows 和新版 macOS 可直接在应用内更新；旧版 macOS 需手动覆盖安装一次。Intel Mac 暂无安装包。
 
-如果你正在使用尚未集成 Sparkle 的旧 macOS 版本，它仍会打开 GitHub Releases。此时需要最后手动下载一次新版 `.dmg` 并覆盖安装；从该版本起即可在应用内更新。
+旧版 macOS 如果打开 GitHub Releases，请下载新版 `.dmg` 并覆盖安装；之后即可在应用内更新。
 
 ## 检查更新失败怎么办
 
-检查更新需要访问 GitHub。网络不可用、GitHub 无法访问或代理配置异常时，检查更新将失败，并有相应提示。macOS 的错误提示由 Sparkle 原生窗口显示。
-
-可以稍后重试，或手动前往 GitHub Releases 下载最新安装包：
+更新检查需要访问 GitHub。失败时请检查网络和代理，稍后重试，或手动下载最新安装包：
 
 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases)
 
@@ -24,8 +22,6 @@ macOS Apple Silicon 安装版数据目录：
 
 `~/Library/Application Support/auto-email-sender-desktop`
 
-本地运行源码时，默认数据目录是仓库根目录下的 `data/`。后端支持通过环境变量 `AUTO_EMAIL_SENDER_DATA_DIR` 自定义路径。
-
 ## 为什么安装时提示未知发布者
 
 安装包暂未购买 Windows 代码签名证书，因此 Windows 可能提示「未知发布者」或 SmartScreen 拦截。
@@ -34,7 +30,7 @@ macOS Apple Silicon 安装版数据目录：
 
 ## macOS 为什么提示无法验证开发者
 
-当前 macOS Apple Silicon 版采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证，因此首次打开可能被系统拦截。请确认安装包来自本项目 GitHub Releases 页面，然后到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。之后可以正常双击启动。
+当前 macOS 版采用 ad-hoc 签名，未使用 Developer ID 签名和 Apple 公证，首次打开可能被系统拦截。确认安装包来自本项目后，请到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。
 
 ## 启动后白屏怎么办
 
@@ -55,7 +51,7 @@ macOS Apple Silicon 安装版数据目录：
 - 邮箱服务商是否限制第三方客户端登录。
 - 网络能否访问邮箱服务器。
 
-还不清楚 SMTP、IMAP 或授权码是什么，先看 [首次配置](./first-run#1-创建发件身份) 和 [个人配置](./profile#发件身份) 的说明。
+还不清楚 SMTP、IMAP 或授权码是什么，请查看[首次配置](./first-run#_1-创建发件身份)和[个人中心](./profile#发件身份)。
 
 ## 匹配分析结果不准怎么办
 
@@ -64,6 +60,5 @@ macOS Apple Silicon 安装版数据目录：
 - 主材料是否上传正确。
 - 导师研究方向和近期论文是否完整。
 - 模型配置是否可用。
-- 邮件模板是否过于空泛。
 
 匹配分析是辅助判断，不建议把分数当作唯一依据。

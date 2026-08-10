@@ -11,6 +11,10 @@ from typing import Literal
 AgentSkillState = Literal["not_configured", "not_installed", "installed", "needs_update"]
 
 
+AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION = 5
+SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS = frozenset({4, 5})
+
+
 AGENT_NAMES: dict[str, str] = {
     "codex": "Codex",
     "claude_code": "Claude Code",
@@ -51,17 +55,22 @@ def inspect_agent_skill_installation() -> dict[str, object]:
 
     if not isinstance(manifest, dict) or manifest.get("enabled") is not True:
         return _not_configured(manifest_path, "尚未启用命令行与 Agent 支持。")
-    if manifest.get("schema_version") != 4:
+    schema_version = manifest.get("schema_version")
+    if schema_version not in SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS:
         return {
             "ok": False,
             "state": "needs_update",
             "manifest_path": manifest_path.as_posix(),
-            "message": "Agent 使用说明来自旧版本，需要在个人中心重新安装。",
+            "message": "Agent 安装清单版本不受当前 CLI 支持，需要在个人中心重新安装。",
             "items": [],
             "cli": _cli_needs_update("安装清单版本过旧，无法验证 CLI 文件。"),
         }
 
-    cli_installation = _inspect_cli_installation(manifest)
+    assert isinstance(schema_version, int)
+    cli_installation = _inspect_cli_installation(
+        manifest,
+        schema_version=schema_version,
+    )
     agents = manifest.get("agents")
     if not isinstance(agents, dict) or not agents:
         return {
@@ -147,7 +156,11 @@ def _not_configured(manifest_path: Path, message: str, *, ok: bool = True) -> di
     }
 
 
-def _inspect_cli_installation(manifest: dict[str, object]) -> dict[str, object]:
+def _inspect_cli_installation(
+    manifest: dict[str, object],
+    *,
+    schema_version: int,
+) -> dict[str, object]:
     source_value = manifest.get("cli_source")
     target_value = manifest.get("cli_target")
     expected_hash = manifest.get("cli_sha256")
@@ -168,6 +181,13 @@ def _inspect_cli_installation(manifest: dict[str, object]) -> dict[str, object]:
 
     source = Path(source_value).expanduser()
     target = Path(target_value).expanduser()
+    if schema_version >= 5:
+        return _inspect_cli_bundle_installation(
+            source=source,
+            target=target,
+            expected_hash=expected_hash,
+        )
+
     source_hash = _safe_sha256_file(source)
     target_hash = _safe_sha256_file(target)
     checks = [
@@ -203,6 +223,81 @@ def _inspect_cli_installation(manifest: dict[str, object]) -> dict[str, object]:
         "target": target.as_posix(),
         "expected_sha256": expected_hash,
         "checks": checks,
+    }
+
+
+def _inspect_cli_bundle_installation(
+    *,
+    source: Path,
+    target: Path,
+    expected_hash: str,
+) -> dict[str, object]:
+    """Validate the schema-v5 onedir bundle and its managed command target.
+
+    The desktop installer fingerprints the complete PyInstaller onedir bundle.
+    On macOS the command target is a symlink to the embedded executable; on
+    Windows it is a small managed ``.cmd`` launcher.  Neither target's file
+    hash is expected to equal the bundle fingerprint.
+    """
+
+    bundle = source.parent
+    bundle_hash = _sha256_directory(bundle)
+    source_ok = source.is_file()
+    target_binding = _inspect_cli_target_binding(source=source, target=target)
+    checks = [
+        {
+            "id": "cli_bundle_sha256",
+            "ok": bundle_hash == expected_hash,
+            "path": bundle.as_posix(),
+            "actual_sha256": bundle_hash,
+        },
+        {
+            "id": "cli_source_executable",
+            "ok": source_ok,
+            "path": source.as_posix(),
+        },
+        target_binding,
+    ]
+    healthy = all(bool(check["ok"]) for check in checks)
+    return {
+        "ok": healthy,
+        "state": "installed" if healthy else "needs_update",
+        "message": (
+            "CLI onedir 文件、目录指纹与安装目标一致。"
+            if healthy
+            else "CLI onedir 文件、目录指纹或安装目标不一致，需要重新安装。"
+        ),
+        "source": source.as_posix(),
+        "target": target.as_posix(),
+        "expected_sha256": expected_hash,
+        "hash_kind": "canonical_directory_v1",
+        "checks": checks,
+    }
+
+
+def _inspect_cli_target_binding(*, source: Path, target: Path) -> dict[str, object]:
+    binding_type = "missing"
+    healthy = False
+    try:
+        if target.is_symlink():
+            binding_type = "symlink"
+            healthy = target.resolve(strict=True) == source.resolve(strict=True)
+        elif target.is_file() and target.suffix.lower() in {".cmd", ".bat"}:
+            binding_type = "windows_launcher"
+            expected_source = str(source.resolve()).replace("%", "%%")
+            expected = f'@echo off\r\n"{expected_source}" %*\r\nexit /b %ERRORLEVEL%\r\n'
+            with target.open("r", encoding="utf-8", newline="") as stream:
+                healthy = stream.read() == expected
+        elif target.is_file():
+            binding_type = "same_file"
+            healthy = os.path.samefile(source, target)
+    except (OSError, UnicodeError):
+        healthy = False
+    return {
+        "id": "cli_target_binding",
+        "ok": healthy,
+        "path": target.as_posix(),
+        "binding_type": binding_type,
     }
 
 

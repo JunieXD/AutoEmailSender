@@ -174,7 +174,7 @@ const PROFILE_SETUP_STAGES = [
     id: "model",
     label: "3. 模型配置",
     title: "模型配置",
-    description: "以 DeepSeek 为示例配置可用模型并测试连接。",
+    description: "配置并测试 AI 模型。",
   },
   {
     id: "test",
@@ -186,7 +186,7 @@ const PROFILE_SETUP_STAGES = [
   id: ProfileSetupSectionId;
   label: string;
   title: string;
-  description: string;
+  description?: string;
 }>;
 
 const createEmptyIdentityForm = (): IdentityFormState => ({
@@ -443,7 +443,9 @@ function ProfileSetupSection({
             <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
             {badge}
           </div>
-          <p className="mt-2 text-sm leading-6 text-stone-600">{description}</p>
+          {description ? (
+            <p className="mt-2 text-sm leading-6 text-stone-600">{description}</p>
+          ) : null}
         </div>
         <ChevronDown
           className={clsx(
@@ -523,7 +525,7 @@ const LlmModelsFeedbackPanel = ({
               : "bg-stone-900 text-white",
           )}
         >
-          {result.consumes_tokens ? "会耗 token" : "不耗 token"}
+          {result.consumes_tokens ? "会耗 Token" : "不耗 Token"}
         </span>
       </div>
       <p className="mt-2 text-sm leading-6 text-stone-700">{result.message}</p>
@@ -659,7 +661,7 @@ const LlmTestFeedbackPanel = ({
               : "bg-stone-900 text-white",
           )}
         >
-          {result.consumes_tokens ? "会耗 token" : "不耗 token"}
+          {result.consumes_tokens ? "会耗 Token" : "不耗 Token"}
         </span>
       </div>
       <p className="mt-2 text-sm leading-6 text-stone-700">{result.message}</p>
@@ -690,13 +692,13 @@ const LlmTestFeedbackPanel = ({
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
         <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          输入 token：{result.prompt_tokens ?? "未返回"}
+          输入 Token：{result.prompt_tokens ?? "未返回"}
         </span>
         <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          输出 token：{result.completion_tokens ?? "未返回"}
+          输出 Token：{result.completion_tokens ?? "未返回"}
         </span>
         <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          总 token：{result.total_tokens ?? "未返回"}
+          总 Token：{result.total_tokens ?? "未返回"}
         </span>
       </div>
       {result.response_preview ? (
@@ -1048,12 +1050,15 @@ const OutreachTemplateSummaryCard = ({
               发信模板库
             </div>
             <div className="mt-1 text-xs leading-6 text-stone-500">
-              模板与发件身份独立保存，可创建多份并在使用时选择。当前身份默认：
+              模板可单独保存并重复使用。
+            </div>
+            <div className="mt-1 text-xs leading-6 text-stone-500">
+              默认模板：
               {template
                 ? template.name
                 : globalTemplate
-                  ? `未单独设置（使用全局“${globalTemplate.name}”）`
-                  : "未选择"}
+                  ? `使用全局“${globalTemplate.name}”`
+                  : "未设置"}
             </div>
             <div className="mt-1 text-xs leading-6 text-stone-500">
               默认写信方式：
@@ -1079,7 +1084,7 @@ const OutreachTemplateSummaryCard = ({
           className="inline-flex items-center gap-2 rounded-2xl border border-stone-300 bg-white/95 px-4 py-2.5 text-sm font-medium text-stone-800 shadow-sm transition hover:border-stone-400 hover:bg-white"
         >
           <FolderOpen className="h-4 w-4" />
-          管理模板库
+          管理模板
         </button>
       </div>
     </div>
@@ -1211,7 +1216,7 @@ const OutreachTemplateModal = ({
                 发信模板库
               </h3>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-500">
-                模板可以单独保存并重复使用。修改或删除模板，不会改变已经创建的任务和邮件内容。
+                模板可复用；修改不影响已创建任务。
               </p>
             </div>
             <button
@@ -1323,7 +1328,7 @@ const OutreachTemplateModal = ({
                   </div>
                 ) : visibleTemplateCount === 0 ? (
                   <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-500">
-                    还没有模板。点击“新建模板”开始创建，不需要先完善发件身份。
+                    暂无模板，点击“新建模板”创建。
                   </div>
                 ) : (
                   <>
@@ -1447,7 +1452,7 @@ const OutreachTemplateModal = ({
             </div>
 
             <div className="rounded-2xl border border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
-              可在主题或正文编辑器中通过“占位符”按钮插入个性化信息，例如插入“导师姓名”后，发送时会替换为对应导师的姓名。
+              用“占位符”插入导师姓名等变量，发送时自动替换。
             </div>
 
             <div className="grid gap-4">
@@ -1459,7 +1464,7 @@ const OutreachTemplateModal = ({
                 placeholder="例如：申请与 {{name}} 老师交流科研方向"
               />
               <p className="text-xs leading-6 text-stone-500">
-                导入文件只带入正文，主题需单独填写。
+                导入文件仅包含正文，主题需另填。
               </p>
               <EmailTemplateEditor
                 label="模板正文"
@@ -1472,7 +1477,7 @@ const OutreachTemplateModal = ({
 
             <div className="rounded-2xl border border-dashed border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
               {form.outreach_generation_mode === "template"
-                ? "选用模板时会把内容复制到任务中；之后修改或删除模板，不会影响已创建任务。"
+                ? "选用时复制到任务，后续修改互不影响。"
                 : "AI 只在模板基础上调整称呼、个性化理由和主题。"}
             </div>
 
@@ -1534,7 +1539,7 @@ const OutreachTemplateModal = ({
         <div className="border-t border-stone-200/80 bg-white/80 px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs leading-6 text-stone-500">
-              只需填写模板名称即可保存；主题和正文可稍后补充，创建或发送邮件时会再检查。
+              只填名称也可保存，缺失内容会标记为“待完善”。
             </div>
             <button
               type="button"
@@ -1902,12 +1907,9 @@ export const ProfilePage = () => {
     model: null,
     test: null,
   });
-  const templateSubjectRef = useRef("");
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   templateEditorIdRef.current = templateEditorId;
-  templateSubjectRef.current =
-    outreachTemplateForm.outreach_template_subject;
 
   const focusInput = (element: HTMLInputElement | null) => {
     if (!element) {
@@ -2267,7 +2269,7 @@ export const ProfilePage = () => {
           completed: hasLlmProfile,
           statusDetail: hasLlmProfile
             ? `已保存模型：${setupLlmProfile!.name}`
-            : "待保存模型配置",
+            : "待保存模型",
         };
       }
       return {
@@ -2521,7 +2523,7 @@ export const ProfilePage = () => {
       await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
       notifySuccess(
         isCreating ? "模板创建成功" : "模板保存成功",
-        "模板已独立保存；主题或正文未填写时会标记为“内容待完善”。",
+        "缺失主题或正文时会标记为“待完善”。",
       );
       return saved;
     } catch (saveError) {
@@ -2637,7 +2639,7 @@ export const ProfilePage = () => {
     const confirmed = await confirm({
       title: `确认删除模板“${template.name}”？`,
       description:
-        "删除后将不再显示在模板库中；使用它的身份会取消默认关联，但已创建任务和邮件内容不会改变。",
+        "删除后取消默认关联；已创建任务不受影响。",
       confirmLabel: "删除模板",
       cancelLabel: "取消",
       tone: "danger",
@@ -2676,7 +2678,7 @@ export const ProfilePage = () => {
       }
       notifySuccess(
         "模板已删除",
-        "模板已从模板库移除，已创建任务和邮件内容保持不变。",
+        "已创建任务不受影响。",
       );
     } catch (templateError) {
       notifyError(
@@ -2719,7 +2721,6 @@ export const ProfilePage = () => {
         return;
       }
 
-      const hasSubject = Boolean(templateSubjectRef.current.trim());
       setOutreachTemplateForm((previous) => ({
         ...previous,
         name:
@@ -2727,12 +2728,7 @@ export const ProfilePage = () => {
         outreach_template_body_text: imported.body_text,
         outreach_template_body_html: imported.body_html,
       }));
-      notifySuccess(
-        "模板导入成功",
-        hasSubject
-          ? `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。`
-          : `已导入 ${imported.format_name} 模板文件，并自动生成纯文本正文。可以补充主题后保存，也可以先保存并稍后完善。`,
-      );
+      notifySuccess("模板导入成功", `已导入 ${imported.format_name} 并生成纯文本正文。`);
     } catch (importError) {
       notifyError(
         "模板导入失败",
@@ -2860,7 +2856,7 @@ export const ProfilePage = () => {
     }
 
     if (!identityForm.profile_name.trim() || !identityForm.sender_name.trim()) {
-      notifyFormErrors("请检查表单", ["请填写配置名称和发件人姓名"]);
+      notifyFormErrors("请检查表单", ["请填写身份名称和发件人姓名"]);
       return null;
     }
     if (
@@ -2879,16 +2875,12 @@ export const ProfilePage = () => {
       const saved = isExistingEditorId(identityEditorId)
         ? await updateIdentity(identityEditorId, payload)
         : await createIdentity(payload);
-      const isCreatingIdentity = identityEditorId === "new";
       await refreshSelections();
       setIdentityEditorId(saved.id);
       setIdentityForm(toIdentityForm(saved));
       setSmtpPasswordVisible(false);
       if (!silent) {
-        notifySuccess(
-          "身份保存成功",
-          isCreatingIdentity ? "身份已创建。" : "身份已保存。",
-        );
+        notifySuccess(identityEditorId === "new" ? "身份已创建" : "身份已保存");
       }
       return saved;
     } catch (saveError) {
@@ -2919,14 +2911,10 @@ export const ProfilePage = () => {
       const saved = isExistingEditorId(llmEditorId)
         ? await updateLLMProfile(llmEditorId, payload)
         : await createLLMProfile(payload);
-      const isCreatingLlm = llmEditorId === "new";
       await refreshSelections();
       setLlmEditorId(saved.id);
       setLlmForm(toLLMForm(saved));
-      notifySuccess(
-        "模型保存成功",
-        isCreatingLlm ? "模型配置已创建。" : "模型配置已保存。",
-      );
+      notifySuccess(llmEditorId === "new" ? "模型配置已创建" : "模型配置已保存");
     } catch (saveError) {
       notifyError(
         "模型保存失败",
@@ -3072,10 +3060,7 @@ export const ProfilePage = () => {
                     return;
                   }
                   setSelectedIdentityId(editingIdentity.id);
-                  notifySuccess(
-                    "已设为当前身份",
-                    `当前身份已切换为“${getIdentityProfileName(editingIdentity)}”。`,
-                  );
+                  notifySuccess(`当前身份：${getIdentityProfileName(editingIdentity)}`);
                 })();
               }}
               className="ui-btn-secondary"
@@ -3098,10 +3083,7 @@ export const ProfilePage = () => {
                       ...previous,
                       is_default: true,
                     }));
-                    notifySuccess(
-                      "已设为默认身份",
-                      `“${getIdentityProfileName(editingIdentity)}”已设为默认身份。`,
-                    );
+                    notifySuccess(`默认身份：${getIdentityProfileName(editingIdentity)}`);
                   })
                   .catch((defaultError) => {
                     notifyError(
@@ -3133,10 +3115,7 @@ export const ProfilePage = () => {
                   setIdentityEditorId(null);
                   setIdentityForm(createEmptyIdentityForm());
                   setSmtpPasswordVisible(false);
-                  notifySuccess(
-                    "删除身份成功",
-                    `身份“${getIdentityProfileName(editingIdentity)}”已删除。`,
-                  );
+                  notifySuccess(`已删除身份“${getIdentityProfileName(editingIdentity)}”`);
                 } catch (deleteError) {
                   notifyError(
                     "删除身份失败",
@@ -3190,7 +3169,7 @@ export const ProfilePage = () => {
       {loading ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载配置...
+          正在加载配置…
         </div>
       ) : (
         <div className="mt-6 space-y-6">
@@ -3199,15 +3178,12 @@ export const ProfilePage = () => {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-semibold text-stone-900">
-                    首次配置建议
+                    首次配置
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-stone-600">
-                    按顺序完成身份、材料、模型和测试写信。
+                    完成以下 4 项即可开始使用。
                   </p>
                 </div>
-                <span className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs text-stone-600">
-                  新用户上手流程
-                </span>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {setupItems.map((item) => (
@@ -3252,7 +3228,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="identity"
             title="发件身份"
-            description="配置发件邮箱、SMTP 和 IMAP。"
+            description=""
             open={openSetupSections.identity}
             renderContent={renderedSetupSections.identity}
             onToggle={() => toggleSetupSection("identity")}
@@ -3268,9 +3244,10 @@ export const ProfilePage = () => {
             }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
-              <div className="grid gap-4 lg:grid-cols-[1.2fr,0.8fr]">
                 <EditorSwitcher
-                  label="当前编辑的身份配置"
+                  label={editingIdentity
+                    ? `编辑发件身份：${getIdentityProfileName(editingIdentity)}`
+                    : "新建发件身份"}
                   helper={
                     identities.length > 0 ? "点选切换，或新建一套。" : undefined
                   }
@@ -3279,47 +3256,19 @@ export const ProfilePage = () => {
                     name: getIdentityProfileName(identity),
                   }))}
                   activeId={identityEditorId}
-                  createLabel="新建身份配置"
-                  creatingLabel={
-                    identities.length > 0
-                      ? "正在新建身份配置"
-                      : "新建第一套身份配置"
-                  }
+                  createLabel="新建发件身份"
+                  creatingLabel="新建发件身份"
                   onCreate={beginIdentityCreation}
                   onSelect={openIdentityEditor}
                 />
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-                    <div className="text-xs uppercase tracking-[0.18em] text-stone-400">
-                      使用中
-                    </div>
-                    <div className="mt-2 text-sm font-medium text-stone-900">
-                      {selectedIdentity
-                        ? getIdentityProfileName(selectedIdentity)
-                        : "未选择"}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-                    <div className="text-xs uppercase tracking-[0.18em] text-stone-400">
-                      编辑中
-                    </div>
-                    <div className="mt-2 text-sm font-medium text-stone-900">
-                      {editingIdentity
-                        ? `正在编辑 ${getIdentityProfileName(editingIdentity)}`
-                        : "正在新建身份配置"}
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="block">
-                {renderFieldLabel("配置名称", true)}
+                {renderFieldLabel("身份名称", true)}
                 <input
                   ref={identityNameInputRef}
-                  aria-label="配置名称"
+                  aria-label="身份名称"
                   value={identityForm.profile_name}
                   onChange={(event) =>
                     setIdentityForm((previous) => ({
@@ -3362,7 +3311,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("SMTP Host", true)}
+                {renderFieldLabel("SMTP 服务器", true)}
                 <input
                   value={identityForm.smtp_host}
                   onChange={(event) => handleSmtpHostChange(event.target.value)}
@@ -3386,7 +3335,7 @@ export const ProfilePage = () => {
                       }))
                     }
                     className={clsx(inputClassName, "pr-11")}
-                    placeholder="示例：邮箱授权码或应用专用密码（可从网页版邮箱设置页面中获取）"
+                    placeholder="授权码或应用专用密码"
                   />
                   <button
                     type="button"
@@ -3405,7 +3354,7 @@ export const ProfilePage = () => {
                 </div>
               </div>
               <label className="block">
-                {renderFieldLabel("SMTP Port", true)}
+                {renderFieldLabel("SMTP 端口", true)}
                 <input
                   type="number"
                   value={identityForm.smtp_port}
@@ -3420,7 +3369,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("IMAP Host", true)}
+                {renderFieldLabel("IMAP 服务器", true)}
                 <input
                   value={identityForm.imap_host}
                   onChange={(event) =>
@@ -3434,7 +3383,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("IMAP Port", true)}
+                {renderFieldLabel("IMAP 端口", true)}
                 <input
                   type="number"
                   value={identityForm.imap_port}
@@ -3467,7 +3416,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="materials"
             title="材料与模板"
-            description="准备默认模板和常用材料。"
+            description=""
             open={openSetupSections.materials}
             renderContent={renderedSetupSections.materials}
             onToggle={() => toggleSetupSection("materials")}
@@ -3475,7 +3424,7 @@ export const ProfilePage = () => {
             sectionRef={setMaterialsSetupSectionRef}
             badge={
               <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600">
-                任务准备
+                管理材料和模板
               </span>
             }
           >
@@ -3512,7 +3461,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="model"
             title="模型配置"
-            description="以 DeepSeek 为示例配置可用模型并测试连接。"
+            description=""
             open={openSetupSections.model}
             renderContent={renderedSetupSections.model}
             onToggle={() => toggleSetupSection("model")}
@@ -3525,9 +3474,8 @@ export const ProfilePage = () => {
             }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
-              <div className="grid gap-4 lg:grid-cols-[1.2fr,0.8fr]">
                 <EditorSwitcher
-                  label="当前编辑的模型配置"
+                  label={editingLLM ? `编辑模型：${editingLLM.name}` : "新建模型"}
                   helper={
                     llmProfiles.length > 0
                       ? "点选切换，或新建一套。"
@@ -3535,53 +3483,27 @@ export const ProfilePage = () => {
                   }
                   options={llmProfiles}
                   activeId={llmEditorId}
-                  createLabel="新建模型配置"
-                  creatingLabel={
-                    llmProfiles.length > 0
-                      ? "正在新建模型配置"
-                      : "新建第一套模型配置"
-                  }
+                  createLabel="新建模型"
+                  creatingLabel="新建模型"
                   onCreate={beginLLMCreation}
                   onSelect={openLLMEditor}
                 />
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-                    <div className="text-xs uppercase tracking-[0.18em] text-stone-400">
-                      使用中
-                    </div>
-                    <div className="mt-2 text-sm font-medium text-stone-900">
-                      {selectedLlmProfile?.name ?? "未选择"}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-                    <div className="text-xs uppercase tracking-[0.18em] text-stone-400">
-                      编辑中
-                    </div>
-                    <div className="mt-2 text-sm font-medium text-stone-900">
-                      {editingLLM
-                        ? `正在编辑 ${editingLLM.name}`
-                        : "正在新建模型配置"}
-                    </div>
-                  </div>
-                </div>
-              </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500">
                 <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
                   DeepSeek 示例
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-                  Temperature {DEFAULT_LLM_TEMPERATURE}
+                  随机性（Temperature）{DEFAULT_LLM_TEMPERATURE}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-                  草稿 Token 默认 {DEFAULT_LLM_MAX_TOKENS}
+                  草稿上限 {DEFAULT_LLM_MAX_TOKENS} Token
                 </span>
               </div>
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="block">
-                {renderFieldLabel("配置名称", true)}
+                {renderFieldLabel("名称", true)}
                 <input
                   ref={llmNameInputRef}
                   value={llmForm.name}
@@ -3596,7 +3518,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block md:col-span-2">
-                {renderFieldLabel("API Base URL", true)}
+                {renderFieldLabel("API 地址", true)}
                 <input
                   value={llmForm.api_base_url}
                   onChange={(event) =>
@@ -3648,7 +3570,7 @@ export const ProfilePage = () => {
                 className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {submittingLLM && <Loader2 className="h-4 w-4 animate-spin" />}
-                保存模型配置
+                保存模型
               </button>
               {editingLLM && (
                 <>
@@ -3701,10 +3623,7 @@ export const ProfilePage = () => {
                             return;
                           }
                           setSelectedLlmProfileId(editingLLM.id);
-                          notifySuccess(
-                            "已设为当前模型",
-                            `当前模型已切换为“${editingLLM.name}”。`,
-                          );
+                          notifySuccess(`当前模型：${editingLLM.name}`);
                         })();
                       }}
                       className="ui-btn-secondary"
@@ -3727,10 +3646,7 @@ export const ProfilePage = () => {
                               ...previous,
                               is_default: true,
                             }));
-                            notifySuccess(
-                              "已设为默认模型",
-                              `“${editingLLM.name}”已设为默认模型。`,
-                            );
+                            notifySuccess(`默认模型：${editingLLM.name}`);
                           })
                           .catch((defaultError) => {
                             notifyError(
@@ -3763,10 +3679,7 @@ export const ProfilePage = () => {
                           await refreshSelections();
                           setLlmEditorId(null);
                           setLlmForm(createEmptyLLMForm());
-                          notifySuccess(
-                            "删除模型配置成功",
-                            `模型配置“${editingLLM.name}”已删除。`,
-                          );
+                          notifySuccess(`已删除模型配置“${editingLLM.name}”`);
                         } catch (deleteError) {
                           notifyError(
                             "删除模型配置失败",
@@ -3835,7 +3748,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="test"
             title="测试写信"
-            description="用当前身份和模型发送一封测试邮件。"
+            description=""
             open={openSetupSections.test}
             renderContent={renderedSetupSections.test}
             onToggle={() => toggleSetupSection("test")}
@@ -3843,31 +3756,31 @@ export const ProfilePage = () => {
             sectionRef={setTestSetupSectionRef}
             badge={
               <span className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600">
-                完成前检查
+                测试发信设置
               </span>
             }
           >
             <div className="mt-6">
               <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
                 <Send className="h-4 w-4 text-primary" />
-                发送测试邮件
+                给自己发一封测试邮件
               </div>
               <p className="mt-2 text-sm leading-6 text-stone-600">
-                给自己发一封测试邮件，检查模板、附件、模型和 SMTP。
+                检查模板、附件、模型和邮箱设置。
               </p>
               <p className="mt-2 text-sm leading-6 text-stone-500">
-                仅发送到当前身份邮箱，不写入导师任务。
+                仅用于测试，不会创建导师任务。
               </p>
               <div className="mt-4">
                 <Link to="/test-compose" className="ui-btn-primary">
                   <Send className="h-4 w-4" />
-                  进入测试写信页
+                  开始测试
                 </Link>
               </div>
             </div>
 
             <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-4 text-sm leading-6 text-emerald-800">
-              接着去「导师管理」导入导师，再回首页创建任务。
+              测试成功后，导入导师并创建任务。
             </div>
           </ProfileSetupSection>
 

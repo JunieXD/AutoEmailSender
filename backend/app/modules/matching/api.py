@@ -19,6 +19,8 @@ from .schemas import (
     MatchAnalysisJobItemRead,
     MatchAnalysisJobItemsPageRead,
     MatchAnalysisJobRead,
+    MatchAnalysisSelectionSummaryRead,
+    MatchAnalysisSelectionSummaryRequest,
 )
 from .job_runtime import (
     create_match_analysis_job,
@@ -28,6 +30,7 @@ from .job_runtime import (
     retry_failed_match_analysis_job,
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
+    summarize_match_analysis_selection,
 )
 router = APIRouter(prefix="/api/match-analysis-jobs", tags=["match-analysis-jobs"])
 
@@ -64,10 +67,29 @@ async def create_job(payload: CreateMatchAnalysisJobRequest) -> MatchAnalysisJob
             llm_profile_id=payload.llm_profile_id,
             professor_ids=payload.professor_ids,
             name=payload.name,
+            skip_existing=payload.skip_existing,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return serialize_match_analysis_job(job)
+
+
+@router.post(
+    "/selection-summary",
+    response_model=MatchAnalysisSelectionSummaryRead,
+)
+async def get_match_analysis_selection_summary(
+    payload: MatchAnalysisSelectionSummaryRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> MatchAnalysisSelectionSummaryRead:
+    try:
+        return await summarize_match_analysis_selection(
+            session,
+            identity_id=payload.identity_id,
+            professor_ids=payload.professor_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{job_id}", response_model=MatchAnalysisJobRead)

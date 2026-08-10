@@ -28,6 +28,6 @@ describe("bulkTagConfirmCopy", () => {
         selectedCount: 2,
         tagNames: [],
       }),
-    ).toBe("将清空选中的 2 位导师的全部标签。原来的标签将会被替换。");
+    ).toBe("将清空 2 位导师的全部标签。");
   });
 });

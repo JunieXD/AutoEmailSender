@@ -125,7 +125,7 @@ describe('CommunicationSharingPanel', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('heading', { name: '多身份共享' })).toBeInTheDocument();
     expect(
-      screen.getByText(/组内共享真实收发记录，并可统一显示某个身份的匹配度结果/),
+      screen.getByText(/共享收发记录，可统一匹配度/),
     ).toBeInTheDocument();
     expect(screen.getByText('未创建共享组')).toBeInTheDocument();
     expect(
@@ -280,7 +280,7 @@ describe('CommunicationSharingPanel', () => {
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          description: expect.stringContaining('不会删除任何身份、任务或通信记录'),
+          description: expect.stringContaining('不会删除身份、任务或通信记录'),
         }),
       );
       expect(apiMocks.deleteCommunicationGroup).toHaveBeenCalledWith(10);

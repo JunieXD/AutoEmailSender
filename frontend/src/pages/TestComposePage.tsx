@@ -210,8 +210,7 @@ export const TestComposePage = () => {
     return (
       <main className="mx-auto max-w-4xl px-6 py-10">
         <div className="rounded-3xl border border-dashed border-stone-300 bg-[#fcfbf8] p-10 text-center">
-          <h1 className="text-2xl font-semibold text-stone-900">选择身份和模型</h1>
-          <p className="mt-3 text-sm text-stone-600">使用顶部选择的身份和模型。</p>
+          <h1 className="text-2xl font-semibold text-stone-900">请先在顶部选择身份和模型</h1>
         </div>
       </main>
     );
@@ -295,7 +294,7 @@ export const TestComposePage = () => {
       {loading || !thread ? (
         <div className="flex flex-1 items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载测试写信页...
+          正在加载测试写信页…
         </div>
       ) : (
         <>
@@ -309,33 +308,10 @@ export const TestComposePage = () => {
                 <ArrowLeft className="h-4 w-4" />
                 返回
               </button>
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-                测试邮件工作台
-              </div>
-              <h1 className="mt-2 text-3xl font-semibold text-stone-950">测试写信</h1>
+              <h1 className="text-3xl font-semibold text-stone-950">测试写信</h1>
               <p className="mt-2 text-sm leading-6 text-stone-600">
-                发送到自己的邮箱，用于检查模板、附件和发信设置。
+                给自己发一封测试邮件，检查模板、附件、模型和邮箱设置。
               </p>
-            </div>
-            <div className="grid min-w-full gap-2 text-sm sm:min-w-[520px] sm:grid-cols-3">
-              <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm">
-                <div className="text-xs text-stone-500">身份</div>
-                <div className="mt-1 truncate font-medium text-stone-900">
-                  {identityProfileName}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm">
-                <div className="text-xs text-stone-500">模型 / {thread.llm_profile.name}</div>
-                <div className="mt-1 truncate font-medium text-stone-900">
-                  {thread.llm_profile.model_name}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 shadow-sm">
-                <div className="text-xs text-primary">测试收件邮箱</div>
-                <div className="mt-1 truncate font-medium text-stone-900">
-                  {thread.identity.email_address}
-                </div>
-              </div>
             </div>
           </header>
 
@@ -356,7 +332,7 @@ export const TestComposePage = () => {
               <div className="space-y-4">
                 <div className="rounded-2xl border border-stone-200 bg-stone-50/80 p-4">
                   <NativeSelectField
-                    label="测试使用的发信模板"
+                    label="选择模板"
                     value={
                       selectedOutreachTemplateId === null
                         ? ""
@@ -387,8 +363,8 @@ export const TestComposePage = () => {
                     {loadingOutreachTemplates
                       ? "正在加载模板库…"
                       : selectedOutreachTemplate
-                        ? `已带入“${selectedOutreachTemplate.name}”。这里的修改只保存到测试草稿。`
-                        : "当前内容作为独立测试草稿保存，不会改动模板库。"}
+                        ? `已带入“${selectedOutreachTemplate.name}”；本次修改不影响模板库。`
+                        : "本次内容将独立保存。"}
                   </p>
                 </div>
                 <SubjectTemplateInput
@@ -439,8 +415,7 @@ export const TestComposePage = () => {
 
               <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-base font-semibold text-stone-900">随信附件</h2>
-                  <span className="text-xs text-stone-500">随邮件发送</span>
+                  <h2 className="text-base font-semibold text-stone-900">附件</h2>
                 </div>
                 <div className="mt-4 space-y-2">
                   {thread.material_options.length === 0 ? (

@@ -826,7 +826,7 @@ export const CrawlJobCard = ({
               className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Pause className="h-4 w-4" />
-              {pausingCrawlJobId === job.id ? "暂停中..." : "暂停抓取"}
+              {pausingCrawlJobId === job.id ? "暂停中…" : "暂停抓取"}
             </button>
             <button
               type="button"
@@ -847,7 +847,7 @@ export const CrawlJobCard = ({
               className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Play className="h-4 w-4" />
-              {resumingCrawlJobId === job.id ? "继续中..." : "继续抓取"}
+              {resumingCrawlJobId === job.id ? "继续中…" : "继续抓取"}
             </button>
             <button
               type="button"
@@ -869,7 +869,7 @@ export const CrawlJobCard = ({
               className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Play className="h-4 w-4" />
-              {retryingCrawlJobId === job.id ? "重新抓取中..." : "重新抓取"}
+              {retryingCrawlJobId === job.id ? "重新抓取中…" : "重新抓取"}
             </button>
             <button
               type="button"
@@ -879,7 +879,7 @@ export const CrawlJobCard = ({
             >
               <CheckCircle2 className="h-4 w-4" />
               {resumingCrawlJobReviewId === job.id
-                ? "转入中..."
+                ? "转入中…"
                 : "转入待审核"}
             </button>
           </>
@@ -3023,7 +3023,7 @@ export const TasksPage = () => {
   const handlePauseCrawlJob = async (jobId: number) => {
     const confirmed = await confirm({
       title: "确认暂停这个抓取任务？",
-      description: "暂停后会保留已抓到的页面和候选导师，之后可以继续。",
+      description: "保留当前结果，可随时继续。",
       confirmLabel: "确认暂停",
       cancelLabel: "先不暂停",
     });
@@ -3043,7 +3043,7 @@ export const TasksPage = () => {
         eventName: "tasks.crawl_job_pause_succeeded",
         data: diagnosticData,
       });
-      notifySuccess("抓取任务已暂停", "已保留当前抓取结果，之后可以继续");
+      notifySuccess("抓取任务已暂停", "已保留当前结果");
       await loadCrawlJobs();
       if (selectedCrawlJobId === jobId) {
         await loadCrawlJobDetails(jobId, { showLoading: false });
@@ -3068,7 +3068,7 @@ export const TasksPage = () => {
     if (selectedLlmProfileId !== null) {
       return selectedLlmProfileId;
     }
-    notifyError("请先选择模型配置", "请选择一个 LLM Profile 后再继续操作。");
+    notifyError("请先选择模型配置", "选择模型后再继续。");
     return null;
   };
 
@@ -3114,7 +3114,7 @@ export const TasksPage = () => {
   const handleCancelCrawlJob = async (jobId: number) => {
     const confirmed = await confirm({
       title: "确认取消这个抓取任务？",
-      description: "取消后本次抓取不会继续。如需重新抓取，请点击“重新抓取”。",
+      description: "停止抓取并保留已有结果。",
       confirmLabel: "取消抓取",
       cancelLabel: "先保留",
       tone: "danger",
@@ -3155,8 +3155,7 @@ export const TasksPage = () => {
 
     const confirmed = await confirm({
       title: "确认重新抓取任务？",
-      description:
-        "重新抓取会清空该任务历史抓取数据（页面与候选导师），并重新加入队列执行。",
+      description: "清空已有页面和候选导师后重新抓取。",
       confirmLabel: "确认重新抓取",
       cancelLabel: "暂不处理",
     });
@@ -3204,8 +3203,7 @@ export const TasksPage = () => {
   const handleResumeCrawlJobReview = async (jobId: number) => {
     const confirmed = await confirm({
       title: "确认转入待审核？",
-      description:
-        "任务不会重新抓取，只会把已有候选导师转入待审核，随后可以继续补全或导入。",
+      description: "不重新抓取，仅将已有候选转入待审核。",
       confirmLabel: "转入待审核",
       cancelLabel: "先保留",
     });
@@ -3574,10 +3572,7 @@ export const TasksPage = () => {
       );
       setSelectedCandidateDetail(updatedCandidate);
       setCandidateEditForm(null);
-      notifySuccess(
-        "导师信息已保存",
-        "后续补全只会填写仍然缺失的可补全字段，不会覆盖本次保存的内容。",
-      );
+      notifySuccess("导师信息已保存", "后续补全仅填写空缺字段。");
     } catch (actionError) {
       const message =
         actionError instanceof Error
@@ -3868,15 +3863,15 @@ export const TasksPage = () => {
     const deliveryDescription =
       selectedBatchTask.status === "paused"
         ? selectedBatchTask.schedule_type === "scheduled"
-          ? `任务当前处于暂停状态；确认后仍不会发送，恢复任务后会按原计划（${buildScheduleLabel(selectedBatchTask)}）发送。`
-          : "任务当前处于暂停状态；确认后仍不会发送，恢复任务后才会进入发送流程。"
+          ? `任务已暂停；恢复后按原计划（${buildScheduleLabel(selectedBatchTask)}）发送。`
+          : "任务已暂停；恢复后才会发送。"
         : selectedBatchTask.schedule_type === "scheduled"
           ? `确认后会按原计划（${buildScheduleLabel(selectedBatchTask)}）进入定时发送流程；邮件发出后无法撤回。`
           : "确认后会立即进入发送队列，邮件发出后无法撤回。";
     const ignoredDraftDescription =
       generatingDraftBatchTaskItems.length > 0 ||
       draftFailedBatchTaskItems.length > 0
-        ? "本次只处理当前已经生成且仍为待审核状态的草稿；生成中或生成失败的邮件不会被处理。"
+        ? "仅处理已生成的待审核草稿；生成中或失败项不受影响。"
         : null;
     const confirmed = await confirm({
       title: `确认全部通过这 ${approvedCount} 封草稿？`,
@@ -4088,7 +4083,7 @@ export const TasksPage = () => {
     const plannedTime = formatDisplayTime(item.scheduled_at);
     const confirmed = await confirm({
       title: `取消给${item.professor_name}的本次发送？`,
-      description: `取消后，这封邮件不会在 ${plannedTime} 发送，不影响批次中的其他导师。之后可在原卡片上恢复。`,
+      description: `取消 ${plannedTime} 的发送；不影响其他导师，可稍后恢复。`,
       confirmLabel: "确认取消发送",
       cancelLabel: "保留发送",
       tone: "danger",
@@ -4202,7 +4197,7 @@ export const TasksPage = () => {
           className="ui-btn-secondary min-h-8 gap-1.5 px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
         >
           <RotateCcw className="h-3.5 w-3.5" />
-          {activeAction === "restore" ? "恢复中..." : "恢复发送"}
+          {activeAction === "restore" ? "恢复中…" : "恢复发送"}
         </button>
       );
     }
@@ -4217,7 +4212,7 @@ export const TasksPage = () => {
         className="ui-btn-danger min-h-8 gap-1.5 px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
       >
         <Ban className="h-3.5 w-3.5" />
-        {activeAction === "cancel" ? "取消中..." : "取消发送"}
+        {activeAction === "cancel" ? "取消中…" : "取消发送"}
       </button>
     );
   };
@@ -4421,12 +4416,11 @@ export const TasksPage = () => {
       resendContext.defaults.outreach_generation_mode,
     );
     const confirmed = await confirm({
-      title: "确认重新发起这批老师？",
+      title: "确认重新发起这批导师？",
       description: [
-        "将自动切换到原任务身份；下一步可选择沿用上次内容、重新套用模板或让 AI 重新改写。",
+        "下一步选择内容策略和发送时间。",
         `发信模板：${resendTemplateLabel}`,
         `写信方式：${resendGenerationModeLabel}`,
-        "发送日期和时间窗口需要重新设置。",
       ].join("\n"),
       confirmLabel: "去创建新任务",
       cancelLabel: "继续选择",
@@ -4456,9 +4450,9 @@ export const TasksPage = () => {
   };
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
-      title: "删除任务",
-      description: "删除后会移入回收站，不会清除任务记录，可在回收站恢复。",
-      confirmLabel: "删除",
+      title: "移入回收站？",
+      description: "可在回收站恢复。",
+      confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
     });
@@ -4493,9 +4487,9 @@ export const TasksPage = () => {
 
   const handleDeleteCrawlJob = async (job: CrawlJobSummaryDTO) => {
     const confirmed = await confirm({
-      title: "删除任务",
-      description: "删除后会移入回收站，不会清除任务记录，可在回收站恢复。",
-      confirmLabel: "删除",
+      title: "移入回收站？",
+      description: "可在回收站恢复。",
+      confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
     });
@@ -4530,9 +4524,9 @@ export const TasksPage = () => {
 
   const handleDeleteMatchJob = async (job: MatchAnalysisJobDTO) => {
     const confirmed = await confirm({
-      title: "删除任务",
-      description: "删除后会移入回收站，不会清除任务记录，可在回收站恢复。",
-      confirmLabel: "删除",
+      title: "移入回收站？",
+      description: "可在回收站恢复。",
+      confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
     });
@@ -4569,9 +4563,9 @@ export const TasksPage = () => {
     job: ProfessorInformationEnrichmentJobDTO,
   ) => {
     const confirmed = await confirm({
-      title: "删除任务",
-      description: "删除后会移入回收站，不会清除任务记录，可在回收站恢复。",
-      confirmLabel: "删除",
+      title: "移入回收站？",
+      description: "可在回收站恢复。",
+      confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
     });
@@ -4647,7 +4641,7 @@ export const TasksPage = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-stone-900">任务中心</h1>
-            <p className="mt-1 text-sm text-stone-500">管理批量流程与后台任务</p>
+            <p className="mt-1 text-sm text-stone-500">查看发送计划和后台任务</p>
           </div>
           <TaskCenterSectionSwitch
             activeSection="background"
@@ -4657,7 +4651,7 @@ export const TasksPage = () => {
 
         {!hasTaskSelection ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            还没有选择身份和模型，批量邮件与匹配分析会在配置后显示；教师抓取和信息补全任务可继续查看。
+            选择身份和模型后显示批量邮件与匹配分析。
           </div>
         ) : null}
 
@@ -4674,7 +4668,7 @@ export const TasksPage = () => {
           <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
             <div className="flex items-center gap-2 text-sm text-stone-500">
               <FileSearch className="h-4 w-4 text-sky-600" />
-              教师抓取
+              智能抓取
             </div>
             <div className="mt-2 text-2xl font-semibold text-stone-900">
               {currentCrawlJobs.length}
@@ -4726,7 +4720,7 @@ export const TasksPage = () => {
           </button>
           <button
             type="button"
-            aria-label="教师抓取"
+            aria-label="智能抓取"
             onClick={() => setActiveTab("crawl")}
             className={
               activeTab === "crawl"
@@ -4735,7 +4729,7 @@ export const TasksPage = () => {
             }
           >
             <FileSearch className="h-4 w-4" />
-            教师抓取
+            智能抓取
             <span
               className={
                 activeTab === "crawl" ? "text-white/80" : "text-stone-400"
@@ -4806,7 +4800,7 @@ export const TasksPage = () => {
       {activeTab === "batch" && loading ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载任务列表...
+          正在加载任务列表…
         </div>
       ) : activeTab === "batch" && tasks.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
@@ -4994,7 +4988,7 @@ export const TasksPage = () => {
       ) : activeTab === "match" && matchJobsLoading && matchAnalysisJobs.length === 0 ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载匹配分析任务列表...
+          正在加载匹配分析任务列表…
         </div>
       ) : activeTab === "match" && matchAnalysisJobs.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
@@ -5142,7 +5136,7 @@ export const TasksPage = () => {
         informationEnrichmentJobs.length === 0 ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载信息补全任务列表...
+          正在加载信息补全任务列表…
         </div>
       ) : activeTab === "enrichment" &&
         informationEnrichmentJobs.length === 0 ? (
@@ -5328,7 +5322,7 @@ export const TasksPage = () => {
       ) : crawlJobsLoading && crawlJobs.length === 0 ? (
         <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载抓取任务列表...
+          正在加载抓取任务列表…
         </div>
       ) : crawlJobs.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
@@ -5373,7 +5367,7 @@ export const TasksPage = () => {
             pageSize={crawlPageSize}
             totalCount={crawlJobs.length}
             onChange={handleCrawlPaginationChange}
-            ariaLabel="教师抓取任务分页"
+            ariaLabel="智能抓取任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
             unitLabel="个"
             itemLabel="个任务"
@@ -5556,7 +5550,7 @@ export const TasksPage = () => {
                     {batchReviewLoading && !batchReviewThread ? (
                       <div className="flex min-h-[520px] items-center justify-center gap-2 text-sm text-stone-500">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        正在加载草稿...
+                        正在加载草稿…
                       </div>
                     ) : batchReviewThread ? (
                       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -5568,19 +5562,17 @@ export const TasksPage = () => {
                             >
                               <div className="flex items-center gap-2 font-semibold">
                                 <Sparkles className="h-4 w-4" />
-                                当前草稿未进行 AI 改写
+                                未进行 AI 改写
                               </div>
                               <p className="mt-1">
-                                {batchReviewProfessorMissingResearchDirection
-                                  ? "该导师缺少研究方向，系统已直接使用"
-                                  : "该草稿生成时导师缺少研究方向，系统已直接使用"}
+                                因缺少研究方向，已直接套用
                                 {selectedBatchTask
                                   ? `「${getOutreachTemplateSourceLabel(selectedBatchTask)}」`
-                                  : "本次所选"}
-                                模板生成草稿。
+                                  : "所选"}
+                                模板。
                                 {batchReviewProfessorMissingResearchDirection
-                                  ? "你可以编辑并审核通过。"
-                                  : "导师资料现已补充，你可以使用 AI 改写或继续审核模板草稿。"}
+                                  ? "可编辑后审核或先补充资料。"
+                                  : "资料已补充，可重新改写或直接审核。"}
                               </p>
                               {batchReviewTemplateReferencesResearchDirection ? (
                                 <p className="mt-1 font-medium">
@@ -5626,7 +5618,7 @@ export const TasksPage = () => {
                               label="邮件主题"
                               value={batchReviewSubject}
                               onChange={setBatchReviewSubject}
-                              placeholder="给老师的邮件主题"
+                              placeholder="给导师的邮件主题"
                             />
                             <EmailTemplateEditor
                               key={`batch-review-body-${batchReviewThread.current_task.id}`}
@@ -5697,7 +5689,7 @@ export const TasksPage = () => {
                             className="rounded-2xl border border-stone-100 bg-white px-4 py-3"
                           >
                             <div className="text-xs leading-5 text-stone-500">
-                              审核通过后会进入批量发送队列；定时批量任务会继续遵守日期、时间窗口和每日数量限制。
+                              通过后进入发送队列；定时任务仍按原计划发送。
                             </div>
                             <div className="mt-4 flex flex-col gap-2">
                               <button
@@ -5739,11 +5731,11 @@ export const TasksPage = () => {
                           </section>
 
                           <section
-                            aria-label="老师详情"
+                            aria-label="导师详情"
                             className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
                           >
                             <div className="text-xs font-medium text-stone-500">
-                              老师详情
+                              导师详情
                             </div>
                             <dl className="mt-2 space-y-1.5">
                               {[
@@ -5963,7 +5955,7 @@ export const TasksPage = () => {
                   pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
                   unitLabel="位"
                   itemLabel="位导师"
-                  summary={`显示 ${(safeBatchSentItemPage - 1) * batchSentItemPageSize + 1}-${Math.min(sentBatchTaskItems.length, safeBatchSentItemPage * batchSentItemPageSize)} / ${sentBatchTaskItems.length} 个任务`}
+                  summary={`${(safeBatchSentItemPage - 1) * batchSentItemPageSize + 1}-${Math.min(sentBatchTaskItems.length, safeBatchSentItemPage * batchSentItemPageSize)} / ${sentBatchTaskItems.length}`}
                   focusTargetRef={batchSentItemsStartRef}
                   menuPlacement="popover"
                   className="mt-3 border-t border-stone-100 pt-3"
@@ -5981,17 +5973,17 @@ export const TasksPage = () => {
                 </h3>
                 {selectedBatchTask.schedule_type === "scheduled" && selectedBatchWaitingSendCount > 0 ? (
                   <p className="mt-2 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-stone-700">
-                    已通过的模板邮件会按批量任务的日期、时间窗口和每日数量自动发送，不需要逐封手动设定发送时间。
+                    已审核邮件将按批次计划自动发送。
                   </p>
                 ) : null}
                 {reviewRequiredBatchTaskItems.length > 0 ? (
                   <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 sm:flex-row sm:items-center sm:justify-between">
                     <p>
-                      当前有 {reviewRequiredBatchTaskItems.length} 封草稿待审核。
+                      {reviewRequiredBatchTaskItems.length} 封草稿待审核。
                       {templateFallbackReviewCount > 0
-                        ? `其中 ${templateFallbackReviewCount} 封因导师缺少研究方向，使用模板生成且未进行 AI 改写。`
-                        : "这些草稿已完成 AI 改写。"}
-                      你可以逐封检查，也可以直接通过当前全部待审核草稿。
+                        ? `其中 ${templateFallbackReviewCount} 封未进行 AI 改写。`
+                        : "均已完成 AI 改写。"}
+                      可逐封审核或全部通过。
                     </p>
                     <button
                       type="button"
@@ -6005,7 +5997,7 @@ export const TasksPage = () => {
                         <CheckCircle2 className="h-4 w-4" />
                       )}
                       {batchBulkApprovalLoading
-                        ? `正在通过 ${reviewRequiredBatchTaskItems.length} 封...`
+                        ? `正在通过 ${reviewRequiredBatchTaskItems.length} 封…`
                         : `全部通过审核（${reviewRequiredBatchTaskItems.length} 封）`}
                     </button>
                   </div>
@@ -6121,7 +6113,7 @@ export const TasksPage = () => {
                   pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
                   unitLabel="位"
                   itemLabel="位导师"
-                  summary={`显示 ${(safeBatchPendingItemPage - 1) * batchPendingItemPageSize + 1}-${Math.min(pendingBatchTaskItems.length, safeBatchPendingItemPage * batchPendingItemPageSize)} / ${pendingBatchTaskItems.length} 个任务`}
+                  summary={`${(safeBatchPendingItemPage - 1) * batchPendingItemPageSize + 1}-${Math.min(pendingBatchTaskItems.length, safeBatchPendingItemPage * batchPendingItemPageSize)} / ${pendingBatchTaskItems.length}`}
                   focusTargetRef={batchPendingItemsStartRef}
                   menuPlacement="popover"
                   className="mt-3 border-t border-stone-100 pt-3"
@@ -6276,7 +6268,7 @@ export const TasksPage = () => {
                       </div>
                       {selectedBatchTask.outreach_template_snapshot_version !== null ? (
                         <div className="mt-1 text-xs leading-5 text-stone-500">
-                          内容以创建任务时编辑器中的版本为准，不随模板库后续修改。
+                          使用任务创建时的模板快照。
                         </div>
                       ) : null}
                     </dd>
@@ -6937,7 +6929,7 @@ export const TasksPage = () => {
               {crawlJobDetailsLoading ? (
                 <div className="flex items-center gap-2 text-sm text-stone-500">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  正在加载日志详情...
+                  正在加载日志详情…
                 </div>
               ) : null}
 
@@ -7291,8 +7283,8 @@ export const TasksPage = () => {
                                 type="button"
                                 aria-label={
                                   allFilteredCrawlCandidatesSelected
-                                    ? "取消选择全部筛选结果"
-                                    : "选择全部筛选结果"
+                                    ? "取消全选"
+                                    : "全选当前结果"
                                 }
                                 aria-pressed={
                                   allFilteredCrawlCandidatesSelected
@@ -7320,8 +7312,8 @@ export const TasksPage = () => {
                                   <Square className="h-4 w-4" />
                                 )}
                                 {allFilteredCrawlCandidatesSelected
-                                  ? "取消选择全部筛选结果"
-                                  : "选择全部筛选结果"}
+                                  ? "取消全选"
+                                  : "全选当前结果"}
                               </button>
                             ) : null}
                           </div>
@@ -7361,7 +7353,7 @@ export const TasksPage = () => {
                               className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {crawlJobEnrichLoading
-                                ? "补全中..."
+                                ? "补全中…"
                                 : "补全缺失信息"}
                             </button>
                             <button
@@ -7377,7 +7369,7 @@ export const TasksPage = () => {
                               className="ui-btn-primary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {crawlJobApproveLoading
-                                ? "导入中..."
+                                ? "导入中…"
                                 : "审核通过并导入"}
                             </button>
                           </div>
@@ -7546,7 +7538,7 @@ export const TasksPage = () => {
                     pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
                     unitLabel="位"
                     itemLabel="位导师"
-                    summary={`共 ${filteredCrawlJobCandidates.length} 位符合筛选条件，已选 ${selectedReviewableCrawlCandidateIds.length} 位`}
+                    summary={`${filteredCrawlJobCandidates.length} 位 · 已选 ${selectedReviewableCrawlCandidateIds.length} 位`}
                     focusTargetRef={crawlCandidateFirstItemRef}
                     menuPlacement="popover"
                     className="mt-3 border-t border-stone-100 pt-3"
@@ -7791,7 +7783,7 @@ export const TasksPage = () => {
                       ) : (
                         <Save className="h-4 w-4" />
                       )}
-                      {candidateUpdateLoading ? "保存中..." : "保存修改"}
+                      {candidateUpdateLoading ? "保存中…" : "保存修改"}
                     </button>
                   </div>
                 </div>

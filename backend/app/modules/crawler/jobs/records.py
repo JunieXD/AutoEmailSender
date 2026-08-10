@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.schemas.selection import SelectionSpec
 from app.models import (
     CrawlCandidate,
@@ -1011,26 +1012,33 @@ async def _build_crawl_job_summaries(
         return []
     job_ids = [job.id for job in jobs]
     page_counts = await _count_by_job_id(session, CrawlPage.job_id, job_ids)
-    candidate_count_rows = await session.execute(
-        select(CrawlCandidate.job_id, func.count())
-        .where(
-            CrawlCandidate.job_id.in_(job_ids),
-            canonical_candidate_clause(),
-        )
-        .group_by(CrawlCandidate.job_id)
-    )
-    candidate_counts = dict(candidate_count_rows.all())
-    model_rows = (
-        await session.execute(
-            select(CrawlWorkerTokenUsage.job_id, CrawlWorkerTokenUsage.model_name)
+    candidate_counts: dict[int, int] = {}
+    model_rows = []
+    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
+        candidate_count_rows = await session.execute(
+            select(CrawlCandidate.job_id, func.count())
             .where(
-                CrawlWorkerTokenUsage.job_id.in_(job_ids),
-                CrawlWorkerTokenUsage.model_name.is_not(None),
+                CrawlCandidate.job_id.in_(job_id_chunk),
+                canonical_candidate_clause(),
             )
-            .distinct()
-            .order_by(CrawlWorkerTokenUsage.job_id.asc(), CrawlWorkerTokenUsage.model_name.asc()),
+            .group_by(CrawlCandidate.job_id)
         )
-    ).all()
+        candidate_counts.update(
+            {int(job_id): int(count) for job_id, count in candidate_count_rows},
+        )
+        model_rows.extend(
+            (
+                await session.execute(
+                    select(CrawlWorkerTokenUsage.job_id, CrawlWorkerTokenUsage.model_name)
+                    .where(
+                        CrawlWorkerTokenUsage.job_id.in_(job_id_chunk),
+                        CrawlWorkerTokenUsage.model_name.is_not(None),
+                    )
+                    .distinct()
+                    .order_by(CrawlWorkerTokenUsage.job_id.asc(), CrawlWorkerTokenUsage.model_name.asc()),
+                )
+            ).all(),
+        )
     effective_models: dict[int, list[str]] = {}
     for job_id, model_name in model_rows:
         if isinstance(model_name, str) and model_name:
@@ -1072,14 +1080,17 @@ async def _count_by_job_id(
     job_id_column: object,
     job_ids: list[int],
 ) -> dict[int, int]:
-    rows = (
-        await session.execute(
-            select(job_id_column, func.count())
-            .where(job_id_column.in_(job_ids))
-            .group_by(job_id_column),
-        )
-    ).all()
-    return {int(job_id): int(count) for job_id, count in rows}
+    counts: dict[int, int] = {}
+    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
+        rows = (
+            await session.execute(
+                select(job_id_column, func.count())
+                .where(job_id_column.in_(job_id_chunk))
+                .group_by(job_id_column),
+            )
+        ).all()
+        counts.update({int(job_id): int(count) for job_id, count in rows})
+    return counts
 
 
 def _latest_event_message(agent_trace: object) -> str | None:

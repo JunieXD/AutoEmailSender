@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.core.database import get_async_session, get_session_factory
+from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     BatchTask,
     BatchTaskStatus,
@@ -147,15 +148,16 @@ async def list_batch_tasks(
     ]
     if completed_task_ids:
         completed_task_id_set = set(completed_task_ids)
-        await session.execute(
-            update(BatchTask)
-            .where(BatchTask.id.in_(completed_task_ids))
-            .values(
-                status=BatchTaskStatus.COMPLETED.value,
-                updated_at=now,
+        for task_id_chunk in chunked_values(completed_task_ids):
+            await session.execute(
+                update(BatchTask)
+                .where(BatchTask.id.in_(task_id_chunk))
+                .values(
+                    status=BatchTaskStatus.COMPLETED.value,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
             )
-            .execution_options(synchronize_session=False)
-        )
         for task in tasks:
             if task.id in completed_task_id_set:
                 task.status = BatchTaskStatus.COMPLETED.value
@@ -221,16 +223,18 @@ async def create_batch_task(
     if not llm_profile:
         raise HTTPException(status_code=404, detail="未找到 LLM 配置")
 
-    professors = list(
-        (
-            await session.execute(
+    requested_professor_ids = unique_positive_ids(payload.professor_ids)
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(requested_professor_ids):
+        professors.extend(
+            await session.scalars(
                 select(Professor).where(
-                    Professor.id.in_(payload.professor_ids),
+                    Professor.id.in_(professor_id_chunk),
                     Professor.archived_at.is_(None),
                 ),
-            )
-        ).scalars()
-    )
+            ),
+        )
+    professors.sort(key=lambda professor: professor.id)
     if len(professors) != len(set(payload.professor_ids)):
         raise HTTPException(status_code=404, detail="部分导师不存在或已被移入回收站")
 
@@ -667,14 +671,18 @@ async def list_batch_task_items(
     }
     material_sizes: dict[int, int] = {}
     if selected_material_ids:
-        rows = (
-            await session.execute(
-                select(IdentityMaterial.id, IdentityMaterial.size_bytes).where(
-                    IdentityMaterial.identity_id == identity_id,
-                    IdentityMaterial.id.in_(selected_material_ids),
-                ),
+        rows = []
+        for material_id_chunk in chunked_values(selected_material_ids):
+            rows.extend(
+                (
+                    await session.execute(
+                        select(IdentityMaterial.id, IdentityMaterial.size_bytes).where(
+                            IdentityMaterial.identity_id == identity_id,
+                            IdentityMaterial.id.in_(material_id_chunk),
+                        ),
+                    )
+                ).all(),
             )
-        ).all()
         material_sizes = {
             material_id: max(0, size_bytes)
             for material_id, size_bytes in rows
@@ -1439,14 +1447,16 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
     if not material_ids:
         return
 
-    existing_material_ids = set(
-        await session.scalars(
-            select(IdentityMaterial.id).where(
-                IdentityMaterial.identity_id == task.identity_id,
-                IdentityMaterial.id.in_(material_ids),
+    existing_material_ids: set[int] = set()
+    for material_id_chunk in chunked_values(material_ids):
+        existing_material_ids.update(
+            await session.scalars(
+                select(IdentityMaterial.id).where(
+                    IdentityMaterial.identity_id == task.identity_id,
+                    IdentityMaterial.id.in_(material_id_chunk),
+                ),
             ),
-        ),
-    )
+        )
     removed_primary = task.primary_material_id is not None and task.primary_material_id not in existing_material_ids
     updated = False
     if removed_primary:
@@ -1501,8 +1511,13 @@ async def _load_batch_task_card_metrics(
     def count_when(condition: object, name: str):
         return func.coalesce(func.sum(case((condition, 1), else_=0)), 0).label(name)
 
-    rows = await session.execute(
-        select(
+    metric_rows = []
+    canceled_scheduled_rows = []
+    for task_id_chunk in chunked_values(unique_positive_ids(task_ids)):
+        metric_rows.extend(
+            (
+                await session.execute(
+                    select(
             EmailTask.batch_task_id,
             count_when(is_completed, "completed_count"),
             count_when(
@@ -1552,16 +1567,22 @@ async def _load_batch_task_card_metrics(
             ),
         )
         .join(Professor, EmailTask.professor_id == Professor.id)
-        .where(EmailTask.batch_task_id.in_(task_ids))
-        .group_by(EmailTask.batch_task_id)
-    )
-    canceled_scheduled_rows = await session.execute(
-        select(EmailTask.batch_task_id, EmailTask.scheduled_at).where(
-            EmailTask.batch_task_id.in_(task_ids),
-            EmailTask.batch_send_canceled_at.is_not(None),
-            EmailTask.scheduled_at.is_not(None),
+                    .where(EmailTask.batch_task_id.in_(task_id_chunk))
+                    .group_by(EmailTask.batch_task_id)
+                )
+            ).all(),
         )
-    )
+        canceled_scheduled_rows.extend(
+            (
+                await session.execute(
+                    select(EmailTask.batch_task_id, EmailTask.scheduled_at).where(
+                        EmailTask.batch_task_id.in_(task_id_chunk),
+                        EmailTask.batch_send_canceled_at.is_not(None),
+                        EmailTask.scheduled_at.is_not(None),
+                    )
+                )
+            ).all(),
+        )
     completed_canceled_counts: Counter[int] = Counter()
     for task_id, scheduled_at in canceled_scheduled_rows:
         if scheduled_at is not None and as_utc_aware(scheduled_at) <= as_utc_aware(now):
@@ -1585,7 +1606,7 @@ async def _load_batch_task_card_metrics(
             replied_count=int(row.replied_count),
             canceled_send_count=int(row.canceled_send_count),
         )
-        for row in rows
+        for row in metric_rows
     }
 
 

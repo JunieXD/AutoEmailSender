@@ -13,7 +13,7 @@ describe("getWorkspaceNextStep", () => {
         canWriteFollowUp: false,
       }),
     ).toEqual({
-      title: "选择 AI 写信参考材料",
+      title: "选择 AI 参考材料",
     });
   });
 
@@ -88,7 +88,7 @@ describe("getWorkspaceNextStep", () => {
         canWriteFollowUp: false,
       }),
     ).toEqual({
-      title: "选择 AI 写信参考材料",
+      title: "选择 AI 参考材料",
     });
   });
 
@@ -115,7 +115,7 @@ describe("getWorkspaceNextStep", () => {
         canContinueManually: true,
         canWriteFollowUp: false,
       },
-      "作为单独联系继续",
+      "单独联系",
     ],
   ])(
     "keeps terminal status %s from falling back to precondition prompts",
@@ -181,7 +181,7 @@ describe("getWorkspaceNextStep", () => {
         canWriteFollowUp: false,
       }),
     ).toEqual({
-      title: "作为单独联系继续",
+      title: "单独联系",
     });
   });
 });

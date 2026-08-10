@@ -58,25 +58,25 @@ describe("OtherSettingsCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     expect(await screen.findByLabelText("每个匹配任务同时分析导师数")).toHaveValue(5);
-    expect(screen.getByLabelText("AI 草稿输出 token 上限")).toHaveValue(6000);
+    expect(screen.getByLabelText("AI 草稿输出 Token 上限")).toHaveValue(6000);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(5);
     expect(screen.getByLabelText("同时运行的抓取任务数")).toHaveValue(1);
     expect(screen.getByLabelText("同时补全导师详情页数")).toHaveValue(3);
     expect(
-      screen.getByText(/智能抓取和导师管理页信息补全合计最多同时处理/),
+      screen.getByText(/越高速度越快，但更易触发网站限制/),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("同一网站同时抓取页数")).toHaveValue(2);
 
     fireEvent.change(screen.getByLabelText("每个匹配任务同时分析导师数"), {
       target: { value: "4" },
     });
-    fireEvent.change(screen.getByLabelText("AI 草稿输出 token 上限"), {
+    fireEvent.change(screen.getByLabelText("AI 草稿输出 Token 上限"), {
       target: { value: "4800" },
     });
     fireEvent.change(screen.getByLabelText("同时生成草稿数"), {
       target: { value: "6" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
@@ -88,12 +88,11 @@ describe("OtherSettingsCard", () => {
       );
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "保存全部设置" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "保存设置" })).toBeEnabled();
     });
     expect(screen.getByLabelText("每个匹配任务同时分析导师数")).toHaveValue(4);
     expect(screen.getByLabelText("同时生成草稿数")).toHaveValue(6);
     expect(screen.getByTestId("notification-title")).toHaveTextContent("设置已保存");
-    expect(screen.getByText("其他设置已更新。")).toBeInTheDocument();
     expect(screen.getByTestId("notification-card").parentElement).toHaveClass(
       "fixed",
       "right-4",
@@ -112,7 +111,7 @@ describe("OtherSettingsCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
     await screen.findByLabelText("每个匹配任务同时分析导师数");
-    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     expect(await screen.findByTestId("notification-title")).toHaveTextContent(
       "保存其他设置失败",
@@ -151,7 +150,9 @@ describe("OtherSettingsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
 
     expect(await screen.findByLabelText("同时生成草稿数")).toHaveValue(5);
-    expect(screen.getByRole("button", { name: /其他设置/ })).toHaveTextContent("草稿 5");
+    expect(screen.getByRole("button", { name: /其他设置/ })).toHaveTextContent(
+      "写信偏好、匹配方向与运行参数",
+    );
     expect(screen.getByRole("button", { name: /其他设置/ })).not.toHaveTextContent("undefined");
   });
 
@@ -171,7 +172,7 @@ describe("OtherSettingsCard", () => {
       target: { value: "少用套话，结尾保持简短。" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -199,7 +200,7 @@ describe("OtherSettingsCard", () => {
     fireEvent.change(intendedDirection, {
       target: { value: "医学自然语言处理、临床知识图谱" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存全部设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => {
       expect(api.updateRuntimeSettings).toHaveBeenCalledWith(
@@ -226,7 +227,7 @@ describe("OtherSettingsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
 
     const saveBar = await screen.findByRole("region", { name: "其他设置保存栏" });
-    const saveButtons = screen.getAllByRole("button", { name: "保存全部设置" });
+    const saveButtons = screen.getAllByRole("button", { name: "保存设置" });
     const settingsContent = document.querySelector("#other-settings-card-content");
     const formContent = screen.getByTestId("other-settings-form-content");
     expect(saveButtons).toHaveLength(1);

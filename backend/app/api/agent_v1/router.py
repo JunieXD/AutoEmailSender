@@ -11,8 +11,8 @@ from typing import Literal, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, Response
-from pydantic import ValidationError
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,6 +26,7 @@ from app.core.agent_runtime_descriptor import (
 from app.core.agent_revisions import ensure_revision, revision_for
 from app.core.config import get_settings
 from app.core.database import get_async_session, get_session_factory
+from app.core.query_chunks import chunked_values
 from app.core.time import utc_now
 from app.models import (
     CrawlJob,
@@ -48,6 +49,8 @@ from app.models import (
 from app.schemas.agent import (
     AgentActionPlanRead,
     AgentBatchItemsRequest,
+    AgentCampaignApproveDraftsRequest,
+    AgentCampaignBulkApproveRead,
     AgentCampaignCreateRequest,
     AgentCampaignItemRead,
     AgentCampaignRead,
@@ -73,6 +76,7 @@ from app.schemas.agent import (
     AgentDraftRegenerateRequest,
     AgentDraftRewriteRequest,
     AgentDraftSaveRequest,
+    AgentEmailDeliveryPageRead,
     AgentIdentityRead,
     AgentIdentitySettingsUpdateRequest,
     AgentInfoRead,
@@ -144,6 +148,7 @@ from app.modules.professors.public import (
     ProfessorTagUpdatePayload,
     ProfessorUpsertPayload,
     archive_professor_record,
+    build_professor_template,
     build_professor_export,
     create_professor_record,
     create_professor_information_enrichment_job_record,
@@ -168,7 +173,26 @@ from app.modules.system.public import (
     serialize_runtime_settings,
     update_runtime_settings,
 )
-from app.modules.workspace.public import WorkspaceSyncWarningRead, WorkspaceThreadRead
+from app.modules.workspace.public import (
+    BatchDraftApprovalConflictError,
+    EmailTaskApprovalRequest,
+    WorkspaceSyncWarningRead,
+    WorkspaceThreadRead,
+    approve_draft_task,
+    approve_generated_batch_drafts,
+    build_workspace_thread_for_task,
+)
+from app.modules.workspace.deliveries.schemas import (
+    EmailDeliveryActionRead,
+    EmailDeliveryRescheduleRequest,
+    EmailDeliverySort,
+    EmailDeliverySource,
+    EmailDeliveryView,
+)
+from app.modules.workspace.deliveries.service import (
+    list_email_deliveries,
+    reschedule_email_delivery,
+)
 from app.modules.campaigns.public import (
     IdentityDefaultOutreachTemplateUpdate,
     OutreachTemplateCreate,
@@ -399,11 +423,15 @@ async def list_agent_professors(
     q: str | None = Query(default=None),
     archived: Literal["active", "archived", "all"] = Query(default="active"),
     tag_id: int | None = Query(default=None, ge=1),
+    professor_id: int | None = Query(default=None, ge=1),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentProfessorRead]:
+) -> AgentPage[AgentProfessorRead] | Response:
     statement = select(Professor).options(selectinload(Professor.tags))
+    if professor_id is not None:
+        statement = statement.where(Professor.id == professor_id)
     if archived == "active":
         statement = statement.where(Professor.archived_at.is_(None))
     elif archived == "archived":
@@ -432,11 +460,12 @@ async def list_agent_professors(
         ).unique(),
     )
     page, next_cursor, has_more = _slice_page(professors, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_professor(professor) for professor in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/professors/export")
@@ -457,6 +486,25 @@ async def export_agent_professors(
         raise AgentApiError(
             status_code=400,
             code="INVALID_EXPORT_FORMAT",
+            message=str(exc),
+        ) from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/professors/import-template")
+async def download_agent_professor_import_template(
+    format: Literal["xlsx", "csv"] = Query(default="xlsx"),
+) -> Response:
+    try:
+        content, media_type, filename = build_professor_template(format)
+    except ValueError as exc:
+        raise AgentApiError(
+            status_code=400,
+            code="INVALID_TEMPLATE_FORMAT",
             message=str(exc),
         ) from exc
     return Response(
@@ -796,11 +844,13 @@ async def export_agent_community_share_package(
             code="PROFESSOR_IDS_INVALID",
             message=str(exc),
         ) from exc
-    professors = list(
-        (
-            await session.execute(select(Professor).where(Professor.id.in_(ids)))
-        ).scalars(),
-    )
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(ids):
+        professors.extend(
+            await session.scalars(
+                select(Professor).where(Professor.id.in_(professor_id_chunk)),
+            ),
+        )
     professors_by_id = {professor.id: professor for professor in professors}
     missing_ids = [professor_id for professor_id in ids if professor_id not in professors_by_id]
     if missing_ids:
@@ -828,24 +878,32 @@ async def export_agent_community_share_package(
 
 @router.get("/professor-tags", response_model=AgentPage[AgentProfessorTagRead])
 async def list_agent_professor_tags(
+    tag_id: int | None = Query(default=None, ge=1),
+    name: str | None = Query(default=None, max_length=200),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentProfessorTagRead]:
+) -> AgentPage[AgentProfessorTagRead] | Response:
+    statement = select(ProfessorTag)
+    if tag_id is not None:
+        statement = statement.where(ProfessorTag.id == tag_id)
+    if name is not None:
+        statement = statement.where(ProfessorTag.name == name)
     tags = list(
         await session.scalars(
-            select(ProfessorTag)
-            .order_by(ProfessorTag.id.asc())
+            statement.order_by(ProfessorTag.id.asc())
             .offset(cursor)
             .limit(limit + 1),
         ),
     )
     page, next_cursor, has_more = _slice_page(tags, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_tag(tag) for tag in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.post(
@@ -912,10 +970,11 @@ async def list_agent_communication_threads(
     professor_id: int | None = Query(default=None, ge=1),
     sent: bool | None = Query(default=None),
     replied: bool | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentCommunicationThreadRead]:
+) -> AgentPage[AgentCommunicationThreadRead] | Response:
     rows = await _query_threads(
         session,
         identity_id=identity_id,
@@ -926,11 +985,12 @@ async def list_agent_communication_threads(
         limit=limit,
     )
     page, next_cursor, has_more = _slice_page(rows, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_thread_row(row) for row in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get(
@@ -994,10 +1054,11 @@ async def list_agent_messages(
     direction: Literal["sent", "received", "draft"] | None = Query(default=None),
     include_body: bool = Query(default=False),
     order: Literal["asc", "desc"] = Query(default="desc"),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentMessageRead]:
+) -> AgentPage[AgentMessageRead] | Response:
     if thread_id is not None:
         thread_identity_id, thread_professor_id = _parse_thread_id(thread_id)
         if identity_id is not None and identity_id != thread_identity_id:
@@ -1025,11 +1086,12 @@ async def list_agent_messages(
         ),
     )
     page, next_cursor, has_more = _slice_page(messages, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_message(message, include_body=include_body) for message in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/communications/messages/{message_id}", response_model=AgentMessageRead)
@@ -1265,6 +1327,135 @@ async def refresh_agent_workspace_replies(
     )
 
 
+@router.get("/deliveries", response_model=AgentEmailDeliveryPageRead)
+async def list_agent_email_deliveries(
+    view: EmailDeliveryView = Query(default="upcoming"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    identity_id: int | None = Query(default=None, ge=1),
+    source: EmailDeliverySource = Query(default="all"),
+    status_filter: str | None = Query(default=None, alias="status"),
+    sort: EmailDeliverySort | None = Query(default=None),
+    search_fields: str | None = Query(default=None, max_length=100),
+    query: str | None = Query(default=None, max_length=200),
+    task_id: int | None = Query(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentEmailDeliveryPageRead:
+    try:
+        result = await list_email_deliveries(
+            session,
+            view=view,
+            page=page,
+            page_size=page_size,
+            identity_id=identity_id,
+            source=source,
+            status=status_filter,
+            sort=sort,
+            search_fields=(
+                tuple(field.strip() for field in search_fields.split(","))
+                if search_fields is not None
+                else None
+            ),
+            query=query,
+            task_id=task_id,
+        )
+    except ValueError as exc:
+        raise AgentApiError(
+            status_code=422,
+            code="INVALID_DELIVERY_FILTER",
+            message=str(exc),
+        ) from exc
+    return AgentEmailDeliveryPageRead(
+        items=[
+            {
+                **item.model_dump(),
+                "expected_updated_at": item.updated_at.isoformat(),
+            }
+            for item in result.items
+        ],
+        next_cursor=str(result.page + 1) if result.page < result.total_pages else None,
+        has_more=result.page < result.total_pages,
+        page=result.page,
+        page_size=result.page_size,
+        total=result.total_count,
+        total_pages=result.total_pages,
+        counts=result.counts,
+    )
+
+
+@router.patch("/deliveries/{task_id}/schedule", response_model=EmailDeliveryActionRead)
+async def reschedule_agent_email_delivery(
+    task_id: int,
+    payload: EmailDeliveryRescheduleRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> EmailDeliveryActionRead:
+    async def mutation() -> EmailDeliveryActionRead:
+        async with get_session_factory()() as mutation_session:
+            try:
+                return await reschedule_email_delivery(
+                    mutation_session,
+                    task_id=task_id,
+                    scheduled_at=payload.scheduled_at,
+                    expected_updated_at=payload.expected_updated_at,
+                )
+            except HTTPException as exc:
+                raise AgentApiError(
+                    status_code=exc.status_code,
+                    code="DELIVERY_RESCHEDULE_REJECTED",
+                    message=str(exc.detail),
+                    retryable=exc.status_code == 409,
+                ) from exc
+
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
+        command="deliveries.reschedule",
+        request_data={"task_id": task_id, **payload.model_dump(mode="json")},
+        idempotency_key=idempotency_key,
+        response_type=EmailDeliveryActionRead,
+        mutation=mutation,
+    )
+
+
+@router.post("/tasks/{task_id}/approve-draft", response_model=AgentWorkspaceThreadRead)
+async def approve_agent_task_draft(
+    task_id: int,
+    payload: AgentDraftSaveRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentWorkspaceThreadRead:
+    async def mutation() -> AgentWorkspaceThreadRead:
+        await _ensure_draft_revision(task_id, if_revision)
+        return await _run_agent_task_workspace_action(
+            session,
+            task_id=task_id,
+            command="drafts.approve",
+            action=lambda: approve_draft_task(
+                get_session_factory(),
+                task_id,
+                EmailTaskApprovalRequest(
+                    subject=payload.subject,
+                    body_text=payload.body_text,
+                    body_html=payload.body_html,
+                    selected_material_ids=payload.attachment_material_ids,
+                ),
+            ),
+        )
+
+    return await execute_agent_mutation(
+        session,
+        command="drafts.approve",
+        request_data={
+            "task_id": task_id,
+            "if_revision": if_revision,
+            **payload.model_dump(mode="json"),
+        },
+        idempotency_key=idempotency_key,
+        response_type=AgentWorkspaceThreadRead,
+        mutation=mutation,
+    )
+
+
 @router.post("/tasks/{task_id}/cancel-schedule", response_model=AgentWorkspaceThreadRead)
 async def cancel_agent_task_schedule(
     task_id: int,
@@ -1427,13 +1618,20 @@ async def calculate_agent_task_match(
 @router.get("/templates", response_model=AgentPage[AgentTemplateRead])
 async def list_agent_templates(
     include_archived: bool = Query(default=False),
+    template_id: int | None = Query(default=None, ge=1),
+    is_default: bool | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentTemplateRead]:
+) -> AgentPage[AgentTemplateRead] | Response:
     statement = select(OutreachTemplate)
     if not include_archived:
         statement = statement.where(OutreachTemplate.archived_at.is_(None))
+    if template_id is not None:
+        statement = statement.where(OutreachTemplate.id == template_id)
+    if is_default is not None:
+        statement = statement.where(OutreachTemplate.is_default.is_(is_default))
     templates = list(
         await session.scalars(
             statement.order_by(
@@ -1446,11 +1644,12 @@ async def list_agent_templates(
         ),
     )
     page, next_cursor, has_more = _slice_page(templates, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_template(template) for template in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/templates/{template_id}", response_model=AgentTemplateRead)
@@ -1643,11 +1842,15 @@ async def prepare_agent_template_archive(
 async def list_agent_materials(
     identity_id: int | None = Query(default=None, ge=1),
     material_type: str | None = Query(default=None),
+    material_id: int | None = Query(default=None, ge=1),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentMaterialRead]:
+) -> AgentPage[AgentMaterialRead] | Response:
     statement = select(IdentityMaterial).options(selectinload(IdentityMaterial.identity))
+    if material_id is not None:
+        statement = statement.where(IdentityMaterial.id == material_id)
     if identity_id is not None:
         statement = statement.where(IdentityMaterial.identity_id == identity_id)
     if material_type:
@@ -1660,11 +1863,12 @@ async def list_agent_materials(
         ).unique(),
     )
     page, next_cursor, has_more = _slice_page(materials, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_material(material, include_text=False) for material in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/materials/{material_id}", response_model=AgentMaterialRead)
@@ -1784,24 +1988,50 @@ async def prepare_agent_material_delete(
 
 @router.get("/identities", response_model=AgentPage[AgentIdentityRead])
 async def list_agent_identities(
+    identity_id: int | None = Query(default=None, ge=1),
+    is_default: bool | None = Query(default=None),
+    smtp_configured: bool | None = Query(default=None),
+    imap_configured: bool | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentIdentityRead]:
+) -> AgentPage[AgentIdentityRead] | Response:
+    statement = select(IdentityProfile)
+    if identity_id is not None:
+        statement = statement.where(IdentityProfile.id == identity_id)
+    if is_default is not None:
+        statement = statement.where(IdentityProfile.is_default.is_(is_default))
+    smtp_predicate = (IdentityProfile.smtp_host != "")
+    smtp_predicate = smtp_predicate & (IdentityProfile.smtp_username != "")
+    smtp_predicate = smtp_predicate & (IdentityProfile.smtp_password != "")
+    if smtp_configured is not None:
+        statement = statement.where(smtp_predicate if smtp_configured else ~smtp_predicate)
+    if imap_configured is not None:
+        predicate = func.coalesce(
+            func.trim(IdentityProfile.imap_host),
+            "",
+        ) != ""
+        predicate = predicate & (IdentityProfile.imap_port > 0)
+        predicate = predicate & (
+            func.coalesce(func.trim(IdentityProfile.imap_username), "") != ""
+        )
+        predicate = predicate & (func.coalesce(IdentityProfile.imap_password, "") != "")
+        statement = statement.where(predicate if imap_configured else ~predicate)
     identities = list(
         await session.scalars(
-            select(IdentityProfile)
-            .order_by(IdentityProfile.is_default.desc(), IdentityProfile.id.asc())
+            statement.order_by(IdentityProfile.is_default.desc(), IdentityProfile.id.asc())
             .offset(cursor)
             .limit(limit + 1),
         ),
     )
     page, next_cursor, has_more = _slice_page(identities, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_identity(identity) for identity in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/identities/{identity_id}", response_model=AgentIdentityRead)
@@ -1960,24 +2190,38 @@ async def test_agent_identity_imap(
 
 @router.get("/llm-profiles", response_model=AgentPage[AgentLLMProfileRead])
 async def list_agent_llm_profiles(
+    profile_id: int | None = Query(default=None, ge=1),
+    provider: str | None = Query(default=None, max_length=100),
+    model_name: str | None = Query(default=None, max_length=200),
+    is_default: bool | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[AgentLLMProfileRead]:
+) -> AgentPage[AgentLLMProfileRead] | Response:
+    statement = select(LLMProfile)
+    if profile_id is not None:
+        statement = statement.where(LLMProfile.id == profile_id)
+    if provider is not None:
+        statement = statement.where(LLMProfile.provider == provider)
+    if model_name is not None:
+        statement = statement.where(LLMProfile.model_name == model_name)
+    if is_default is not None:
+        statement = statement.where(LLMProfile.is_default.is_(is_default))
     profiles = list(
         await session.scalars(
-            select(LLMProfile)
-            .order_by(LLMProfile.is_default.desc(), LLMProfile.id.asc())
+            statement.order_by(LLMProfile.is_default.desc(), LLMProfile.id.asc())
             .offset(cursor)
             .limit(limit + 1),
         ),
     )
     page, next_cursor, has_more = _slice_page(profiles, cursor=cursor, limit=limit)
-    return AgentPage(
+    response = AgentPage(
         items=[_serialize_llm_profile(profile) for profile in page],
         next_cursor=next_cursor,
         has_more=has_more,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/llm-profiles/{profile_id}", response_model=AgentLLMProfileRead)
@@ -2118,13 +2362,25 @@ async def test_agent_llm_profile(
     response_model=AgentPage[IdentityCommunicationGroupRead],
 )
 async def list_agent_communication_groups(
+    group_id: int | None = Query(default=None, ge=1),
+    match_source_identity_id: int | None = Query(default=None, ge=1),
+    fields: str | None = Query(default=None, max_length=4_000),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
-) -> AgentPage[IdentityCommunicationGroupRead]:
+) -> AgentPage[IdentityCommunicationGroupRead] | Response:
     groups = await list_communication_group_records(session)
+    if group_id is not None:
+        groups = [group for group in groups if group.id == group_id]
+    if match_source_identity_id is not None:
+        groups = [
+            group
+            for group in groups
+            if group.match_source_identity_id == match_source_identity_id
+        ]
     page, next_cursor, has_more = _slice_page(groups[cursor:], cursor=cursor, limit=limit)
-    return AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
+    response = AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get(
@@ -3074,8 +3330,9 @@ async def list_agent_operation_logs(
     entity_id: str | None = Query(default=None),
     start_at: datetime | None = Query(default=None),
     end_at: datetime | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     session: AsyncSession = Depends(get_async_session),
-) -> OperationLogListResponse:
+) -> OperationLogListResponse | Response:
     filters = _agent_operation_log_filters(
         level=level,
         category=category,
@@ -3103,12 +3360,13 @@ async def list_agent_operation_logs(
             )
         ).all(),
     )
-    return OperationLogListResponse(
+    response = OperationLogListResponse(
         items=[_serialize_agent_operation_log(log) for log in logs],
         total=total,
         limit=limit,
         offset=offset,
     )
+    return _project_agent_collection_response(response, fields)
 
 
 @router.get("/diagnostics/export", response_model=OperationLogExportResponse)
@@ -3235,10 +3493,11 @@ async def list_agent_token_usage_records(
     model_name: str | None = Query(default=None),
     start_at: datetime | None = Query(default=None),
     end_at: datetime | None = Query(default=None),
+    fields: str | None = Query(default=None, max_length=4_000),
     session: AsyncSession = Depends(get_async_session),
-) -> TokenUsageRecordListRead:
+) -> TokenUsageRecordListRead | Response:
     try:
-        return await list_token_usage_records(
+        response = await list_token_usage_records(
             session,
             page=page,
             page_size=page_size,
@@ -3247,6 +3506,7 @@ async def list_agent_token_usage_records(
             start_at=start_at,
             end_at=end_at,
         )
+        return _project_agent_collection_response(response, fields)
     except ValueError as exc:
         raise AgentApiError(
             status_code=422,
@@ -3384,6 +3644,117 @@ async def list_agent_email_campaign_items(
         limit=limit,
     )
     return AgentPage(items=items, next_cursor=next_cursor, has_more=has_more)
+
+
+@router.get(
+    "/campaigns/{campaign_id}/items/{item_id}/thread",
+    response_model=AgentWorkspaceThreadRead,
+)
+async def read_agent_email_campaign_item_thread(
+    campaign_id: int,
+    item_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentWorkspaceThreadRead:
+    await _ensure_agent_campaign_item(session, campaign_id=campaign_id, item_id=item_id)
+    workspace = await build_workspace_thread_for_task(session, task_id=item_id)
+    return _serialize_agent_workspace_thread(workspace)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/items/{item_id}/approve-draft",
+    response_model=AgentWorkspaceThreadRead,
+)
+async def approve_agent_email_campaign_item_draft(
+    campaign_id: int,
+    item_id: int,
+    payload: AgentDraftSaveRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    if_revision: str | None = Header(default=None, alias="If-Revision"),
+    session: AsyncSession = Depends(get_async_session),
+) -> AgentWorkspaceThreadRead:
+    async def mutation() -> AgentWorkspaceThreadRead:
+        await _ensure_agent_campaign_item(
+            session,
+            campaign_id=campaign_id,
+            item_id=item_id,
+        )
+        await _ensure_draft_revision(item_id, if_revision)
+        return await _run_agent_task_workspace_action(
+            session,
+            task_id=item_id,
+            command="campaigns.approve-item-draft",
+            workspace_task_id=item_id,
+            action=lambda: approve_draft_task(
+                get_session_factory(),
+                item_id,
+                EmailTaskApprovalRequest(
+                    subject=payload.subject,
+                    body_text=payload.body_text,
+                    body_html=payload.body_html,
+                    selected_material_ids=payload.attachment_material_ids,
+                ),
+            ),
+        )
+
+    return await execute_agent_mutation(
+        session,
+        command="campaigns.approve-item-draft",
+        request_data={
+            "campaign_id": campaign_id,
+            "item_id": item_id,
+            "if_revision": if_revision,
+            **payload.model_dump(mode="json"),
+        },
+        idempotency_key=idempotency_key,
+        response_type=AgentWorkspaceThreadRead,
+        mutation=mutation,
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/approve-drafts",
+    response_model=AgentCampaignBulkApproveRead,
+)
+async def approve_agent_email_campaign_drafts(
+    campaign_id: int,
+    payload: AgentCampaignApproveDraftsRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentCampaignBulkApproveRead:
+    async def mutation() -> AgentCampaignBulkApproveRead:
+        try:
+            approved_count = await approve_generated_batch_drafts(
+                get_session_factory(),
+                campaign_id,
+                payload.item_ids,
+            )
+        except BatchDraftApprovalConflictError as exc:
+            raise AgentApiError(
+                status_code=409,
+                code="CAMPAIGN_DRAFT_APPROVAL_CONFLICT",
+                message=str(exc),
+                retryable=True,
+            ) from exc
+        except ValueError as exc:
+            raise AgentApiError(
+                status_code=400,
+                code="CAMPAIGN_DRAFT_APPROVAL_REJECTED",
+                message=str(exc),
+            ) from exc
+        async with get_session_factory()() as read_session:
+            campaign = await get_agent_campaign(read_session, campaign_id)
+        return AgentCampaignBulkApproveRead(
+            approved_count=approved_count,
+            campaign=campaign,
+        )
+
+    return await execute_agent_factory_mutation(
+        get_session_factory(),
+        command="campaigns.approve-drafts",
+        request_data={"campaign_id": campaign_id, **payload.model_dump(mode="json")},
+        idempotency_key=idempotency_key,
+        response_type=AgentCampaignBulkApproveRead,
+        mutation=mutation,
+    )
 
 
 @router.post(
@@ -3998,6 +4369,7 @@ async def _run_agent_task_workspace_action(
     *,
     task_id: int,
     command: str,
+    workspace_task_id: int | None = None,
     action: Callable[[], Awaitable[tuple[int, int, int]]],
 ) -> AgentWorkspaceThreadRead:
     try:
@@ -4014,11 +4386,15 @@ async def _run_agent_task_workspace_action(
         raise _agent_task_error(exc) from exc
 
     session.expire_all()
-    workspace = await build_workspace_thread(
-        session,
-        professor_id=professor_id,
-        identity_id=identity_id,
-        llm_profile_id=llm_profile_id,
+    workspace = (
+        await build_workspace_thread_for_task(session, task_id=workspace_task_id)
+        if workspace_task_id is not None
+        else await build_workspace_thread(
+            session,
+            professor_id=professor_id,
+            identity_id=identity_id,
+            llm_profile_id=llm_profile_id,
+        )
     )
     await record_operation_log(
         session,
@@ -4036,6 +4412,26 @@ async def _run_agent_task_workspace_action(
         },
     )
     return _serialize_agent_workspace_thread(workspace)
+
+
+async def _ensure_agent_campaign_item(
+    session: AsyncSession,
+    *,
+    campaign_id: int,
+    item_id: int,
+) -> None:
+    matched_item_id = await session.scalar(
+        select(EmailTask.id).where(
+            EmailTask.id == item_id,
+            EmailTask.batch_task_id == campaign_id,
+        ),
+    )
+    if matched_item_id is None:
+        raise AgentApiError(
+            status_code=404,
+            code="CAMPAIGN_ITEM_NOT_FOUND",
+            message="未找到属于该活动的邮件项。",
+        )
 
 
 async def _calculate_agent_task_match(
@@ -5708,6 +6104,58 @@ def _slice_page(
     page = items[:limit]
     next_cursor = str(cursor + len(page)) if has_more else None
     return page, next_cursor, has_more
+
+
+def _project_agent_collection_response(
+    response: BaseModel,
+    fields: str | None,
+) -> BaseModel | Response:
+    """Apply an additive DTO-only projection for Agent collection reads."""
+
+    if fields is None:
+        return response
+    selected = list(
+        dict.fromkeys(
+            field.strip()
+            for field in fields.split(",")
+            if field.strip()
+        ),
+    )
+    if not selected or any(
+        len(field) > 100 or not field.replace("_", "").isalnum()
+        for field in selected
+    ):
+        raise AgentApiError(
+            status_code=422,
+            code="INVALID_FIELD_SELECTION",
+            message="fields 必须是非空、逗号分隔的 DTO 字段名。",
+        )
+    payload = response.model_dump(mode="json")
+    collection_key = next(
+        (
+            key
+            for key in ("items", "records")
+            if isinstance(payload.get(key), list)
+        ),
+        None,
+    )
+    if collection_key is None:
+        raise AgentApiError(
+            status_code=422,
+            code="FIELD_SELECTION_NOT_SUPPORTED",
+            message="当前响应不是可投影集合。",
+        )
+    payload[collection_key] = [
+        {
+            field: item[field]
+            for field in selected
+            if isinstance(item, dict) and field in item
+        }
+        if isinstance(item, dict)
+        else item
+        for item in payload[collection_key]
+    ]
+    return JSONResponse(content=payload)
 
 
 def _parse_thread_id(thread_id: str) -> tuple[int, int]:

@@ -15,6 +15,7 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/benchmark_agent_cli.py"
       - "scripts/quality/cli-workflow.test.mjs"
       - ".github/workflows/cli.yml"
       - ".github/workflows/cli-binaries.yml"
@@ -28,6 +29,7 @@ on:
       - "scripts/build/build-cli.sh"
       - "scripts/build/generate_cli_build_identity.py"
       - "scripts/build/verify_cli_binary.py"
+      - "scripts/quality/benchmark_agent_cli.py"
       - "scripts/quality/cli-workflow.test.mjs"
       - ".github/workflows/cli.yml"
       - ".github/workflows/cli-binaries.yml"
@@ -47,19 +49,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify CLI workflow topology
         working-directory: .
         run: node scripts/quality/cli-workflow.test.mjs
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install CLI dependencies
         run: uv sync --dev
@@ -84,15 +86,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install CLI dependencies
         run: uv sync --dev

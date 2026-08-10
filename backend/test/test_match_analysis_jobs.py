@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
@@ -39,6 +39,7 @@ from app.modules.matching.job_runtime import (
     _claim_next_match_analysis_item,
     _mark_item_succeeded,
     _recover_expired_match_analysis_items,
+    summarize_match_analysis_selection,
 )
 
 
@@ -141,6 +142,99 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(logs[0].event_metadata["skipped_count"], 1)
         self.assertEqual(logs[0].event_metadata["identity_id"], identity_id)
         self.assertEqual(logs[0].event_metadata["llm_profile_id"], llm_profile_id)
+
+    def test_create_job_supports_more_than_sqlite_parameter_limit(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+
+        async def add_scale_professors() -> list[int]:
+            async with self.session_factory() as session:
+                professors = [
+                    Professor(
+                        name=f"规模匹配导师 {index}",
+                        email=f"scale-match-{index:04d}@example.edu",
+                        research_direction=f"数据库系统 {index}",
+                        recent_papers=[],
+                    )
+                    for index in range(1_003)
+                ]
+                session.add_all(professors)
+                await session.commit()
+                return [professor.id for professor in professors]
+
+        professor_ids.extend(self._run_async(add_scale_professors()))
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=professor_ids,
+                name="规模匹配任务",
+            ),
+        )
+
+        async def load_counts() -> dict[str, int]:
+            async with self.session_factory() as session:
+                rows = await session.execute(
+                    select(MatchAnalysisJobItem.status, func.count())
+                    .where(MatchAnalysisJobItem.job_id == job.id)
+                    .group_by(MatchAnalysisJobItem.status),
+                )
+                return {str(status): int(count) for status, count in rows}
+
+        counts = self._run_async(load_counts())
+        self.assertEqual(job.target_count, 1_004)
+        self.assertEqual(job.skipped_count, 1)
+        self.assertEqual(counts, {"queued": 1_004, "skipped": 1})
+
+    def test_selection_summary_and_skip_existing_cover_off_page_professors(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(extra_analyzable_professor=True),
+        )
+
+        async def seed_existing_match_and_summarize():
+            async with self.session_factory() as session:
+                session.add(
+                    EmailTask(
+                        identity_id=identity_id,
+                        llm_profile_id=llm_profile_id,
+                        professor_id=professor_ids[0],
+                        status=EmailTaskStatus.MATCHED.value,
+                        match_score=88,
+                        match_reason="已有结果",
+                    ),
+                )
+                await session.commit()
+                return await summarize_match_analysis_selection(
+                    session,
+                    identity_id=identity_id,
+                    professor_ids=professor_ids,
+                )
+
+        summary = self._run_async(seed_existing_match_and_summarize())
+        self.assertEqual(summary.selected_count, 3)
+        self.assertEqual(summary.analyzable_count, 2)
+        self.assertEqual(summary.missing_evidence_count, 1)
+        self.assertEqual(summary.already_scored_count, 1)
+        self.assertEqual(summary.unscored_analyzable_count, 1)
+
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=professor_ids,
+                skip_existing=True,
+            ),
+        )
+        self.assertEqual(job.target_count, 1)
+        self.assertEqual(job.skipped_count, 1)
+        items = self._run_async(self._get_job_items(job.id))
+        self.assertEqual(
+            [item.professor_id for item in items],
+            [professor_ids[1], professor_ids[2]],
+        )
 
     def test_run_queued_job_marks_success_and_updates_counts(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(

@@ -23,6 +23,81 @@ export interface ProfessorDashboardItemDTO {
   tags: ProfessorTagDTO[];
 }
 
+export interface ProfessorFilterOptionsDTO {
+  universities: string[];
+  schools: string[];
+  departments: string[];
+  titles: string[];
+  tags: Array<{ id: number; name: string }>;
+}
+
+export interface ProfessorPageDTO<T> {
+  items: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  next_cursor: string | null;
+  filter_options: ProfessorFilterOptionsDTO;
+}
+
+export interface ProfessorIdSelectionDTO {
+  ids: number[];
+  total_count: number;
+}
+
+export type ProfessorKeywordSearchScopeDTO =
+  | 'name'
+  | 'email'
+  | 'university'
+  | 'school'
+  | 'department'
+  | 'title'
+  | 'researchDirection'
+  | 'tag';
+
+export interface ProfessorDashboardPageRequestDTO {
+  identity_id: number;
+  page: number;
+  page_size: number;
+  cursor?: string | null;
+  keyword: string;
+  keyword_search_scopes: ProfessorKeywordSearchScopeDTO[];
+  universities: string[];
+  schools: string[];
+  departments: string[];
+  titles: string[];
+  statuses: ProfessorDashboardFilterStatus[];
+  tag_ids: string[];
+  min_match_score: number | null;
+  max_match_score: number | null;
+  match_score_missing: boolean;
+  sort_key:
+    | 'latest'
+    | 'matchScoreDesc'
+    | 'sentCountDesc'
+    | 'nameAsc'
+    | 'lastSentAt'
+    | 'lastRepliedAt';
+  sort_direction: 'asc' | 'desc';
+}
+
+export interface ProfessorManagementPageRequestDTO {
+  archived: 'active' | 'archived' | 'all';
+  page: number;
+  page_size: number;
+  cursor?: string | null;
+  keyword: string;
+  keyword_search_scopes: ProfessorKeywordSearchScopeDTO[];
+  universities: string[];
+  schools: string[];
+  departments: string[];
+  titles: string[];
+  tag_ids: string[];
+  sort_key: 'latest' | 'updatedAtDesc' | 'nameAsc' | 'universityAsc';
+  sort_direction: 'asc' | 'desc';
+}
+
 export type ProfessorDashboardStatus =
   | 'not_contacted'
   | 'preparing'
@@ -152,7 +227,6 @@ export interface ProfessorBulkTagsPayloadDTO {
 export interface ProfessorBulkTagsResultDTO {
   ok: boolean;
   affected_count: number;
-  professors: ProfessorManagementItemDTO[];
   message: string;
 }
 

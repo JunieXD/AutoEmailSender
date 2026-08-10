@@ -15,6 +15,8 @@ from auto_email_sender_cli.errors import (
     sanitize_error_message,
 )
 from auto_email_sender_cli.result_protocol import (
+    DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_MAX_OUTPUT_ITEMS,
     prepare_result_data,
     result_protocol_metadata,
 )
@@ -52,6 +54,8 @@ class CliContext:
     force_output: bool = False
     projection: ResultProjection = ResultProjection.SUMMARY
     expand: tuple[str, ...] = ()
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
+    max_items: int = DEFAULT_MAX_OUTPUT_ITEMS
     include_revisions: bool = False
     specified_options: frozenset[str] = frozenset()
     invoke_command: str | None = None
@@ -101,6 +105,8 @@ def emit_success(
         command=command,
         projection=context.projection.value,
         expanded_paths=context.expand,
+        max_output_bytes=context.max_output_bytes,
+        max_items=context.max_items,
         continuation_input=continuation_input,
         invoke_input=(
             context.invoke_input

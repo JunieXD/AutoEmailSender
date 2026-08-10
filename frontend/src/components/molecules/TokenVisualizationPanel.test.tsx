@@ -174,10 +174,10 @@ describe('TokenVisualizationPanel', () => {
     expect(screen.getByText('总 Token')).toBeInTheDocument();
     expect(screen.getByText('3,060')).toBeInTheDocument();
     expect(screen.getByText('输入命中率 20%')).toBeInTheDocument();
-    expect(screen.getByText('输入 / 输出 / 缓存趋势')).toBeInTheDocument();
-    expect(screen.getByText('功能消耗分布')).toBeInTheDocument();
-    expect(screen.getByText('模型消耗排行')).toBeInTheDocument();
-    expect(screen.getByText('Token 消耗记录')).toBeInTheDocument();
+    expect(screen.getByText('Token 趋势')).toBeInTheDocument();
+    expect(screen.getByText('按功能分布')).toBeInTheDocument();
+    expect(screen.getByText('模型用量排行')).toBeInTheDocument();
+    expect(screen.getByText('Token 明细')).toBeInTheDocument();
     expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
   });
 
@@ -211,7 +211,7 @@ describe('TokenVisualizationPanel', () => {
   it('centers all recent token record table headers and cells', async () => {
     render(<TokenVisualizationPanel />);
 
-    await screen.findByText('Token 消耗记录');
+    await screen.findByText('Token 明细');
 
     screen.getAllByRole('columnheader').forEach((header) => {
       expect(header).toHaveClass('text-center');
@@ -225,19 +225,19 @@ describe('TokenVisualizationPanel', () => {
     listTokenUsageRecords.mockResolvedValueOnce(recordList).mockResolvedValueOnce(secondRecordList);
     render(<TokenVisualizationPanel />);
 
-    expect(await screen.findByText('共 12 条记录，当前第 1 / 2 页')).toBeInTheDocument();
+    expect(await screen.findByText('12 条 · 1/2 页')).toBeInTheDocument();
     expect(screen.getByText('李老师 1 - 匹配分析')).toBeInTheDocument();
     expect(screen.queryByText('李老师 11 - 匹配分析')).not.toBeInTheDocument();
     expect(screen.getByText('条')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
 
-    expect(await screen.findByText('共 12 条记录，当前第 2 / 2 页')).toBeInTheDocument();
+    expect(await screen.findByText('12 条 · 2/2 页')).toBeInTheDocument();
     expect(screen.getByText('李老师 11 - 匹配分析')).toBeInTheDocument();
     expect(screen.queryByText('李老师 1 - 匹配分析')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled();
     expect(
-      screen.getByRole('region', { name: 'Token 消耗记录列表' }),
+      screen.getByRole('region', { name: 'Token 明细列表' }),
     ).toHaveFocus();
     expect(scrollIntoView).toHaveBeenCalledWith({
       behavior: 'auto',
@@ -252,7 +252,7 @@ describe('TokenVisualizationPanel', () => {
       .mockResolvedValueOnce(secondRecordList);
     render(<TokenVisualizationPanel />);
 
-    await screen.findByText('共 12 条记录，当前第 1 / 2 页');
+    await screen.findByText('12 条 · 1/2 页');
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
 
     expect(await screen.findByText('分页请求失败')).toBeInTheDocument();
@@ -261,7 +261,7 @@ describe('TokenVisualizationPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
 
-    expect(await screen.findByText('共 12 条记录，当前第 2 / 2 页')).toBeInTheDocument();
+    expect(await screen.findByText('12 条 · 2/2 页')).toBeInTheDocument();
     expect(listTokenUsageRecords).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, pageSize: 10 }),
     );
@@ -271,14 +271,14 @@ describe('TokenVisualizationPanel', () => {
   it('filters token records by feature model and time range', async () => {
     render(<TokenVisualizationPanel />);
 
-    await screen.findByText('Token 消耗记录');
-    fireEvent.click(screen.getByLabelText('Token 记录功能筛选'));
+    await screen.findByText('Token 明细');
+    fireEvent.click(screen.getByLabelText('Token 功能'));
     fireEvent.click(screen.getByRole('option', { name: '匹配分析' }));
-    fireEvent.click(screen.getByLabelText('Token 记录模型筛选'));
+    fireEvent.click(screen.getByLabelText('Token 模型'));
     fireEvent.click(screen.getByRole('option', { name: 'gpt-primary' }));
     fireEvent.change(screen.getByLabelText('Token 记录开始时间'), { target: { value: '2026-05-24T10:30' } });
     fireEvent.change(screen.getByLabelText('Token 记录结束时间'), { target: { value: '2026-05-25T11:45' } });
-    fireEvent.click(screen.getByRole('button', { name: '查询记录' }));
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
       expect(listTokenUsageRecords).toHaveBeenLastCalledWith({
@@ -333,7 +333,7 @@ describe('TokenVisualizationPanel', () => {
       expect(screen.getByRole('button', { name: '刷新' })).toBeDisabled();
     });
 
-    expect(screen.queryByText('正在更新 Token 可视化数据...')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在更新 Token 可视化数据…')).not.toBeInTheDocument();
 
     resolveNext?.(visualization);
   });
@@ -420,10 +420,10 @@ describe('TokenVisualizationPanel', () => {
 
     render(<TokenVisualizationPanel />);
 
-    expect(await screen.findByText('当前时间范围暂无 Token 消耗数据')).toBeInTheDocument();
+    expect(await screen.findByText('当前时段暂无 Token 数据')).toBeInTheDocument();
     expect(screen.getByText('暂无功能消耗数据')).toBeInTheDocument();
     expect(screen.getByText('暂无模型消耗数据')).toBeInTheDocument();
-    expect(screen.getByText('暂无 Token 消耗记录')).toBeInTheDocument();
+    expect(screen.getByText('暂无 Token 记录')).toBeInTheDocument();
   });
 
   it('shows an error and retries loading', async () => {

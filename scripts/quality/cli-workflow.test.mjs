@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,13 @@ const [contractWorkflow, binaryWorkflow, releaseWorkflow] = await Promise.all([
   readFile(path.join(workflowsRoot, "cli-binaries.yml"), "utf8"),
   readFile(path.join(workflowsRoot, "release.yml"), "utf8"),
 ]);
+const allWorkflows = (
+  await Promise.all(
+    (await readdir(workflowsRoot))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => readFile(path.join(workflowsRoot, name), "utf8")),
+  )
+).join("\n");
 
 test("ordinary CLI pushes run contracts on Ubuntu only", () => {
   assert.match(contractWorkflow, /ubuntu-contract-tests:[\s\S]*runs-on: ubuntu-latest/);
@@ -39,6 +46,31 @@ test("frozen binaries build only on supported desktop platforms", () => {
   assert.doesNotMatch(binaryWorkflow, /unittest discover/);
   assert.match(binaryWorkflow, /\.\/scripts\/build\/build-cli\.sh --clean/);
   assert.match(binaryWorkflow, /\.\/scripts\/build\/build-cli\.ps1 -Clean/);
+});
+
+test("CLI benchmark changes trigger contracts and both frozen builds", () => {
+  const benchmarkPath = '- "scripts/quality/benchmark_agent_cli.py"';
+  for (const workflow of [contractWorkflow, binaryWorkflow]) {
+    assert.equal(
+      workflow.split(benchmarkPath).length - 1,
+      2,
+      "benchmark changes must trigger both push and pull_request validation",
+    );
+  }
+});
+
+test("workflows use Node.js 24 compatible official action generations", () => {
+  const staleActions = [
+    /actions\/checkout@v[1-6]\b/,
+    /actions\/setup-python@v[1-6]\b/,
+    /actions\/setup-node@v[1-6]\b/,
+    /astral-sh\/setup-uv@v[1-8]\b/,
+    /actions\/upload-artifact@v[1-6]\b/,
+    /actions\/download-artifact@v[1-7]\b/,
+  ];
+  for (const staleAction of staleActions) {
+    assert.doesNotMatch(allWorkflows, staleAction);
+  }
 });
 
 test("release tags gate platform builds on one Ubuntu CLI contract suite", () => {

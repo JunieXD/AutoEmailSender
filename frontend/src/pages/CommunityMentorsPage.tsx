@@ -148,9 +148,9 @@ const categoryMeta: Record<
   { label: string; className: string; description: string }
 > = {
   new: {
-    label: '本地没有',
+    label: '未导入',
     className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    description: '本地还没有这位导师，导入后会新增。',
+    description: '导入后将新增到本地。',
   },
   linked_unchanged: {
     label: '内容一致',
@@ -317,7 +317,7 @@ const openFeedbackForm = (
   openExternalHttpUrl(buildCommunityReportUrl(record));
   notifySuccess(
     '反馈页面已打开',
-    '导师和当前信息已自动填写，请选择问题并补充正确内容和新的官网证据。',
+    '已自动填入导师信息。请选择问题，并补充正确信息和官网来源。',
   );
 };
 
@@ -570,7 +570,7 @@ const CommunityMentorDetailDialog = ({
           </section>
 
           <section>
-            <h3 className="text-sm font-semibold text-stone-900">近期或代表论文</h3>
+            <h3 className="text-sm font-semibold text-stone-900">代表论文</h3>
             <div className="mt-3 rounded-2xl border border-stone-200 bg-white px-4 py-3">
               {record.recent_papers.length > 0 ? (
                 <ol className="list-decimal space-y-2 pl-5 text-sm leading-6 text-stone-700">
@@ -602,7 +602,7 @@ const CommunityMentorDetailDialog = ({
               </div>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-stone-900">全部当前任职</h3>
+              <h3 className="text-sm font-semibold text-stone-900">当前任职</h3>
               <div className="mt-3 space-y-2">
                 {record.affiliations.length > 0 ? record.affiliations.map((affiliation) => (
                   <div key={affiliation.id} className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm">
@@ -625,16 +625,16 @@ const CommunityMentorDetailDialog = ({
           <section>
             <h3 className="text-sm font-semibold text-stone-900">来源与核验</h3>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <DetailValue label="高校官网详情页">
+              <DetailValue label="导师主页">
                 {record.profile_url ? (
                   <ExternalTextLink url={record.profile_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                    打开详情页 <ExternalLink className="h-3.5 w-3.5" />
+                    打开导师主页 <ExternalLink className="h-3.5 w-3.5" />
                   </ExternalTextLink>
                 ) : '暂无'}
               </DetailValue>
-              <DetailValue label="发现导师的来源页">
+              <DetailValue label="信息来源">
                 <ExternalTextLink url={record.source_url} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                  打开来源页 <ExternalLink className="h-3.5 w-3.5" />
+                  打开来源 <ExternalLink className="h-3.5 w-3.5" />
                 </ExternalTextLink>
               </DetailValue>
               <DetailValue label="最后核验">{formatDate(record.last_verified_at)}</DetailValue>
@@ -982,7 +982,7 @@ export const CommunityMentorsPage = () => {
           return nextCatalog;
         });
         if (nextCatalog.warning && announceResult) {
-          notifyWarning('正在使用社区缓存', nextCatalog.warning);
+          notifyWarning('正在使用缓存数据', nextCatalog.warning);
         } else if (announceResult) {
           notifySuccess('社区目录已刷新', `当前共有 ${nextCatalog.record_count} 位导师。`);
         }
@@ -1167,7 +1167,7 @@ export const CommunityMentorsPage = () => {
         notifyWarning('学院数据来自缓存', result.warning);
       }
     } catch (error) {
-      notifyError('加载导师数据失败', getErrorMessage(error, '无法加载所选学院的导师数据'));
+      notifyError('加载导师失败', getErrorMessage(error, '无法加载导师数据'));
     } finally {
       setRecordsLoading(false);
     }
@@ -1562,7 +1562,7 @@ export const CommunityMentorsPage = () => {
       recordsSelectionStale
     ) {
       if (recordsSelectionStale) {
-        notifyWarning('请先重新加载导师列表', '学院选择已改变，当前列表仍是上一次加载的结果。');
+        notifyWarning('请重新加载导师', '学院选择已变化，请重新加载导师。');
       }
       return;
     }
@@ -1673,7 +1673,7 @@ export const CommunityMentorsPage = () => {
       return;
     }
     if (recordsSelectionStale) {
-      notifyWarning('请先重新加载导师列表', '学院选择已改变，不能用旧列表继续导入。');
+      notifyWarning('请重新加载导师', '学院选择已变化，请重新加载导师。');
       return;
     }
     const blocked = previewPayload.records.find((item) => !isRecordSelectable(item));
@@ -1735,7 +1735,7 @@ export const CommunityMentorsPage = () => {
               className="ui-btn-primary"
             >
               <FileSpreadsheet className="h-4 w-4" />
-              批量贡献学校/学院
+              贡献院校数据
             </Link>
             <button
               type="button"
@@ -1756,9 +1756,9 @@ export const CommunityMentorsPage = () => {
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
             <div>
-              <h2 className="font-semibold">当前显示的是上次验证成功的数据</h2>
+              <h2 className="font-semibold">正在使用缓存数据</h2>
               <p className="mt-1 text-sm leading-6 text-amber-800">{catalog.warning}</p>
-              <p className="mt-1 text-xs text-amber-700">你仍可浏览和导入；恢复联网后点击“刷新社区目录”即可获取最新版本。</p>
+              <p className="mt-1 text-xs text-amber-700">联网后刷新即可更新。</p>
             </div>
           </div>
         </section>
@@ -1771,7 +1771,7 @@ export const CommunityMentorsPage = () => {
             <div className="min-w-0 flex-1">
               <h2 className="font-semibold text-red-900">已导入导师有生命周期变化</h2>
               <p className="mt-1 text-sm leading-6 text-red-700">
-                社区不会静默删除或恢复你的本地导师。请查看证据后自行决定是否归档或修改。
+                本地导师不会自动变更，请查看证据后处理。
               </p>
               <div className="mt-3 grid gap-2">
                 {catalog?.lifecycle_warnings.map((warning) => (
@@ -1812,7 +1812,6 @@ export const CommunityMentorsPage = () => {
         <div className="mt-8 rounded-[32px] border border-dashed border-orange-200 bg-white p-10 text-center">
           <Inbox className="mx-auto h-10 w-10 text-orange-400" />
           <h2 className="mt-4 text-xl font-semibold text-stone-900">还没有导师数据</h2>
-          <p className="mt-2 text-sm text-stone-600">欢迎贡献第一个学校或学院。</p>
           <Link
             to="/professors?community_contribution=batch"
             className="ui-btn-primary mt-6"
@@ -1834,7 +1833,7 @@ export const CommunityMentorsPage = () => {
               <div>
                 <h2 className="font-semibold text-stone-900">选择学校与学院</h2>
                 <p className="mt-1 text-xs text-stone-500">
-                  已选 {selectedUnitPaths.length}/{MAX_SELECTED_UNITS} 个学院 · {selectedUnitRecordCount}/{MAX_LOADED_RECORDS} 位
+                  已选 {selectedUnitPaths.length} 个学院 · {selectedUnitRecordCount} 位导师
                 </p>
               </div>
               <Building2 className="h-5 w-5 text-primary" />
@@ -1863,7 +1862,7 @@ export const CommunityMentorsPage = () => {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
               <button
                 type="button"
-                aria-label="选择当前筛选结果（学院）"
+                aria-label={allFilteredUnitsSelected ? "取消全选学院" : "全选当前学院"}
                 aria-pressed={allFilteredUnitsSelected}
                 disabled={filteredCatalogUnitPaths.length === 0}
                 onClick={toggleFilteredUnits}
@@ -1877,7 +1876,7 @@ export const CommunityMentorsPage = () => {
                   <Square className="h-5 w-5 shrink-0 text-stone-400" />
                 )}
                 <span>
-                  选择当前筛选结果
+                  {allFilteredUnitsSelected ? '取消全选' : '全选当前结果'}
                   {selectedFilteredUnitCount > 0
                     ? `（已选 ${selectedFilteredUnitCount}/${filteredCatalogUnitPaths.length}）`
                     : ''}
@@ -1894,7 +1893,7 @@ export const CommunityMentorsPage = () => {
                     ));
                   }}
                 >
-                  清除当前筛选选择
+                  清除当前选择
                 </button>
               ) : null}
             </div>
@@ -1969,7 +1968,7 @@ export const CommunityMentorsPage = () => {
             <div className="mt-5 flex justify-end">
               <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary w-full justify-center disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
                 {recordsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-                加载所选学院
+                查看导师
               </button>
             </div>
           </section>
@@ -1978,15 +1977,14 @@ export const CommunityMentorsPage = () => {
             {!recordsPayload ? (
               <div className="flex min-h-64 flex-col items-center justify-center text-center">
                 <Users className="h-10 w-10 text-stone-300" />
-                <h2 className="mt-4 font-semibold text-stone-900">先在上方选择学校和学院</h2>
-                <p className="mt-2 max-w-md text-sm leading-6 text-stone-500">选择后点击“加载所选学院”，导师列表会显示在这里。</p>
+                <h2 className="mt-4 font-semibold text-stone-900">选择学院后查看导师</h2>
               </div>
             ) : (
               <>
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                   <div>
                     <h2 className="text-xl font-semibold text-stone-900">导师列表</h2>
-                    <p className="mt-1 text-sm text-stone-500">已加载 {recordsPayload.records.length} 位，已选择 {selectedRecordIds.length}/{MAX_SELECTED_RECORDS}</p>
+                    <p className="mt-1 text-sm text-stone-500">已加载 {recordsPayload.records.length} 位 · 已选 {selectedRecordIds.length} 位</p>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
@@ -2066,7 +2064,7 @@ export const CommunityMentorsPage = () => {
                     }}
                   />
                   <MultiSelectFilter
-                    label="与本地的关系"
+                    label="本地状态"
                     allLabel="全部情况"
                     selectedValues={categoryFilters}
                     options={categoryOptions}
@@ -2102,7 +2100,7 @@ export const CommunityMentorsPage = () => {
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                     <span className="inline-flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
-                      当前列表来自上一次加载。学院选择已经改变，请重新加载后再预览或导入。
+                      学院选择已变化，请重新加载导师。
                     </span>
                     <button
                       type="button"
@@ -2118,7 +2116,7 @@ export const CommunityMentorsPage = () => {
                   <div className="flex flex-wrap items-center gap-3">
                     <button
                       type="button"
-                      aria-label="选择当前筛选结果"
+                      aria-label={allVisibleSelected ? "取消全选导师" : "全选当前导师"}
                       aria-pressed={allVisibleSelected}
                       disabled={selectableVisibleIds.length === 0}
                       onClick={toggleVisibleRecords}
@@ -2132,7 +2130,7 @@ export const CommunityMentorsPage = () => {
                         <Square className="h-5 w-5 shrink-0 text-stone-400" />
                       )}
                       <span>
-                        选择当前筛选结果
+                        {allVisibleSelected ? '取消全选' : '全选当前结果'}
                         {selectedVisibleCount > 0 ? `（已选 ${selectedVisibleCount}/${selectableVisibleIds.length}）` : ''}
                       </span>
                     </button>
@@ -2142,7 +2140,7 @@ export const CommunityMentorsPage = () => {
                         className="text-xs font-medium text-stone-600 underline decoration-stone-300 underline-offset-2"
                         onClick={clearVisibleRecords}
                       >
-                        清除当前筛选选择
+                        清除当前选择
                       </button>
                     ) : null}
                   </div>
@@ -2172,7 +2170,7 @@ export const CommunityMentorsPage = () => {
                 {visibleRecords.length > RECORDS_PER_PAGE ? (
                   <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
                     <span className="text-xs text-stone-500">
-                      第 {currentRecordPage}/{totalRecordPages} 页 · 当前筛选共 {visibleRecords.length} 位
+                      {visibleRecords.length} 位 · {currentRecordPage}/{totalRecordPages} 页
                     </span>
                     <div className="flex gap-2">
                       <button
@@ -2215,7 +2213,7 @@ export const CommunityMentorsPage = () => {
           <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-y-auto rounded-[26px] border border-white/60 bg-stone-50 shadow-2xl md:max-h-[92vh] md:overflow-hidden">
             <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 py-3 sm:px-5 sm:py-4 md:static">
               <div className="min-w-0">
-                <h2 className="text-xl font-semibold text-stone-950">导入预览与字段选择</h2>
+                <h2 className="text-xl font-semibold text-stone-950">导入预览</h2>
                 <p className="mt-1 text-xs text-stone-500">
                   共 {previewPayload.records.length} 位 · 当前筛选 {filteredPreviewRecords.length} 位
                   {previewUnconfirmedCount > 0 ? ` · ${previewUnconfirmedCount} 位待确认身份` : ''}
@@ -2227,7 +2225,7 @@ export const CommunityMentorsPage = () => {
                   disabled={importing}
                   onClick={() => applyChoiceToAllPreviewFields('local')}
                   className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-                  title="已有导师全部保留本地；本地没有的导师仍采用社区资料"
+                  title="已有导师保留本地资料，新导师使用社区资料"
                 >
                   全部保留本地
                 </button>
@@ -2236,7 +2234,7 @@ export const CommunityMentorsPage = () => {
                   disabled={importing}
                   onClick={() => applyChoiceToAllPreviewFields('community')}
                   className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-                  title="包括社区空值；空值会清空对应的本地内容"
+                  title="社区空值也会覆盖并清空本地内容"
                 >
                   全部采用社区
                 </button>
@@ -2275,7 +2273,7 @@ export const CommunityMentorsPage = () => {
                   </div>
                 </div>
                 <MultiSelectFilter
-                  label="与本地的关系"
+                  label="本地状态"
                   allLabel="全部情况"
                   selectedValues={previewCategoryFilters}
                   options={categoryOptions}
@@ -2312,14 +2310,14 @@ export const CommunityMentorsPage = () => {
               <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <div className="flex items-center gap-2 text-xs text-stone-600">
                   <SelectionToggleButton
-                    label="只看尚未确认身份"
+                    label="只看待确认导师"
                     selected={previewOnlyUnconfirmed}
                     onToggle={() => {
                       setPreviewOnlyUnconfirmed((current) => !current);
                       setPreviewPage(1);
                     }}
                   />
-                  <span>只看尚未确认身份</span>
+                  <span>只看待确认导师</span>
                 </div>
                 {previewFieldEntries.length > 0 ? (
                   <div className="flex min-w-0 flex-[1_1_24rem] items-center gap-1.5 overflow-x-auto pb-1">
@@ -2363,7 +2361,7 @@ export const CommunityMentorsPage = () => {
 
               {previewBulkFieldOptions.length > 0 ? (
                 <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-stone-200 pt-2.5">
-                  <span className="text-xs font-semibold text-stone-700">按字段批量处理</span>
+                  <span className="text-xs font-semibold text-stone-700">批量选择资料来源</span>
                   <TopBarSelectMenu
                     placeholder="字段"
                     value={previewBulkField}
@@ -2373,7 +2371,7 @@ export const CommunityMentorsPage = () => {
                     onChange={(value) => setPreviewBulkField(String(value))}
                   />
                   <span className="text-xs text-stone-500">
-                    当前筛选可处理 {previewBulkEligibleRecords.length} 位
+                    当前可处理 {previewBulkEligibleRecords.length} 位
                   </span>
                   <div className="ml-auto flex flex-wrap gap-2">
                     <button
@@ -2383,7 +2381,7 @@ export const CommunityMentorsPage = () => {
                       onClick={() => applyChoiceToFilteredPreviewField('local')}
                       className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      该字段保留本地
+                      保留本地值
                     </button>
                     <button
                       type="button"
@@ -2392,7 +2390,7 @@ export const CommunityMentorsPage = () => {
                       onClick={() => applyChoiceToFilteredPreviewField('community')}
                       className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      该字段采用社区
+                      采用社区值
                     </button>
                   </div>
                 </div>
@@ -2457,7 +2455,7 @@ export const CommunityMentorsPage = () => {
                     ) : (
                       <div className="mt-2 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">
                         {item.category === 'new'
-                          ? '本地没有这位导师，将按社区资料新增。'
+                          ? '将按社区资料新增到本地。'
                           : '资料一致，导入只会更新社区关联。'}
                       </div>
                     )}
@@ -2468,9 +2466,9 @@ export const CommunityMentorsPage = () => {
             {filteredPreviewRecords.length > PREVIEW_RECORDS_PER_PAGE ? (
               <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50 px-4 py-3 sm:px-6">
                 <span className="text-xs text-stone-500">
-                  第 {currentPreviewPage}/{totalPreviewPages} 页 · 当前显示第{' '}
+                  {currentPreviewPage}/{totalPreviewPages} 页 · {' '}
                   {(currentPreviewPage - 1) * PREVIEW_RECORDS_PER_PAGE + 1}–
-                  {Math.min(currentPreviewPage * PREVIEW_RECORDS_PER_PAGE, filteredPreviewRecords.length)} 位，筛选后共 {filteredPreviewRecords.length} 位
+                  {Math.min(currentPreviewPage * PREVIEW_RECORDS_PER_PAGE, filteredPreviewRecords.length)} / {filteredPreviewRecords.length} 位
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -2501,7 +2499,7 @@ export const CommunityMentorsPage = () => {
               </div>
             ) : null}
             <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-4 py-3 sm:px-6 sm:py-4 md:static">
-              <p className="text-xs text-stone-500">不会导入标签、个人备注、任务、发送记录或匹配结果。</p>
+              <p className="text-xs text-stone-500">只导入导师资料；其他本地数据不变。</p>
               <div className="flex gap-3">
                 <button type="button" disabled={importing} onClick={closePreview} className="ui-btn-secondary">取消</button>
                 <button type="button" disabled={importing || recordsSelectionStale || previewPayload.records.some((item) => !isRecordSelectable(item))} onClick={() => void submitImport()} className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60">{importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}确认导入 {previewPayload.records.length} 位</button>

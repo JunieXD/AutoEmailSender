@@ -113,7 +113,7 @@ function expectDateRangeParams(extra: Record<string, unknown> = {}) {
 }
 
 async function expandPanel() {
-  fireEvent.click(screen.getByRole("button", { name: /开发诊断日志/ }));
+  fireEvent.click(screen.getByRole("button", { name: /诊断日志/ }));
   await waitFor(() => {
     expect(listOperationLogs).toHaveBeenCalled();
   });
@@ -160,12 +160,12 @@ describe("DiagnosticLogPanel", () => {
 
     render(<DiagnosticLogPanel />);
 
-    expect(screen.getByRole("button", { name: /开发诊断日志/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /诊断日志/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
     expect(screen.getByText(/本地\s*2\s*条/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "导出诊断日志" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "导出" })).not.toBeInTheDocument();
     expect(listOperationLogs).not.toHaveBeenCalled();
   });
 
@@ -175,12 +175,12 @@ describe("DiagnosticLogPanel", () => {
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
-    expect(screen.getByRole("button", { name: /开发诊断日志/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /诊断日志/ })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
     expect(screen.getByLabelText("导出日期")).toHaveValue(todayInputValue());
-    expect(screen.getByRole("button", { name: "导出诊断日志" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导出" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "导出抓取日志" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "清空本地日志" })).toBeInTheDocument();
     expect(listOperationLogs).toHaveBeenCalledWith(
@@ -204,21 +204,21 @@ describe("DiagnosticLogPanel", () => {
     expect(crawlJobSelect).toHaveClass("min-w-0");
   });
 
-  it("把诊断日志导出和抓取任务日志导出拆成两个明确区域", async () => {
+  it("把应用日志和抓取任务日志导出拆成两个明确区域", async () => {
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
     const diagnosticExportGroup = screen.getByRole("group", {
-      name: "诊断日志导出",
+      name: "应用日志",
     });
     expect(
       within(diagnosticExportGroup).getByRole("button", {
-        name: "导出诊断日志",
+        name: "导出",
       }),
     ).toBeInTheDocument();
     expect(within(diagnosticExportGroup).getByLabelText("导出日期")).toBeInTheDocument();
-    expect(within(diagnosticExportGroup).getByRole("button", { name: "Level" })).toBeInTheDocument();
-    expect(within(diagnosticExportGroup).getByRole("button", { name: "Category" })).toBeInTheDocument();
+    expect(within(diagnosticExportGroup).getByRole("button", { name: "级别" })).toBeInTheDocument();
+    expect(within(diagnosticExportGroup).getByRole("button", { name: "分类" })).toBeInTheDocument();
     expect(
       within(diagnosticExportGroup).queryByRole("button", {
         name: "导出抓取日志",
@@ -240,7 +240,7 @@ describe("DiagnosticLogPanel", () => {
     ).toBeInTheDocument();
     expect(
       within(crawlerLogExportGroup).queryByRole("button", {
-        name: "导出诊断日志",
+        name: "导出",
       }),
     ).not.toBeInTheDocument();
   });
@@ -249,7 +249,7 @@ describe("DiagnosticLogPanel", () => {
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Category" }));
+    fireEvent.click(screen.getByRole("button", { name: "分类" }));
 
     const categoryMenu = screen.getByRole("listbox");
     expect(categoryMenu).toHaveClass("fixed");
@@ -265,7 +265,7 @@ describe("DiagnosticLogPanel", () => {
     expect(content).toHaveClass("collapsible-card-content");
     expect(content).toHaveAttribute("data-state", "open");
 
-    fireEvent.click(screen.getByRole("button", { name: /开发诊断日志/ }));
+    fireEvent.click(screen.getByRole("button", { name: /诊断日志/ }));
 
     expect(content).toHaveAttribute("data-state", "closed");
     fireEvent.transitionEnd(content!, { propertyName: "grid-template-rows" });
@@ -277,9 +277,9 @@ describe("DiagnosticLogPanel", () => {
     vi.mocked(listOperationLogs).mockRejectedValue(new Error("backend down"));
 
     render(<DiagnosticLogPanel />);
-    fireEvent.click(screen.getByRole("button", { name: /开发诊断日志/ }));
+    fireEvent.click(screen.getByRole("button", { name: /诊断日志/ }));
 
-    expect(await screen.findByRole("button", { name: "导出诊断日志" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "导出" })).toBeInTheDocument();
   });
 
   it("修改日期和筛选条件时会带上对应参数重新加载", async () => {
@@ -289,8 +289,8 @@ describe("DiagnosticLogPanel", () => {
     fireEvent.change(screen.getByLabelText("导出日期"), {
       target: { value: "2026-04-25" },
     });
-    chooseSelectOption("Level", "warning（后端）");
-    chooseSelectOption("Category", "crawler（后端）");
+    chooseSelectOption("级别", "warning（后端）");
+    chooseSelectOption("分类", "crawler（后端）");
 
     await waitFor(() =>
       expect(listOperationLogs).toHaveBeenCalledWith(
@@ -312,7 +312,7 @@ describe("DiagnosticLogPanel", () => {
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "导出诊断日志" }));
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
 
     await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
     const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
@@ -365,7 +365,7 @@ describe("DiagnosticLogPanel", () => {
     render(<DiagnosticLogPanel />);
     await expandPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "导出诊断日志" }));
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
 
     await waitFor(() => {
       expect(notificationApi.notifyError).toHaveBeenCalledWith(

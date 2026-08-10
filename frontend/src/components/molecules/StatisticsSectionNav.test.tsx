@@ -30,7 +30,8 @@ describe("StatisticsSectionNav", () => {
     fireEvent.mouseEnter(screen.getByRole("button", { name: "邮件" }));
 
     expect(screen.getByText("邮件")).toBeInTheDocument();
-    expect(screen.getByRole("tooltip")).toHaveTextContent("点击跳转");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("邮件");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("点击跳转");
 
     fireEvent.mouseLeave(screen.getByRole("button", { name: "邮件" }));
 
@@ -108,6 +109,7 @@ describe("StatisticsSectionNav", () => {
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: "导师" }));
 
-    expect(screen.getByRole("tooltip")).toHaveTextContent("当前版块");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("导师");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("当前版块");
   });
 });

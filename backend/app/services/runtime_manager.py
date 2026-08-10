@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.backend_error_logging import write_backend_worker_error_log
 from app.core.config import get_settings
+from app.core.sqlite_maintenance import run_sqlite_maintenance_once
 from app.models import AppSetting
 from app.modules.campaigns.public import (
     BatchDraftGenerationCoordinator,
@@ -207,6 +208,13 @@ class RuntimeManager:
             )
 
         self._tasks = [
+            asyncio.create_task(
+                self._loop(
+                    "sqlite-maintenance",
+                    getattr(settings, "sqlite_maintenance_interval_seconds", 21_600),
+                    run_sqlite_maintenance_once,
+                ),
+            ),
             asyncio.create_task(
                 self._loop(
                     "dispatcher",

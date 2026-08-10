@@ -24,7 +24,8 @@ import type {
 } from "../../../../contracts/desktop-ipc.js";
 
 const execFileAsync = promisify(execFile);
-const MANIFEST_SCHEMA_VERSION = 5;
+export const AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION = 5;
+const MANIFEST_SCHEMA_VERSION = AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION;
 const PREVIOUS_MANIFEST_SCHEMA_VERSION = 4;
 const OLDER_MANIFEST_SCHEMA_VERSION = 3;
 const LEGACY_MANIFEST_SCHEMA_VERSION = 2;
@@ -153,7 +154,13 @@ export type AgentSupportServiceOptions = {
   writeWindowsUserPath?: (value: string) => Promise<void>;
   broadcastWindowsEnvironmentChange?: () => Promise<void>;
   detectAgentInstallation?: (agentId: AgentIntegrationId) => Promise<boolean>;
+  writeManifest?: (targetPath: string, value: object) => Promise<void>;
   now?: () => Date;
+};
+
+type ManagedPathChange = {
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
 };
 
 export function resolveAgentSupportPaths(options: AgentSupportServiceOptions): AgentSupportPaths {
@@ -206,6 +213,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     ?? broadcastWindowsEnvironmentChange;
   const detectAgentInstallation = options.detectAgentInstallation
     ?? ((agentId: AgentIntegrationId) => detectInstalledAgent(agentId, options));
+  const writeManifest = options.writeManifest ?? writeJsonAtomic;
 
   const getStatus = async (): Promise<AgentSupportStatus> => {
     const manifest = await readManifest(paths.manifestPath);
@@ -306,10 +314,15 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       throw new Error(`Skill 目标已存在且不属于本软件：${target}`);
     }
 
-    await installSkill(paths.skillSource, target, isManaged);
+    const replacement = await installSkill(paths.skillSource, target, isManaged);
     const agentIds = new Set(getManagedAgentIds(paths, previousManifest));
     agentIds.add(agent.id);
-    await writeEnabledManifest(previousManifest, previousManifest.path_managed, [...agentIds]);
+    try {
+      await writeEnabledManifest(previousManifest, previousManifest.path_managed, [...agentIds]);
+    } catch (error) {
+      await rollbackManagedPathChanges([replacement], error);
+    }
+    await replacement.commit();
     return getStatus();
   };
 
@@ -411,22 +424,27 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       throw new Error(`为避免覆盖你的文件，无法安装：${cliConflict}`);
     }
 
-    await installCli(
+    const replacements = await installCli(
       paths,
       options.platform,
       getManagedCliTargetPath(previousManifest, paths),
     );
-    const pathManaged = options.platform === "darwin"
-      ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
-      : await ensureWindowsPath(
-          paths.commandDirectory,
-          Boolean(previousManifest?.enabled && previousManifest.path_managed),
-          readWindowsPath,
-          writeWindowsPath,
-          processEnvironment,
-          broadcastWindowsChange,
-        );
-    await writeEnabledManifest(previousManifest, pathManaged, []);
+    try {
+      const pathManaged = options.platform === "darwin"
+        ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
+        : await ensureWindowsPath(
+            paths.commandDirectory,
+            Boolean(previousManifest?.enabled && previousManifest.path_managed),
+            readWindowsPath,
+            writeWindowsPath,
+            processEnvironment,
+            broadcastWindowsChange,
+          );
+      await writeEnabledManifest(previousManifest, pathManaged, []);
+    } catch (error) {
+      await rollbackManagedPathChanges(replacements, error);
+    }
+    await commitManagedPathChanges(replacements);
     return getStatus();
   }
 
@@ -437,26 +455,33 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       throw new Error(`为避免覆盖你的文件，无法更新：${cliConflict}`);
     }
 
-    await installCli(
+    const replacements = await installCli(
       paths,
       options.platform,
       getManagedCliTargetPath(previousManifest, paths),
     );
     const agentIds = getManagedAgentIds(paths, previousManifest);
-    for (const agentId of agentIds) {
-      await installSkill(paths.skillSource, paths.agentSkillTargets[agentId], true);
-    }
-    const pathManaged = options.platform === "darwin"
-      ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
-      : await ensureWindowsPath(
-          paths.commandDirectory,
-          previousManifest.path_managed,
-          readWindowsPath,
-          writeWindowsPath,
-          processEnvironment,
-          broadcastWindowsChange,
+    try {
+      for (const agentId of agentIds) {
+        replacements.push(
+          await installSkill(paths.skillSource, paths.agentSkillTargets[agentId], true),
         );
-    await writeEnabledManifest(previousManifest, pathManaged, agentIds);
+      }
+      const pathManaged = options.platform === "darwin"
+        ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
+        : await ensureWindowsPath(
+            paths.commandDirectory,
+            previousManifest.path_managed,
+            readWindowsPath,
+            writeWindowsPath,
+            processEnvironment,
+            broadcastWindowsChange,
+          );
+      await writeEnabledManifest(previousManifest, pathManaged, agentIds);
+    } catch (error) {
+      await rollbackManagedPathChanges(replacements, error);
+    }
+    await commitManagedPathChanges(replacements);
     return getStatus();
   }
 
@@ -475,7 +500,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
         } satisfies ManagedAgentSkill,
       ]),
     ) as AgentSupportManifest["agents"];
-    await writeJsonAtomic(paths.manifestPath, {
+    await writeManifest(paths.manifestPath, {
       schema_version: MANIFEST_SCHEMA_VERSION,
       enabled: true,
       prompt_dismissed: true,
@@ -494,7 +519,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     previousManifest: AgentSupportManifest | null,
     promptDismissed: boolean,
   ): Promise<void> {
-    await writeJsonAtomic(paths.manifestPath, {
+    await writeManifest(paths.manifestPath, {
       schema_version: MANIFEST_SCHEMA_VERSION,
       enabled: false,
       prompt_dismissed: promptDismissed,
@@ -552,33 +577,32 @@ async function installCli(
   paths: AgentSupportPaths,
   platform: NodeJS.Platform,
   managedTarget: string | null,
-): Promise<void> {
+): Promise<ManagedPathChange[]> {
   await mkdir(path.dirname(paths.cliTarget), { recursive: true });
   if (await pathExists(paths.cliTarget)) {
     if (managedTarget !== paths.cliTarget) {
       throw new Error(`命令目标已存在且不属于本软件：${paths.cliTarget}`);
     }
-    await rm(paths.cliTarget, { recursive: true, force: true });
-  }
-  if (platform === "darwin") {
-    await symlink(path.resolve(paths.cliSource), paths.cliTarget);
-    return;
   }
   const temporaryPath = `${paths.cliTarget}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporaryPath, windowsCliLauncherContent(paths.cliSource), {
-      encoding: "utf8",
-      flag: "wx",
-    });
-    await rename(temporaryPath, paths.cliTarget);
+    if (platform === "darwin") {
+      await symlink(path.resolve(paths.cliSource), temporaryPath);
+    } else {
+      await writeFile(temporaryPath, windowsCliLauncherContent(paths.cliSource), {
+        encoding: "utf8",
+        flag: "wx",
+      });
+    }
+    const changes = [await replaceManagedPath(temporaryPath, paths.cliTarget)];
     if (managedTarget !== null && managedTarget !== paths.cliTarget) {
       try {
-        await rm(managedTarget, { recursive: true, force: true });
+        changes.push(await stageManagedPathRemoval(managedTarget));
       } catch (error) {
-        await rm(paths.cliTarget, { force: true }).catch(() => undefined);
-        throw error;
+        await rollbackManagedPathChanges(changes, error);
       }
     }
+    return changes;
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
@@ -593,21 +617,102 @@ async function installSkill(
   sourcePath: string,
   targetPath: string,
   allowManagedReplacement: boolean,
-): Promise<void> {
+): Promise<ManagedPathChange> {
   await mkdir(path.dirname(targetPath), { recursive: true });
   if (await pathExists(targetPath)) {
     if (!allowManagedReplacement) {
       throw new Error(`Skill 目标已存在且不属于本软件：${targetPath}`);
     }
-    await rm(targetPath, { recursive: true, force: true });
   }
   const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
   try {
     await cp(sourcePath, temporaryPath, { recursive: true, force: false });
-    await rename(temporaryPath, targetPath);
+    return await replaceManagedPath(temporaryPath, targetPath);
   } finally {
     await rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function replaceManagedPath(
+  temporaryPath: string,
+  targetPath: string,
+): Promise<ManagedPathChange> {
+  const backupPath = `${targetPath}.${randomUUID()}.rollback`;
+  const hadPrevious = await pathExists(targetPath);
+  if (hadPrevious) {
+    await rename(targetPath, backupPath);
+  }
+  try {
+    await rename(temporaryPath, targetPath);
+  } catch (error) {
+    if (hadPrevious) {
+      await rename(backupPath, targetPath).catch(() => undefined);
+    }
+    throw error;
+  }
+  let settled = false;
+  return {
+    commit: async () => {
+      if (settled) return;
+      settled = true;
+      if (hadPrevious) {
+        await rm(backupPath, { recursive: true, force: true });
+      }
+    },
+    rollback: async () => {
+      if (settled) return;
+      settled = true;
+      await rm(targetPath, { recursive: true, force: true });
+      if (hadPrevious) {
+        await rename(backupPath, targetPath);
+      }
+    },
+  };
+}
+
+async function stageManagedPathRemoval(targetPath: string): Promise<ManagedPathChange> {
+  const backupPath = `${targetPath}.${randomUUID()}.rollback`;
+  await rename(targetPath, backupPath);
+  let settled = false;
+  return {
+    commit: async () => {
+      if (settled) return;
+      settled = true;
+      await rm(backupPath, { recursive: true, force: true });
+    },
+    rollback: async () => {
+      if (settled) return;
+      settled = true;
+      await rename(backupPath, targetPath);
+    },
+  };
+}
+
+async function commitManagedPathChanges(changes: ManagedPathChange[]): Promise<void> {
+  for (const change of changes) {
+    await change.commit();
+  }
+}
+
+async function rollbackManagedPathChanges(
+  changes: ManagedPathChange[],
+  originalError: unknown,
+): Promise<never> {
+  const rollbackErrors: unknown[] = [];
+  for (const change of [...changes].reverse()) {
+    try {
+      await change.rollback();
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(
+      [originalError, ...rollbackErrors],
+      "Agent 支持安装失败，且部分文件无法回滚。",
+    );
+  }
+  throw originalError;
 }
 
 async function isInstallationHealthy(input: {

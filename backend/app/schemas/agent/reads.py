@@ -7,6 +7,10 @@ from pydantic import Field
 
 from app.schemas.base import ApiSchema
 from app.modules.crawler.public import CrawlCandidateRead, CrawlJobEventRead, CrawlPageRead
+from app.modules.workspace.deliveries.schemas import (
+    EmailDeliveryItemRead,
+    EmailDeliveryViewCountsRead,
+)
 
 
 AgentItem = TypeVar("AgentItem")
@@ -414,6 +418,31 @@ class AgentCampaignItemRead(ApiSchema):
     can_restore_send: bool = False
     can_retry_draft: bool = False
     updated_at: datetime
+
+
+class AgentCampaignBulkApproveRead(ApiSchema):
+    approved_count: int
+    campaign: AgentCampaignRead
+
+
+class AgentEmailDeliveryItemRead(EmailDeliveryItemRead):
+    # ApiSchema intentionally renders ordinary display timestamps at second
+    # precision.  Optimistic concurrency must retain the database precision,
+    # so expose a dedicated round-trippable token instead of overloading the
+    # human-facing ``updated_at`` field.
+    expected_updated_at: str
+
+
+class AgentEmailDeliveryPageRead(ApiSchema):
+    items: list[AgentEmailDeliveryItemRead] = Field(default_factory=list)
+    next_cursor: str | None = None
+    has_more: bool = False
+    pagination_mode: Literal["page"] = "page"
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    counts: EmailDeliveryViewCountsRead
 
 
 class AgentWorkspaceProfessorRead(ApiSchema):

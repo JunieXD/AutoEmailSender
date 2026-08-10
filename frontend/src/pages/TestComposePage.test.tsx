@@ -127,7 +127,7 @@ describe('TestComposePage', () => {
       expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
         title: '附件超过 1 MB，仍要发送测试邮件吗？',
         description: expect.stringContaining(
-          '建议不超过 1 MB，以减少被邮箱提供商限流的概率。',
+          '建议不超过 1 MB，以降低限流风险。',
         ),
         confirmLabel: '仍然发送',
         cancelLabel: '返回调整',
