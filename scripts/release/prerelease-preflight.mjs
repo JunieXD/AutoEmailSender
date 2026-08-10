@@ -5,7 +5,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { normalizePrereleaseContract } from "./prerelease-contract.mjs";
+import {
+  normalizePrereleaseContract,
+  toPep440PrereleaseVersion,
+} from "./prerelease-contract.mjs";
 
 const REQUIRED_NOTE_FRAGMENTS = [
   "## 测试版说明",
@@ -109,7 +112,11 @@ export async function assertPrereleasePreflight({
   const desktopLock = readJson(desktopLockText, "desktop/package-lock.json");
   const frontendPackage = readJson(frontendPackageText, "frontend/package.json");
   const frontendLock = readJson(frontendLockText, "frontend/package-lock.json");
-  assertVersion("cli/pyproject.toml", extractCliVersion(cliToml), contract.version);
+  assertVersion(
+    "cli/pyproject.toml",
+    extractCliVersion(cliToml),
+    toPep440PrereleaseVersion(contract.version, contract.channel),
+  );
   assertVersion("desktop/package.json", desktopPackage.version, contract.version);
   assertVersion("desktop/package-lock.json", desktopLock.version, contract.version);
   assertVersion("desktop/package-lock.json packages['']", desktopLock.packages?.[""]?.version, contract.version);

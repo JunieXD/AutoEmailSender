@@ -37,7 +37,8 @@ git -C "$fixture" init -b release/generic-topic >/dev/null
 git -C "$fixture" config user.email test@example.test
 git -C "$fixture" config user.name "Test User"
 version="9.9.9-beta.1"
-printf '%s\n' '[project]' "version = \"$version\"" > "$fixture/cli/pyproject.toml"
+cli_version="9.9.9b1"
+printf '%s\n' '[project]' "version = \"$cli_version\"" > "$fixture/cli/pyproject.toml"
 printf '%s\n' "{\"version\":\"$version\"}" > "$fixture/desktop/package.json"
 printf '%s\n' "{\"version\":\"$version\",\"packages\":{\"\":{\"version\":\"$version\"}}}" > "$fixture/desktop/package-lock.json"
 printf '%s\n' "{\"version\":\"$version\"}" > "$fixture/frontend/package.json"

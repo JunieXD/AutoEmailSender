@@ -33,7 +33,7 @@ async function createFixture() {
   const packageJson = JSON.stringify({ version });
   const lockfile = JSON.stringify({ version, packages: { "": { version } } });
   await Promise.all([
-    writeFile(path.join(root, "cli", "pyproject.toml"), `[project]\nversion = "${version}"\n`),
+    writeFile(path.join(root, "cli", "pyproject.toml"), "[project]\nversion = \"9.9.9b1\"\n"),
     writeFile(path.join(root, "desktop", "package.json"), packageJson),
     writeFile(path.join(root, "desktop", "package-lock.json"), lockfile),
     writeFile(path.join(root, "frontend", "package.json"), packageJson),
@@ -90,6 +90,10 @@ test("rejects unfinished notes, stale metadata, changed stable feed, and another
     await assert.rejects(verify(), /frontend\/package\.json 版本为 9\.9\.8/);
 
     await writeFile(path.join(fixture.root, "frontend", "package.json"), JSON.stringify({ version }));
+    await writeFile(path.join(fixture.root, "cli", "pyproject.toml"), `[project]\nversion = "${version}"\n`);
+    await assert.rejects(verify(), /cli\/pyproject\.toml 版本为 9\.9\.9-beta\.1，预期为 9\.9\.9b1/);
+
+    await writeFile(path.join(fixture.root, "cli", "pyproject.toml"), "[project]\nversion = \"9.9.9b1\"\n");
     await writeFile(path.join(fixture.root, "desktop", "electron-builder.yml"), "publish:\n  releaseType: prerelease\n");
     await assert.rejects(verify(), /稳定版更新入口合同已改变/);
 

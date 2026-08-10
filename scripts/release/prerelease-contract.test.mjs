@@ -9,6 +9,7 @@ import {
   latestStableReleaseTag,
   parsePrereleaseVersion,
   stableReleaseTags,
+  toPep440PrereleaseVersion,
 } from "./prerelease-contract.mjs";
 
 const sha = "a".repeat(40);
@@ -39,6 +40,9 @@ test("normalizes a reusable prerelease contract without binding one branch name"
 test("requires explicit matching alpha, beta, or rc channels and exact SHAs", () => {
   assert.equal(parsePrereleaseVersion("2.6.0-alpha.1", "alpha").channel, "alpha");
   assert.equal(parsePrereleaseVersion("2.6.0-rc.2", "rc").channel, "rc");
+  assert.equal(toPep440PrereleaseVersion("2.6.0-alpha.1", "alpha"), "2.6.0a1");
+  assert.equal(toPep440PrereleaseVersion("2.6.0-beta.12", "beta"), "2.6.0b12");
+  assert.equal(toPep440PrereleaseVersion("2.6.0-rc.2", "rc"), "2.6.0rc2");
   assert.throws(
     () => parsePrereleaseVersion("2.6.0-beta.1", "rc"),
     /不一致/,
@@ -46,6 +50,14 @@ test("requires explicit matching alpha, beta, or rc channels and exact SHAs", ()
   assert.throws(
     () => parsePrereleaseVersion("2.6.0-beta", "beta"),
     /递增标识/,
+  );
+  assert.throws(
+    () => parsePrereleaseVersion("2.6.0-beta.preview", "beta"),
+    /正整数递增标识/,
+  );
+  assert.throws(
+    () => parsePrereleaseVersion("2.6.0-beta.1.extra", "beta"),
+    /正整数递增标识/,
   );
   assert.throws(
     () => normalizePrereleaseContract({

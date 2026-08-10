@@ -10,6 +10,7 @@ $fixture = Join-Path $tempRoot "fixture"
 $stdoutPath = Join-Path $tempRoot "stdout.txt"
 $stderrPath = Join-Path $tempRoot "stderr.txt"
 $version = "9.9.9-beta.1"
+$cliVersion = "9.9.9b1"
 $branch = "release/powershell-generic"
 
 function Invoke-PwshScript {
@@ -66,7 +67,7 @@ try {
     throw "PowerShell Prepare Prerelease dry-run 不应写文件。"
   }
 
-  Set-Content -Encoding UTF8 -Path (Join-Path $fixture "cli\pyproject.toml") -Value "[project]`nversion = `"$version`""
+  Set-Content -Encoding UTF8 -Path (Join-Path $fixture "cli\pyproject.toml") -Value "[project]`nversion = `"$cliVersion`""
   Set-Content -Encoding UTF8 -Path (Join-Path $fixture "desktop\package.json") -Value "{`"version`":`"$version`"}"
   Set-Content -Encoding UTF8 -Path (Join-Path $fixture "desktop\package-lock.json") -Value "{`"version`":`"$version`",`"packages`":{`"`":{`"version`":`"$version`"}}}"
   Set-Content -Encoding UTF8 -Path (Join-Path $fixture "frontend\package.json") -Value "{`"version`":`"$version`"}"

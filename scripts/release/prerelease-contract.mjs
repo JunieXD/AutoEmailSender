@@ -12,7 +12,7 @@ export const PRERELEASE_DIAGNOSTICS_SCHEMA_VERSION = 1;
 
 const CHANNELS = new Set(PRERELEASE_CHANNELS);
 const STABLE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/u;
-const PRERELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+-(?:alpha|beta|rc)\.[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/u;
+const PRERELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+-(?:alpha|beta|rc)\.[1-9]\d*)$/u;
 
 export function normalizePrereleaseChannel(value) {
   const channel = String(value ?? "").trim().toLowerCase();
@@ -25,14 +25,27 @@ export function normalizePrereleaseChannel(value) {
 export function parsePrereleaseVersion(value, expectedChannel = "") {
   const normalized = String(value ?? "").trim();
   const parsed = parseVersion(normalized);
-  if (parsed.prerelease.length < 2) {
-    throw new Error(`测试版版本必须包含 channel 和递增标识，例如 2.6.0-beta.1：${normalized}`);
+  if (
+    parsed.prerelease.length !== 2
+    || !/^[1-9]\d*$/u.test(parsed.prerelease[1] ?? "")
+  ) {
+    throw new Error(`测试版版本必须包含 channel 和正整数递增标识，例如 2.6.0-beta.1：${normalized}`);
   }
   const channel = normalizePrereleaseChannel(parsed.prerelease[0]);
   if (expectedChannel && channel !== normalizePrereleaseChannel(expectedChannel)) {
     throw new Error(`版本 ${normalized} 的 channel 为 ${channel}，与显式 channel ${expectedChannel} 不一致。`);
   }
   return { ...parsed, channel };
+}
+
+export function toPep440PrereleaseVersion(value, expectedChannel = "") {
+  const parsed = parsePrereleaseVersion(value, expectedChannel);
+  const channelSuffix = {
+    alpha: "a",
+    beta: "b",
+    rc: "rc",
+  }[parsed.channel];
+  return `${parsed.core.join(".")}${channelSuffix}${parsed.prerelease[1]}`;
 }
 
 export function normalizeSourceBranch(value) {
