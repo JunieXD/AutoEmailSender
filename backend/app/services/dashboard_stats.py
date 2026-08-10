@@ -186,6 +186,7 @@ async def build_dashboard_overview(
         follow_ups=follow_ups,
         identity_id=identity_id,
         communication_identity_ids=communication_scope.identity_ids,
+        school_filters=mentor_section.school_filters,
         email_university=email_university,
         email_school=email_school,
         start_date=start_date,
@@ -1000,25 +1001,30 @@ async def _load_active_professor_school_refs(
     return refs
 
 
-async def _count_active_professors_for_school_filter(
-    session: AsyncSession,
+def _count_professors_for_school_filter(
+    school_filters: list[DashboardSchoolFilterRead],
     *,
     university: str | None,
     school: str | None,
 ) -> int:
-    return int(
-        (
-            await session.scalar(
-                select(func.count(Professor.id)).where(
-                    *_mentor_database_conditions(
-                        university=university,
-                        school=school,
-                    ),
-                ),
-            )
+    normalized_university = _normalize_filter_value(university)
+    normalized_school = _normalize_filter_value(school)
+    total = 0
+    for university_item in school_filters:
+        if (
+            normalized_university is not None
+            and university_item.university != normalized_university
+        ):
+            continue
+        if normalized_school is None:
+            total += university_item.count
+            continue
+        total += sum(
+            school_item.count
+            for school_item in university_item.schools
+            if school_item.school_name == normalized_school
         )
-        or 0,
-    )
+    return total
 
 
 def _filter_professors_for_mentor_analysis(
@@ -1074,6 +1080,7 @@ async def _build_email_section(
     follow_ups: list[DashboardEmailFollowUpRead],
     identity_id: int,
     communication_identity_ids: tuple[int, ...],
+    school_filters: list[DashboardSchoolFilterRead],
     email_university: str | None,
     email_school: str | None,
     start_date: str | None,
@@ -1252,8 +1259,8 @@ async def _build_email_section(
 
     sent_count = len(sent_events)
     sent_professor_count = len(sent_professor_ids)
-    total_professor_count = await _count_active_professors_for_school_filter(
-        session,
+    total_professor_count = _count_professors_for_school_filter(
+        school_filters,
         university=email_university,
         school=email_school,
     )
@@ -1283,8 +1290,8 @@ async def _build_email_section(
         end_at=end_at,
         local_timezone=local_timezone,
     )
-    outreach_coverage = await _build_outreach_coverage_from_database(
-        session,
+    outreach_coverage = _build_outreach_coverage_from_aggregates(
+        school_filters=school_filters,
         professor_by_id=professor_by_id,
         sent_professor_ids=all_sent_professor_ids,
         contacted_professor_ids=all_contacted_professor_ids,
@@ -1537,36 +1544,22 @@ def _build_mentor_follow_up_reason(*, status: str) -> str:
     }.get(status, "待处理")
 
 
-async def _build_outreach_coverage_from_database(
-    session: AsyncSession,
+def _build_outreach_coverage_from_aggregates(
     *,
+    school_filters: list[DashboardSchoolFilterRead],
     professor_by_id: dict[int, _ProfessorSchoolRef],
     sent_professor_ids: set[int],
     contacted_professor_ids: set[int],
     replied_professor_ids: set[int],
 ) -> DashboardOutreachCoverageRead:
-    university_label = _sql_professor_label(Professor.university, "学校未填写")
-    school_label = _sql_professor_label(Professor.school, "学院未填写")
-    rows = (
-        await session.execute(
-            select(
-                university_label.label("university"),
-                school_label.label("school"),
-                func.count(Professor.id).label("count"),
-            )
-            .where(Professor.archived_at.is_(None))
-            .group_by(university_label, school_label),
-        )
-    ).mappings().all()
-
     university_totals: Counter[str] = Counter()
     school_totals: Counter[tuple[str, str]] = Counter()
-    for row in rows:
-        university = str(row["university"])
-        school = str(row["school"])
-        count = int(row["count"])
-        university_totals[university] += count
-        school_totals[(university, school)] += count
+    for university_item in school_filters:
+        university_totals[university_item.university] += university_item.count
+        for school_item in university_item.schools:
+            school_totals[
+                (university_item.university, school_item.school_name)
+            ] += school_item.count
 
     university_sent: Counter[str] = Counter()
     university_contacted: Counter[str] = Counter()

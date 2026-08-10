@@ -1145,11 +1145,20 @@ async def list_management_professor_ids(
     )
     if request.archived == "all":
         conditions.append(Professor.archived_at.is_(None))
-    ids = list(
-        await session.scalars(
-            select(Professor.id).where(*conditions).order_by(Professor.id.asc()),
-        ),
+    statement = (
+        select(Professor.id.label("id"))
+        .where(*conditions)
+        .order_by(Professor.id.asc())
     )
+    bind = session.bind
+    if bind is not None and bind.dialect.name == "sqlite":
+        ordered_ids = statement.subquery("ordered_management_professor_ids")
+        payload = await session.scalar(
+            select(func.json_group_array(ordered_ids.c.id)),
+        )
+        ids = [int(professor_id) for professor_id in json.loads(payload or "[]")]
+    else:
+        ids = list(await session.scalars(statement))
     return ProfessorIdSelectionRead(ids=ids, total_count=len(ids))
 
 
