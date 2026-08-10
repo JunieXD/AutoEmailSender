@@ -433,7 +433,11 @@ class BackendRoleRealProcessTests(unittest.TestCase):
                 worker.start()
                 worker.wait_worker_ready()
                 api.stop()
-                self.assertEqual(worker.managed.wait(timeout_seconds=5), 0)
+                self.assertEqual(
+                    worker.managed.wait(timeout_seconds=5),
+                    0,
+                    msg=worker.managed.read_stderr(),
+                )
             finally:
                 if worker is not None:
                     worker.stop()

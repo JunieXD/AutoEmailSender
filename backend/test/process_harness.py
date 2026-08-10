@@ -1200,6 +1200,7 @@ class DesktopBackendProcess:
         env = os.environ.copy()
         env.update(
             {
+                "PYTHONUTF8": "1",
                 "PYTHONUNBUFFERED": "1",
                 "AUTO_EMAIL_SENDER_DATA_DIR": str(self.data_dir),
                 "DATABASE_URL": f"sqlite+aiosqlite:///{database_path.as_posix()}",
