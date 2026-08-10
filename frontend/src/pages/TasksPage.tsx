@@ -63,16 +63,14 @@ import {
   listBatchTaskItems,
   pauseBatchTask,
   regenerateBatchTaskItemDraft,
+  rewriteBatchTaskItemDraft,
   retryBatchTaskItemDraft,
   restoreBatchTaskItemSend,
   restoreBatchTask,
   resumeBatchTask,
   stopBatchTask,
+  updateBatchTaskItemOutreachConfig,
 } from "@/lib/api/batchTasksApi";
-import {
-  rewriteDraft,
-  updateTaskOutreachConfig,
-} from "@/lib/api/emailTasksApi";
 import {
   getOutreachTemplate,
   listOutreachTemplates,
@@ -3837,13 +3835,17 @@ export const TasksPage = () => {
           : [...templates, latestTemplate],
       );
 
-      const thread = await updateTaskOutreachConfig(itemId, {
-        outreach_generation_mode: latestTemplate.recommended_generation_mode,
-        outreach_template_id: latestTemplate.id,
-        outreach_template_subject: latestTemplate.subject,
-        outreach_template_body_text: latestTemplate.body_text,
-        outreach_template_body_html: latestTemplate.body_html,
-      });
+      const thread = await updateBatchTaskItemOutreachConfig(
+        selectedBatchTask.id,
+        itemId,
+        {
+          outreach_generation_mode: latestTemplate.recommended_generation_mode,
+          outreach_template_id: latestTemplate.id,
+          outreach_template_subject: latestTemplate.subject,
+          outreach_template_body_text: latestTemplate.body_text,
+          outreach_template_body_html: latestTemplate.body_html,
+        },
+      );
       ensureBatchReviewThreadMatchesItem(
         thread,
         activeBatchReviewItem,
@@ -3902,7 +3904,7 @@ export const TasksPage = () => {
     setBatchReviewItemAction(itemId, "regenerate");
     try {
       const thread = usesRenderedTemplateDraft
-        ? await rewriteDraft(itemId, {
+        ? await rewriteBatchTaskItemDraft(selectedBatchTask.id, itemId, {
             ...buildBatchReviewPayload(),
             llm_profile_id: batchReviewThread?.llm_profile.id ?? selectedBatchTask.llm_profile_id,
           })
@@ -5800,7 +5802,7 @@ export const TasksPage = () => {
                               aria-label="模板"
                               className="rounded-2xl border border-stone-200/80 bg-stone-50/75 p-4"
                             >
-                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.72fr)] lg:items-end">
+                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.72fr)] lg:items-center">
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
                                     <FileText className="h-4 w-4 text-primary" />
@@ -5816,7 +5818,6 @@ export const TasksPage = () => {
                                   </div>
                                 </div>
                                 <NativeSelectField
-                                  label="重新套用模板"
                                   value=""
                                   ariaLabel="选择模板重新套用"
                                   selectedLabel={

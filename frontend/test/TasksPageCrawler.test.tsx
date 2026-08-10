@@ -71,7 +71,9 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   listBatchTasks: vi.fn(),
   pauseBatchTask: vi.fn(),
   resumeBatchTask: vi.fn(),
+  rewriteBatchTaskItemDraft: vi.fn(),
   stopBatchTask: vi.fn(),
+  updateBatchTaskItemOutreachConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({

@@ -6,6 +6,8 @@ import type {
   BatchTaskResendContextDTO,
   CreateBatchTaskRequestDTO,
   EmailTaskApprovalPayloadDTO,
+  EmailTaskOutreachConfigPayloadDTO,
+  EmailTaskRewriteDraftPayloadDTO,
   TaskListView,
   WorkspaceThreadDTO,
 } from '@/types';
@@ -54,6 +56,32 @@ export const regenerateBatchTaskItemDraft = (taskId: number, itemId: number) =>
     `/api/batch-tasks/${taskId}/items/${itemId}/regenerate-draft`,
     {
       method: 'POST',
+    },
+  );
+
+export const rewriteBatchTaskItemDraft = (
+  taskId: number,
+  itemId: number,
+  payload: EmailTaskRewriteDraftPayloadDTO,
+) =>
+  apiFetch<WorkspaceThreadDTO>(
+    `/api/batch-tasks/${taskId}/items/${itemId}/rewrite-draft`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+
+export const updateBatchTaskItemOutreachConfig = (
+  taskId: number,
+  itemId: number,
+  payload: EmailTaskOutreachConfigPayloadDTO,
+) =>
+  apiFetch<WorkspaceThreadDTO>(
+    `/api/batch-tasks/${taskId}/items/${itemId}/outreach-config`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
     },
   );
 

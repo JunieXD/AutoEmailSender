@@ -42,10 +42,10 @@ const apiMocks = vi.hoisted(() => ({
   restoreBatchTask: vi.fn(),
   getBatchTaskItemThread: vi.fn(),
   regenerateBatchTaskItemDraft: vi.fn(),
+  rewriteBatchTaskItemDraft: vi.fn(),
+  updateBatchTaskItemOutreachConfig: vi.fn(),
   listOutreachTemplates: vi.fn(),
   getOutreachTemplate: vi.fn(),
-  updateTaskOutreachConfig: vi.fn(),
-  rewriteDraft: vi.fn(),
   approveBatchTaskItemDraft: vi.fn(),
   approveAllBatchTaskDrafts: vi.fn(),
   approveAndSendBatchTaskItemDraft: vi.fn(),
@@ -155,6 +155,9 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   restoreBatchTask: apiMocks.restoreBatchTask,
   getBatchTaskItemThread: apiMocks.getBatchTaskItemThread,
   regenerateBatchTaskItemDraft: apiMocks.regenerateBatchTaskItemDraft,
+  rewriteBatchTaskItemDraft: apiMocks.rewriteBatchTaskItemDraft,
+  updateBatchTaskItemOutreachConfig:
+    apiMocks.updateBatchTaskItemOutreachConfig,
   approveBatchTaskItemDraft: apiMocks.approveBatchTaskItemDraft,
   approveAllBatchTaskDrafts: apiMocks.approveAllBatchTaskDrafts,
   approveAndSendBatchTaskItemDraft: apiMocks.approveAndSendBatchTaskItemDraft,
@@ -227,8 +230,6 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
   regenerateDraft: apiMocks.regenerateDraft,
   approveDraft: apiMocks.approveDraft,
   approveAndSend: apiMocks.approveAndSend,
-  updateTaskOutreachConfig: apiMocks.updateTaskOutreachConfig,
-  rewriteDraft: apiMocks.rewriteDraft,
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -2172,8 +2173,8 @@ describe("TasksPage batch draft review", () => {
     apiMocks.getBatchTaskItemThread.mockResolvedValue(initialThread);
     apiMocks.listOutreachTemplates.mockResolvedValue([template]);
     apiMocks.getOutreachTemplate.mockResolvedValue(template);
-    apiMocks.updateTaskOutreachConfig.mockResolvedValue(appliedThread);
-    apiMocks.rewriteDraft.mockResolvedValue(rewrittenThread);
+    apiMocks.updateBatchTaskItemOutreachConfig.mockResolvedValue(appliedThread);
+    apiMocks.rewriteBatchTaskItemDraft.mockResolvedValue(rewrittenThread);
 
     render(
       <MemoryRouter>
@@ -2195,6 +2196,7 @@ describe("TasksPage batch draft review", () => {
     const templateSelector = await screen.findByRole("button", {
       name: "选择模板重新套用",
     });
+    expect(screen.queryByText("重新套用模板")).not.toBeInTheDocument();
     await waitFor(() => expect(templateSelector).toBeEnabled());
     fireEvent.click(templateSelector);
     fireEvent.click(
@@ -2204,13 +2206,17 @@ describe("TasksPage batch draft review", () => {
     );
 
     await waitFor(() => {
-      expect(apiMocks.updateTaskOutreachConfig).toHaveBeenCalledWith(item.id, {
-        outreach_generation_mode: "template",
-        outreach_template_id: template.id,
-        outreach_template_subject: template.subject,
-        outreach_template_body_text: template.body_text,
-        outreach_template_body_html: template.body_html,
-      });
+      expect(apiMocks.updateBatchTaskItemOutreachConfig).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        {
+          outreach_generation_mode: "template",
+          outreach_template_id: template.id,
+          outreach_template_subject: template.subject,
+          outreach_template_body_text: template.body_text,
+          outreach_template_body_html: template.body_html,
+        },
+      );
     });
     expect(confirmMock).toHaveBeenCalledWith({
       title: "用模板替换当前草稿？",
@@ -2231,14 +2237,18 @@ describe("TasksPage batch draft review", () => {
     confirmMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
     await waitFor(() => {
-      expect(apiMocks.rewriteDraft).toHaveBeenCalledWith(item.id, {
-        subject: "申请加入模板直通导师老师课题组",
-        body_text: "模板直通导师老师您好，我想申请加入您的课题组。",
-        body_html:
-          "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
-        selected_material_ids: [7],
-        llm_profile_id: 2,
-      });
+      expect(apiMocks.rewriteBatchTaskItemDraft).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        {
+          subject: "申请加入模板直通导师老师课题组",
+          body_text: "模板直通导师老师您好，我想申请加入您的课题组。",
+          body_html:
+            "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+          selected_material_ids: [7],
+          llm_profile_id: 2,
+        },
+      );
     });
     expect(apiMocks.regenerateBatchTaskItemDraft).not.toHaveBeenCalled();
     expect(confirmMock).toHaveBeenCalledWith(
