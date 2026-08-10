@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, NotRequired, TypedDict, cast
@@ -13,6 +15,7 @@ from app.core.process_liveness import process_is_running
 RuntimeProcessRole = Literal["api", "worker"]
 RuntimeProcessState = Literal["starting", "ready", "stopping", "error"]
 RUNTIME_PROCESS_STATUS_PROTOCOL_VERSION = "2"
+RUNTIME_STATUS_REPLACE_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32)
 
 
 class RuntimeSubsystemStatus(TypedDict):
@@ -85,10 +88,28 @@ def write_runtime_process_status(
             temporary_path.chmod(0o600)
         except OSError:
             pass
-        temporary_path.replace(status_path)
+        _replace_runtime_status_with_retry(temporary_path, status_path)
     finally:
         temporary_path.unlink(missing_ok=True)
     return payload
+
+
+def _replace_runtime_status_with_retry(
+    temporary_path: Path,
+    status_path: Path,
+    *,
+    sleep: Callable[[float], object] = time.sleep,
+) -> None:
+    """Preserve atomic status writes across brief Windows reader locks."""
+
+    for delay_seconds in (*RUNTIME_STATUS_REPLACE_RETRY_DELAYS_SECONDS, None):
+        try:
+            temporary_path.replace(status_path)
+            return
+        except PermissionError:
+            if delay_seconds is None:
+                raise
+            sleep(delay_seconds)
 
 
 def read_runtime_process_status(
