@@ -1944,9 +1944,16 @@ def search_capability_matches(
         resource=resource,
         resource_exact=resource_exact,
     )
+    explicit_resources = _query_resource_matches(normalized_query)
+    query_tokens = _search_tokens(normalized_query)
     ranked: list[tuple[int, float, int, CapabilitySearchMatch]] = []
     for index, capability in enumerate(candidates):
-        match = _capability_search_evidence(capability, normalized_query)
+        match = _capability_search_evidence(
+            capability,
+            normalized_query,
+            explicit_resources=explicit_resources,
+            query_tokens=query_tokens,
+        )
         # Low-confidence token collisions are intentionally omitted.  An empty
         # result is more actionable than a long list of plausible-looking but
         # unrelated commands.
@@ -1998,6 +2005,9 @@ def _capability_search_score(
 def _capability_search_evidence(
     capability: Capability,
     normalized_query: str,
+    *,
+    explicit_resources: frozenset[str] | None = None,
+    query_tokens: tuple[str, ...] | None = None,
 ) -> CapabilitySearchMatch:
     command = _normalize_search_text(capability.command.replace(".", " "))
     resource = discovery_resource(capability.command)
@@ -2060,7 +2070,10 @@ def _capability_search_evidence(
                 record(f"partial_{reason}", phrase)
 
     matched_token_count = 0
-    for token in _search_tokens(normalized_query):
+    effective_query_tokens = (
+        query_tokens if query_tokens is not None else _search_tokens(normalized_query)
+    )
+    for token in effective_query_tokens:
         if token in command:
             score += 180
             matched_token_count += 1
@@ -2077,7 +2090,8 @@ def _capability_search_evidence(
         score += round(similarity * 100)
         record("command_similarity")
 
-    explicit_resources = _query_resource_matches(normalized_query)
+    if explicit_resources is None:
+        explicit_resources = _query_resource_matches(normalized_query)
     has_command_alias_match = any("command_alias" in reason for reason in reasons)
     if explicit_resources and resource not in explicit_resources and not has_command_alias_match:
         # A clear resource noun such as “导师” or “模板” should suppress

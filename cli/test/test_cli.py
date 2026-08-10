@@ -12,11 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from typer.testing import CliRunner
-
+import auto_email_sender_cli.capabilities as capability_catalog
 import auto_email_sender_cli.main as cli_main
-from auto_email_sender_cli.main import app
-from auto_email_sender_cli.commands.common import augment_state_metadata
 from auto_email_sender_cli.agent_installation import (
     AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION,
     SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS,
@@ -29,9 +26,16 @@ from auto_email_sender_cli.capabilities import (
     list_capability_cards,
     list_resource_catalog,
 )
+from auto_email_sender_cli.commands.common import augment_state_metadata
 from auto_email_sender_cli.describe import describe_command, describe_commands
-from auto_email_sender_cli.errors import CliError, RuntimeUnavailableError, redact_error_details
+from auto_email_sender_cli.errors import (
+    CliError,
+    RuntimeUnavailableError,
+    redact_error_details,
+)
+from auto_email_sender_cli.main import app
 from auto_email_sender_cli.result_protocol import prepare_result_data
+from typer.testing import CliRunner
 
 
 class CliTests(unittest.TestCase):
@@ -1000,6 +1004,28 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(payload["items"][0]["command"], expected)
                 self.assertLessEqual(len(payload["items"]), 8)
 
+    def test_capability_search_derives_query_features_once(self) -> None:
+        with (
+            patch.object(
+                capability_catalog,
+                "_query_resource_matches",
+                wraps=capability_catalog._query_resource_matches,
+            ) as resource_matches,
+            patch.object(
+                capability_catalog,
+                "_search_tokens",
+                wraps=capability_catalog._search_tokens,
+            ) as search_tokens,
+        ):
+            matches = capability_catalog.search_capability_matches(
+                "列出当前系统中所有姓名包含英文字母的导师",
+                limit=1,
+            )
+
+        self.assertEqual(matches[0].capability.command, "professors.list")
+        resource_matches.assert_called_once()
+        search_tokens.assert_called_once()
+
     def test_capabilities_intent_alias_explains_matches_and_suppresses_noise(self) -> None:
         result = self.runner.invoke(
             app,
@@ -1373,7 +1399,7 @@ class CliTests(unittest.TestCase):
             source_file.write_text("official skill", encoding="utf-8")
             target_file.write_text("official skill", encoding="utf-8")
             file_hash = hashlib.sha256(b"official skill").hexdigest()
-            skill_hash = hashlib.sha256(f"F\tSKILL.md\t{file_hash}\n".encode("utf-8")).hexdigest()
+            skill_hash = hashlib.sha256(f"F\tSKILL.md\t{file_hash}\n".encode()).hexdigest()
             manifest_path = root / "installation.json"
             manifest_path.write_text(
                 json.dumps(
