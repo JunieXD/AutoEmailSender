@@ -160,6 +160,7 @@ from app.modules.professors.public import (
     delete_professor_information_enrichment_job_record,
     list_professor_information_enrichment_items_page,
     list_professor_information_enrichment_jobs,
+    professor_name_script_clause,
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
     retry_failed_professor_information_enrichment_job_record,
@@ -421,6 +422,7 @@ async def read_agent_runtime(request: Request) -> AgentRuntimeInfoRead:
 @router.get("/professors", response_model=AgentPage[AgentProfessorRead])
 async def list_agent_professors(
     q: str | None = Query(default=None),
+    name_script: Literal["latin", "han", "cyrillic", "arabic", "digit"] | None = Query(default=None),
     archived: Literal["active", "archived", "all"] = Query(default="active"),
     tag_id: int | None = Query(default=None, ge=1),
     professor_id: int | None = Query(default=None, ge=1),
@@ -432,6 +434,8 @@ async def list_agent_professors(
     statement = select(Professor).options(selectinload(Professor.tags))
     if professor_id is not None:
         statement = statement.where(Professor.id == professor_id)
+    if name_script is not None:
+        statement = statement.where(professor_name_script_clause(name_script))
     if archived == "active":
         statement = statement.where(Professor.archived_at.is_(None))
     elif archived == "archived":
@@ -696,7 +700,7 @@ async def prepare_agent_professor_bulk_archive(
 ) -> AgentChangePlanRead:
     return await create_professor_bulk_archive_change_plan(
         get_session_factory(),
-        payload.professor_ids,
+        payload.resolved_selection(),
         idempotency_key=idempotency_key,
     )
 

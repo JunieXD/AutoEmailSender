@@ -198,6 +198,20 @@ async def execute_email_action_plan(
                 retryable=True,
                 suggested_command=f"auto-email-sender plans show {plan.id}",
             )
+        if (
+            payload.confirmed_fingerprint is not None
+            and payload.confirmed_fingerprint != plan.content_fingerprint
+        ):
+            raise AgentApiError(
+                status_code=409,
+                code="PLAN_CONFIRMATION_MISMATCH",
+                message="确认指纹与当前发送计划不一致；请重新读取并展示该计划。",
+                details={
+                    "confirmed_fingerprint": payload.confirmed_fingerprint,
+                    "current_fingerprint": plan.content_fingerprint,
+                },
+                suggested_command=f"auto-email-sender plans show {plan.id}",
+            )
 
         task = await _load_task(session, plan.email_task_id)
         if task is None:

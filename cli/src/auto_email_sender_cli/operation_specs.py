@@ -457,6 +457,11 @@ _PLAN_CONFIRMATION_REQUIRED: Final = ErrorSpec(
     False,
     "尚未得到用户对该计划的明确确认",
 )
+_PLAN_CONFIRMATION_MISMATCH: Final = ErrorSpec(
+    "PLAN_CONFIRMATION_MISMATCH",
+    False,
+    "确认指纹与当前计划内容不一致",
+)
 _PLAN_STALE: Final = ErrorSpec("PLAN_STALE", True, "计划范围或对象版本已变化")
 _EXTERNAL_UNKNOWN: Final = ErrorSpec(
     "EXTERNAL_EXECUTION_UNKNOWN",
@@ -485,7 +490,7 @@ _WRITE_ERRORS: Final = _error_set(_READ_ERRORS, (_IDEMPOTENCY_REUSED,))
 _PLAN_PRODUCER_ERRORS: Final = _error_set(_WRITE_ERRORS, (_PLAN_STALE,))
 _PLAN_CONSUMER_ERRORS: Final = _error_set(
     _WRITE_ERRORS,
-    (_PLAN_CONFIRMATION_REQUIRED, _PLAN_STALE),
+    (_PLAN_CONFIRMATION_REQUIRED, _PLAN_CONFIRMATION_MISMATCH, _PLAN_STALE),
 )
 _EXTERNAL_ERRORS: Final = _error_set(_WRITE_ERRORS, (_EXTERNAL_UNKNOWN,))
 _EXTERNAL_PLAN_CONSUMER_ERRORS: Final = _error_set(

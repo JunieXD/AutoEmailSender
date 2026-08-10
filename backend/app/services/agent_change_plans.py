@@ -45,6 +45,7 @@ from app.modules.professors.public import (
     ParsedProfessorImport,
     ProfessorBulkTagsPayload,
     ProfessorMutationError,
+    ProfessorSelectionError,
     bulk_archive_professor_records,
     bulk_update_professor_tags_record,
     delete_professor_tag_record,
@@ -57,6 +58,7 @@ from app.modules.professors.public import (
     prepare_bulk_professor_tags_snapshot,
     prepare_professor_import_snapshot,
     prepare_professor_tag_delete_snapshot,
+    resolve_professor_selection,
 )
 from app.modules.communications.public import TestComposeMessageSendRequest
 from app.services.agent_mutations import (
@@ -343,13 +345,24 @@ async def create_professor_bulk_tags_change_plan(
 
 async def create_professor_bulk_archive_change_plan(
     session_factory: async_sessionmaker[AsyncSession],
-    professor_ids: list[int],
+    selection: SelectionSpec,
     *,
     idempotency_key: str | None,
 ) -> AgentChangePlanRead:
     normalized_key = normalize_idempotency_key(idempotency_key)
+    normalized_selection = selection.model_dump(mode="json")
+    normalized_selection["ids"] = sorted(normalized_selection["ids"])
+    normalized_selection["exclude_ids"] = sorted(normalized_selection["exclude_ids"])
+    legacy_id_selection = selection.mode == "ids" and not selection.exclude_ids
     request_fingerprint = fingerprint(
-        {"action": PROFESSOR_BULK_ARCHIVE_ACTION, "professor_ids": professor_ids},
+        {
+            "action": PROFESSOR_BULK_ARCHIVE_ACTION,
+            **(
+                {"professor_ids": selection.ids}
+                if legacy_id_selection
+                else {"selection": normalized_selection}
+            ),
+        },
     )
     async with session_factory() as session:
         if normalized_key is not None:
@@ -363,6 +376,17 @@ async def create_professor_bulk_archive_change_plan(
                 await _expire_if_needed(session, existing)
                 return _serialize_change_plan(existing, idempotent_replay=True)
         try:
+            professor_ids, matched_count, excluded_count = await resolve_professor_selection(
+                session,
+                selection,
+            )
+        except ProfessorSelectionError as exc:
+            raise AgentApiError(
+                status_code=exc.status_code,
+                code=exc.code,
+                message=exc.message,
+            ) from exc
+        try:
             snapshot = await prepare_bulk_professor_archive_snapshot(
                 session,
                 professor_ids,
@@ -370,6 +394,17 @@ async def create_professor_bulk_archive_change_plan(
         except ProfessorMutationError as exc:
             raise _professor_error(exc) from exc
         snapshot["bulk_archive_fingerprint"] = _bulk_archive_snapshot_fingerprint(snapshot)
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict):
+            summary["snapshot_stage"] = "preflight"
+            summary["selection"] = {
+                "mode": selection.mode,
+                "matched_count": matched_count,
+                "selected_count": len(professor_ids),
+                "excluded_count": excluded_count,
+                "frozen_ids_hash": fingerprint(sorted(professor_ids)),
+            }
+        snapshot["selection"] = normalized_selection
         return await _create_change_plan(
             session,
             action=PROFESSOR_BULK_ARCHIVE_ACTION,
@@ -1012,6 +1047,21 @@ async def execute_change_plan(
                 code="CHANGE_PLAN_EXECUTION_IN_PROGRESS",
                 message="该变更计划正在执行，请稍后再次查看计划状态。",
                 retryable=True,
+                suggested_command=f"auto-email-sender plans show {plan.id}",
+            )
+        content_fingerprint = _change_plan_content_fingerprint(plan)
+        if (
+            payload.confirmed_fingerprint is not None
+            and payload.confirmed_fingerprint != content_fingerprint
+        ):
+            raise AgentApiError(
+                status_code=409,
+                code="PLAN_CONFIRMATION_MISMATCH",
+                message="确认指纹与当前变更计划不一致；请重新读取并展示该计划。",
+                details={
+                    "confirmed_fingerprint": payload.confirmed_fingerprint,
+                    "current_fingerprint": content_fingerprint,
+                },
                 suggested_command=f"auto-email-sender plans show {plan.id}",
             )
 
@@ -2417,6 +2467,7 @@ def _serialize_change_plan(
         plan_id=plan.id,
         action=plan.action,
         status=plan.status,  # type: ignore[arg-type]
+        content_fingerprint=_change_plan_content_fingerprint(plan),
         expires_at=plan.expires_at,
         confirmed_at=plan.confirmed_at,
         executed_at=plan.executed_at,
@@ -2432,6 +2483,10 @@ def _serialize_change_plan(
             else None
         ),
     )
+
+
+def _change_plan_content_fingerprint(plan: AgentChangePlan) -> str:
+    return fingerprint({"action": plan.action, "snapshot": plan.snapshot})
 
 
 async def _expire_if_needed(session: AsyncSession, plan: AgentChangePlan) -> None:

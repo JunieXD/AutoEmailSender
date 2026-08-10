@@ -47,6 +47,12 @@ from .normalization import (
     normalize_research_direction,
 )
 from .samples import SAMPLE_PROFESSORS
+from .selection import (
+    PROFESSOR_NAME_SCRIPT_PATTERNS,
+    ProfessorSelectionError,
+    professor_name_script_clause,
+    resolve_professor_selection,
+)
 from .schemas import (
     MAX_PERSONAL_NOTE_LENGTH,
     ProfessorActionResult,
@@ -116,6 +122,7 @@ __all__ = [
     "PROFESSOR_EXPORT_COLUMNS",
     "PROFESSOR_LEGACY_TEMPLATE_COLUMNS",
     "PROFESSOR_TEMPLATE_COLUMNS",
+    "PROFESSOR_NAME_SCRIPT_PATTERNS",
     "ParsedProfessorImport",
     "ProfessorActionResult",
     "ProfessorBulkArchivePayload",
@@ -134,6 +141,7 @@ __all__ = [
     "NO_NEW_INFORMATION_SKIP_REASON",
     "ProfessorManagementItemRead",
     "ProfessorMutationError",
+    "ProfessorSelectionError",
     "ProfessorNoteUpdatePayload",
     "ProfessorNoteUpdateRead",
     "ProfessorRead",
@@ -181,9 +189,11 @@ __all__ = [
     "prepare_bulk_professor_tags_snapshot",
     "prepare_professor_import_snapshot",
     "prepare_professor_tag_delete_snapshot",
+    "professor_name_script_clause",
     "record_professor_event",
     "request_professor_information_enrichment_cancel",
     "restore_professor_record",
+    "resolve_professor_selection",
     "restore_professor_information_enrichment_job_record",
     "retry_failed_professor_information_enrichment_job",
     "retry_failed_professor_information_enrichment_job_record",

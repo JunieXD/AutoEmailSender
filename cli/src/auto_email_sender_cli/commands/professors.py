@@ -32,7 +32,15 @@ professors_app.add_typer(community_app, name="community")
 @professors_app.command("list")
 def list_professors(
     ctx: typer.Context,
-    query: Annotated[str | None, typer.Option("--query", "-q", help="按姓名、邮箱、学校、方向或备注搜索。")]=None,
+    query: Annotated[
+        str | None,
+        typer.Option(
+            "--query",
+            "--search",
+            "-q",
+            help="按姓名、邮箱、学校、方向或备注搜索；--search 含义更明确。",
+        ),
+    ] = None,
     archived: Annotated[str, typer.Option("--archived", help="active、archived 或 all。") ]="active",
     tag_id: Annotated[int | None, typer.Option("--tag-id", min=1)] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
@@ -519,13 +527,91 @@ def prepare_bulk_professor_archive(
     professor_ids: Annotated[
         list[int],
         typer.Option("--professor-id", min=1, help="重复指定要移入回收站的导师 ID。"),
-    ],
+    ] = [],
+    selection_filter: Annotated[
+        str | None,
+        typer.Option(
+            "--selection-filter",
+            help=(
+                "按结构化 JSON 条件选择导师；例如 "
+                "{\"name\":{\"contains_script\":\"latin\"}}。"
+                "服务端会把匹配到的 ID 冻结进确认计划。"
+            ),
+        ),
+    ] = None,
+    archived: Annotated[
+        str,
+        typer.Option("--archived", help="选择范围：active、archived 或 all。"),
+    ] = "active",
+    exclude_ids: Annotated[
+        list[int],
+        typer.Option("--exclude-id", min=1, help="从选择结果中排除导师 ID；可重复。"),
+    ] = [],
 ) -> None:
+    if archived not in {"active", "archived", "all"}:
+        raise typer.BadParameter("--archived 仅支持 active、archived 或 all。", param_hint="--archived")
+    if len(set(professor_ids)) != len(professor_ids):
+        raise typer.BadParameter("--professor-id 不能包含重复 ID。", param_hint="--professor-id")
+    if len(set(exclude_ids)) != len(exclude_ids):
+        raise typer.BadParameter("--exclude-id 不能包含重复 ID。", param_hint="--exclude-id")
+    if professor_ids and selection_filter is not None:
+        raise typer.BadParameter(
+            "--professor-id 与 --selection-filter 不能同时使用。",
+            param_hint="--selection-filter",
+        )
+    if not professor_ids and selection_filter is None:
+        raise typer.BadParameter(
+            "请提供至少一个 --professor-id，或使用 --selection-filter。",
+            param_hint="--professor-id",
+        )
+
+    if selection_filter is not None:
+        try:
+            parsed_filter = json.loads(selection_filter)
+        except json.JSONDecodeError as exc:
+            raise typer.BadParameter(
+                "--selection-filter 必须是合法 JSON 对象。",
+                param_hint="--selection-filter",
+            ) from exc
+        if not isinstance(parsed_filter, dict) or not parsed_filter:
+            raise typer.BadParameter(
+                "--selection-filter 必须是非空 JSON 对象。",
+                param_hint="--selection-filter",
+            )
+        json_body: dict[str, object] = {
+            "selection": {
+                "mode": "filter",
+                "filter": {"archived": archived, "where": parsed_filter},
+                "exclude_ids": exclude_ids,
+            },
+        }
+    elif exclude_ids:
+        if archived != "active":
+            raise typer.BadParameter(
+                "显式 --professor-id 选择不能使用 --archived；该选项只约束筛选选择。",
+                param_hint="--archived",
+            )
+        json_body = {
+            "selection": {
+                "mode": "ids",
+                "ids": professor_ids,
+                "exclude_ids": exclude_ids,
+            },
+        }
+    else:
+        if archived != "active":
+            raise typer.BadParameter(
+                "显式 --professor-id 选择不能使用 --archived；该选项只约束筛选选择。",
+                param_hint="--archived",
+            )
+        # Preserve the original wire shape for existing clients and stored
+        # idempotency fingerprints.
+        json_body = {"professor_ids": professor_ids}
     run_write_command(
         ctx,
         command="professors.prepare-bulk-archive",
         path="/api/agent/v1/professors/prepare-bulk-archive",
-        json_body={"professor_ids": professor_ids},
+        json_body=json_body,
         guide_topic="safety",
         human_formatter=format_detail,
     )

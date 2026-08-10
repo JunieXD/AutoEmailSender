@@ -382,6 +382,15 @@ async def bulk_archive_professor_records(
     return {
         "professor_ids": ordered_ids,
         "affected_count": len(affected_ids),
+        "post_state": {
+            "professors": [
+                {
+                    "id": professor.id,
+                    "archived_at": serialize_api_datetime(professor.archived_at),
+                }
+                for professor in sorted(professors, key=lambda item: item.id)
+            ],
+        },
     }
 
 

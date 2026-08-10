@@ -1027,6 +1027,25 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(malformed.status_code, 422)
         self.assertEqual(malformed.json()["error"]["code"], "INVALID_FIELD_SELECTION")
 
+    def test_agent_professor_name_script_filter_supports_unicode_latin_names(self) -> None:
+        self._create_professor(name="李雷", email="han-name@example.edu")
+        jose_id = self._create_professor(name="José", email="jose@example.edu")
+        mixed_id = self._create_professor(name="李 Ada", email="mixed@example.edu")
+
+        response = self._agent_get(
+            "/api/agent/v1/professors",
+            params={"name_script": "latin", "fields": "id,name", "limit": 500},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            response.json()["items"],
+            [
+                {"id": jose_id, "name": "José"},
+                {"id": mixed_id, "name": "李 Ada"},
+            ],
+        )
+
     def test_agent_safe_identity_and_model_filters_match_serialized_dto_fields(self) -> None:
         identity_id = self._create_identity(email="pushdown-identity@example.edu")
         profile_id = self._create_llm_profile(name="Pushdown model")
@@ -1584,11 +1603,85 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(executed.status_code, 200, msg=executed.text)
         self.assertEqual(executed.json()["result"]["outcome"], "professors_archived")
         self.assertEqual(executed.json()["result"]["affected_count"], 1)
+        self.assertEqual(
+            [item["id"] for item in executed.json()["result"]["post_state"]["professors"]],
+            [first_professor_id, second_professor_id],
+        )
+        self.assertTrue(
+            all(
+                item["archived_at"] is not None
+                for item in executed.json()["result"]["post_state"]["professors"]
+            ),
+        )
         for professor_id in (first_professor_id, second_professor_id):
             professor = self._agent_get(
                 f"/api/agent/v1/professors/{professor_id}",
             ).json()
             self.assertIsNotNone(professor["archived_at"])
+
+    def test_bulk_professor_archive_filter_selection_is_frozen_before_confirmation(self) -> None:
+        selected_id = self._create_professor(name="José", email="selection-jose@example.edu")
+        excluded_id = self._create_professor(name="李 Ada", email="selection-ada@example.edu")
+        han_id = self._create_professor(name="李雷", email="selection-han@example.edu")
+
+        prepared = self.client.post(
+            "/api/agent/v1/professors/prepare-bulk-archive",
+            headers={**self._agent_headers(), "Idempotency-Key": "bulk-archive-selection"},
+            json={
+                "selection": {
+                    "mode": "filter",
+                    "filter": {
+                        "archived": "active",
+                        "where": {"name": {"contains_script": "latin"}},
+                    },
+                    "exclude_ids": [excluded_id],
+                },
+            },
+        )
+
+        self.assertEqual(prepared.status_code, 201, msg=prepared.text)
+        plan = prepared.json()
+        self.assertTrue(plan["content_fingerprint"])
+        self.assertEqual(plan["summary"]["snapshot_stage"], "preflight")
+        self.assertEqual(
+            plan["summary"]["selection"],
+            {
+                "mode": "filter",
+                "matched_count": 2,
+                "selected_count": 1,
+                "excluded_count": 1,
+                "frozen_ids_hash": plan["summary"]["selection"]["frozen_ids_hash"],
+            },
+        )
+        self.assertTrue(plan["summary"]["selection"]["frozen_ids_hash"])
+
+        created_after_plan_id = self._create_professor(
+            name="Grace Hopper",
+            email="selection-later@example.edu",
+        )
+        mismatched = self.client.post(
+            f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+            headers=self._agent_headers(),
+            json={"confirm": True, "confirmed_fingerprint": "wrong-fingerprint"},
+        )
+        self.assertEqual(mismatched.status_code, 409, msg=mismatched.text)
+        self.assertEqual(mismatched.json()["error"]["code"], "PLAN_CONFIRMATION_MISMATCH")
+        executed = self.client.post(
+            f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+            headers=self._agent_headers(),
+            json={
+                "confirm": True,
+                "confirmed_fingerprint": plan["content_fingerprint"],
+            },
+        )
+        self.assertEqual(executed.status_code, 200, msg=executed.text)
+        self.assertEqual(executed.json()["result"]["affected_count"], 1)
+
+        archived = self._agent_get(f"/api/agent/v1/professors/{selected_id}").json()
+        self.assertIsNotNone(archived["archived_at"])
+        for professor_id in (excluded_id, han_id, created_after_plan_id):
+            professor = self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()
+            self.assertIsNone(professor["archived_at"])
 
     def test_agent_can_prepare_and_execute_professor_import_plan(self) -> None:
         existing_professor_id = self._create_professor(email="import-existing@example.edu")
@@ -4344,6 +4437,7 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(plan_response.status_code, 201, msg=plan_response.text)
         plan_id = plan_response.json()["plan_id"]
+        content_fingerprint = plan_response.json()["content_fingerprint"]
         send_mock = AsyncMock(
             return_value=SimpleNamespace(
                 message_id="<agent-plan@example.com>",
@@ -4351,17 +4445,26 @@ class AgentApiTests(unittest.TestCase):
             ),
         )
         with patch("app.modules.communications.transport.send_email", send_mock):
+            mismatch = self.client.post(
+                f"/api/agent/v1/plans/{plan_id}/execute",
+                headers=self._agent_headers(),
+                json={"confirm": True, "confirmed_fingerprint": "wrong-fingerprint"},
+            )
             first = self.client.post(
                 f"/api/agent/v1/plans/{plan_id}/execute",
                 headers=self._agent_headers(),
-                json={"confirm": True},
+                json={
+                    "confirm": True,
+                    "confirmed_fingerprint": content_fingerprint,
+                },
             )
             second = self.client.post(
                 f"/api/agent/v1/plans/{plan_id}/execute",
                 headers=self._agent_headers(),
                 json={"confirm": True},
             )
-
+        self.assertEqual(mismatch.status_code, 409, msg=mismatch.text)
+        self.assertEqual(mismatch.json()["error"]["code"], "PLAN_CONFIRMATION_MISMATCH")
         self.assertEqual(first.status_code, 200, msg=first.text)
         self.assertEqual(first.json()["status"], "executed")
         self.assertEqual(first.json()["result"]["outcome"], "sent")
@@ -5336,11 +5439,12 @@ class AgentApiTests(unittest.TestCase):
     def _create_professor(
         self,
         *,
+        name: str | None = None,
         email: str = "professor@example.edu",
         profile_url: str | None = None,
     ) -> int:
         payload: dict[str, object] = {
-            "name": f"导师 {email}",
+            "name": name or f"导师 {email}",
             "email": email,
             "university": "示例大学",
             "research_direction": "智能体",

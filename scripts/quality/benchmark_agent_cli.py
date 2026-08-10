@@ -19,6 +19,9 @@ INTENT_CASES = (
     ("generate email draft", "drafts.generate"),
     ("professers improt", "professors.import"),
     ("修改发送时间", "deliveries.reschedule"),
+    ("列出当前系统中所有姓名包含英文字母的导师", "professors.list"),
+    ("批量将指定导师移入回收站", "professors.prepare-bulk-archive"),
+    ("确认并执行已有变更计划", "plans.execute"),
 )
 
 
@@ -130,7 +133,7 @@ def run_benchmark(
                     "--format",
                     "json",
                     "capabilities",
-                    "--query",
+                    "--intent",
                     query,
                     "--limit",
                     "1",

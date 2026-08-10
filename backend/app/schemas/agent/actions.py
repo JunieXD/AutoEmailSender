@@ -75,6 +75,7 @@ class AgentPrepareSendRequest(ApiSchema):
 
 class AgentPlanExecuteRequest(ApiSchema):
     confirm: bool = False
+    confirmed_fingerprint: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AgentPlanEffectsRead(ApiSchema):
@@ -138,15 +139,26 @@ class AgentProfessorBulkTagsRequest(ApiSchema):
 
 
 class AgentProfessorBulkArchiveRequest(ApiSchema):
-    professor_ids: list[int] = Field(min_length=1)
+    professor_ids: list[int] | None = Field(default=None, min_length=1)
+    selection: SelectionSpec | None = None
 
     @model_validator(mode="after")
-    def validate_professor_ids(self) -> "AgentProfessorBulkArchiveRequest":
-        if any(professor_id < 1 for professor_id in self.professor_ids):
-            raise ValueError("professor_ids 必须是正整数")
-        if len(set(self.professor_ids)) != len(self.professor_ids):
-            raise ValueError("professor_ids 不能包含重复的导师 ID")
+    def validate_selection(self) -> "AgentProfessorBulkArchiveRequest":
+        if self.selection is not None and self.professor_ids is not None:
+            raise ValueError("selection 和 professor_ids 不能同时提供")
+        if self.selection is None and self.professor_ids is None:
+            raise ValueError("请提供 selection 或 professor_ids")
+        if self.professor_ids is not None:
+            if any(professor_id < 1 for professor_id in self.professor_ids):
+                raise ValueError("professor_ids 必须是正整数")
+            if len(set(self.professor_ids)) != len(self.professor_ids):
+                raise ValueError("professor_ids 不能包含重复的导师 ID")
         return self
+
+    def resolved_selection(self) -> SelectionSpec:
+        if self.selection is not None:
+            return self.selection
+        return SelectionSpec(mode="ids", ids=self.professor_ids or [])
 
 
 class AgentTaskRuntimeProfileRequest(ApiSchema):
@@ -457,6 +469,7 @@ class AgentChangePlanRead(ApiSchema):
     plan_id: str
     action: str
     status: AgentPlanStatus
+    content_fingerprint: str
     expires_at: datetime
     confirmed_at: datetime | None = None
     executed_at: datetime | None = None
