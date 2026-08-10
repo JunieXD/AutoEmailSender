@@ -23,6 +23,7 @@ from test.process_harness import (
     FakeImapMessage,
     FaultController,
     TestClockController,
+    _prepare_managed_process_launch,
     fetch_json,
     reserve_tcp_port,
     spawn_managed_process,
@@ -30,6 +31,27 @@ from test.process_harness import (
 
 
 class FaultInjectionInfrastructureTests(unittest.TestCase):
+    def test_windows_managed_python_launch_tracks_the_real_venv_runtime(self) -> None:
+        original_env = {"EXISTING": "preserved"}
+        command, environment = _prepare_managed_process_launch(
+            ["C:/qa/.venv/Scripts/python.exe", "desktop_entry.py"],
+            original_env,
+            platform_name="nt",
+            python_executable="C:/qa/.venv/Scripts/python.exe",
+            base_python_executable="C:/python/python.exe",
+        )
+
+        self.assertEqual(command[0], "C:/python/python.exe")
+        self.assertEqual(command[1:], ["desktop_entry.py"])
+        self.assertEqual(
+            environment,
+            {
+                "EXISTING": "preserved",
+                "__PYVENV_LAUNCHER__": "C:/qa/.venv/Scripts/python.exe",
+            },
+        )
+        self.assertEqual(original_env, {"EXISTING": "preserved"})
+
     def test_clock_override_requires_test_gate_and_sandboxed_file(self) -> None:
         from app.core.fault_injection import resolve_test_clock_offset_seconds
 

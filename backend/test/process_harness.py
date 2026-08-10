@@ -1038,20 +1038,53 @@ def spawn_managed_process(
     log_dir: Path,
     name: str,
 ) -> ManagedProcess:
+    process_command, process_env = _prepare_managed_process_launch(command, env)
     log_dir.mkdir(parents=True, exist_ok=True)
     suffix = uuid.uuid4().hex
     stdout_path = log_dir / f"{name}-{suffix}.stdout.log"
     stderr_path = log_dir / f"{name}-{suffix}.stderr.log"
     with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
         process = subprocess.Popen(
-            list(command),
+            process_command,
             cwd=cwd,
-            env=env,
+            env=process_env,
             stdin=subprocess.DEVNULL,
             stdout=stdout_file,
             stderr=stderr_file,
         )
     return ManagedProcess(process, stdout_path, stderr_path)
+
+
+def _prepare_managed_process_launch(
+    command: Sequence[str],
+    env: dict[str, str],
+    *,
+    platform_name: str = os.name,
+    python_executable: str = sys.executable,
+    base_python_executable: str | None = getattr(sys, "_base_executable", None),
+) -> tuple[list[str], dict[str, str]]:
+    """Keep the managed PID equal to the real Python runtime on Windows.
+
+    A Windows virtual environment's ``python.exe`` is a redirector.  Popen
+    otherwise tracks that launcher while the API/Worker status files contain
+    the child base-interpreter PID, which makes runtime-group identity checks
+    fail and prevents process termination tests from targeting the real role.
+    Starting the base interpreter with CPython's venv launcher hint preserves
+    ``sys.prefix`` and installed packages without introducing the extra PID.
+    """
+
+    process_command = list(command)
+    process_env = dict(env)
+    if not process_command or platform_name != "nt" or not base_python_executable:
+        return process_command, process_env
+
+    requested = os.path.normcase(os.path.abspath(process_command[0]))
+    venv_python = os.path.normcase(os.path.abspath(python_executable))
+    base_python = os.path.normcase(os.path.abspath(base_python_executable))
+    if requested == venv_python and base_python != venv_python:
+        process_command[0] = base_python_executable
+        process_env["__PYVENV_LAUNCHER__"] = python_executable
+    return process_command, process_env
 
 
 class FaultController:
