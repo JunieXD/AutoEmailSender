@@ -273,8 +273,16 @@ function Get-StageFingerprint {
   $parts = New-Object System.Collections.Generic.List[string]
   foreach ($path in $Paths) {
     $gitPath = $path.Replace("\", "/")
-    $treeId = (& git -C $CheckoutPath rev-parse "${Revision}:$gitPath" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $treeId) {
+    # `rev-parse <revision>:<path>` writes a fatal native error when a path was
+    # added after PreviousRevision.  With ErrorActionPreference=Stop that
+    # expected cache miss terminates Windows PowerShell before LASTEXITCODE can
+    # be inspected.  ls-tree reports an absent path as empty output with exit
+    # code zero, while still failing closed for an invalid revision.
+    $treeId = (& git -C $CheckoutPath ls-tree "--format=%(objectname)" $Revision -- $gitPath | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+      throw "Unable to fingerprint $gitPath at revision $Revision."
+    }
+    if (-not $treeId) {
       $treeId = "missing"
     }
     $parts.Add("$gitPath=$treeId")

@@ -250,6 +250,10 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("[string]$ExpectedRevision");
     expect(guestRunner).toContain("[string]$PreviousRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");
+    expect(guestRunner).toContain(
+      'ls-tree "--format=%(objectname)" $Revision -- $gitPath',
+    );
+    expect(guestRunner).not.toContain('rev-parse "${Revision}:$gitPath"');
     expect(guestRunner).toContain("Test-VerifiedStage");
     expect(guestRunner).toContain("Import-LegacyVerifiedStage");
     expect(guestRunner).toContain("toolchainFingerprint");
