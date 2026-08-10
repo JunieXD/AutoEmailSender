@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from auto_email_sender_cli.commands.attachment_options import build_attachment_payload
 from auto_email_sender_cli.commands.common import (
     format_detail,
     format_page,
@@ -185,6 +186,12 @@ def prepare_campaign_create(
                 "定时活动必须指定 --scheduled-date、--window-start-time、--window-end-time 和 --emails-per-window。",
                 param_hint="--schedule-type",
             )
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        preserve_when_omitted=False,
+    )
     run_write_command(
         ctx,
         command="campaigns.create",
@@ -197,7 +204,7 @@ def prepare_campaign_create(
             "generation_mode": generation_mode.value,
             "template_id": template_id,
             "reference_material_id": reference_material_id,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
             "subject": subject,
             "body_text": body_text,
             "body_html": body_html,
@@ -242,7 +249,17 @@ def approve_campaign_item_draft(
         list[int] | None,
         typer.Option("--attachment-material-id", min=1),
     ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部随信附件。"),
+    ] = False,
 ) -> None:
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        clear_attachments=clear_attachments,
+    )
     run_write_command(
         ctx,
         command="campaigns.approve-item-draft",
@@ -253,7 +270,7 @@ def approve_campaign_item_draft(
             "subject": subject,
             "body_text": body_text,
             "body_html": body_html,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
         },
         guide_topic="campaigns",
         human_formatter=format_detail,

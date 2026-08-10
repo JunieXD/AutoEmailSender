@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.schemas.base import ApiSchema
 from app.modules.identities.public import IdentityMaterialRead
@@ -61,6 +61,20 @@ class TestComposeDraftUpdateRequest(BaseModel):
     body_text: str
     body_html: str | None = None
     selected_material_ids: list[int] | None = None
+
+    @field_validator("selected_material_ids")
+    @classmethod
+    def validate_selected_material_ids(
+        cls,
+        value: list[int] | None,
+    ) -> list[int] | None:
+        if value is None:
+            return None
+        if any(material_id < 1 for material_id in value):
+            raise ValueError("selected_material_ids 必须是正整数")
+        if len(value) != len(set(value)):
+            raise ValueError("selected_material_ids 不能包含重复的材料 ID")
+        return value
 
 
 class TestComposeMessageSendRequest(TestComposeDraftUpdateRequest):

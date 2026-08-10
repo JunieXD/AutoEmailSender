@@ -3218,6 +3218,57 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(metadata["stable_prefix_hash"], "d" * 64)
         self.assertEqual(metadata["prompt_cache_key"], "draft-rewrite:v5:rewrite-test")
 
+    def test_rewrite_draft_preserves_omitted_attachments_after_failure(self) -> None:
+        from app.modules.llm import runtime as llm_runtime
+
+        task_id = self._create_rewrite_ready_task()
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            material_id = connection.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE email_tasks SET selected_material_ids = ? WHERE id = ?",
+                (json.dumps([material_id]), task_id),
+            )
+
+        async def fail_after_claim(**_kwargs: object):
+            with closing(sqlite3.connect(self.db_path)) as connection:
+                selected_ids, source_ids = connection.execute(
+                    """
+                    SELECT selected_material_ids,
+                           draft_rewrite_source_selected_material_ids
+                    FROM email_tasks
+                    WHERE id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            self.assertEqual(json.loads(selected_ids), [material_id])
+            self.assertEqual(json.loads(source_ids), [material_id])
+            raise llm_runtime.LLMRuntimeError("模型请求失败: 验证附件回滚")
+
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fail_after_claim),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "保留附件主题",
+                    "body_text": "保留附件正文",
+                    "body_html": "<p>保留附件正文</p>",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            status, selected_ids = connection.execute(
+                "SELECT status, selected_material_ids FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(status, "matched")
+        self.assertEqual(json.loads(selected_ids), [material_id])
+
     def test_rewrite_draft_resolves_thinking_adaptation_once(self) -> None:
         task_id = self._create_rewrite_ready_task()
         extra_body = {"thinking": {"type": "disabled"}}

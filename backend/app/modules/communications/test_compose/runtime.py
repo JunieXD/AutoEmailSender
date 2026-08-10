@@ -18,6 +18,7 @@ from app.models import (
     IdentityMaterial,
     IdentityProfile,
     LLMProfile,
+    OutreachTemplate,
     Professor,
     TestComposeMessage,
     TestComposeSession,
@@ -243,7 +244,7 @@ async def send_test_compose_message(
         identity,
         commit=commit,
     )
-    selected_material_ids = payload.selected_material_ids or []
+    selected_material_ids = _resolve_selected_material_ids(compose_session, payload)
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
 
@@ -361,19 +362,16 @@ async def prepare_test_compose_send_snapshot(
     """Build the exact safe-to-display state for an Agent-confirmed test send."""
     identity = await _get_identity(session, identity_id)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    selected_material_ids = payload.selected_material_ids or []
+    compose_session = await _get_latest_test_compose_session(session, identity_id)
+    selected_material_ids = _resolve_selected_material_ids(compose_session, payload)
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
 
-    selected_template = None
-    if (
-        "outreach_template_id" in payload.model_fields_set
-        and payload.outreach_template_id is not None
-    ):
-        selected_template = await get_outreach_template(
-            session,
-            payload.outreach_template_id,
-            include_archived=True,
-        )
+    selected_template = await _resolve_snapshot_template(
+        session,
+        identity=identity,
+        compose_session=compose_session,
+        payload=payload,
+    )
     if not (
         identity.smtp_host
         and identity.smtp_username
@@ -474,7 +472,7 @@ async def save_test_compose_draft(
         identity,
         commit=commit,
     )
-    selected_material_ids = payload.selected_material_ids or []
+    selected_material_ids = _resolve_selected_material_ids(compose_session, payload)
 
     await _validate_selected_material_ids(session, identity_id, selected_material_ids)
 
@@ -545,11 +543,7 @@ async def _get_or_create_test_compose_session(
     *,
     commit: bool = True,
 ) -> TestComposeSession:
-    compose_session = await session.scalar(
-        select(TestComposeSession)
-        .where(TestComposeSession.identity_id == identity_id)
-        .order_by(TestComposeSession.updated_at.desc(), TestComposeSession.id.desc()),
-    )
+    compose_session = await _get_latest_test_compose_session(session, identity_id)
     if compose_session:
         compose_session.llm_profile_id = llm_profile_id
         compose_session.updated_at = utc_now()
@@ -583,6 +577,17 @@ async def _get_or_create_test_compose_session(
     return compose_session
 
 
+async def _get_latest_test_compose_session(
+    session: AsyncSession,
+    identity_id: int,
+) -> TestComposeSession | None:
+    return await session.scalar(
+        select(TestComposeSession)
+        .where(TestComposeSession.identity_id == identity_id)
+        .order_by(TestComposeSession.updated_at.desc(), TestComposeSession.id.desc()),
+    )
+
+
 async def _list_test_compose_messages(
     session: AsyncSession,
     session_id: int,
@@ -603,6 +608,10 @@ async def _validate_selected_material_ids(
     identity_id: int,
     material_ids: list[int],
 ) -> None:
+    if any(material_id < 1 for material_id in material_ids):
+        raise ValueError("随信材料 ID 必须是正整数")
+    if len(material_ids) != len(set(material_ids)):
+        raise ValueError("随信材料 ID 不能重复")
     if not material_ids:
         return
     materials: list[int] = []
@@ -617,6 +626,39 @@ async def _validate_selected_material_ids(
         )
     if len(set(materials)) != len(set(material_ids)):
         raise ValueError("存在不属于当前身份的随信材料")
+
+
+def _resolve_selected_material_ids(
+    compose_session: TestComposeSession | None,
+    payload: TestComposeDraftUpdateRequest,
+) -> list[int]:
+    if "selected_material_ids" in payload.model_fields_set:
+        return list(payload.selected_material_ids or [])
+    if compose_session is None:
+        return []
+    return list(compose_session.selected_material_ids or [])
+
+
+async def _resolve_snapshot_template(
+    session: AsyncSession,
+    *,
+    identity: IdentityProfile,
+    compose_session: TestComposeSession | None,
+    payload: TestComposeDraftUpdateRequest,
+) -> OutreachTemplate | None:
+    if "outreach_template_id" in payload.model_fields_set:
+        template_id = payload.outreach_template_id
+    elif compose_session is not None:
+        template_id = compose_session.outreach_template_id
+    else:
+        return await get_default_outreach_template_for_identity(session, identity)
+    if template_id is None:
+        return None
+    return await get_outreach_template(
+        session,
+        template_id,
+        include_archived=True,
+    )
 
 
 async def _resolve_selected_materials(
