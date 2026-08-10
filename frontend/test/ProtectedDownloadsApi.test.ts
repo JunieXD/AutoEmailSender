@@ -3,6 +3,7 @@ import {
   downloadProfessorExport,
   downloadProfessorTemplate,
 } from "@/entities/professor/api/professors";
+import { downloadCommunitySharePackage } from "@/entities/community-mentor/api/communityMentors";
 import { exportCrawlerDebugLog } from "@/lib/api/diagnosticsApi";
 import { downloadMaterial } from "@/lib/api/materials";
 import { updateDesktopBackendBaseUrl } from "@/lib/api/client";
@@ -101,5 +102,33 @@ describe("protected desktop file downloads", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:protected-download");
     expect(document.querySelector("a[download]")).toBeNull();
     createElementSpy.mockRestore();
+  });
+
+  it("posts the complete community share selection without putting IDs in the URL", async () => {
+    const professorIds = Array.from({ length: 82 }, (_, index) => index + 1);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("xlsx-content", {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      }),
+    );
+
+    const blob = await downloadCommunitySharePackage(professorIds);
+
+    expect(await blob.text()).toBe("xlsx-content");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:48123/api/community-mentors/share-package",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ professor_ids: professorIds }),
+        headers: expect.any(Headers),
+      }),
+    );
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer desktop-ui-token",
+    );
   });
 });

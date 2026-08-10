@@ -18,6 +18,7 @@ DATA_FILE_PATTERN = r"^objects/sha256/[a-f0-9]{64}\.json$"
 RELEASE_FILE_PATTERN = rf"^releases/{DATASET_VERSION_FRAGMENT}/(catalog|revocations)\.json$"
 MANIFEST_FILE_PATTERN = rf"^(?:{DATA_FILE_PATTERN[1:-1]}|{RELEASE_FILE_PATTERN[1:-1]})$"
 MAX_COMMUNITY_LOADED_RECORDS = 2_000
+MAX_COMMUNITY_SHARE_PROFESSORS = 500
 
 COMMUNITY_IMPORT_FIELDS = (
     "name",
@@ -455,6 +456,22 @@ class CommunityRecordSelectionPayload(BaseModel):
 
         if any(re.fullmatch(DATA_FILE_PATTERN, value) is None for value in values):
             raise ValueError("学院分片路径无效")
+        return values
+
+
+class CommunitySharePackagePayload(BaseModel):
+    professor_ids: list[int] = Field(
+        min_length=1,
+        max_length=MAX_COMMUNITY_SHARE_PROFESSORS,
+    )
+
+    @field_validator("professor_ids")
+    @classmethod
+    def _validate_professor_ids(cls, values: list[int]) -> list[int]:
+        if any(professor_id <= 0 for professor_id in values):
+            raise ValueError("导师 ID 必须为正整数")
+        if len(values) != len(set(values)):
+            raise ValueError("导师 ID 不能重复")
         return values
 
 

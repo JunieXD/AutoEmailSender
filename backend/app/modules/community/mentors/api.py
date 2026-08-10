@@ -15,6 +15,8 @@ from .schemas import (
     CommunityPreviewPayload,
     CommunityRecordSelectionPayload,
     CommunityRecordsRead,
+    CommunitySharePackagePayload,
+    MAX_COMMUNITY_SHARE_PROFESSORS,
 )
 from .service import (
     CommunityDataError,
@@ -190,6 +192,21 @@ async def export_community_share_package(
         ids = _parse_professor_ids(professor_ids)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await _build_community_share_package_response(ids, session)
+
+
+@router.post("/share-package")
+async def export_community_share_package_from_selection(
+    payload: CommunitySharePackagePayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    return await _build_community_share_package_response(payload.professor_ids, session)
+
+
+async def _build_community_share_package_response(
+    ids: list[int],
+    session: AsyncSession,
+) -> Response:
     professors: list[Professor] = []
     for professor_id_chunk in chunked_values(ids):
         professors.extend(
@@ -223,8 +240,10 @@ def _parse_professor_ids(value: str) -> list[int]:
     ids = [int(part) for part in parts]
     if any(professor_id <= 0 for professor_id in ids):
         raise ValueError("导师 ID 必须为正整数")
-    if len(ids) > 500:
-        raise ValueError("一次最多导出 500 位导师")
+    if len(ids) > MAX_COMMUNITY_SHARE_PROFESSORS:
+        raise ValueError(
+            f"一次最多导出 {MAX_COMMUNITY_SHARE_PROFESSORS} 位导师",
+        )
     if len(ids) != len(set(ids)):
         raise ValueError("导师 ID 不能重复")
     return ids

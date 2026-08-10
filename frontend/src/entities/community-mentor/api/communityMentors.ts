@@ -34,6 +34,7 @@ export const importCommunityMentors = (payload: CommunityImportPayloadDTO) =>
   });
 
 export const downloadCommunitySharePackage = (professorIds: number[]) =>
-  fetchApiFile('/api/community-mentors/share-package', undefined, {
-    professor_ids: professorIds.join(','),
+  fetchApiFile('/api/community-mentors/share-package', {
+    method: 'POST',
+    body: JSON.stringify({ professor_ids: professorIds }),
   });
