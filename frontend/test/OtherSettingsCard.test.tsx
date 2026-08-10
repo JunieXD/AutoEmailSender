@@ -385,6 +385,173 @@ describe("OtherSettingsCard", () => {
     expect(screen.queryByRole("button", { name: "继续安全重启" })).not.toBeInTheDocument();
     expect(restartForBackendMode).toHaveBeenCalledOnce();
   });
+
+  it("shows bounded local diagnostics only when the beta recorder is enabled", async () => {
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus: vi.fn(async () => betaDiagnosticsStatus()),
+      clearBetaDiagnostics: vi.fn(async () => betaDiagnosticsStatus({ totalBytes: 0 })),
+      markBetaDiagnosticsProblem: vi.fn(async () => ({
+        markedAt: "2026-08-10T08:00:00.000Z",
+      })),
+      exportBetaDiagnostics: vi.fn(async () => ({ status: "canceled" as const })),
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+
+    const diagnostics = await screen.findByRole("region", { name: "Beta 本地诊断" });
+    expect(diagnostics).toHaveTextContent("不会自动上传");
+    expect(diagnostics).toHaveTextContent("1.5 MiB");
+    expect(diagnostics).toHaveTextContent("上限 64 MiB");
+    expect(diagnostics).toHaveTextContent("14 天");
+    expect(screen.getByLabelText("Beta 诊断导出范围")).toHaveValue("24h");
+  });
+
+  it("exports a complete beta diagnostics bundle for the selected range", async () => {
+    const exportBetaDiagnostics = vi.fn(async () => ({
+      status: "saved" as const,
+      fileName: "auto-email-sender-beta-diagnostics.zip",
+      reportId: "report-1",
+      partial: false,
+      missingSections: [],
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus: vi.fn(async () => betaDiagnosticsStatus()),
+      clearBetaDiagnostics: vi.fn(async () => betaDiagnosticsStatus({ totalBytes: 0 })),
+      markBetaDiagnosticsProblem: vi.fn(async () => ({
+        markedAt: "2026-08-10T08:00:00.000Z",
+      })),
+      exportBetaDiagnostics,
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    await screen.findByRole("region", { name: "Beta 本地诊断" });
+    fireEvent.change(screen.getByLabelText("Beta 诊断导出范围"), {
+      target: { value: "7d" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "导出诊断包" }));
+
+    await waitFor(() => expect(exportBetaDiagnostics).toHaveBeenCalledWith("7d"));
+    expect(await screen.findByTestId("notification-title")).toHaveTextContent(
+      "Beta 诊断包已导出",
+    );
+    expect(screen.getByText("auto-email-sender-beta-diagnostics.zip")).toBeInTheDocument();
+  });
+
+  it("exports a partial bundle through the desktop bridge when the backend is down", async () => {
+    const exportBetaDiagnostics = vi.fn(async () => ({
+      status: "saved" as const,
+      fileName: "partial-beta-diagnostics.zip",
+      reportId: "report-partial",
+      partial: true,
+      missingSections: ["workload-summary.json", "database-health.json"],
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus: vi.fn(async () => betaDiagnosticsStatus()),
+      clearBetaDiagnostics: vi.fn(async () => betaDiagnosticsStatus({ totalBytes: 0 })),
+      markBetaDiagnosticsProblem: vi.fn(async () => ({
+        markedAt: "2026-08-10T08:00:00.000Z",
+      })),
+      exportBetaDiagnostics,
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    await screen.findByRole("region", { name: "Beta 本地诊断" });
+    fireEvent.click(screen.getByRole("button", { name: "导出诊断包" }));
+
+    await waitFor(() => expect(exportBetaDiagnostics).toHaveBeenCalledWith("24h"));
+    expect(await screen.findByTestId("notification-title")).toHaveTextContent(
+      "已导出部分诊断包",
+    );
+    expect(screen.getByText(/后端不可用时缺少/)).toHaveTextContent(
+      "workload-summary.json、database-health.json",
+    );
+  });
+
+  it("marks the recent problem without uploading diagnostics", async () => {
+    const markBetaDiagnosticsProblem = vi.fn(async () => ({
+      markedAt: "2026-08-10T08:00:00.000Z",
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus: vi.fn(async () => betaDiagnosticsStatus()),
+      clearBetaDiagnostics: vi.fn(async () => betaDiagnosticsStatus({ totalBytes: 0 })),
+      markBetaDiagnosticsProblem,
+      exportBetaDiagnostics: vi.fn(async () => ({ status: "canceled" as const })),
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    await screen.findByRole("region", { name: "Beta 本地诊断" });
+    fireEvent.change(screen.getByLabelText("Beta 诊断问题类别"), {
+      target: { value: "mode_switch" },
+    });
+    fireEvent.change(screen.getByLabelText("Beta 诊断问题简短说明"), {
+      target: { value: "  切换后没有恢复  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "标记刚才的问题" }));
+
+    await waitFor(() => {
+      expect(markBetaDiagnosticsProblem).toHaveBeenCalledWith({
+        category: "mode_switch",
+        note: "切换后没有恢复",
+      });
+    });
+    expect(screen.getByLabelText("Beta 诊断问题简短说明")).toHaveValue("");
+    expect(await screen.findByTestId("notification-title")).toHaveTextContent(
+      "已标记刚才的问题",
+    );
+  });
+
+  it("requires confirmation before clearing local beta diagnostics", async () => {
+    const clearBetaDiagnostics = vi.fn(async () => betaDiagnosticsStatus({
+      totalBytes: 0,
+      segmentCount: 0,
+      oldestRecordAt: null,
+      newestRecordAt: null,
+    }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus: vi.fn(async () => betaDiagnosticsStatus()),
+      clearBetaDiagnostics,
+      markBetaDiagnosticsProblem: vi.fn(async () => ({
+        markedAt: "2026-08-10T08:00:00.000Z",
+      })),
+      exportBetaDiagnostics: vi.fn(async () => ({ status: "canceled" as const })),
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    await screen.findByRole("region", { name: "Beta 本地诊断" });
+    fireEvent.click(screen.getByRole("button", { name: "清空本地诊断记录" }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(clearBetaDiagnostics).toHaveBeenCalledOnce());
+    expect(await screen.findByTestId("notification-title")).toHaveTextContent(
+      "本地 Beta 诊断记录已清空",
+    );
+  });
+
+  it("hides beta diagnostics when the recorder is disabled", async () => {
+    const getBetaDiagnosticsStatus = vi.fn(async () => betaDiagnosticsStatus({
+      enabled: false,
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getBetaDiagnosticsStatus,
+      clearBetaDiagnostics: vi.fn(async () => betaDiagnosticsStatus({ enabled: false })),
+      markBetaDiagnosticsProblem: vi.fn(async () => ({
+        markedAt: "2026-08-10T08:00:00.000Z",
+      })),
+      exportBetaDiagnostics: vi.fn(async () => ({ status: "canceled" as const })),
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+
+    await waitFor(() => expect(getBetaDiagnosticsStatus).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("region", { name: "Beta 本地诊断" })).not.toBeInTheDocument();
+  });
 });
 
 function backendModeStatus(overrides = {}) {
@@ -413,6 +580,20 @@ function restartSafety(overrides = {}) {
       imapSync: 0,
     },
     message: "可以安全重启。",
+    ...overrides,
+  };
+}
+
+function betaDiagnosticsStatus(overrides = {}) {
+  return {
+    enabled: true,
+    schemaVersion: 1,
+    retentionDays: 14,
+    maxTotalBytes: 64 * 1024 * 1024,
+    totalBytes: 1.5 * 1024 * 1024,
+    segmentCount: 3,
+    oldestRecordAt: "2026-08-09T08:00:00.000Z",
+    newestRecordAt: "2026-08-10T08:00:00.000Z",
     ...overrides,
   };
 }

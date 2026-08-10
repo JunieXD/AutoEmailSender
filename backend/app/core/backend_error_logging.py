@@ -4,6 +4,7 @@ import traceback
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
+from app.core.beta_diagnostics import record_beta_diagnostic_event
 from app.core.diagnostic_redaction import sanitize_diagnostic_text
 from app.core.sqlite_diagnostics import sqlite_lock_diagnostic_line
 
@@ -30,6 +31,12 @@ def write_backend_error_log(
         timestamp = datetime.now(UTC).isoformat()
         traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         diagnostic_line = sqlite_lock_diagnostic_line(exc)
+        if diagnostic_line:
+            record_beta_diagnostic_event(
+                "sqlite_lock_error",
+                {"error_code": type(exc).__name__, "source": "api"},
+                "warning",
+            )
         diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (
             f"[{timestamp}] request_id={request_id} {method} {path}\n"
@@ -50,6 +57,12 @@ def write_backend_worker_error_log(
         timestamp = datetime.now(UTC).isoformat()
         traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         diagnostic_line = sqlite_lock_diagnostic_line(exc)
+        if diagnostic_line:
+            record_beta_diagnostic_event(
+                "sqlite_lock_error",
+                {"error_code": type(exc).__name__, "source": "worker"},
+                "warning",
+            )
         diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (
             f"[{timestamp}] worker_name={worker_name}\n"

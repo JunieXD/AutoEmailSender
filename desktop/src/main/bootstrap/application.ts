@@ -35,6 +35,9 @@ import {
   writeAgentRuntimeDescriptor,
 } from "../agent-support/runtime.js";
 import { createAgentSupportService } from "../agent-support/service.js";
+import { isBetaDiagnosticsEnabled } from "../diagnostics/constants.js";
+import { DesktopBetaDiagnosticsRecorder } from "../diagnostics/recorder.js";
+import { createDesktopBetaDiagnosticsService } from "../diagnostics/service.js";
 import { registerDesktopIpc } from "../ipc/register.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "../shell/startup-at-login.js";
 import { bindTrayInteractions } from "../shell/tray.js";
@@ -89,8 +92,6 @@ const desktopBackendClient = createDesktopBackendClient({
         }
   ),
 });
-
-
 const repoRoot = path.resolve(app.getAppPath(), "..");
 const packagedQaIsolatedHomePath = getActivePackagedQaIsolatedHomePath();
 const agentSupportHomePath = packagedQaIsolatedHomePath
@@ -110,6 +111,34 @@ const agentSupportService = createAgentSupportService({
   localAppDataPath: process.env.LOCALAPPDATA,
   appVersion: app.getVersion(),
   environmentPath: process.env.PATH,
+});
+const betaDiagnosticsEnabled = isBetaDiagnosticsEnabled({
+  appVersion: app.getVersion(),
+  environmentValue: process.env.AUTO_EMAIL_SENDER_BETA_DIAGNOSTICS,
+});
+const betaDiagnosticsRecorder = new DesktopBetaDiagnosticsRecorder({
+  userDataPath: app.getPath("userData"),
+  homePath: agentSupportHomePath,
+  appVersion: app.getVersion(),
+  enabled: betaDiagnosticsEnabled,
+  getCurrentMode: () => currentBackendMode,
+  getProcessSnapshot: () => ({
+    ...(backend?.backendPid ? { apiPid: backend.backendPid } : {}),
+    ...(backend?.workerPid ? { workerPid: backend.workerPid } : {}),
+  }),
+});
+const betaDiagnosticsService = createDesktopBetaDiagnosticsService({
+  recorder: betaDiagnosticsRecorder,
+  appVersion: app.getVersion(),
+  backendClient: desktopBackendClient,
+  getBackendModeStatus: getDesktopBackendModeStatus,
+  buildIdentity: {
+    sourceBranch: process.env.AUTO_EMAIL_SENDER_RELEASE_SOURCE_BRANCH,
+    releaseSha: process.env.AUTO_EMAIL_SENDER_RELEASE_SHA,
+    candidateRunId: process.env.AUTO_EMAIL_SENDER_CANDIDATE_RUN_ID,
+    candidateAssetName: process.env.AUTO_EMAIL_SENDER_CANDIDATE_ASSET_NAME,
+    candidateAssetSha256: process.env.AUTO_EMAIL_SENDER_CANDIDATE_ASSET_SHA256,
+  },
 });
 const launchedAtStartup = isLaunchedAtStartup({
   argv: process.argv,
@@ -139,15 +168,20 @@ function stopBackendAndExit(exitCode: number): void {
   const currentBackend = backend;
   backend = null;
   currentBackendConnection = null;
+  void betaDiagnosticsRecorder.recordTimeline("desktop_exit_requested", {
+    code: exitCode,
+    effective_mode: currentBackendMode,
+  });
   backendStopPromise = Promise.all([
     currentBackend?.stop() ?? Promise.resolve(),
     currentBackend ? removeAgentRuntime(currentBackend) : Promise.resolve(false),
+    betaDiagnosticsRecorder.stop(),
   ]).then(
     () => undefined,
     () => undefined,
   ).finally(() => {
-      app.exit(exitCode);
-    });
+    app.exit(exitCode);
+  });
 }
 
 function getStartupInput() {
@@ -185,6 +219,10 @@ async function ensureCurrentBackendMode(): Promise<BackendMode> {
   }
   const resolution = await resolveNextBackendMode();
   currentBackendMode = resolution.mode;
+  void betaDiagnosticsRecorder.recordTimeline("backend_mode_resolved", {
+    effective_mode: resolution.mode,
+    source: resolution.source,
+  });
   if (resolution.warning) {
     console.warn(resolution.warning);
   }
@@ -199,6 +237,10 @@ async function getDesktopBackendModeStatus(): Promise<DesktopBackendModeStatus> 
 
 async function setDesktopBackendMode(mode: BackendMode): Promise<DesktopBackendModeStatus> {
   await writeBackendModeSetting(app.getPath("userData"), mode);
+  void betaDiagnosticsRecorder.recordTimeline("backend_mode_saved", {
+    requested_mode: mode,
+    effective_mode: currentBackendMode,
+  });
   return getDesktopBackendModeStatus();
 }
 
@@ -236,6 +278,11 @@ async function requestDesktopBackendModeRestart(
     allowUnavailableBackend: internalOptions?.allowUnavailableBackend,
   });
   const decision = decideBackendModeRestart(safety, options);
+  void betaDiagnosticsRecorder.recordTimeline("backend_mode_restart_decided", {
+    state: decision.state,
+    requested_mode: internalOptions?.forcedMode,
+    effective_mode: currentBackendMode,
+  }, decision.state === "blocked" ? "warning" : "info");
   if (decision.state === "restarting") {
     scheduleDesktopRelaunch(internalOptions?.forcedMode);
   }
@@ -247,6 +294,10 @@ function scheduleDesktopRelaunch(forcedMode?: BackendMode): void {
     return;
   }
   relaunchRequested = true;
+  void betaDiagnosticsRecorder.recordTimeline("desktop_relaunch_scheduled", {
+    requested_mode: forcedMode,
+    effective_mode: currentBackendMode,
+  });
   const currentArgs = process.argv.slice(1);
   app.relaunch({
     args: forcedMode === undefined
@@ -260,6 +311,9 @@ function scheduleDesktopRelaunch(forcedMode?: BackendMode): void {
 }
 
 async function switchToCombinedModeFromNative(): Promise<void> {
+  void betaDiagnosticsRecorder.recordTimeline("combined_recovery_selected", {
+    effective_mode: currentBackendMode,
+  }, "warning");
   try {
     await writeBackendModeSetting(app.getPath("userData"), "combined");
   } catch (error) {
@@ -312,31 +366,90 @@ async function offerNativeSplitRecovery(
     || isQuitting
   ) {
     if (quitOnDismiss && !relaunchRequested) {
-      dialog.showErrorBox("启动失败", detail);
-      app.quit();
+      await offerNativeGenericStartupFailure(detail);
     }
     return;
   }
 
   nativeSplitRecoveryPromptVisible = true;
   try {
+    void betaDiagnosticsRecorder.recordTimeline("split_recovery_prompted", {
+      state: quitOnDismiss ? "startup_failure" : "runtime_failure",
+    }, "error");
+    while (!relaunchRequested && !isQuitting) {
+      const buttons = betaDiagnosticsEnabled
+        ? ["使用兼容模式重启", "导出 Beta 诊断包", quitOnDismiss ? "退出" : "留在当前页面"]
+        : ["使用兼容模式重启", quitOnDismiss ? "退出" : "留在当前页面"];
+      const result = await dialog.showMessageBox({
+        type: "error",
+        title: "API + Worker 测试模式启动失败",
+        message: "可以改用单进程兼容模式重启。",
+        detail,
+        buttons,
+        defaultId: 0,
+        cancelId: buttons.length - 1,
+        noLink: true,
+      });
+      if (result.response === 0) {
+        await switchToCombinedModeFromNative();
+        break;
+      }
+      if (betaDiagnosticsEnabled && result.response === 1) {
+        await exportBetaDiagnosticsFromNative();
+        continue;
+      }
+      if (quitOnDismiss) {
+        app.quit();
+      }
+      break;
+    }
+  } finally {
+    nativeSplitRecoveryPromptVisible = false;
+  }
+}
+
+async function offerNativeGenericStartupFailure(detail: string): Promise<void> {
+  if (!betaDiagnosticsEnabled) {
+    dialog.showErrorBox("启动失败", detail);
+    app.quit();
+    return;
+  }
+  while (!isQuitting) {
     const result = await dialog.showMessageBox({
       type: "error",
-      title: "API + Worker 测试模式启动失败",
-      message: "可以改用单进程兼容模式重启。",
+      title: "启动失败",
+      message: "系统服务未能启动。可以先导出 Beta 诊断包。",
       detail,
-      buttons: ["使用兼容模式重启", quitOnDismiss ? "退出" : "留在当前页面"],
+      buttons: ["导出 Beta 诊断包", "退出"],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
     });
     if (result.response === 0) {
-      await switchToCombinedModeFromNative();
-    } else if (quitOnDismiss) {
-      app.quit();
+      await exportBetaDiagnosticsFromNative();
+      continue;
     }
-  } finally {
-    nativeSplitRecoveryPromptVisible = false;
+    app.quit();
+    break;
+  }
+}
+
+async function exportBetaDiagnosticsFromNative(): Promise<void> {
+  try {
+    const result = await betaDiagnosticsService.exportBundle("24h");
+    if (result.status === "saved") {
+      await dialog.showMessageBox({
+        type: "info",
+        title: "Beta 诊断包已保存",
+        message: result.partial
+          ? "诊断包已保存。由于后端不可用，部分汇总信息缺失。"
+          : "诊断包已保存，可以将该 ZIP 文件发给开发者。",
+        detail: result.fileName,
+        buttons: ["知道了"],
+      });
+    }
+  } catch (error) {
+    dialog.showErrorBox("导出 Beta 诊断包失败", getErrorMessage(error));
   }
 }
 
@@ -365,6 +478,13 @@ function buildTrayContextMenu() {
       visible: currentBackendMode === "split",
       click: () => {
         void switchToCombinedModeFromNative();
+      },
+    },
+    {
+      label: "导出 Beta 诊断包",
+      visible: betaDiagnosticsEnabled,
+      click: () => {
+        void exportBetaDiagnosticsFromNative();
       },
     },
     { type: "separator" },
@@ -426,6 +546,9 @@ function ensureTray(): void {
 }
 
 async function createWindow(): Promise<void> {
+  void betaDiagnosticsRecorder.recordTimeline("desktop_window_creation_started", {
+    effective_mode: currentBackendMode,
+  });
   backend = await startDesktopBackend();
   ensureTray();
   Menu.setApplicationMenu(null);
@@ -503,6 +626,9 @@ async function createWindow(): Promise<void> {
     mainWindow?.hide();
   });
   publishBackendReady(backend);
+  void betaDiagnosticsRecorder.recordTimeline("desktop_window_created", {
+    effective_mode: currentBackendMode,
+  });
 
   if (!app.isPackaged && process.argv.includes("--dev")) {
     const developmentServerUrl = process.env.AUTO_EMAIL_SENDER_DEV_SERVER_URL?.trim()
@@ -526,6 +652,9 @@ async function createWindow(): Promise<void> {
 async function startDesktopBackend(): Promise<BackendController> {
   const userDataPath = app.getPath("userData");
   const mode = await ensureCurrentBackendMode();
+  void betaDiagnosticsRecorder.recordTimeline("backend_start_requested", {
+    effective_mode: mode,
+  });
   await clearAgentRuntimeDescriptor(userDataPath);
   const controller = await startBackend({
     isPackaged: app.isPackaged,
@@ -544,6 +673,12 @@ async function startDesktopBackend(): Promise<BackendController> {
     await controller.stop().catch(() => undefined);
     throw new Error(`Unable to publish Agent runtime descriptor: ${getErrorMessage(error)}`);
   }
+  void betaDiagnosticsRecorder.recordTimeline("backend_process_group_started", {
+    effective_mode: controller.mode,
+    api_pid: controller.backendPid,
+    worker_pid: controller.workerPid,
+    runtime_id: controller.runtimeId,
+  });
   return controller;
 }
 
@@ -600,6 +735,11 @@ async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<voi
   }
 
   restartingBackend = true;
+  void betaDiagnosticsRecorder.recordTimeline("backend_unexpected_exit", {
+    code: exit.code,
+    signal: exit.signal,
+    effective_mode: currentBackendMode,
+  }, "error");
   const exitedBackend = backend;
   backend = null;
   currentBackendConnection = null;
@@ -695,6 +835,19 @@ async function removeAgentRuntime(controller: BackendController): Promise<boolea
 
 function publishBackendStatus(status: typeof currentBackendStatus): void {
   currentBackendStatus = status;
+  void betaDiagnosticsRecorder.recordTimeline("backend_status_changed", {
+    state: status.state,
+    ...(status.state === "starting" || status.state === "ready" || status.state === "error"
+      ? { phase: status.phase }
+      : {}),
+    ...(status.state === "restarting"
+      ? { code: status.code, signal: status.signal }
+      : {}),
+    ...(status.state === "degraded"
+      ? { reason: status.reason, worker_pid: status.workerPid }
+      : {}),
+    effective_mode: currentBackendMode,
+  }, status.state === "error" || status.state === "degraded" ? "warning" : "info");
   mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendStatus, status);
 }
 
@@ -774,6 +927,10 @@ export function bootstrapDesktopApplication(): void {
     getBackendModeStatus: getDesktopBackendModeStatus,
     setBackendMode: setDesktopBackendMode,
     restartForBackendMode: requestDesktopBackendModeRestart,
+    getBetaDiagnosticsStatus: betaDiagnosticsService.getStatus,
+    clearBetaDiagnostics: betaDiagnosticsService.clear,
+    markBetaDiagnosticsProblem: betaDiagnosticsService.markProblem,
+    exportBetaDiagnostics: betaDiagnosticsService.exportBundle,
     getStartupAtLoginStatus: async () => {
       currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
       refreshTrayContextMenu();
@@ -815,12 +972,31 @@ export function bootstrapDesktopApplication(): void {
 
   if (hasSingleInstanceLock) {
     app.on("second-instance", () => {
+      void betaDiagnosticsRecorder.recordTimeline("second_instance_detected", {
+        effective_mode: currentBackendMode,
+      }, "warning");
       showMainWindow();
     });
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
+      await betaDiagnosticsRecorder.start();
+      await betaDiagnosticsRecorder.recordTimeline("electron_ready", {
+        process_id: process.pid,
+        effective_mode: currentBackendMode,
+        current_version: app.getVersion(),
+      });
+      powerMonitor.on("suspend", () => {
+        void betaDiagnosticsRecorder.recordTimeline("system_suspend");
+      });
       powerMonitor.on("resume", () => {
+        void betaDiagnosticsRecorder.recordTimeline("system_resume");
         backend?.notifySystemResume?.();
+      });
+      powerMonitor.on("lock-screen", () => {
+        void betaDiagnosticsRecorder.recordTimeline("screen_locked");
+      });
+      powerMonitor.on("unlock-screen", () => {
+        void betaDiagnosticsRecorder.recordTimeline("screen_unlocked");
       });
       startWindowCreationOnce(windowCreationState, createWindow).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -838,9 +1014,6 @@ export function bootstrapDesktopApplication(): void {
 
   app.on("before-quit", (event) => {
     isQuitting = true;
-    if (backend === null) {
-      return;
-    }
     event.preventDefault();
     stopBackendAndExit(0);
   });

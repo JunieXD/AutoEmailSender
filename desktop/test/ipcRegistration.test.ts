@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   isAgentIntegrationId,
   isAgentSupportEnableOptions,
+  isBetaDiagnosticsProblemInput,
+  isBetaDiagnosticsRange,
 } from "../src/main/ipc/register.js";
 
 
@@ -24,5 +26,28 @@ describe("desktop IPC registration", () => {
     expect(isAgentSupportEnableOptions({ installDetectedAgents: "yes" })).toBe(false);
     expect(isAgentSupportEnableOptions({ unknown: true })).toBe(false);
     expect(isAgentSupportEnableOptions(null)).toBe(false);
+  });
+
+  it("accepts only bounded Beta diagnostic ranges and problem markers", () => {
+    expect(isBetaDiagnosticsRange("1h")).toBe(true);
+    expect(isBetaDiagnosticsRange("24h")).toBe(true);
+    expect(isBetaDiagnosticsRange("7d")).toBe(true);
+    expect(isBetaDiagnosticsRange("all")).toBe(true);
+    expect(isBetaDiagnosticsRange("30d")).toBe(false);
+    expect(isBetaDiagnosticsProblemInput({ category: "database" })).toBe(true);
+    expect(isBetaDiagnosticsProblemInput({
+      category: "background_stall",
+      note: "刚才后台任务没有继续运行",
+    })).toBe(true);
+    expect(isBetaDiagnosticsProblemInput({ category: "unknown" })).toBe(false);
+    expect(isBetaDiagnosticsProblemInput({
+      category: "general",
+      note: "x".repeat(241),
+    })).toBe(false);
+    expect(isBetaDiagnosticsProblemInput({
+      category: "general",
+      note: "bad\u0000note",
+    })).toBe(false);
+    expect(isBetaDiagnosticsProblemInput({ category: "general", extra: true })).toBe(false);
   });
 });

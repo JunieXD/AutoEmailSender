@@ -95,6 +95,7 @@ dependencies = [
     { name = "pdfminer-six" },
     { name = "pdfplumber" },
     { name = "playwright" },
+    { name = "psutil" },
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "python-docx" },
@@ -107,7 +108,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "psutil" },
     { name = "pyinstaller" },
     { name = "ruff" },
 ]
@@ -128,6 +128,7 @@ requires-dist = [
     { name = "pdfminer-six", specifier = ">=20251230" },
     { name = "pdfplumber", specifier = ">=0.11.9" },
     { name = "playwright", specifier = ">=1.58.0" },
+    { name = "psutil", specifier = ">=7.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pypdf", specifier = ">=6.10.2" },
     { name = "python-docx", specifier = ">=1.2.0" },
@@ -140,7 +141,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyinstaller", specifier = ">=6.20.0" },
     { name = "ruff", specifier = ">=0.16.1" },
 ]

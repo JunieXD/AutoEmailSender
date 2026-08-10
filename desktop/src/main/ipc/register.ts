@@ -7,6 +7,10 @@ import type {
   DesktopBackendModeRestartOptions,
   DesktopBackendModeRestartResult,
   DesktopBackendModeStatus,
+  DesktopBetaDiagnosticsExportResult,
+  DesktopBetaDiagnosticsProblemCategory,
+  DesktopBetaDiagnosticsRange,
+  DesktopBetaDiagnosticsStatus,
   DesktopStartupAtLoginStatus,
 } from "../../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
@@ -29,6 +33,15 @@ export type DesktopIpcRegistrationOptions = {
   restartForBackendMode: (
     options: DesktopBackendModeRestartOptions,
   ) => Promise<DesktopBackendModeRestartResult>;
+  getBetaDiagnosticsStatus: () => Promise<DesktopBetaDiagnosticsStatus>;
+  clearBetaDiagnostics: () => Promise<DesktopBetaDiagnosticsStatus>;
+  markBetaDiagnosticsProblem: (input: {
+    category: DesktopBetaDiagnosticsProblemCategory;
+    note?: string;
+  }) => Promise<{ markedAt: string }>;
+  exportBetaDiagnostics: (
+    range: DesktopBetaDiagnosticsRange,
+  ) => Promise<DesktopBetaDiagnosticsExportResult>;
   getStartupAtLoginStatus: () => Promise<DesktopStartupAtLoginStatus>;
   setStartupAtLoginEnabled: (enabled: boolean) => Promise<DesktopStartupAtLoginStatus>;
   getAgentSupportStatus: () => Promise<DesktopAgentSupportStatus>;
@@ -57,6 +70,26 @@ export function registerDesktopIpc(options: DesktopIpcRegistrationOptions): void
       throw new Error("无效的桌面重启选项。");
     }
     return options.restartForBackendMode(request ?? {});
+  });
+  ipcMain.handle(
+    DESKTOP_IPC_CHANNELS.betaDiagnosticsGetStatus,
+    options.getBetaDiagnosticsStatus,
+  );
+  ipcMain.handle(
+    DESKTOP_IPC_CHANNELS.betaDiagnosticsClear,
+    options.clearBetaDiagnostics,
+  );
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.betaDiagnosticsMarkProblem, (_event, input: unknown) => {
+    if (!isBetaDiagnosticsProblemInput(input)) {
+      throw new Error("无效的 Beta 问题标记。");
+    }
+    return options.markBetaDiagnosticsProblem(input);
+  });
+  ipcMain.handle(DESKTOP_IPC_CHANNELS.betaDiagnosticsExport, (_event, range: unknown) => {
+    if (!isBetaDiagnosticsRange(range)) {
+      throw new Error("无效的 Beta 诊断导出范围。");
+    }
+    return options.exportBetaDiagnostics(range);
   });
   ipcMain.handle(DESKTOP_IPC_CHANNELS.startupGetStatus, options.getStartupAtLoginStatus);
   ipcMain.handle(DESKTOP_IPC_CHANNELS.startupSetEnabled, (_event, enabled: unknown) => {
@@ -117,6 +150,47 @@ export function isBackendModeRestartOptions(
       candidate.confirmActiveWork === undefined
       || typeof candidate.confirmActiveWork === "boolean"
     );
+}
+
+export function isBetaDiagnosticsRange(
+  value: unknown,
+): value is DesktopBetaDiagnosticsRange {
+  return value === "1h" || value === "24h" || value === "7d" || value === "all";
+}
+
+export function isBetaDiagnosticsProblemInput(value: unknown): value is {
+  category: DesktopBetaDiagnosticsProblemCategory;
+  note?: string;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (!Object.keys(candidate).every((key) => key === "category" || key === "note")) {
+    return false;
+  }
+  if (!isBetaDiagnosticsProblemCategory(candidate.category)) {
+    return false;
+  }
+  return candidate.note === undefined
+    || (
+      typeof candidate.note === "string"
+      && candidate.note.length <= 240
+      && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(candidate.note)
+    );
+}
+
+function isBetaDiagnosticsProblemCategory(
+  value: unknown,
+): value is DesktopBetaDiagnosticsProblemCategory {
+  return value === "general"
+    || value === "startup"
+    || value === "background_stall"
+    || value === "mode_switch"
+    || value === "email_delivery"
+    || value === "crawler"
+    || value === "database"
+    || value === "resource_usage";
 }
 
 export function isAgentIntegrationId(value: unknown): value is DesktopAgentIntegrationId {

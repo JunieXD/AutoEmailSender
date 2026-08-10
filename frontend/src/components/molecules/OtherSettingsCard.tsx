@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState, type TransitionEvent } from "react";
 import clsx from "clsx";
 import {
   ChevronDown,
+  Download,
+  Flag,
+  HardDrive,
   Loader2,
   Power,
   RefreshCw,
@@ -9,6 +12,7 @@ import {
   ServerCog,
   Settings,
   TriangleAlert,
+  Trash2,
 } from "lucide-react";
 
 import { quitDesktopApp } from "@/lib/desktopApi";
@@ -26,6 +30,9 @@ import type {
   DesktopBackendMode,
   DesktopBackendModeRestartResult,
   DesktopBackendModeStatus,
+  DesktopBetaDiagnosticsProblemCategory,
+  DesktopBetaDiagnosticsRange,
+  DesktopBetaDiagnosticsStatus,
   DesktopStartupAtLoginStatus,
 } from "@/types/desktop";
 
@@ -128,7 +135,7 @@ emptyForm.draft_custom_instruction = "";
 emptyForm.intended_research_direction = "";
 
 export function OtherSettingsCard() {
-  const { notifyError, notifySuccess } = useNotification();
+  const { notifyError, notifySuccess, notifyWarning } = useNotification();
   const [open, setOpen] = useState(false);
   const [renderContent, setRenderContent] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -148,6 +155,17 @@ export function OtherSettingsCard() {
   const [backendModeError, setBackendModeError] = useState<string | null>(null);
   const [backendModeRestartConfirmation, setBackendModeRestartConfirmation] =
     useState<DesktopBackendModeRestartResult | null>(null);
+  const [betaDiagnosticsStatus, setBetaDiagnosticsStatus] =
+    useState<DesktopBetaDiagnosticsStatus | null>(null);
+  const [betaDiagnosticsLoading, setBetaDiagnosticsLoading] = useState(false);
+  const [betaDiagnosticsAction, setBetaDiagnosticsAction] =
+    useState<"export" | "clear" | "mark" | null>(null);
+  const [betaDiagnosticsError, setBetaDiagnosticsError] = useState<string | null>(null);
+  const [betaDiagnosticsRange, setBetaDiagnosticsRange] =
+    useState<DesktopBetaDiagnosticsRange>("24h");
+  const [betaProblemCategory, setBetaProblemCategory] =
+    useState<DesktopBetaDiagnosticsProblemCategory>("general");
+  const [betaProblemNote, setBetaProblemNote] = useState("");
   const [quittingApp, setQuittingApp] = useState(false);
   const [quitError, setQuitError] = useState<string | null>(null);
 
@@ -226,6 +244,40 @@ export function OtherSettingsCard() {
     }
     void loadBackendModeStatus();
   }, [backendModeLoading, backendModeStatus, loadBackendModeStatus, open]);
+
+  const loadBetaDiagnosticsStatus = useCallback(async () => {
+    const api = window.autoEmailSender;
+    if (!api?.getBetaDiagnosticsStatus) {
+      return;
+    }
+    setBetaDiagnosticsLoading(true);
+    setBetaDiagnosticsError(null);
+    try {
+      setBetaDiagnosticsStatus(await api.getBetaDiagnosticsStatus());
+    } catch (statusError) {
+      setBetaDiagnosticsError(getErrorMessage(statusError, "读取 Beta 诊断状态失败"));
+    } finally {
+      setBetaDiagnosticsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !open
+      || betaDiagnosticsLoading
+      || betaDiagnosticsStatus !== null
+      || betaDiagnosticsError
+    ) {
+      return;
+    }
+    void loadBetaDiagnosticsStatus();
+  }, [
+    betaDiagnosticsError,
+    betaDiagnosticsLoading,
+    betaDiagnosticsStatus,
+    loadBetaDiagnosticsStatus,
+    open,
+  ]);
 
   const toggleOpen = () => {
     setOpen((current) => {
@@ -374,6 +426,76 @@ export function OtherSettingsCard() {
     } catch (quitAppError) {
       setQuitError(getErrorMessage(quitAppError, "退出桌面应用失败"));
       setQuittingApp(false);
+    }
+  };
+
+  const handleBetaDiagnosticsExport = async () => {
+    const api = window.autoEmailSender;
+    if (!api?.exportBetaDiagnostics) {
+      setBetaDiagnosticsError("当前桌面版不支持导出 Beta 诊断包");
+      return;
+    }
+    setBetaDiagnosticsAction("export");
+    setBetaDiagnosticsError(null);
+    try {
+      const result = await api.exportBetaDiagnostics(betaDiagnosticsRange);
+      if (result.status === "saved") {
+        if (result.partial) {
+          notifyWarning(
+            "已导出部分诊断包",
+            `${result.fileName}；后端不可用时缺少：${result.missingSections.join("、")}`,
+          );
+        } else {
+          notifySuccess("Beta 诊断包已导出", result.fileName);
+        }
+        await loadBetaDiagnosticsStatus();
+      }
+    } catch (exportError) {
+      setBetaDiagnosticsError(getErrorMessage(exportError, "导出 Beta 诊断包失败"));
+    } finally {
+      setBetaDiagnosticsAction(null);
+    }
+  };
+
+  const handleBetaDiagnosticsClear = async () => {
+    const api = window.autoEmailSender;
+    if (!api?.clearBetaDiagnostics) {
+      return;
+    }
+    if (!window.confirm("确认清空本机保存的 Beta 诊断记录？此操作不会删除数据库或业务数据。")) {
+      return;
+    }
+    setBetaDiagnosticsAction("clear");
+    setBetaDiagnosticsError(null);
+    try {
+      setBetaDiagnosticsStatus(await api.clearBetaDiagnostics());
+      notifySuccess("本地 Beta 诊断记录已清空");
+    } catch (clearError) {
+      setBetaDiagnosticsError(getErrorMessage(clearError, "清空 Beta 诊断记录失败"));
+    } finally {
+      setBetaDiagnosticsAction(null);
+    }
+  };
+
+  const handleBetaProblemMark = async () => {
+    const api = window.autoEmailSender;
+    if (!api?.markBetaDiagnosticsProblem) {
+      return;
+    }
+    setBetaDiagnosticsAction("mark");
+    setBetaDiagnosticsError(null);
+    try {
+      await api.markBetaDiagnosticsProblem({
+        category: betaProblemCategory,
+        ...(betaProblemNote.trim() ? { note: betaProblemNote.trim() } : {}),
+      });
+      setBetaProblemNote("");
+      notifySuccess("已标记刚才的问题", "之后导出诊断包时会包含这个时间点。");
+      await loadBetaDiagnosticsStatus();
+    } catch (markError) {
+      setBetaDiagnosticsError(getErrorMessage(markError, "标记问题失败"));
+    } finally {
+      setBetaDiagnosticsAction(null);
     }
   };
 
@@ -678,6 +800,186 @@ export function OtherSettingsCard() {
                         ) : null}
                       </div>
                     ) : null}
+                    {betaDiagnosticsStatus?.enabled
+                      && window.autoEmailSender?.exportBetaDiagnostics
+                      && window.autoEmailSender.clearBetaDiagnostics
+                      && window.autoEmailSender.markBetaDiagnosticsProblem ? (
+                      <div
+                        role="region"
+                        aria-label="Beta 本地诊断"
+                        className="rounded-2xl border border-sky-200 bg-sky-50/60 px-4 py-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                              <HardDrive className="h-4 w-4" />
+                              Beta 本地诊断
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-stone-600">
+                              只在本机有界保存运行指标，不会自动上传。你可以主动导出 ZIP 后发送给我们。
+                            </p>
+                          </div>
+                          {betaDiagnosticsLoading ? (
+                            <span className="inline-flex items-center gap-2 text-xs text-stone-500">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              刷新中…
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                          <div className="rounded-xl border border-sky-100 bg-white px-3 py-3">
+                            <span className="block text-xs text-stone-500">本地占用</span>
+                            <span className="mt-1 block text-sm font-semibold text-stone-900">
+                              {formatByteSize(betaDiagnosticsStatus.totalBytes)}
+                            </span>
+                            <span className="mt-1 block text-xs text-stone-500">
+                              上限 {formatByteSize(betaDiagnosticsStatus.maxTotalBytes)}
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-sky-100 bg-white px-3 py-3">
+                            <span className="block text-xs text-stone-500">自动保留</span>
+                            <span className="mt-1 block text-sm font-semibold text-stone-900">
+                              {betaDiagnosticsStatus.retentionDays} 天
+                            </span>
+                            <span className="mt-1 block text-xs text-stone-500">
+                              {betaDiagnosticsStatus.segmentCount} 个记录分片
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-sky-100 bg-white px-3 py-3">
+                            <span className="block text-xs text-stone-500">最近记录</span>
+                            <span className="mt-1 block text-sm font-semibold text-stone-900">
+                              {betaDiagnosticsStatus.newestRecordAt
+                                ? formatApiDateTime(betaDiagnosticsStatus.newestRecordAt)
+                                : "暂无记录"}
+                            </span>
+                            <span className="mt-1 block text-xs text-stone-500">
+                              schema v{betaDiagnosticsStatus.schemaVersion}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-end gap-3">
+                          <label className="min-w-48 flex-1 text-xs font-medium text-stone-700">
+                            导出范围
+                            <select
+                              aria-label="Beta 诊断导出范围"
+                              value={betaDiagnosticsRange}
+                              onChange={(event) =>
+                                setBetaDiagnosticsRange(
+                                  event.target.value as DesktopBetaDiagnosticsRange,
+                                )}
+                              disabled={betaDiagnosticsAction !== null}
+                              className="mt-2 h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <option value="1h">最近 1 小时</option>
+                              <option value="24h">最近 24 小时</option>
+                              <option value="7d">最近 7 天</option>
+                              <option value="all">全部保留记录</option>
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void handleBetaDiagnosticsExport()}
+                            disabled={betaDiagnosticsAction !== null}
+                            className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {betaDiagnosticsAction === "export" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
+                            导出诊断包
+                          </button>
+                        </div>
+
+                        <div className="mt-4 rounded-xl border border-sky-100 bg-white px-3 py-3">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                            <Flag className="h-4 w-4" />
+                            记录问题时间点
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-stone-500">
+                            遇到卡住、崩溃或异常时立即标记，后续分析时更容易找到对应记录。
+                          </p>
+                          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(10rem,0.45fr)_minmax(14rem,1fr)_auto]">
+                            <label className="text-xs font-medium text-stone-700">
+                              问题类别
+                              <select
+                                aria-label="Beta 诊断问题类别"
+                                value={betaProblemCategory}
+                                onChange={(event) =>
+                                  setBetaProblemCategory(
+                                    event.target.value as DesktopBetaDiagnosticsProblemCategory,
+                                  )}
+                                disabled={betaDiagnosticsAction !== null}
+                                className="mt-2 h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {betaProblemCategories.map((category) => (
+                                  <option key={category.value} value={category.value}>
+                                    {category.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="text-xs font-medium text-stone-700">
+                              简短说明（可选，只转换为故障关键词，不保存原文）
+                              <input
+                                aria-label="Beta 诊断问题简短说明"
+                                value={betaProblemNote}
+                                maxLength={240}
+                                onChange={(event) => setBetaProblemNote(event.target.value)}
+                                disabled={betaDiagnosticsAction !== null}
+                                placeholder="例如：从睡眠恢复后任务没有继续"
+                                className="mt-2 h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-800 outline-none transition placeholder:text-stone-400 focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => void handleBetaProblemMark()}
+                              disabled={betaDiagnosticsAction !== null}
+                              className="ui-btn-secondary self-end disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {betaDiagnosticsAction === "mark" ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Flag className="h-4 w-4" />
+                              )}
+                              标记刚才的问题
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs leading-5 text-stone-500">
+                            清空只删除本地 Beta 诊断记录，不会删除数据库、邮件或其他业务数据。
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void handleBetaDiagnosticsClear()}
+                            disabled={betaDiagnosticsAction !== null}
+                            className="ui-btn-secondary text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {betaDiagnosticsAction === "clear" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                            清空本地诊断记录
+                          </button>
+                        </div>
+
+                        {betaDiagnosticsStatus.lastError ? (
+                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                            最近一次记录错误：{betaDiagnosticsStatus.lastError}
+                          </div>
+                        ) : null}
+                        {betaDiagnosticsError ? (
+                          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                            {betaDiagnosticsError}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
                       <SelectionToggleButton
                         label="开机自启动"
@@ -838,4 +1140,32 @@ function backendModeSourceLabel(source: DesktopBackendModeStatus["source"]): str
     channel_default: "由当前发布通道默认值决定",
   };
   return labels[source];
+}
+
+const betaProblemCategories: Array<{
+  value: DesktopBetaDiagnosticsProblemCategory;
+  label: string;
+}> = [
+  { value: "general", label: "其他异常" },
+  { value: "startup", label: "启动失败" },
+  { value: "background_stall", label: "后台任务卡住" },
+  { value: "mode_switch", label: "模式切换" },
+  { value: "email_delivery", label: "邮件发送" },
+  { value: "crawler", label: "智能抓取" },
+  { value: "database", label: "数据库" },
+  { value: "resource_usage", label: "资源占用" },
+];
+
+function formatByteSize(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const unitIndex = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1,
+  );
+  const scaled = value / (1024 ** unitIndex);
+  const digits = scaled >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${scaled.toFixed(digits)} ${units[unitIndex]}`;
 }

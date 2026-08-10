@@ -14,3 +14,6 @@ Start with `architecture/README.md` for code ownership and dependency direction.
 Machine-checked JSON under `development/` is owned by the CLI contract tests. Update the data and its tests together rather than treating it as prose documentation.
 
 On the project Mac, use `operations/windows-parallels-release-qa.md` for the dedicated Windows 11 VM and real Windows pre-release verification workflow.
+
+For prerelease-only local diagnostics, safe multi-bundle analysis, and the final-ZIP canary gate, use
+`operations/beta-diagnostics-operations.md`.

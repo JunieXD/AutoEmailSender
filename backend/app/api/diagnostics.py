@@ -14,12 +14,14 @@ from app.core.config import get_settings
 from app.core.database import get_async_session
 from app.models import OperationLog
 from app.schemas.diagnostics import (
+    BetaDiagnosticsSummaryResponse,
     DiagnosticFileRead,
     OperationLogExportResponse,
     OperationLogListResponse,
     OperationLogRead,
 )
 from app.modules.crawler.public import crawler_debug_file_path
+from app.services.beta_diagnostics_summary import build_beta_diagnostics_summary
 
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
@@ -124,6 +126,13 @@ async def export_operation_logs(
     )
 
 
+@router.get("/beta-summary", response_model=BetaDiagnosticsSummaryResponse)
+async def get_beta_diagnostics_summary(
+    session: AsyncSession = Depends(get_async_session),
+) -> BetaDiagnosticsSummaryResponse:
+    return await build_beta_diagnostics_summary(session)
+
+
 @router.get("/crawler-debug/{job_id}/export", response_class=FileResponse)
 async def export_crawler_debug_jsonl(job_id: int) -> FileResponse:
     debug_file = crawler_debug_file_path(job_id)
@@ -202,4 +211,3 @@ def _to_operation_log_read(log: OperationLog) -> OperationLogRead:
         metadata=log.event_metadata,
         created_at=log.created_at,
     )
-

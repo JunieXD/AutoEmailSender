@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.beta_diagnostics import record_beta_diagnostic_event
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,14 @@ def _configure_sqlite_connection_pragmas(engine: AsyncEngine, settings: object) 
         elapsed_seconds = perf_counter() - started_at
         if elapsed_seconds < slow_query_seconds:
             return
+        record_beta_diagnostic_event(
+            "sqlite_slow_query",
+            {
+                "elapsed_seconds": round(elapsed_seconds, 3),
+                "source": "sqlalchemy",
+            },
+            "warning",
+        )
         normalized_statement = " ".join(str(statement).split())[:2_000]
         logger.warning(
             "slow_sqlite_query elapsed_ms=%.1f executemany=%s sql=%s",

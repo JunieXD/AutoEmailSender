@@ -92,6 +92,40 @@ export type DesktopBackendModeRestartResult = {
   safety: DesktopRestartSafety;
 };
 
+export type DesktopBetaDiagnosticsRange = "1h" | "24h" | "7d" | "all";
+
+export type DesktopBetaDiagnosticsProblemCategory =
+  | "general"
+  | "startup"
+  | "background_stall"
+  | "mode_switch"
+  | "email_delivery"
+  | "crawler"
+  | "database"
+  | "resource_usage";
+
+export type DesktopBetaDiagnosticsStatus = {
+  enabled: boolean;
+  schemaVersion: number;
+  retentionDays: number;
+  maxTotalBytes: number;
+  totalBytes: number;
+  segmentCount: number;
+  oldestRecordAt: string | null;
+  newestRecordAt: string | null;
+  lastError?: string;
+};
+
+export type DesktopBetaDiagnosticsExportResult =
+  | { status: "canceled" }
+  | {
+      status: "saved";
+      fileName: string;
+      reportId: string;
+      partial: boolean;
+      missingSections: string[];
+    };
+
 export type DesktopBackendDatabaseError = {
   code: "DATABASE_REQUIRES_NEWER_APP";
   message: string;
@@ -217,6 +251,15 @@ export type DesktopBridge = {
   restartForBackendMode?: (
     options?: DesktopBackendModeRestartOptions,
   ) => Promise<DesktopBackendModeRestartResult>;
+  getBetaDiagnosticsStatus?: () => Promise<DesktopBetaDiagnosticsStatus>;
+  clearBetaDiagnostics?: () => Promise<DesktopBetaDiagnosticsStatus>;
+  markBetaDiagnosticsProblem?: (input: {
+    category: DesktopBetaDiagnosticsProblemCategory;
+    note?: string;
+  }) => Promise<{ markedAt: string }>;
+  exportBetaDiagnostics?: (
+    range: DesktopBetaDiagnosticsRange,
+  ) => Promise<DesktopBetaDiagnosticsExportResult>;
   getAgentSupportStatus?: () => Promise<DesktopAgentSupportStatus>;
   enableAgentSupport?: (options?: DesktopAgentSupportEnableOptions) => Promise<DesktopAgentSupportStatus>;
   repairAgentSupport?: () => Promise<DesktopAgentSupportStatus>;

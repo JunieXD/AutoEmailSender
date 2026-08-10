@@ -8,6 +8,10 @@ import type {
   DesktopBackendModeRestartResult,
   DesktopBackendModeStatus,
   DesktopBackendStatus,
+  DesktopBetaDiagnosticsExportResult,
+  DesktopBetaDiagnosticsProblemCategory,
+  DesktopBetaDiagnosticsRange,
+  DesktopBetaDiagnosticsStatus,
   DesktopBridge,
   DesktopCommunityShareSaveResult,
   DesktopMaterialOpenResult,
@@ -80,6 +84,26 @@ export function installDesktopBridge(): void {
         DESKTOP_IPC_CHANNELS.backendModeRestart,
         options,
       ) as Promise<DesktopBackendModeRestartResult>,
+    getBetaDiagnosticsStatus: () =>
+      ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.betaDiagnosticsGetStatus,
+      ) as Promise<DesktopBetaDiagnosticsStatus>,
+    clearBetaDiagnostics: () =>
+      ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.betaDiagnosticsClear,
+      ) as Promise<DesktopBetaDiagnosticsStatus>,
+    markBetaDiagnosticsProblem: (input: {
+      category: DesktopBetaDiagnosticsProblemCategory;
+      note?: string;
+    }) => ipcRenderer.invoke(
+      DESKTOP_IPC_CHANNELS.betaDiagnosticsMarkProblem,
+      input,
+    ) as Promise<{ markedAt: string }>,
+    exportBetaDiagnostics: (range: DesktopBetaDiagnosticsRange) =>
+      ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.betaDiagnosticsExport,
+        range,
+      ) as Promise<DesktopBetaDiagnosticsExportResult>,
     getAgentSupportStatus: () =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportGetStatus) as Promise<DesktopAgentSupportStatus>,
     enableAgentSupport: (options?: DesktopAgentSupportEnableOptions) =>

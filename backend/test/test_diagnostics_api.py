@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -314,6 +315,94 @@ class DiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(item["id"], log_id)
         self.assertEqual(item["metadata"], {"status": "ok", "usage": {"prompt_tokens": 10}})
         self.assertNotIn("event_metadata", item)
+
+    def test_beta_summary_endpoint_preserves_the_schema_without_business_content(self) -> None:
+        generated_at = datetime(2026, 8, 10, 8, 0, tzinfo=UTC)
+        workload_kinds = [
+            "dispatcher",
+            "imap_sync",
+            "imap_history",
+            "batch_draft",
+            "matching",
+            "crawler",
+        ]
+        summary = {
+            "schema_version": 1,
+            "generated_at": generated_at,
+            "workload_summary": {
+                "schema_version": 1,
+                "generated_at": generated_at,
+                "workloads": [
+                    {
+                        "kind": kind,
+                        "queued": 0,
+                        "running": 0,
+                        "succeeded": 0,
+                        "failed": 0,
+                        "interrupted": 0,
+                        "recovered": 0,
+                    }
+                    for kind in workload_kinds
+                ],
+                "invariants": {
+                    "sending_count": 0,
+                    "duplicate_delivery_attempt_groups": 0,
+                    "orphaned_claim_count": 0,
+                },
+            },
+            "database_health": {
+                "schema_version": 1,
+                "generated_at": generated_at,
+                "available": True,
+                "alembic_revision": "20260810_merge_delivery_scale",
+                "integrity_check": "ok",
+                "foreign_key_violation_count": 0,
+                "journal_mode": "wal",
+                "busy_timeout_ms": 5000,
+                "database_bytes": 4096,
+                "wal_bytes": 0,
+                "shm_bytes": 0,
+                "backup_count": 1,
+                "newest_backup_age_seconds": 60.0,
+                "lock_errors_1h": 0,
+                "busy_errors_1h": 0,
+                "slow_queries_1h": 0,
+                "maximum_query_ms_1h": 0.0,
+            },
+            "operation_log_summary": {
+                "schema_version": 1,
+                "generated_at": generated_at,
+                "total_1h": 0,
+                "total_24h": 0,
+                "levels_24h": {
+                    "debug": 0,
+                    "info": 0,
+                    "warning": 0,
+                    "error": 0,
+                },
+                "categories_24h": [],
+            },
+        }
+        build_summary = AsyncMock(return_value=summary)
+
+        with patch(
+            "app.api.diagnostics.build_beta_diagnostics_summary",
+            new=build_summary,
+        ):
+            response = self.client.get("/api/diagnostics/beta-summary")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        payload = response.json()
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(
+            [item["kind"] for item in payload["workload_summary"]["workloads"]],
+            workload_kinds,
+        )
+        self.assertEqual(payload["database_health"]["integrity_check"], "ok")
+        self.assertEqual(payload["operation_log_summary"]["categories_24h"], [])
+        self.assertNotIn("message", response.text)
+        self.assertNotIn("metadata", response.text)
+        build_summary.assert_awaited_once()
 
     def test_export_crawler_debug_jsonl_returns_job_file(self) -> None:
         self.crawler_debug_dir.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,7 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 验收记录
 
-- 状态：执行中（B0～B1 已完成，B2 进行中）
+- 状态：执行中（Goal active；B0～B2 已完成，下一阶段为 B3）
+- 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 计划：[`desktop-api-worker-beta-goal-plan.md`](../architecture/desktop-api-worker-beta-goal-plan.md)
 - 前置证据：[`desktop_api_worker_goal_acceptance.md`](./desktop_api_worker_goal_acceptance.md)
 - 建立日期：2026-08-10
@@ -14,13 +15,22 @@
 - 当前 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`。
 - 尚未授权 push、远端 workflow、tag、GitHub Prerelease 或 master 合并。
 
+## Goal 恢复检查点
+
+- Goal 系统在 2026-08-10 返回当前 Goal 为 `active`，因此沿用同一 Goal ID，不并行创建第二个
+  Goal。恢复点为本地分支 `beta/desktop-api-worker` 的已提交基线 `7d9be0b` 加 B2 未提交工作区。
+- B0/B1 已通过证据保持有效；只有受后续代码影响的检查才按 impact 重新执行，最终仍由 B4/B5
+  的完整回归和 exact-package 证据统一收口。
+- 当前允许继续本地实现、测试、提交，以及把最新 `origin/master` 合入测试分支；仍未授权反向
+  合回 `master`、push、远端 workflow、tag、GitHub Release 或稳定版发布。
+
 ## 阶段证据
 
 | 阶段 | 状态 | 证据 |
 | --- | --- | --- |
 | B0：分支与 master 集成 | 已完成 | `e062f36`、`c51df44`、`4fe1bdf`；聚焦 291/291；修复后全仓 0 failures |
 | B1：模式设置与安全重启 | 已完成 | Desktop 208/208；Frontend 956/956；后端聚焦 27/27；20 次切换；macOS 隔离 UI、初始启动失败及 group-restart 原生回退实测 |
-| B2：本地诊断与 analyzer | 执行中 | — |
+| B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 待执行 | — |
 | B4：完整与重复回归 | 待执行 | — |
 | B5：Mac/Windows 内部 Beta | 待执行 | — |
@@ -35,8 +45,8 @@
 | --- | --- | --- |
 | AC-BRANCH | 部分通过 | AC-BRANCH-01/02 已通过；AC-BRANCH-03 随 B3 的通用 source branch/SHA 合同关闭 |
 | AC-MODE | 已通过 | 原子设置、UI 当前/下次状态、20 次同库切换、发送窗口硬阻断、初始与运行中 split 故障原生回退 |
-| AC-OBS | 未通过 | 本地有界记录、故障时导出、bundle schema 和 analyzer |
-| AC-PRIV | 未通过 | allowlist、统一脱敏、canary 解包扫描和零上传路径 |
+| AC-OBS | 已通过 | Electron/API/Worker/combined 有界记录、六类工作摘要、API 宕机 partial ZIP、三类页面外导出入口和单包/多包 analyzer 均有自动化证据；B5 将用 exact package 重复故障注入 |
+| AC-PRIV | 已通过 | allowlist、固定自由文本标签、最终 ZIP canary 零命中、恶意 ZIP 拒绝和无远程上传源码合同均通过 |
 | AC-REL | 未通过 | Skill、脚本、workflow、候选 manifest 与恢复合同 |
 | AC-ISO | 未通过 | Prerelease 非 Latest，稳定 feed/客户端完全隔离 |
 | AC-BETA-QA | 未通过 | 双平台 exact-package lifecycle、2h normal、1h chaos |
@@ -212,3 +222,98 @@ mode 为 WAL。
 
 B1 完成。B2 从本地有界记录器、诊断包 schema、后端失效 partial 导出和统一脱敏开始；
 不得把现有普通诊断日志误当成 AC-OBS/AC-PRIV 已通过。
+
+### B2：本地诊断、隐私门禁与 analyzer
+
+#### 实现边界
+
+- Electron 持有独立基础时间线和资源采样；API、Worker 与 combined 角色补充结构化时间线、
+  资源及健康指标。记录器使用 14 天保留期、2 MiB 分片、64 KiB 单记录和 64 MiB 总上限，
+  每 10 秒采样一次。活动分片同样计入总上限，记录、轮转、清理失败均不得抛入产品流程。
+- “其他设置”只在诊断实际启用时显示本地占用、保留期、上限、1h/24h/7d/all 导出、问题标记
+  和清空入口，并明确说明不会自动上传。稳定版及禁用状态不显示该区域。
+- 托盘、split 启动失败和通用启动失败原生窗口均能在页面不可达时导出；API 宕机时仍生成
+  `partial` ZIP，并明确列出后端缺失项。Electron exporter 在读前关闭并原子收口自身活动分片，
+  随后可继续记录。
+- ZIP 包含 manifest、时间线、资源样本、六类工作聚合、数据库健康、分类后的启动/后端错误摘要、
+  `summary.json`、README 与 checksums。它不包含数据库、SQL、operation log 原文、业务正文、
+  crash dump 或 crawler 原始调试内容。
+- 本地 analyzer 支持单包和多包，在内存中校验并聚合 combined/split、平台、版本、安装、资源趋势、
+  重启、SQLite 锁、积压及不变量；不解压到磁盘，也不执行包内内容。绝对路径、反斜杠、traversal、
+  symlink/特殊文件、重复或未知 entry、未知 schema、checksum/CRC 错误、加密、未知压缩方法、
+  声明大小不一致和 zip bomb 均为整批硬失败。
+
+#### 隐私设计与零上传证明
+
+- 结构化时间线和后端摘要使用逐字段 allowlist。用户的问题说明不保存脱敏后的原句，而只转换为
+  内置故障关键词，例如 `background_stall`、`email_delivery`；无法识别的文本固定写为
+  `[FREE_TEXT_OMITTED]`。形似内部标签的输入也只接受内置 tag，不能伪造任意文本旁路。
+- 安装 ID 为本机随机 UUID，不来自硬件标识；只有用户主动导出 ZIP 时才离开诊断目录。
+- Desktop 源码合同测试确认诊断模块没有远程上传 client，只请求既有认证的 loopback 相对路由
+  `/api/diagnostics/beta-summary`；应用内文案和操作文档均明确“不自动上传”。
+- 最终隐私门禁不是扫描中间对象：测试由实际 Electron `yazl` writer 写出 ZIP，再由 Python
+  analyzer 校验 checksums/schema 并扫描 token、密码、邮箱、中文姓名、home 路径、远程 URL、
+  非 loopback IP、机器名和正文 canary，7/7 通过且零命中。
+
+#### 首次失败与修复
+
+1. 首次最终 ZIP canary 扫描命中用户自由说明中的中文姓名“张三”。继续扩展姓名正则仍无法覆盖
+   无标签姓名，因此改为根本不保存自由说明原文，只提取固定故障标签；同时增加伪造
+   `[FREE_TEXT_OMITTED tags=...]` 的旁路测试。原 canary 场景重放后 7/7、零命中。
+2. 清空诊断的并发测试发现，在途资源采样可能持有已删除活动分片的句柄并继续写入“幽灵文件”。
+   资源采样现由单一队列串行化，clear、stop 和 export checkpoint 均先等待在途采样，再关闭 writer
+   和删除/读取分片；原并发场景重放通过。
+3. 安全审阅继续补上：安装/会话元数据有界且 `O_NOFOLLOW` 读取；Python SQLite 指标扫描同样
+   `O_NOFOLLOW` + `fstat` + 大小限制；Windows 覆盖导出使用完整临时 ZIP 的可恢复替换，不写半包、
+   不跟随目标 symlink；服务层串行化 export/clear/mark，避免并发保存对话框和存储竞争。
+4. 增加 ZIP 依赖后 production audit 暴露既有 updater/builder 依赖链中的 `js-yaml 4.3.0` high
+   漏洞。未使用会扩大修改面的 `npm audit fix`，只把 lockfile 收敛到修复版 `4.3.1`；最终
+   `npm audit --omit=dev` 为 0 vulnerabilities。
+5. 最终后端影响面回归第一次误写了不存在的模块 `test.test_migrations`，因此出现一项
+   `ModuleNotFoundError`，不属于产品测试失败。改为真实模块 `test.test_runtime_settings_module` 后，
+   第二组 52/52 通过；与第一组 63/63 合计 115/115。
+
+#### 最终自动化证据
+
+```bash
+cd desktop
+rtk npm run typecheck
+rtk npm run test
+rtk env AUTO_EMAIL_SENDER_BETA_DIAGNOSTICS_CROSS_QA=1 \
+  npm run test -- betaDiagnosticsExporter.test.ts
+rtk npm audit --omit=dev
+
+cd frontend
+rtk npm run lint
+rtk npm run test -- OtherSettingsCard.test.tsx
+rtk npm run build
+
+cd backend
+rtk uv run --no-sync ruff check <B2 变更的 Python 文件>
+rtk uv run --no-sync python -m unittest \
+  test.test_beta_diagnostics test.test_beta_diagnostics_analyzer \
+  test.test_diagnostics_api test.test_sqlite_diagnostics \
+  test.test_startup_runtime test.test_database_engine test.test_runtime_manager
+rtk uv run --no-sync python -m unittest \
+  test.test_desktop_runtime test.test_packaged_runtime_qa test.test_sqlite_runtime \
+  test.test_migrations_runtime test.test_runtime_settings_api \
+  test.test_migrated_database test.test_runtime_settings_module
+rtk uv run --no-sync python -m compileall -q \
+  app main.py ../scripts/quality/analyze_beta_diagnostics.py
+rtk uv lock --check
+```
+
+| 检查 | 结果 |
+| --- | --- |
+| Desktop typecheck | 通过 |
+| Desktop full | 35 files 通过、2 skipped；239 tests 通过、3 skipped |
+| Electron ZIP → Python analyzer 跨语言门禁 | 7/7，所有 canary 零命中 |
+| Frontend 完整回归（实现收口期间） | 123 files / 962 tests 通过 |
+| Frontend 最终 lint / 设置页聚焦 / build | 通过；18/18；通过 |
+| Backend Ruff / compileall / lock | 通过 |
+| Backend B2 影响面 | 63/63 + 52/52 = 115/115 |
+| analyzer 恶意包与批量聚合 | 10/10 |
+| Desktop production dependency audit | 0 vulnerabilities |
+
+B2 完成。这里关闭 AC-OBS 和 AC-PRIV 的实现与自动化门禁；B5 仍须在两平台 exact package 上
+重复页面外导出、强杀、API 不可用、磁盘/权限故障和最终 ZIP canary，不能用本节代替真实候选证据。

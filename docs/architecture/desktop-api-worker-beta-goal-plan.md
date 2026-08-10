@@ -1,6 +1,7 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（B0～B1 已完成，B2 进行中）
+- 状态：执行中（现有 Goal 为 active；B0～B2 已完成，下一阶段为 B3）
+- 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
 - 前置验收证据：[`desktop_api_worker_goal_acceptance.md`](../development/desktop_api_worker_goal_acceptance.md)
@@ -38,20 +39,36 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - 当前版本和最新稳定版均为 `2.5.4`；本计划不预先替所有者决定首个 Beta 版本号。
 - 尚无外部候选 workflow 的 DMG、NSIS、`release-candidate.json` 或 run ID。
 
-### 1.3 授权边界
+### 1.3 Goal 恢复检查点（2026-08-10）
 
-本 Goal 允许在本地完成代码、文档、测试、分支创建、提交和 `master` 集成。以下动作均设置
-独立人工批准门，不因“启动 Goal”自动获得授权：
+- Goal 系统当前将 `019fe582-2dea-7e42-bd2e-684bae191421` 报告为 `active`。因此不创建第二个
+  相互冲突的 Goal；本次从既有 B2 工作区继续，已通过的 B0/B1 不重做。
+- 当前本地分支为 `beta/desktop-api-worker`，已提交基线为
+  `7d9be0b`（`feat(desktop): add safe backend mode switching`）。该分支名只描述本次开发工作，
+  不会成为通用测试版发布条件。
+- B2 已完成 Electron/Python 有界记录器、设置页/托盘/启动失败导出、API 宕机 partial ZIP、
+  单包/多包安全 analyzer、恶意 ZIP 防护和最终 ZIP 跨语言 canary 零泄漏门禁。最终证据为
+  Desktop 239/239、Frontend 完整 962/962 且最终聚焦 18/18、Backend 115/115、analyzer
+  10/10、跨语言 ZIP 7/7；AC-OBS/AC-PRIV 已关闭，B5 仍会在 exact package 上重复真实故障场景。
+- 下一步 B3 必须把稳定版与通用 prerelease 双状态机同时落实到 Release Skill、POSIX/PowerShell
+  脚本、workflow、候选 manifest、恢复/隔离验证和合同测试；不能只更新说明文档。
+- 当前没有获得 push、远端 workflow、tag、GitHub Prerelease、合回 `master` 或稳定版发布授权。
+
+### 1.4 授权边界
+
+本 Goal 允许在本地完成代码、文档、测试、分支创建和提交，也允许为避免长期漂移而把最新
+`origin/master` 语义化合入当前测试开发分支。这里的“同步 master”不等于把测试分支合回
+`master`。以下动作均设置独立人工批准门，不因“启动 Goal”自动获得授权：
 
 1. 首次 push 任意 Beta 来源分支；
 2. dispatch 会使用 GitHub Secrets 或生成候选资产的远端 workflow；
 3. 创建或推送 prerelease tag；
 4. 创建、公开、撤回或删除 GitHub Prerelease；
-5. 合并到 `master`、修改稳定更新 feed 或发布稳定版本。
+5. 将测试分支合并到 `master`、修改稳定更新 feed 或发布稳定版本。
 
 在批准门之前，可以完成本地候选构建和开发 smoke，但不得把它表述成远端候选来源证据。
 
-### 1.4 明确不在本 Goal 内的事项
+### 1.5 明确不在本 Goal 内的事项
 
 - 不建设远程遥测、自动上传或后台上报；诊断数据只在本地轮转保存，由用户主动导出并发送。
 - 不收集邮件地址、导师姓名、邮件主题/正文、附件内容、LLM prompt/response、凭据或完整本地路径。
@@ -205,6 +222,21 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B5 | 本地候选、Mac/Windows exact-package Dogfood | 两平台 lifecycle、2h normal、1h chaos 和诊断重建通过 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
+
+### 7.1 本次恢复后的固定执行顺序
+
+1. **关闭 B2**：先完成设置页诊断 UI，再完成 analyzer、恶意包防护、canary 解包扫描和相关回归；
+   未通过隐私零命中前，不进入发布流程改造。
+2. **实施 B3**：把 Release Skill、POSIX/PowerShell 入口、workflow、候选 manifest、恢复规则和
+   合同测试一起改为“稳定版 + 通用 prerelease”双状态机。通用入口只认显式
+   `source_branch + release_sha + version + channel`，不得绑定当前分支名。
+3. **执行 B4**：合入届时最新 `origin/master` 后，运行连续两次全仓和连续 20 次 split 集成；
+   首次失败与修复原样记入验收报告。
+4. **执行 B5**：先构建本地开发候选并完成安全 smoke；获得远端候选授权后，两平台只使用同一
+   精确 SHA 对应的候选资产完成覆盖升级、lifecycle、2h normal 和 1h seeded chaos。
+5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
+   才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。
+6. **完成 B7**：收口可复现证据、已知限制和后续观察方式；仍不自动合回 `master` 或发布稳定版。
 
 ## 8. 必选验收标准
 

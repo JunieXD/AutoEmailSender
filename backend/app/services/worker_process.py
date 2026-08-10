@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from app.core.agent_runtime_descriptor import get_runtime_id
+from app.core.beta_diagnostics import create_beta_diagnostics_recorder
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
@@ -168,6 +169,18 @@ async def run_worker_process(*, desktop_pid: int | None) -> None:
     runtime_manager: RuntimeManager | None = None
     watchdog: asyncio.Task[None] | None = None
     heartbeat: asyncio.Task[None] | None = None
+    beta_diagnostics = create_beta_diagnostics_recorder()
+
+    await beta_diagnostics.start()
+    beta_diagnostics.record_timeline(
+        "worker_startup_started",
+        {
+            "process_id": os.getpid(),
+            "api_pid": api_pid,
+            "runtime_id": runtime_id,
+            "source": "worker",
+        },
+    )
 
     write_runtime_process_status(
         settings.data_dir,
@@ -178,6 +191,10 @@ async def run_worker_process(*, desktop_pid: int | None) -> None:
         started_at=started_at,
     )
     try:
+        beta_diagnostics.record_timeline(
+            "worker_database_schema_check_started",
+            {"phase": "migrating_database", "state": "starting"},
+        )
         await asyncio.to_thread(require_database_schema_at_head)
         require_ready_api_leader(
             settings.data_dir,
@@ -198,6 +215,7 @@ async def run_worker_process(*, desktop_pid: int | None) -> None:
             worker_generation=generation,
         )
         await runtime_manager.start()
+        beta_diagnostics.set_health_provider(runtime_manager.get_health_snapshot)
         watchdog = asyncio.create_task(
             watch_required_processes(
                 stop_event,
@@ -224,10 +242,28 @@ async def run_worker_process(*, desktop_pid: int | None) -> None:
             "worker.ready",
             detail=f"runtime_id={runtime_id} generation={generation}",
         )
+        beta_diagnostics.record_timeline(
+            "worker_runtime_ready",
+            {
+                "state": "ready",
+                "runtime_id": runtime_id,
+                "api_pid": api_pid,
+                "worker_pid": os.getpid(),
+            },
+        )
         await stop_event.wait()
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        beta_diagnostics.record_timeline(
+            "worker_runtime_failed",
+            {
+                "state": "error",
+                "error_code": type(exc).__name__,
+                "runtime_id": runtime_id,
+            },
+            "error",
+        )
         stop_event.set()
         if heartbeat is not None:
             heartbeat.cancel()
@@ -271,6 +307,7 @@ async def run_worker_process(*, desktop_pid: int | None) -> None:
                 ),
             )
             await runtime_manager.stop()
+        await beta_diagnostics.stop()
         await dispose_engine()
         cleanup_owned_runtime_process_status(
             settings.data_dir,

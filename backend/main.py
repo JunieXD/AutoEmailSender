@@ -27,6 +27,11 @@ from app.core.agent_mutation_headers import AgentMutationHeadersMiddleware
 from app.core.agent_runtime_descriptor import get_runtime_id
 from app.core.api_auth import ApiAuthMiddleware
 from app.core.backend_role import get_backend_role
+from app.core.beta_diagnostics import (
+    BetaDiagnosticsRecorder,
+    create_beta_diagnostics_recorder,
+    record_beta_diagnostic_event,
+)
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
@@ -124,12 +129,26 @@ def set_startup_status(
         error=error,
         error_detail=error_detail,
     )
+    beta_diagnostics = getattr(app.state, "beta_diagnostics", None)
+    if isinstance(beta_diagnostics, BetaDiagnosticsRecorder):
+        beta_diagnostics.record_timeline(
+            "backend_startup_phase_changed",
+            {"phase": phase, "state": state, "source": get_backend_role()},
+            "error" if state == "error" else "info",
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_startup_status(app)
     backend_role = get_backend_role()
+    beta_diagnostics = create_beta_diagnostics_recorder()
+    app.state.beta_diagnostics = beta_diagnostics
+    await beta_diagnostics.start()
+    beta_diagnostics.record_timeline(
+        "api_lifespan_started",
+        {"source": backend_role, "process_id": os.getpid()},
+    )
     app.state.backend_role = backend_role
     app.state.runtime_ready = False
     app.state.runtime_error = None
@@ -158,6 +177,7 @@ async def lifespan(app: FastAPI):
         runtime_manager = app.state.runtime_manager
         if runtime_manager is not None:
             await runtime_manager.stop()
+        await beta_diagnostics.stop()
         await dispose_engine()
         if backend_role == "api":
             cleanup_owned_runtime_process_status(
@@ -169,6 +189,7 @@ async def lifespan(app: FastAPI):
 
 
 async def initialize_runtime(app: FastAPI) -> None:
+    beta_diagnostics = get_beta_diagnostics_recorder(app)
     try:
         set_startup_status(app, state="starting", phase="migrating_database")
         await run_startup_step_with_database_lock_retry(
@@ -189,8 +210,13 @@ async def initialize_runtime(app: FastAPI) -> None:
             )
             await runtime_manager.start()
             app.state.runtime_manager = runtime_manager
+            beta_diagnostics.set_health_provider(runtime_manager.get_health_snapshot)
         app.state.runtime_ready = True
         set_startup_status(app, state="ready", phase="ready")
+        beta_diagnostics.record_timeline(
+            "backend_runtime_ready",
+            {"source": get_backend_role(), "state": "ready"},
+        )
         if get_backend_role() == "api":
             write_runtime_process_status(
                 get_settings().data_dir,
@@ -203,6 +229,15 @@ async def initialize_runtime(app: FastAPI) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
+        beta_diagnostics.record_timeline(
+            "backend_runtime_failed",
+            {
+                "source": get_backend_role(),
+                "state": "error",
+                "error_code": type(exc).__name__,
+            },
+            "error",
+        )
         error_detail = build_startup_error_detail(exc)
         error_message = sanitize_user_visible_error(safe_exception_message(exc))
         app.state.runtime_error = error_message
@@ -226,6 +261,14 @@ async def initialize_runtime(app: FastAPI) -> None:
             )
         write_startup_diagnostic_log("桌面后端启动初始化失败", exc=exc)
         raise
+
+
+def get_beta_diagnostics_recorder(app: FastAPI) -> BetaDiagnosticsRecorder:
+    recorder = getattr(app.state, "beta_diagnostics", None)
+    if not isinstance(recorder, BetaDiagnosticsRecorder):
+        recorder = create_beta_diagnostics_recorder()
+        app.state.beta_diagnostics = recorder
+    return recorder
 
 
 def build_startup_error_detail(exc: Exception) -> dict[str, object] | None:
@@ -261,6 +304,15 @@ async def run_startup_step_with_database_lock_retry(
         except Exception as exc:
             if not is_sqlite_database_lock_error(exc) or attempt >= STARTUP_DATABASE_LOCK_MAX_ATTEMPTS:
                 raise
+            record_beta_diagnostic_event(
+                "sqlite_lock_error",
+                {
+                    "error_code": type(exc).__name__,
+                    "phase": phase,
+                    "source": "startup",
+                },
+                "warning",
+            )
             write_startup_diagnostic_log(
                 "启动步骤遇到 SQLite 数据库锁，准备重试",
                 phase=phase,
