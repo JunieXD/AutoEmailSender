@@ -2,24 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import unittest
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import AppSetting, Base
-from datetime import UTC, datetime, timedelta, timezone
-
 from app.modules.workspace.tasks.delivery import _has_future_scheduled_at
 from app.services.runtime_manager import (
     CRAWLER_WORK_ITEM_WORKER_COUNT,
     RuntimeManager,
     _run_match_analysis_worker_once,
 )
-
 
 
 class TaskRuntimeTimeHandlingTests(unittest.TestCase):
@@ -36,7 +34,31 @@ class TaskRuntimeTimeHandlingTests(unittest.TestCase):
                 local_timezone=shanghai,
             )
         )
+
+
 class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_crawler_worker_owner_changes_with_worker_generation(self) -> None:
+        session_factory = Mock()
+        first = RuntimeManager(
+            session_factory,
+            runtime_id="runtime-1",
+            worker_generation="generation-1",
+        )
+        replacement = RuntimeManager(
+            session_factory,
+            runtime_id="runtime-1",
+            worker_generation="generation-2",
+        )
+
+        self.assertEqual(
+            first._crawler_worker_id(1),
+            "crawler-worker-1:runtime-1:generation-1",
+        )
+        self.assertNotEqual(
+            first._crawler_worker_id(1),
+            replacement._crawler_worker_id(1),
+        )
+
     async def test_start_creates_fixed_crawler_work_item_pool(self) -> None:
         session = object()
         session_context = MagicMock()
@@ -255,6 +277,109 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(worker_calls, 2)
         self.assertEqual(sleep_calls, [10])
+
+    async def test_loop_health_exposes_sanitized_failure_and_recovers(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        allow_success = asyncio.Event()
+        worker_calls = 0
+
+        async def worker(session_factory_arg: object) -> int:
+            nonlocal worker_calls
+            self.assertIs(session_factory_arg, session_factory)
+            worker_calls += 1
+            if worker_calls == 1:
+                raise RuntimeError(
+                    "poll failed password=super-secret token=private-token"
+                )
+            await allow_success.wait()
+            manager._stopped.set()
+            return 0
+
+        loop_task = asyncio.create_task(
+            manager._loop("imap-incremental-poller", 0.01, worker)
+        )
+        try:
+            async with asyncio.timeout(1):
+                while not manager.is_degraded():
+                    await asyncio.sleep(0)
+
+            failed = manager.get_health_snapshot()["imap-incremental-poller"]
+            self.assertEqual(failed["consecutive_failures"], 1)
+            self.assertIsNotNone(failed["last_started_at"])
+            self.assertIsNotNone(failed["last_failed_at"])
+            self.assertIsNone(failed["last_succeeded_at"])
+            self.assertIn("password=[REDACTED]", str(failed["error"]))
+            self.assertIn("token=[REDACTED]", str(failed["error"]))
+            self.assertNotIn("super-secret", str(failed["error"]))
+            self.assertNotIn("private-token", str(failed["error"]))
+
+            allow_success.set()
+            await loop_task
+        finally:
+            allow_success.set()
+            if not loop_task.done():
+                manager._stopped.set()
+                await loop_task
+
+        recovered = manager.get_health_snapshot()["imap-incremental-poller"]
+        self.assertEqual(recovered["consecutive_failures"], 0)
+        self.assertIsNotNone(recovered["last_succeeded_at"])
+        self.assertIsNone(recovered["error"])
+        self.assertFalse(manager.is_degraded())
+
+    async def test_stop_allows_in_flight_loop_to_finish_within_grace(self) -> None:
+        manager = RuntimeManager(Mock())
+        started = asyncio.Event()
+        release = asyncio.Event()
+        canceled = False
+
+        async def in_flight() -> None:
+            nonlocal canceled
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                canceled = True
+                raise
+
+        task = asyncio.create_task(in_flight())
+        manager._tasks = [task]
+        await started.wait()
+        stop_task = asyncio.create_task(manager.stop(grace_seconds=1))
+        await asyncio.sleep(0)
+
+        self.assertTrue(manager._stopped.is_set())
+        self.assertFalse(task.cancelled())
+        self.assertFalse(stop_task.done())
+
+        release.set()
+        await stop_task
+        self.assertFalse(canceled)
+        self.assertTrue(task.done())
+        self.assertEqual(manager._tasks, [])
+
+    async def test_stop_cancels_work_that_exceeds_grace(self) -> None:
+        manager = RuntimeManager(Mock())
+        canceled = asyncio.Event()
+
+        async def stubborn() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                canceled.set()
+                raise
+
+        task = asyncio.create_task(stubborn())
+        manager._tasks = [task]
+        await asyncio.sleep(0)
+
+        await manager.stop(grace_seconds=0.01)
+
+        self.assertTrue(canceled.is_set())
+        self.assertTrue(task.cancelled())
+        self.assertEqual(manager._tasks, [])
+
     async def test_loop_writes_backend_error_log_when_worker_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             from app.core.config import get_settings

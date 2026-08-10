@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 import app.modules.llm.public as llm_runtime
+from app.core.fault_injection import wait_at_fault_point
 from app.core.time import utc_now
 from app.models import (
     BatchTask,
@@ -290,6 +291,8 @@ async def generate_task_draft(
                     draft_custom_instruction=runtime_settings.draft_custom_instruction,
                     intended_research_direction=runtime_settings.intended_research_direction,
                 )
+                if automatic_batch:
+                    await wait_at_fault_point("batch_draft.before_external_call")
                 generation = await llm_runtime.generate_draft_content(
                     identity=task.identity,
                     primary_material=task.primary_material,
@@ -304,6 +307,8 @@ async def generate_task_draft(
                     session=session,
                     adaptation=adaptation,
                 )
+                if automatic_batch:
+                    await wait_at_fault_point("batch_draft.external_call_returned")
                 subject = generation.result.subject
                 body_text = generation.result.body_text
                 body_html = generation.result.body_html
@@ -514,7 +519,11 @@ async def generate_task_draft(
                 "selected_material_ids": task.selected_material_ids,
             },
         )
+        if automatic_batch:
+            await wait_at_fault_point("batch_draft.before_final_commit")
         await session.commit()
+        if automatic_batch:
+            await wait_at_fault_point("batch_draft.after_final_commit")
         return task_identity
 
 

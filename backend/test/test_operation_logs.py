@@ -184,7 +184,8 @@ class OperationLogTests(unittest.TestCase):
                     message=(
                         "failed url=https://api.example.test/send?token=url-secret#debug "
                         "token=message-secret Authorization: Bearer auth-secret "
-                        "api_key=sk-secret smtpPassword=smtp-secret status=failed"
+                        "api_key=sk-secret smtpPassword=smtp-secret "
+                        "body=private-body request_body=private-request status=failed"
                     ),
                 )
                 flushed = await session.scalar(
@@ -204,6 +205,8 @@ class OperationLogTests(unittest.TestCase):
         self.assertNotIn("auth-secret", message)
         self.assertNotIn("sk-secret", message)
         self.assertNotIn("smtp-secret", message)
+        self.assertNotIn("private-body", message)
+        self.assertNotIn("private-request", message)
         self.assertIn("status=failed", message)
 
     def test_record_operation_log_does_not_cleanup_old_logs_inline(self) -> None:

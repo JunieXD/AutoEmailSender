@@ -26,7 +26,6 @@ from app.modules.crawler.public import (
     build_crawl_job_metrics,
     create_initial_crawl_job_run,
     mark_crawl_job_run_finished,
-    profile_text_cache,
     validate_safe_public_crawl_url,
 )
 from app.modules.professors.public import (
@@ -731,7 +730,6 @@ async def request_professor_information_enrichment_cancel(
         entity_id=str(job.id),
         metadata=metadata,
     )
-    profile_text_cache.discard_job(job_id=job.id)
 
 
 async def retry_failed_professor_information_enrichment_job(
@@ -946,7 +944,6 @@ async def finalize_professor_information_enrichment_job(
             "canceled_count": canceled,
         },
     )
-    profile_text_cache.discard_job(job_id=job.id)
 
 
 async def apply_enrichment_to_professor(

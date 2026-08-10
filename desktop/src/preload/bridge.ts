@@ -12,6 +12,7 @@ import type {
   DesktopUpdateStatus,
 } from "../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../contracts/channels.js";
+import { backendStatusKeepsApiConnection } from "../contracts/backend-status.js";
 
 export function installDesktopBridge(): void {
   const markDesktopRuntime = (): void => {
@@ -43,7 +44,7 @@ export function installDesktopBridge(): void {
     DESKTOP_IPC_CHANNELS.backendConnection,
     (_event: IpcRendererEvent, connection: DesktopBackendConnection) => {
       backendConnection = connection;
-      if (currentBackendStatus.state === "ready") {
+      if (backendStatusKeepsApiConnection(currentBackendStatus)) {
         backendBaseUrl = connection.baseUrl;
       }
     },
@@ -53,7 +54,7 @@ export function installDesktopBridge(): void {
     DESKTOP_IPC_CHANNELS.backendStatus,
     (_event: IpcRendererEvent, status: DesktopBackendStatus) => {
       currentBackendStatus = status;
-      if (status.state === "ready") {
+      if (backendStatusKeepsApiConnection(status)) {
         backendBaseUrl = backendConnection?.baseUrl ?? status.baseUrl;
       } else {
         backendBaseUrl = null;

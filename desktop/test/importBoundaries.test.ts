@@ -39,6 +39,14 @@ const importSpecifiers = (file: string): string[] => {
     ) {
       imports.push(node.moduleSpecifier.text);
     }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      imports.push(node.arguments[0].text);
+    }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
@@ -82,8 +90,12 @@ const processBoundaryViolations = (graph: Map<string, Set<string>>): string[] =>
       if (source !== "preload.ts" && target === "preload.ts") {
         violations.push(`${source} -> ${target}: preload must remain a process boundary`);
       }
-      if (source === "main.ts" && target !== "main/bootstrap/application.ts") {
-        violations.push(`${source} -> ${target}: main entrypoint may only call the application bootstrap`);
+      if (
+        source === "main.ts" &&
+        target !== "main/bootstrap/application.ts" &&
+        target !== "main/packaged-qa/user-data.ts"
+      ) {
+        violations.push(`${source} -> ${target}: main entrypoint may only run the packaged QA gate and application bootstrap`);
       }
       if (source === "preload.ts" && target !== "preload/bridge.ts") {
         violations.push(`${source} -> ${target}: preload may only depend on bridge contracts`);
@@ -170,9 +182,15 @@ describe("desktop process and import boundaries", () => {
       ts.ScriptKind.TS,
     );
 
-    expect(sourceFile.statements).toHaveLength(2);
+    expect(sourceFile.statements).toHaveLength(3);
     expect(ts.isImportDeclaration(sourceFile.statements[0])).toBe(true);
-    expect(ts.isExpressionStatement(sourceFile.statements[1])).toBe(true);
+    expect(ts.isImportDeclaration(sourceFile.statements[1])).toBe(true);
+    expect(ts.isTryStatement(sourceFile.statements[2])).toBe(true);
+    expect(source).not.toContain('import { bootstrapDesktopApplication }');
+    expect(source.indexOf("configurePackagedQaUserData(app)")).toBeLessThan(
+      source.indexOf('import("./main/bootstrap/application.js")'),
+    );
     expect(source).toContain("bootstrapDesktopApplication();");
+    expect(source).toContain("app.exit(1);");
   });
 });

@@ -12,6 +12,7 @@ import {
   generateAccessToken,
   notifyBackendExit,
   normalizePort,
+  resolveBackendMode,
   shouldDetachBackend,
   stopBackend,
   waitForHealth,
@@ -158,6 +159,40 @@ describe("desktop backend helpers", () => {
     expect(env.AUTO_EMAIL_SENDER_UI_TOKEN).toBe("ui-token");
     expect(env.AUTO_EMAIL_SENDER_AGENT_TOKEN).toBe("agent-token");
     expect(baseEnv).toEqual({ PATH: "C:\\Windows" });
+  });
+
+  it("removes UI and Agent credentials from the Worker environment", () => {
+    const env = buildBackendEnv({
+      baseEnv: {
+        AUTO_EMAIL_SENDER_UI_TOKEN: "inherited-ui-token",
+        auto_email_sender_agent_token: "inherited-agent-token",
+      },
+      isPackaged: false,
+      repoRoot: "/repo",
+      resourcesPath: "/resources",
+      userDataPath: "/data",
+      appVersion: "2.5.4",
+      electronExecutablePath: "/electron",
+      runtimeId: "runtime-worker",
+      role: "worker",
+      apiPid: 4321,
+      workerGeneration: "generation-1",
+      uiAccessToken: "new-ui-token",
+      agentAccessToken: "new-agent-token",
+    });
+
+    expect(env.AUTO_EMAIL_SENDER_UI_TOKEN).toBeUndefined();
+    expect(env.AUTO_EMAIL_SENDER_AGENT_TOKEN).toBeUndefined();
+    expect(env.auto_email_sender_agent_token).toBeUndefined();
+    expect(env.AUTO_EMAIL_SENDER_API_PID).toBe("4321");
+    expect(env.AUTO_EMAIL_SENDER_WORKER_GENERATION).toBe("generation-1");
+  });
+
+  it("keeps combined as the default while allowing an explicit split rollout", () => {
+    expect(resolveBackendMode(undefined)).toBe("combined");
+    expect(resolveBackendMode("")).toBe("combined");
+    expect(resolveBackendMode("unknown")).toBe("combined");
+    expect(resolveBackendMode(" SPLIT ")).toBe("split");
   });
 
   it("generates high-entropy URL-safe access tokens", () => {

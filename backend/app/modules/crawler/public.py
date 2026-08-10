@@ -73,8 +73,7 @@ from .schemas import (
     CrawlJobSummaryRead,
     CrawlPageRead,
 )
-from .v2.profile_text_cache import ProfileTextCache, profile_text_cache
-from .v2.scheduler import run_crawler_v2_once
+from .v2.scheduler import recover_interrupted_crawler_v2_claims, run_crawler_v2_once
 
 __all__ = [
     "CRAWL_JOB_DELETABLE_STATUSES",
@@ -98,7 +97,6 @@ __all__ = [
     "CrawlJobSummaryRead",
     "CrawlPageRead",
     "CrawlToolContext",
-    "ProfileTextCache",
     "UNSAFE_CRAWL_URL_MESSAGE",
     "append_crawler_debug_event",
     "append_crawler_v2_debug_event",
@@ -131,8 +129,8 @@ __all__ = [
     "rebuild_candidate_identity_keys",
     "normalize_agent_trace_event",
     "pause_faculty_crawl_job_record",
-    "profile_text_cache",
     "recover_interrupted_crawl_jobs",
+    "recover_interrupted_crawler_v2_claims",
     "restore_faculty_crawl_job_record",
     "resolve_faculty_crawl_candidate_selection",
     "resume_faculty_crawl_job_record",

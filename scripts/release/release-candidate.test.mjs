@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   createCandidateManifest,
   createPlatformEvidence,
+  verifyCandidateAsset,
   verifyCandidateManifest,
 } from "./release-candidate.mjs";
 
@@ -125,6 +126,72 @@ test("candidate JSON remains portable after serialization", async () => {
     const manifestPath = path.join(fixture.root, "release-candidate.json");
     await writeFile(manifestPath, JSON.stringify(manifest));
     assert.deepEqual(JSON.parse(await readFile(manifestPath, "utf8")), manifest);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("binds one packaged QA asset to its candidate run, SHA, version, and digest", async () => {
+  const fixture = await createFixture();
+  try {
+    const manifest = await createCandidateManifest({
+      repository,
+      releaseTag,
+      releaseSha,
+      runId,
+      releaseNotesPath: fixture.releaseNotesPath,
+      platforms: fixture.platforms,
+    });
+    const windowsAsset = path.join(
+      fixture.directories.windows,
+      "AutoEmailSender-Setup-9.9.9.exe",
+    );
+    const evidence = await verifyCandidateAsset({
+      manifest,
+      platform: "windows",
+      releaseSha,
+      runId,
+      version: "9.9.9",
+      assetPath: windowsAsset,
+    });
+    assert.equal(evidence.asset.name, "AutoEmailSender-Setup-9.9.9.exe");
+    assert.equal(evidence.candidateRunId, runId);
+    const macosEvidence = await verifyCandidateAsset({
+      manifest,
+      platform: "macos",
+      releaseSha,
+      runId,
+      version: "9.9.9",
+      assetPath: path.join(
+        fixture.directories.macos,
+        "AutoEmailSender-9.9.9-arm64.dmg",
+      ),
+    });
+    assert.equal(macosEvidence.asset.name, "AutoEmailSender-9.9.9-arm64.dmg");
+
+    await assert.rejects(
+      verifyCandidateAsset({
+        manifest,
+        platform: "windows",
+        releaseSha: "b".repeat(40),
+        runId,
+        version: "9.9.9",
+        assetPath: windowsAsset,
+      }),
+      /releaseSha 不匹配/,
+    );
+    await writeFile(windowsAsset, "tampered installer");
+    await assert.rejects(
+      verifyCandidateAsset({
+        manifest,
+        platform: "windows",
+        releaseSha,
+        runId,
+        version: "9.9.9",
+        assetPath: windowsAsset,
+      }),
+      /候选资产 size 不匹配|候选资产 SHA-256 不匹配/,
+    );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

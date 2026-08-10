@@ -58,6 +58,19 @@ describe("Agent runtime descriptor", () => {
     }
   });
 
+  it("adds optional Worker identity without changing the API backend field", async () => {
+    const userDataPath = await createTemporaryDirectory();
+    const descriptor = createDescriptor({
+      worker: { pid: 6789, started_at: "2026-08-03T00:00:02.000Z" },
+    });
+
+    const runtimePath = await writeAgentRuntimeDescriptor({ userDataPath, descriptor });
+    const written = JSON.parse(await readFile(runtimePath, "utf8"));
+
+    expect(written.backend).toEqual(descriptor.backend);
+    expect(written.worker).toEqual(descriptor.worker);
+  });
+
   it("replaces a previous backend token and removes only the owned descriptor", async () => {
     const userDataPath = await createTemporaryDirectory();
     await writeAgentRuntimeDescriptor({

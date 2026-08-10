@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from app.core.config import get_settings
 from app.core.time import utc_now
 
-from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -195,6 +195,102 @@ async def release_imap_identity_sync_claim(
             return False
         await session.commit()
         return True
+
+
+async def recover_interrupted_imap_background_claims(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    preserve_full_sync_claims: bool = True,
+) -> int:
+    """Recover dead background IMAP owners without touching a live API sync.
+
+    The Worker role lock proves that incremental/history owners from an older
+    Worker generation are gone.  A manual API sync uses ``claim_kind='full'``;
+    when the API remains alive during a Worker-only restart, both that identity
+    lease and its nested history work must remain fenced to the API operation.
+    ``BEGIN IMMEDIATE`` serializes this decision with a manual sync beginning at
+    the same time as Worker startup.
+    """
+
+    now = utc_now()
+    async with session_factory() as session:
+        await session.execute(text("BEGIN IMMEDIATE"))
+        protected_identity_ids: list[int] = []
+        if preserve_full_sync_claims:
+            protected_identity_ids = list(
+                await session.scalars(
+                    select(ImapIdentitySyncLease.identity_id).where(
+                        ImapIdentitySyncLease.claim_id.is_not(None),
+                        ImapIdentitySyncLease.claim_kind == "full",
+                    )
+                )
+            )
+
+        identity_conditions: list[object] = [
+            ImapIdentitySyncLease.claim_id.is_not(None),
+        ]
+        if preserve_full_sync_claims:
+            identity_conditions.append(
+                ImapIdentitySyncLease.claim_kind.in_(("incremental", "history"))
+            )
+        identity_transition = await session.execute(
+            update(ImapIdentitySyncLease)
+            .where(*identity_conditions)
+            .values(
+                claim_id=None,
+                claim_kind=None,
+                claimed_at=None,
+                lease_expires_at=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        recovered = int(identity_transition.rowcount or 0)
+
+        professor_conditions: list[object] = [
+            ImapProfessorSyncState.historical_scan_status
+            == ImapProfessorHistoricalScanStatus.RUNNING.value,
+        ]
+        mailbox_conditions: list[object] = [
+            ImapMailboxSyncState.history_scan_status
+            == ImapMailboxHistoricalScanStatus.RUNNING.value,
+        ]
+        if protected_identity_ids:
+            professor_conditions.append(
+                ImapProfessorSyncState.identity_id.not_in(protected_identity_ids)
+            )
+            mailbox_conditions.append(
+                ImapMailboxSyncState.identity_id.not_in(protected_identity_ids)
+            )
+
+        professor_transition = await session.execute(
+            update(ImapProfessorSyncState)
+            .where(*professor_conditions)
+            .values(
+                historical_scan_status=ImapProfessorHistoricalScanStatus.PENDING.value,
+                historical_scan_started_at=None,
+                history_claim_id=None,
+                history_lease_expires_at=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        mailbox_transition = await session.execute(
+            update(ImapMailboxSyncState)
+            .where(*mailbox_conditions)
+            .values(
+                history_scan_status=ImapMailboxHistoricalScanStatus.PENDING.value,
+                history_scan_started_at=None,
+                history_claim_id=None,
+                history_lease_expires_at=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        recovered += int(professor_transition.rowcount or 0)
+        recovered += int(mailbox_transition.rowcount or 0)
+        await session.commit()
+        return recovered
 
 
 async def commit_imap_identity_sync_session(session: AsyncSession) -> None:

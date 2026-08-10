@@ -73,7 +73,6 @@ from app.modules.professors.public import (
     normalize_recent_papers,
 )
 from .v2.url_utils import normalize_url
-from .v2.profile_text_cache import profile_text_cache
 from .v2.routing import (
     ENTRY_EXPANSION_MODE,
     NO_EXPANSION_MODE,
@@ -847,7 +846,6 @@ async def cancel_crawl_job(
         CrawlJobStatus.FAILED.value,
         CrawlJobStatus.CANCELED.value,
     }:
-        profile_text_cache.discard_job(job_id=job.id)
         return job
 
     now = utc_now()
@@ -869,7 +867,6 @@ async def cancel_crawl_job(
         metadata={"status": job.status},
     )
     await session.commit()
-    profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
     return job
 
@@ -1020,7 +1017,6 @@ async def retry_crawl_job(
         },
     )
     await session.commit()
-    profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
     return job
 
@@ -1060,7 +1056,6 @@ async def delete_crawl_job(
         },
     )
     await session.commit()
-    profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
     return job
 

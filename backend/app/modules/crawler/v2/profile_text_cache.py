@@ -4,7 +4,8 @@ from collections import OrderedDict
 from collections.abc import Callable
 
 
-ProfileTextCacheKey = tuple[int, int, int, str]
+# session factory, job, persistent job run, candidate, normalized profile URL
+ProfileTextCacheKey = tuple[int, int, int | None, int, str]
 
 PROFILE_TEXT_CACHE_MAX_ENTRIES = 128
 PROFILE_TEXT_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
@@ -60,7 +61,7 @@ class ProfileTextCache:
         return self._discard_matching(
             lambda key: (
                 key[1] == job_id
-                and key[2] == candidate_id
+                and key[3] == candidate_id
                 and (session_factory_id is None or key[0] == session_factory_id)
             )
         )

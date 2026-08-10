@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
 import random
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
+from pathlib import Path
+from typing import Any
 
+from app.core.agent_runtime_descriptor import get_runtime_id
+from app.core.backend_role import get_backend_role
+from app.core.config import get_settings
+from app.core.fault_injection import wait_at_fault_point
+from app.core.process_liveness import process_is_running
+from app.core.runtime_group import read_runtime_process_status
 from app.core.time import as_utc_aware, local_now as get_local_now, utc_now
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,6 +26,8 @@ from app.models import (
     BatchTask,
     BatchTaskStatus,
     EmailDirection,
+    EmailDeliveryAttempt,
+    EmailDeliveryOutcome,
     EmailLog,
     EmailTaskCancellationReason,
     EmailTask,
@@ -19,6 +35,7 @@ from app.models import (
     EmailTaskSource,
     IdentityMaterial,
     IdentityProfile,
+    Professor,
 )
 from app.modules.campaigns.public import (
     build_send_template_context,
@@ -36,7 +53,10 @@ from app.modules.communications.public import (
     transport as mail_runtime,
 )
 from app.modules.identities.public import build_material_download_name
-from app.services.operation_logs import record_operation_log
+from app.services.operation_logs import (
+    record_operation_log,
+    sanitize_user_visible_error,
+)
 
 __all__ = [
     "DEFAULT_SEND_INTERVAL_MAX_SECONDS",
@@ -55,6 +75,7 @@ DISPATCHABLE_EMAIL_TASK_STATUSES = (
 )
 
 STALE_SENDING_TASK_AFTER = timedelta(minutes=30)
+DELIVERY_ABANDONED_MARKER_DIRECTORY = "abandoned-delivery-attempts"
 
 SCHEDULED_BATCH_SEND_GRACE_PERIOD = timedelta(minutes=2)
 
@@ -63,6 +84,76 @@ STARTUP_MANUAL_SCHEDULE_GRACE_PERIOD = timedelta(minutes=2)
 DEFAULT_SEND_INTERVAL_MIN_SECONDS = 1
 
 DEFAULT_SEND_INTERVAL_MAX_SECONDS = 5
+TIMESTAMP_CAS_EPSILON = timedelta(microseconds=1)
+
+_DELIVERY_PROCESS_GENERATION = uuid.uuid4().hex
+_ABANDONED_ATTEMPTS_IN_PROCESS: set[str] = set()
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryOwnerIdentity:
+    role: str
+    runtime_id: str
+    generation: str
+    pid: int
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryPreparationSnapshot:
+    task_id: int
+    source: str
+    batch_task_id: int | None
+    parent_task_id: int | None
+    identity_id: int
+    identity_expected_updated_at: datetime
+    llm_profile_id: int
+    professor_id: int
+    expected_updated_at: datetime
+    batch_expected_updated_at: datetime | None
+    subject: str
+    body_text: str
+    body_html: str | None
+    attachment_count: int
+    identity: IdentityProfile
+    professor: Professor
+    attachments: tuple[MailAttachment, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedDeliverySnapshot:
+    task_id: int
+    source: str
+    batch_task_id: int | None
+    parent_task_id: int | None
+    identity_id: int
+    identity_expected_updated_at: datetime
+    llm_profile_id: int
+    professor_id: int
+    expected_updated_at: datetime
+    batch_expected_updated_at: datetime | None
+    subject: str
+    body_text: str
+    body_html: str | None
+    attachment_count: int
+    identity: IdentityProfile
+    prepared_email: mail_runtime.PreparedEmail
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryFinalizationSnapshot:
+    task_id: int
+    attempt_id: str
+    source: str
+    batch_task_id: int | None
+    parent_task_id: int | None
+    identity_id: int
+    llm_profile_id: int
+    professor_id: int
+    subject: str
+    body_text: str
+    body_html: str | None
+    attachment_count: int
 
 
 async def mark_overdue_manual_schedules_missed(
@@ -293,12 +384,20 @@ async def _reserve_identity_send_window(
     now: datetime,
     *,
     require_window_open: bool = True,
+    expected_updated_at: datetime | None = None,
 ) -> bool:
     min_seconds, max_seconds = _resolve_identity_send_interval_seconds(identity)
     next_send_after = now + timedelta(
         seconds=random.uniform(min_seconds, max_seconds),
     )
     conditions = [IdentityProfile.id == identity.id]
+    if expected_updated_at is not None:
+        conditions.extend(
+            _timestamp_cas_conditions(
+                IdentityProfile.updated_at,
+                expected_updated_at,
+            )
+        )
     if require_window_open:
         conditions.append(
             or_(
@@ -517,33 +616,78 @@ async def recover_stale_sending_tasks(
     stale_after: timedelta = STALE_SENDING_TASK_AFTER,
     now: datetime | None = None,
 ) -> int:
+    """Conservatively finalize abandoned delivery claims without redispatching.
+
+    A delivery claim is the irreversible boundary.  Wall-clock age is only used
+    for legacy/corrupt rows that do not have an attempt owner; a live owner is
+    never fenced merely because SMTP is taking a long time.
+    """
+
     resolved_now = as_utc_aware(now) if now is not None else utc_now()
     cutoff = resolved_now - stale_after
     async with session_factory() as session:
-        tasks = list(
-            await session.scalars(
-                select(EmailTask)
-                .options(selectinload(EmailTask.batch_task))
-                .where(
-                    EmailTask.status == EmailTaskStatus.SENDING.value,
-                    or_(
-                        and_(
-                            EmailTask.last_send_attempt_at.is_not(None),
-                            EmailTask.last_send_attempt_at < cutoff,
-                        ),
-                        and_(
-                            EmailTask.last_send_attempt_at.is_(None),
-                            EmailTask.updated_at < cutoff,
-                        ),
-                    ),
-                ),
-            ),
+        rows = list(
+            (
+                await session.execute(
+                    select(EmailTask, EmailDeliveryAttempt)
+                    .join(
+                        EmailDeliveryAttempt,
+                        EmailDeliveryAttempt.attempt_id
+                        == EmailTask.delivery_attempt_id,
+                        isouter=True,
+                    )
+                    .where(EmailTask.status == EmailTaskStatus.SENDING.value),
+                )
+            ).all()
         )
-        for task in tasks:
-            _restore_or_cancel_interrupted_send(task)
-            task.updated_at = resolved_now
-        await session.commit()
-        return len(tasks)
+
+    recovered = 0
+    for task, attempt in rows:
+        if attempt is None:
+            last_activity_at = task.last_send_attempt_at or task.updated_at
+            if as_utc_aware(last_activity_at) >= cutoff:
+                continue
+            attempt = await _claim_legacy_sending_for_recovery(
+                session_factory,
+                task,
+                resolved_now,
+            )
+            if attempt is None:
+                continue
+
+        explicitly_abandoned = _delivery_attempt_is_explicitly_abandoned(
+            attempt.attempt_id
+        )
+        if not explicitly_abandoned and _delivery_owner_is_active(attempt):
+            continue
+
+        finalization = _build_recovery_finalization_snapshot(task, attempt)
+        finalized = await _finalize_delivery_attempt(
+            session_factory,
+            finalization,
+            outcome=EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION,
+            finalized_at=resolved_now,
+            rfc_message_id=None,
+            provider_payload={
+                "delivery_outcome": (
+                    EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value
+                ),
+                "recovery_reason": (
+                    "attempt_explicitly_abandoned"
+                    if explicitly_abandoned
+                    else "delivery_owner_no_longer_active"
+                ),
+            },
+            error_summary=(
+                attempt.error_summary
+                or "发送所有者已失效；为防止重复发送，保守视为已发送"
+            ),
+            inject_faults=False,
+        )
+        if finalized:
+            recovered += 1
+            _clear_delivery_abandoned_marker(attempt.attempt_id)
+    return recovered
 
 
 async def dispatch_email_task(
@@ -553,6 +697,7 @@ async def dispatch_email_task(
     now: datetime | None = None,
     respect_identity_send_window: bool = True,
 ) -> bool:
+    prepared_at = as_utc_aware(now) if now is not None else utc_now()
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
         if not task:
@@ -563,60 +708,8 @@ async def dispatch_email_task(
             return False
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
             return False
-
-        claimed_at = as_utc_aware(now) if now is not None else utc_now()
-        if _is_task_scheduled_for_future(task, claimed_at):
+        if _is_task_scheduled_for_future(task, prepared_at):
             return False
-        if not await _reserve_identity_send_window(
-            session,
-            task.identity,
-            claimed_at,
-            require_window_open=respect_identity_send_window,
-        ):
-            await session.rollback()
-            return False
-        claim_result = await session.execute(
-            update(EmailTask)
-            .where(
-                EmailTask.id == task_id,
-                EmailTask.status.in_(DISPATCHABLE_EMAIL_TASK_STATUSES),
-                EmailTask.batch_send_canceled_at.is_(None),
-                or_(
-                    EmailTask.scheduled_at.is_(None),
-                    EmailTask.scheduled_at <= claimed_at,
-                ),
-            )
-            .values(
-                status=EmailTaskStatus.SENDING.value,
-                last_send_attempt_at=claimed_at,
-                retry_count=func.coalesce(EmailTask.retry_count, 0) + 1,
-                updated_at=claimed_at,
-            )
-            .execution_options(synchronize_session=False),
-        )
-        if claim_result.rowcount != 1:
-            await session.rollback()
-            return False
-        await session.commit()
-        task = await _load_email_task(session, task_id)
-        if not task:
-            raise ValueError(f"EmailTask {task_id} 不存在")
-        if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
-            if task.batch_task.status == BatchTaskStatus.PAUSED.value:
-                task.status = EmailTaskStatus.APPROVED.value
-            elif task.batch_task.status == BatchTaskStatus.EXPIRED.value:
-                task.status = EmailTaskStatus.CANCELED.value
-                task.cancellation_reason = (
-                    EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
-                )
-            else:
-                task.status = EmailTaskStatus.CANCELED.value
-                task.cancellation_reason = (
-                    EmailTaskCancellationReason.BATCH_STOPPED.value
-                )
-            task.updated_at = utc_now()
-            await session.commit()
-            return True
 
         subject_template = task.approved_subject or task.generated_subject
         body_text_template = task.approved_body_text or task.generated_content_text
@@ -626,98 +719,734 @@ async def dispatch_email_task(
             task.professor,
             local_timezone=get_local_now().tzinfo,
         )
-        subject = render_template_with_context(subject_template, context).strip()
-        body_text = render_template_with_context(body_text_template, context).strip()
+        subject = render_template_with_context(subject_template or "", context).strip()
+        body_text = render_template_with_context(body_text_template or "", context).strip()
         body_html = (
             render_template_with_context(body_html_template, context)
             if body_html_template
             else None
         )
-        if not subject or not body_text:
-            task.status = EmailTaskStatus.SEND_FAILED.value
-            task.last_error = "任务缺少可发送的主题或正文"
-            task.updated_at = utc_now()
-            await session.commit()
-            return True
-
         attachments = await _resolve_selected_materials(
             session,
             task.identity_id,
             task.selected_material_ids,
         )
+        preparation = DeliveryPreparationSnapshot(
+            task_id=task.id,
+            source=task.source,
+            batch_task_id=task.batch_task_id,
+            parent_task_id=task.parent_task_id,
+            identity_id=task.identity_id,
+            identity_expected_updated_at=task.identity.updated_at,
+            llm_profile_id=task.llm_profile_id,
+            professor_id=task.professor_id,
+            expected_updated_at=task.updated_at,
+            batch_expected_updated_at=(
+                task.batch_task.updated_at if task.batch_task is not None else None
+            ),
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+            attachment_count=len(attachments),
+            identity=task.identity,
+            professor=task.professor,
+            attachments=tuple(attachments),
+        )
 
-        try:
-            result = await mail_runtime.send_email(
-                identity=task.identity,
-                professor=task.professor,
-                subject=subject,
-                body_text=body_text,
-                body_html=body_html,
-                attachments=attachments,
-            )
-            rfc_message_id = result.message_id
-            provider_payload = result.provider_payload
+    if not preparation.subject or not preparation.body_text:
+        return await _record_pre_claim_delivery_failure(
+            session_factory,
+            preparation,
+            "任务缺少可发送的主题或正文",
+        )
 
-            task.status = EmailTaskStatus.SENT.value
-            task.sent_at = utc_now()
-            task.last_rfc_message_id = rfc_message_id
-            task.last_error = None
-            task.updated_at = utc_now()
-            session.add(
-                EmailLog(
-                    email_task_id=task.id,
-                    identity_id=task.identity_id,
-                    llm_profile_id=task.llm_profile_id,
-                    professor_id=task.professor_id,
-                    direction=EmailDirection.SENT.value,
-                    subject=subject,
-                    content=body_text,
-                    content_html=body_html,
-                    rfc_message_id=rfc_message_id,
-                    provider_payload=provider_payload,
-                ),
-            )
-            await _record_email_task_log(
-                session,
-                task,
-                "email_task.sent",
-                metadata={
-                    "rfc_message_id": rfc_message_id,
-                    "retry_count": task.retry_count,
-                    "attachment_count": len(attachments),
+    try:
+        prepared_email = await mail_runtime.prepare_email(
+            identity=preparation.identity,
+            professor=preparation.professor,
+            subject=preparation.subject,
+            body_text=preparation.body_text,
+            body_html=preparation.body_html,
+            attachments=list(preparation.attachments),
+        )
+    except mail_runtime.MailRuntimeError as exc:
+        return await _record_pre_claim_delivery_failure(
+            session_factory,
+            preparation,
+            sanitize_user_visible_error(exc),
+        )
+
+    prepared = PreparedDeliverySnapshot(
+        task_id=preparation.task_id,
+        source=preparation.source,
+        batch_task_id=preparation.batch_task_id,
+        parent_task_id=preparation.parent_task_id,
+        identity_id=preparation.identity_id,
+        identity_expected_updated_at=preparation.identity_expected_updated_at,
+        llm_profile_id=preparation.llm_profile_id,
+        professor_id=preparation.professor_id,
+        expected_updated_at=preparation.expected_updated_at,
+        batch_expected_updated_at=preparation.batch_expected_updated_at,
+        subject=preparation.subject,
+        body_text=preparation.body_text,
+        body_html=preparation.body_html,
+        attachment_count=preparation.attachment_count,
+        identity=preparation.identity,
+        prepared_email=prepared_email,
+    )
+
+    await wait_at_fault_point("delivery.before_claim")
+    owner = _resolve_delivery_owner_identity()
+    claimed_at = as_utc_aware(now) if now is not None else utc_now()
+    attempt_id = await _claim_prepared_delivery(
+        session_factory,
+        prepared,
+        owner,
+        claimed_at=claimed_at,
+        respect_identity_send_window=respect_identity_send_window,
+    )
+    if attempt_id is None:
+        return False
+
+    finalization = _build_finalization_snapshot(prepared, attempt_id)
+    try:
+        await wait_at_fault_point("delivery.claim_committed")
+        await wait_at_fault_point("delivery.before_smtp")
+        result = await mail_runtime.send_prepared_email(
+            identity=prepared.identity,
+            prepared=prepared.prepared_email,
+        )
+        await wait_at_fault_point("delivery.smtp_accepted")
+    except asyncio.CancelledError:
+        await _finalize_canceled_delivery(
+            session_factory,
+            finalization,
+            "发送进程在结果确认前被取消",
+        )
+        raise
+    except mail_runtime.MailDeliveryError as exc:
+        if exc.safe_to_retry:
+            return await _finalize_claimed_delivery(
+                session_factory,
+                finalization,
+                outcome=EmailDeliveryOutcome.PRE_SUBMISSION_FAILED,
+                rfc_message_id=None,
+                provider_payload={
+                    "delivery_outcome": EmailDeliveryOutcome.PRE_SUBMISSION_FAILED.value,
+                    "failure_kind": exc.failure_kind.value,
                 },
+                error_summary=sanitize_user_visible_error(exc),
             )
-        except mail_runtime.MailRuntimeError as exc:
-            task.status = EmailTaskStatus.SEND_FAILED.value
-            task.last_error = str(exc)
-            task.updated_at = utc_now()
-            session.add(
-                EmailLog(
-                    email_task_id=task.id,
-                    identity_id=task.identity_id,
-                    llm_profile_id=task.llm_profile_id,
-                    professor_id=task.professor_id,
-                    direction=EmailDirection.SENT.value,
-                    subject=subject,
-                    content=body_text,
-                    content_html=body_html,
-                    failure_summary=str(exc),
+        return await _finalize_claimed_delivery(
+            session_factory,
+            finalization,
+            outcome=EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION,
+            rfc_message_id=None,
+            provider_payload={
+                "delivery_outcome": (
+                    EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value
                 ),
-            )
-            await _record_email_task_log(
-                session,
-                task,
-                "email_task.send_failed",
-                level="warning",
-                message=str(exc),
-                metadata={
-                    "retry_count": task.retry_count,
-                    "attachment_count": len(attachments),
-                },
-            )
+                "failure_kind": exc.failure_kind.value,
+            },
+            error_summary=sanitize_user_visible_error(exc),
+        )
+    except Exception as exc:
+        return await _finalize_claimed_delivery(
+            session_factory,
+            finalization,
+            outcome=EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION,
+            rfc_message_id=None,
+            provider_payload={
+                "delivery_outcome": (
+                    EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value
+                ),
+                "failure_kind": "unclassified_after_claim",
+            },
+            error_summary=sanitize_user_visible_error(exc),
+        )
 
+    return await _finalize_claimed_delivery(
+        session_factory,
+        finalization,
+        outcome=EmailDeliveryOutcome.SMTP_ACCEPTED,
+        rfc_message_id=result.message_id,
+        provider_payload=result.provider_payload,
+        error_summary=None,
+    )
+
+
+async def _record_pre_claim_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    snapshot: DeliveryPreparationSnapshot,
+    error_summary: str,
+) -> bool:
+    failed_at = utc_now()
+    conditions = _delivery_snapshot_conditions(snapshot, failed_at)
+    async with session_factory() as session:
+        result = await session.execute(
+            update(EmailTask)
+            .where(*conditions)
+            .values(
+                status=EmailTaskStatus.SEND_FAILED.value,
+                delivery_attempt_id=None,
+                delivery_outcome=None,
+                delivery_outcome_at=None,
+                last_error=error_summary,
+                retry_count=func.coalesce(EmailTask.retry_count, 0) + 1,
+                updated_at=failed_at,
+            )
+            .execution_options(synchronize_session=False),
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            return False
+        session.add(
+            EmailLog(
+                email_task_id=snapshot.task_id,
+                identity_id=snapshot.identity_id,
+                llm_profile_id=snapshot.llm_profile_id,
+                professor_id=snapshot.professor_id,
+                direction=EmailDirection.SENT.value,
+                subject=snapshot.subject,
+                content=snapshot.body_text,
+                content_html=snapshot.body_html,
+                failure_summary=error_summary,
+            )
+        )
+        await record_operation_log(
+            session,
+            category="email",
+            event_name="email_task.send_preparation_failed",
+            level="warning",
+            message=error_summary,
+            entity_type="email_task",
+            entity_id=str(snapshot.task_id),
+            metadata={
+                "task_id": snapshot.task_id,
+                "source": snapshot.source,
+                "batch_task_id": snapshot.batch_task_id,
+                "parent_task_id": snapshot.parent_task_id,
+                "identity_id": snapshot.identity_id,
+                "llm_profile_id": snapshot.llm_profile_id,
+                "professor_id": snapshot.professor_id,
+                "attachment_count": snapshot.attachment_count,
+                "pre_claim": True,
+            },
+        )
         await session.commit()
         return True
+
+
+def _delivery_snapshot_conditions(
+    snapshot: DeliveryPreparationSnapshot | PreparedDeliverySnapshot,
+    attempted_at: datetime,
+) -> list[object]:
+    conditions: list[object] = [
+        EmailTask.id == snapshot.task_id,
+        EmailTask.status.in_(DISPATCHABLE_EMAIL_TASK_STATUSES),
+        *_timestamp_cas_conditions(
+            EmailTask.updated_at,
+            snapshot.expected_updated_at,
+        ),
+        EmailTask.batch_send_canceled_at.is_(None),
+        or_(
+            EmailTask.scheduled_at.is_(None),
+            EmailTask.scheduled_at <= attempted_at,
+        ),
+    ]
+    if snapshot.batch_task_id is None:
+        conditions.append(EmailTask.batch_task_id.is_(None))
+    else:
+        conditions.extend(
+            [
+                EmailTask.batch_task_id == snapshot.batch_task_id,
+                EmailTask.batch_task_id.in_(
+                    select(BatchTask.id).where(
+                        BatchTask.id == snapshot.batch_task_id,
+                        BatchTask.status == BatchTaskStatus.RUNNING.value,
+                        BatchTask.deleted_at.is_(None),
+                        *_timestamp_cas_conditions(
+                            BatchTask.updated_at,
+                            snapshot.batch_expected_updated_at,
+                        ),
+                    )
+                ),
+            ]
+        )
+    return conditions
+
+
+def _timestamp_cas_conditions(
+    column: Any,
+    expected: datetime | None,
+) -> tuple[object, object]:
+    if expected is None:
+        return column.is_(None), column.is_(None)
+    return (
+        column >= expected - TIMESTAMP_CAS_EPSILON,
+        column <= expected + TIMESTAMP_CAS_EPSILON,
+    )
+
+
+async def _claim_prepared_delivery(
+    session_factory: async_sessionmaker[AsyncSession],
+    snapshot: PreparedDeliverySnapshot,
+    owner: DeliveryOwnerIdentity,
+    *,
+    claimed_at: datetime,
+    respect_identity_send_window: bool,
+) -> str | None:
+    attempt_id = str(uuid.uuid4())
+    async with session_factory() as session:
+        if not await _reserve_identity_send_window(
+            session,
+            snapshot.identity,
+            claimed_at,
+            require_window_open=respect_identity_send_window,
+            expected_updated_at=snapshot.identity_expected_updated_at,
+        ):
+            await session.rollback()
+            return None
+
+        claim_result = await session.execute(
+            update(EmailTask)
+            .where(*_delivery_snapshot_conditions(snapshot, claimed_at))
+            .values(
+                status=EmailTaskStatus.SENDING.value,
+                last_send_attempt_at=claimed_at,
+                delivery_attempt_id=attempt_id,
+                delivery_outcome=EmailDeliveryOutcome.CLAIMED.value,
+                delivery_outcome_at=claimed_at,
+                last_error=None,
+                retry_count=func.coalesce(EmailTask.retry_count, 0) + 1,
+                updated_at=claimed_at,
+            )
+            .execution_options(synchronize_session=False),
+        )
+        if claim_result.rowcount != 1:
+            await session.rollback()
+            return None
+
+        session.add(
+            EmailDeliveryAttempt(
+                attempt_id=attempt_id,
+                email_task_id=snapshot.task_id,
+                owner_role=owner.role,
+                runtime_id=owner.runtime_id,
+                owner_generation=owner.generation,
+                owner_pid=owner.pid,
+                outcome=EmailDeliveryOutcome.CLAIMED.value,
+                claimed_at=claimed_at,
+                prepared_rfc_message_id=snapshot.prepared_email.message_id,
+                subject=snapshot.subject,
+                content=snapshot.body_text,
+                content_html=snapshot.body_html,
+                attachment_count=snapshot.attachment_count,
+            )
+        )
+        await session.commit()
+    return attempt_id
+
+
+def _build_finalization_snapshot(
+    snapshot: PreparedDeliverySnapshot,
+    attempt_id: str,
+) -> DeliveryFinalizationSnapshot:
+    return DeliveryFinalizationSnapshot(
+        task_id=snapshot.task_id,
+        attempt_id=attempt_id,
+        source=snapshot.source,
+        batch_task_id=snapshot.batch_task_id,
+        parent_task_id=snapshot.parent_task_id,
+        identity_id=snapshot.identity_id,
+        llm_profile_id=snapshot.llm_profile_id,
+        professor_id=snapshot.professor_id,
+        subject=snapshot.subject,
+        body_text=snapshot.body_text,
+        body_html=snapshot.body_html,
+        attachment_count=snapshot.attachment_count,
+    )
+
+
+async def _finalize_claimed_delivery(
+    session_factory: async_sessionmaker[AsyncSession],
+    snapshot: DeliveryFinalizationSnapshot,
+    *,
+    outcome: EmailDeliveryOutcome,
+    rfc_message_id: str | None,
+    provider_payload: dict[str, object] | None,
+    error_summary: str | None,
+) -> bool:
+    try:
+        await _finalize_delivery_attempt(
+            session_factory,
+            snapshot,
+            outcome=outcome,
+            finalized_at=utc_now(),
+            rfc_message_id=rfc_message_id,
+            provider_payload=provider_payload,
+            error_summary=error_summary,
+            inject_faults=True,
+        )
+    except BaseException as exc:
+        _record_delivery_abandoned_marker(
+            snapshot.attempt_id,
+            sanitize_user_visible_error(exc),
+        )
+        raise
+    _clear_delivery_abandoned_marker(snapshot.attempt_id)
+    await wait_at_fault_point("delivery.after_final_commit")
+    return True
+
+
+async def _finalize_canceled_delivery(
+    session_factory: async_sessionmaker[AsyncSession],
+    snapshot: DeliveryFinalizationSnapshot,
+    error_summary: str,
+) -> None:
+    finalize_task = asyncio.create_task(
+        _finalize_delivery_attempt(
+            session_factory,
+            snapshot,
+            outcome=EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION,
+            finalized_at=utc_now(),
+            rfc_message_id=None,
+            provider_payload={
+                "delivery_outcome": (
+                    EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value
+                ),
+                "failure_kind": "delivery_coroutine_canceled_after_claim",
+            },
+            error_summary=error_summary,
+            inject_faults=False,
+        )
+    )
+    try:
+        await asyncio.shield(finalize_task)
+    except BaseException as exc:
+        _record_delivery_abandoned_marker(
+            snapshot.attempt_id,
+            sanitize_user_visible_error(exc),
+        )
+    else:
+        _clear_delivery_abandoned_marker(snapshot.attempt_id)
+
+
+async def _finalize_delivery_attempt(
+    session_factory: async_sessionmaker[AsyncSession],
+    snapshot: DeliveryFinalizationSnapshot,
+    *,
+    outcome: EmailDeliveryOutcome,
+    finalized_at: datetime,
+    rfc_message_id: str | None,
+    provider_payload: dict[str, object] | None,
+    error_summary: str | None,
+    inject_faults: bool,
+) -> bool:
+    if outcome == EmailDeliveryOutcome.PRE_SUBMISSION_FAILED:
+        task_status = EmailTaskStatus.SEND_FAILED.value
+        event_name = "email_task.send_failed"
+        event_level = "warning"
+    elif outcome == EmailDeliveryOutcome.SMTP_ACCEPTED:
+        task_status = EmailTaskStatus.SENT.value
+        event_name = "email_task.sent"
+        event_level = "info"
+    else:
+        task_status = EmailTaskStatus.SENT.value
+        event_name = "email_task.assumed_sent_after_interruption"
+        event_level = "warning"
+
+    task_values: dict[str, object | None] = {
+        "status": task_status,
+        "delivery_outcome": outcome.value,
+        "delivery_outcome_at": finalized_at,
+        "last_error": (
+            error_summary
+            if outcome == EmailDeliveryOutcome.PRE_SUBMISSION_FAILED
+            else None
+        ),
+        "updated_at": finalized_at,
+    }
+    if task_status == EmailTaskStatus.SENT.value:
+        task_values["sent_at"] = finalized_at
+    if outcome == EmailDeliveryOutcome.SMTP_ACCEPTED:
+        task_values["last_rfc_message_id"] = rfc_message_id
+
+    async with session_factory() as session:
+        attempt_result = await session.execute(
+            update(EmailDeliveryAttempt)
+            .where(
+                EmailDeliveryAttempt.attempt_id == snapshot.attempt_id,
+                EmailDeliveryAttempt.email_task_id == snapshot.task_id,
+                EmailDeliveryAttempt.outcome == EmailDeliveryOutcome.CLAIMED.value,
+            )
+            .values(
+                outcome=outcome.value,
+                finalized_at=finalized_at,
+                smtp_accepted_at=(
+                    finalized_at
+                    if outcome == EmailDeliveryOutcome.SMTP_ACCEPTED
+                    else None
+                ),
+                provider_payload=provider_payload,
+                error_summary=error_summary,
+            )
+            .execution_options(synchronize_session=False),
+        )
+        if attempt_result.rowcount != 1:
+            await session.rollback()
+            return False
+
+        task_result = await session.execute(
+            update(EmailTask)
+            .where(
+                EmailTask.id == snapshot.task_id,
+                EmailTask.status == EmailTaskStatus.SENDING.value,
+                EmailTask.delivery_attempt_id == snapshot.attempt_id,
+            )
+            .values(**task_values)
+            .execution_options(synchronize_session=False),
+        )
+        if task_result.rowcount != 1:
+            await session.rollback()
+            return False
+
+        session.add(
+            EmailLog(
+                email_task_id=snapshot.task_id,
+                delivery_attempt_id=snapshot.attempt_id,
+                identity_id=snapshot.identity_id,
+                llm_profile_id=snapshot.llm_profile_id,
+                professor_id=snapshot.professor_id,
+                direction=EmailDirection.SENT.value,
+                subject=snapshot.subject,
+                content=snapshot.body_text,
+                content_html=snapshot.body_html,
+                rfc_message_id=(
+                    rfc_message_id
+                    if outcome == EmailDeliveryOutcome.SMTP_ACCEPTED
+                    else None
+                ),
+                provider_payload=provider_payload,
+                failure_summary=error_summary,
+            )
+        )
+        await record_operation_log(
+            session,
+            category="email",
+            event_name=event_name,
+            level=event_level,
+            message=error_summary,
+            entity_type="email_task",
+            entity_id=str(snapshot.task_id),
+            metadata={
+                "task_id": snapshot.task_id,
+                "source": snapshot.source,
+                "batch_task_id": snapshot.batch_task_id,
+                "parent_task_id": snapshot.parent_task_id,
+                "identity_id": snapshot.identity_id,
+                "llm_profile_id": snapshot.llm_profile_id,
+                "professor_id": snapshot.professor_id,
+                "attempt_id": snapshot.attempt_id,
+                "delivery_outcome": outcome.value,
+                "rfc_message_id": rfc_message_id,
+                "attachment_count": snapshot.attachment_count,
+            },
+        )
+        if inject_faults:
+            await wait_at_fault_point("delivery.before_final_commit")
+        await session.commit()
+
+    return True
+
+
+def _resolve_delivery_owner_identity() -> DeliveryOwnerIdentity:
+    role = get_backend_role()
+    runtime_id = get_runtime_id()
+    pid = os.getpid()
+    if role == "combined":
+        return DeliveryOwnerIdentity(
+            role=role,
+            runtime_id=runtime_id,
+            generation=_DELIVERY_PROCESS_GENERATION,
+            pid=pid,
+        )
+
+    status = read_runtime_process_status(get_settings().data_dir, role)
+    if (
+        status is None
+        or status.get("role") != role
+        or status.get("runtime_id") != runtime_id
+        or status.get("pid") != pid
+        or not isinstance(status.get("generation"), str)
+        or not status["generation"]
+        or not process_is_running(pid)
+    ):
+        raise RuntimeError(
+            f"Cannot claim email delivery without a current {role} runtime identity"
+        )
+    return DeliveryOwnerIdentity(
+        role=role,
+        runtime_id=runtime_id,
+        generation=status["generation"],
+        pid=pid,
+    )
+
+
+def _delivery_owner_is_active(attempt: EmailDeliveryAttempt) -> bool:
+    if attempt.owner_role == "combined":
+        return (
+            attempt.owner_pid == os.getpid()
+            and attempt.runtime_id == get_runtime_id()
+            and attempt.owner_generation == _DELIVERY_PROCESS_GENERATION
+            and process_is_running(attempt.owner_pid)
+        )
+    if attempt.owner_role not in {"api", "worker"}:
+        return False
+    status = read_runtime_process_status(
+        get_settings().data_dir,
+        attempt.owner_role,
+    )
+    return bool(
+        status is not None
+        and status.get("role") == attempt.owner_role
+        and status.get("runtime_id") == attempt.runtime_id
+        and status.get("generation") == attempt.owner_generation
+        and status.get("pid") == attempt.owner_pid
+        and process_is_running(attempt.owner_pid)
+    )
+
+
+async def _claim_legacy_sending_for_recovery(
+    session_factory: async_sessionmaker[AsyncSession],
+    task: EmailTask,
+    recovered_at: datetime,
+) -> EmailDeliveryAttempt | None:
+    attempt_id = str(uuid.uuid4())
+    claimed_at = task.last_send_attempt_at or task.updated_at
+    attempt = EmailDeliveryAttempt(
+        attempt_id=attempt_id,
+        email_task_id=task.id,
+        owner_role="legacy",
+        runtime_id="legacy",
+        owner_generation="missing-attempt-owner",
+        owner_pid=0,
+        outcome=EmailDeliveryOutcome.CLAIMED.value,
+        claimed_at=claimed_at,
+        prepared_rfc_message_id=task.last_rfc_message_id,
+        subject=task.approved_subject or task.generated_subject or "",
+        content=task.approved_body_text or task.generated_content_text or "",
+        content_html=task.approved_body_html or task.generated_content_html,
+        attachment_count=0,
+        error_summary="Recovered a legacy sending row without delivery owner metadata",
+    )
+    async with session_factory() as session:
+        result = await session.execute(
+            update(EmailTask)
+            .where(
+                EmailTask.id == task.id,
+                EmailTask.status == EmailTaskStatus.SENDING.value,
+                EmailTask.delivery_attempt_id.is_(None),
+            )
+            .values(
+                delivery_attempt_id=attempt_id,
+                delivery_outcome=EmailDeliveryOutcome.CLAIMED.value,
+                delivery_outcome_at=recovered_at,
+                updated_at=recovered_at,
+            )
+            .execution_options(synchronize_session=False),
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            return None
+        session.add(attempt)
+        await session.commit()
+    return attempt
+
+
+def _build_recovery_finalization_snapshot(
+    task: EmailTask,
+    attempt: EmailDeliveryAttempt,
+) -> DeliveryFinalizationSnapshot:
+    return DeliveryFinalizationSnapshot(
+        task_id=task.id,
+        attempt_id=attempt.attempt_id,
+        source=task.source,
+        batch_task_id=task.batch_task_id,
+        parent_task_id=task.parent_task_id,
+        identity_id=task.identity_id,
+        llm_profile_id=task.llm_profile_id,
+        professor_id=task.professor_id,
+        subject=attempt.subject,
+        body_text=attempt.content,
+        body_html=attempt.content_html,
+        attachment_count=attempt.attachment_count,
+    )
+
+
+def _delivery_abandoned_marker_path(attempt_id: str) -> Path:
+    marker_name = uuid.uuid5(uuid.NAMESPACE_URL, attempt_id).hex
+    return (
+        get_settings().data_dir
+        / DELIVERY_ABANDONED_MARKER_DIRECTORY
+        / f"{marker_name}.json"
+    )
+
+
+def _record_delivery_abandoned_marker(attempt_id: str, error_summary: str) -> None:
+    _ABANDONED_ATTEMPTS_IN_PROCESS.add(attempt_id)
+    marker_path = _delivery_abandoned_marker_path(attempt_id)
+    temporary_path = marker_path.parent / f".{uuid.uuid4().hex}.tmp"
+    try:
+        marker_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary_path.write_text(
+            json.dumps(
+                {
+                    "attempt_id": attempt_id,
+                    "recorded_at": utc_now().isoformat(),
+                    "error_summary": error_summary,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            temporary_path.chmod(0o600)
+        except OSError:
+            pass
+        temporary_path.replace(marker_path)
+    except OSError:
+        logger.warning(
+            "Unable to persist abandoned email delivery marker for attempt_id=%s",
+            attempt_id,
+            exc_info=True,
+        )
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _delivery_attempt_is_explicitly_abandoned(attempt_id: str) -> bool:
+    if attempt_id in _ABANDONED_ATTEMPTS_IN_PROCESS:
+        return True
+    marker_path = _delivery_abandoned_marker_path(attempt_id)
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("attempt_id") == attempt_id
+
+
+def _clear_delivery_abandoned_marker(attempt_id: str) -> None:
+    _ABANDONED_ATTEMPTS_IN_PROCESS.discard(attempt_id)
+    try:
+        _delivery_abandoned_marker_path(attempt_id).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 async def _resolve_selected_materials(
@@ -747,26 +1476,6 @@ async def _resolve_selected_materials(
             ),
         )
     return attachments
-
-
-def _restore_or_cancel_interrupted_send(task: EmailTask) -> None:
-    batch_status = task.batch_task.status if task.batch_task else None
-    if batch_status == BatchTaskStatus.EXPIRED.value:
-        task.status = EmailTaskStatus.CANCELED.value
-        task.cancellation_reason = EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
-    elif batch_status == BatchTaskStatus.STOPPED.value:
-        task.status = EmailTaskStatus.CANCELED.value
-        task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
-    elif batch_status == BatchTaskStatus.PAUSED.value:
-        task.status = EmailTaskStatus.APPROVED.value
-        task.cancellation_reason = None
-    else:
-        task.status = (
-            EmailTaskStatus.SCHEDULED.value
-            if task.scheduled_at is not None
-            else EmailTaskStatus.APPROVED.value
-        )
-        task.cancellation_reason = None
 
 
 def _ensure_batch_task_has_future_window(task: EmailTask) -> None:

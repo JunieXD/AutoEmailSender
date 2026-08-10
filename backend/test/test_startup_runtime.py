@@ -46,6 +46,7 @@ class StartupRuntimeTest(unittest.TestCase):
                     patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                     patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
                     patch.object(main, "recover_interrupted_workspace_draft_rewrites", AsyncMock()),
+                    patch.object(main, "recover_interrupted_worker_claims", AsyncMock()),
                     patch.object(main, "recover_stale_generating_drafts", AsyncMock()),
                     patch.object(main, "get_session_factory", return_value=_session_factory()),
                     patch.object(main, "get_settings", return_value=SimpleNamespace(enable_background_workers=False, data_dir=Path(temp_dir))),
@@ -69,12 +70,14 @@ class StartupRuntimeTest(unittest.TestCase):
             session_factory = _session_factory()
             cleanup_logs = AsyncMock()
             recover_workspace_rewrites = AsyncMock(return_value=1)
+            recover_worker_claims = AsyncMock()
             recover_generating_drafts = AsyncMock(return_value=1)
             with (
                 patch.object(main, "cleanup_old_operation_logs", cleanup_logs),
                 patch.object(main, "recover_interrupted_crawl_jobs", AsyncMock()),
                 patch.object(main, "recover_interrupted_match_analysis_runs", AsyncMock()),
                 patch.object(main, "recover_interrupted_workspace_draft_rewrites", recover_workspace_rewrites),
+                patch.object(main, "recover_interrupted_worker_claims", recover_worker_claims),
                 patch.object(main, "recover_stale_generating_drafts", recover_generating_drafts),
                 patch.object(main, "get_session_factory", return_value=session_factory),
             ):
@@ -82,6 +85,10 @@ class StartupRuntimeTest(unittest.TestCase):
 
             cleanup_logs.assert_awaited_once()
             recover_workspace_rewrites.assert_awaited_once_with(session_factory)
+            recover_worker_claims.assert_awaited_once_with(
+                session_factory,
+                preserve_full_imap_claims=False,
+            )
             recover_generating_drafts.assert_awaited_once_with(
                 session_factory,
                 stale_after=timedelta(seconds=0),

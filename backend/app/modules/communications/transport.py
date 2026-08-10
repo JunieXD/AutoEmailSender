@@ -15,6 +15,7 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formataddr, make_msgid, parseaddr, parsedate_to_datetime
+from enum import StrEnum
 
 from app.core.time import as_utc_aware, utc_now
 
@@ -140,10 +141,35 @@ class MailRuntimeError(RuntimeError):
     pass
 
 
+class MailDeliveryFailureKind(StrEnum):
+    PRE_SUBMISSION = "pre_submission"
+    UNCERTAIN_AFTER_SUBMISSION_STARTED = "uncertain_after_submission_started"
+
+
+class MailDeliveryError(MailRuntimeError):
+    def __init__(self, message: str, *, failure_kind: MailDeliveryFailureKind) -> None:
+        super().__init__(message)
+        self.failure_kind = failure_kind
+
+    @property
+    def safe_to_retry(self) -> bool:
+        return self.failure_kind == MailDeliveryFailureKind.PRE_SUBMISSION
+
+
 @dataclass(slots=True)
 class SendMailResult:
     message_id: str
     provider_payload: dict[str, Any]
+
+
+@dataclass(slots=True)
+class PreparedEmail:
+    message: EmailMessage
+    recipient_email: str
+
+    @property
+    def message_id(self) -> str:
+        return self.message["Message-ID"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,10 +313,7 @@ async def send_email(
     body_html: str | None,
     attachments: list[MailAttachment],
 ) -> SendMailResult:
-    if not professor.email:
-        raise MailRuntimeError("导师没有可用邮箱，无法发送")
-
-    message = build_email_message(
+    prepared = await prepare_email(
         identity=identity,
         professor=professor,
         subject=subject,
@@ -298,13 +321,45 @@ async def send_email(
         body_html=body_html,
         attachments=attachments,
     )
-    sent_folder_sync = await asyncio.to_thread(_send_email_sync, identity, message)
+    return await send_prepared_email(identity=identity, prepared=prepared)
+
+
+async def prepare_email(
+    *,
+    identity: IdentityProfile,
+    professor: Professor,
+    subject: str,
+    body_text: str,
+    body_html: str | None,
+    attachments: list[MailAttachment],
+) -> PreparedEmail:
+    return await asyncio.to_thread(
+        _prepare_email_sync,
+        identity,
+        professor,
+        subject,
+        body_text,
+        body_html,
+        attachments,
+    )
+
+
+async def send_prepared_email(
+    *,
+    identity: IdentityProfile,
+    prepared: PreparedEmail,
+) -> SendMailResult:
+    sent_folder_sync = await asyncio.to_thread(
+        _send_email_sync,
+        identity,
+        prepared.message,
+    )
     return SendMailResult(
-        message_id=message["Message-ID"],
+        message_id=prepared.message_id,
         provider_payload={
             "smtp_host": identity.smtp_host,
             "smtp_port": identity.smtp_port,
-            "to": professor.email,
+            "to": prepared.recipient_email,
             "sent_folder_sync": sent_folder_sync.to_payload(),
         },
     )
@@ -324,7 +379,7 @@ async def send_email_to_recipient(
         name=recipient_name or recipient_email,
         email=recipient_email,
     )
-    message = build_email_message(
+    prepared = await prepare_email(
         identity=identity,
         professor=recipient,
         subject=subject,
@@ -332,16 +387,7 @@ async def send_email_to_recipient(
         body_html=body_html,
         attachments=attachments,
     )
-    sent_folder_sync = await asyncio.to_thread(_send_email_sync, identity, message)
-    return SendMailResult(
-        message_id=message["Message-ID"],
-        provider_payload={
-            "smtp_host": identity.smtp_host,
-            "smtp_port": identity.smtp_port,
-            "to": recipient_email,
-            "sent_folder_sync": sent_folder_sync.to_payload(),
-        },
-    )
+    return await send_prepared_email(identity=identity, prepared=prepared)
 
 
 async def discover_sent_folder(identity: IdentityProfile) -> str | None:
@@ -619,6 +665,31 @@ def build_email_message(
     return message
 
 
+def _prepare_email_sync(
+    identity: IdentityProfile,
+    professor: Professor,
+    subject: str,
+    body_text: str,
+    body_html: str | None,
+    attachments: list[MailAttachment],
+) -> PreparedEmail:
+    if not professor.email:
+        raise MailRuntimeError("导师没有可用邮箱，无法发送")
+    _validate_smtp_login_credentials(identity)
+    try:
+        message = build_email_message(
+            identity=identity,
+            professor=professor,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+            attachments=attachments,
+        )
+    except (OSError, ValueError) as exc:
+        raise MailRuntimeError(f"邮件发送准备失败: {exc}") from exc
+    return PreparedEmail(message=message, recipient_email=professor.email)
+
+
 def text_to_html(body_text: str) -> str:
     paragraphs = [segment.strip() for segment in body_text.split("\n\n") if segment.strip()]
     if not paragraphs:
@@ -665,18 +736,52 @@ def _test_imap_connection_sync(identity: IdentityProfile) -> None:
 
 def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFolderSyncResult:
     server = None
+    submission_started = False
     try:
         _validate_smtp_login_credentials(identity)
         server = _open_smtp_client(identity)
         _login_smtp_client(server, identity)
+        submission_started = True
         server.send_message(message)
+    except MailDeliveryError:
+        raise
+    except MailRuntimeError as exc:
+        raise MailDeliveryError(
+            str(exc),
+            failure_kind=(
+                MailDeliveryFailureKind.UNCERTAIN_AFTER_SUBMISSION_STARTED
+                if submission_started
+                else MailDeliveryFailureKind.PRE_SUBMISSION
+            ),
+        ) from exc
+    except (
+        smtplib.SMTPSenderRefused,
+        smtplib.SMTPRecipientsRefused,
+        smtplib.SMTPDataError,
+    ) as exc:
+        # These exceptions carry an explicit server rejection. The SMTP server
+        # did not accept the message, so a later user retry is safe.
+        raise MailDeliveryError(
+            f"SMTP 发信失败: {exc}",
+            failure_kind=MailDeliveryFailureKind.PRE_SUBMISSION,
+        ) from exc
     except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
-        raise MailRuntimeError(f"SMTP 发信失败: {exc}") from exc
+        raise MailDeliveryError(
+            f"SMTP 发信失败: {exc}",
+            failure_kind=(
+                MailDeliveryFailureKind.UNCERTAIN_AFTER_SUBMISSION_STARTED
+                if submission_started
+                else MailDeliveryFailureKind.PRE_SUBMISSION
+            ),
+        ) from exc
     finally:
         if server is not None:
             try:
-                server.quit()
-            except OSError:
+                # Do not wait for SMTP QUIT after DATA was accepted.  Closing
+                # the local socket keeps the accepted-to-SQLite window free of
+                # another network round trip.
+                server.close()
+            except Exception:
                 pass
     return SentFolderSyncResult(status="sent_folder_sync_disabled")
 

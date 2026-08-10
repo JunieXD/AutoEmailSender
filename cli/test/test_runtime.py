@@ -10,7 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from auto_email_sender_cli.errors import RuntimeProtocolMismatchError, RuntimeUnavailableError
+from auto_email_sender_cli.errors import (
+    RuntimeProtocolMismatchError,
+    RuntimeUnavailableError,
+)
 from auto_email_sender_cli.runtime import (
     RuntimeDescriptor,
     RuntimeProbe,
@@ -136,6 +139,7 @@ class RuntimeTests(unittest.TestCase):
                         "access_token": "token",
                         "desktop": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:00Z"},
                         "backend": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:01Z"},
+                        "worker": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:02Z"},
                         "published_at": "2026-08-03T00:00:01Z",
                     },
                 ),
@@ -149,6 +153,7 @@ class RuntimeTests(unittest.TestCase):
                 descriptor = load_runtime_descriptor()
             self.assertEqual(descriptor.app_version, "2.4.1")
             self.assertEqual(descriptor.access_token, "token")
+            self.assertEqual(descriptor.worker_pid, os.getpid())
 
     def test_malformed_runtime_descriptors_fail_as_app_unavailable(self) -> None:
         cases: tuple[object, ...] = (
@@ -184,25 +189,29 @@ class RuntimeTests(unittest.TestCase):
                         payload if isinstance(payload, str) else json.dumps(payload),
                         encoding="utf-8",
                     )
-                    with patch.dict(
-                        os.environ,
-                        {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
-                        clear=False,
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
+                            clear=False,
+                        ),
+                        self.assertRaises(RuntimeUnavailableError) as raised,
                     ):
-                        with self.assertRaises(RuntimeUnavailableError) as raised:
-                            load_runtime_descriptor()
+                        load_runtime_descriptor()
                     self.assertIn("运行信息无效", raised.exception.message)
 
     def test_missing_runtime_descriptor_tells_user_to_open_the_desktop_app(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "missing.json"
-            with patch.dict(
-                os.environ,
-                {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
-                clear=False,
+            with (
+                patch.dict(
+                    os.environ,
+                    {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
+                    clear=False,
+                ),
+                self.assertRaises(RuntimeUnavailableError) as raised,
             ):
-                with self.assertRaises(RuntimeUnavailableError) as raised:
-                    load_runtime_descriptor()
+                load_runtime_descriptor()
         self.assertIn("手动打开软件", str(raised.exception))
 
     def test_old_runtime_protocol_is_rejected_before_any_process_probe(self) -> None:
@@ -284,13 +293,15 @@ class RuntimeTests(unittest.TestCase):
     def test_missing_runtime_requires_manual_desktop_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "missing.json"
-            with patch.dict(
-                os.environ,
-                {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
-                clear=False,
+            with (
+                patch.dict(
+                    os.environ,
+                    {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()},
+                    clear=False,
+                ),
+                self.assertRaises(RuntimeUnavailableError) as raised,
             ):
-                with self.assertRaises(RuntimeUnavailableError) as raised:
-                    ensure_runtime_descriptor()
+                ensure_runtime_descriptor()
 
         self.assertIn("当前未运行", str(raised.exception))
         self.assertIn("手动打开软件", str(raised.exception))
@@ -306,9 +317,9 @@ class RuntimeTests(unittest.TestCase):
                 "auto_email_sender_cli.runtime.probe_runtime_descriptor",
                 return_value=_probe(desktop_process_running=False, backend_process_running=False),
             ),
+            self.assertRaises(RuntimeUnavailableError) as raised,
         ):
-            with self.assertRaises(RuntimeUnavailableError) as raised:
-                ensure_runtime_descriptor()
+            ensure_runtime_descriptor()
 
         self.assertIn("桌面进程已停止", raised.exception.message)
 
@@ -336,9 +347,9 @@ class RuntimeTests(unittest.TestCase):
                 return_value=descriptor,
             ),
             patch("auto_email_sender_cli.runtime.probe_runtime_descriptor") as probe,
+            self.assertRaises(RuntimeProtocolMismatchError) as raised,
         ):
-            with self.assertRaises(RuntimeProtocolMismatchError) as raised:
-                ensure_runtime_descriptor()
+            ensure_runtime_descriptor()
 
         self.assertIn("协议 3", str(raised.exception))
         probe.assert_not_called()

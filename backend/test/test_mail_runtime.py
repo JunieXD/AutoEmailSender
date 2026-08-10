@@ -3,17 +3,22 @@ from __future__ import annotations
 import asyncio
 import imaplib
 import re
+import smtplib
 import unittest
 from datetime import UTC, date, datetime
+from email.message import EmailMessage
 from unittest.mock import ANY, call, patch
 
 from app.models import IdentityProfile
 from app.modules.communications.transport import (
+    MailDeliveryError,
+    MailDeliveryFailureKind,
     MailRuntimeError,
     SMTP_PASSWORD_ENCODING_ERROR_CODE,
     SMTP_USERNAME_ENCODING_ERROR_CODE,
     _open_smtp_client,
     _resolve_smtp_local_hostname,
+    _send_email_sync,
     discover_sent_folder,
     fetch_inbox_messages_from_sender,
     fetch_incremental_inbox_messages,
@@ -163,10 +168,15 @@ class _FakeImapClient:
 
 
 class _FakeSmtpClient:
-    def __init__(self, login_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        login_error: Exception | None = None,
+        send_error: Exception | None = None,
+    ) -> None:
         self.commands: list[str] = []
         self.messages: list[object] = []
         self.login_error = login_error
+        self.send_error = send_error
 
     def login(self, username: str, password: str):
         self.commands.append("login")
@@ -177,11 +187,16 @@ class _FakeSmtpClient:
     def send_message(self, message: object):
         self.commands.append("send_message")
         self.messages.append(message)
+        if self.send_error is not None:
+            raise self.send_error
         return {}
 
     def quit(self):
         self.commands.append("quit")
         return "OK", [b"quit"]
+
+    def close(self):
+        self.commands.append("close")
 
 
 class _MultipartBase64ImapClient(_FakeImapClient):
@@ -692,6 +707,88 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         open_imap.assert_not_called()
         self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
+
+    def test_smtp_explicit_recipient_rejection_is_safe_pre_submission_failure(self) -> None:
+        client = _FakeSmtpClient(
+            send_error=smtplib.SMTPRecipientsRefused(
+                {"teacher@example.com": (550, b"rejected")}
+            )
+        )
+
+        with patch(
+            "app.modules.communications.transport._open_smtp_client",
+            return_value=client,
+        ):
+            with self.assertRaises(MailDeliveryError) as raised:
+                _send_email_sync(_build_identity(), EmailMessage())
+
+        self.assertTrue(raised.exception.safe_to_retry)
+        self.assertEqual(
+            raised.exception.failure_kind,
+            MailDeliveryFailureKind.PRE_SUBMISSION,
+        )
+        self.assertEqual(client.commands, ["login", "send_message", "close"])
+
+    def test_smtp_explicit_data_rejection_is_safe_pre_submission_failure(self) -> None:
+        client = _FakeSmtpClient(
+            send_error=smtplib.SMTPDataError(550, b"message rejected")
+        )
+
+        with patch(
+            "app.modules.communications.transport._open_smtp_client",
+            return_value=client,
+        ):
+            with self.assertRaises(MailDeliveryError) as raised:
+                _send_email_sync(_build_identity(), EmailMessage())
+
+        self.assertTrue(raised.exception.safe_to_retry)
+        self.assertEqual(
+            raised.exception.failure_kind,
+            MailDeliveryFailureKind.PRE_SUBMISSION,
+        )
+
+    def test_smtp_connection_loss_after_submission_starts_is_uncertain(self) -> None:
+        client = _FakeSmtpClient(
+            send_error=smtplib.SMTPServerDisconnected("response lost")
+        )
+
+        with patch(
+            "app.modules.communications.transport._open_smtp_client",
+            return_value=client,
+        ):
+            with self.assertRaises(MailDeliveryError) as raised:
+                _send_email_sync(_build_identity(), EmailMessage())
+
+        self.assertFalse(raised.exception.safe_to_retry)
+        self.assertEqual(
+            raised.exception.failure_kind,
+            MailDeliveryFailureKind.UNCERTAIN_AFTER_SUBMISSION_STARTED,
+        )
+
+    def test_smtp_connect_failure_is_safe_pre_submission_failure(self) -> None:
+        with patch(
+            "app.modules.communications.transport._open_smtp_client",
+            side_effect=OSError("connection refused"),
+        ):
+            with self.assertRaises(MailDeliveryError) as raised:
+                _send_email_sync(_build_identity(), EmailMessage())
+
+        self.assertTrue(raised.exception.safe_to_retry)
+        self.assertEqual(
+            raised.exception.failure_kind,
+            MailDeliveryFailureKind.PRE_SUBMISSION,
+        )
+
+    def test_smtp_success_closes_locally_without_post_acceptance_quit(self) -> None:
+        client = _FakeSmtpClient()
+
+        with patch(
+            "app.modules.communications.transport._open_smtp_client",
+            return_value=client,
+        ):
+            _send_email_sync(_build_identity(), EmailMessage())
+
+        self.assertEqual(client.commands, ["login", "send_message", "close"])
 
     def test_send_email_reports_sanitized_invalid_authorization_code_error(self) -> None:
         identity = _build_identity()

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
+from app.core.fault_injection import wait_at_fault_point
 
 from sqlalchemy import select
 
@@ -181,6 +182,7 @@ async def run_crawler_v2_chunk_worker_once(
     *,
     chunk_id: int,
     worker_id: str,
+    raise_after_failure: bool = False,
 ) -> int:
     try:
         async with session_factory() as session:
@@ -205,6 +207,7 @@ async def run_crawler_v2_chunk_worker_once(
             adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
             await session.commit()
 
+        await wait_at_fault_point("crawler_chunk.before_external_call")
         chunk_agent_result = await invoke_v2_chunk_agent(
             llm_profile,
             session_factory=session_factory,
@@ -214,6 +217,7 @@ async def run_crawler_v2_chunk_worker_once(
             chunk_content=chunk.content,
             adaptation=adaptation,
         )
+        await wait_at_fault_point("crawler_chunk.external_call_returned")
         raw_model_text = None
         if isinstance(chunk_agent_result, tuple):
             if len(chunk_agent_result) >= 3:
@@ -304,6 +308,8 @@ async def run_crawler_v2_chunk_worker_once(
                     terminal_status=CrawlPageChunkStatus.FAILED_TERMINAL.value,
                 )
             await session.commit()
+        if raise_after_failure:
+            raise
         return 1
 
 
@@ -484,7 +490,9 @@ async def complete_current_chunk(
         chunk.worker_id = None
         chunk.claimed_at = None
         chunk.lease_expires_at = None
+        await wait_at_fault_point("crawler_chunk.before_final_commit")
         await session.commit()
+        await wait_at_fault_point("crawler_chunk.after_final_commit")
     return {
         "status": "saved",
         "saved_count": save_result["saved_count"],

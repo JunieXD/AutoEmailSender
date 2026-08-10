@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { DESKTOP_IPC_CHANNELS } from "../src/contracts/channels.js";
+import { backendStatusKeepsApiConnection } from "../src/contracts/backend-status.js";
 
 
 const expectedChannels = [
@@ -33,6 +34,20 @@ const expectedChannels = [
 ];
 
 describe("desktop IPC contracts", () => {
+  it("keeps the API connection while only background processing is degraded", () => {
+    expect(backendStatusKeepsApiConnection({
+      state: "degraded",
+      baseUrl: "http://127.0.0.1:48120",
+      reason: "background_unavailable",
+      message: "后台服务暂时不可用",
+    })).toBe(true);
+    expect(backendStatusKeepsApiConnection({
+      state: "restarting",
+      code: 1,
+      signal: null,
+    })).toBe(false);
+  });
+
   it("keeps every channel unique and versioned in one registry", () => {
     const channels = Object.values(DESKTOP_IPC_CHANNELS);
 

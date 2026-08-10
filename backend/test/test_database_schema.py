@@ -2649,6 +2649,124 @@ class MigrationScriptTests(unittest.TestCase):
                         table_names,
                     )
 
+    def test_at_most_once_delivery_migration_conservatively_finalizes_legacy_sending(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "delivery-at-most-once.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260808_crawl_llm_snapshot"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        connection = sqlite3.connect(database_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        identity_id = DatabaseSchemaTests._insert_identity_into(
+            connection,
+            email_address="delivery-migration@example.com",
+        )
+        llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+            connection,
+            name="Delivery migration model",
+        )
+        professor_id = DatabaseSchemaTests._insert_professor_into(
+            connection,
+            "delivery-migration@example.edu",
+        )
+        task_id = int(
+            connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source, identity_id, llm_profile_id, professor_id, status,
+                    approved_subject, approved_body_text, selected_material_ids,
+                    last_send_attempt_at, created_at, updated_at
+                )
+                VALUES (
+                    'manual', ?, ?, ?, 'sending', 'Legacy subject',
+                    'Legacy body', '[]', ?, ?, ?
+                )
+                """,
+                (
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    "2026-08-09 08:00:00",
+                    "2026-08-09 07:00:00",
+                    "2026-08-09 08:00:00",
+                ),
+            ).lastrowid
+        )
+        connection.commit()
+        connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(database_path)
+        upgraded.execute("PRAGMA foreign_keys = ON")
+        task_row = upgraded.execute(
+            """
+            SELECT status, delivery_attempt_id, delivery_outcome,
+                   delivery_outcome_at, sent_at
+            FROM email_tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        attempt_row = upgraded.execute(
+            """
+            SELECT email_task_id, owner_role, runtime_id, owner_generation,
+                   owner_pid, outcome, subject, content
+            FROM email_delivery_attempts
+            WHERE attempt_id = ?
+            """,
+            (f"legacy-{task_id}",),
+        ).fetchone()
+        task_columns = {
+            row[1] for row in upgraded.execute("PRAGMA table_info('email_tasks')")
+        }
+        email_log_columns = {
+            row[1] for row in upgraded.execute("PRAGMA table_info('email_logs')")
+        }
+        log_indexes = {
+            row[1] for row in upgraded.execute("PRAGMA index_list('email_logs')")
+        }
+        version = upgraded.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()[0]
+        foreign_key_check = upgraded.execute("PRAGMA foreign_key_check").fetchall()
+        upgraded.close()
+
+        self.assertEqual(version, HEAD_REVISION)
+        self.assertEqual(
+            task_row[:3],
+            (
+                "sent",
+                f"legacy-{task_id}",
+                "assumed_sent_after_interruption",
+            ),
+        )
+        self.assertIsNotNone(task_row[3])
+        self.assertIsNotNone(task_row[4])
+        self.assertEqual(
+            attempt_row,
+            (
+                task_id,
+                "legacy",
+                "legacy",
+                "pre-at-most-once",
+                0,
+                "assumed_sent_after_interruption",
+                "Legacy subject",
+                "Legacy body",
+            ),
+        )
+        self.assertTrue(
+            {"delivery_attempt_id", "delivery_outcome", "delivery_outcome_at"}
+            <= task_columns
+        )
+        self.assertIn("delivery_attempt_id", email_log_columns)
+        self.assertIn("uq_email_logs_delivery_attempt_id", log_indexes)
+        self.assertEqual(foreign_key_check, [])
+
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:
         try:
             run_alembic_in_process(env, *args)

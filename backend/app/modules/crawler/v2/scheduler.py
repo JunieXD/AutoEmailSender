@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from app.core.time import utc_now
+from app.core.fault_injection import wait_at_fault_point
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -52,6 +53,48 @@ logger = logging.getLogger(__name__)
 async def ensure_job_active(session: AsyncSession, job_id: int) -> bool:
     job = await session.get(CrawlJob, job_id)
     return job is not None and job.status in _ACTIVE_JOB_STATUSES
+
+
+async def recover_interrupted_crawler_v2_claims(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Requeue every active Crawler v2 claim owned by a dead Worker generation."""
+
+    now = utc_now()
+    recovered = 0
+    async with session_factory() as session:
+        for model, processing_status, pending_status in (
+            (
+                CrawlPageTask,
+                CrawlPageTaskStatus.PROCESSING.value,
+                CrawlPageTaskStatus.PENDING.value,
+            ),
+            (
+                CrawlPageChunk,
+                CrawlPageChunkStatus.PROCESSING.value,
+                CrawlPageChunkStatus.PENDING.value,
+            ),
+            (
+                CrawlCandidateEnrichmentTask,
+                CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+            ),
+        ):
+            transition = await session.execute(
+                update(model)
+                .where(model.status == processing_status)
+                .values(
+                    status=pending_status,
+                    worker_id=None,
+                    claimed_at=None,
+                    lease_expires_at=None,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            recovered += int(transition.rowcount or 0)
+        await session.commit()
+    return recovered
 
 
 async def claim_next_v2_work(
@@ -121,6 +164,9 @@ async def _claim_next_v2_work_locked(
                 )
             if claimed.kind is not CrawlerV2WorkKind.IDLE:
                 await session.commit()
+                await wait_at_fault_point(
+                    f"crawler_{claimed.kind.value}.claim_committed"
+                )
                 return claimed
         await session.commit()
         return CrawlerV2ClaimedWork.idle()
@@ -288,6 +334,7 @@ async def _claim_page_task(
     )
     if task is None:
         return CrawlerV2ClaimedWork.idle()
+    await wait_at_fault_point("crawler_page.before_claim")
     result = await _conditional_claim_page_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
     if result.rowcount != 1:
         await session.rollback()
@@ -331,6 +378,7 @@ async def _claim_chunk(
     )
     if chunk is None:
         return CrawlerV2ClaimedWork.idle()
+    await wait_at_fault_point("crawler_chunk.before_claim")
     result = await _conditional_claim_chunk(session, chunk=chunk, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
     if result.rowcount != 1:
         await session.rollback()
@@ -385,6 +433,7 @@ async def _claim_enrichment_task(
         break
     if task is None:
         return CrawlerV2ClaimedWork.idle()
+    await wait_at_fault_point("crawler_enrichment.before_claim")
     result = await _conditional_claim_enrichment_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
     if result.rowcount != 1:
         await session.rollback()
@@ -764,6 +813,7 @@ async def run_crawler_v2_once(
     *,
     worker_id: str = "crawler-v2-worker",
     config: CrawlerV2WorkerConfig | None = None,
+    propagate_work_failures: bool = False,
 ) -> int:
     resolved_config = config or CrawlerV2WorkerConfig()
     claim_owner_id = f"{worker_id[:80]}:{uuid.uuid4().hex}"
@@ -780,6 +830,9 @@ async def run_crawler_v2_once(
     if claimed.work_item_id is None:
         return 0
     work: Awaitable[int]
+    failure_reporting = (
+        {"raise_after_failure": True} if propagate_work_failures else {}
+    )
     if claimed.kind is CrawlerV2WorkKind.PAGE:
         from .page_worker import run_crawler_v2_page_worker_once
 
@@ -787,6 +840,7 @@ async def run_crawler_v2_once(
             session_factory,
             task_id=claimed.work_item_id,
             worker_id=claim_owner_id,
+            **failure_reporting,
         )
     elif claimed.kind is CrawlerV2WorkKind.CHUNK:
         from .chunk_worker import run_crawler_v2_chunk_worker_once
@@ -795,6 +849,7 @@ async def run_crawler_v2_once(
             session_factory,
             chunk_id=claimed.work_item_id,
             worker_id=claim_owner_id,
+            **failure_reporting,
         )
     elif claimed.kind is CrawlerV2WorkKind.ENRICHMENT:
         from .enrichment_worker import run_crawler_v2_enrichment_worker_once
@@ -803,6 +858,7 @@ async def run_crawler_v2_once(
             session_factory,
             task_id=claimed.work_item_id,
             worker_id=claim_owner_id,
+            **failure_reporting,
         )
     else:
         return 0

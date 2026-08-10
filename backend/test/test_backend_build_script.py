@@ -138,14 +138,23 @@ class BackendBuildScriptTest(unittest.TestCase):
                 self.assertEqual(api_hook["hiddenimports"], [])
 
     def test_runs_packaged_backend_self_check_after_build(self) -> None:
-        content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
-
-        self.assertIn('Join-Path $BackendDir "dist\\backend\\backend.exe"', content)
-        self.assertIn("--self-check", content)
+        for script_name in ["build-backend.ps1", "build-backend.sh"]:
+            with self.subTest(script_name=script_name):
+                content = (BUILD_SCRIPTS_ROOT / script_name).read_text(encoding="utf-8")
+                self.assertIn("--self-check", content)
+                for role in ["api", "worker", "combined"]:
+                    self.assertIn(role, content)
+        powershell_content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'Join-Path $BackendDir "dist\\backend\\backend.exe"',
+            powershell_content,
+        )
         self.assertIn(
             '& $PackagedBackendExe --document-self-check '
             '(Join-Path $BackendDir "test\\fixtures\\document_extraction")',
-            content,
+            powershell_content,
         )
 
     def test_backend_packaging_uses_noarchive_for_smaller_differential_updates(self) -> None:
@@ -193,7 +202,7 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn('--add-data "$AlembicIni:."', content)
         self.assertIn('--add-data "$AlembicDir:alembic"', content)
         self.assertIn('--add-data "$DocumentExtractionNotice:licenses"', content)
-        self.assertIn('"$PackagedBackendExe" --self-check', content)
+        self.assertIn('"$PackagedBackendExe" --role "$BackendRole" --self-check', content)
         self.assertIn(
             '"$PackagedBackendExe" --document-self-check '
             '"$BackendDir/test/fixtures/document_extraction"',

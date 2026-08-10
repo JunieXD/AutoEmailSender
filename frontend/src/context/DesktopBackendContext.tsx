@@ -39,7 +39,9 @@ export const DesktopBackendProvider = ({ children }: PropsWithChildren) => {
     const unsubscribe = window.autoEmailSender?.onBackendStatus?.((nextStatus) => {
       setStatus(nextStatus);
       updateDesktopBackendBaseUrl(
-        nextStatus.state === "ready" ? nextStatus.baseUrl : null,
+        nextStatus.state === "ready" || nextStatus.state === "degraded"
+          ? nextStatus.baseUrl
+          : null,
       );
 
       try {
@@ -60,7 +62,9 @@ export const DesktopBackendProvider = ({ children }: PropsWithChildren) => {
   }, []);
 
   const value = useMemo<DesktopBackendContextValue>(() => {
-    const isReady = !isDesktop || status?.state === "ready";
+    const isReady = !isDesktop
+      || status?.state === "ready"
+      || status?.state === "degraded";
     return {
       status,
       isDesktop,

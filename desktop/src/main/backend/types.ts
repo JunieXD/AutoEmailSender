@@ -20,20 +20,31 @@ export type BackendEnvInput = {
   appVersion: string;
   electronExecutablePath: string;
   runtimeId: string;
+  role?: BackendRole;
+  apiPid?: number;
+  workerGeneration?: string;
   uiAccessToken?: string;
   agentAccessToken?: string;
 };
+
+export type BackendMode = "combined" | "split";
+export type BackendRole = "api" | "worker" | "combined";
 
 export type BackendController = {
   baseUrl: string;
   backendPid: number;
   backendStartedAt: string;
+  workerPid?: number;
+  workerStartedAt?: string;
+  workerGeneration?: string;
+  mode: BackendMode;
   runtimeId: string;
   uiAccessToken: string;
   agentAccessToken: string;
   getRuntimeInfo: () => Promise<BackendRuntimeInfo>;
   ready: Promise<void>;
   onStatus: (handler: (status: DesktopBackendStatus) => void) => () => void;
+  notifySystemResume?: () => void;
   stop: () => Promise<void>;
 };
 

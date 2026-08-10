@@ -4,6 +4,7 @@ import traceback
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
+from app.core.diagnostic_redaction import sanitize_diagnostic_text
 from app.core.sqlite_diagnostics import sqlite_lock_diagnostic_line
 
 BACKEND_ERROR_LOG_NAME = "backend-errors.log"
@@ -13,7 +14,7 @@ def _append_backend_error_entry(entry: str) -> None:
     log_dir = get_settings().data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / BACKEND_ERROR_LOG_NAME).open("a", encoding="utf-8", newline="\n") as file:
-        file.write(entry)
+        file.write(sanitize_diagnostic_text(entry))
 
 
 def write_backend_error_log(

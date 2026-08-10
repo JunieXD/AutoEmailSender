@@ -4,10 +4,26 @@ set -euo pipefail
 
 usage() {
   echo "Usage: $0 [--force-full] [--quick]" >&2
+  echo "          [--candidate-installer PATH] [--candidate-installer-sha256 HEX]" >&2
+  echo "          [--candidate-manifest PATH] [--candidate-run-id N]" >&2
+  echo "          [--previous-installer PATH] [--previous-installer-sha256 HEX]" >&2
+  echo "          [--normal-soak] [--seeded-chaos]" >&2
+  echo "          [--normal-soak-seconds N] [--seeded-chaos-seconds N] [--seed N]" >&2
 }
 
 force_full=0
 qa_mode="release"
+run_normal_soak=0
+run_seeded_chaos=0
+normal_soak_seconds=86400
+seeded_chaos_seconds=28800
+seeded_chaos_seed=20260810
+previous_installer=""
+previous_installer_sha256=""
+candidate_installer=""
+candidate_installer_sha256=""
+candidate_manifest=""
+candidate_run_id=""
 while (($#)); do
   case "$1" in
     --force-full)
@@ -15,6 +31,48 @@ while (($#)); do
       ;;
     --quick)
       qa_mode="quick"
+      ;;
+    --normal-soak)
+      run_normal_soak=1
+      ;;
+    --seeded-chaos)
+      run_seeded_chaos=1
+      ;;
+    --normal-soak-seconds)
+      normal_soak_seconds="${2:-}"
+      shift
+      ;;
+    --seeded-chaos-seconds)
+      seeded_chaos_seconds="${2:-}"
+      shift
+      ;;
+    --seed)
+      seeded_chaos_seed="${2:-}"
+      shift
+      ;;
+    --previous-installer)
+      previous_installer="${2:-}"
+      shift
+      ;;
+    --previous-installer-sha256)
+      previous_installer_sha256="${2:-}"
+      shift
+      ;;
+    --candidate-installer)
+      candidate_installer="${2:-}"
+      shift
+      ;;
+    --candidate-installer-sha256)
+      candidate_installer_sha256="${2:-}"
+      shift
+      ;;
+    --candidate-manifest)
+      candidate_manifest="${2:-}"
+      shift
+      ;;
+    --candidate-run-id)
+      candidate_run_id="${2:-}"
+      shift
       ;;
     *)
       usage
@@ -24,18 +82,107 @@ while (($#)); do
   shift
 done
 
+if [[ "$qa_mode" == "quick" ]] && ((run_normal_soak || run_seeded_chaos)); then
+  echo "--quick 不能与长稳认证参数一起使用。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "quick" ]] && [[ -n "$previous_installer" || -n "$previous_installer_sha256" || -n "$candidate_installer" || -n "$candidate_installer_sha256" || -n "$candidate_manifest" || -n "$candidate_run_id" ]]; then
+  echo "--quick 不接受正式候选或上一稳定版安装包参数。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && -z "$previous_installer" ]]; then
+  echo "正式 Windows QA 必须用 --previous-installer 指定上一稳定版真实 NSIS 安装包。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && ! "$previous_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "正式 Windows QA 必须用 --previous-installer-sha256 绑定公开稳定版摘要。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && -z "$candidate_installer" ]]; then
+  echo "正式 Windows QA 必须用 --candidate-installer 指定候选 workflow 的确切 NSIS 安装包。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && ! "$candidate_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "正式 Windows QA 必须用 --candidate-installer-sha256 绑定候选清单摘要。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && -z "$candidate_manifest" ]]; then
+  echo "正式 Windows QA 必须用 --candidate-manifest 指定同一 workflow 的 release-candidate.json。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && ! "$candidate_run_id" =~ ^[1-9][0-9]*$ ]]; then
+  echo "正式 Windows QA 必须用 --candidate-run-id 绑定正整数 workflow run ID。" >&2
+  exit 2
+fi
+if [[ -n "$previous_installer" && ! -f "$previous_installer" ]]; then
+  echo "上一稳定版安装包不存在: $previous_installer" >&2
+  exit 2
+fi
+if [[ -n "$candidate_installer" && ! -f "$candidate_installer" ]]; then
+  echo "候选 Windows 安装包不存在: $candidate_installer" >&2
+  exit 2
+fi
+if [[ -n "$candidate_manifest" && ! -f "$candidate_manifest" ]]; then
+  echo "候选认证清单不存在: $candidate_manifest" >&2
+  exit 2
+fi
+if [[ ! "$normal_soak_seconds" =~ ^[0-9]+$ ]] || ((normal_soak_seconds < 86400)); then
+  echo "--normal-soak-seconds 至少为 86400。" >&2
+  exit 2
+fi
+if [[ ! "$seeded_chaos_seconds" =~ ^[0-9]+$ ]] || ((seeded_chaos_seconds < 28800)); then
+  echo "--seeded-chaos-seconds 至少为 28800。" >&2
+  exit 2
+fi
+if [[ ! "$seeded_chaos_seed" =~ ^-?[0-9]+$ ]]; then
+  echo "--seed 必须是整数。" >&2
+  exit 2
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
+target_revision="$(git -C "$repo_root" rev-parse HEAD)"
+current_app_version="$(cd "$repo_root" && node -p "require('./desktop/package.json').version")"
 vm_name="${AUTO_EMAIL_SENDER_WINDOWS_VM_NAME:-Windows 11}"
 guest_checkout="${AUTO_EMAIL_SENDER_WINDOWS_QA_CHECKOUT:-C:\Users\junie\Projects\AutoEmailSender-Windows-QA}"
 host_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR:-$HOME/Parallels Shared}"
 guest_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR:-Z:}"
 guest_transfer_dir="${guest_transfer_dir//\\//}"
 guest_transfer_dir="${guest_transfer_dir%/}"
+expected_previous_version=""
+if [[ "$qa_mode" == "release" ]]; then
+  if ! previous_tag="$(git -C "$repo_root" describe --tags --abbrev=0 --match 'v*' HEAD)"; then
+    echo "无法从当前 SHA 推导上一稳定版 tag。" >&2
+    exit 1
+  fi
+  expected_previous_version="${previous_tag#v}"
+  if [[ ! "$expected_previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    echo "上一稳定版 tag 格式无效: $previous_tag" >&2
+    exit 1
+  fi
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This host runner requires macOS with Parallels Desktop." >&2
   exit 1
+fi
+if [[ -n "$previous_installer" ]]; then
+  actual_previous_sha256="$(/usr/bin/shasum -a 256 "$previous_installer" | /usr/bin/awk '{print $1}')"
+  actual_previous_sha256="$(printf '%s' "$actual_previous_sha256" | tr '[:upper:]' '[:lower:]')"
+  expected_previous_sha256="$(printf '%s' "$previous_installer_sha256" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_previous_sha256" != "$expected_previous_sha256" ]]; then
+    echo "上一稳定版 Windows 安装包 SHA-256 与期望值不一致。" >&2
+    exit 1
+  fi
+fi
+if [[ -n "$candidate_installer" ]]; then
+  actual_candidate_sha256="$(/usr/bin/shasum -a 256 "$candidate_installer" | /usr/bin/awk '{print $1}')"
+  actual_candidate_sha256="$(printf '%s' "$actual_candidate_sha256" | tr '[:upper:]' '[:lower:]')"
+  expected_candidate_sha256="$(printf '%s' "$candidate_installer_sha256" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual_candidate_sha256" != "$expected_candidate_sha256" ]]; then
+    echo "Windows 候选安装包 SHA-256 与候选清单不一致。" >&2
+    exit 1
+  fi
 fi
 
 if ! command -v prlctl >/dev/null 2>&1; then
@@ -43,9 +190,19 @@ if ! command -v prlctl >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
-  echo "Windows release QA only tests committed code. Commit tracked changes first." >&2
+if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+  echo "Windows release QA only tests a completely clean committed worktree." >&2
   exit 1
+fi
+
+if [[ "$qa_mode" == "release" ]]; then
+  node "$repo_root/scripts/release/release-candidate.mjs" asset \
+    --manifest "$candidate_manifest" \
+    --platform windows \
+    --release-sha "$target_revision" \
+    --run-id "$candidate_run_id" \
+    --version "$current_app_version" \
+    --asset "$candidate_installer"
 fi
 
 if [[ ! -d "$host_transfer_dir" || ! -w "$host_transfer_dir" ]]; then
@@ -63,15 +220,30 @@ transfer_id="$$"
 bundle_name="AutoEmailSender-Windows-QA-$transfer_id.bundle"
 runner_name="run-windows-release-qa-$transfer_id.ps1"
 probe_name=".auto-email-sender-windows-qa-$transfer_id.probe"
+previous_installer_name="AutoEmailSender-Previous-$transfer_id.exe"
+candidate_installer_name="AutoEmailSender-Candidate-$transfer_id.exe"
+candidate_manifest_name="release-candidate-$transfer_id.json"
 bundle_path="$host_transfer_dir/$bundle_name"
 runner_path="$host_transfer_dir/$runner_name"
 probe_path="$host_transfer_dir/$probe_name"
+previous_installer_transfer_path="$host_transfer_dir/$previous_installer_name"
+candidate_installer_transfer_path="$host_transfer_dir/$candidate_installer_name"
+candidate_manifest_transfer_path="$host_transfer_dir/$candidate_manifest_name"
 guest_runner_path="$guest_transfer_dir/$runner_name"
 guest_bundle_path="$guest_transfer_dir/$bundle_name"
 guest_probe_path="$guest_transfer_dir/$probe_name"
+guest_previous_installer_path="$guest_transfer_dir/$previous_installer_name"
+guest_candidate_installer_path="$guest_transfer_dir/$candidate_installer_name"
+guest_candidate_manifest_path="$guest_transfer_dir/$candidate_manifest_name"
 
 cleanup() {
-  rm -f -- "$bundle_path" "$runner_path" "$probe_path"
+  rm -f -- \
+    "$bundle_path" \
+    "$runner_path" \
+    "$probe_path" \
+    "$previous_installer_transfer_path" \
+    "$candidate_installer_transfer_path" \
+    "$candidate_manifest_transfer_path"
 }
 trap cleanup EXIT
 
@@ -94,8 +266,6 @@ then
   exit 1
 fi
 
-target_revision="$(git -C "$repo_root" rev-parse HEAD)"
-
 guest_revision="$({
   prlctl exec "$vm_name" --current-user powershell.exe \
     -NoLogo \
@@ -115,6 +285,15 @@ else
   git -C "$repo_root" bundle verify "$bundle_path"
 fi
 cp "$script_dir/run-windows-release-qa.ps1" "$runner_path"
+if [[ -n "$previous_installer" ]]; then
+  cp "$previous_installer" "$previous_installer_transfer_path"
+fi
+if [[ -n "$candidate_installer" ]]; then
+  cp "$candidate_installer" "$candidate_installer_transfer_path"
+fi
+if [[ -n "$candidate_manifest" ]]; then
+  cp "$candidate_manifest" "$candidate_manifest_transfer_path"
+fi
 
 echo "Running Windows $qa_mode QA for ${target_revision:0:12} in $vm_name"
 guest_args=(
@@ -132,7 +311,32 @@ fi
 if [[ -n "$guest_revision" && "$guest_revision" != "$target_revision" ]]; then
   guest_args+=(-PreviousRevision "$guest_revision")
 fi
+if [[ -n "$previous_installer" ]]; then
+  guest_args+=(
+    -PreviousInstallerPath "$guest_previous_installer_path"
+    -ExpectedPreviousVersion "$expected_previous_version"
+    -ExpectedPreviousPackageSha256 "$previous_installer_sha256"
+  )
+fi
+if [[ -n "$candidate_installer" ]]; then
+  guest_args+=(
+    -CandidateInstallerPath "$guest_candidate_installer_path"
+    -ExpectedCandidatePackageSha256 "$candidate_installer_sha256"
+    -CandidateManifestPath "$guest_candidate_manifest_path"
+    -ExpectedCandidateRunId "$candidate_run_id"
+  )
+fi
 if ((force_full)); then
   guest_args+=(-ForceFull)
+fi
+if ((run_normal_soak)); then
+  guest_args+=(-RunNormalSoak -NormalSoakDurationSeconds "$normal_soak_seconds")
+fi
+if ((run_seeded_chaos)); then
+  guest_args+=(
+    -RunSeededChaos
+    -SeededChaosDurationSeconds "$seeded_chaos_seconds"
+    -SeededChaosSeed "$seeded_chaos_seed"
+  )
 fi
 prlctl exec "$vm_name" --current-user powershell.exe "${guest_args[@]}"

@@ -32,6 +32,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pyinstaller>=6.20.0",
+    "psutil>=7.0.0",
     "ruff>=0.16.1",
 ]
 

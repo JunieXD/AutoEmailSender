@@ -247,6 +247,75 @@ export async function verifyCandidateManifest({
   return manifest;
 }
 
+export async function verifyCandidateAsset({
+  manifest,
+  platform,
+  releaseSha,
+  runId,
+  version,
+  assetPath,
+}) {
+  if (!new Set(["windows", "macos"]).has(platform)) {
+    throw new Error(`不支持 packaged QA 候选平台：${platform}`);
+  }
+  const normalizedSha = normalizeSha(releaseSha);
+  const normalizedRunId = normalizeRunId(runId);
+  const normalizedVersion = String(version).trim();
+  const expectedTag = `v${normalizedVersion}`;
+  const normalizedTag = normalizeReleaseTag(expectedTag);
+  assertIdentity(manifest.schemaVersion, SCHEMA_VERSION, "候选报告 schemaVersion");
+  assertIdentity(manifest.kind, CANDIDATE_KIND, "候选报告 kind");
+  assertIdentity(manifest.releaseTag, normalizedTag.tag, "候选报告 releaseTag");
+  assertIdentity(manifest.version, normalizedTag.version, "候选报告 version");
+  assertIdentity(manifest.releaseSha, normalizedSha, "候选报告 releaseSha");
+  assertIdentity(manifest.candidateRunId, normalizedRunId, "候选报告 candidateRunId");
+
+  const evidence = manifest.platforms?.[platform];
+  if (!evidence) throw new Error(`候选报告缺少 ${platform} 证据。`);
+  assertIdentity(evidence.schemaVersion, SCHEMA_VERSION, `${platform} 证据 schemaVersion`);
+  assertIdentity(evidence.kind, PLATFORM_KIND, `${platform} 证据 kind`);
+  assertIdentity(evidence.platform, platform, `${platform} 证据 platform`);
+  assertIdentity(evidence.releaseTag, normalizedTag.tag, `${platform} 证据 releaseTag`);
+  assertIdentity(evidence.version, normalizedTag.version, `${platform} 证据 version`);
+  assertIdentity(evidence.releaseSha, normalizedSha, `${platform} 证据 releaseSha`);
+  assertIdentity(evidence.candidateRunId, normalizedRunId, `${platform} 证据 candidateRunId`);
+
+  const expectedName = platform === "windows"
+    ? `AutoEmailSender-Setup-${normalizedTag.version}.exe`
+    : `AutoEmailSender-${normalizedTag.version}-arm64.dmg`;
+  const resolvedAssetPath = path.resolve(assetPath);
+  assertIdentity(path.basename(resolvedAssetPath), expectedName, `${platform} 候选资产名`);
+  if (!Array.isArray(evidence.artifacts)) {
+    throw new Error(`${platform} 候选资产记录不是数组。`);
+  }
+  const records = evidence.artifacts.filter((record) => record?.name === expectedName);
+  if (records.length !== 1) {
+    throw new Error(`${platform} 候选报告必须恰好包含一个 ${expectedName} 记录。`);
+  }
+  const record = records[0];
+  if (!Number.isSafeInteger(record.size) || record.size <= 0) {
+    throw new Error(`${platform} 候选资产记录的 size 无效。`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(record.sha256 ?? "")) {
+    throw new Error(`${platform} 候选资产记录的 SHA-256 无效。`);
+  }
+  const fileStat = await stat(resolvedAssetPath);
+  if (!fileStat.isFile() || fileStat.size <= 0) {
+    throw new Error(`${platform} 候选资产为空或不是文件：${resolvedAssetPath}`);
+  }
+  assertIdentity(fileStat.size, record.size, `${platform} 候选资产 size`);
+  const digest = await sha256File(resolvedAssetPath);
+  assertIdentity(digest, record.sha256, `${platform} 候选资产 SHA-256`);
+  return {
+    platform,
+    releaseTag: normalizedTag.tag,
+    version: normalizedTag.version,
+    releaseSha: normalizedSha,
+    candidateRunId: normalizedRunId,
+    asset: { name: expectedName, size: fileStat.size, sha256: digest },
+  };
+}
+
 function platformInputs(options) {
   return Object.fromEntries(
     ["windows", "macos", "skill"].map((platform) => [
@@ -309,7 +378,22 @@ async function main() {
     console.log(`[ok] ${manifest.releaseTag} 候选报告、公告和全部资产摘要一致。`);
     return;
   }
-  throw new Error("用法: release-candidate.mjs <platform|candidate|verify> [options]");
+  if (mode === "asset") {
+    const manifest = JSON.parse(await readFile(path.resolve(requireOption(options, "manifest")), "utf8"));
+    const evidence = await verifyCandidateAsset({
+      manifest,
+      platform: requireOption(options, "platform"),
+      releaseSha: requireOption(options, "release_sha"),
+      runId: requireOption(options, "run_id"),
+      version: requireOption(options, "version"),
+      assetPath: requireOption(options, "asset"),
+    });
+    console.log(
+      `[ok] ${evidence.platform} ${evidence.asset.name} 已绑定候选 run ${evidence.candidateRunId}。`,
+    );
+    return;
+  }
+  throw new Error("用法: release-candidate.mjs <platform|candidate|verify|asset> [options]");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

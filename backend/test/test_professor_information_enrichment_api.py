@@ -175,7 +175,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
-    def test_cancel_clears_cached_profile_text_for_canceled_items(self) -> None:
+    def test_cancel_correctness_does_not_depend_on_process_local_cache_invalidation(self) -> None:
         from app.modules.crawler.v2.profile_text_cache import profile_text_cache
 
         professor_id = self._create_professor(
@@ -193,13 +193,22 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = int(created.json()["id"])
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
-            candidate_id = int(
-                connection.execute(
-                    "SELECT candidate_id FROM crawl_candidate_enrichment_tasks WHERE job_id = ?",
+            candidate_id, run_id = connection.execute(
+                    """
+                    SELECT task.candidate_id, job.current_run_id
+                    FROM crawl_candidate_enrichment_tasks AS task
+                    JOIN crawl_jobs AS job ON job.id = task.job_id
+                    WHERE task.job_id = ?
+                    """,
                     (job_id,),
-                ).fetchone()[0]
-            )
-        cache_key = (999, job_id, candidate_id, "https://example.edu/cancel")
+                ).fetchone()
+        cache_key = (
+            999,
+            job_id,
+            int(run_id),
+            int(candidate_id),
+            "https://example.edu/cancel",
+        )
         profile_text_cache.put(cache_key, "cached profile")
 
         canceled = self.client.post(
@@ -207,7 +216,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         )
 
         self.assertEqual(canceled.status_code, 200, msg=canceled.text)
-        self.assertNotIn(cache_key, profile_text_cache)
+        # The API process deliberately does not mutate the Worker process's LRU.
+        # Persisted task/job state is the cancellation fence.
+        self.assertIn(cache_key, profile_text_cache)
         items = self.client.get(
             f"/api/professor-information-enrichment-jobs/{job_id}/items",
         )

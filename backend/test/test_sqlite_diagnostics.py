@@ -112,6 +112,43 @@ class SQLiteDiagnosticsTests(unittest.TestCase):
         self.assertIn("database_lock=1", log_text)
         self.assertIn("request_id=lock-request POST /api/test", log_text)
 
+    def test_backend_error_log_redacts_credentials_and_body_fields(self) -> None:
+        from app.core.backend_error_logging import write_backend_error_log
+        from app.core.config import get_settings
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            get_settings.cache_clear()
+            os.environ["AUTO_EMAIL_SENDER_DATA_DIR"] = temp_dir
+            try:
+                try:
+                    raise RuntimeError(
+                        "request failed token=secret-token password=secret-password "
+                        "body=private-message request_body=private-request"
+                    )
+                except RuntimeError as exc:
+                    write_backend_error_log(
+                        request_id="redaction-request",
+                        method="POST",
+                        path="/api/test",
+                        exc=exc,
+                    )
+            finally:
+                os.environ.pop("AUTO_EMAIL_SENDER_DATA_DIR", None)
+                get_settings.cache_clear()
+
+            log_text = (Path(temp_dir) / "logs" / "backend-errors.log").read_text(
+                encoding="utf-8",
+            )
+
+        self.assertIn("token=[REDACTED]", log_text)
+        self.assertIn("password=[REDACTED]", log_text)
+        self.assertIn("body=[REDACTED]", log_text)
+        self.assertIn("request_body=[REDACTED]", log_text)
+        self.assertNotIn("secret-token", log_text)
+        self.assertNotIn("secret-password", log_text)
+        self.assertNotIn("private-message", log_text)
+        self.assertNotIn("private-request", log_text)
+
 
 if __name__ == "__main__":
     unittest.main()

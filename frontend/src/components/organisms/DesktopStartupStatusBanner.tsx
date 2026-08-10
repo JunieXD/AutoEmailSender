@@ -8,6 +8,22 @@ export const DesktopStartupStatusBanner = () => {
     return null;
   }
 
+  if (status.state === "degraded") {
+    return (
+      <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-950">
+        <div className="mx-auto flex max-w-7xl items-start gap-3">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
+          <div>
+            <div className="font-medium">{status.message}</div>
+            <div className="mt-1 text-amber-900">
+              查询、编辑和其他即时操作仍可正常使用；定时发送、抓取等后台任务恢复后会自动继续。
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (status.state === "error" && status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
     return (
       <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-950">

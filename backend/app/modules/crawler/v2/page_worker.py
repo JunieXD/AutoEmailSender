@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.time import as_utc_aware, utc_now
+from app.core.fault_injection import wait_at_fault_point
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -51,6 +52,7 @@ async def run_crawler_v2_page_worker_once(
     *,
     task_id: int,
     worker_id: str,
+    raise_after_failure: bool = False,
 ) -> int:
     async with session_factory() as session:
         task = await session.get(CrawlPageTask, task_id)
@@ -81,9 +83,15 @@ async def run_crawler_v2_page_worker_once(
             university=job.university,
             school=job.school,
             start_url=job.start_url,
+            claim_fence=CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.PAGE,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
         )
 
     try:
+        await wait_at_fault_point("crawler_page.before_external_call")
         if force_browser:
             direct_status = "skipped_for_zero_candidate_retry"
             fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
@@ -137,6 +145,7 @@ async def run_crawler_v2_page_worker_once(
                 if browser_snapshot.status == "succeeded" or direct_snapshot.status != "succeeded":
                     snapshot = browser_snapshot
                     fetch_mode = "browser"
+        await wait_at_fault_point("crawler_page.external_call_returned")
         async with session_factory() as session:
             if not await fence_crawler_v2_claim(
                 session,
@@ -186,6 +195,8 @@ async def run_crawler_v2_page_worker_once(
                 "snapshot": _snapshot_debug_payload(snapshot),
             },
         )
+        if snapshot.status != "succeeded" and raise_after_failure:
+            raise RuntimeError(snapshot.error_message or "Crawler page fetch failed")
         if snapshot.status == "succeeded":
             if job.entry_type == "profile":
                 await _extract_profile_for_page_snapshot(
@@ -373,6 +384,8 @@ async def run_crawler_v2_page_worker_once(
             if task is not None and _page_task_owned_by_worker(task, worker_id):
                 _mark_page_failed(task, format_llm_runtime_error_for_user(exc))
             await session.commit()
+        if raise_after_failure:
+            raise
         return 1
 
 
@@ -509,6 +522,7 @@ async def _record_page_and_state(
             title=snapshot.title,
             text_excerpt=(snapshot.text or "")[:2000],
             error_message=snapshot.error_message,
+            created_at=utc_now(),
         )
         session.add(page)
         await session.flush()
@@ -630,10 +644,13 @@ async def _complete_list_page_routing(
         )
         task.allow_expansion = effective_allow_expansion
         task.status = CrawlPageTaskStatus.SUCCEEDED.value
+        task.last_error = None
         task.worker_id = None
         task.claimed_at = None
         task.lease_expires_at = None
+        await wait_at_fault_point("crawler_page.before_final_commit")
         await session.commit()
+        await wait_at_fault_point("crawler_page.after_final_commit")
         result: dict[str, int | bool | str] = {
             "status": "completed",
             "queued_count": queued_count,
@@ -898,10 +915,13 @@ async def _complete_profile_page_extraction(
         if not await ensure_job_active(session, task.job_id):
             return
         task.status = CrawlPageTaskStatus.SUCCEEDED.value
+        task.last_error = None
         task.worker_id = None
         task.claimed_at = None
         task.lease_expires_at = None
+        await wait_at_fault_point("crawler_page.before_final_commit")
         await session.commit()
+        await wait_at_fault_point("crawler_page.after_final_commit")
     append_crawler_v2_debug_event(
         job_id,
         worker_kind="page",

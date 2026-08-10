@@ -8,7 +8,7 @@ class CrawlerModuleBoundaryTest(unittest.TestCase):
         from app.modules.crawler import public, schemas
         from app.modules.crawler.jobs import records, recovery, runs
         from app.modules.crawler.pages import debug, tools
-        from app.modules.crawler.v2 import profile_text_cache, scheduler
+        from app.modules.crawler.v2 import scheduler
 
         self.assertIs(public.CrawlJobCreatePayload, schemas.CrawlJobCreatePayload)
         self.assertIs(
@@ -24,7 +24,6 @@ class CrawlerModuleBoundaryTest(unittest.TestCase):
             public.validate_safe_public_crawl_url,
             tools.validate_safe_public_crawl_url,
         )
-        self.assertIs(public.profile_text_cache, profile_text_cache.profile_text_cache)
         self.assertIs(
             public.recover_interrupted_crawl_jobs,
             recovery.recover_interrupted_crawl_jobs,

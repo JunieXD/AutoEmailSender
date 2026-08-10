@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getActivePackagedQaUserDataPath } from "../packaged-qa/user-data.js";
 import { checkForMacSparkleUpdates, startMacSparkle } from "./sparkle.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
 import type {
@@ -224,6 +225,10 @@ function getUpdateCacheRoot(): string {
 }
 
 function getElectronUpdaterCacheRoot(): string {
+  const packagedQaUserDataPath = getActivePackagedQaUserDataPath();
+  if (packagedQaUserDataPath !== null) {
+    return path.join(packagedQaUserDataPath, "electron-updater-cache");
+  }
   const baseCachePath =
     process.platform === "win32"
       ? process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local")
@@ -321,6 +326,9 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
 }
 
 export function checkForUpdatesOnStartup(getWindow: () => BrowserWindow | null): void {
+  if (getActivePackagedQaUserDataPath() !== null) {
+    return;
+  }
   const mode = resolveStartupUpdateMode({
     isPackaged: app.isPackaged,
     platform: process.platform,

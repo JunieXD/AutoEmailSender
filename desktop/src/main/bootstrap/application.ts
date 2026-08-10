@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, powerMonitor, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -8,7 +8,11 @@ import type {
   DesktopStartupAtLoginStatus as StartupAtLoginStatus,
 } from "../../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
-import { getFrontendIndexPath, startBackend } from "../backend/service.js";
+import {
+  getFrontendIndexPath,
+  resolveBackendMode,
+  startBackend,
+} from "../backend/service.js";
 import { createDesktopBackendClient } from "../backend/client.js";
 import type {
   BackendController,
@@ -40,6 +44,7 @@ import {
   startWindowCreationOnce,
 } from "../shell/window-lifecycle.js";
 import { createTrayIcon, getWindowIconPath } from "../shell/window-icon.js";
+import { getActivePackagedQaIsolatedHomePath } from "../packaged-qa/user-data.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -67,9 +72,13 @@ const desktopBackendClient = createDesktopBackendClient({
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
-const agentSupportHomePath = !app.isPackaged && process.env.AUTO_EMAIL_SENDER_AGENT_HOME?.trim()
-  ? path.resolve(process.env.AUTO_EMAIL_SENDER_AGENT_HOME)
-  : app.getPath("home");
+const packagedQaIsolatedHomePath = getActivePackagedQaIsolatedHomePath();
+const agentSupportHomePath = packagedQaIsolatedHomePath
+  ?? (
+    !app.isPackaged && process.env.AUTO_EMAIL_SENDER_AGENT_HOME?.trim()
+      ? path.resolve(process.env.AUTO_EMAIL_SENDER_AGENT_HOME)
+      : app.getPath("home")
+  );
 const agentSupportService = createAgentSupportService({
   platform: process.platform,
   arch: process.arch,
@@ -324,6 +333,8 @@ async function startDesktopBackend(): Promise<BackendController> {
     resourcesPath: process.resourcesPath,
     repoRoot,
     userDataPath,
+    appVersion: app.getVersion(),
+    mode: resolveBackendMode(process.env.AUTO_EMAIL_SENDER_BACKEND_MODE),
     onUnexpectedExit: (exit) => {
       void restartBackendAfterUnexpectedExit(exit);
     },
@@ -357,6 +368,14 @@ async function publishAgentRuntimeDescriptor(
         pid: backendPid,
         started_at: controller.backendStartedAt,
       },
+      ...(controller.workerPid === undefined || controller.workerStartedAt === undefined
+        ? {}
+        : {
+            worker: {
+              pid: controller.workerPid,
+              started_at: controller.workerStartedAt,
+            },
+          }),
       published_at: new Date().toISOString(),
     },
   });
@@ -417,17 +436,26 @@ function publishBackendReady(controller: BackendController): void {
   };
   mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendConnection, currentBackendConnection);
   publishBackendStatus(createInitialBackendStatus());
-  const unsubscribe = controller.onStatus((status) => publishBackendStatus(status));
+  controller.onStatus((status) => {
+    publishBackendStatus(status);
+    if (status.state === "restarting") {
+      void removeAgentRuntime(controller);
+      return;
+    }
+    if (status.state === "ready" || status.state === "degraded") {
+      void finalizeAgentRuntimeDescriptor(controller).catch((error: unknown) => {
+        console.warn(`Unable to refresh Agent runtime descriptor: ${getErrorMessage(error)}`);
+      });
+    }
+  });
   controller.ready
     .then(() => {
-      unsubscribe();
       void finalizeAgentRuntimeDescriptor(controller).catch(async (error: unknown) => {
         await removeAgentRuntime(controller);
         console.warn(`Unable to finalize Agent runtime descriptor: ${getErrorMessage(error)}`);
       });
     })
     .catch((error: unknown) => {
-      unsubscribe();
       void removeAgentRuntime(controller);
       if (currentBackendStatus.state === "error") {
         return;
@@ -572,6 +600,9 @@ export function bootstrapDesktopApplication(): void {
     });
 
     app.whenReady().then(() => {
+      powerMonitor.on("resume", () => {
+        backend?.notifySystemResume?.();
+      });
       startWindowCreationOnce(windowCreationState, createWindow).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         dialog.showErrorBox("启动失败", message);

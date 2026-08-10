@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
+
+from app.core.fault_injection import resolve_test_clock_offset_seconds
 
 
 def utc_now() -> datetime:
     # time-check: ignore(core-time-primitive, reason="utc_now is the canonical wrapper")
-    return datetime.now(UTC)
+    current = datetime.now(UTC)
+    offset_seconds = resolve_test_clock_offset_seconds()
+    if offset_seconds:
+        current += timedelta(seconds=offset_seconds)
+    return current
 
 
 def as_utc_aware(value: datetime) -> datetime:

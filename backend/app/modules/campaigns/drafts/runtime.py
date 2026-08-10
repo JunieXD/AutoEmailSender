@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,6 +14,7 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.core.fault_injection import wait_at_fault_point
 from app.core.time import utc_now
 from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellationReason, EmailTaskSource, EmailTaskStatus, Professor
 from app.modules.campaigns.public import (
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 BATCH_DRAFT_LEASE = timedelta(seconds=90)
 BATCH_DRAFT_IDLE_POLL_SECONDS = 1.0
 BATCH_DRAFT_CANCEL_GRACE_SECONDS = 1.0
+BATCH_DRAFT_CANCEL_POLL_SECONDS = 1.0
 _BATCH_DRAFT_CLAIM_LOCK = asyncio.Lock()
 _DETACHED_GENERATION_TASKS: set[asyncio.Task[object]] = set()
 
@@ -93,9 +96,15 @@ class BatchDraftScheduler:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         coordinator: BatchDraftGenerationCoordinator,
+        on_iteration_started: Callable[[], None] | None = None,
+        on_iteration_succeeded: Callable[[], None] | None = None,
+        on_iteration_failed: Callable[[Exception], None] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._coordinator = coordinator
+        self._on_iteration_started = on_iteration_started
+        self._on_iteration_succeeded = on_iteration_succeeded
+        self._on_iteration_failed = on_iteration_failed
 
     async def run_forever(self, stopped: asyncio.Event) -> None:
         await self._run(stopped=stopped, stop_when_idle=False, concurrency_override=None)
@@ -118,6 +127,8 @@ class BatchDraftScheduler:
         claimed_count = 0
         try:
             while not stopped.is_set():
+                if self._on_iteration_started is not None:
+                    self._on_iteration_started()
                 try:
                     await recover_stale_generating_drafts(self._session_factory)
                     concurrency = concurrency_override
@@ -147,9 +158,13 @@ class BatchDraftScheduler:
                         )
                         in_flight[worker] = claim
                         claimed_count += 1
+                    if self._on_iteration_succeeded is not None:
+                        self._on_iteration_succeeded()
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as exc:
+                    if self._on_iteration_failed is not None:
+                        self._on_iteration_failed(exc)
                     logger.exception("批量草稿调度循环执行失败")
                     if stop_when_idle:
                         raise
@@ -244,12 +259,49 @@ async def recover_stale_generating_drafts(
         return recovered
 
 
+async def recover_interrupted_batch_draft_claims(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Recover every persisted automatic-draft claim after its Worker died.
+
+    This is deliberately independent of ``draft_lease_expires_at``.  The caller
+    must hold the exclusive Worker role lock (or be the API cold-start recovery
+    path after the old runtime group has stopped), so a claimed automatic draft
+    cannot still have a live Worker owner.  Manual workspace rewrites do not use
+    ``draft_claim_id`` and are therefore outside this recovery boundary.
+    """
+
+    resolved_now = now or utc_now()
+    async with session_factory() as session:
+        tasks = list(
+            await session.scalars(
+                select(EmailTask)
+                .options(selectinload(EmailTask.batch_task))
+                .where(EmailTask.draft_claim_id.is_not(None)),
+            )
+        )
+        recovered = 0
+        for task in tasks:
+            recovered += await _recover_stale_batch_draft_task(
+                session,
+                task,
+                now=resolved_now,
+                cutoff=resolved_now,
+                require_expired_claim=False,
+            )
+        await session.commit()
+        return recovered
+
+
 async def _recover_stale_batch_draft_task(
     session: AsyncSession,
     task: EmailTask,
     *,
     now: datetime,
     cutoff: datetime,
+    require_expired_claim: bool = True,
 ) -> int:
     guards: list[object] = [EmailTask.id == task.id]
     values: dict[str, object | None] = {
@@ -263,15 +315,14 @@ async def _recover_stale_batch_draft_task(
     if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
         guards.append(EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value)
         if task.draft_claim_id is not None:
-            guards.extend(
-                [
-                    EmailTask.draft_claim_id == task.draft_claim_id,
+            guards.append(EmailTask.draft_claim_id == task.draft_claim_id)
+            if require_expired_claim:
+                guards.append(
                     or_(
                         EmailTask.draft_lease_expires_at.is_(None),
                         EmailTask.draft_lease_expires_at <= now,
-                    ),
-                ]
-            )
+                    )
+                )
         else:
             guards.extend(
                 [
@@ -524,6 +575,7 @@ async def _claim_next_queued_llm_draft(
             if task is None:
                 return None
 
+            await wait_at_fault_point("batch_draft.before_claim")
             now = utc_now()
             claim_id = str(uuid.uuid4())
             claim_result = await session.execute(
@@ -550,6 +602,7 @@ async def _claim_next_queued_llm_draft(
                 return None
             batch_task.draft_last_dispatched_at = now
             await session.commit()
+            await wait_at_fault_point("batch_draft.claim_committed")
             return BatchDraftClaim(
                 task_id=task.id,
                 batch_task_id=batch_task.id,
@@ -576,10 +629,13 @@ async def _run_claimed_batch_draft(
     heartbeat_task = asyncio.create_task(
         _renew_batch_draft_claim_until_lost(session_factory, claim)
     )
+    claim_watch_task = asyncio.create_task(
+        _watch_batch_draft_claim_until_lost(session_factory, claim)
+    )
     async with coordinator.track(claim.batch_task_id, generation_task):
         try:
             done, _ = await asyncio.wait(
-                {generation_task, heartbeat_task},
+                {generation_task, heartbeat_task, claim_watch_task},
                 timeout=WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS,
                 return_when=asyncio.FIRST_COMPLETED,
             )
@@ -591,8 +647,13 @@ async def _run_claimed_batch_draft(
                     WORKSPACE_DRAFT_REWRITE_TIMEOUT_MESSAGE,
                 )
                 return
-            if heartbeat_task in done:
-                claim_is_current = heartbeat_task.result()
+            if heartbeat_task in done or claim_watch_task in done:
+                completed_monitor = (
+                    heartbeat_task
+                    if heartbeat_task in done
+                    else claim_watch_task
+                )
+                claim_is_current = completed_monitor.result()
                 if not claim_is_current:
                     await _cancel_generation_task_with_grace(generation_task, claim)
                     await _release_batch_draft_claim(session_factory, claim)
@@ -617,8 +678,12 @@ async def _run_claimed_batch_draft(
             await _release_batch_draft_claim(session_factory, claim)
         finally:
             heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat_task
+            claim_watch_task.cancel()
+            await asyncio.gather(
+                heartbeat_task,
+                claim_watch_task,
+                return_exceptions=True,
+            )
 
 
 async def _cancel_generation_task_with_grace(
@@ -686,6 +751,59 @@ async def _renew_batch_draft_claim_until_lost(
                 claim.task_id,
             )
             return False
+
+
+async def _watch_batch_draft_claim_until_lost(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: BatchDraftClaim,
+    *,
+    poll_seconds: float | None = None,
+) -> bool:
+    """Poll persisted state so API-side cancellation crosses process boundaries."""
+
+    resolved_poll_seconds = (
+        BATCH_DRAFT_CANCEL_POLL_SECONDS
+        if poll_seconds is None
+        else poll_seconds
+    )
+    while True:
+        await asyncio.sleep(max(0.01, resolved_poll_seconds))
+        try:
+            if not await _batch_draft_claim_is_current(session_factory, claim):
+                return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A transient read failure is not proof that the claim was revoked. The
+            # lower-frequency lease heartbeat remains the fail-closed backstop.
+            logger.exception(
+                "批量草稿取消状态读取失败：task_id=%s",
+                claim.task_id,
+            )
+
+
+async def _batch_draft_claim_is_current(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: BatchDraftClaim,
+) -> bool:
+    now = utc_now()
+    async with session_factory() as session:
+        current = await session.scalar(
+            select(EmailTask.id)
+            .join(BatchTask, BatchTask.id == EmailTask.batch_task_id)
+            .where(
+                EmailTask.id == claim.task_id,
+                EmailTask.batch_task_id == claim.batch_task_id,
+                EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value,
+                EmailTask.draft_claim_id == claim.claim_id,
+                EmailTask.draft_lease_expires_at.is_not(None),
+                EmailTask.draft_lease_expires_at > now,
+                EmailTask.batch_send_canceled_at.is_(None),
+                BatchTask.status == BatchTaskStatus.RUNNING.value,
+                BatchTask.deleted_at.is_(None),
+            )
+        )
+        return current is not None
 
 
 async def _mark_batch_draft_claim_failed(

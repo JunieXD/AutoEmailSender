@@ -9,6 +9,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from app.core.config import get_settings
+from app.core.fault_injection import wait_at_fault_point_sync
+from app.core.instance_lock import DatabaseMigrationLock
 from app.core.schema_backup import create_schema_backup
 from app.core.schema_metadata import (
     get_current_app_version,
@@ -17,6 +19,10 @@ from app.core.schema_metadata import (
     get_sqlite_database_path,
     read_app_metadata,
     update_app_metadata,
+)
+from app.core.sqlite_runtime import (
+    configure_sqlite_runtime,
+    require_sqlite_runtime_ready,
 )
 
 ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
@@ -50,6 +56,13 @@ def get_current_database_revision(connection: sqlite3.Connection) -> str | None:
 
 def run_migrations_to_head() -> None:
     settings = get_settings()
+    with DatabaseMigrationLock(settings.data_dir):
+        wait_at_fault_point_sync("migration.lock_acquired")
+        _run_migrations_to_head_locked()
+
+
+def _run_migrations_to_head_locked() -> None:
+    settings = get_settings()
     database_path = get_sqlite_database_path(settings.database_url)
     config = get_alembic_config()
     target_revision = get_head_revision(config)
@@ -82,7 +95,9 @@ def run_migrations_to_head() -> None:
             target_schema_revision=target_revision,
         )
 
+    wait_at_fault_point_sync("migration.before_upgrade")
     command.upgrade(config, "head")
+    wait_at_fault_point_sync("migration.after_upgrade")
 
     if database_path is not None and database_path.exists() and should_update_metadata:
         connection = sqlite3.connect(database_path)
@@ -98,3 +113,34 @@ def run_migrations_to_head() -> None:
 
 async def ensure_database_schema() -> None:
     await asyncio.to_thread(run_migrations_to_head)
+    await asyncio.to_thread(configure_sqlite_runtime)
+
+
+def require_database_schema_at_head() -> None:
+    """Validate Worker schema compatibility without performing any migration."""
+
+    settings = get_settings()
+    database_path = get_sqlite_database_path(settings.database_url)
+    if database_path is None:
+        raise RuntimeError("Desktop Worker requires a SQLite database URL")
+    if not database_path.is_file():
+        raise RuntimeError("Desktop database does not exist; start the API before Worker")
+
+    config = get_alembic_config()
+    expected_revision = get_head_revision(config)
+    connection = sqlite3.connect(database_path)
+    try:
+        check_database_compatibility(
+            connection,
+            current_app_version=get_current_app_version(),
+            backup_directory=get_schema_backup_dir(settings.data_dir),
+        )
+        current_revision = get_current_database_revision(connection)
+    finally:
+        connection.close()
+    if current_revision != expected_revision:
+        raise RuntimeError(
+            "Desktop database schema is not current; "
+            f"expected {expected_revision}, found {current_revision or 'unversioned'}"
+        )
+    require_sqlite_runtime_ready()

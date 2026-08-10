@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import NO_VALUE
 
 from app.core.sqlite_diagnostics import sqlite_lock_user_message
+from app.core.fault_injection import wait_at_fault_point
 from app.core.time import local_now, utc_now
 from app.core.config import get_settings
 from app.models import (
@@ -30,6 +31,7 @@ from app.services.operation_logs import record_operation_log
 
 from .schemas import MatchAnalysisJobItemRead, MatchAnalysisJobRead
 from .task_analysis import (
+    MatchUsageSummary,
     MatchAnalysisAlreadyRunningError,
     MatchCalculationCanceledError,
     calculate_identity_professor_match,
@@ -294,6 +296,7 @@ async def run_queued_match_analysis_jobs_once(
 ) -> int:
     await _recover_expired_match_analysis_items(session_factory)
     await _finalize_cancel_requested_match_analysis_jobs(session_factory)
+    await _refresh_terminal_active_match_analysis_jobs(session_factory)
     first_claim = await _claim_next_match_analysis_item(session_factory)
     if first_claim is None:
         return 0
@@ -589,6 +592,7 @@ async def _claim_next_match_analysis_item(
                 return None
 
             item_id, job_id = int(candidate.id), int(candidate.job_id)
+            await wait_at_fault_point("matching.before_claim")
             now = utc_now()
             claim_id = str(uuid.uuid4())
             transition = await session.execute(
@@ -643,6 +647,7 @@ async def _claim_next_match_analysis_item(
                 )
             )
             await session.commit()
+            await wait_at_fault_point("matching.claim_committed")
             return _MatchAnalysisItemClaim(
                 job_id=job_id,
                 item_id=item_id,
@@ -654,10 +659,37 @@ async def _claim_next_match_analysis_item(
 async def _recover_expired_match_analysis_items(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> int:
+    return await _recover_match_analysis_items(session_factory, require_expired=True)
+
+
+async def recover_interrupted_match_analysis_job_items(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Recover all job-item claims after the exclusive Worker owner died."""
+
+    return await _recover_match_analysis_items(session_factory, require_expired=False)
+
+
+async def _recover_match_analysis_items(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    require_expired: bool,
+) -> int:
     now = utc_now()
     recovered_job_ids: set[int] = set()
     recovered = 0
     async with session_factory() as session:
+        row_conditions: list[object] = [
+            MatchAnalysisJobItem.status
+            == MatchAnalysisJobItemStatus.RUNNING.value,
+        ]
+        if require_expired:
+            row_conditions.append(
+                or_(
+                    MatchAnalysisJobItem.lease_expires_at.is_(None),
+                    MatchAnalysisJobItem.lease_expires_at <= now,
+                )
+            )
         rows = list(
             await session.execute(
                 select(
@@ -665,21 +697,14 @@ async def _recover_expired_match_analysis_items(
                     MatchAnalysisJobItem.job_id,
                     MatchAnalysisJobItem.professor_id,
                     MatchAnalysisJobItem.claim_id,
+                    MatchAnalysisJobItem.match_analysis_run_id,
                     MatchAnalysisJob.cancel_requested_at,
-                    MatchAnalysisJob.match_source_identity_id,
                 )
                 .join(
                     MatchAnalysisJob,
                     MatchAnalysisJob.id == MatchAnalysisJobItem.job_id,
                 )
-                .where(
-                    MatchAnalysisJobItem.status
-                    == MatchAnalysisJobItemStatus.RUNNING.value,
-                    or_(
-                        MatchAnalysisJobItem.lease_expires_at.is_(None),
-                        MatchAnalysisJobItem.lease_expires_at <= now,
-                    ),
-                )
+                .where(*row_conditions)
             )
         )
         for row in rows:
@@ -688,18 +713,22 @@ async def _recover_expired_match_analysis_items(
                 if row.cancel_requested_at is not None
                 else MatchAnalysisJobItemStatus.QUEUED.value
             )
-            transition = await session.execute(
-                update(MatchAnalysisJobItem)
-                .where(
-                    MatchAnalysisJobItem.id == row.id,
-                    MatchAnalysisJobItem.status
-                    == MatchAnalysisJobItemStatus.RUNNING.value,
-                    MatchAnalysisJobItem.claim_id == row.claim_id,
+            transition_conditions: list[object] = [
+                MatchAnalysisJobItem.id == row.id,
+                MatchAnalysisJobItem.status
+                == MatchAnalysisJobItemStatus.RUNNING.value,
+                MatchAnalysisJobItem.claim_id == row.claim_id,
+            ]
+            if require_expired:
+                transition_conditions.append(
                     or_(
                         MatchAnalysisJobItem.lease_expires_at.is_(None),
                         MatchAnalysisJobItem.lease_expires_at <= now,
-                    ),
+                    )
                 )
+            transition = await session.execute(
+                update(MatchAnalysisJobItem)
+                .where(*transition_conditions)
                 .values(
                     status=next_status,
                     claim_id=None,
@@ -718,19 +747,22 @@ async def _recover_expired_match_analysis_items(
                 continue
             recovered += 1
             recovered_job_ids.add(int(row.job_id))
-            if row.match_source_identity_id is not None:
+            if row.match_analysis_run_id is not None:
                 await session.execute(
                     update(MatchAnalysisRun)
                     .where(
-                        MatchAnalysisRun.identity_id == row.match_source_identity_id,
-                        MatchAnalysisRun.professor_id == row.professor_id,
+                        MatchAnalysisRun.id == row.match_analysis_run_id,
                         MatchAnalysisRun.status == "running",
                     )
                     .values(
                         status="failed",
                         success=False,
                         error_kind="interrupted",
-                        error_message="匹配分析工作项租约过期后恢复",
+                        error_message=(
+                            "匹配分析 Worker 中断后恢复"
+                            if not require_expired
+                            else "匹配分析工作项租约过期后恢复"
+                        ),
                         finished_at=now,
                     )
                 )
@@ -940,6 +972,8 @@ async def _run_match_analysis_job_item(
         )
         return
 
+    if getattr(result, "claim_finalized", False):
+        return
     if not await _match_analysis_claim_is_current(session_factory, claim):
         return
     if await _is_match_analysis_job_cancel_requested(
@@ -1059,6 +1093,21 @@ async def _calculate_identity_professor_match_until_canceled(
             llm_profile_id=llm_profile_id,
             match_source_identity_id=match_source_identity_id,
             cancel_requested=cancel_requested,
+            run_started_guard=lambda session, run_id: (
+                _record_match_analysis_run_for_claim(
+                    session,
+                    claim,
+                    run_id=run_id,
+                )
+            ),
+            result_commit_guard=lambda session, run_id, usage: (
+                _commit_match_analysis_result_for_claim(
+                    session,
+                    claim,
+                    run_id=run_id,
+                    usage=usage,
+                )
+            ),
         )
     )
     try:
@@ -1075,6 +1124,125 @@ async def _calculate_identity_professor_match_until_canceled(
     finally:
         if not calculation_task.done():
             await _cancel_task_with_grace(calculation_task)
+
+
+async def _commit_match_analysis_result_for_claim(
+    session: AsyncSession,
+    claim: _MatchAnalysisItemClaim,
+    *,
+    run_id: int,
+    usage: MatchUsageSummary,
+) -> bool:
+    now = utc_now()
+    active_job = select(MatchAnalysisJob.id).where(
+        MatchAnalysisJob.id == claim.job_id,
+        MatchAnalysisJob.status.in_(
+            [
+                MatchAnalysisJobStatus.QUEUED.value,
+                MatchAnalysisJobStatus.RUNNING.value,
+            ]
+        ),
+        MatchAnalysisJob.cancel_requested_at.is_(None),
+        MatchAnalysisJob.deleted_at.is_(None),
+    )
+    transition = await session.execute(
+        update(MatchAnalysisJobItem)
+        .where(
+            MatchAnalysisJobItem.id == claim.item_id,
+            MatchAnalysisJobItem.job_id == claim.job_id,
+            MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+            MatchAnalysisJobItem.claim_id == claim.claim_id,
+            MatchAnalysisJobItem.lease_expires_at > now,
+            MatchAnalysisJobItem.job_id.in_(active_job),
+        )
+        .values(
+            status=MatchAnalysisJobItemStatus.SUCCEEDED.value,
+            match_analysis_run_id=run_id,
+            prompt_tokens=usage.prompt_tokens or 0,
+            completion_tokens=usage.completion_tokens or 0,
+            cached_tokens=usage.cached_tokens or 0,
+            total_tokens=usage.total_tokens or 0,
+            error_message=None,
+            skip_reason=None,
+            claim_id=None,
+            claimed_at=None,
+            lease_expires_at=None,
+            finished_at=now,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return transition.rowcount == 1
+
+
+async def _record_match_analysis_run_for_claim(
+    session: AsyncSession,
+    claim: _MatchAnalysisItemClaim,
+    *,
+    run_id: int,
+) -> bool:
+    """Link a running analysis to its exact job claim before external I/O."""
+
+    now = utc_now()
+    active_job = select(MatchAnalysisJob.id).where(
+        MatchAnalysisJob.id == claim.job_id,
+        MatchAnalysisJob.status.in_(
+            [
+                MatchAnalysisJobStatus.QUEUED.value,
+                MatchAnalysisJobStatus.RUNNING.value,
+            ]
+        ),
+        MatchAnalysisJob.cancel_requested_at.is_(None),
+        MatchAnalysisJob.deleted_at.is_(None),
+    )
+    transition = await session.execute(
+        update(MatchAnalysisJobItem)
+        .where(
+            MatchAnalysisJobItem.id == claim.item_id,
+            MatchAnalysisJobItem.job_id == claim.job_id,
+            MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
+            MatchAnalysisJobItem.claim_id == claim.claim_id,
+            MatchAnalysisJobItem.lease_expires_at > now,
+            MatchAnalysisJobItem.job_id.in_(active_job),
+        )
+        .values(
+            match_analysis_run_id=run_id,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return transition.rowcount == 1
+
+
+async def _refresh_terminal_active_match_analysis_jobs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    active_item = select(MatchAnalysisJobItem.id).where(
+        MatchAnalysisJobItem.job_id == MatchAnalysisJob.id,
+        MatchAnalysisJobItem.status.in_(
+            [
+                MatchAnalysisJobItemStatus.QUEUED.value,
+                MatchAnalysisJobItemStatus.RUNNING.value,
+            ]
+        ),
+    )
+    async with session_factory() as session:
+        job_ids = list(
+            await session.scalars(
+                select(MatchAnalysisJob.id).where(
+                    MatchAnalysisJob.status.in_(
+                        [
+                            MatchAnalysisJobStatus.QUEUED.value,
+                            MatchAnalysisJobStatus.RUNNING.value,
+                        ]
+                    ),
+                    MatchAnalysisJob.deleted_at.is_(None),
+                    ~active_item.exists(),
+                )
+            )
+        )
+    for job_id in job_ids:
+        await _refresh_match_analysis_job_summary(session_factory, job_id)
 
 
 async def _is_match_analysis_job_cancel_requested(

@@ -212,6 +212,24 @@ describe("windows installer packaging", () => {
 
     expect(hostRunner).toContain("--force-full");
     expect(hostRunner).toContain("--quick");
+    expect(hostRunner).toContain("--normal-soak");
+    expect(hostRunner).toContain("--seeded-chaos");
+    expect(hostRunner).toContain("-RunNormalSoak");
+    expect(hostRunner).toContain("-RunSeededChaos");
+    expect(hostRunner).toContain("expected_previous_version");
+    expect(hostRunner).toContain("--previous-installer-sha256");
+    expect(hostRunner).toContain("--candidate-installer");
+    expect(hostRunner).toContain("--candidate-installer-sha256");
+    expect(hostRunner).toContain("--candidate-manifest");
+    expect(hostRunner).toContain("--candidate-run-id");
+    expect(hostRunner).toContain("git -C \"$repo_root\" describe --tags");
+    expect(hostRunner).toContain('git -C "$repo_root" status --porcelain');
+    expect(hostRunner).toContain("-ExpectedPreviousVersion");
+    expect(hostRunner).toContain("-ExpectedPreviousPackageSha256");
+    expect(hostRunner).toContain("-CandidateInstallerPath");
+    expect(hostRunner).toContain("-ExpectedCandidatePackageSha256");
+    expect(hostRunner).toContain("-CandidateManifestPath");
+    expect(hostRunner).toContain("-ExpectedCandidateRunId");
     expect(hostRunner).not.toContain("--skip-runtime-lifecycle");
     expect(hostRunner).toContain("skipping Git bundle transfer");
     expect(hostRunner).toContain("Creating incremental Git bundle");
@@ -224,6 +242,10 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("[switch]$ForceFull");
     expect(guestRunner).toContain('[ValidateSet("release", "quick")]');
     expect(guestRunner).toContain('[string]$Mode = "release"');
+    expect(guestRunner).toContain("[switch]$RunNormalSoak");
+    expect(guestRunner).toContain("[switch]$RunSeededChaos");
+    expect(guestRunner).toContain("[int]$NormalSoakDurationSeconds = 86400");
+    expect(guestRunner).toContain("[int]$SeededChaosDurationSeconds = 28800");
     expect(guestRunner).toContain("[string]$ExpectedRevision");
     expect(guestRunner).toContain("[string]$PreviousRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");
@@ -245,14 +267,161 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("if ($Mode -eq \"release\")");
     expect(guestRunner).toContain("npm run dist:prepared");
     expect(guestRunner).toContain(
-      'Invoke-QaStep "Packaged runtime identity and stale-process lifecycle"',
+      'Invoke-QaStep "Installed packaged split lifecycle and optional soak certification"',
     );
+    expect(guestRunner).toContain("packaged-runtime-qa.py");
+    expect(guestRunner).toContain("PreviousInstallerPath");
+    expect(guestRunner).toContain("ExpectedPreviousVersion");
+    expect(guestRunner).toContain("ExpectedPreviousPackageSha256");
+    expect(guestRunner).toContain("CandidateInstallerPath");
+    expect(guestRunner).toContain("ExpectedCandidatePackageSha256");
+    expect(guestRunner).toContain("CandidateManifestPath");
+    expect(guestRunner).toContain("ExpectedCandidateRunId");
+    expect(guestRunner).toContain('release-candidate.mjs") `');
+    expect(guestRunner).toContain("asset `");
+    expect(guestRunner).toContain("seed-previous-packaged-upgrade.py");
+    expect(guestRunner).toContain("--package-file $previousInstallerPathLocal");
+    expect(guestRunner).toContain(
+      "Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal",
+    );
+    expect(guestRunner).toContain(
+      "Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal",
+    );
+    expect(guestRunner).toContain("$startInfo.Arguments = $Arguments");
+    expect(guestRunner).toContain("$startInfo.EnvironmentVariables[");
+    expect(guestRunner).not.toContain("$startInfo.ArgumentList");
+    expect(guestRunner).not.toContain("$startInfo.Environment[");
+    expect(guestRunner).toContain('-Arguments "/S /D=$installRoot"');
+    expect(guestRunner).toContain('"--existing-user-data", $upgradeUserData');
+    expect(guestRunner).toContain('"--upgrade-manifest", $upgradeManifest');
+    expect(guestRunner).toContain(
+      '"--expected-previous-version", $ExpectedPreviousVersion',
+    );
+    expect(guestRunner).toContain('"--system-sleep-wake"');
+    expect(guestRunner).toContain('"--artifact-root", $installRoot');
+    expect(guestRunner).toContain(
+      '"--package-file", $candidateInstallerPathLocal',
+    );
+    expect(guestRunner).toContain(
+      '"--expected-app-version", ([string]$desktopPackage.version)',
+    );
+    expect(guestRunner).toContain(
+      '"--expected-package-sha256", $installerSha256',
+    );
+    expect(guestRunner).toContain(
+      '"--candidate-manifest-file", $candidateManifestPathLocal',
+    );
+    expect(guestRunner).toContain(
+      '"--expected-candidate-run-id", ([string]$ExpectedCandidateRunId)',
+    );
+    expect(guestRunner).toContain(
+      '"--previous-package-file", $previousInstallerPathLocal',
+    );
+    expect(guestRunner).toContain(
+      '"--expected-previous-package-sha256", $ExpectedPreviousPackageSha256',
+    );
+    expect(guestRunner).toContain('"--certification"');
+    expect(guestRunner).toContain('"AUTO_EMAIL_SENDER_PACKAGED_QA"');
+    expect(guestRunner).toContain('Join-Path $installRoot "Uninstall Auto Email Sender.exe"');
+    expect(guestRunner).toContain("Uninstall did not preserve isolated user data");
+    expect(guestRunner).toMatch(/Windows packaged QA artifacts:[\s\S]*?finally \{[\s\S]*?Stop-QaProcessesFromRoot/);
     expect(guestRunner).toContain("it is not valid release preflight evidence");
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "installer"');
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "runtime-lifecycle"');
     expect(packageJson.scripts["dist:prepared"]).toContain("electron-builder");
     expect(packageJson.scripts.dist).toBe(
       "npm run prepare:windows-runtime && npm run dist:prepared",
+    );
+  });
+
+  it("provides a real macOS DMG lifecycle and soak certification entrypoint", () => {
+    const runnerPath = path.resolve(
+      "..",
+      "scripts",
+      "quality",
+      "run-macos-packaged-qa.sh",
+    );
+    const runner = readFileSync(runnerPath, "utf8");
+
+    expect(existsSync(runnerPath)).toBe(true);
+    expect(runner).toContain("--certification");
+    expect(runner).toContain("--development-smoke");
+    expect(runner).toContain("SPARKLE_PUBLIC_ED_KEY");
+    expect(runner).not.toContain('echo "$SPARKLE_PUBLIC_ED_KEY"');
+    expect(runner).toContain("hdiutil attach -readonly -nobrowse -plist");
+    expect(runner).toContain('ditto "${MountedApps[0]}" "$InstalledBundle"');
+    expect(runner).toContain("codesign --verify --deep --strict");
+    expect(runner).toContain("packaged-runtime-qa.py");
+    expect(runner).toContain("--previous-dmg");
+    expect(runner).toContain("--expected-dmg-sha256");
+    expect(runner).toContain("--expected-previous-dmg-sha256");
+    expect(runner).toContain("--candidate-manifest");
+    expect(runner).toContain("--candidate-run-id");
+    expect(runner).toContain("ExpectedPreviousVersion");
+    expect(runner).toContain("git -C \"$RepoRoot\" describe --tags");
+    expect(runner).toContain("--dedicated-test-account");
+    expect(runner).toContain("seed-previous-packaged-upgrade.py");
+    expect(runner).toContain('--package-file "$PreviousDmgPath"');
+    expect(runner).toContain("--existing-user-data");
+    expect(runner).toContain("--upgrade-manifest");
+    expect(runner).toContain("--expected-previous-version");
+    expect(runner).toContain("--expected-app-version");
+    expect(runner).toContain('--package-file "$DmgPath"');
+    expect(runner).toContain('--expected-package-sha256 "$ExpectedDmgSha256"');
+    expect(runner).toContain("--previous-package-file");
+    expect(runner).toContain(
+      '--expected-previous-package-sha256 "$ExpectedPreviousDmgSha256"',
+    );
+    expect(runner).toContain(
+      '--candidate-manifest-file "$CandidateManifestPath"',
+    );
+    expect(runner).toContain(
+      '--expected-candidate-run-id "$CandidateRunId"',
+    );
+    expect(runner).toContain('echo "macOS 正式认证的全部场景都必须使用 --dmg');
+    expect(runner).toContain("--system-sleep-wake");
+    expect(runner).toContain("/usr/bin/sudo -n /usr/bin/true");
+    expect(runner).toContain("sudo -v");
+    expect(runner).toContain('--artifact-root "$AppBundle"');
+    expect(runner).toContain('mv "$InstalledBundle" "$UninstalledBundle"');
+    expect(runner).toContain("卸载模拟后隔离用户数据库未保留");
+  });
+
+  it("gates packaged QA isolation before importing desktop bootstrap", () => {
+    const mainSource = readFileSync(path.resolve("src", "main.ts"), "utf8");
+    const qaGate = readFileSync(
+      path.resolve("src", "main", "packaged-qa", "user-data.ts"),
+      "utf8",
+    );
+    const applicationSource = readFileSync(
+      path.resolve("src", "main", "bootstrap", "application.ts"),
+      "utf8",
+    );
+    const updateSource = readFileSync(
+      path.resolve("src", "main", "updates", "service.ts"),
+      "utf8",
+    );
+    const backendServiceSource = readFileSync(
+      path.resolve("src", "main", "backend", "service.ts"),
+      "utf8",
+    );
+
+    expect(mainSource.indexOf("configurePackagedQaUserData(app)")).toBeLessThan(
+      mainSource.indexOf('import("./main/bootstrap/application.js")'),
+    );
+    expect(mainSource).not.toContain(
+      'import { bootstrapDesktopApplication } from "./main/bootstrap/application.js"',
+    );
+    expect(qaGate).toContain("enabled-for-release-certification");
+    expect(qaGate).toContain("PACKAGED_QA_SENTINEL_NAME");
+    expect(qaGate).toContain("must not traverse symbolic links");
+    expect(applicationSource).toContain("getActivePackagedQaIsolatedHomePath");
+    expect(updateSource).toContain("getActivePackagedQaUserDataPath");
+    expect(applicationSource).toContain('powerMonitor.on("resume"');
+    expect(applicationSource).toContain("backend?.notifySystemResume?.()");
+    expect(backendServiceSource).toContain("notifySystemResume(): void");
+    expect(backendServiceSource).toContain(
+      "this.#lastWorkerHeartbeatAdvancedAt = performance.now()",
     );
   });
 

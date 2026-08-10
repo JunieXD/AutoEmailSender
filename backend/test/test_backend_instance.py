@@ -63,6 +63,47 @@ class BackendInstanceLockTests(unittest.TestCase):
             second.acquire()
             second.release()
 
+    def test_api_and_worker_role_locks_can_coexist_but_each_role_is_unique(self) -> None:
+        from app.core.instance_lock import (
+            BackendInstanceLock,
+            BackendWorkerAlreadyRunningError,
+            BackendWorkerLock,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            api_lock = BackendInstanceLock(data_dir)
+            worker_lock = BackendWorkerLock(data_dir)
+            duplicate_worker = BackendWorkerLock(data_dir)
+            api_lock.acquire()
+            worker_lock.acquire()
+            try:
+                with self.assertRaises(BackendWorkerAlreadyRunningError):
+                    duplicate_worker.acquire()
+            finally:
+                worker_lock.release()
+                api_lock.release()
+
+    def test_migration_lock_is_independent_and_exclusive(self) -> None:
+        from app.core.instance_lock import (
+            DatabaseMigrationAlreadyRunningError,
+            DatabaseMigrationLock,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            first = DatabaseMigrationLock(data_dir)
+            second = DatabaseMigrationLock(data_dir)
+            first.acquire()
+            try:
+                with self.assertRaises(DatabaseMigrationAlreadyRunningError):
+                    second.acquire()
+            finally:
+                first.release()
+
+            second.acquire()
+            second.release()
+
 
 class AgentRuntimeDescriptorCleanupTests(unittest.TestCase):
     def test_cleanup_removes_only_the_owned_runtime_descriptor(self) -> None:

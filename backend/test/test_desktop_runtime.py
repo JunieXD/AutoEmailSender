@@ -106,6 +106,52 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(ready_response.status_code, 503)
         runtime_start.assert_not_called()
 
+    def test_business_routes_are_blocked_until_cold_start_recovery_finishes(self) -> None:
+        os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
+
+        from app.core.config import get_settings
+        import main as main_module
+
+        get_settings.cache_clear()
+        schema_started = False
+
+        async def slow_schema() -> None:
+            nonlocal schema_started
+            schema_started = True
+            await asyncio.Event().wait()
+
+        with patch.object(main_module, "ensure_database_schema", slow_schema):
+            with TestClient(main_module.create_app()) as client:
+                business_response = client.get("/api/ping")
+                health_response = client.get("/health")
+                startup_response = client.get("/startup-status")
+
+        self.assertTrue(schema_started)
+        self.assertEqual(business_response.status_code, 503)
+        self.assertEqual(business_response.json(), {"detail": "后端初始化中"})
+        self.assertEqual(business_response.headers["retry-after"], "1")
+        self.assertEqual(health_response.status_code, 200)
+        self.assertEqual(startup_response.status_code, 200)
+
+    def test_business_routes_report_the_cold_start_error(self) -> None:
+        os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
+
+        from app.core.config import get_settings
+        import main as main_module
+
+        get_settings.cache_clear()
+
+        async def failing_schema() -> None:
+            raise RuntimeError("migration failed")
+
+        with patch.object(main_module, "ensure_database_schema", failing_schema):
+            with TestClient(main_module.create_app()) as client:
+                self._wait_for_startup_state(client, "error")
+                business_response = client.get("/api/ping")
+
+        self.assertEqual(business_response.status_code, 500)
+        self.assertEqual(business_response.json(), {"detail": "migration failed"})
+
     def test_startup_status_reports_database_migration_phase(self) -> None:
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "1"
 
@@ -185,6 +231,11 @@ class DesktopRuntimeTests(unittest.TestCase):
             ),
             patch.object(
                 main_module,
+                "recover_interrupted_worker_claims",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
                 "recover_stale_generating_drafts",
                 new_callable=AsyncMock,
             ),
@@ -220,6 +271,11 @@ class DesktopRuntimeTests(unittest.TestCase):
             patch.object(
                 main_module,
                 "recover_interrupted_workspace_draft_rewrites",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                main_module,
+                "recover_interrupted_worker_claims",
                 new_callable=AsyncMock,
             ),
             patch.object(
@@ -336,11 +392,26 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(args.document_self_check, fixture_dir)
 
     def test_packaged_runtime_self_check_imports_dynamic_dependencies(self) -> None:
-        from desktop_entry import run_packaged_runtime_self_check
+        from desktop_entry import (
+            packaged_runtime_self_check_modules,
+            run_packaged_runtime_self_check,
+        )
 
-        result = run_packaged_runtime_self_check()
+        for role in ("api", "worker", "combined"):
+            with self.subTest(role=role):
+                self.assertEqual(run_packaged_runtime_self_check(role), 0)
 
-        self.assertEqual(result, 0)
+        self.assertIn("main", packaged_runtime_self_check_modules("api"))
+        self.assertNotIn(
+            "app.services.worker_process",
+            packaged_runtime_self_check_modules("api"),
+        )
+        self.assertIn(
+            "app.services.worker_process",
+            packaged_runtime_self_check_modules("worker"),
+        )
+        self.assertNotIn("main", packaged_runtime_self_check_modules("worker"))
+        self.assertIn("main", packaged_runtime_self_check_modules("combined"))
 
     def test_packaged_document_self_check_extracts_high_risk_fixtures(self) -> None:
         from desktop_entry import run_packaged_document_self_check
@@ -369,6 +440,12 @@ class DesktopRuntimeTests(unittest.TestCase):
             "playwright.sync_api",
             "docx",
             "openpyxl",
+            "app.services.worker_process",
+            "app.services.runtime_manager",
+            "app.modules.campaigns.public",
+            "app.modules.communications.public",
+            "app.modules.crawler.public",
+            "app.modules.matching.public",
         ]:
             self.assertIn(module_name, PACKAGED_RUNTIME_SELF_CHECK_MODULES)
 

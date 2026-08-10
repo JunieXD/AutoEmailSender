@@ -16,6 +16,7 @@ from app.models.types import UTCDateTime
 if TYPE_CHECKING:
     from app.models.batch_task import BatchTask
     from app.models.email_log import EmailLog
+    from app.models.email_delivery_attempt import EmailDeliveryAttempt
     from app.models.identity_profile import IdentityProfile
     from app.models.identity_material import IdentityMaterial
     from app.models.llm_profile import LLMProfile
@@ -157,6 +158,12 @@ class EmailTask(Base):
                 "AND batch_send_canceled_at IS NULL"
             ),
         ),
+        Index(
+            "ix_email_tasks_delivery_sending_attempt",
+            "delivery_attempt_id",
+            sqlite_where=text("status = 'sending'"),
+            postgresql_where=text("status = 'sending'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -277,6 +284,18 @@ class EmailTask(Base):
         UTCDateTime(),
         nullable=True,
     )
+    delivery_attempt_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+    )
+    delivery_outcome: Mapped[str | None] = mapped_column(
+        String(48),
+        nullable=True,
+    )
+    delivery_outcome_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        nullable=True,
+    )
     sent_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
@@ -339,6 +358,10 @@ class EmailTask(Base):
         back_populates="email_tasks",
     )
     email_logs: Mapped[list["EmailLog"]] = relationship(
+        back_populates="email_task",
+        cascade="all, delete-orphan",
+    )
+    delivery_attempts: Mapped[list["EmailDeliveryAttempt"]] = relationship(
         back_populates="email_task",
         cascade="all, delete-orphan",
     )

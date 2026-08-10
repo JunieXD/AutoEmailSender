@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
-from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
 import sys
+from ctypes import wintypes
+from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -25,7 +25,7 @@ class RuntimeProcessDescriptor:
     @classmethod
     def from_mapping(cls, value: object, *, field: str) -> RuntimeProcessDescriptor:
         if not isinstance(value, dict):
-            raise ValueError(f"runtime descriptor field {field} must be an object")
+            raise TypeError(f"runtime descriptor field {field} must be an object")
         pid = value.get("pid")
         started_at = value.get("started_at")
         if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
@@ -44,12 +44,13 @@ class RuntimeDescriptor:
     access_token: str
     desktop: RuntimeProcessDescriptor
     backend: RuntimeProcessDescriptor
+    worker: RuntimeProcessDescriptor | None
     published_at: str
 
     @classmethod
     def from_mapping(cls, value: object) -> RuntimeDescriptor:
         if not isinstance(value, dict):
-            raise ValueError("runtime descriptor must be an object")
+            raise TypeError("runtime descriptor must be an object")
         string_fields = (
             "protocol_version",
             "app_version",
@@ -64,9 +65,15 @@ class RuntimeDescriptor:
             if not isinstance(raw, str) or not raw.strip():
                 raise ValueError(f"runtime descriptor field {field} must be a non-empty string")
             strings[field] = raw.strip()
+        worker_value = value.get("worker")
         return cls(
             desktop=RuntimeProcessDescriptor.from_mapping(value.get("desktop"), field="desktop"),
             backend=RuntimeProcessDescriptor.from_mapping(value.get("backend"), field="backend"),
+            worker=(
+                None
+                if worker_value is None
+                else RuntimeProcessDescriptor.from_mapping(worker_value, field="worker")
+            ),
             **strings,
         )
 
@@ -77,6 +84,10 @@ class RuntimeDescriptor:
     @property
     def backend_pid(self) -> int:
         return self.backend.pid
+
+    @property
+    def worker_pid(self) -> int | None:
+        return self.worker.pid if self.worker is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +158,7 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
     try:
         payload = json.loads(raw)
         if not isinstance(payload, dict):
-            raise ValueError("runtime descriptor must be an object")
+            raise TypeError("runtime descriptor must be an object")
         protocol_version = payload.get("protocol_version")
         if isinstance(protocol_version, str) and protocol_version != PROTOCOL_VERSION:
             raise RuntimeProtocolMismatchError(
@@ -157,7 +168,7 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
         return RuntimeDescriptor.from_mapping(payload)
     except RuntimeProtocolMismatchError:
         raise
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise RuntimeUnavailableError("本地运行信息无效，请在个人中心修复命令行支持。") from exc
 
 

@@ -136,6 +136,7 @@ _DRAFT_RUNTIME_EXPORTS = {
     "BatchDraftGenerationCoordinator",
     "BatchDraftScheduler",
     "materialize_missing_research_template_fallbacks",
+    "recover_interrupted_batch_draft_claims",
     "recover_interrupted_workspace_draft_rewrites",
     "recover_stale_generating_drafts",
     "recover_stale_workspace_draft_rewrites",

@@ -8,11 +8,26 @@ class BackendInstanceAlreadyRunningError(RuntimeError):
     pass
 
 
-class BackendInstanceLock:
-    """Hold an OS-level lock for one backend process per data directory."""
+class BackendWorkerAlreadyRunningError(RuntimeError):
+    pass
 
-    def __init__(self, data_dir: Path) -> None:
-        self.path = data_dir / "backend.instance.lock"
+
+class DatabaseMigrationAlreadyRunningError(RuntimeError):
+    pass
+
+
+class _ExclusiveDataDirectoryLock:
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        file_name: str,
+        error_type: type[RuntimeError],
+        conflict_message: str,
+    ) -> None:
+        self.path = data_dir / file_name
+        self._error_type = error_type
+        self._conflict_message = conflict_message
         self._file: BinaryIO | None = None
 
     def acquire(self) -> None:
@@ -29,10 +44,7 @@ class BackendInstanceLock:
             _lock_file(lock_file)
         except OSError as exc:
             lock_file.close()
-            raise BackendInstanceAlreadyRunningError(
-                "检测到另一个 Auto Email Sender 后端仍在使用当前数据目录。"
-                "请先完全退出旧实例，再重新启动软件。"
-            ) from exc
+            raise self._error_type(self._conflict_message) from exc
         self._file = lock_file
 
     def release(self) -> None:
@@ -46,12 +58,54 @@ class BackendInstanceLock:
         finally:
             lock_file.close()
 
-    def __enter__(self) -> BackendInstanceLock:
+    def __enter__(self) -> _ExclusiveDataDirectoryLock:
         self.acquire()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.release()
+
+
+class BackendInstanceLock(_ExclusiveDataDirectoryLock):
+    """Hold the runtime-group leader lock for one data directory."""
+
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__(
+            data_dir,
+            file_name="backend.instance.lock",
+            error_type=BackendInstanceAlreadyRunningError,
+            conflict_message=(
+                "检测到另一个 Auto Email Sender 后端仍在使用当前数据目录。"
+                "请先完全退出旧实例，再重新启动软件。"
+            ),
+        )
+
+
+class BackendWorkerLock(_ExclusiveDataDirectoryLock):
+    """Hold the single Worker-role lock for one data directory."""
+
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__(
+            data_dir,
+            file_name="backend.worker.lock",
+            error_type=BackendWorkerAlreadyRunningError,
+            conflict_message=(
+                "检测到另一个 Auto Email Sender Worker 仍在使用当前数据目录。"
+                "请先等待旧 Worker 完全退出，再重新启动。"
+            ),
+        )
+
+
+class DatabaseMigrationLock(_ExclusiveDataDirectoryLock):
+    """Prevent accidental concurrent Alembic execution across processes."""
+
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__(
+            data_dir,
+            file_name="database.migration.lock",
+            error_type=DatabaseMigrationAlreadyRunningError,
+            conflict_message="另一个进程正在升级 Auto Email Sender 数据库。",
+        )
 
 
 def _lock_file(lock_file: BinaryIO) -> None:
@@ -84,4 +138,11 @@ def _is_windows() -> bool:
     return sys.platform == "win32"
 
 
-__all__ = ["BackendInstanceAlreadyRunningError", "BackendInstanceLock"]
+__all__ = [
+    "BackendInstanceAlreadyRunningError",
+    "BackendInstanceLock",
+    "BackendWorkerAlreadyRunningError",
+    "BackendWorkerLock",
+    "DatabaseMigrationAlreadyRunningError",
+    "DatabaseMigrationLock",
+]

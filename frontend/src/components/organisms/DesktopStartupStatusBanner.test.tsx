@@ -10,6 +10,21 @@ vi.mock("@/context/DesktopBackendContext", () => ({
 }));
 
 describe("DesktopStartupStatusBanner", () => {
+  it("keeps synchronous features available while explaining Worker degradation", () => {
+    const status: DesktopBackendStatus = {
+      state: "degraded",
+      baseUrl: "http://127.0.0.1:48120",
+      reason: "background_restarting",
+      message: "后台服务正在恢复，其他功能仍可使用",
+    };
+    useDesktopBackendMock.mockReturnValue({ isDesktop: true, status });
+
+    render(<DesktopStartupStatusBanner />);
+
+    expect(screen.getByText(status.message)).toBeInTheDocument();
+    expect(screen.getByText(/查询、编辑和其他即时操作仍可正常使用/)).toBeInTheDocument();
+  });
+
   it("shows database version recovery guidance", () => {
     const status: DesktopBackendStatus = {
       state: "error",

@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-
-from app.core.time import utc_now
-
 from types import FunctionType, MethodType
-from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.diagnostic_redaction import (
+    MAX_STRING_LENGTH,
+    REDACTED,
+    sanitize_diagnostic_text,
+    sanitize_text as _sanitize_message,
+    truncate_text as _truncate_string,
+)
 from app.core.request_context import get_request_id
+from app.core.time import utc_now
 from app.models import OperationLog
 
 
@@ -44,26 +47,7 @@ TOKEN_USAGE_KEYS = {
     "prompttokens",
     "totaltokens",
 }
-MAX_STRING_LENGTH = 1000
-MAX_DIAGNOSTIC_TEXT_LENGTH = 250_000
 MAX_DEPTH = 10
-REDACTED = "[REDACTED]"
-MESSAGE_KEY_VALUE_PATTERN = re.compile(
-    r"(?P<key>\b(?:api[_-]?key|authorization|cookie|password|secret|smtpPassword|token)\b)"
-    r"(?P<key_quote>[\"']?)"
-    r"(?P<separator>\s*[:=]\s*)"
-    r"(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)",
-    re.IGNORECASE,
-)
-MESSAGE_BEARER_PATTERN = re.compile(
-    r"(?P<prefix>\bAuthorization\s*:\s*Bearer\s+)(?P<value>[^\s,;]+)",
-    re.IGNORECASE,
-)
-MESSAGE_COOKIE_HEADER_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:Cookie|Set-Cookie)\s*:\s*)(?P<value>[^\r\n]+)",
-    re.IGNORECASE,
-)
-URL_PATTERN = re.compile(r"https?://[^\s<>'\"]+")
 
 
 async def record_operation_log(
@@ -129,19 +113,6 @@ def sanitize_user_visible_error(message_or_exc: object) -> str:
 def sanitize_diagnostic_metadata(value: object | None) -> object | None:
     """Return log metadata that is safe to expose outside the desktop UI."""
     return _safe_json(value)
-
-
-def sanitize_diagnostic_text(value: object | None) -> str:
-    """Redact a diagnostic text file without reducing it to an error summary."""
-    if value is None:
-        return ""
-    try:
-        return _sanitize_message(
-            str(value),
-            max_length=MAX_DIAGNOSTIC_TEXT_LENGTH,
-        )
-    except Exception:
-        return "[DiagnosticSanitizationFailed]"
 
 
 def _safe_json(value: object | None) -> object | None:
@@ -210,35 +181,6 @@ def _safe_message(message: str | None) -> str | None:
         return _sanitize_message(message)
     except Exception:
         return "[MessageSanitizationFailed]"
-
-
-def _sanitize_message(message: str, *, max_length: int = MAX_STRING_LENGTH) -> str:
-    sanitized = URL_PATTERN.sub(_strip_url_query_and_fragment, message)
-    sanitized = MESSAGE_BEARER_PATTERN.sub(r"\g<prefix>[REDACTED]", sanitized)
-    sanitized = MESSAGE_COOKIE_HEADER_PATTERN.sub(r"\g<prefix>[REDACTED]", sanitized)
-
-    def replace_value(match: re.Match[str]) -> str:
-        key = match.group("key")
-        key_quote = match.group("key_quote")
-        separator = match.group("separator")
-        return f"{key}{key_quote}{separator}{REDACTED}"
-
-    return _truncate_string(
-        MESSAGE_KEY_VALUE_PATTERN.sub(replace_value, sanitized),
-        max_length=max_length,
-    )
-
-
-def _strip_url_query_and_fragment(match: re.Match[str]) -> str:
-    raw_url = match.group(0)
-    parsed = urlsplit(raw_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-
-
-def _truncate_string(value: str, *, max_length: int = MAX_STRING_LENGTH) -> str:
-    if len(value) <= max_length:
-        return value
-    return f"{value[:max_length]}...[truncated]"
 
 
 def _stringify_exception(exc: BaseException) -> str:

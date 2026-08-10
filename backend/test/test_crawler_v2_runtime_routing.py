@@ -114,7 +114,11 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         session_context.__aenter__ = AsyncMock(return_value=session)
         session_context.__aexit__ = AsyncMock(return_value=None)
         session_factory = Mock(return_value=session_context)
-        manager = RuntimeManager(session_factory)
+        manager = RuntimeManager(
+            session_factory,
+            runtime_id="runtime-a",
+            worker_generation="generation-b",
+        )
 
         async def idle_loop() -> None:
             await asyncio.Event().wait()
@@ -136,7 +140,10 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         crawler_worker = worker_calls["crawler-worker-1"][2]
         self.assertIsInstance(crawler_worker, partial)
         self.assertEqual(crawler_worker.func.__name__, "run_crawler_v2_once")
-        self.assertEqual(crawler_worker.keywords["worker_id"], "crawler-worker-1")
+        self.assertEqual(
+            crawler_worker.keywords["worker_id"],
+            "crawler-worker-1:runtime-a:generation-b",
+        )
         await manager.stop()
 
 

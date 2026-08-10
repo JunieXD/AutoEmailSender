@@ -17,6 +17,7 @@ export type AgentRuntimeDescriptor = {
   access_token: string;
   desktop: AgentRuntimeProcess;
   backend: AgentRuntimeProcess;
+  worker?: AgentRuntimeProcess;
   published_at: string;
 };
 

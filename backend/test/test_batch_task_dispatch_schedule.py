@@ -3,18 +3,25 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import tempfile
+import time
 import unittest
+import uuid
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import event
+from sqlalchemy import event, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
     BatchTask,
     BatchTaskStatus,
+    EmailDeliveryAttempt,
+    EmailDeliveryOutcome,
+    EmailLog,
     EmailTask,
     EmailTaskCancellationReason,
     EmailTaskSource,
@@ -23,17 +30,26 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.modules.communications.transport import SendMailResult
+from app.modules.communications.transport import (
+    MailDeliveryError,
+    MailDeliveryFailureKind,
+    PreparedEmail,
+    SendMailResult,
+)
+from app.modules.communications import transport as mail_transport
 from test.schema_database import create_schema_sqlite_database
+from test.process_harness import FakeSMTPServer
 from app.modules.workspace.tasks.delivery import (
     dispatch_due_tasks_once,
     dispatch_email_task,
+    recover_stale_sending_tasks,
 )
 from app.modules.workspace.tasks.runtime import (
     approve_and_send_task,
     approve_draft_task,
 )
 from app.modules.workspace.tasks.schemas import EmailTaskApprovalRequest
+from app.services.worker_claim_recovery import recover_interrupted_worker_claims
 
 
 class BatchTaskDispatchScheduleTests(unittest.TestCase):
@@ -65,7 +81,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -89,7 +105,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -114,7 +130,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -138,7 +154,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -164,7 +180,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -197,7 +213,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -229,7 +245,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -256,7 +272,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -288,7 +304,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -369,7 +385,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._mark_task_user_removed(task_id))
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             with self.assertRaisesRegex(ValueError, "已从批量任务中移除"):
@@ -408,7 +424,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -440,7 +456,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         event.listen(self.engine.sync_engine, "before_cursor_execute", reschedule_before_claim)
         try:
             with patch(
-                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
                 AsyncMock(return_value=self._build_send_result()),
             ) as mocked_send:
                 self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -480,7 +496,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         event.listen(self.engine.sync_engine, "before_cursor_execute", cancel_before_claim)
         try:
             with patch(
-                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
                 AsyncMock(return_value=self._build_send_result()),
             ) as mocked_send:
                 sent = self._run_async(
@@ -512,7 +528,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(
@@ -549,7 +565,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(
@@ -573,7 +589,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._set_task_status(task_id, EmailTaskStatus.REVIEW_REQUIRED.value))
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             self._run_async(dispatch_email_task(self.session_factory, task_id))
@@ -595,7 +611,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(side_effect=delayed_send),
         ) as mocked_send:
             self._run_async(dispatch_twice())
@@ -603,13 +619,13 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
 
-    def test_dispatch_due_tasks_recovers_stale_sending_task(self) -> None:
+    def test_dispatch_due_tasks_assumes_stale_legacy_sending_task_was_sent(self) -> None:
         task_id = self._run_async(self._create_manual_approved_task())
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
         self._run_async(self._set_task_sending(task_id, now - timedelta(minutes=45)))
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -620,9 +636,13 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(processed, 1)
+        self.assertEqual(processed, 0)
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
-        mocked_send.assert_awaited_once()
+        self.assertEqual(
+            self._run_async(self._get_task_delivery_outcome(task_id)),
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        mocked_send.assert_not_awaited()
 
     def test_dispatch_due_tasks_keeps_recent_sending_task_claimed(self) -> None:
         task_id = self._run_async(self._create_manual_approved_task())
@@ -630,7 +650,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._set_task_sending(task_id, now - timedelta(minutes=5)))
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -645,13 +665,407 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENDING.value)
         mocked_send.assert_not_awaited()
 
+    def test_dispatch_prepares_message_before_committing_delivery_claim(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        prepared_message = EmailMessage()
+        prepared_message["Message-ID"] = "<prepared-before-claim@example.com>"
+
+        async def prepare_while_task_is_dispatchable(**_kwargs):
+            self.assertEqual(
+                await self._get_task_status(task_id),
+                EmailTaskStatus.APPROVED.value,
+            )
+            return PreparedEmail(
+                message=prepared_message,
+                recipient_email="professor@example.com",
+            )
+
+        with (
+            patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.prepare_email",
+                AsyncMock(side_effect=prepare_while_task_is_dispatchable),
+            ) as mocked_prepare,
+            patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send,
+        ):
+            sent = self._run_async(
+                dispatch_email_task(self.session_factory, task_id)
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.SENT.value,
+        )
+        mocked_prepare.assert_awaited_once()
+        mocked_send.assert_awaited_once()
+
+    def test_explicit_pre_submission_rejection_is_retryable_but_not_automatic(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        rejected = MailDeliveryError(
+            "SMTP recipient rejected",
+            failure_kind=MailDeliveryFailureKind.PRE_SUBMISSION,
+        )
+
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+            AsyncMock(side_effect=rejected),
+        ) as mocked_send:
+            handled = self._run_async(
+                dispatch_email_task(self.session_factory, task_id)
+            )
+            processed_again = self._run_async(
+                dispatch_due_tasks_once(self.session_factory)
+            )
+
+        task, attempts, logs = self._run_async(self._get_delivery_audit(task_id))
+        self.assertTrue(handled)
+        self.assertEqual(processed_again, 0)
+        self.assertEqual(task.status, EmailTaskStatus.SEND_FAILED.value)
+        self.assertEqual(
+            task.delivery_outcome,
+            EmailDeliveryOutcome.PRE_SUBMISSION_FAILED.value,
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(
+            attempts[0].outcome,
+            EmailDeliveryOutcome.PRE_SUBMISSION_FAILED.value,
+        )
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].delivery_attempt_id, attempts[0].attempt_id)
+        self.assertEqual(mocked_send.await_count, 1)
+
+    def test_uncertain_smtp_result_is_assumed_sent_and_never_redispatched(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        uncertain = MailDeliveryError(
+            "SMTP response was lost",
+            failure_kind=(
+                MailDeliveryFailureKind.UNCERTAIN_AFTER_SUBMISSION_STARTED
+            ),
+        )
+
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+            AsyncMock(side_effect=uncertain),
+        ) as mocked_send:
+            handled = self._run_async(
+                dispatch_email_task(self.session_factory, task_id)
+            )
+            processed_again = self._run_async(
+                dispatch_due_tasks_once(self.session_factory)
+            )
+
+        task, attempts, logs = self._run_async(self._get_delivery_audit(task_id))
+        self.assertTrue(handled)
+        self.assertEqual(processed_again, 0)
+        self.assertEqual(task.status, EmailTaskStatus.SENT.value)
+        self.assertEqual(
+            task.delivery_outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertIsNone(task.last_rfc_message_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertIsNotNone(attempts[0].prepared_rfc_message_id)
+        self.assertEqual(
+            attempts[0].outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertEqual(len(logs), 1)
+        self.assertIsNone(logs[0].rfc_message_id)
+        self.assertEqual(mocked_send.await_count, 1)
+
+    def test_live_delivery_owner_is_not_recovered_by_wall_clock_age(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        async def exercise() -> tuple[int, str, str]:
+            send_started = asyncio.Event()
+            release_send = asyncio.Event()
+
+            async def delayed_send(**_kwargs):
+                send_started.set()
+                await release_send.wait()
+                return self._build_send_result()
+
+            with patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(side_effect=delayed_send),
+            ):
+                dispatch_task = asyncio.create_task(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+                await send_started.wait()
+                recovered = await recover_stale_sending_tasks(
+                    self.session_factory,
+                    stale_after=timedelta(seconds=0),
+                    now=datetime.now(UTC) + timedelta(days=7),
+                )
+                status_during_send = await self._get_task_status(task_id)
+                release_send.set()
+                await dispatch_task
+            return recovered, status_during_send, await self._get_task_status(task_id)
+
+        recovered, status_during_send, final_status = self._run_async(exercise())
+        self.assertEqual(recovered, 0)
+        self.assertEqual(status_during_send, EmailTaskStatus.SENDING.value)
+        self.assertEqual(final_status, EmailTaskStatus.SENT.value)
+
+    def test_worker_generation_recovery_never_touches_live_sending_attempt(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        async def exercise() -> tuple[int, str, str]:
+            send_started = asyncio.Event()
+            release_send = asyncio.Event()
+
+            async def delayed_send(**_kwargs):
+                send_started.set()
+                await release_send.wait()
+                return self._build_send_result()
+
+            with patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(side_effect=delayed_send),
+            ):
+                dispatch_task = asyncio.create_task(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+                await send_started.wait()
+                summary = await recover_interrupted_worker_claims(
+                    self.session_factory,
+                    preserve_full_imap_claims=True,
+                )
+                status_during_send = await self._get_task_status(task_id)
+                release_send.set()
+                await dispatch_task
+            return (
+                summary.total,
+                status_during_send,
+                await self._get_task_status(task_id),
+            )
+
+        recovered, status_during_send, final_status = self._run_async(exercise())
+        self.assertEqual(recovered, 0)
+        self.assertEqual(status_during_send, EmailTaskStatus.SENDING.value)
+        self.assertEqual(final_status, EmailTaskStatus.SENT.value)
+
+    def test_invalid_owner_recovery_fences_late_smtp_success(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        async def exercise() -> int:
+            send_started = asyncio.Event()
+            release_send = asyncio.Event()
+
+            async def delayed_send(**_kwargs):
+                send_started.set()
+                await release_send.wait()
+                return self._build_send_result()
+
+            with patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(side_effect=delayed_send),
+            ):
+                dispatch_task = asyncio.create_task(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+                await send_started.wait()
+                await self._set_delivery_owner_generation(task_id, "invalid-owner")
+                recovered = await recover_stale_sending_tasks(
+                    self.session_factory,
+                )
+                release_send.set()
+                await dispatch_task
+            return recovered
+
+        recovered = self._run_async(exercise())
+        task, attempts, logs = self._run_async(self._get_delivery_audit(task_id))
+        self.assertEqual(recovered, 1)
+        self.assertEqual(task.status, EmailTaskStatus.SENT.value)
+        self.assertEqual(
+            task.delivery_outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(
+            attempts[0].outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertEqual(len(logs), 1)
+        self.assertIsNone(logs[0].rfc_message_id)
+
+    def test_final_commit_failure_stays_non_dispatchable_and_recovers_assume_sent(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        marker_path = Path(self.temp_dir.name) / "abandoned-attempt.json"
+        commit_error = OperationalError(
+            "UPDATE email_tasks",
+            {},
+            sqlite3.OperationalError("database is locked"),
+        )
+
+        with (
+            patch(
+                "app.modules.workspace.tasks.delivery._delivery_abandoned_marker_path",
+                return_value=marker_path,
+            ),
+            patch(
+                "app.modules.workspace.tasks.delivery._finalize_delivery_attempt",
+                AsyncMock(side_effect=commit_error),
+            ),
+            patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send,
+        ):
+            with self.assertRaises(OperationalError):
+                self._run_async(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.SENDING.value,
+        )
+        self.assertTrue(marker_path.exists())
+        self.assertEqual(mocked_send.await_count, 1)
+
+        with patch(
+            "app.modules.workspace.tasks.delivery._delivery_abandoned_marker_path",
+            return_value=marker_path,
+        ):
+            recovered = self._run_async(
+                recover_stale_sending_tasks(self.session_factory)
+            )
+
+        task, attempts, logs = self._run_async(self._get_delivery_audit(task_id))
+        self.assertEqual(recovered, 1)
+        self.assertEqual(task.status, EmailTaskStatus.SENT.value)
+        self.assertEqual(
+            task.delivery_outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(logs), 1)
+        self.assertFalse(marker_path.exists())
+
+    def test_disk_full_final_commit_and_marker_failure_still_never_redispatches(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        marker_path = Path(self.temp_dir.name) / "unwritable" / "abandoned.json"
+        disk_full_error = OperationalError(
+            "COMMIT",
+            {},
+            sqlite3.OperationalError("database or disk is full"),
+        )
+
+        with (
+            patch(
+                "app.modules.workspace.tasks.delivery._delivery_abandoned_marker_path",
+                return_value=marker_path,
+            ),
+            patch(
+                "app.modules.workspace.tasks.delivery._finalize_delivery_attempt",
+                AsyncMock(side_effect=disk_full_error),
+            ),
+            patch.object(
+                Path,
+                "write_text",
+                side_effect=OSError("disk is full"),
+            ),
+            patch(
+                "app.modules.workspace.tasks.delivery.logger.warning",
+            ) as marker_warning,
+            patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send,
+        ):
+            with self.assertRaises(OperationalError):
+                self._run_async(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.SENDING.value,
+        )
+        self.assertFalse(marker_path.exists())
+        self.assertEqual(mocked_send.await_count, 1)
+        marker_warning.assert_called_once()
+
+        with patch(
+            "app.modules.workspace.tasks.delivery._delivery_abandoned_marker_path",
+            return_value=marker_path,
+        ):
+            recovered = self._run_async(
+                recover_stale_sending_tasks(self.session_factory)
+            )
+
+        task, attempts, logs = self._run_async(self._get_delivery_audit(task_id))
+        self.assertEqual(recovered, 1)
+        self.assertEqual(task.status, EmailTaskStatus.SENT.value)
+        self.assertEqual(
+            task.delivery_outcome,
+            EmailDeliveryOutcome.ASSUMED_SENT_AFTER_INTERRUPTION.value,
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(len(logs), 1)
+
+    def test_smtp_success_to_sqlite_commit_p99_is_below_250_ms(self) -> None:
+        delivery_count = 500
+        with FakeSMTPServer(Path(self.temp_dir.name) / "benchmark-smtp") as smtp_server:
+            task_ids = self._run_async(
+                self._create_delivery_benchmark_tasks(
+                    smtp_port=smtp_server.port,
+                    count=delivery_count,
+                )
+            )
+            original_send = mail_transport.send_prepared_email
+
+            async def exercise() -> list[float]:
+                latencies_ms: list[float] = []
+                smtp_returned_at: float | None = None
+
+                async def measured_send(**kwargs):
+                    nonlocal smtp_returned_at
+                    result = await original_send(**kwargs)
+                    smtp_returned_at = time.perf_counter()
+                    return result
+
+                with patch(
+                    "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
+                    AsyncMock(side_effect=measured_send),
+                ):
+                    for task_id in task_ids:
+                        smtp_returned_at = None
+                        handled = await dispatch_email_task(
+                            self.session_factory,
+                            task_id,
+                            respect_identity_send_window=False,
+                        )
+                        self.assertTrue(handled)
+                        self.assertIsNotNone(smtp_returned_at)
+                        assert smtp_returned_at is not None
+                        latencies_ms.append(
+                            (time.perf_counter() - smtp_returned_at) * 1000
+                        )
+                return latencies_ms
+
+            latencies_ms = self._run_async(exercise())
+
+        p99_ms = sorted(latencies_ms)[int(delivery_count * 0.99) - 1]
+        self.assertEqual(smtp_server.accepted_count, delivery_count)
+        self.assertLessEqual(
+            p99_ms,
+            250,
+            f"SMTP success to SQLite commit upper-bound p99 was {p99_ms:.2f} ms",
+        )
+
     def test_dispatch_due_tasks_does_not_let_blocked_scheduled_task_consume_limit(self) -> None:
         blocked_task_id, dispatchable_task_id = self._run_async(
             self._create_blocked_scheduled_task_before_dispatchable_task(),
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -684,7 +1098,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -723,7 +1137,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -757,7 +1171,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -795,7 +1209,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -827,7 +1241,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -859,7 +1273,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -893,7 +1307,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -929,7 +1343,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             before_due = self._run_async(
@@ -973,7 +1387,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ):
             self._run_async(
@@ -997,7 +1411,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1022,7 +1436,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1047,7 +1461,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1078,7 +1492,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self._run_async(self._mark_batch_task_deleted_by_email_task_id(approved_task_id))
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result()),
         ) as mocked_send:
             processed = self._run_async(
@@ -1476,6 +1890,58 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             await session.commit()
             return task.id
 
+    async def _create_delivery_benchmark_tasks(
+        self,
+        *,
+        smtp_port: int,
+        count: int,
+    ) -> list[int]:
+        async with self.session_factory() as session:
+            suffix = uuid.uuid4().hex
+            identity = IdentityProfile(
+                name="Benchmark identity",
+                profile_name="Benchmark identity",
+                sender_name="Benchmark sender",
+                email_address=f"benchmark-{suffix}@example.com",
+                smtp_host="127.0.0.1",
+                smtp_port=smtp_port,
+                smtp_username=f"benchmark-{suffix}@example.com",
+                smtp_password="secret",
+                send_interval_min=1,
+                send_interval_max=1,
+                default_language="zh-CN",
+                outreach_generation_mode="template",
+                is_default=True,
+            )
+            llm_profile = LLMProfile(
+                name=f"Benchmark model {suffix}",
+                provider="openai",
+                api_base_url="https://api.example.com/v1",
+                api_key="test-key",
+                model_name="test-model",
+                is_default=True,
+            )
+            tasks: list[EmailTask] = []
+            for index in range(count):
+                professor = Professor(
+                    name=f"Benchmark professor {index}",
+                    email=f"benchmark-professor-{suffix}-{index}@example.edu",
+                    research_direction="Benchmarking",
+                    recent_papers=[],
+                )
+                tasks.append(
+                    self._build_email_task(
+                        batch_task=None,
+                        identity=identity,
+                        llm_profile=llm_profile,
+                        professor=professor,
+                        status=EmailTaskStatus.APPROVED.value,
+                    )
+                )
+            session.add_all(tasks)
+            await session.commit()
+            return [task.id for task in tasks]
+
     async def _create_blocked_scheduled_task_before_dispatchable_task(self) -> tuple[int, int]:
         async with self.session_factory() as session:
             identity = IdentityProfile(
@@ -1636,6 +2102,12 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             assert task is not None
             return task.status
 
+    async def _get_task_delivery_outcome(self, task_id: int) -> str | None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            return task.delivery_outcome
+
     async def _get_task_scheduled_at(self, task_id: int) -> datetime | None:
         async with self.session_factory() as session:
             task = await session.get(EmailTask, task_id)
@@ -1682,6 +2154,46 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             return task.cancellation_reason
+
+    async def _get_delivery_audit(
+        self,
+        task_id: int,
+    ) -> tuple[EmailTask, list[EmailDeliveryAttempt], list[EmailLog]]:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            attempts = list(
+                await session.scalars(
+                    select(EmailDeliveryAttempt)
+                    .where(EmailDeliveryAttempt.email_task_id == task_id)
+                    .order_by(EmailDeliveryAttempt.claimed_at, EmailDeliveryAttempt.attempt_id)
+                )
+            )
+            logs = list(
+                await session.scalars(
+                    select(EmailLog)
+                    .where(EmailLog.email_task_id == task_id)
+                    .order_by(EmailLog.id)
+                )
+            )
+            return task, attempts, logs
+
+    async def _set_delivery_owner_generation(
+        self,
+        task_id: int,
+        generation: str,
+    ) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            assert task.delivery_attempt_id is not None
+            attempt = await session.get(
+                EmailDeliveryAttempt,
+                task.delivery_attempt_id,
+            )
+            assert attempt is not None
+            attempt.owner_generation = generation
+            await session.commit()
 
     @staticmethod
     def _build_send_result() -> SendMailResult:

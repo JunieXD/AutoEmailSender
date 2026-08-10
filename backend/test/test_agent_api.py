@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -181,6 +182,16 @@ class AgentApiTests(unittest.TestCase):
         old_agent = os.environ.pop("AUTO_EMAIL_SENDER_AGENT_TOKEN", None)
         try:
             with TestClient(create_app(), raise_server_exceptions=False) as client:
+                deadline = time.monotonic() + 10.0
+                startup_status = client.get("/startup-status")
+                while startup_status.json()["state"] != "ready":
+                    self.assertLess(
+                        time.monotonic(),
+                        deadline,
+                        msg=f"Timed out waiting for startup: {startup_status.json()!r}",
+                    )
+                    time.sleep(0.05)
+                    startup_status = client.get("/startup-status")
                 self.assertEqual(client.get("/api/ping").status_code, 200)
                 self.assertEqual(client.get("/api/agent/v1/info").status_code, 200)
         finally:
@@ -4249,7 +4260,10 @@ class AgentApiTests(unittest.TestCase):
                 provider_payload={"accepted": True},
             ),
         )
-        with patch("app.modules.communications.transport.send_email", send_mock):
+        with patch(
+            "app.modules.communications.transport.send_prepared_email",
+            send_mock,
+        ):
             first = self.client.post(
                 f"/api/agent/v1/plans/{plan_id}/execute",
                 headers=self._agent_headers(),

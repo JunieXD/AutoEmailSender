@@ -43,10 +43,32 @@ The workflow must pass its cheap Ubuntu preflight before Windows/macOS jobs. It 
 On the project Mac, run formal Windows VM QA exactly once for this frozen SHA while certification runs:
 
 ```bash
-rtk bash scripts/quality/run-windows-vm-release-qa.sh
+rtk bash scripts/quality/run-windows-vm-release-qa.sh \
+  --candidate-installer /absolute/path/AutoEmailSender-Setup-<current-version>.exe \
+  --candidate-installer-sha256 <release-candidate-json-installer-sha256> \
+  --candidate-manifest /absolute/path/release-candidate.json \
+  --candidate-run-id <candidate-workflow-run-id> \
+  --previous-installer /absolute/path/AutoEmailSender-Setup-<previous-version>.exe \
+  --previous-installer-sha256 <published-previous-installer-sha256>
 ```
 
+The candidate installer, digest, manifest, and run ID must come from the same candidate workflow
+run. The runner validates manifest schema, SHA, version, run ID, asset name, size, and digest. The
+VM may still build a local installer as a packaging contract, but installed lifecycle and soak
+evidence must use the transferred candidate bytes; a same-SHA rebuild is not a substitute.
+
 Use `--quick` only for daily Windows-sensitive changes. Quick mode skips VC++ preparation, NSIS, and packaged lifecycle checks and is not release evidence. Release-note-only changes do not invalidate formal VM evidence. Windows packaging, installer, runtime, native dependency, or frozen-product changes do.
+
+For the desktop API + Worker topology's final certification, run the same frozen SHA with
+`--normal-soak --seeded-chaos --seed <recorded-seed>` as documented in
+`docs/development/desktop_api_worker_goal_acceptance.md`; do not accumulate shorter runs to satisfy
+the 24-hour or 8-hour gates.
+
+For the matching macOS lifecycle certification, bind the previous public DMG with
+`--expected-previous-dmg-sha256` as well as binding the current candidate with
+`--expected-dmg-sha256`. Pass the same `--candidate-manifest` and `--candidate-run-id` to all three
+macOS scenarios. Development smoke may calculate its local previous-package digest, but that
+automatically adopted value is not public-asset provenance and is not release evidence.
 
 Do not edit code, version metadata, or release notes after certification. If anything changes, use `release-impact.mjs` to invalidate only affected local/VM evidence, then certify the new SHA. Candidate artifacts remain bound to their original SHA and cannot be mixed into another candidate.
 

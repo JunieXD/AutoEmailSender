@@ -24,6 +24,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.fault_injection import (
+    get_test_browser_host_resolver_args,
+    resolve_test_crawl_loopback_host,
+)
+from app.core.time import utc_now
 from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
 from app.modules.crawler.candidate_identity import (
     candidate_identity_values,
@@ -679,6 +684,12 @@ def _resolve_safe_public_crawl_url(
     allow_public_dns_fallback: bool = False,
 ) -> _SafeCrawlUrl:
     normalized_host, _scheme, port = _validate_safe_crawl_url_literal(url)
+    test_loopback_ip = resolve_test_crawl_loopback_host(normalized_host)
+    if test_loopback_ip is not None:
+        return _SafeCrawlUrl(
+            hostname=normalized_host,
+            resolved_ips=(test_loopback_ip,),
+        )
     try:
         ip_address = ipaddress.ip_address(normalized_host)
     except ValueError:
@@ -1171,6 +1182,7 @@ async def crawl_page_with_browser_fallback(
                 else "same_host_http_previously_blocked"
             ),
             browser_status=snapshot.status,
+            claim_fence=ctx.claim_fence,
         )
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return snapshot
@@ -1215,6 +1227,7 @@ async def crawl_page_with_browser_fallback(
                 direct_status=http_snapshot.status,
                 fallback_reason=http_snapshot.error_message or "direct_fetch_unusable",
                 browser_status=browser_snapshot.status,
+                claim_fence=ctx.claim_fence,
             )
         if fetch_mode == "direct":
             ctx.forget_page_snapshot(absolute_url)
@@ -1235,6 +1248,7 @@ async def crawl_page_with_browser_fallback(
         snapshot=processed_snapshot,
         fetch_mode="direct",
         direct_status=processed_snapshot.status,
+        claim_fence=ctx.claim_fence,
     )
     if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
@@ -1338,6 +1352,7 @@ async def browser_investigate(
         job_id=ctx.job_id,
         original_url=absolute_url,
         snapshot=processed_snapshot,
+        claim_fence=ctx.claim_fence,
     )
     if _should_remember_page_snapshot(processed_snapshot):
         ctx.remember_page_snapshot(processed_snapshot)
@@ -1580,7 +1595,7 @@ def _browser_fetch_options_for_goal(goal: str) -> BrowserFetchOptions:
 def _playwright_launch_options() -> dict[str, object]:
     return {
         "headless": True,
-        "args": list(BROWSER_EXTRA_ARGS),
+        "args": [*BROWSER_EXTRA_ARGS, *get_test_browser_host_resolver_args()],
     }
 
 
@@ -2519,8 +2534,15 @@ async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) ->
         title=snapshot.title,
         text_excerpt=snapshot.text[:MAX_TEXT_CHARS] or None,
         error_message=snapshot.error_message,
+        created_at=utc_now(),
     )
     async with ctx.session_factory() as session:
+        if ctx.claim_fence is not None and not await fence_crawler_v2_claim(
+            session,
+            ctx.claim_fence,
+        ):
+            await session.rollback()
+            return None
         if await _is_crawl_job_stopped(session, ctx.job_id):
             return None
 

@@ -42,6 +42,7 @@ from .imap.state import (
     mark_professor_scan_failed,
     mark_recent_v2_batch_completed,
     prepare_recent_v2_bulk_sent_batch,
+    recover_interrupted_imap_background_claims,
     reset_professor_scans_to_pending,
 )
 from .ingestion import (

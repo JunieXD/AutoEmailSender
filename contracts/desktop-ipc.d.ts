@@ -78,6 +78,19 @@ export type DesktopBackendStatus =
     }
   | { state: "restarting"; code: number | null; signal: string | null }
   | {
+      state: "degraded";
+      baseUrl: string;
+      reason:
+        | "background_unavailable"
+        | "background_restarting"
+        | "background_hung"
+        | "background_degraded";
+      message: string;
+      workerPid?: number;
+      circuitOpenUntil?: string;
+      detail?: string;
+    }
+  | {
       state: "ready";
       baseUrl: string;
       phase: "ready";

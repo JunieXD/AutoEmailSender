@@ -76,12 +76,23 @@ class EmailLog(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "uq_email_logs_delivery_attempt_id",
+            "delivery_attempt_id",
+            unique=True,
+            sqlite_where=text("delivery_attempt_id IS NOT NULL"),
+            postgresql_where=text("delivery_attempt_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("email_tasks.id"),
         index=True,
+        nullable=True,
+    )
+    delivery_attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("email_delivery_attempts.attempt_id", ondelete="SET NULL"),
         nullable=True,
     )
     identity_id: Mapped[int] = mapped_column(

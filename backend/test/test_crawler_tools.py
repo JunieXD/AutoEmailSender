@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -236,6 +237,25 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("--disable-blink-features=AutomationControlled", args)
         self.assertTrue(options["headless"])
         self.assertNotIn("channel", options)
+
+    def test_playwright_launch_options_map_only_explicit_test_hosts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ,
+            {
+                "AUTO_EMAIL_SENDER_TEST_FAULTS": "enabled-for-tests-only",
+                "AUTO_EMAIL_SENDER_TEST_FAULT_DIR": temp_dir,
+                "AUTO_EMAIL_SENDER_TEST_CRAWL_LOOPBACK_HOSTS": (
+                    "browser.test.invalid"
+                ),
+            },
+            clear=False,
+        ):
+            args = crawler_tools._playwright_launch_options()["args"]
+
+        self.assertIn(
+            "--host-resolver-rules=MAP browser.test.invalid 127.0.0.1",
+            args,
+        )
 
     def test_certificate_compatibility_only_accepts_date_errors(self) -> None:
         self.assertTrue(

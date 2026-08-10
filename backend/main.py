@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,12 +24,19 @@ from app.core.agent_api_errors import (
     request_validation_error_handler,
 )
 from app.core.agent_mutation_headers import AgentMutationHeadersMiddleware
+from app.core.agent_runtime_descriptor import get_runtime_id
 from app.core.api_auth import ApiAuthMiddleware
+from app.core.backend_role import get_backend_role
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_session_factory
 from app.core.error_formatting import safe_exception_message
 from app.core.migrations import ensure_database_schema
 from app.core.request_context import RequestContextMiddleware
+from app.core.runtime_group import (
+    cleanup_owned_runtime_process_status,
+    write_runtime_process_status,
+)
+from app.core.runtime_readiness import RuntimeReadinessMiddleware
 from app.core.schema_metadata import DatabaseRequiresNewerAppError
 from app.core.sqlite_diagnostics import is_sqlite_database_lock_error
 from app.core.startup_logging import write_startup_phase_log
@@ -39,8 +47,13 @@ from app.modules.campaigns.public import (
     recover_stale_generating_drafts,
 )
 from app.modules.crawler.public import recover_interrupted_crawl_jobs
-from app.services.operation_logs import cleanup_old_operation_logs
+from app.services.operation_logs import (
+    cleanup_old_operation_logs,
+    sanitize_diagnostic_text,
+    sanitize_user_visible_error,
+)
 from app.services.runtime_manager import RuntimeManager
+from app.services.worker_claim_recovery import recover_interrupted_worker_claims
 
 ensure_windows_proactor_event_loop_policy()
 logger = logging.getLogger(__name__)
@@ -116,9 +129,23 @@ def set_startup_status(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_startup_status(app)
+    backend_role = get_backend_role()
+    app.state.backend_role = backend_role
     app.state.runtime_ready = False
     app.state.runtime_error = None
     app.state.runtime_manager = None
+    if backend_role == "api":
+        app.state.api_runtime_id = get_runtime_id()
+        app.state.api_generation = f"api-{os.getpid()}"
+        app.state.api_started_at = datetime.now(UTC)
+        write_runtime_process_status(
+            get_settings().data_dir,
+            runtime_id=app.state.api_runtime_id,
+            role="api",
+            generation=app.state.api_generation,
+            state="starting",
+            started_at=app.state.api_started_at,
+        )
     runtime_task = asyncio.create_task(initialize_runtime(app))
     runtime_task.add_done_callback(log_runtime_initialization_failure)
 
@@ -132,6 +159,13 @@ async def lifespan(app: FastAPI):
         if runtime_manager is not None:
             await runtime_manager.stop()
         await dispose_engine()
+        if backend_role == "api":
+            cleanup_owned_runtime_process_status(
+                get_settings().data_dir,
+                runtime_id=app.state.api_runtime_id,
+                role="api",
+                generation=app.state.api_generation,
+            )
 
 
 async def initialize_runtime(app: FastAPI) -> None:
@@ -147,17 +181,30 @@ async def initialize_runtime(app: FastAPI) -> None:
             cleanup_runtime_state,
         )
         set_startup_status(app, state="starting", phase="starting_workers")
-        if get_settings().enable_background_workers:
-            runtime_manager = RuntimeManager(get_session_factory())
+        if get_backend_role() == "combined" and get_settings().enable_background_workers:
+            runtime_manager = RuntimeManager(
+                get_session_factory(),
+                runtime_id=get_runtime_id(),
+                worker_generation=f"combined-{os.getpid()}-{uuid.uuid4().hex}",
+            )
             await runtime_manager.start()
             app.state.runtime_manager = runtime_manager
         app.state.runtime_ready = True
         set_startup_status(app, state="ready", phase="ready")
+        if get_backend_role() == "api":
+            write_runtime_process_status(
+                get_settings().data_dir,
+                runtime_id=app.state.api_runtime_id,
+                role="api",
+                generation=app.state.api_generation,
+                state="ready",
+                started_at=app.state.api_started_at,
+            )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         error_detail = build_startup_error_detail(exc)
-        error_message = safe_exception_message(exc)
+        error_message = sanitize_user_visible_error(safe_exception_message(exc))
         app.state.runtime_error = error_message
         app.state.runtime_error_detail = error_detail
         set_startup_status(
@@ -167,6 +214,16 @@ async def initialize_runtime(app: FastAPI) -> None:
             error=error_message,
             error_detail=error_detail,
         )
+        if get_backend_role() == "api":
+            write_runtime_process_status(
+                get_settings().data_dir,
+                runtime_id=app.state.api_runtime_id,
+                role="api",
+                generation=app.state.api_generation,
+                state="error",
+                started_at=app.state.api_started_at,
+                error=error_message,
+            )
         write_startup_diagnostic_log("桌面后端启动初始化失败", exc=exc)
         raise
 
@@ -183,6 +240,10 @@ async def cleanup_runtime_state() -> None:
     await recover_interrupted_crawl_jobs(get_session_factory())
     await recover_interrupted_match_analysis_runs(get_session_factory())
     await recover_interrupted_workspace_draft_rewrites(get_session_factory())
+    await recover_interrupted_worker_claims(
+        get_session_factory(),
+        preserve_full_imap_claims=False,
+    )
     await recover_stale_generating_drafts(
         get_session_factory(),
         stale_after=timedelta(seconds=0),
@@ -231,7 +292,7 @@ def write_startup_diagnostic_log(
         if exc is not None:
             lines.append(f"error={type(exc).__name__}: {safe_exception_message(exc)}")
             lines.append("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip())
-        append_text(log_path, "\n".join(lines) + "\n")
+        append_text(log_path, sanitize_diagnostic_text("\n".join(lines) + "\n"))
     except Exception:
         logger.exception("写入启动诊断日志失败")
 
@@ -257,6 +318,10 @@ def create_app() -> FastAPI:
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 
+    # Keep the API socket available for startup diagnostics while preventing
+    # every business route from racing migrations and cold-start recovery.
+    # This middleware is registered before auth so auth remains the outer gate.
+    app.add_middleware(RuntimeReadinessMiddleware)
     app.add_middleware(
         ApiAuthMiddleware,
         ui_token=os.getenv("AUTO_EMAIL_SENDER_UI_TOKEN"),

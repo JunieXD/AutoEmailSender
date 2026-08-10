@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3686,7 +3687,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(return_value=self._build_send_result(message_id="<subject-render@example.com>", provider_payload={})),
         ) as mocked_send, patch(
             "app.modules.campaigns.templates.rendering.datetime",
@@ -3710,12 +3711,15 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         kwargs = mocked_send.await_args.kwargs
-        self.assertEqual(kwargs["subject"], "申请与主题导师老师交流")
-        self.assertIn("主题导师老师您好", kwargs["body_text"])
-        self.assertIn(f"发送日期：{expected_date}", kwargs["body_text"])
-        self.assertNotIn("{{name}}", kwargs["body_html"])
-        self.assertNotIn("{{year}}", kwargs["body_html"])
-        self.assertIn(f"发送日期：{expected_date}", kwargs["body_html"])
+        prepared_message = kwargs["prepared"].message
+        plain_body = prepared_message.get_body(preferencelist=("plain",)).get_content()
+        html_body = prepared_message.get_body(preferencelist=("html",)).get_content()
+        self.assertEqual(prepared_message["Subject"], "申请与主题导师老师交流")
+        self.assertIn("主题导师老师您好", plain_body)
+        self.assertIn(f"发送日期：{expected_date}", plain_body)
+        self.assertNotIn("{{name}}", html_body)
+        self.assertNotIn("{{year}}", html_body)
+        self.assertIn(f"发送日期：{expected_date}", html_body)
         self.assertEqual(response.json()["current_task"]["approved_subject"], "申请与{{name}}老师交流")
         self.assertIn("{{year}}年{{month}}月{{day}}日", response.json()["current_task"]["approved_body_text"])
 
@@ -3747,7 +3751,7 @@ class ApiEndpointTests(unittest.TestCase):
         task_id = ensure_response.json()["current_task"]["id"]
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(),
         ) as mocked_send:
             response = self.client.post(
@@ -4795,7 +4799,7 @@ class ApiEndpointTests(unittest.TestCase):
         professor_id = self._create_professor(email="queued-template@example.edu")
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<queued-template@example.com>",
@@ -4859,6 +4863,16 @@ class ApiEndpointTests(unittest.TestCase):
         os.environ["DATABASE_URL"] = stale_env["DATABASE_URL"]
 
         with TestClient(create_app()) as client:
+            deadline = time.monotonic() + 10.0
+            startup_status = client.get("/startup-status")
+            while startup_status.json()["state"] != "ready":
+                self.assertLess(
+                    time.monotonic(),
+                    deadline,
+                    msg=f"Timed out waiting for startup: {startup_status.json()!r}",
+                )
+                time.sleep(0.05)
+                startup_status = client.get("/startup-status")
             response = client.get("/api/ping")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["status"], "ok")
@@ -6629,7 +6643,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(switched_thread["current_task"]["status"], "review_required")
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<manual-send@example.com>",
@@ -7897,7 +7911,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<guarded-send@example.com>",
@@ -8508,7 +8522,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(regenerate_response.json()["detail"], "请选择 AI 写信参考材料后再生成草稿")
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<manual-no-primary@example.com>",
@@ -8669,7 +8683,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         schedule_time = datetime.now(UTC) + timedelta(hours=1)
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<msg-1@example.com>",
@@ -10260,7 +10274,7 @@ class ApiEndpointTests(unittest.TestCase):
         professor_id = professor_response.json()["id"]
 
         with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_prepared_email",
             AsyncMock(
                 return_value=self._build_send_result(
                     message_id="<template-immediate@example.com>",

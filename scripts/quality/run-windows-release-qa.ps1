@@ -6,13 +6,79 @@ param(
   [string]$ExpectedRevision,
   [ValidatePattern('^$|^[0-9a-fA-F]{40}$')]
   [string]$PreviousRevision = "",
+  [string]$PreviousInstallerPath = "",
+  [string]$ExpectedPreviousVersion = "",
+  [ValidatePattern('^$|^[0-9a-fA-F]{64}$')]
+  [string]$ExpectedPreviousPackageSha256 = "",
+  [string]$CandidateInstallerPath = "",
+  [ValidatePattern('^$|^[0-9a-fA-F]{64}$')]
+  [string]$ExpectedCandidatePackageSha256 = "",
+  [string]$CandidateManifestPath = "",
+  [long]$ExpectedCandidateRunId = 0,
   [switch]$ForceFull,
   [ValidateSet("release", "quick")]
-  [string]$Mode = "release"
+  [string]$Mode = "release",
+  [switch]$RunNormalSoak,
+  [switch]$RunSeededChaos,
+  [ValidateRange(86400, 604800)]
+  [int]$NormalSoakDurationSeconds = 86400,
+  [ValidateRange(28800, 604800)]
+  [int]$SeededChaosDurationSeconds = 28800,
+  [int]$SeededChaosSeed = 20260810
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($Mode -eq "release") {
+  if ([string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
+    throw "Release QA requires -PreviousInstallerPath for a real previous-stable in-place upgrade."
+  }
+  if ([string]::IsNullOrWhiteSpace($ExpectedPreviousVersion)) {
+    throw "Release QA requires -ExpectedPreviousVersion for previous-stable provenance."
+  }
+  if ([string]::IsNullOrWhiteSpace($ExpectedPreviousPackageSha256)) {
+    throw "Release QA requires -ExpectedPreviousPackageSha256 for previous-stable provenance."
+  }
+  if ([string]::IsNullOrWhiteSpace($CandidateInstallerPath)) {
+    throw "Release QA requires -CandidateInstallerPath for the exact candidate NSIS asset."
+  }
+  if ([string]::IsNullOrWhiteSpace($ExpectedCandidatePackageSha256)) {
+    throw "Release QA requires -ExpectedCandidatePackageSha256 from the candidate manifest."
+  }
+  if ([string]::IsNullOrWhiteSpace($CandidateManifestPath)) {
+    throw "Release QA requires -CandidateManifestPath from the same candidate workflow."
+  }
+  if ($ExpectedCandidateRunId -le 0) {
+    throw "Release QA requires a positive -ExpectedCandidateRunId."
+  }
+  $PreviousInstallerPath = [System.IO.Path]::GetFullPath($PreviousInstallerPath)
+  if (-not (Test-Path -LiteralPath $PreviousInstallerPath -PathType Leaf)) {
+    throw "Previous stable installer is missing: $PreviousInstallerPath"
+  }
+  $actualPreviousPackageSha256 = (
+    Get-FileHash -LiteralPath $PreviousInstallerPath -Algorithm SHA256
+  ).Hash.ToLowerInvariant()
+  if ($actualPreviousPackageSha256 -ne $ExpectedPreviousPackageSha256.ToLowerInvariant()) {
+    throw "Previous stable installer SHA-256 does not match the host-provided digest."
+  }
+  $ExpectedPreviousPackageSha256 = $ExpectedPreviousPackageSha256.ToLowerInvariant()
+  $CandidateInstallerPath = [System.IO.Path]::GetFullPath($CandidateInstallerPath)
+  if (-not (Test-Path -LiteralPath $CandidateInstallerPath -PathType Leaf)) {
+    throw "Candidate installer is missing: $CandidateInstallerPath"
+  }
+  $actualCandidatePackageSha256 = (
+    Get-FileHash -LiteralPath $CandidateInstallerPath -Algorithm SHA256
+  ).Hash.ToLowerInvariant()
+  if ($actualCandidatePackageSha256 -ne $ExpectedCandidatePackageSha256.ToLowerInvariant()) {
+    throw "Candidate installer SHA-256 does not match the candidate manifest digest."
+  }
+  $ExpectedCandidatePackageSha256 = $ExpectedCandidatePackageSha256.ToLowerInvariant()
+  $CandidateManifestPath = [System.IO.Path]::GetFullPath($CandidateManifestPath)
+  if (-not (Test-Path -LiteralPath $CandidateManifestPath -PathType Leaf)) {
+    throw "Candidate manifest is missing: $CandidateManifestPath"
+  }
+}
 
 function Invoke-QaStep {
   param(
@@ -118,6 +184,56 @@ function Stop-StaleQaCheckoutProcesses {
     if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue)) {
       throw "Unable to stop stale QA process $($process.ProcessId)."
     }
+  }
+}
+
+function Stop-QaProcessesFromRoot {
+  param([Parameter(Mandatory = $true)][string]$RootPath)
+
+  if (-not (Test-Path -LiteralPath $RootPath)) {
+    return
+  }
+  $rootPrefix = [System.IO.Path]::GetFullPath($RootPath).TrimEnd("\") + "\"
+  $processes = @(
+    Get-CimInstance Win32_Process | Where-Object {
+      $_.ExecutablePath -and
+      $_.ExecutablePath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+  )
+  foreach ($process in $processes) {
+    & taskkill.exe /PID $process.ProcessId /T /F | Out-Host
+    if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue)) {
+      throw "Unable to stop packaged QA process $($process.ProcessId)."
+    }
+  }
+}
+
+function Invoke-QaExecutable {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [string]$Arguments = "",
+    [hashtable]$Environment = @{},
+    [Parameter(Mandatory = $true)][string]$Operation
+  )
+
+  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = $FilePath
+  $startInfo.UseShellExecute = $false
+  # The Parallels runner intentionally invokes Windows PowerShell 5.1.  Its
+  # .NET Framework ProcessStartInfo has no ArgumentList on the supported VM.
+  # Arguments/EnvironmentVariables are the compatible APIs across supported
+  # PowerShell 5.1 hosts, regardless of whether a host also exposes Environment.
+  $startInfo.Arguments = $Arguments
+  foreach ($name in $Environment.Keys) {
+    $startInfo.EnvironmentVariables[[string]$name] = [string]$Environment[$name]
+  }
+  $process = [System.Diagnostics.Process]::Start($startInfo)
+  if ($null -eq $process) {
+    throw "$Operation did not start."
+  }
+  $process.WaitForExit()
+  if ($process.ExitCode -ne 0) {
+    throw "$Operation failed with exit code $($process.ExitCode)."
   }
 }
 
@@ -296,6 +412,19 @@ if ($revision -ne $ExpectedRevision) {
 Write-Host "Testing committed revision $revision"
 Write-Host "Windows QA mode: $Mode"
 Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
+
+if ($Mode -eq "release") {
+  $candidateDesktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
+  & node (Join-Path $CheckoutPath "scripts\release\release-candidate.mjs") `
+    asset `
+    --manifest $CandidateManifestPath `
+    --platform windows `
+    --release-sha $revision `
+    --run-id ([string]$ExpectedCandidateRunId) `
+    --version ([string]$candidateDesktopPackage.version) `
+    --asset $CandidateInstallerPath
+  Assert-NativeSuccess "candidate manifest and Windows installer binding"
+}
 
 $gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
 $script:QaCacheDirectory = Join-Path $gitDirectory "auto-email-sender-windows-qa"
@@ -553,61 +682,181 @@ if ($Mode -eq "release") {
     }
   }
 
-  Invoke-QaStep "Packaged runtime identity and stale-process lifecycle" {
-    $appExecutable = Join-Path $CheckoutPath "desktop\release\win-unpacked\Auto Email Sender.exe"
-    $cliExecutable = Join-Path $CheckoutPath "cli\dist\auto-email-sender\auto-email-sender.exe"
-    if (-not (Test-Path -LiteralPath $appExecutable -PathType Leaf)) {
-      throw "Packaged app is missing: $appExecutable"
-    }
-    if (-not (Test-Path -LiteralPath $cliExecutable -PathType Leaf)) {
-      throw "Frozen CLI is missing: $cliExecutable"
+  Invoke-QaStep "Installed packaged split lifecycle and optional soak certification" {
+    $desktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
+    $builtInstallerPath = Join-Path $CheckoutPath "desktop\release\AutoEmailSender-Setup-$($desktopPackage.version).exe"
+    if (-not (Test-Path -LiteralPath $builtInstallerPath -PathType Leaf)) {
+      throw "Locally built Windows installer is missing: $builtInstallerPath"
     }
 
-    $firstDesktop = Start-Process -FilePath $appExecutable -PassThru
+    $qaTimestamp = Get-Date -Format "yyyyMMddTHHmmss"
+    $qaRoot = Join-Path $env:TEMP "auto-email-sender-packaged-qa\$revision-$qaTimestamp"
+    $installRoot = Join-Path $qaRoot "安装 路径 Ω"
+    $evidenceRoot = Join-Path $qaRoot "evidence"
+    $packageRoot = Join-Path $qaRoot "candidate packages"
+    New-Item -ItemType Directory -Force -Path $qaRoot, $evidenceRoot, $packageRoot | Out-Null
+
+    $previousInstallerPathLocal = Join-Path $packageRoot "previous-stable.exe"
+    $candidateInstallerPathLocal = Join-Path $packageRoot "current-candidate.exe"
+    $candidateManifestPathLocal = Join-Path $packageRoot "release-candidate.json"
+    Copy-Item -LiteralPath $PreviousInstallerPath -Destination $previousInstallerPathLocal
+    Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal
+    Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal
+    $previousInstallerSha256 = (
+      Get-FileHash -LiteralPath $previousInstallerPathLocal -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    $installerSha256 = (
+      Get-FileHash -LiteralPath $candidateInstallerPathLocal -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if ($previousInstallerSha256 -ne $ExpectedPreviousPackageSha256) {
+      throw "Guest-local previous installer copy changed after shared-folder transfer."
+    }
+    if ($installerSha256 -ne $ExpectedCandidatePackageSha256) {
+      throw "Guest-local candidate installer copy changed after shared-folder transfer."
+    }
+
     try {
-      $firstStatus = Wait-AgentReady -CliExecutable $cliExecutable
-      $firstDescriptor = Get-AgentRuntimeDescriptor
-      $firstRuntimeId = [string]$firstDescriptor.runtime_id
-      if ($firstDescriptor.protocol_version -ne "3") {
-        throw "Packaged runtime did not publish protocol v3."
-      }
-      if (-not (Get-Process -Id ([int]$firstDescriptor.desktop.pid) -ErrorAction SilentlyContinue)) {
-        throw "Runtime descriptor desktop PID is not running."
-      }
-      if (-not (Get-Process -Id ([int]$firstDescriptor.backend.pid) -ErrorAction SilentlyContinue)) {
-        throw "Runtime descriptor backend PID is not running."
-      }
-      for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
-        $status = Get-AgentStatus -CliExecutable $cliExecutable
-        if ($status.backend_ready -ne $true -or $status.state -ne "ready") {
-          throw "Repeated CLI status changed or invalidated the active runtime."
-        }
-      }
-      Stop-QaDesktopTree -DesktopPid ([int]$firstDescriptor.desktop.pid)
-      $firstDesktop = $null
+    Invoke-QaExecutable `
+      -FilePath $previousInstallerPathLocal `
+      -Arguments "/S /D=$installRoot" `
+      -Environment @{} `
+      -Operation "silent previous-stable Windows installer"
+    Start-Sleep -Seconds 2
+    Stop-QaProcessesFromRoot -RootPath $installRoot
 
-      Start-Sleep -Seconds 1
-      $stoppedStatus = Get-AgentStatus -CliExecutable $cliExecutable
-      if ($stoppedStatus.state -ne "stopped" -or $stoppedStatus.backend_ready -ne $false) {
-        throw "CLI did not fail closed after the desktop process exited."
-      }
+    $previousAppExecutable = Join-Path $installRoot "Auto Email Sender.exe"
+    if (-not (Test-Path -LiteralPath $previousAppExecutable -PathType Leaf)) {
+      throw "Previous stable installed app is missing: $previousAppExecutable"
+    }
+    $upgradeUserData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
+    $upgradeManifest = Join-Path $qaRoot "previous-upgrade\manifest.json"
+    New-Item -ItemType Directory -Force -Path $upgradeUserData | Out-Null
+    & uv run `
+      --project (Join-Path $CheckoutPath "backend") `
+      --no-sync `
+      python `
+      (Join-Path $CheckoutPath "scripts\quality\seed-previous-packaged-upgrade.py") `
+      --app-executable $previousAppExecutable `
+      --artifact-root $installRoot `
+      --package-file $previousInstallerPathLocal `
+      --user-data $upgradeUserData `
+      --manifest $upgradeManifest
+    Assert-NativeSuccess "previous-stable packaged upgrade seeding"
 
-      $secondDesktop = Start-Process -FilePath $appExecutable -PassThru
-      try {
-        $secondStatus = Wait-AgentReady -CliExecutable $cliExecutable
-        $secondDescriptor = Get-AgentRuntimeDescriptor
-        if ([string]$secondDescriptor.runtime_id -eq $firstRuntimeId) {
-          throw "Restarted desktop reused the previous runtime identity."
-        }
-      } finally {
-        if ($secondDesktop -and -not $secondDesktop.HasExited) {
-          Stop-QaDesktopTree -DesktopPid $secondDesktop.Id
-        }
+    # A silent NSIS install must not be allowed to auto-launch against real
+    # userData.  If it attempts to launch, this incomplete QA gate makes the
+    # packaged main process fail closed before desktop bootstrap.
+    Invoke-QaExecutable `
+      -FilePath $candidateInstallerPathLocal `
+      -Arguments "/S /D=$installRoot" `
+      -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "installer-auto-launch-must-fail-closed" } `
+      -Operation "silent Windows installer"
+    Start-Sleep -Seconds 2
+    Stop-QaProcessesFromRoot -RootPath $installRoot
+
+    $appExecutable = Join-Path $installRoot "Auto Email Sender.exe"
+    if (-not (Test-Path -LiteralPath $appExecutable -PathType Leaf)) {
+      throw "Installed packaged app is missing: $appExecutable"
+    }
+
+    $scenarioSettings = @(
+      @{ Name = "lifecycle"; Duration = $null; Seed = $null }
+    )
+    if ($RunNormalSoak) {
+      $scenarioSettings += @{
+        Name = "normal-soak"
+        Duration = $NormalSoakDurationSeconds
+        Seed = $null
       }
+    }
+    if ($RunSeededChaos) {
+      $scenarioSettings += @{
+        Name = "seeded-chaos"
+        Duration = $SeededChaosDurationSeconds
+        Seed = $SeededChaosSeed
+      }
+    }
+
+    $reportPaths = New-Object System.Collections.Generic.List[string]
+    foreach ($scenario in $scenarioSettings) {
+      $scenarioEvidence = Join-Path $evidenceRoot ([string]$scenario.Name)
+      $driverArguments = @(
+        "run",
+        "--project", (Join-Path $CheckoutPath "backend"),
+        "--no-sync",
+        "python",
+        (Join-Path $CheckoutPath "scripts\quality\packaged-runtime-qa.py"),
+        "--scenario", ([string]$scenario.Name),
+        "--app-executable", $appExecutable,
+        "--artifact-root", $installRoot,
+        "--package-file", $candidateInstallerPathLocal,
+        "--artifacts-dir", $scenarioEvidence,
+        "--certification",
+        "--expected-app-version", ([string]$desktopPackage.version),
+        "--expected-package-sha256", $installerSha256,
+        "--candidate-manifest-file", $candidateManifestPathLocal,
+        "--expected-candidate-run-id", ([string]$ExpectedCandidateRunId),
+        "--expected-revision", $revision,
+        "--repository-root", $CheckoutPath
+      )
+      if ($null -ne $scenario.Duration) {
+        $driverArguments += @("--duration-seconds", ([string]$scenario.Duration))
+      }
+      if ($null -ne $scenario.Seed) {
+        $driverArguments += @("--seed", ([string]$scenario.Seed))
+      }
+      if ($scenario.Name -in @("lifecycle", "seeded-chaos")) {
+        $driverArguments += "--system-sleep-wake"
+      }
+      if ($scenario.Name -eq "lifecycle") {
+        $driverArguments += @(
+          "--existing-user-data", $upgradeUserData,
+          "--upgrade-manifest", $upgradeManifest,
+          "--expected-previous-version", $ExpectedPreviousVersion,
+          "--previous-package-file", $previousInstallerPathLocal,
+          "--expected-previous-package-sha256", $ExpectedPreviousPackageSha256
+        )
+      }
+      & uv @driverArguments
+      Assert-NativeSuccess "packaged $($scenario.Name) certification"
+
+      $reports = @(
+        Get-ChildItem -LiteralPath $scenarioEvidence -Filter "report.json" -File -Recurse
+      )
+      if ($reports.Count -ne 1) {
+        throw "Expected one packaged $($scenario.Name) report; found $($reports.Count)."
+      }
+      $report = Get-Content -Raw -LiteralPath $reports[0].FullName | ConvertFrom-Json
+      if ($report.status -ne "passed" -or $report.certification_eligible -ne $true) {
+        throw "Packaged $($scenario.Name) report is not valid certification evidence."
+      }
+      $reportPaths.Add($reports[0].FullName)
+    }
+
+    Stop-QaProcessesFromRoot -RootPath $installRoot
+    $uninstallerPath = Join-Path $installRoot "Uninstall Auto Email Sender.exe"
+    if (-not (Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
+      throw "Windows uninstaller is missing: $uninstallerPath"
+    }
+    Invoke-QaExecutable `
+      -FilePath $uninstallerPath `
+      -Arguments "/S" `
+      -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "uninstaller-must-not-launch-app" } `
+      -Operation "silent Windows uninstaller"
+    Start-Sleep -Seconds 2
+    if (Test-Path -LiteralPath $appExecutable) {
+      throw "Installed executable remains after uninstall: $appExecutable"
+    }
+    foreach ($reportPath in $reportPaths) {
+      $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json
+      $databasePath = Join-Path ([string]$report.user_data_path) "auto_email_sender.db"
+      if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf)) {
+        throw "Uninstall did not preserve isolated user data: $databasePath"
+      }
+    }
+    Write-Host "Windows packaged QA artifacts: $qaRoot"
     } finally {
-      if ($firstDesktop -and -not $firstDesktop.HasExited) {
-        Stop-QaDesktopTree -DesktopPid $firstDesktop.Id
-      }
+      Stop-QaProcessesFromRoot -RootPath $installRoot
     }
   }
   Write-Host "`nWindows release QA passed for $revision"

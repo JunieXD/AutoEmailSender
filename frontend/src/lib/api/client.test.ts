@@ -172,6 +172,41 @@ describe("api client desktop base url", () => {
     await expect(request).resolves.toEqual({ status: "ok" });
   });
 
+  it("continues API requests when only background processing is degraded", async () => {
+    let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ok" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      checkForUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      downloadUpdate: async () => ({ state: "not_available", version: "0.1.0" }),
+      switchToFullDownload: async () => ({ state: "not_available", version: "0.1.0" }),
+      quitAndInstall: async () => undefined,
+      onBackendStatus: (callback) => {
+        backendStatusCallback = callback;
+        return () => undefined;
+      },
+      onUpdateStatus: () => () => undefined,
+    };
+
+    const request = apiFetch<{ status: string }>("/health");
+    await Promise.resolve();
+    backendStatusCallback?.({
+      state: "degraded",
+      baseUrl: "http://127.0.0.1:48124",
+      reason: "background_unavailable",
+      message: "后台服务暂时不可用",
+    });
+
+    await expect(request).resolves.toEqual({ status: "ok" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:48124/health",
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
+
   it("uses a user-facing message when desktop backend startup fails", async () => {
     let backendStatusCallback: ((status: DesktopBackendStatus) => void) | undefined;
     window.autoEmailSender = {

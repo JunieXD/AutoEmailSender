@@ -5,11 +5,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.modules.llm.public as llm_runtime
+from app.core.fault_injection import wait_at_fault_point
 from app.core.time import as_utc_aware, utc_now
 from app.models import (
     BatchTaskStatus,
@@ -55,6 +56,13 @@ class MatchUsageSummary:
     cached_tokens: int | None = None
 
 
+MatchResultCommitGuard = Callable[
+    [AsyncSession, int, MatchUsageSummary],
+    Awaitable[bool],
+]
+MatchRunStartedGuard = Callable[[AsyncSession, int], Awaitable[bool]]
+
+
 @dataclass(slots=True)
 class MatchCalculationActionResult:
     professor_id: int
@@ -63,6 +71,7 @@ class MatchCalculationActionResult:
     llm_profile_id: int
     usage: MatchUsageSummary
     run_id: int | None = None
+    claim_finalized: bool = False
 
 
 class MatchAnalysisAlreadyRunningError(RuntimeError):
@@ -104,6 +113,8 @@ async def calculate_task_match(
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
     llm_profile_id: int | None = None,
     match_source_identity_id: int | None = None,
+    run_started_guard: MatchRunStartedGuard | None = None,
+    result_commit_guard: MatchResultCommitGuard | None = None,
 ) -> MatchCalculationActionResult:
     async with session_factory() as session:
         task = await _load_email_task(session, task_id)
@@ -137,6 +148,8 @@ async def calculate_task_match(
             source_task=task,
             force=force,
             cancel_requested=cancel_requested,
+            run_started_guard=run_started_guard,
+            result_commit_guard=result_commit_guard,
         )
 
 
@@ -148,6 +161,8 @@ async def calculate_identity_professor_match(
     llm_profile_id: int,
     match_source_identity_id: int | None = None,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    run_started_guard: MatchRunStartedGuard | None = None,
+    result_commit_guard: MatchResultCommitGuard | None = None,
 ) -> MatchCalculationActionResult:
     """Calculate a canonical mentor match without creating an email task."""
 
@@ -173,6 +188,8 @@ async def calculate_identity_professor_match(
             source_task=None,
             force=True,
             cancel_requested=cancel_requested,
+            run_started_guard=run_started_guard,
+            result_commit_guard=result_commit_guard,
         )
 
 
@@ -186,6 +203,8 @@ async def _calculate_identity_professor_match(
     source_task: EmailTask | None,
     force: bool,
     cancel_requested: Callable[[], Awaitable[bool]] | None,
+    run_started_guard: MatchRunStartedGuard | None,
+    result_commit_guard: MatchResultCommitGuard | None,
 ) -> MatchCalculationActionResult:
     try:
         match_material = await _resolve_match_primary_material(session, match_identity)
@@ -228,8 +247,13 @@ async def _calculate_identity_professor_match(
         llm_profile_id=llm_profile.id,
         primary_material=match_material,
     )
+    if run_started_guard is not None and not await run_started_guard(session, run.id):
+        await session.rollback()
+        raise MatchCalculationCanceledError("匹配分析 claim 已失效")
     await session.commit()
     try:
+        if result_commit_guard is not None:
+            await wait_at_fault_point("matching.before_external_call")
         generation = await llm_runtime.generate_match_evaluation(
             identity=match_identity,
             primary_material=match_material,
@@ -240,6 +264,8 @@ async def _calculate_identity_professor_match(
             session=session,
             adaptation=adaptation,
         )
+        if result_commit_guard is not None:
+            await wait_at_fault_point("matching.external_call_returned")
     except asyncio.CancelledError:
         _mark_match_analysis_run_failed(
             run,
@@ -292,6 +318,16 @@ async def _calculate_identity_professor_match(
             source_task.updated_at = utc_now()
         await session.commit()
         raise MatchCalculationCanceledError("匹配分析任务已取消")
+
+    usage_summary = _match_usage_summary(generation.usage)
+    claim_finalized = False
+    if result_commit_guard is not None:
+        run_id = run.id
+        if not await result_commit_guard(session, run_id, usage_summary):
+            await session.rollback()
+            await _mark_stale_match_analysis_run_failed(session, run_id)
+            raise MatchCalculationCanceledError("匹配分析 claim 已失效")
+        claim_finalized = True
 
     result = generation.result
     run.status = "succeeded"
@@ -359,15 +395,42 @@ async def _calculate_identity_professor_match(
                 "force": force,
             },
         )
+    if result_commit_guard is not None:
+        await wait_at_fault_point("matching.before_final_commit")
     await session.commit()
+    if result_commit_guard is not None:
+        await wait_at_fault_point("matching.after_final_commit")
     return _match_action_result(
         active_identity_id=active_identity_id,
         professor_id=professor.id,
         llm_profile_id=llm_profile.id,
         match_source_identity_id=match_identity.id,
-        usage=_match_usage_summary(generation.usage),
+        usage=usage_summary,
         run_id=run.id,
+        claim_finalized=claim_finalized,
     )
+
+
+async def _mark_stale_match_analysis_run_failed(
+    session: AsyncSession,
+    run_id: int,
+) -> None:
+    now = utc_now()
+    await session.execute(
+        update(MatchAnalysisRun)
+        .where(
+            MatchAnalysisRun.id == run_id,
+            MatchAnalysisRun.status == "running",
+        )
+        .values(
+            status="failed",
+            success=False,
+            error_kind="stale_claim",
+            error_message="匹配分析 claim 已失效，旧结果未提交",
+            finished_at=now,
+        )
+    )
+    await session.commit()
 
 
 def _match_usage_summary(
@@ -391,6 +454,7 @@ def _match_action_result(
     match_source_identity_id: int,
     usage: MatchUsageSummary | None = None,
     run_id: int | None = None,
+    claim_finalized: bool = False,
 ) -> MatchCalculationActionResult:
     return MatchCalculationActionResult(
         professor_id=professor_id,
@@ -399,6 +463,7 @@ def _match_action_result(
         llm_profile_id=llm_profile_id,
         usage=usage or MatchUsageSummary(),
         run_id=run_id,
+        claim_finalized=claim_finalized,
     )
 
 

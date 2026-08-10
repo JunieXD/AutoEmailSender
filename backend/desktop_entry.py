@@ -15,17 +15,22 @@ from app.core.agent_runtime_descriptor import (
     cleanup_owned_runtime_descriptor,
     get_runtime_id,
 )
+from app.core.backend_role import BACKEND_ROLES, BackendRole, set_backend_role
 from app.core.config import get_settings
 from app.core.instance_lock import (
     BackendInstanceAlreadyRunningError,
     BackendInstanceLock,
+    BackendWorkerAlreadyRunningError,
+    BackendWorkerLock,
 )
 from app.core.process_liveness import process_is_running
 from app.core.startup_logging import write_startup_phase_log
+from app.services.worker_process import run_worker_process
 
 
-PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
-    "main",
+PACKAGED_RUNTIME_SHARED_SELF_CHECK_MODULES = (
+    "app.core.backend_role",
+    "app.core.runtime_group",
     "aiosqlite",
     "socksio",
     "openai",
@@ -43,6 +48,27 @@ PACKAGED_RUNTIME_SELF_CHECK_MODULES = (
     "docx",
     "openpyxl",
 )
+PACKAGED_RUNTIME_API_SELF_CHECK_MODULES = (
+    "main",
+)
+PACKAGED_RUNTIME_WORKER_SELF_CHECK_MODULES = (
+    "app.services.worker_process",
+    "app.services.runtime_manager",
+    "app.modules.campaigns.public",
+    "app.modules.communications.public",
+    "app.modules.crawler.public",
+    "app.modules.matching.public",
+    "app.modules.professors.enrichment.public",
+)
+PACKAGED_RUNTIME_SELF_CHECK_MODULES = tuple(
+    dict.fromkeys(
+        (
+            *PACKAGED_RUNTIME_SHARED_SELF_CHECK_MODULES,
+            *PACKAGED_RUNTIME_API_SELF_CHECK_MODULES,
+            *PACKAGED_RUNTIME_WORKER_SELF_CHECK_MODULES,
+        )
+    )
+)
 DESKTOP_PARENT_PID_ENV = "AUTO_EMAIL_SENDER_DESKTOP_PID"
 DESKTOP_PARENT_POLL_SECONDS = 1.0
 
@@ -51,6 +77,7 @@ def parse_desktop_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Auto Email Sender desktop backend.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--role", choices=BACKEND_ROLES, default="combined")
     parser.add_argument("--self-check", action="store_true")
     parser.add_argument("--document-self-check", type=Path)
     return parser.parse_args(argv)
@@ -116,10 +143,25 @@ async def serve_desktop_backend(
                 await parent_task
 
 
-def run_packaged_runtime_self_check() -> int:
-    for module_name in PACKAGED_RUNTIME_SELF_CHECK_MODULES:
+def packaged_runtime_self_check_modules(role: BackendRole) -> tuple[str, ...]:
+    role_modules = {
+        "api": PACKAGED_RUNTIME_API_SELF_CHECK_MODULES,
+        "worker": PACKAGED_RUNTIME_WORKER_SELF_CHECK_MODULES,
+        "combined": (
+            *PACKAGED_RUNTIME_API_SELF_CHECK_MODULES,
+            *PACKAGED_RUNTIME_WORKER_SELF_CHECK_MODULES,
+        ),
+    }[role]
+    return tuple(
+        dict.fromkeys((*PACKAGED_RUNTIME_SHARED_SELF_CHECK_MODULES, *role_modules))
+    )
+
+
+def run_packaged_runtime_self_check(role: BackendRole = "combined") -> int:
+    set_backend_role(role)
+    for module_name in packaged_runtime_self_check_modules(role):
         importlib.import_module(module_name)
-    print("packaged runtime self-check ok")
+    print(f"packaged runtime self-check role={role} ok")
     return 0
 
 
@@ -146,33 +188,47 @@ def run_packaged_document_self_check(fixture_dir: Path) -> int:
 def main() -> None:
     args = parse_desktop_args()
     if args.self_check:
-        raise SystemExit(run_packaged_runtime_self_check())
+        raise SystemExit(run_packaged_runtime_self_check(args.role))
     if args.document_self_check is not None:
         raise SystemExit(run_packaged_document_self_check(args.document_self_check))
 
+    role: BackendRole = args.role
+    set_backend_role(role)
     options = build_uvicorn_options()
     write_startup_phase_log(
         "desktop_entry.start",
-        detail=f"host={options['host']} port={options['port']}",
+        detail=f"role={role} host={options['host']} port={options['port']}",
     )
     data_dir = get_settings().data_dir
     runtime_id = get_runtime_id()
-    instance_lock = BackendInstanceLock(data_dir)
+    locks = []
+    if role in {"api", "combined"}:
+        locks.append(BackendInstanceLock(data_dir))
+    if role in {"worker", "combined"}:
+        locks.append(BackendWorkerLock(data_dir))
     try:
-        instance_lock.acquire()
-    except BackendInstanceAlreadyRunningError as exc:
+        for role_lock in locks:
+            role_lock.acquire()
+    except (BackendInstanceAlreadyRunningError, BackendWorkerAlreadyRunningError) as exc:
+        for role_lock in reversed(locks):
+            role_lock.release()
         write_startup_phase_log("desktop_entry.instance_conflict", detail=str(exc))
         raise SystemExit(str(exc)) from None
     try:
-        asyncio.run(
-            serve_desktop_backend(
-                options,
-                desktop_pid=get_desktop_parent_pid(),
+        if role == "worker":
+            asyncio.run(run_worker_process(desktop_pid=get_desktop_parent_pid()))
+        else:
+            asyncio.run(
+                serve_desktop_backend(
+                    options,
+                    desktop_pid=get_desktop_parent_pid(),
+                )
             )
-        )
     finally:
-        cleanup_owned_runtime_descriptor(data_dir, runtime_id)
-        instance_lock.release()
+        if role in {"api", "combined"}:
+            cleanup_owned_runtime_descriptor(data_dir, runtime_id)
+        for role_lock in reversed(locks):
+            role_lock.release()
 
 
 if __name__ == "__main__":

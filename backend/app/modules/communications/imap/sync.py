@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
+from app.core.fault_injection import wait_at_fault_point
 from app.core.time import as_utc_aware, utc_now
 from app.models import (
     EmailDirection,
@@ -94,6 +96,36 @@ _DETACHED_IMAP_TASKS: set[asyncio.Task[object]] = set()
 RECENT_HISTORY_STRATEGY_NAME = RECENT_V2_STRATEGY_VERSION
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _ImapFaultContext:
+    claim_kind: str
+    reached_stages: set[str]
+
+
+_CURRENT_IMAP_FAULT_CONTEXT: ContextVar[_ImapFaultContext | None] = ContextVar(
+    "current_imap_fault_context",
+    default=None,
+)
+
+
+def _bind_imap_fault_context(claim_kind: str) -> Token[_ImapFaultContext | None]:
+    return _CURRENT_IMAP_FAULT_CONTEXT.set(
+        _ImapFaultContext(claim_kind=claim_kind, reached_stages=set())
+    )
+
+
+async def _wait_at_bound_imap_fault_point(stage: str) -> bool:
+    """Pause once per identity-sync attempt at a test-only IMAP boundary."""
+
+    context = _CURRENT_IMAP_FAULT_CONTEXT.get()
+    if context is None or context.claim_kind not in {"incremental", "history"}:
+        return False
+    if stage in context.reached_stages:
+        return False
+    context.reached_stages.add(stage)
+    return await wait_at_fault_point(f"imap_{context.claim_kind}.{stage}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,10 +241,10 @@ async def _run_imap_identities_bounded(
         return 0
     semaphore = asyncio.Semaphore(get_settings().imap_identity_concurrency)
 
-    async def run_identity(identity_id: int) -> int:
+    async def run_identity(identity_id: int) -> tuple[int, bool]:
         async with semaphore:
             try:
-                return await worker(session_factory, identity_id)
+                return await worker(session_factory, identity_id), False
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -221,9 +253,17 @@ async def _run_imap_identities_bounded(
                     poll_name,
                     identity_id,
                 )
-                return 0
+                return 0, True
 
-    return sum(await asyncio.gather(*(run_identity(item) for item in identity_ids)))
+    outcomes = await asyncio.gather(*(run_identity(item) for item in identity_ids))
+    failed_count = sum(1 for _detected, failed in outcomes if failed)
+    if failed_count:
+        identity_label = "identity" if failed_count == 1 else "identities"
+        raise RuntimeError(
+            f"IMAP {poll_name} poll failed for {failed_count} configured "
+            f"{identity_label}"
+        )
+    return sum(detected for detected, _failed in outcomes)
 
 
 async def poll_identity_replies(
@@ -316,6 +356,8 @@ async def _run_identity_sync_with_lease(
     operation: Callable[[], Awaitable[int]],
 ) -> int:
     settings = get_settings()
+    if claim_kind in {"incremental", "history"}:
+        await wait_at_fault_point(f"imap_{claim_kind}.before_claim")
     claim = await claim_imap_identity_sync(
         session_factory,
         identity_id,
@@ -324,15 +366,19 @@ async def _run_identity_sync_with_lease(
     )
     if claim is None:
         return 0
+    if claim_kind in {"incremental", "history"}:
+        await wait_at_fault_point(f"imap_{claim_kind}.claim_committed")
 
     async def run_bound_operation() -> int:
         token = bind_imap_identity_sync_claim(
             claim,
             lease_seconds=settings.imap_identity_lease_seconds,
         )
+        fault_token = _bind_imap_fault_context(claim_kind)
         try:
             return await operation()
         finally:
+            _CURRENT_IMAP_FAULT_CONTEXT.reset(fault_token)
             reset_imap_identity_sync_claim(token)
 
     work_task = asyncio.create_task(run_bound_operation())
@@ -1379,6 +1425,7 @@ async def _sync_identity_targeted_history_once(
                     folder_role=state.folder_role,
                     folder=state.folder,
                 )
+            await _wait_at_bound_imap_fault_point("before_external_call")
             header_result = await mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count(
                 identity,
                 state.folder,
@@ -1389,6 +1436,7 @@ async def _sync_identity_targeted_history_once(
                 since_date=since_date,
                 expected_uidvalidity=expected_uidvalidity,
             )
+            await _wait_at_bound_imap_fault_point("external_call_returned")
             if header_result.command_count > command_budget:
                 raise RuntimeError(
                     "IMAP history command budget exhausted during header fetch"
@@ -1443,12 +1491,14 @@ async def _sync_identity_targeted_history_once(
                 )
                 detected_total += detected
                 break
+            await _wait_at_bound_imap_fault_point("before_final_commit")
             await mark_professor_scan_completed(
                 session_factory,
                 state.id,
                 max_uid,
                 claim_id=state.history_claim_id,
             )
+            await _wait_at_bound_imap_fault_point("after_final_commit")
             detected_total += detected
             if inbox_uidvalidity_changed:
                 break
@@ -1863,6 +1913,7 @@ async def sync_identity_incremental_once(
         await commit_imap_identity_sync_session(session)
     try:
         if should_bootstrap_history_cursor:
+            await _wait_at_bound_imap_fault_point("before_external_call")
             bootstrap_result = (
                 await mail_runtime.fetch_history_mailbox_message_headers_before_uid(
                     identity,
@@ -1873,6 +1924,7 @@ async def sync_identity_incremental_once(
                     expected_uidvalidity=expected_uidvalidity,
                 )
             )
+            await _wait_at_bound_imap_fault_point("external_call_returned")
             if bootstrap_result.high_water_uid is not None:
                 async with session_factory() as session:
                     state = await _get_or_create_mailbox_state(
@@ -1911,6 +1963,7 @@ async def sync_identity_incremental_once(
             None,
         )
         used_uidvalidity_aware_fetch = callable(fetch_with_uidvalidity)
+        await _wait_at_bound_imap_fault_point("before_external_call")
         if used_uidvalidity_aware_fetch:
             max_seen_uid, messages, current_uidvalidity = await fetch_with_uidvalidity(
                 identity,
@@ -1928,6 +1981,7 @@ async def sync_identity_incremental_once(
                 last_seen_uid,
             )
             current_uidvalidity = _resolve_messages_uidvalidity(messages)
+        await _wait_at_bound_imap_fault_point("external_call_returned")
     except Exception as exc:
         async with session_factory() as session:
             state = await _get_or_create_mailbox_state(
@@ -1949,6 +2003,12 @@ async def sync_identity_incremental_once(
             await clear_identity_sent_folder_discovery_cache(
                 session_factory, identity_id
             )
+        fault_context = _CURRENT_IMAP_FAULT_CONTEXT.get()
+        if (
+            fault_context is not None
+            and fault_context.claim_kind == "incremental"
+        ):
+            raise
         return 0
     detected = await process_imap_fetched_messages(
         session_factory,
@@ -1978,7 +2038,9 @@ async def sync_identity_incremental_once(
             state.last_seen_uid = max(state.last_seen_uid or 0, max_seen_uid)
         state.last_sync_at = utc_now()
         state.last_error = None
+        await _wait_at_bound_imap_fault_point("before_final_commit")
         await commit_imap_identity_sync_session(session)
+        await _wait_at_bound_imap_fault_point("after_final_commit")
     return detected
 
 

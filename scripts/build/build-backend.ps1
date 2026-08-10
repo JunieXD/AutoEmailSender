@@ -96,8 +96,10 @@ try {
   if (-not (Test-Path $PackagedPlaywrightCli)) {
     throw "Playwright driver package is incomplete: $PackagedPlaywrightCli"
   }
-  & $PackagedBackendExe --self-check
-  Assert-NativeSuccess "packaged backend self-check"
+  foreach ($BackendRole in @("api", "worker", "combined")) {
+    & $PackagedBackendExe --role $BackendRole --self-check
+    Assert-NativeSuccess "packaged backend $BackendRole self-check"
+  }
   & $PackagedBackendExe --document-self-check (Join-Path $BackendDir "test\fixtures\document_extraction")
   Assert-NativeSuccess "packaged backend document self-check"
 } finally {

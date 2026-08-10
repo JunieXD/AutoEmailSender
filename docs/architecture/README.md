@@ -23,6 +23,8 @@
 - 已完成：第 8 批——Desktop 进程模块化与 IPC 合同收敛。
 - 已完成：第 9 批——测试拓扑、脚本分类、文档归档与确认后的遗留清理。
 - 当前状态：第 1～9 批全部完成；后续结构调整以模块地图和依赖规则为准，另立独立批次。
+- 已完成前置实现：桌面端 API + Worker 双进程改造 G0～G5；原 Goal 已取消，证据保留。
+- 当前计划：通用 Beta 验证 Goal，补齐拓扑切换、本地诊断、Prerelease 隔离与双平台 Dogfood。
 - 重构原则：每批只做一个可独立验证的结构变化，不同时改变 API、数据库 schema 与业务行为。
 
 ## 文档
@@ -30,6 +32,10 @@
 - [模块化重构总计划](./modularization-plan.md)：目标拓扑、批次、验收命令和停止条件。
 - [模块地图](./module-map.md)：领域所有权、跨模块关系与现有文件归属。
 - [依赖规则](./dependency-rules.md)：允许的依赖方向、当前技术债基线和自动门禁要求。
+- [桌面端后端 API + Worker 双进程改造 Goal 执行计划](./desktop-api-worker-process-plan.md)：
+  前置目标进程拓扑、邮件 at-most-once 取舍、实施阶段、故障矩阵和已有验收门槛。
+- [桌面 API + Worker 通用 Beta 验证 Goal 执行计划](./desktop-api-worker-beta-goal-plan.md)：
+  当前 Goal 的通用 Prerelease、拓扑设置、本地诊断、双平台 Dogfood 和人工批准门。
 
 ## 更新规则
 

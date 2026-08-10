@@ -521,6 +521,73 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         self.assertTrue(self._run_async(scenario()))
 
+    def test_persisted_pause_cancels_inflight_generation_without_local_coordinator(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value])
+        )
+
+        async def scenario() -> tuple[int, bool]:
+            generation_started = asyncio.Event()
+            generation_canceled = asyncio.Event()
+
+            async def blocked_generate(**_kwargs):
+                generation_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    generation_canceled.set()
+                    raise
+
+            scheduler = BatchDraftScheduler(
+                self.session_factory,
+                coordinator=BatchDraftGenerationCoordinator(),
+            )
+            with (
+                patch(
+                    "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                    new=AsyncMock(side_effect=blocked_generate),
+                ),
+                patch(
+                    "app.modules.campaigns.drafts.runtime.BATCH_DRAFT_CANCEL_POLL_SECONDS",
+                    0.01,
+                ),
+            ):
+                runner = asyncio.create_task(
+                    scheduler.run_until_idle(concurrency=1)
+                )
+                await asyncio.wait_for(generation_started.wait(), timeout=1)
+
+                # This is the durable part of the API pause transaction. No call is
+                # made to BatchDraftGenerationCoordinator.cancel_batch().
+                async with self.session_factory() as session:
+                    task = await session.get(EmailTask, task_ids[0])
+                    assert task is not None and task.batch_task_id is not None
+                    batch = await session.get(BatchTask, task.batch_task_id)
+                    assert batch is not None
+                    batch.status = BatchTaskStatus.PAUSED.value
+                    task.status = (
+                        task.draft_generation_previous_status
+                        or EmailTaskStatus.DISCOVERED.value
+                    )
+                    task.draft_generation_previous_status = None
+                    task.draft_generation_started_at = None
+                    task.draft_claim_id = None
+                    task.draft_claimed_at = None
+                    task.draft_lease_expires_at = None
+                    await session.commit()
+
+                await asyncio.wait_for(generation_canceled.wait(), timeout=1)
+                processed = await asyncio.wait_for(runner, timeout=1)
+                return processed, generation_canceled.is_set()
+
+        processed, canceled = self._run_async(scenario())
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 1)
+        self.assertTrue(canceled)
+        self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
+        self.assertIsNone(task.generated_content_text)
+        self.assertIsNone(task.draft_claim_id)
+
     def test_scheduler_round_robins_across_batch_tasks(self) -> None:
         self._run_async(
             self._create_batch_with_tasks(
@@ -657,12 +724,12 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             )
         )
 
-        async def never_finishes(**_kwargs):
+        async def never_finishes(*_args, **_kwargs):
             await asyncio.Event().wait()
 
         with (
             patch(
-                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                "app.modules.campaigns.drafts.runtime.generate_task_draft",
                 new=AsyncMock(side_effect=never_finishes),
             ),
             patch(

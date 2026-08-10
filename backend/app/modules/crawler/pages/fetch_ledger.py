@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlPageFetchState, CrawlPageFetchStatus
 from ..v2.url_utils import is_spa_route_fragment
+from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 
 TRANSIENT_FETCH_RETRY_LIMIT = 2
 
@@ -171,12 +172,19 @@ async def mark_page_fetch_result(
     direct_status: str | None = None,
     fallback_reason: str | None = None,
     browser_status: str | None = None,
+    claim_fence: CrawlerV2ClaimFence | None = None,
 ) -> None:
     if not callable(session_factory):
         return
     normalized_url = normalize_fetch_url(snapshot.url or original_url)
     now = utc_now()
     async with session_factory() as session:
+        if claim_fence is not None and not await fence_crawler_v2_claim(
+            session,
+            claim_fence,
+        ):
+            await session.rollback()
+            return
         state = await session.scalar(
             select(CrawlPageFetchState).where(
                 CrawlPageFetchState.job_id == job_id,

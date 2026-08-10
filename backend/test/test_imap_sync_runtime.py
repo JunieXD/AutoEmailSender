@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import unittest
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import event, func, select
@@ -16,6 +16,7 @@ from app.models import (
     EmailTask,
     EmailTaskStatus,
     IdentityProfile,
+    ImapIdentitySyncLease,
     ImapMailboxHistoricalScanStatus,
     ImapMailboxSyncState,
     ImapProfessorHistoricalScanStatus,
@@ -66,6 +67,162 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
     async def _create_schema(self) -> None:
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+
+    def test_worker_generation_recovery_preserves_live_api_full_sync(self) -> None:
+        async def scenario() -> tuple[int, int, list[tuple[object, ...]]]:
+            now = datetime.now(UTC)
+            future = now + timedelta(days=365)
+            async with self.session_factory() as session:
+                background_identity = self._build_identity()
+                background_identity.email_address = "background@example.com"
+                background_identity.profile_name = "Background"
+                full_identity = self._build_identity()
+                full_identity.email_address = "full@example.com"
+                full_identity.profile_name = "Full"
+                background_professor = Professor(
+                    name="Background professor",
+                    email="background-professor@example.edu",
+                )
+                full_professor = Professor(
+                    name="Full professor",
+                    email="full-professor@example.edu",
+                )
+                session.add_all(
+                    [
+                        background_identity,
+                        full_identity,
+                        background_professor,
+                        full_professor,
+                    ]
+                )
+                await session.flush()
+                session.add_all(
+                    [
+                        ImapIdentitySyncLease(
+                            identity_id=background_identity.id,
+                            claim_id="background-identity-claim",
+                            claim_kind="history",
+                            claimed_at=now,
+                            lease_expires_at=future,
+                        ),
+                        ImapIdentitySyncLease(
+                            identity_id=full_identity.id,
+                            claim_id="full-identity-claim",
+                            claim_kind="full",
+                            claimed_at=now,
+                            lease_expires_at=future,
+                        ),
+                        ImapProfessorSyncState(
+                            identity_id=background_identity.id,
+                            professor_id=background_professor.id,
+                            professor_email=background_professor.email,
+                            folder_role="inbox",
+                            folder="INBOX",
+                            historical_scan_status="running",
+                            historical_scan_started_at=now,
+                            history_claim_id="background-professor-claim",
+                            history_lease_expires_at=future,
+                        ),
+                        ImapProfessorSyncState(
+                            identity_id=full_identity.id,
+                            professor_id=full_professor.id,
+                            professor_email=full_professor.email,
+                            folder_role="inbox",
+                            folder="INBOX",
+                            historical_scan_status="running",
+                            historical_scan_started_at=now,
+                            history_claim_id="full-professor-claim",
+                            history_lease_expires_at=future,
+                        ),
+                        ImapMailboxSyncState(
+                            identity_id=background_identity.id,
+                            folder_role="inbox",
+                            folder="INBOX",
+                            history_scan_status="running",
+                            history_scan_started_at=now,
+                            history_claim_id="background-mailbox-claim",
+                            history_lease_expires_at=future,
+                        ),
+                        ImapMailboxSyncState(
+                            identity_id=full_identity.id,
+                            folder_role="inbox",
+                            folder="INBOX",
+                            history_scan_status="running",
+                            history_scan_started_at=now,
+                            history_claim_id="full-mailbox-claim",
+                            history_lease_expires_at=future,
+                        ),
+                    ]
+                )
+                await session.commit()
+
+            recovered = await imap_sync_state.recover_interrupted_imap_background_claims(
+                self.session_factory,
+                preserve_full_sync_claims=True,
+            )
+            recovered_again = (
+                await imap_sync_state.recover_interrupted_imap_background_claims(
+                    self.session_factory,
+                    preserve_full_sync_claims=True,
+                )
+            )
+            async with self.session_factory() as session:
+                background_lease = await session.get(
+                    ImapIdentitySyncLease,
+                    background_identity.id,
+                )
+                full_lease = await session.get(ImapIdentitySyncLease, full_identity.id)
+                professor_rows = list(
+                    await session.scalars(
+                        select(ImapProfessorSyncState).order_by(
+                            ImapProfessorSyncState.identity_id
+                        )
+                    )
+                )
+                mailbox_rows = list(
+                    await session.scalars(
+                        select(ImapMailboxSyncState).order_by(
+                            ImapMailboxSyncState.identity_id
+                        )
+                    )
+                )
+                states = [
+                    (
+                        background_lease.claim_id,
+                        background_lease.claim_kind,
+                        professor_rows[0].historical_scan_status,
+                        professor_rows[0].history_claim_id,
+                        mailbox_rows[0].history_scan_status,
+                        mailbox_rows[0].history_claim_id,
+                    ),
+                    (
+                        full_lease.claim_id,
+                        full_lease.claim_kind,
+                        professor_rows[1].historical_scan_status,
+                        professor_rows[1].history_claim_id,
+                        mailbox_rows[1].history_scan_status,
+                        mailbox_rows[1].history_claim_id,
+                    ),
+                ]
+            return recovered, recovered_again, states
+
+        recovered, recovered_again, states = self._run_async(scenario())
+        self.assertEqual(recovered, 3)
+        self.assertEqual(recovered_again, 0)
+        self.assertEqual(
+            states,
+            [
+                (None, None, "pending", None, "pending", None),
+                (
+                    "full-identity-claim",
+                    "full",
+                    "running",
+                    "full-professor-claim",
+                    "running",
+                    "full-mailbox-claim",
+                ),
+            ],
+        )
 
     def test_ensure_professor_scan_states_tracks_all_existing_professors_for_inbox_and_sent(self) -> None:
         async def scenario() -> tuple[int, int, list[tuple[str, str, str]]]:

@@ -60,6 +60,17 @@ describe("DesktopBackendProvider", () => {
     });
 
     expect(updateDesktopBackendBaseUrlMock).toHaveBeenLastCalledWith(null);
+
+    backendStatusCallback?.({
+      state: "degraded",
+      baseUrl: "http://127.0.0.1:48121",
+      reason: "background_unavailable",
+      message: "后台服务暂时不可用",
+    });
+
+    expect(updateDesktopBackendBaseUrlMock).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:48121",
+    );
   });
 });
 

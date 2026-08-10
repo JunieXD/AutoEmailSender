@@ -77,6 +77,66 @@ workflow 会：
 
 工作流失败后可以在 Release 仍为 draft 时重跑；一旦 Release 已公开，重跑必须在上传任何资产前失败。已公开版本不得用 `--clobber` 替换安装包、Skill ZIP 或 appcast，修复后应发布新版本。
 
+## API + Worker 冻结包认证
+
+桌面 API + Worker 双进程改造在公开提升前还要求同一 clean committed SHA、同一个当前 DMG
+完成三类 packaged QA。正式场景一律从 DMG 只读挂载并复制 app bundle，不能用源码开发模式
+或裸的旧 build 目录替代。报告会同时记录 DMG SHA-256、app tree SHA-256、仓库版本和 SHA，
+并在场景结束后重新计算，任何漂移都失败。
+正式认证必须使用候选 workflow 下载的外部 DMG，并同时提供同一 run 的
+`release-candidate.json`、run ID 和清单内 SHA-256。runner 会在挂载 DMG 前核对清单 schema、
+候选 SHA/版本/run ID、资产名/大小/摘要，Python driver 再独立核对并在场景结束复哈希。
+`--build` 自动固定现场摘要只允许 development smoke，不能作为正式候选证据。
+
+lifecycle 使用上一稳定版真实 DMG。runner 从当前 SHA 最新可达的 `v*` tag 推导期望旧版本，
+先把旧 bundle 复制到含中文、空格和 Ω 的专用路径，通过旧应用 Agent API 写数据，再把当前
+bundle 安装到同一路径。升级测试必须在专用 macOS 账户运行；不能依赖仅首进程有效的普通
+`--user-data-dir`。正式模式还要求 `--expected-previous-dmg-sha256`，并在挂载旧 DMG 前、
+Python driver 内和最终报告中三次绑定摘要；development smoke 自动采用现场摘要只用于调试，
+不构成公开资产来源证据。
+
+原生 sleep/wake 使用 `sudo -n pmset relative wake` 与 `sudo -n pmset sleepnow`。runner 不
+读取或保存密码；在 lifecycle 或 seeded chaos 前由操作员执行一次 `sudo -v`，runner 在启动
+driver 的最后一刻检查 ticket。seeded chaos 将原生 sleep 作为第一个动作，其余故障仍按
+seed 随机，避免普通 sudo ticket 在前置动作期间过期。
+
+```bash
+rtk bash scripts/quality/run-macos-packaged-qa.sh \
+  --scenario lifecycle --certification --expected-revision <最终40位SHA> \
+  --dmg /绝对路径/AutoEmailSender-<当前版本>-arm64.dmg \
+  --expected-dmg-sha256 <候选清单中的64位SHA-256> \
+  --candidate-manifest /绝对路径/release-candidate.json \
+  --candidate-run-id <候选workflow run ID> \
+  --previous-dmg /绝对路径/AutoEmailSender-<上一稳定版>-arm64.dmg \
+  --expected-previous-dmg-sha256 <上一稳定版公开DMG的64位SHA-256> \
+  --dedicated-test-account
+
+rtk bash scripts/quality/run-macos-packaged-qa.sh \
+  --scenario normal-soak --certification --expected-revision <最终40位SHA> \
+  --dmg /绝对路径/AutoEmailSender-<当前版本>-arm64.dmg \
+  --expected-dmg-sha256 <同一个候选SHA-256> \
+  --candidate-manifest /绝对路径/release-candidate.json \
+  --candidate-run-id <同一个候选workflow run ID>
+
+rtk bash scripts/quality/run-macos-packaged-qa.sh \
+  --scenario seeded-chaos --certification --expected-revision <最终40位SHA> \
+  --dmg /绝对路径/AutoEmailSender-<当前版本>-arm64.dmg \
+  --expected-dmg-sha256 <同一个候选SHA-256> \
+  --candidate-manifest /绝对路径/release-candidate.json \
+  --candidate-run-id <同一个候选workflow run ID> \
+  --seed 20260810
+```
+
+当前公开上一稳定版 v2.5.4 的 arm64 DMG SHA-256 为
+`c67fe772766751798163b16a985a9e3e97893c4ad906cde161c4e85bc6c9447b`。后续稳定版发布后必须
+从该 Release 的可信候选或资产清单取得新摘要，不能继续照抄此值。
+
+normal soak 至少连续 24 小时，seeded chaos 至少连续 8 小时；driver 同时按单调时钟和墙钟
+验证实际时长，并持续运行 Dispatcher、IMAP incremental/history、Batch Draft、Matching、
+Crawler 六类真实 Worker 工作。SMTP 只连接 loopback fake server，network flap 不关闭 SMTP；
+发送结果不确定时 assume-sent，绝不自动重发。三份报告的 `package_sha256` 必须完全一致，
+首次失败、原 seed 重放和受影响整段长稳复跑都必须保留。
+
 首个集成 Sparkle 的版本没有旧 appcast，因此只生成当前 DMG 的 appcast，不会生成差分包。这是正常结果。尚未集成 Sparkle 的旧 macOS 客户端必须手动覆盖安装这个过渡版本一次；之后才能使用原生更新。
 
 v2.4.0 和 v2.4.1 的 DMG 含有旧式代码签名扩展属性，Sparkle 无法把它们作为差分源；v2.5.3 是首个经过签名后清理并验证的公开基线。ad-hoc 构建之间可能出现签名 identity 不一致警告，但已验证这不会阻止从干净基线生成 delta。后续版本必须至少包含从最新干净基线生成的差分包，否则 workflow 失败。

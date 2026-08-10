@@ -74,5 +74,7 @@ if [[ ! -f "$PackagedPlaywrightCli" ]]; then
   echo "Playwright driver package is incomplete: $PackagedPlaywrightCli" >&2
   exit 1
 fi
-"$PackagedBackendExe" --self-check
+for BackendRole in api worker combined; do
+  "$PackagedBackendExe" --role "$BackendRole" --self-check
+done
 "$PackagedBackendExe" --document-self-check "$BackendDir/test/fixtures/document_extraction"

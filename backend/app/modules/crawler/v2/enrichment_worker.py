@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.time import as_utc_aware, utc_now
+from app.core.fault_injection import wait_at_fault_point
 
 from sqlalchemy import select
 
@@ -14,6 +15,7 @@ from app.models import (
     CrawlCandidateEnrichmentTaskStatus,
     CrawlJob,
     CrawlJobKind,
+    CrawlJobRun,
     CrawlJobStatus,
     CrawlPage,
     CrawlPageChunk,
@@ -86,6 +88,7 @@ async def run_crawler_v2_enrichment_worker_once(
     *,
     task_id: int,
     worker_id: str,
+    raise_after_failure: bool = False,
 ) -> int:
     async with session_factory() as session:
         task = await session.get(CrawlCandidateEnrichmentTask, task_id)
@@ -130,7 +133,17 @@ async def run_crawler_v2_enrichment_worker_once(
             return 1
 
     try:
-        enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
+        await wait_at_fault_point("crawler_enrichment.before_external_call")
+        enrichment_result = await enrich_candidate_once_with_usage(
+            session_factory,
+            candidate_id=candidate_id,
+            claim_fence=CrawlerV2ClaimFence(
+                kind=CrawlerV2WorkKind.ENRICHMENT,
+                work_item_id=task_id,
+                worker_id=worker_id,
+            ),
+        )
+        await wait_at_fault_point("crawler_enrichment.external_call_returned")
         raw_model_text = None
         if isinstance(enrichment_result, tuple):
             if len(enrichment_result) >= 3:
@@ -276,7 +289,9 @@ async def run_crawler_v2_enrichment_worker_once(
                 )
             terminal_job_id = task.job_id
             terminal_candidate_id = task.candidate_id
+            await wait_at_fault_point("crawler_enrichment.before_final_commit")
             await session.commit()
+            await wait_at_fault_point("crawler_enrichment.after_final_commit")
         _discard_cached_profile_text(
             session_factory,
             job_id=terminal_job_id,
@@ -364,6 +379,8 @@ async def run_crawler_v2_enrichment_worker_once(
                 job_id=job_id,
                 candidate_id=candidate_id,
             )
+        if raise_after_failure:
+            raise
         return 1
 
 
@@ -399,6 +416,7 @@ async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     candidate_id: int,
+    claim_fence: CrawlerV2ClaimFence | None = None,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     async with session_factory() as session:
         candidate = await session.get(CrawlCandidate, candidate_id)
@@ -427,8 +445,14 @@ async def enrich_candidate_once_with_usage(
             start_url=profile_crawl_root,
             llm_adaptation=adaptation,
             allow_public_dns_fallback=True,
+            claim_fence=claim_fence,
         )
-    page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
+    page_text = await get_or_fetch_profile_text(
+        ctx,
+        candidate.id,
+        profile_url,
+        run_id=job.current_run_id,
+    )
     return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
 
 
@@ -497,12 +521,28 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
     return snapshot.text or snapshot.html
 
 
-async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:
-    cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, profile_url.strip())
+async def get_or_fetch_profile_text(
+    ctx: CrawlToolContext,
+    candidate_id: int,
+    profile_url: str,
+    *,
+    run_id: int | None,
+) -> str:
+    cache_key = (
+        id(ctx.session_factory),
+        ctx.job_id,
+        run_id,
+        candidate_id,
+        profile_url.strip(),
+    )
     cached = _PROFILE_TEXT_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    stored = await _load_successful_profile_text(ctx, profile_url)
+    stored = await _load_successful_profile_text(
+        ctx,
+        profile_url,
+        run_id=run_id,
+    )
     if stored:
         _PROFILE_TEXT_CACHE.put(cache_key, stored)
         return stored
@@ -548,20 +588,29 @@ async def _discard_cached_profile_text_if_terminal(
         )
 
 
-async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str) -> str | None:
+async def _load_successful_profile_text(
+    ctx: CrawlToolContext,
+    profile_url: str,
+    *,
+    run_id: int | None,
+) -> str | None:
     if not profile_url.strip():
         return None
     async with ctx.session_factory() as session:
+        query = select(CrawlPage).where(
+            CrawlPage.job_id == ctx.job_id,
+            CrawlPage.url == profile_url,
+            CrawlPage.status == "succeeded",
+            CrawlPage.text_excerpt.is_not(None),
+        )
+        if run_id is not None:
+            run = await session.get(CrawlJobRun, run_id)
+            if run is None or run.job_id != ctx.job_id:
+                return None
+            run_boundary = run.started_at or run.created_at
+            query = query.where(CrawlPage.created_at >= run_boundary)
         page = await session.scalar(
-            select(CrawlPage)
-            .where(
-                CrawlPage.job_id == ctx.job_id,
-                CrawlPage.url == profile_url,
-                CrawlPage.status == "succeeded",
-                CrawlPage.text_excerpt.is_not(None),
-            )
-            .order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc())
-            .limit(1)
+            query.order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc()).limit(1)
         )
     if (
         page is None

@@ -46,7 +46,6 @@ from .runs import (
     mark_crawl_job_run_queued,
     mark_crawl_job_run_running,
 )
-from ..v2.profile_text_cache import profile_text_cache
 from ..v2.routing import (
     ENTRY_EXPANSION_MODE,
     NO_EXPANSION_MODE,
@@ -686,7 +685,6 @@ async def cancel_faculty_crawl_job_record(
         CrawlJobStatus.FAILED.value,
         CrawlJobStatus.CANCELED.value,
     }:
-        profile_text_cache.discard_job(job_id=job.id)
         return job
     now = utc_now()
     job.status = CrawlJobStatus.CANCELED.value
@@ -705,7 +703,6 @@ async def cancel_faculty_crawl_job_record(
         metadata={"status": job.status},
         actor=actor,
     )
-    profile_text_cache.discard_job(job_id=job.id)
     return job
 
 
@@ -852,7 +849,6 @@ async def retry_faculty_crawl_job_record(
         },
         actor=actor,
     )
-    profile_text_cache.discard_job(job_id=job.id)
     return job
 
 
@@ -936,7 +932,6 @@ async def delete_faculty_crawl_job_record(
         },
         actor=actor,
     )
-    profile_text_cache.discard_job(job_id=job.id)
     return job
 
 

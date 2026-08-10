@@ -401,7 +401,7 @@ async function waitForDesktopBackendBaseUrl(): Promise<string | null> {
       reject(new Error("系统正在准备本地数据。请保持应用打开，完成后再继续操作。"));
     }, 10 * 60_000);
     unsubscribe = subscribe((status) => {
-      if (status.state === "ready") {
+      if (status.state === "ready" || status.state === "degraded") {
         window.clearTimeout(timeout);
         updateDesktopBackendBaseUrl(status.baseUrl);
         unsubscribe();
