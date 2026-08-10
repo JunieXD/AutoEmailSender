@@ -945,6 +945,84 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.total_tokens, 0)
         self.assertEqual(items[0].status, "canceled")
 
+    def test_cancel_running_job_closes_run_before_detached_calculation_finishes(
+        self,
+    ) -> None:
+        async def scenario() -> tuple[str, str, str, str, bool]:
+            identity_id, llm_profile_id, professor_ids = (
+                await self._seed_create_job_data()
+            )
+            job = await create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+                name=None,
+            )
+            release = False
+            generation_started = asyncio.Event()
+            cancellation_ignored = asyncio.Event()
+            calculation_task: asyncio.Task[object] | None = None
+
+            async def stubborn_generation(**_kwargs):
+                nonlocal calculation_task
+                calculation_task = asyncio.current_task()
+                generation_started.set()
+                while not release:
+                    try:
+                        await asyncio.sleep(0.001)
+                    except asyncio.CancelledError:
+                        cancellation_ignored.set()
+                return self._build_match_evaluation_result(match_score=88)
+
+            with (
+                patch(
+                    "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+                    side_effect=stubborn_generation,
+                ),
+                patch(
+                    "app.modules.matching.job_runtime._MATCH_ANALYSIS_CANCEL_GRACE_SECONDS",
+                    0.01,
+                ),
+            ):
+                worker = asyncio.create_task(
+                    run_queued_match_analysis_jobs_once(
+                        self.session_factory,
+                        item_concurrency=1,
+                    ),
+                )
+                await asyncio.wait_for(generation_started.wait(), timeout=1)
+                await request_match_analysis_job_cancel(self.session_factory, job.id)
+                await asyncio.wait_for(cancellation_ignored.wait(), timeout=1)
+                await asyncio.wait_for(worker, timeout=2)
+
+                stored = await self._get_job(job.id)
+                [item] = await self._get_job_items(job.id)
+                [run] = await self._list_match_analysis_runs()
+                terminal_state = (
+                    stored.status,
+                    item.status,
+                    run.status,
+                    str(run.error_kind),
+                )
+
+                release = True
+                calculation_finished = False
+                if calculation_task is not None:
+                    done, _ = await asyncio.wait({calculation_task}, timeout=2)
+                    calculation_finished = calculation_task in done
+
+            return (*terminal_state, calculation_finished)
+
+        job_status, item_status, run_status, error_kind, calculation_finished = (
+            self._run_async(scenario())
+        )
+        self.assertEqual(job_status, MatchAnalysisJobStatus.CANCELED.value)
+        self.assertEqual(item_status, MatchAnalysisJobItemStatus.CANCELED.value)
+        self.assertEqual(run_status, "failed")
+        self.assertEqual(error_kind, "canceled")
+        self.assertTrue(calculation_finished)
+
     def test_cancel_requested_job_with_success_and_canceled_items_stays_canceled(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(extra_analyzable_professor=True),

@@ -5,7 +5,7 @@ import logging
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, insert, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -1093,6 +1093,25 @@ async def _fail_timed_out_match_analysis_run(
     claim: _MatchAnalysisItemClaim,
 ) -> None:
     now = utc_now()
+    async with session_factory() as session:
+        await _fail_running_match_analysis_runs_for_claim(
+            session,
+            claim,
+            now=now,
+            error_kind="timeout",
+            error_message="匹配分析工作项总超时",
+        )
+        await session.commit()
+
+
+async def _fail_running_match_analysis_runs_for_claim(
+    session: AsyncSession,
+    claim: _MatchAnalysisItemClaim,
+    *,
+    now: datetime,
+    error_kind: str,
+    error_message: str,
+) -> None:
     current_item = (
         select(
             MatchAnalysisJobItem.professor_id,
@@ -1115,25 +1134,23 @@ async def _fail_timed_out_match_analysis_run(
     claimed_at = current_item.with_only_columns(
         MatchAnalysisJobItem.claimed_at,
     ).scalar_subquery()
-    async with session_factory() as session:
-        await session.execute(
-            update(MatchAnalysisRun)
-            .where(
-                MatchAnalysisRun.identity_id == match_source_identity_id,
-                MatchAnalysisRun.professor_id == professor_id,
-                MatchAnalysisRun.status == "running",
-                MatchAnalysisRun.started_at >= claimed_at,
-            )
-            .values(
-                status="failed",
-                success=False,
-                error_kind="timeout",
-                error_message="匹配分析工作项总超时",
-                finished_at=now,
-            )
-            .execution_options(synchronize_session=False)
+    await session.execute(
+        update(MatchAnalysisRun)
+        .where(
+            MatchAnalysisRun.identity_id == match_source_identity_id,
+            MatchAnalysisRun.professor_id == professor_id,
+            MatchAnalysisRun.status == "running",
+            MatchAnalysisRun.started_at >= claimed_at,
         )
-        await session.commit()
+        .values(
+            status="failed",
+            success=False,
+            error_kind=error_kind,
+            error_message=error_message,
+            finished_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def _match_analysis_run_error(
@@ -1405,6 +1422,18 @@ async def _mark_item_canceled(
         if item is None:
             return
         now = utc_now()
+        # A canceled job/item must not become externally terminal while its
+        # calculation run still says ``running``.  The calculation task may be
+        # detached after its bounded cancellation grace on a slow platform, so
+        # close the run in this same transaction instead of relying on the
+        # detached task's eventual CancelledError handler.
+        await _fail_running_match_analysis_runs_for_claim(
+            session,
+            claim,
+            now=now,
+            error_kind="canceled",
+            error_message="匹配分析任务已取消",
+        )
         transition = await session.execute(
             update(MatchAnalysisJobItem)
             .where(
