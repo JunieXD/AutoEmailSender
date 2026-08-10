@@ -242,21 +242,27 @@ transfer_id="$$"
 bundle_name="AutoEmailSender-Windows-QA-$transfer_id.bundle"
 runner_name="run-windows-release-qa-$transfer_id.ps1"
 probe_name=".auto-email-sender-windows-qa-$transfer_id.probe"
-previous_installer_name="AutoEmailSender-Previous-$transfer_id.exe"
-candidate_installer_name="AutoEmailSender-Candidate-$transfer_id.exe"
-candidate_manifest_name="release-candidate-$transfer_id.json"
-bundle_path="$host_transfer_dir/$bundle_name"
-runner_path="$host_transfer_dir/$runner_name"
-probe_path="$host_transfer_dir/$probe_name"
-previous_installer_transfer_path="$host_transfer_dir/$previous_installer_name"
-candidate_installer_transfer_path="$host_transfer_dir/$candidate_installer_name"
-candidate_manifest_transfer_path="$host_transfer_dir/$candidate_manifest_name"
-guest_runner_path="$guest_transfer_dir/$runner_name"
-guest_bundle_path="$guest_transfer_dir/$bundle_name"
-guest_probe_path="$guest_transfer_dir/$probe_name"
-guest_previous_installer_path="$guest_transfer_dir/$previous_installer_name"
-guest_candidate_installer_path="$guest_transfer_dir/$candidate_installer_name"
-guest_candidate_manifest_path="$guest_transfer_dir/$candidate_manifest_name"
+previous_installer_name="${previous_installer##*/}"
+candidate_installer_name="${candidate_installer##*/}"
+candidate_manifest_name="${candidate_manifest##*/}"
+if [[ -z "$previous_installer_name" ]]; then previous_installer_name="previous-installer-unused"; fi
+if [[ -z "$candidate_installer_name" ]]; then candidate_installer_name="candidate-installer-unused"; fi
+if [[ -z "$candidate_manifest_name" ]]; then candidate_manifest_name="candidate-manifest-unused"; fi
+transfer_directory_path="$(mktemp -d "$host_transfer_dir/.auto-email-sender-windows-qa.XXXXXX")"
+transfer_directory_name="${transfer_directory_path##*/}"
+guest_transfer_directory_path="$guest_transfer_dir/$transfer_directory_name"
+bundle_path="$transfer_directory_path/$bundle_name"
+runner_path="$transfer_directory_path/$runner_name"
+probe_path="$transfer_directory_path/$probe_name"
+previous_installer_transfer_path="$transfer_directory_path/$previous_installer_name"
+candidate_installer_transfer_path="$transfer_directory_path/$candidate_installer_name"
+candidate_manifest_transfer_path="$transfer_directory_path/$candidate_manifest_name"
+guest_runner_path="$guest_transfer_directory_path/$runner_name"
+guest_bundle_path="$guest_transfer_directory_path/$bundle_name"
+guest_probe_path="$guest_transfer_directory_path/$probe_name"
+guest_previous_installer_path="$guest_transfer_directory_path/$previous_installer_name"
+guest_candidate_installer_path="$guest_transfer_directory_path/$candidate_installer_name"
+guest_candidate_manifest_path="$guest_transfer_directory_path/$candidate_manifest_name"
 
 cleanup() {
   rm -f -- \
@@ -266,6 +272,7 @@ cleanup() {
     "$previous_installer_transfer_path" \
     "$candidate_installer_transfer_path" \
     "$candidate_manifest_transfer_path"
+  rmdir "$transfer_directory_path" 2>/dev/null || true
 }
 trap cleanup EXIT
 

@@ -237,6 +237,21 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain('-PreviousRevision "$guest_revision"');
     expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR");
     expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR");
+    expect(hostRunner).toContain(
+      'candidate_installer_name="${candidate_installer##*/}"',
+    );
+    expect(hostRunner).toContain(
+      'transfer_directory_path="$(mktemp -d "$host_transfer_dir/.auto-email-sender-windows-qa.XXXXXX")"',
+    );
+    expect(hostRunner).toContain(
+      'candidate_installer_transfer_path="$transfer_directory_path/$candidate_installer_name"',
+    );
+    expect(hostRunner).toContain(
+      'guest_candidate_installer_path="$guest_transfer_directory_path/$candidate_installer_name"',
+    );
+    expect(hostRunner).not.toContain(
+      'candidate_installer_name="AutoEmailSender-Candidate-$transfer_id.exe"',
+    );
     expect(hostRunner).toContain("Test-Path -LiteralPath '$guest_probe_path'");
     expect(hostRunner).not.toContain('$HOME/Desktop');
     expect(hostRunner).not.toContain("Z:/Desktop");
