@@ -346,6 +346,12 @@ async def generate_task_draft(
                         await session.commit()
                         return task.professor_id, task.identity_id, task.llm_profile_id
         except asyncio.CancelledError:
+            if automatic_batch and draft_claim_id is not None:
+                # The batch scheduler owns claim failure/release after it cancels
+                # this worker. Roll back this session first so its read transaction
+                # cannot block the scheduler's cleanup write on SQLite.
+                await session.rollback()
+                raise
             await session.refresh(task)
             if draft_claim_id is not None and task.draft_claim_id != draft_claim_id:
                 raise
