@@ -130,7 +130,7 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> Callable[[], None]:
     def request_stop() -> None:
         stop_event.set()
 
-    for signal_number in (signal.SIGINT, signal.SIGTERM):
+    for signal_number in _worker_stop_signals():
         try:
             loop.add_signal_handler(signal_number, request_stop)
         except (NotImplementedError, RuntimeError):
@@ -156,6 +156,14 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> Callable[[], None]:
             signal.signal(signal_number, handler)
 
     return cleanup
+
+
+def _worker_stop_signals() -> tuple[signal.Signals, ...]:
+    stop_signals = [signal.SIGINT, signal.SIGTERM]
+    windows_break = getattr(signal, "SIGBREAK", None)
+    if windows_break is not None:
+        stop_signals.append(windows_break)
+    return tuple(stop_signals)
 
 
 async def run_worker_process(*, desktop_pid: int | None) -> None:

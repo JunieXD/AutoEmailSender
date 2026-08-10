@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import socket
 import tempfile
 import time
@@ -54,6 +55,16 @@ class BackendRoleUnitTests(unittest.TestCase):
         self.assertEqual(parse_desktop_args([]).role, "combined")
         self.assertEqual(parse_desktop_args(["--role", "api"]).role, "api")
         self.assertEqual(parse_desktop_args(["--role", "worker"]).role, "worker")
+
+    def test_worker_stop_signals_include_the_native_windows_break_event(self) -> None:
+        from app.services.worker_process import _worker_stop_signals
+
+        expected = {signal.SIGINT, signal.SIGTERM}
+        windows_break = getattr(signal, "SIGBREAK", None)
+        if windows_break is not None:
+            expected.add(windows_break)
+
+        self.assertEqual(set(_worker_stop_signals()), expected)
 
     def test_api_role_never_starts_runtime_manager(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
