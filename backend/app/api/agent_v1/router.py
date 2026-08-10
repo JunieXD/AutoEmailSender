@@ -1434,6 +1434,7 @@ async def approve_agent_task_draft(
             session,
             task_id=task_id,
             command="drafts.approve",
+            workspace_task_id=task_id,
             action=lambda: approve_draft_task(
                 get_session_factory(),
                 task_id,
@@ -1476,6 +1477,7 @@ async def cancel_agent_task_schedule(
             session,
             task_id=task_id,
             command="tasks.cancel-schedule",
+            workspace_task_id=task_id,
             action=lambda: cancel_scheduled_task(get_session_factory(), task_id),
         ),
     )
@@ -1536,6 +1538,7 @@ async def update_agent_task_primary_material(
                 mutation_session,
                 task_id=task_id,
                 command="tasks.set-primary-material",
+                workspace_task_id=task_id,
                 action=lambda: update_task_primary_material(
                     get_session_factory(),
                     task_id,
@@ -1574,6 +1577,7 @@ async def update_agent_task_outreach_config(
             session,
             task_id=task_id,
             command="tasks.set-outreach-config",
+            workspace_task_id=task_id,
             action=lambda: update_task_outreach_config(
                 get_session_factory(),
                 task_id,
@@ -4469,12 +4473,7 @@ async def _calculate_agent_task_match(
         raise _agent_task_error(exc) from exc
 
     session.expire_all()
-    workspace = await build_workspace_thread(
-        session,
-        professor_id=result.professor_id,
-        identity_id=result.identity_id,
-        llm_profile_id=result.llm_profile_id,
-    )
+    workspace = await build_workspace_thread_for_task(session, task_id=task_id)
     await record_operation_log(
         session,
         category="agent_action",

@@ -5186,6 +5186,68 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
 
+    def test_agent_task_actions_return_requested_batch_item(self) -> None:
+        _campaign_id, item_id = self._create_template_campaign(
+            key_suffix="exact-task-response",
+        )
+        draft = self._agent_get(f"/api/agent/v1/drafts/{item_id}").json()
+        approved = self.client.post(
+            f"/api/agent/v1/tasks/{item_id}/approve-draft",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-exact-task-approve",
+                "If-Revision": draft["revision"],
+            },
+            json={
+                "subject": "指定批量项主题",
+                "body_text": "指定批量项正文",
+                "body_html": "<p>指定批量项正文</p>",
+                "attachment_material_ids": draft["attachment_material_ids"],
+            },
+        )
+
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(approved.json()["current_task"]["id"], item_id)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            professor_id, identity_id, llm_profile_id = connection.execute(
+                """
+                SELECT professor_id, identity_id, llm_profile_id
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        calculation = SimpleNamespace(
+            professor_id=professor_id,
+            identity_id=identity_id,
+            match_source_identity_id=identity_id,
+            llm_profile_id=llm_profile_id,
+            usage=SimpleNamespace(
+                prompt_tokens=5,
+                completion_tokens=3,
+                total_tokens=8,
+                cached_tokens=0,
+            ),
+            run_id=91,
+        )
+        with patch(
+            "app.api.agent_v1.router.calculate_task_match_once",
+            new=AsyncMock(return_value=calculation),
+        ):
+            calculated = self.client.post(
+                f"/api/agent/v1/tasks/{item_id}/calculate-match",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-exact-task-calculate-match",
+                },
+                json={"llm_profile_id": llm_profile_id},
+            )
+
+        self.assertEqual(calculated.status_code, 200, msg=calculated.text)
+        self.assertEqual(calculated.json()["task_id"], item_id)
+        self.assertEqual(calculated.json()["thread"]["current_task"]["id"], item_id)
+
     def test_agent_can_list_and_concurrency_protect_delivery_rescheduling(self) -> None:
         draft = self._create_template_draft()
         task_id = int(draft["task_id"])

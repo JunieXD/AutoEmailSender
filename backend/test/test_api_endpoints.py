@@ -6962,6 +6962,90 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(row[1], "模型未返回可用改写内容")
         self.assertIsNone(row[2])
 
+    def test_email_task_actions_return_requested_batch_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="exact-task-response-resume.txt",
+            content=b"My background covers information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="exact-task-response@example.edu")
+        requested_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        newer_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        requested_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[],
+            batch_task_id=requested_batch_id,
+            source="batch",
+            generated_subject="待操作旧任务",
+            generated_content_text="待操作旧正文",
+            generated_content_html="<p>待操作旧正文</p>",
+        )
+        newer_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[],
+            batch_task_id=newer_batch_id,
+            source="batch",
+            generated_subject="不应返回的新任务",
+            generated_content_text="不应修改的新正文",
+            generated_content_html="<p>不应修改的新正文</p>",
+        )
+
+        save_response = self.client.post(
+            f"/api/email-tasks/{requested_task_id}/save-draft",
+            json={
+                "subject": "明确保存到旧任务",
+                "body_text": "明确保存到旧正文",
+                "body_html": "<p>明确保存到旧正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(save_response.status_code, 200, msg=save_response.text)
+        saved_task = save_response.json()["current_task"]
+        self.assertEqual(saved_task["id"], requested_task_id)
+        self.assertEqual(saved_task["approved_subject"], "明确保存到旧任务")
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=81)),
+        ):
+            match_response = self.client.post(
+                f"/api/email-tasks/{requested_task_id}/calculate-match",
+            )
+
+        self.assertEqual(match_response.status_code, 200, msg=match_response.text)
+        matched_task = match_response.json()["thread"]["current_task"]
+        self.assertEqual(matched_task["id"], requested_task_id)
+        self.assertEqual(matched_task["match_score"], 81)
+
+        newer_thread = self.client.get(f"/api/email-tasks/{newer_task_id}/thread")
+        self.assertEqual(newer_thread.status_code, 200, msg=newer_thread.text)
+        newer_task = newer_thread.json()["current_task"]
+        self.assertEqual(newer_task["id"], newer_task_id)
+        self.assertEqual(newer_task["generated_subject"], "不应返回的新任务")
+        self.assertIsNone(newer_task["approved_subject"])
+
     def test_calculate_match_keeps_low_score_task_in_matched_state(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
