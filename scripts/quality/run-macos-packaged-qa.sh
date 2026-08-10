@@ -16,6 +16,7 @@ CandidateManifestPath=""
 CandidateRunId=""
 Build=0
 Certification=0
+PrereleaseCertification=0
 DevelopmentSmoke=0
 SkipBrowserProbe=0
 KeepInstalledApp=0
@@ -29,7 +30,8 @@ usage() {
   cat <<'EOF'
 用法: scripts/quality/run-macos-packaged-qa.sh \
   --scenario lifecycle|normal-soak|seeded-chaos \
-  (--certification --expected-revision <40位SHA> | --development-smoke) \
+  (--certification | --prerelease-certification | --development-smoke) \
+  [--expected-revision <40位SHA>] \
   [--build] [--dmg <path> | --app-bundle <path>] \
   [--expected-dmg-sha256 <候选DMG的64位SHA-256>] \
   [--previous-dmg <上一稳定版路径>] \
@@ -102,6 +104,10 @@ while (($#)); do
       Certification=1
       shift
       ;;
+    --prerelease-certification)
+      PrereleaseCertification=1
+      shift
+      ;;
     --development-smoke)
       DevelopmentSmoke=1
       shift
@@ -138,10 +144,11 @@ if [[ "$Scenario" != "lifecycle" && "$Scenario" != "normal-soak" && "$Scenario" 
   echo "--scenario 必须是 lifecycle、normal-soak 或 seeded-chaos。" >&2
   exit 2
 fi
-if ((Certification == DevelopmentSmoke)); then
-  echo "必须且只能指定 --certification 或 --development-smoke 之一。" >&2
+if ((Certification + PrereleaseCertification + DevelopmentSmoke != 1)); then
+  echo "必须且只能指定 --certification、--prerelease-certification 或 --development-smoke 之一。" >&2
   exit 2
 fi
+FormalCertification=$((Certification || PrereleaseCertification))
 if [[ "$Scenario" == "seeded-chaos" && -z "$Seed" ]]; then
   echo "seeded-chaos 必须指定 --seed。" >&2
   exit 2
@@ -166,19 +173,19 @@ if [[ -n "$ExpectedPreviousDmgSha256" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9
   echo "--expected-previous-dmg-sha256 必须是 64 位 SHA-256。" >&2
   exit 2
 fi
-if ((Certification)) && [[ ! "$ExpectedRevision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+if ((FormalCertification)) && [[ ! "$ExpectedRevision" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "正式认证必须指定 40 位 --expected-revision。" >&2
   exit 2
 fi
-if ((Certification)) && [[ -z "$DmgPath" && Build -eq 0 ]]; then
+if ((FormalCertification)) && [[ -z "$DmgPath" && Build -eq 0 ]]; then
   echo "macOS 正式认证的全部场景都必须使用 --dmg，或用 --build 生成并挂载 DMG。" >&2
   exit 2
 fi
-if ((Certification && Build)); then
+if ((FormalCertification && Build)); then
   echo "macOS 正式认证必须使用候选 workflow 的确切 DMG；--build 只允许 development smoke。" >&2
   exit 2
 fi
-if ((Certification && Build == 0)) && [[ ! "$ExpectedDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((FormalCertification && Build == 0)) && [[ ! "$ExpectedDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "使用外部候选 DMG 正式认证时必须指定 64 位 --expected-dmg-sha256。" >&2
   exit 2
 fi
@@ -190,35 +197,35 @@ if [[ -n "$CandidateRunId" && ! "$CandidateRunId" =~ ^[1-9][0-9]*$ ]]; then
   echo "--candidate-run-id 必须是正整数。" >&2
   exit 2
 fi
-if ((Certification)) && [[ -z "$CandidateManifestPath" ]]; then
+if ((FormalCertification)) && [[ -z "$CandidateManifestPath" ]]; then
   echo "macOS 正式认证必须用 --candidate-manifest 和 --candidate-run-id 绑定候选 workflow。" >&2
   exit 2
 fi
-if ((Certification)) && [[ "$Scenario" == "lifecycle" && -z "$PreviousDmgPath" ]]; then
+if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && -z "$PreviousDmgPath" ]]; then
   echo "macOS lifecycle 正式认证必须用 --previous-dmg 指定上一稳定版真实 DMG。" >&2
   exit 2
 fi
-if ((Certification)) && [[ "$Scenario" == "lifecycle" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "macOS lifecycle 正式认证必须用 --expected-previous-dmg-sha256 绑定上一稳定版公开 DMG 摘要。" >&2
   exit 2
 fi
-if ((Certification)) && [[ "$Scenario" == "lifecycle" && $DedicatedTestAccount -eq 0 ]]; then
+if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && $DedicatedTestAccount -eq 0 ]]; then
   echo "上一稳定版可能使用旧 updater/cache 路径；正式升级认证必须在专用 macOS 测试账户运行并显式指定 --dedicated-test-account。" >&2
   exit 2
 fi
-if ((Certification && SkipBrowserProbe)); then
+if ((FormalCertification && SkipBrowserProbe)); then
   echo "正式认证不能跳过真实 Playwright/Chromium 进程树验证。" >&2
   exit 2
 fi
 
 RepoRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ -n "$PreviousDmgPath" ]]; then
-  if ! PreviousTag="$(git -C "$RepoRoot" describe --tags --abbrev=0 --match 'v*' HEAD)"; then
+  if ! PreviousTag="$(node "$RepoRoot/scripts/release/prerelease-contract.mjs" latest-stable --repo-root "$RepoRoot" --ref HEAD)"; then
     echo "无法从当前 SHA 推导上一稳定版 tag。" >&2
     exit 1
   fi
   ExpectedPreviousVersion="${PreviousTag#v}"
-  if [[ ! "$ExpectedPreviousVersion" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  if [[ ! "$ExpectedPreviousVersion" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "上一稳定版 tag 格式无效: $PreviousTag" >&2
     exit 1
   fi
@@ -227,7 +234,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "此 runner 只能在 macOS 上运行。" >&2
   exit 1
 fi
-if ((Certification)) && [[ "$(uname -m)" != "arm64" ]]; then
+if ((FormalCertification)) && [[ "$(uname -m)" != "arm64" ]]; then
   echo "正式 macOS 认证要求 Apple Silicon arm64；当前为 $(uname -m)。" >&2
   exit 1
 fi
@@ -238,9 +245,17 @@ if [[ "$NodeMajor" != "24" ]]; then
   exit 1
 fi
 CurrentAppVersion="$(cd "$RepoRoot" && node -p "require('./desktop/package.json').version")"
+if ((PrereleaseCertification)) && [[ ! "$CurrentAppVersion" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*$ ]]; then
+  echo "测试版认证要求 alpha、beta 或 rc 版本；当前为 $CurrentAppVersion。" >&2
+  exit 2
+fi
+if ((Certification)) && [[ ! "$CurrentAppVersion" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "稳定版认证只接受 x.y.z；当前为 $CurrentAppVersion。" >&2
+  exit 2
+fi
 
 CurrentRevision="$(git -C "$RepoRoot" rev-parse HEAD)"
-if ((Certification)); then
+if ((FormalCertification)); then
   CurrentRevisionLower="$(printf '%s' "$CurrentRevision" | tr '[:upper:]' '[:lower:]')"
   ExpectedRevisionLower="$(printf '%s' "$ExpectedRevision" | tr '[:upper:]' '[:lower:]')"
   if [[ "$CurrentRevisionLower" != "$ExpectedRevisionLower" ]]; then
@@ -538,6 +553,15 @@ fi
 if ((Certification)); then
   DriverArguments+=(
     --certification
+    --expected-revision "$ExpectedRevision"
+  )
+  if [[ "$Scenario" == "lifecycle" || "$Scenario" == "seeded-chaos" ]]; then
+    DriverArguments+=(--system-sleep-wake)
+    NativeSleepRequested=1
+  fi
+elif ((PrereleaseCertification)); then
+  DriverArguments+=(
+    --prerelease-certification
     --expected-revision "$ExpectedRevision"
   )
   if [[ "$Scenario" == "lifecycle" || "$Scenario" == "seeded-chaos" ]]; then

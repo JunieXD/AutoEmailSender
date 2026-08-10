@@ -74,7 +74,10 @@ function assertReleaseNote(note, tag, label) {
 }
 
 export async function assertReleasePreflight({ version, repoRoot, releaseSha = "" }) {
-  parseVersion(version);
+  const parsed = parseVersion(version);
+  if (parsed.prerelease.length > 0) {
+    throw new Error(`稳定版候选不接受 prerelease 版本：${version}`);
+  }
   const tag = `v${version}`;
   const paths = {
     cli: path.join(repoRoot, "cli", "pyproject.toml"),

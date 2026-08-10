@@ -23,6 +23,8 @@ extraResources:
     to: build/icon.ico
   - from: build/icon.png
     to: build/icon.png
+  - from: build/release-identity.json
+    to: release-identity.json
   - from: build/runtime/vc_redist.x64.exe
     to: runtime/vc_redist.x64.exe
 win:

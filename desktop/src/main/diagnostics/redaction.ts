@@ -11,6 +11,7 @@ const TIMELINE_DETAIL_KEYS = new Set([
   "clock_offset_ms",
   "code",
   "current_version",
+  "default_mode",
   "effective_mode",
   "elapsed_seconds",
   "error_code",

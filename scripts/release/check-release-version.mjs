@@ -56,14 +56,17 @@ export function compareVersions(leftValue, rightValue) {
 }
 
 export function assertReleaseVersion(version, tagNames) {
-  parseVersion(version);
+  const parsed = parseVersion(version);
+  if (parsed.prerelease.length > 0) {
+    throw new Error(`稳定版入口不接受 prerelease 版本：${version}`);
+  }
   const targetTag = `v${version}`;
   if (tagNames.includes(targetTag)) {
     throw new Error(`发布 tag 已存在：${targetTag}`);
   }
 
   const versions = tagNames
-    .filter((tag) => tag.startsWith("v"))
+    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag))
     .map((tag) => tag.slice(1))
     .filter((candidate) => VERSION_PATTERN.test(candidate));
   if (versions.length === 0) return null;

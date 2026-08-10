@@ -1,6 +1,10 @@
 name: Release Desktop
 run-name: >-
-  ${{ github.event_name == 'push' && format('Release {0}', github.ref_name) ||
+  ${{ github.event_name == 'workflow_dispatch' && inputs.release_kind == 'prerelease' &&
+      inputs.candidate_run_id != '' && format('Publish prerelease {0} from candidate {1}', inputs.release_tag, inputs.candidate_run_id) ||
+      github.event_name == 'workflow_dispatch' && inputs.release_kind == 'prerelease' &&
+      format('Certify prerelease {0} from {1}@{2}', inputs.release_tag, inputs.source_branch, inputs.release_sha) ||
+      github.event_name == 'push' && format('Release {0}', github.ref_name) ||
       inputs.candidate_run_id != '' && format('Promote {0} from candidate {1}', inputs.release_tag, inputs.candidate_run_id) ||
       format('Certify {0} at {1}', inputs.release_tag, inputs.release_sha) }}
 
@@ -28,6 +32,24 @@ on:
         required: false
         default: ""
         type: string
+      release_kind:
+        description: Stable release or isolated prerelease contract
+        required: false
+        default: stable
+        type: choice
+        options:
+          - stable
+          - prerelease
+      source_branch:
+        description: Explicit remote source branch for a prerelease
+        required: false
+        default: ""
+        type: string
+      prerelease_channel:
+        description: Explicit alpha, beta, or rc channel for a prerelease
+        required: false
+        default: ""
+        type: string
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
@@ -38,8 +60,22 @@ permissions:
   contents: write
 
 jobs:
+  prerelease:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_kind == 'prerelease'
+    uses: ./.github/workflows/prerelease.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      release_sha: ${{ inputs.release_sha }}
+      source_branch: ${{ inputs.source_branch }}
+      prerelease_channel: ${{ inputs.prerelease_channel }}
+      publish: ${{ inputs.publish }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+    secrets: inherit
+
   preflight:
-    if: github.event_name == 'push' || inputs.candidate_run_id == ''
+    if: >-
+      (github.event_name == 'push' && !contains(github.ref_name, '-')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_kind == 'stable' && inputs.candidate_run_id == '')
     runs-on: ubuntu-latest
 
     steps:
@@ -70,7 +106,7 @@ jobs:
       - name: Validate frozen release candidate
         shell: bash
         run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             node scripts/release/check-release-version.mjs --version "${RELEASE_TAG#v}" --repo-root .
@@ -119,7 +155,9 @@ jobs:
             test.test_crawl_mentors_skill_package
 
   build-windows:
-    if: github.event_name == 'push' || inputs.candidate_run_id == ''
+    if: >-
+      (github.event_name == 'push' && !contains(github.ref_name, '-')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_kind == 'stable' && inputs.candidate_run_id == '')
     runs-on: windows-latest
     needs: preflight
 
@@ -225,7 +263,9 @@ jobs:
           path: release-evidence/windows.json
 
   build-macos:
-    if: github.event_name == 'push' || inputs.candidate_run_id == ''
+    if: >-
+      (github.event_name == 'push' && !contains(github.ref_name, '-')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_kind == 'stable' && inputs.candidate_run_id == '')
     runs-on: macos-latest
     needs: preflight
 
@@ -330,7 +370,9 @@ jobs:
           path: release-evidence/macos.json
 
   certify:
-    if: github.event_name == 'push' || inputs.candidate_run_id == ''
+    if: >-
+      (github.event_name == 'push' && !contains(github.ref_name, '-')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_kind == 'stable' && inputs.candidate_run_id == '')
     runs-on: ubuntu-latest
     needs:
       - build-windows
@@ -414,8 +456,8 @@ jobs:
   publish:
     if: >-
       always() &&
-      ((github.event_name == 'push' && needs.certify.result == 'success') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.candidate_run_id != ''))
+      ((github.event_name == 'push' && !contains(github.ref_name, '-') && needs.certify.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.release_kind == 'stable' && inputs.publish == true && inputs.candidate_run_id != ''))
     runs-on: ubuntu-latest
     needs:
       - preflight

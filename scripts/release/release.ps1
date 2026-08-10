@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$')]
+  [ValidatePattern('^\d+\.\d+\.\d+$')]
   [string]$Version,
 
   [switch]$DryRun,
@@ -199,7 +199,7 @@ if ($PromoteRun) {
   }
   if ($DryRun) {
     Invoke-ReleasePreflight -ReleaseSha "<release-commit-sha>"
-    Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$PromoteRun"
+    Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_kind=stable -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$PromoteRun"
   } else {
     $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
     Invoke-ReleasePreflight -ReleaseSha $releaseSha
@@ -207,6 +207,7 @@ if ($PromoteRun) {
     try {
       gh workflow run release.yml `
         --ref master `
+        -f "release_kind=stable" `
         -f "release_tag=$ReleaseTag" `
         -f "release_sha=$releaseSha" `
         -f "publish=true" `
@@ -239,7 +240,7 @@ if ($DryRun) {
 }
 if ($DryRun) {
   Run-Git push origin master
-  Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
+  Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_kind=stable -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
   Write-Host "[dry-run] 未创建提交、tag 或推送。候选认证成功后，使用 -PromoteRun <run-id> 发布同一批产物。"
 } else {
   $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
@@ -249,6 +250,7 @@ if ($DryRun) {
   try {
     gh workflow run release.yml `
       --ref master `
+      -f "release_kind=stable" `
       -f "release_tag=$ReleaseTag" `
       -f "release_sha=$releaseSha" `
       -f "publish=false" `

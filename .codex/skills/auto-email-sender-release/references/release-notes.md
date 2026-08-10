@@ -1,6 +1,12 @@
 # Release Note Reference
 
-## Required Structure
+## Choose The Announcement Type
+
+Use the stable structure only for `x.y.z`. Use the prerelease structure for
+`x.y.z-(alpha|beta|rc).n`; do not add stable automatic-update promises or the repository Skill asset to a
+prerelease announcement.
+
+## Stable Required Structure
 
 Keep these sections and order:
 
@@ -14,6 +20,36 @@ Keep these sections and order:
 Do not add `## 本次更新`, developer-only sections, raw commit lists, or sub-bullets. Keep the public Skill guide link at the bottom:
 
 `https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`
+
+## Prerelease Required Structure
+
+Keep the title and these sections in order:
+
+1. `# v<version>（Alpha/Beta/RC 测试版）`
+2. warning callout
+3. `## 测试版说明`
+4. `### 新增功能`
+5. `### 体验优化`
+6. `### 问题修复`
+7. `## 测试重点`
+8. `## 安装前备份`
+9. `## 安装与覆盖升级`
+10. `## 回退与诊断`
+11. `## 自动更新隔离`
+12. `## 停止使用与取代`
+
+State plainly that the build is non-stable, manual-install only, never GitHub Latest, and invisible to stable
+in-app update checks. Name the exact EXE and arm64 DMG. Explain that local diagnostics never upload
+automatically and that users send an exported ZIP only by choice. Include same-version combined fallback,
+backup guidance, the scenarios for which feedback is needed, and the higher-version supersession rule.
+
+Do not mention `latest.yml`, `appcast.xml`, blockmaps, deltas, candidate run IDs, SHAs, manifests, workflow
+internals, or telemetry implementation except where the isolation promise requires saying that stable update
+metadata is not published. Do not advertise the repository Skill ZIP: prerelease assets contain only the two
+manual installers and the machine-verification manifest.
+
+Remove every `待根据`, `待列出`, `TODO`, or `TBD` placeholder before certification. If a section has no
+user-visible item, write one concise `- 本测试版没有单独的……变化。` bullet instead of deleting the heading.
 
 ## Writing Rules
 

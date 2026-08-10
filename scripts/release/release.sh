@@ -55,7 +55,7 @@ while (($#)); do
   esac
 done
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   usage
   exit 2
 fi
@@ -232,7 +232,7 @@ if [[ -n "$promote_run_id" ]]; then
   fi
   if ((dry_run)); then
     invoke_release_preflight "<release-commit-sha>"
-    echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$promote_run_id"
+    echo "[dry-run] gh workflow run release.yml --ref master -f release_kind=stable -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$promote_run_id"
   else
     release_sha="$(git -C "$repo_root" rev-parse HEAD)"
     invoke_release_preflight "$release_sha"
@@ -240,6 +240,7 @@ if [[ -n "$promote_run_id" ]]; then
       cd "$repo_root"
       gh workflow run release.yml \
         --ref master \
+        -f "release_kind=stable" \
         -f "release_tag=$release_tag" \
         -f "release_sha=$release_sha" \
         -f "publish=true" \
@@ -271,7 +272,7 @@ fi
 
 if ((dry_run)); then
   run_git push origin master
-  echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
+  echo "[dry-run] gh workflow run release.yml --ref master -f release_kind=stable -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=false -f candidate_run_id="
   echo "[dry-run] 未创建提交、tag 或推送。候选认证成功后，使用 --promote-run <run-id> 发布同一批产物。"
 else
   release_sha="$(git -C "$repo_root" rev-parse HEAD)"
@@ -281,6 +282,7 @@ else
     cd "$repo_root"
     gh workflow run release.yml \
       --ref master \
+      -f "release_kind=stable" \
       -f "release_tag=$release_tag" \
       -f "release_sha=$release_sha" \
       -f "publish=false" \

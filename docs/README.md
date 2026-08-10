@@ -17,3 +17,6 @@ On the project Mac, use `operations/windows-parallels-release-qa.md` for the ded
 
 For prerelease-only local diagnostics, safe multi-bundle analysis, and the final-ZIP canary gate, use
 `operations/beta-diagnostics-operations.md`.
+
+For generic alpha/beta/rc preparation, exact-candidate certification, non-Latest publication, stable-feed
+isolation, local observation, and supersession, use `operations/desktop-prerelease-operations.md`.

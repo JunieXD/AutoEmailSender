@@ -60,6 +60,10 @@ CERTIFICATION_MINIMUM_SECONDS = {
     "normal-soak": 24 * 60 * 60,
     "seeded-chaos": 8 * 60 * 60,
 }
+PRERELEASE_CERTIFICATION_MINIMUM_SECONDS = {
+    "normal-soak": 2 * 60 * 60,
+    "seeded-chaos": 60 * 60,
+}
 ROLE_STATUS_PROTOCOL_VERSION = "2"
 AGENT_PROTOCOL_VERSION = "3"
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -1203,6 +1207,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expected-package-sha256", default="")
     parser.add_argument("--repository-root", type=Path)
     parser.add_argument("--certification", action="store_true")
+    parser.add_argument("--prerelease-certification", action="store_true")
     parser.add_argument("--development-smoke", action="store_true")
     parser.add_argument("--skip-browser-probe", action="store_true")
     parser.add_argument("--system-sleep-wake", action="store_true")
@@ -1216,8 +1221,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    if args.certification == args.development_smoke:
-        parser.error("select exactly one of --certification or --development-smoke")
+    selected_tiers = sum(
+        (args.certification, args.prerelease_certification, args.development_smoke)
+    )
+    if selected_tiers != 1:
+        parser.error(
+            "select exactly one of --certification, "
+            "--prerelease-certification, or --development-smoke"
+        )
+    formal_certification = args.certification or args.prerelease_certification
     executable = args.app_executable.expanduser().resolve()
     if not executable.is_file():
         parser.error(f"packaged app executable is missing: {executable}")
@@ -1256,10 +1268,15 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         args.candidate_manifest_file = candidate_manifest
     if args.sample_interval_seconds <= 0 or args.action_interval_seconds <= 0:
         parser.error("sample and action intervals must be positive")
+    default_minimums = (
+        PRERELEASE_CERTIFICATION_MINIMUM_SECONDS
+        if args.prerelease_certification
+        else CERTIFICATION_MINIMUM_SECONDS
+    )
     default_duration = {
         "lifecycle": 0.0,
-        "normal-soak": float(CERTIFICATION_MINIMUM_SECONDS["normal-soak"]),
-        "seeded-chaos": float(CERTIFICATION_MINIMUM_SECONDS["seeded-chaos"]),
+        "normal-soak": float(default_minimums["normal-soak"]),
+        "seeded-chaos": float(default_minimums["seeded-chaos"]),
     }[args.scenario]
     args.duration_seconds = (
         default_duration if args.duration_seconds is None else args.duration_seconds
@@ -1314,13 +1331,19 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--previous-package-file requires an upgrade manifest")
     elif args.expected_previous_package_sha256:
         parser.error("--expected-previous-package-sha256 requires an upgrade manifest")
-    if args.certification:
+    if formal_certification:
         if args.skip_browser_probe:
             parser.error("certification cannot skip the real browser process probe")
-        minimum = CERTIFICATION_MINIMUM_SECONDS.get(args.scenario)
+        minimums = (
+            PRERELEASE_CERTIFICATION_MINIMUM_SECONDS
+            if args.prerelease_certification
+            else CERTIFICATION_MINIMUM_SECONDS
+        )
+        minimum = minimums.get(args.scenario)
         if minimum is not None and args.duration_seconds < minimum:
+            label = "prerelease certification" if args.prerelease_certification else "certification"
             parser.error(
-                f"{args.scenario} certification requires at least {minimum} seconds"
+                f"{args.scenario} {label} requires at least {minimum} seconds"
             )
         revision = args.expected_revision.lower()
         if not REVISION_PATTERN.fullmatch(revision):
@@ -1332,6 +1355,14 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parser.error("certification requires --package-file")
         if not args.expected_app_version:
             parser.error("certification requires --expected-app-version")
+        prerelease_version = re.fullmatch(
+            r"\d+\.\d+\.\d+-(alpha|beta|rc)\.[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*",
+            args.expected_app_version,
+        )
+        if args.prerelease_certification and prerelease_version is None:
+            parser.error("prerelease certification requires an alpha, beta, or rc app version")
+        if args.certification and prerelease_version is not None:
+            parser.error("stable certification does not accept a prerelease app version")
         if not re.fullmatch(r"[0-9a-f]{64}", args.expected_package_sha256):
             parser.error("certification requires a 64-character --expected-package-sha256")
         if args.candidate_manifest_file is None:
@@ -1352,6 +1383,14 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    formal_certification = args.certification or args.prerelease_certification
+    certification_tier = (
+        "stable"
+        if args.certification
+        else "prerelease"
+        if args.prerelease_certification
+        else "development"
+    )
     paths = _create_paths(
         args.artifacts_dir,
         existing_user_data=args.existing_user_data,
@@ -1371,7 +1410,8 @@ def main(argv: list[str] | None = None) -> int:
         "protocol_version": PROTOCOL_VERSION,
         "scenario": args.scenario,
         "status": "running",
-        "certification_requested": args.certification,
+        "certification_requested": formal_certification,
+        "certification_tier": certification_tier,
         "certification_eligible": False,
         "started_at": _utc_now(),
         "finished_at": None,
@@ -1435,6 +1475,20 @@ def main(argv: list[str] | None = None) -> int:
                 expected_app_version=args.expected_app_version,
                 expected_run_id=args.expected_candidate_run_id,
             )
+            expected_candidate_kind = (
+                "auto-email-sender-prerelease-candidate"
+                if args.prerelease_certification
+                else "auto-email-sender-release-candidate"
+                if args.certification
+                else None
+            )
+            if (
+                expected_candidate_kind is not None
+                and candidate_evidence["candidate_kind"] != expected_candidate_kind
+            ):
+                raise QaFailure(
+                    f"{certification_tier} certification received the wrong candidate kind"
+                )
             recorder.check(
                 "candidate_manifest_binds_package_revision_and_run",
                 passed=True,
@@ -1461,7 +1515,7 @@ def main(argv: list[str] | None = None) -> int:
                     "actual_sha256": previous_package_sha256,
                 },
             )
-        if args.certification:
+        if formal_certification:
             _assert_clean_revision(
                 args.repository_root.resolve(),
                 args.expected_revision,
@@ -1516,7 +1570,7 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
         report["status"] = "passed"
-        report["certification_eligible"] = bool(args.certification)
+        report["certification_eligible"] = formal_certification
         return_code = 0
     except BaseException as exc:  # noqa: BLE001 - always persist interrupted QA evidence
         report["status"] = "failed"
@@ -2614,9 +2668,16 @@ def _verify_candidate_asset_manifest(
         raise QaFailure(f"candidate packaged QA is unsupported on {sys.platform}")
     manifest = _read_json(manifest_path)
     expected_tag = f"v{expected_app_version}"
+    candidate_kind = manifest.get("kind")
+    is_prerelease = candidate_kind == "auto-email-sender-prerelease-candidate"
+    if candidate_kind not in {
+        "auto-email-sender-release-candidate",
+        "auto-email-sender-prerelease-candidate",
+    }:
+        raise QaFailure(f"candidate manifest kind is unsupported: {candidate_kind!r}")
     expected_identity: dict[str, object] = {
         "schemaVersion": 1,
-        "kind": "auto-email-sender-release-candidate",
+        "kind": candidate_kind,
         "releaseTag": expected_tag,
         "version": expected_app_version,
         "releaseSha": expected_revision,
@@ -2629,15 +2690,63 @@ def _verify_candidate_asset_manifest(
                 f"actual={manifest.get(field_name)!r}, expected={expected!r}"
             )
     repository = manifest.get("repository")
-    if not isinstance(repository, str) or not re.fullmatch(r"[^/\s]+/[^/\s]+", repository):
+    if not isinstance(repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
+    ):
         raise QaFailure("candidate manifest repository identity is invalid")
+    prerelease_channel: str | None = None
+    source_branch: str | None = None
+    if is_prerelease:
+        version_match = re.fullmatch(
+            r"\d+\.\d+\.\d+-(alpha|beta|rc)\.[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*",
+            expected_app_version,
+        )
+        prerelease_channel = version_match.group(1) if version_match else None
+        source_branch_value = manifest.get("sourceBranch")
+        source_branch = source_branch_value if isinstance(source_branch_value, str) else None
+        source_branch_is_safe = bool(
+            source_branch
+            and re.fullmatch(r"[A-Za-z0-9._/+@-]{1,200}", source_branch)
+            and not source_branch.startswith(("refs/", "-", "/"))
+            and not source_branch.endswith(("/", "."))
+            and ".." not in source_branch
+            and "@{" not in source_branch
+            and "//" not in source_branch
+            and not any(part.endswith(".lock") for part in source_branch.split("/"))
+        )
+        if prerelease_channel is None or not source_branch_is_safe:
+            raise QaFailure("prerelease candidate channel or sourceBranch is invalid")
+        prerelease_identity: dict[str, object] = {
+            "channel": prerelease_channel,
+            "sourceBranch": source_branch,
+            "defaultBackendMode": "split",
+            "diagnosticsSchemaVersion": 1,
+        }
+        for field_name, expected in prerelease_identity.items():
+            if manifest.get(field_name) != expected:
+                raise QaFailure(
+                    f"prerelease candidate manifest {field_name} does not match: "
+                    f"actual={manifest.get(field_name)!r}, expected={expected!r}"
+                )
+        stable_isolation = manifest.get("stableIsolation")
+        if (
+            not isinstance(stable_isolation, dict)
+            or stable_isolation.get("kind")
+            != "auto-email-sender-stable-isolation-snapshot"
+            or stable_isolation.get("repository") != repository
+        ):
+            raise QaFailure("prerelease candidate stable isolation identity is invalid")
     platforms = manifest.get("platforms")
     evidence = platforms.get(platform_name) if isinstance(platforms, dict) else None
     if not isinstance(evidence, dict):
         raise QaFailure(f"candidate manifest has no {platform_name} platform evidence")
     expected_platform_identity: dict[str, object] = {
         "schemaVersion": 1,
-        "kind": "auto-email-sender-platform-evidence",
+        "kind": (
+            "auto-email-sender-prerelease-platform-evidence"
+            if is_prerelease
+            else "auto-email-sender-platform-evidence"
+        ),
         "platform": platform_name,
         "releaseTag": expected_tag,
         "version": expected_app_version,
@@ -2655,12 +2764,53 @@ def _verify_candidate_asset_manifest(
         if platform_name == "windows"
         else f"AutoEmailSender-{expected_app_version}-arm64.dmg"
     )
-    artifacts = evidence.get("artifacts")
-    records = (
-        [item for item in artifacts if isinstance(item, dict) and item.get("name") == expected_asset_name]
-        if isinstance(artifacts, list)
-        else []
-    )
+    if is_prerelease:
+        prerelease_platform_identity: dict[str, object] = {
+            "channel": prerelease_channel,
+            "sourceBranch": source_branch,
+            "defaultBackendMode": "split",
+            "diagnosticsSchemaVersion": 1,
+        }
+        for field_name, expected in prerelease_platform_identity.items():
+            if evidence.get(field_name) != expected:
+                raise QaFailure(
+                    f"prerelease candidate {platform_name} evidence {field_name} does not match: "
+                    f"actual={evidence.get(field_name)!r}, expected={expected!r}"
+                )
+        expected_build_identity: dict[str, object] = {
+            "schema_version": 1,
+            "release_kind": "prerelease",
+            "version": expected_app_version,
+            "channel": prerelease_channel,
+            "source_branch": source_branch,
+            "release_sha": expected_revision,
+            "candidate_run_id": str(expected_run_id),
+            "candidate_asset_name": expected_asset_name,
+            "candidate_asset_sha256": None,
+            "default_backend_mode": "split",
+            "diagnostics_schema_version": 1,
+        }
+        if evidence.get("buildIdentity") != expected_build_identity:
+            raise QaFailure(
+                f"prerelease candidate {platform_name} build identity does not match"
+            )
+        artifact = evidence.get("artifact")
+        records = (
+            [artifact]
+            if isinstance(artifact, dict) and artifact.get("name") == expected_asset_name
+            else []
+        )
+    else:
+        artifacts = evidence.get("artifacts")
+        records = (
+            [
+                item
+                for item in artifacts
+                if isinstance(item, dict) and item.get("name") == expected_asset_name
+            ]
+            if isinstance(artifacts, list)
+            else []
+        )
     if len(records) != 1:
         raise QaFailure(
             f"candidate manifest must contain exactly one {expected_asset_name} record"
@@ -2679,14 +2829,17 @@ def _verify_candidate_asset_manifest(
     actual_size = package_file.stat().st_size
     actual_sha256 = _sha256_file(package_file)
     if actual_size != recorded_size or actual_sha256 != recorded_sha256:
-        raise QaFailure("candidate package bytes do not match release-candidate.json")
+        raise QaFailure("candidate package bytes do not match the candidate manifest")
     if expected_package_sha256 and expected_package_sha256 != recorded_sha256:
-        raise QaFailure("expected package SHA-256 does not match release-candidate.json")
+        raise QaFailure("expected package SHA-256 does not match the candidate manifest")
     return {
         "repository": repository,
+        "candidate_kind": candidate_kind,
         "release_tag": expected_tag,
         "release_sha": expected_revision,
         "candidate_run_id": expected_run_id,
+        "channel": prerelease_channel,
+        "source_branch": source_branch,
         "platform": platform_name,
         "asset_name": expected_asset_name,
         "asset_size": actual_size,

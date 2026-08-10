@@ -212,6 +212,7 @@ describe("windows installer packaging", () => {
 
     expect(hostRunner).toContain("--force-full");
     expect(hostRunner).toContain("--quick");
+    expect(hostRunner).toContain("--prerelease-certification");
     expect(hostRunner).toContain("--normal-soak");
     expect(hostRunner).toContain("--seeded-chaos");
     expect(hostRunner).toContain("-RunNormalSoak");
@@ -222,7 +223,7 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--candidate-installer-sha256");
     expect(hostRunner).toContain("--candidate-manifest");
     expect(hostRunner).toContain("--candidate-run-id");
-    expect(hostRunner).toContain("git -C \"$repo_root\" describe --tags");
+    expect(hostRunner).toContain("prerelease-contract.mjs\" latest-stable");
     expect(hostRunner).toContain('git -C "$repo_root" status --porcelain');
     expect(hostRunner).toContain("-ExpectedPreviousVersion");
     expect(hostRunner).toContain("-ExpectedPreviousPackageSha256");
@@ -240,7 +241,7 @@ describe("windows installer packaging", () => {
     expect(hostRunner).not.toContain('$HOME/Desktop');
     expect(hostRunner).not.toContain("Z:/Desktop");
     expect(guestRunner).toContain("[switch]$ForceFull");
-    expect(guestRunner).toContain('[ValidateSet("release", "quick")]');
+    expect(guestRunner).toContain('[ValidateSet("release", "prerelease", "quick")]');
     expect(guestRunner).toContain('[string]$Mode = "release"');
     expect(guestRunner).toContain("[switch]$RunNormalSoak");
     expect(guestRunner).toContain("[switch]$RunSeededChaos");
@@ -262,9 +263,10 @@ describe("windows installer packaging", () => {
     );
     expect(guestRunner).toContain("prepare-release.test.ps1");
     expect(guestRunner).toContain("release-script.test.ps1");
+    expect(guestRunner).toContain("prerelease-script.test.ps1");
     expect(guestRunner).toContain("test.test_backend_build_script");
     expect(guestRunner).toContain('Invoke-QaStep "Windows installer build"');
-    expect(guestRunner).toContain("if ($Mode -eq \"release\")");
+    expect(guestRunner).toContain("if ($IsFormal)");
     expect(guestRunner).toContain("npm run dist:prepared");
     expect(guestRunner).toContain(
       'Invoke-QaStep "Installed packaged split lifecycle and optional soak certification"',
@@ -321,6 +323,7 @@ describe("windows installer packaging", () => {
       '"--expected-previous-package-sha256", $ExpectedPreviousPackageSha256',
     );
     expect(guestRunner).toContain('"--certification"');
+    expect(guestRunner).toContain('"--prerelease-certification"');
     expect(guestRunner).toContain('"AUTO_EMAIL_SENDER_PACKAGED_QA"');
     expect(guestRunner).toContain('Join-Path $installRoot "Uninstall Auto Email Sender.exe"');
     expect(guestRunner).toContain("Uninstall did not preserve isolated user data");
@@ -345,6 +348,7 @@ describe("windows installer packaging", () => {
 
     expect(existsSync(runnerPath)).toBe(true);
     expect(runner).toContain("--certification");
+    expect(runner).toContain("--prerelease-certification");
     expect(runner).toContain("--development-smoke");
     expect(runner).toContain("SPARKLE_PUBLIC_ED_KEY");
     expect(runner).not.toContain('echo "$SPARKLE_PUBLIC_ED_KEY"');
@@ -358,7 +362,7 @@ describe("windows installer packaging", () => {
     expect(runner).toContain("--candidate-manifest");
     expect(runner).toContain("--candidate-run-id");
     expect(runner).toContain("ExpectedPreviousVersion");
-    expect(runner).toContain("git -C \"$RepoRoot\" describe --tags");
+    expect(runner).toContain("prerelease-contract.mjs\" latest-stable");
     expect(runner).toContain("--dedicated-test-account");
     expect(runner).toContain("seed-previous-packaged-upgrade.py");
     expect(runner).toContain('--package-file "$PreviousDmgPath"');
@@ -423,6 +427,17 @@ describe("windows installer packaging", () => {
     expect(backendServiceSource).toContain(
       "this.#lastWorkerHeartbeatAdvancedAt = performance.now()",
     );
+  });
+
+  it("uses the embedded release identity as the packaged backend default", () => {
+    const application = readFileSync(
+      path.resolve("src", "main", "bootstrap", "application.ts"),
+      "utf8",
+    );
+    expect(application).toContain(
+      "releaseDefaultMode: releaseBuildIdentity.defaultBackendMode",
+    );
+    expect(application).toContain("release_identity_fallback");
   });
 
   it("fails Windows frozen builds before stale outputs can be verified", () => {

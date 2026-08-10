@@ -58,3 +58,15 @@ test("rejects stale package versions and release note copies", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("rejects prerelease versions at the stable preflight", async () => {
+  const root = await createFixture();
+  try {
+    await assert.rejects(
+      assertReleasePreflight({ version: "9.9.9-beta.1", repoRoot: root }),
+      /稳定版候选不接受 prerelease/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

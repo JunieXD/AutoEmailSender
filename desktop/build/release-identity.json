@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "release_kind": "stable",
+  "version": null,
+  "channel": "stable",
+  "source_branch": null,
+  "release_sha": null,
+  "candidate_run_id": null,
+  "candidate_asset_name": null,
+  "candidate_asset_sha256": null,
+  "default_backend_mode": "combined",
+  "diagnostics_schema_version": 1
+}

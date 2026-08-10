@@ -74,6 +74,30 @@ describe("desktop backend mode settings", () => {
     })).toMatchObject({ mode: "combined", source: "command_line" });
   });
 
+  it("uses the embedded release default without overriding an explicit setting", () => {
+    const base = {
+      argv: [] as string[],
+      environmentMode: undefined,
+      setting: { mode: null },
+      appVersion: "2.6.0-beta.1",
+      releaseDefaultMode: "combined" as const,
+    };
+
+    expect(resolveBackendModeSelection(base)).toMatchObject({
+      mode: "combined",
+      defaultMode: "combined",
+      source: "channel_default",
+    });
+    expect(resolveBackendModeSelection({
+      ...base,
+      setting: { mode: "split" },
+    })).toMatchObject({
+      mode: "split",
+      defaultMode: "combined",
+      source: "settings",
+    });
+  });
+
   it("writes private schema-versioned settings atomically and replaces them", async () => {
     const userDataPath = await createTemporaryDirectory();
     const settingsPath = await writeBackendModeSetting(userDataPath, "split");

@@ -14,6 +14,10 @@ const stableWrappers = new Map([
   ["install-backend-playwright.ps1", "build\\install-backend-playwright.ps1"],
   ["prepare-release.ps1", "release\\prepare-release.ps1"],
   ["prepare-release.sh", "release/prepare-release.sh"],
+  ["prepare-prerelease.ps1", "release\\prepare-prerelease.ps1"],
+  ["prepare-prerelease.sh", "release/prepare-prerelease.sh"],
+  ["prerelease.ps1", "release\\prerelease.ps1"],
+  ["prerelease.sh", "release/prerelease.sh"],
   ["release.ps1", "release\\release.ps1"],
   ["release.sh", "release/release.sh"],
 ]);

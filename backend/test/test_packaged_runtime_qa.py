@@ -247,6 +247,101 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                     expected_run_id=123456,
                 )
 
+    def test_prerelease_candidate_manifest_binds_packaged_qa_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            version = "9.9.9-beta.1"
+            package = root / f"AutoEmailSender-Setup-{version}.exe"
+            package.write_bytes(b"prerelease candidate installer")
+            digest = runner._sha256_file(package)
+            source_branch = "release/generic-topic"
+            release_sha = "a" * 40
+            run_id = 123456
+            asset = {
+                "name": package.name,
+                "size": package.stat().st_size,
+                "sha256": digest,
+            }
+            build_identity = {
+                "schema_version": 1,
+                "release_kind": "prerelease",
+                "version": version,
+                "channel": "beta",
+                "source_branch": source_branch,
+                "release_sha": release_sha,
+                "candidate_run_id": str(run_id),
+                "candidate_asset_name": package.name,
+                "candidate_asset_sha256": None,
+                "default_backend_mode": "split",
+                "diagnostics_schema_version": 1,
+            }
+            platform_evidence = {
+                "schemaVersion": 1,
+                "kind": "auto-email-sender-prerelease-platform-evidence",
+                "platform": "windows",
+                "releaseTag": f"v{version}",
+                "version": version,
+                "channel": "beta",
+                "sourceBranch": source_branch,
+                "releaseSha": release_sha,
+                "candidateRunId": run_id,
+                "defaultBackendMode": "split",
+                "diagnosticsSchemaVersion": 1,
+                "buildIdentity": build_identity,
+                "artifact": asset,
+            }
+            manifest = {
+                "schemaVersion": 1,
+                "kind": "auto-email-sender-prerelease-candidate",
+                "repository": "JunieXD/AutoEmailSender",
+                "releaseTag": f"v{version}",
+                "version": version,
+                "channel": "beta",
+                "sourceBranch": source_branch,
+                "releaseSha": release_sha,
+                "candidateRunId": run_id,
+                "defaultBackendMode": "split",
+                "diagnosticsSchemaVersion": 1,
+                "stableIsolation": {
+                    "kind": "auto-email-sender-stable-isolation-snapshot",
+                    "repository": "JunieXD/AutoEmailSender",
+                },
+                "platforms": {"windows": platform_evidence},
+            }
+            manifest_path = root / "prerelease-candidate.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with mock.patch.object(runner.sys, "platform", "win32"):
+                evidence = runner._verify_candidate_asset_manifest(
+                    manifest_path,
+                    package_file=package,
+                    expected_package_sha256=digest,
+                    expected_revision=release_sha,
+                    expected_app_version=version,
+                    expected_run_id=run_id,
+                )
+            self.assertEqual(
+                evidence["candidate_kind"],
+                "auto-email-sender-prerelease-candidate",
+            )
+            self.assertEqual(evidence["source_branch"], source_branch)
+
+            platform_evidence["channel"] = "rc"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with (
+                mock.patch.object(runner.sys, "platform", "win32"),
+                self.assertRaisesRegex(runner.QaFailure, "evidence channel"),
+            ):
+                runner._verify_candidate_asset_manifest(
+                    manifest_path,
+                    package_file=package,
+                    expected_package_sha256=digest,
+                    expected_revision=release_sha,
+                    expected_app_version=version,
+                    expected_run_id=run_id,
+                )
+
     def test_resource_summary_flags_large_statistically_monotonic_growth(self) -> None:
         samples = [
             {
@@ -380,6 +475,43 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                         temp_dir,
                     ]
                 )
+
+    def test_prerelease_certification_uses_two_hour_normal_soak_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "app"
+            executable.write_bytes(b"fixture")
+            package_file = root / "current-package.dmg"
+            package_file.write_bytes(b"current package")
+            candidate_manifest = root / "prerelease-candidate.json"
+            candidate_manifest.write_text("{}", encoding="utf-8")
+            base = [
+                "--scenario",
+                "normal-soak",
+                "--app-executable",
+                str(executable),
+                "--artifacts-dir",
+                str(root / "evidence"),
+                "--prerelease-certification",
+                "--expected-revision",
+                "a" * 40,
+                "--repository-root",
+                str(root),
+                "--package-file",
+                str(package_file),
+                "--expected-app-version",
+                "2.6.0-beta.1",
+                "--expected-package-sha256",
+                runner._sha256_file(package_file),
+                "--candidate-manifest-file",
+                str(candidate_manifest),
+                "--expected-candidate-run-id",
+                "123456",
+            ]
+            accepted = runner.parse_args([*base, "--duration-seconds", "7200"])
+            self.assertTrue(accepted.prerelease_certification)
+            with self.assertRaises(SystemExit):
+                runner.parse_args([*base, "--duration-seconds", "7199"])
 
     def test_lifecycle_certification_requires_native_sleep_and_previous_package_data(
         self,

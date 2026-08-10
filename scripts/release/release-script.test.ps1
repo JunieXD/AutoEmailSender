@@ -225,7 +225,7 @@ exit /b 0
     Assert-Contains -Text $uvCalls -Needle "version 9.9.9 --no-sync" -Message "release.ps1 没有同步 CLI 发布版本。`n$uvCalls"
     Assert-Contains -Text $output -Needle "fake npm version 9.9.9 --no-git-tag-version --allow-same-version" -Message "release.ps1 不支持复用已经同步的 npm 版本。`n$output"
     $ghCalls = Get-Content -Raw -Encoding UTF8 $ghCallsPath
-    Assert-Contains -Text $ghCalls -Needle "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=false -f candidate_run_id=" -Message "release.ps1 没有按精确提交启动候选认证工作流。`n$ghCalls"
+    Assert-Contains -Text $ghCalls -Needle "workflow run release.yml --ref master -f release_kind=stable -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=false -f candidate_run_id=" -Message "release.ps1 没有按稳定版合同和精确提交启动候选认证工作流。`n$ghCalls"
 
     Remove-Item -LiteralPath $ghCallsPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $uvCallsPath -Force -ErrorAction SilentlyContinue
@@ -251,7 +251,7 @@ exit /b 0
     }
     Assert-Contains -Text $promotionOutput -Needle "只会发布候选 run 123456 的已认证产物" -Message "release.ps1 没有说明 promotion 只复用候选产物。`n$promotionOutput"
     $promotionGhCalls = Get-Content -Raw -Encoding UTF8 $ghCallsPath
-    Assert-Contains -Text $promotionGhCalls -Needle "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true -f candidate_run_id=123456" -Message "release.ps1 没有按候选 run ID 启动提升工作流。`n$promotionGhCalls"
+    Assert-Contains -Text $promotionGhCalls -Needle "workflow run release.yml --ref master -f release_kind=stable -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true -f candidate_run_id=123456" -Message "release.ps1 没有按候选 run ID 启动稳定版提升工作流。`n$promotionGhCalls"
     if (Test-Path $uvCallsPath) {
       throw "release.ps1 promotion 不应重新运行产品验证。"
     }

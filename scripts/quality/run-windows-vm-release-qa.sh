@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--force-full] [--quick]" >&2
+  echo "Usage: $0 [--force-full] [--quick|--prerelease-certification]" >&2
   echo "          [--candidate-installer PATH] [--candidate-installer-sha256 HEX]" >&2
   echo "          [--candidate-manifest PATH] [--candidate-run-id N]" >&2
   echo "          [--previous-installer PATH] [--previous-installer-sha256 HEX]" >&2
@@ -15,8 +15,8 @@ force_full=0
 qa_mode="release"
 run_normal_soak=0
 run_seeded_chaos=0
-normal_soak_seconds=86400
-seeded_chaos_seconds=28800
+normal_soak_seconds=""
+seeded_chaos_seconds=""
 seeded_chaos_seed=20260810
 previous_installer=""
 previous_installer_sha256=""
@@ -31,6 +31,9 @@ while (($#)); do
       ;;
     --quick)
       qa_mode="quick"
+      ;;
+    --prerelease-certification)
+      qa_mode="prerelease"
       ;;
     --normal-soak)
       run_normal_soak=1
@@ -82,6 +85,17 @@ while (($#)); do
   shift
 done
 
+formal_qa=0
+normal_soak_minimum=86400
+seeded_chaos_minimum=28800
+if [[ "$qa_mode" != "quick" ]]; then formal_qa=1; fi
+if [[ "$qa_mode" == "prerelease" ]]; then
+  normal_soak_minimum=7200
+  seeded_chaos_minimum=3600
+fi
+if [[ -z "$normal_soak_seconds" ]]; then normal_soak_seconds="$normal_soak_minimum"; fi
+if [[ -z "$seeded_chaos_seconds" ]]; then seeded_chaos_seconds="$seeded_chaos_minimum"; fi
+
 if [[ "$qa_mode" == "quick" ]] && ((run_normal_soak || run_seeded_chaos)); then
   echo "--quick 不能与长稳认证参数一起使用。" >&2
   exit 2
@@ -90,27 +104,27 @@ if [[ "$qa_mode" == "quick" ]] && [[ -n "$previous_installer" || -n "$previous_i
   echo "--quick 不接受正式候选或上一稳定版安装包参数。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && -z "$previous_installer" ]]; then
+if ((formal_qa)) && [[ -z "$previous_installer" ]]; then
   echo "正式 Windows QA 必须用 --previous-installer 指定上一稳定版真实 NSIS 安装包。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && ! "$previous_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((formal_qa)) && [[ ! "$previous_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "正式 Windows QA 必须用 --previous-installer-sha256 绑定公开稳定版摘要。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && -z "$candidate_installer" ]]; then
+if ((formal_qa)) && [[ -z "$candidate_installer" ]]; then
   echo "正式 Windows QA 必须用 --candidate-installer 指定候选 workflow 的确切 NSIS 安装包。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && ! "$candidate_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((formal_qa)) && [[ ! "$candidate_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "正式 Windows QA 必须用 --candidate-installer-sha256 绑定候选清单摘要。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && -z "$candidate_manifest" ]]; then
-  echo "正式 Windows QA 必须用 --candidate-manifest 指定同一 workflow 的 release-candidate.json。" >&2
+if ((formal_qa)) && [[ -z "$candidate_manifest" ]]; then
+  echo "正式 Windows QA 必须用 --candidate-manifest 指定同一 workflow 的候选 manifest。" >&2
   exit 2
 fi
-if [[ "$qa_mode" == "release" && ! "$candidate_run_id" =~ ^[1-9][0-9]*$ ]]; then
+if ((formal_qa)) && [[ ! "$candidate_run_id" =~ ^[1-9][0-9]*$ ]]; then
   echo "正式 Windows QA 必须用 --candidate-run-id 绑定正整数 workflow run ID。" >&2
   exit 2
 fi
@@ -126,12 +140,12 @@ if [[ -n "$candidate_manifest" && ! -f "$candidate_manifest" ]]; then
   echo "候选认证清单不存在: $candidate_manifest" >&2
   exit 2
 fi
-if [[ ! "$normal_soak_seconds" =~ ^[0-9]+$ ]] || ((normal_soak_seconds < 86400)); then
-  echo "--normal-soak-seconds 至少为 86400。" >&2
+if [[ ! "$normal_soak_seconds" =~ ^[0-9]+$ ]] || ((normal_soak_seconds < normal_soak_minimum)); then
+  echo "--normal-soak-seconds 在 $qa_mode 模式下至少为 $normal_soak_minimum。" >&2
   exit 2
 fi
-if [[ ! "$seeded_chaos_seconds" =~ ^[0-9]+$ ]] || ((seeded_chaos_seconds < 28800)); then
-  echo "--seeded-chaos-seconds 至少为 28800。" >&2
+if [[ ! "$seeded_chaos_seconds" =~ ^[0-9]+$ ]] || ((seeded_chaos_seconds < seeded_chaos_minimum)); then
+  echo "--seeded-chaos-seconds 在 $qa_mode 模式下至少为 $seeded_chaos_minimum。" >&2
   exit 2
 fi
 if [[ ! "$seeded_chaos_seed" =~ ^-?[0-9]+$ ]]; then
@@ -143,6 +157,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 target_revision="$(git -C "$repo_root" rev-parse HEAD)"
 current_app_version="$(cd "$repo_root" && node -p "require('./desktop/package.json').version")"
+if [[ "$qa_mode" == "prerelease" && ! "$current_app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*$ ]]; then
+  echo "测试版 Windows 认证要求 alpha、beta 或 rc 版本；当前为 $current_app_version。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "release" && ! "$current_app_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "稳定版 Windows 认证只接受 x.y.z；当前为 $current_app_version。" >&2
+  exit 2
+fi
 vm_name="${AUTO_EMAIL_SENDER_WINDOWS_VM_NAME:-Windows 11}"
 guest_checkout="${AUTO_EMAIL_SENDER_WINDOWS_QA_CHECKOUT:-C:\Users\junie\Projects\AutoEmailSender-Windows-QA}"
 host_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR:-$HOME/Parallels Shared}"
@@ -150,13 +172,13 @@ guest_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR:-Z:}"
 guest_transfer_dir="${guest_transfer_dir//\\//}"
 guest_transfer_dir="${guest_transfer_dir%/}"
 expected_previous_version=""
-if [[ "$qa_mode" == "release" ]]; then
-  if ! previous_tag="$(git -C "$repo_root" describe --tags --abbrev=0 --match 'v*' HEAD)"; then
+if ((formal_qa)); then
+  if ! previous_tag="$(node "$repo_root/scripts/release/prerelease-contract.mjs" latest-stable --repo-root "$repo_root" --ref HEAD)"; then
     echo "无法从当前 SHA 推导上一稳定版 tag。" >&2
     exit 1
   fi
   expected_previous_version="${previous_tag#v}"
-  if [[ ! "$expected_previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  if [[ ! "$expected_previous_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "上一稳定版 tag 格式无效: $previous_tag" >&2
     exit 1
   fi
@@ -195,7 +217,7 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   exit 1
 fi
 
-if [[ "$qa_mode" == "release" ]]; then
+if ((formal_qa)); then
   node "$repo_root/scripts/release/release-candidate.mjs" asset \
     --manifest "$candidate_manifest" \
     --platform windows \

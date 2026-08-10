@@ -130,14 +130,14 @@ assert_contains "$output" "fake npm version 9.9.9 --no-git-tag-version --allow-s
 assert_contains "$output" "发布版本和公告已包含在候选提交中，复用当前 HEAD" "release.sh 没有复用已经提交并验证的候选。"
 assert_contains "$output" "启动 v9.9.9 候选认证" "release.sh 成功时没有输出候选认证状态。"
 gh_calls="$(cat "$gh_calls_path")"
-assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=false -f candidate_run_id=" "release.sh 没有按精确提交启动候选认证工作流。"
+assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_kind=stable -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=false -f candidate_run_id=" "release.sh 没有按稳定版合同和精确提交启动候选认证工作流。"
 
 rm -f "$gh_calls_path" "$uv_calls_path"
 PROMOTION_CLEAN=1 "$release_script" 9.9.9 --promote-run 123456 --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
 output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
 assert_contains "$output" "只会发布候选 run 123456 的已认证产物" "release.sh 没有说明 promotion 只复用候选产物。"
 gh_calls="$(cat "$gh_calls_path")"
-assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true -f candidate_run_id=123456" "release.sh 没有按候选 run ID 启动提升工作流。"
+assert_contains "$gh_calls" "workflow run release.yml --ref master -f release_kind=stable -f release_tag=v9.9.9 -f release_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -f publish=true -f candidate_run_id=123456" "release.sh 没有按候选 run ID 启动稳定版提升工作流。"
 if [[ -f "$uv_calls_path" ]]; then
   printf '%s\n' "release.sh promotion 不应重新运行产品验证。" >&2
   exit 1

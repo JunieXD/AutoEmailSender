@@ -142,8 +142,9 @@ export function resolveBackendModeSelection(input: {
   environmentMode?: string;
   setting: BackendModeSetting;
   appVersion: string;
+  releaseDefaultMode?: BackendMode;
 }): BackendModeResolution {
-  const defaultMode = getBackendModeChannelDefault(input.appVersion);
+  const defaultMode = input.releaseDefaultMode ?? getBackendModeChannelDefault(input.appVersion);
   const configuredMode = input.setting.mode;
   const commandLineMode = getCommandLineBackendMode(input.argv);
   if (commandLineMode !== null) {

@@ -38,6 +38,7 @@ import { createAgentSupportService } from "../agent-support/service.js";
 import { isBetaDiagnosticsEnabled } from "../diagnostics/constants.js";
 import { DesktopBetaDiagnosticsRecorder } from "../diagnostics/recorder.js";
 import { createDesktopBetaDiagnosticsService } from "../diagnostics/service.js";
+import { readDesktopReleaseBuildIdentity } from "../release/build-identity.js";
 import { registerDesktopIpc } from "../ipc/register.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "../shell/startup-at-login.js";
 import { bindTrayInteractions } from "../shell/tray.js";
@@ -127,18 +128,19 @@ const betaDiagnosticsRecorder = new DesktopBetaDiagnosticsRecorder({
     ...(backend?.workerPid ? { workerPid: backend.workerPid } : {}),
   }),
 });
+const releaseBuildIdentity = readDesktopReleaseBuildIdentity({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appVersion: app.getVersion(),
+  platform: process.platform,
+  environment: process.env,
+});
 const betaDiagnosticsService = createDesktopBetaDiagnosticsService({
   recorder: betaDiagnosticsRecorder,
   appVersion: app.getVersion(),
   backendClient: desktopBackendClient,
   getBackendModeStatus: getDesktopBackendModeStatus,
-  buildIdentity: {
-    sourceBranch: process.env.AUTO_EMAIL_SENDER_RELEASE_SOURCE_BRANCH,
-    releaseSha: process.env.AUTO_EMAIL_SENDER_RELEASE_SHA,
-    candidateRunId: process.env.AUTO_EMAIL_SENDER_CANDIDATE_RUN_ID,
-    candidateAssetName: process.env.AUTO_EMAIL_SENDER_CANDIDATE_ASSET_NAME,
-    candidateAssetSha256: process.env.AUTO_EMAIL_SENDER_CANDIDATE_ASSET_SHA256,
-  },
+  buildIdentity: releaseBuildIdentity.diagnostics,
 });
 const launchedAtStartup = isLaunchedAtStartup({
   argv: process.argv,
@@ -210,6 +212,7 @@ async function resolveNextBackendMode() {
     environmentMode: process.env.AUTO_EMAIL_SENDER_BACKEND_MODE,
     setting,
     appVersion: app.getVersion(),
+    releaseDefaultMode: releaseBuildIdentity.defaultBackendMode,
   });
 }
 
@@ -980,6 +983,12 @@ export function bootstrapDesktopApplication(): void {
 
     app.whenReady().then(async () => {
       await betaDiagnosticsRecorder.start();
+      if (releaseBuildIdentity.errorCode !== undefined) {
+        await betaDiagnosticsRecorder.recordTimeline("release_identity_fallback", {
+          error_code: releaseBuildIdentity.errorCode,
+          default_mode: releaseBuildIdentity.defaultBackendMode,
+        }, "warning");
+      }
       await betaDiagnosticsRecorder.recordTimeline("electron_ready", {
         process_id: process.pid,
         effective_mode: currentBackendMode,

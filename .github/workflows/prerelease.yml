@@ -1,0 +1,592 @@
+name: Reusable Desktop Prerelease
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      release_sha:
+        required: true
+        type: string
+      source_branch:
+        required: true
+        type: string
+      prerelease_channel:
+        required: true
+        type: string
+      publish:
+        required: true
+        type: boolean
+      candidate_run_id:
+        required: false
+        default: ""
+        type: string
+    secrets:
+      SPARKLE_PUBLIC_ED_KEY:
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  PRERELEASE_TAG: ${{ inputs.release_tag }}
+  PRERELEASE_SHA: ${{ inputs.release_sha }}
+  PRERELEASE_SOURCE_BRANCH: ${{ inputs.source_branch }}
+  PRERELEASE_CHANNEL: ${{ inputs.prerelease_channel }}
+  PRERELEASE_PUBLISH: ${{ inputs.publish }}
+  PRERELEASE_CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Validate dispatch shape and exact remote branch
+        shell: bash
+        run: |
+          version="${PRERELEASE_TAG#v}"
+          test "$PRERELEASE_TAG" = "v$version"
+          test "$GITHUB_REF_NAME" = "$PRERELEASE_SOURCE_BRANCH"
+          test "$(git rev-parse HEAD)" = "$PRERELEASE_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          node scripts/release/prerelease-contract.mjs validate \
+            --version "$version" \
+            --channel "$PRERELEASE_CHANNEL" \
+            --source-branch "$PRERELEASE_SOURCE_BRANCH" \
+            --release-sha "$PRERELEASE_SHA"
+          node scripts/release/prerelease-contract.mjs check-tags \
+            --version "$version" \
+            --channel "$PRERELEASE_CHANNEL" \
+            --repo-root .
+          remote_sha="$(git ls-remote --heads origin "refs/heads/$PRERELEASE_SOURCE_BRANCH" | awk '{print $1}')"
+          test "$remote_sha" = "$PRERELEASE_SHA"
+          if [[ "$PRERELEASE_PUBLISH" == "true" ]]; then
+            [[ "$PRERELEASE_CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          else
+            test -z "$PRERELEASE_CANDIDATE_RUN_ID"
+          fi
+
+      - name: Validate frozen prerelease metadata and stable feed contract
+        run: >-
+          node scripts/release/prerelease-preflight.mjs
+          --version "${PRERELEASE_TAG#v}"
+          --channel "$PRERELEASE_CHANNEL"
+          --source-branch "$PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$PRERELEASE_SHA"
+          --repo-root .
+
+  preflight:
+    if: inputs.publish == false && inputs.candidate_run_id == ''
+    runs-on: ubuntu-latest
+    needs: contract
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
+
+      - name: Test stable and prerelease orchestration contracts
+        run: >-
+          node --test
+          scripts/release/check-release-version.test.mjs
+          scripts/release/release-preflight.test.mjs
+          scripts/release/prerelease-contract.test.mjs
+          scripts/release/prerelease-notes.test.mjs
+          scripts/release/prerelease-preflight.test.mjs
+          scripts/release/prerelease-build-identity.test.mjs
+          scripts/release/prerelease-candidate.test.mjs
+          scripts/release/prerelease-isolation.test.mjs
+          scripts/release/prerelease-workflow.test.mjs
+          scripts/quality/script-topology.test.mjs
+          scripts/quality/document-topology.test.mjs
+
+      - name: Test POSIX and PowerShell prerelease entrypoints
+        shell: bash
+        run: |
+          bash scripts/release/prepare-prerelease.test.sh
+          bash scripts/release/prerelease-script.test.sh
+          pwsh -NoProfile -File scripts/release/prerelease-script.test.ps1
+
+      - name: Test desktop prerelease packaging contract
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run typecheck
+          npm run test -- releaseBuildIdentity.test.ts packaging.test.ts betaDiagnosticsApplication.test.ts
+
+      - name: Test backend diagnostics and packaged runtime contracts
+        working-directory: backend
+        run: |
+          uv sync --dev
+          uv run --no-sync python -m unittest \
+            test.test_beta_diagnostics \
+            test.test_beta_diagnostics_analyzer \
+            test.test_desktop_runtime \
+            test.test_packaged_runtime_qa
+
+  build-windows:
+    if: inputs.publish == false && inputs.candidate_run_id == ''
+    runs-on: windows-latest
+    needs: preflight
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
+
+      - name: Prepare Windows packaging prerequisites
+        shell: pwsh
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build/prepare-windows-vc-runtime.ps1
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Agent CLI
+        shell: pwsh
+        run: |
+          uv sync --project cli --dev
+          ./scripts/build/build-cli.ps1 -Clean -SkipSync
+
+      - name: Build backend executable
+        shell: pwsh
+        run: |
+          uv sync --project backend --dev
+          ./scripts/build/build-backend.ps1 -Clean -SkipSync
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Embed exact Windows prerelease build identity
+        shell: pwsh
+        run: >-
+          node scripts/release/prerelease-build-identity.mjs
+          --version "$($env:PRERELEASE_TAG.Substring(1))"
+          --channel "$env:PRERELEASE_CHANNEL"
+          --source-branch "$env:PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$env:PRERELEASE_SHA"
+          --candidate-run-id "$env:GITHUB_RUN_ID"
+          --platform windows
+          --output desktop/build/release-identity.json
+
+      - name: Build Windows prerelease installer
+        working-directory: desktop
+        run: npm run dist:prepared
+
+      - name: Stage only the manual Windows installer
+        shell: pwsh
+        run: |
+          $version = $env:PRERELEASE_TAG.Substring(1)
+          $name = "AutoEmailSender-Setup-$version.exe"
+          New-Item -ItemType Directory -Path prerelease-assets/windows -Force | Out-Null
+          Copy-Item -LiteralPath "desktop/release/$name" -Destination "prerelease-assets/windows/$name"
+
+      - name: Record Windows prerelease evidence
+        shell: pwsh
+        run: >-
+          node scripts/release/prerelease-candidate.mjs platform
+          --platform windows
+          --version "$($env:PRERELEASE_TAG.Substring(1))"
+          --channel "$env:PRERELEASE_CHANNEL"
+          --source-branch "$env:PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$env:PRERELEASE_SHA"
+          --run-id "$env:GITHUB_RUN_ID"
+          --artifact-dir prerelease-assets/windows
+          --build-identity desktop/build/release-identity.json
+          --output prerelease-evidence/windows.json
+
+      - name: Upload Windows prerelease installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-windows
+          if-no-files-found: error
+          path: prerelease-assets/windows/*.exe
+
+      - name: Upload Windows prerelease evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-windows-evidence
+          if-no-files-found: error
+          path: prerelease-evidence/windows.json
+
+  build-macos:
+    if: inputs.publish == false && inputs.candidate_run_id == ''
+    runs-on: macos-latest
+    needs: preflight
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            cli/uv.lock
+            backend/uv.lock
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Agent CLI
+        run: |
+          ./scripts/build/build-cli.sh --clean
+
+      - name: Build backend executable
+        run: |
+          ./scripts/build/build-backend.sh --clean
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Embed exact macOS prerelease build identity
+        run: >-
+          node scripts/release/prerelease-build-identity.mjs
+          --version "${PRERELEASE_TAG#v}"
+          --channel "$PRERELEASE_CHANNEL"
+          --source-branch "$PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$PRERELEASE_SHA"
+          --candidate-run-id "$GITHUB_RUN_ID"
+          --platform macos
+          --output desktop/build/release-identity.json
+
+      - name: Build macOS prerelease DMG without a prerelease feed
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+        run: npm run dist:mac
+
+      - name: Stage only the manual macOS DMG
+        run: |
+          version="${PRERELEASE_TAG#v}"
+          name="AutoEmailSender-$version-arm64.dmg"
+          mkdir -p prerelease-assets/macos
+          cp "desktop/release/$name" "prerelease-assets/macos/$name"
+
+      - name: Record macOS prerelease evidence
+        run: >-
+          node scripts/release/prerelease-candidate.mjs platform
+          --platform macos
+          --version "${PRERELEASE_TAG#v}"
+          --channel "$PRERELEASE_CHANNEL"
+          --source-branch "$PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$PRERELEASE_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --artifact-dir prerelease-assets/macos
+          --build-identity desktop/build/release-identity.json
+          --output prerelease-evidence/macos.json
+
+      - name: Upload macOS prerelease DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-macos
+          if-no-files-found: error
+          path: prerelease-assets/macos/*.dmg
+
+      - name: Upload macOS prerelease evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-macos-evidence
+          if-no-files-found: error
+          path: prerelease-evidence/macos.json
+
+  certify:
+    if: inputs.publish == false && inputs.candidate_run_id == ''
+    runs-on: ubuntu-latest
+    needs:
+      - build-windows
+      - build-macos
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Download prerelease assets and evidence
+        uses: actions/download-artifact@v8
+        with:
+          pattern: prerelease-*
+          path: prerelease-inputs
+
+      - name: Capture immutable stable-update isolation baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          node scripts/release/prerelease-isolation.mjs capture
+          --repository "$GITHUB_REPOSITORY"
+          --output prerelease-inputs/stable-isolation.json
+
+      - name: Create exact prerelease candidate manifest
+        run: >-
+          node scripts/release/prerelease-candidate.mjs candidate
+          --repository "$GITHUB_REPOSITORY"
+          --version "${PRERELEASE_TAG#v}"
+          --channel "$PRERELEASE_CHANNEL"
+          --source-branch "$PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$PRERELEASE_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --release-notes desktop/release-notes.md
+          --stable-isolation prerelease-inputs/stable-isolation.json
+          --windows-dir prerelease-inputs/prerelease-windows
+          --windows-evidence prerelease-inputs/prerelease-windows-evidence/windows.json
+          --macos-dir prerelease-inputs/prerelease-macos
+          --macos-evidence prerelease-inputs/prerelease-macos-evidence/macos.json
+          --output prerelease-inputs/prerelease-candidate/prerelease-candidate.json
+
+      - name: Upload prerelease candidate manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-candidate
+          if-no-files-found: error
+          path: prerelease-inputs/prerelease-candidate/prerelease-candidate.json
+
+  publish:
+    if: inputs.publish == true && inputs.candidate_run_id != ''
+    runs-on: ubuntu-latest
+    needs: contract
+    env:
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+    steps:
+      - name: Checkout exact prerelease SHA
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.PRERELEASE_SHA }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Validate successful candidate workflow provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          candidate="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r .name <<<"$candidate")" = "Release Desktop"
+          test "$(jq -r .event <<<"$candidate")" = "workflow_dispatch"
+          test "$(jq -r .status <<<"$candidate")" = "completed"
+          test "$(jq -r .conclusion <<<"$candidate")" = "success"
+          test "$(jq -r .head_sha <<<"$candidate")" = "$PRERELEASE_SHA"
+
+      - name: Download exact certified Windows prerelease asset
+        uses: actions/download-artifact@v8
+        with:
+          name: prerelease-windows
+          path: release-assets/prerelease-windows
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download exact certified macOS prerelease asset
+        uses: actions/download-artifact@v8
+        with:
+          name: prerelease-macos
+          path: release-assets/prerelease-macos
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download exact certified prerelease manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: prerelease-candidate
+          path: release-assets/prerelease-candidate
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify candidate manifest, announcement, and exact bytes
+        run: >-
+          node scripts/release/prerelease-candidate.mjs verify
+          --manifest release-assets/prerelease-candidate/prerelease-candidate.json
+          --repository "$GITHUB_REPOSITORY"
+          --version "${PRERELEASE_TAG#v}"
+          --channel "$PRERELEASE_CHANNEL"
+          --source-branch "$PRERELEASE_SOURCE_BRANCH"
+          --release-sha "$PRERELEASE_SHA"
+          --run-id "$CANDIDATE_RUN_ID"
+          --release-notes desktop/release-notes.md
+          --windows-dir release-assets/prerelease-windows
+          --macos-dir release-assets/prerelease-macos
+
+      - name: Recheck stable Latest and feed before any public mutation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          jq .stableIsolation release-assets/prerelease-candidate/prerelease-candidate.json > release-assets/stable-isolation-baseline.json
+          node scripts/release/prerelease-isolation.mjs capture \
+            --repository "$GITHUB_REPOSITORY" \
+            --output release-assets/stable-isolation-current.json
+          node scripts/release/prerelease-isolation.mjs compare \
+            --baseline release-assets/stable-isolation-baseline.json \
+            --current release-assets/stable-isolation-current.json
+
+      - name: Create an immutable deferred prerelease tag
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$PRERELEASE_SHA"
+          test -z "$(git ls-remote --tags origin "refs/tags/$PRERELEASE_TAG")"
+          git tag "$PRERELEASE_TAG" "$PRERELEASE_SHA"
+          git push origin "refs/tags/$PRERELEASE_TAG"
+
+      - name: Stage a new GitHub Prerelease without replacing anything
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if gh release view "$PRERELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $PRERELEASE_TAG already exists; publish a higher prerelease version." >&2
+            exit 1
+          fi
+          gh release create "$PRERELEASE_TAG" \
+            --draft \
+            --prerelease \
+            --latest=false \
+            --verify-tag \
+            --title "$PRERELEASE_TAG（$PRERELEASE_CHANNEL 测试版）" \
+            --notes-file desktop/release-notes.md
+
+      - name: Upload only exact manual installers and candidate manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "$PRERELEASE_TAG" \
+            release-assets/prerelease-windows/* \
+            release-assets/prerelease-macos/* \
+            release-assets/prerelease-candidate/prerelease-candidate.json
+
+      - name: Download and verify staged GitHub asset bytes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          mkdir -p staged-download/all staged-download/windows staged-download/macos staged-download/manifest
+          gh release download "$PRERELEASE_TAG" --dir staged-download/all
+          version="${PRERELEASE_TAG#v}"
+          mv "staged-download/all/AutoEmailSender-Setup-$version.exe" staged-download/windows/
+          mv "staged-download/all/AutoEmailSender-$version-arm64.dmg" staged-download/macos/
+          mv staged-download/all/prerelease-candidate.json staged-download/manifest/
+          test -z "$(find staged-download/all -mindepth 1 -maxdepth 1 -print -quit)"
+          cmp \
+            release-assets/prerelease-candidate/prerelease-candidate.json \
+            staged-download/manifest/prerelease-candidate.json
+          node scripts/release/prerelease-candidate.mjs verify \
+            --manifest staged-download/manifest/prerelease-candidate.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$version" \
+            --channel "$PRERELEASE_CHANNEL" \
+            --source-branch "$PRERELEASE_SOURCE_BRANCH" \
+            --release-sha "$PRERELEASE_SHA" \
+            --run-id "$CANDIDATE_RUN_ID" \
+            --release-notes desktop/release-notes.md \
+            --windows-dir staged-download/windows \
+            --macos-dir staged-download/macos
+
+      - name: Publish as non-Latest GitHub Prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$PRERELEASE_TAG" --draft=false --prerelease --latest=false
+
+      - name: Verify public prerelease and stable update isolation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          node scripts/release/prerelease-isolation.mjs verify
+          --repository "$GITHUB_REPOSITORY"
+          --version "${PRERELEASE_TAG#v}"
+          --release-sha "$PRERELEASE_SHA"
+          --baseline release-assets/stable-isolation-baseline.json
+          --output prerelease-isolation-verification.json
+
+      - name: Upload public isolation verification evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-isolation-verification
+          if-no-files-found: error
+          path: prerelease-isolation-verification.json

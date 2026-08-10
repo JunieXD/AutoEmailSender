@@ -7,9 +7,11 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { normalizeReleaseTag } from "./prepare-sparkle-release.mjs";
+import { verifyPrereleaseCandidateAsset } from "./prerelease-candidate.mjs";
 
 const SCHEMA_VERSION = 1;
 const CANDIDATE_KIND = "auto-email-sender-release-candidate";
+const PRERELEASE_CANDIDATE_KIND = "auto-email-sender-prerelease-candidate";
 const PLATFORM_KIND = "auto-email-sender-platform-evidence";
 const SUPPORTED_PLATFORMS = new Set(["windows", "macos", "skill"]);
 
@@ -316,6 +318,36 @@ export async function verifyCandidateAsset({
   };
 }
 
+export async function verifyPackagedQaCandidateAsset({
+  manifest,
+  platform,
+  releaseSha,
+  runId,
+  version,
+  assetPath,
+}) {
+  if (manifest?.kind === PRERELEASE_CANDIDATE_KIND) {
+    return verifyPrereleaseCandidateAsset({
+      manifest,
+      platform,
+      version,
+      channel: manifest.channel,
+      sourceBranch: manifest.sourceBranch,
+      releaseSha,
+      runId,
+      assetPath,
+    });
+  }
+  return verifyCandidateAsset({
+    manifest,
+    platform,
+    releaseSha,
+    runId,
+    version,
+    assetPath,
+  });
+}
+
 function platformInputs(options) {
   return Object.fromEntries(
     ["windows", "macos", "skill"].map((platform) => [
@@ -380,7 +412,7 @@ async function main() {
   }
   if (mode === "asset") {
     const manifest = JSON.parse(await readFile(path.resolve(requireOption(options, "manifest")), "utf8"));
-    const evidence = await verifyCandidateAsset({
+    const evidence = await verifyPackagedQaCandidateAsset({
       manifest,
       platform: requireOption(options, "platform"),
       releaseSha: requireOption(options, "release_sha"),

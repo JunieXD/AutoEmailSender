@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true, Position = 0)]
-  [ValidatePattern('^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$')]
+  [ValidatePattern('^\d+\.\d+\.\d+$')]
   [string]$Version,
 
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path

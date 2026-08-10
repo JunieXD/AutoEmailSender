@@ -16,21 +16,35 @@ param(
   [string]$CandidateManifestPath = "",
   [long]$ExpectedCandidateRunId = 0,
   [switch]$ForceFull,
-  [ValidateSet("release", "quick")]
+  [ValidateSet("release", "prerelease", "quick")]
   [string]$Mode = "release",
   [switch]$RunNormalSoak,
   [switch]$RunSeededChaos,
-  [ValidateRange(86400, 604800)]
+  [ValidateRange(7200, 604800)]
   [int]$NormalSoakDurationSeconds = 86400,
-  [ValidateRange(28800, 604800)]
+  [ValidateRange(3600, 604800)]
   [int]$SeededChaosDurationSeconds = 28800,
   [int]$SeededChaosSeed = 20260810
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$IsFormal = $Mode -ne "quick"
 
-if ($Mode -eq "release") {
+if ($Mode -eq "release" -and $NormalSoakDurationSeconds -lt 86400) {
+  throw "Stable release normal soak requires at least 86400 seconds."
+}
+if ($Mode -eq "release" -and $SeededChaosDurationSeconds -lt 28800) {
+  throw "Stable release seeded chaos requires at least 28800 seconds."
+}
+if ($Mode -eq "prerelease" -and $NormalSoakDurationSeconds -lt 7200) {
+  throw "Prerelease normal soak requires at least 7200 seconds."
+}
+if ($Mode -eq "prerelease" -and $SeededChaosDurationSeconds -lt 3600) {
+  throw "Prerelease seeded chaos requires at least 3600 seconds."
+}
+
+if ($IsFormal) {
   if ([string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
     throw "Release QA requires -PreviousInstallerPath for a real previous-stable in-place upgrade."
   }
@@ -413,7 +427,7 @@ Write-Host "Testing committed revision $revision"
 Write-Host "Windows QA mode: $Mode"
 Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
 
-if ($Mode -eq "release") {
+if ($IsFormal) {
   $candidateDesktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
   & node (Join-Path $CheckoutPath "scripts\release\release-candidate.mjs") `
     asset `
@@ -459,11 +473,13 @@ if (-not (Test-VerifiedStage -Name "release-orchestration-contracts" -Fingerprin
     Assert-NativeSuccess "PowerShell prepare-release contract tests"
     & pwsh -NoLogo -NoProfile -File (Join-Path $CheckoutPath "scripts\release\release-script.test.ps1")
     Assert-NativeSuccess "PowerShell release contract tests"
+    & pwsh -NoLogo -NoProfile -File (Join-Path $CheckoutPath "scripts\release\prerelease-script.test.ps1")
+    Assert-NativeSuccess "PowerShell prerelease contract tests"
   }
   Save-VerifiedStage -Name "release-orchestration-contracts" -Fingerprint $releaseContractFingerprint
 }
 
-if ($Mode -eq "release") {
+if ($IsFormal) {
   Invoke-QaStep "Windows packaging prerequisites" {
     & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")
   }
@@ -566,8 +582,8 @@ if ($cliSuiteRan) {
 }
 
 $cliQuickBuildFingerprint = Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint)
-$cliBuildStageName = if ($Mode -eq "release") { "cli-build" } else { "cli-build-quick" }
-$cliBuildFingerprint = if ($Mode -eq "release") {
+$cliBuildStageName = if ($IsFormal) { "cli-build" } else { "cli-build-quick" }
+$cliBuildFingerprint = if ($IsFormal) {
   Get-StageFingerprint -Paths $cliBuildInputs -AdditionalValues @($toolchainFingerprint, "revision=$revision")
 } else {
   $cliQuickBuildFingerprint
@@ -578,7 +594,7 @@ if (-not (Test-VerifiedStage -Name $cliBuildStageName -Fingerprint $cliBuildFing
     & (Join-Path $CheckoutPath "scripts\build\build-cli.ps1") -Clean -SkipSync
   }
   Save-VerifiedStage -Name $cliBuildStageName -Fingerprint $cliBuildFingerprint
-  if ($Mode -eq "release") {
+  if ($IsFormal) {
     Save-VerifiedStage -Name "cli-build-quick" -Fingerprint $cliQuickBuildFingerprint
   }
 }
@@ -678,7 +694,7 @@ if (-not (Test-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFing
   Save-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint
 }
 
-if ($Mode -eq "release") {
+if ($IsFormal) {
   Invoke-QaStep "Windows installer build" {
     Push-Location (Join-Path $CheckoutPath "desktop")
     try {
@@ -705,7 +721,7 @@ if ($Mode -eq "release") {
 
     $previousInstallerPathLocal = Join-Path $packageRoot "previous-stable.exe"
     $candidateInstallerPathLocal = Join-Path $packageRoot "current-candidate.exe"
-    $candidateManifestPathLocal = Join-Path $packageRoot "release-candidate.json"
+    $candidateManifestPathLocal = Join-Path $packageRoot "candidate-manifest.json"
     Copy-Item -LiteralPath $PreviousInstallerPath -Destination $previousInstallerPathLocal
     Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal
     Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal
@@ -785,6 +801,11 @@ if ($Mode -eq "release") {
     }
 
     $reportPaths = New-Object System.Collections.Generic.List[string]
+    $certificationArgument = if ($Mode -eq "prerelease") {
+      "--prerelease-certification"
+    } else {
+      "--certification"
+    }
     foreach ($scenario in $scenarioSettings) {
       $scenarioEvidence = Join-Path $evidenceRoot ([string]$scenario.Name)
       $driverArguments = @(
@@ -798,7 +819,7 @@ if ($Mode -eq "release") {
         "--artifact-root", $installRoot,
         "--package-file", $candidateInstallerPathLocal,
         "--artifacts-dir", $scenarioEvidence,
-        "--certification",
+        $certificationArgument,
         "--expected-app-version", ([string]$desktopPackage.version),
         "--expected-package-sha256", $installerSha256,
         "--candidate-manifest-file", $candidateManifestPathLocal,
