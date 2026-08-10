@@ -9,7 +9,6 @@ import tempfile
 import time
 import unittest
 import urllib.error
-import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -31,6 +30,7 @@ from test.process_harness import (
     FaultController,
     TestClockController,
     fetch_json,
+    open_loopback_url,
     wait_until,
 )
 
@@ -329,9 +329,9 @@ class BackendRoleRealProcessTests(unittest.TestCase):
                     {"status": "ok"},
                 )
                 with self.assertRaises(urllib.error.HTTPError) as business_error:
-                    urllib.request.urlopen(
+                    open_loopback_url(
                         f"{api.base_url}/api/ping",
-                        timeout=1,
+                        timeout_seconds=1,
                     )
                 self.assertEqual(business_error.exception.code, 503)
                 worker = DesktopBackendProcess(

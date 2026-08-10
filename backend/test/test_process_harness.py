@@ -6,7 +6,6 @@ import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,6 +24,7 @@ from test.process_harness import (
     TestClockController,
     _prepare_managed_process_launch,
     fetch_json,
+    open_loopback_url,
     reserve_tcp_port,
     spawn_managed_process,
 )
@@ -190,13 +190,32 @@ class DesktopProcessHarnessTests(unittest.TestCase):
     def test_fake_http_server_serves_mutable_pages_and_counts_requests(self) -> None:
         with FakeHTTPServer({"/profile": "<h1>first</h1>"}) as server:
             url = server.url("/profile", hostname="127.0.0.1")
-            with urllib.request.urlopen(url, timeout=2) as response:
-                self.assertEqual(response.read().decode("utf-8"), "<h1>first</h1>")
-            server.set_page("/profile", "<h1>second</h1>")
-            with urllib.request.urlopen(url, timeout=2) as response:
-                self.assertEqual(response.read().decode("utf-8"), "<h1>second</h1>")
+            with patch.dict(
+                os.environ,
+                {
+                    "HTTP_PROXY": "http://127.0.0.1:1",
+                    "HTTPS_PROXY": "http://127.0.0.1:1",
+                    "NO_PROXY": "",
+                },
+                clear=False,
+            ):
+                with open_loopback_url(url, timeout_seconds=2) as response:
+                    self.assertEqual(
+                        response.read().decode("utf-8"),
+                        "<h1>first</h1>",
+                    )
+                server.set_page("/profile", "<h1>second</h1>")
+                with open_loopback_url(url, timeout_seconds=2) as response:
+                    self.assertEqual(
+                        response.read().decode("utf-8"),
+                        "<h1>second</h1>",
+                    )
 
             self.assertEqual(server.requests, ("/profile", "/profile"))
+
+    def test_loopback_http_helper_rejects_remote_urls(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not loopback"):
+            open_loopback_url("https://example.com", timeout_seconds=1)
 
     def test_fake_imap_exercises_the_production_incremental_client(self) -> None:
         raw_message = (

@@ -19,6 +19,7 @@ from test.migrated_database import create_migrated_sqlite_database
 from test.process_harness import (
     DesktopBackendProcess,
     fetch_json,
+    open_loopback_url,
     wait_until,
 )
 
@@ -624,7 +625,7 @@ def _request_json(
         method=method,
         headers={"Content-Type": "application/json"} if data is not None else {},
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with open_loopback_url(request, timeout_seconds=5) as response:
         body = json.loads(response.read().decode("utf-8"))
     if not isinstance(body, dict):
         raise TypeError(f"Expected object response from {path}")

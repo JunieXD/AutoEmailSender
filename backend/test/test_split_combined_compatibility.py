@@ -10,7 +10,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from test.process_harness import DesktopBackendProcess, wait_until
+from test.process_harness import (
+    DesktopBackendProcess,
+    open_loopback_url,
+    wait_until,
+)
 
 
 class SplitCombinedCompatibilityTests(unittest.TestCase):
@@ -161,7 +165,7 @@ def _request_json(base_url: str, path: str, *, payload: dict[str, Any] | None = 
         method="GET" if data is None else "PATCH",
         headers={"Content-Type": "application/json"} if data is not None else {},
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with open_loopback_url(request, timeout_seconds=5) as response:
         result = json.loads(response.read().decode("utf-8"))
     if not isinstance(result, dict):
         raise TypeError(f"Expected object response from {path}")

@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,41 @@ from typing import Any, Callable, Sequence
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def open_loopback_url(
+    request: str | urllib.request.Request,
+    *,
+    timeout_seconds: float,
+) -> Any:
+    url = request.full_url if isinstance(request, urllib.request.Request) else request
+    hostname = urllib.parse.urlsplit(url).hostname
+    normalized_hostname = (hostname or "").rstrip(".").lower()
+    if normalized_hostname != "localhost":
+        try:
+            address = ipaddress.ip_address(normalized_hostname)
+        except ValueError as exc:
+            raise ValueError(f"Test HTTP request is not loopback: {url}") from exc
+        if not address.is_loopback:
+            raise ValueError(f"Test HTTP request is not loopback: {url}")
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirectHandler(),
+    )
+    return opener.open(request, timeout=timeout_seconds)
 
 
 def reserve_tcp_port() -> int:
@@ -54,7 +90,7 @@ def wait_until(
 
 def fetch_json(url: str, *, timeout_seconds: float = 0.5) -> dict[str, Any]:
     request = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with open_loopback_url(request, timeout_seconds=timeout_seconds) as response:
         payload = json.loads(response.read().decode("utf-8"))
     if not isinstance(payload, dict):
         raise TypeError(f"Expected JSON object from {url}")
@@ -74,7 +110,7 @@ def post_json(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with open_loopback_url(request, timeout_seconds=timeout_seconds) as response:
             raw_payload = response.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -98,7 +134,7 @@ def patch_json(
         method="PATCH",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with open_loopback_url(request, timeout_seconds=timeout_seconds) as response:
             raw_payload = response.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -1309,6 +1345,7 @@ __all__ = [
     "ManagedProcess",
     "TestClockController",
     "fetch_json",
+    "open_loopback_url",
     "patch_json",
     "post_json",
     "reserve_tcp_port",
