@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import sqlite3
 import tempfile
 import time
 import unittest
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,10 +61,125 @@ class _ProcessResourceSample:
     handle_count: int
     open_file_count: int
     database_file_count: int
-    inet_connection_count: int
+    external_inet_connection_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SyntheticInetConnection:
+    family: int
+    type: int
+    laddr: object
+    raddr: object
+    status: str
+
+
+def _inet_endpoint(
+    value: object,
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] | None:
+    if not value:
+        return None
+    if hasattr(value, "ip") and hasattr(value, "port"):
+        host = getattr(value, "ip")
+        port = getattr(value, "port")
+    elif isinstance(value, (tuple, list)) and len(value) >= 2:
+        host, port = value[0], value[1]
+    else:
+        return None
+    try:
+        address = ipaddress.ip_address(str(host).split("%", maxsplit=1)[0])
+        normalized_port = int(port)
+    except (TypeError, ValueError):
+        return None
+    return address, normalized_port
+
+
+def _is_internal_loopback_pair(first: Any, second: Any) -> bool:
+    if (
+        int(first.family) != int(second.family)
+        or int(first.type) != int(socket.SOCK_STREAM)
+        or int(second.type) != int(socket.SOCK_STREAM)
+        or first.status != psutil.CONN_ESTABLISHED
+        or second.status != psutil.CONN_ESTABLISHED
+    ):
+        return False
+    first_local = _inet_endpoint(first.laddr)
+    first_remote = _inet_endpoint(first.raddr)
+    second_local = _inet_endpoint(second.laddr)
+    second_remote = _inet_endpoint(second.raddr)
+    if None in (first_local, first_remote, second_local, second_remote):
+        return False
+    assert first_local is not None
+    assert first_remote is not None
+    assert second_local is not None
+    assert second_remote is not None
+    if not all(
+        endpoint[0].is_loopback
+        for endpoint in (
+            first_local,
+            first_remote,
+            second_local,
+            second_remote,
+        )
+    ):
+        return False
+    return first_local == second_remote and first_remote == second_local
+
+
+def _external_inet_connection_count(connections: Sequence[Any]) -> int:
+    internal_connection_indexes: set[int] = set()
+    for first_index, first in enumerate(connections):
+        if first_index in internal_connection_indexes:
+            continue
+        for second_index in range(first_index + 1, len(connections)):
+            if second_index in internal_connection_indexes:
+                continue
+            if _is_internal_loopback_pair(first, connections[second_index]):
+                internal_connection_indexes.update((first_index, second_index))
+                break
+    return len(connections) - len(internal_connection_indexes)
 
 
 class CrawlerProcessSafetyTests(unittest.TestCase):
+    def test_windows_proactor_loopback_pair_is_not_external(self) -> None:
+        connections = [
+            self._synthetic_connection(
+                local=("127.0.0.1", 56846),
+                remote=("127.0.0.1", 56845),
+            ),
+            self._synthetic_connection(
+                local=("127.0.0.1", 56845),
+                remote=("127.0.0.1", 56846),
+            ),
+        ]
+        self.assertEqual(_external_inet_connection_count(connections), 0)
+
+    def test_one_way_loopback_connection_remains_external(self) -> None:
+        connections = [
+            self._synthetic_connection(
+                local=("127.0.0.1", 56846),
+                remote=("127.0.0.1", 8010),
+            )
+        ]
+        self.assertEqual(_external_inet_connection_count(connections), 1)
+
+    def test_listener_and_non_loopback_pair_remain_external(self) -> None:
+        connections = [
+            self._synthetic_connection(
+                local=("127.0.0.1", 8010),
+                remote=(),
+                status=psutil.CONN_LISTEN,
+            ),
+            self._synthetic_connection(
+                local=("192.0.2.10", 56846),
+                remote=("192.0.2.20", 56845),
+            ),
+            self._synthetic_connection(
+                local=("192.0.2.20", 56845),
+                remote=("192.0.2.10", 56846),
+            ),
+        ]
+        self.assertEqual(_external_inet_connection_count(connections), 3)
+
     def test_page_worker_kill_matrix_converges_with_one_candidate(self) -> None:
         self._exercise_kill_matrix("page")
 
@@ -909,8 +1027,9 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                             "api_database_fds_peak": max(
                                 sample.database_file_count for sample in api_samples
                             ),
-                            "api_inet_connections_peak": max(
-                                sample.inet_connection_count for sample in api_samples
+                            "api_external_inet_connections_peak": max(
+                                sample.external_inet_connection_count
+                                for sample in api_samples
                             ),
                             "worker_rss_min_bytes": min(
                                 sample.rss_bytes for sample in worker_samples
@@ -923,6 +1042,10 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                             ),
                             "worker_handles_max": max(
                                 sample.handle_count for sample in worker_samples
+                            ),
+                            "worker_external_inet_connections_peak": max(
+                                sample.external_inet_connection_count
+                                for sample in worker_samples
                             ),
                             "worker_database_fds_min": min(
                                 sample.database_file_count
@@ -1754,7 +1877,9 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                 Path(open_file.path).resolve().as_posix() in database_files
                 for open_file in open_files
             ),
-            inet_connection_count=len(inet_connections),
+            external_inet_connection_count=_external_inet_connection_count(
+                inet_connections
+            ),
         )
 
     def _assert_resource_series_bounded(
@@ -1783,8 +1908,8 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
             baseline.database_file_count + 3,
         )
         self.assertLessEqual(
-            max(sample.inet_connection_count for sample in samples),
-            baseline.inet_connection_count + 3,
+            max(sample.external_inet_connection_count for sample in samples),
+            baseline.external_inet_connection_count + 3,
         )
         if repetitions >= 20:
             self.assertLess(
@@ -1818,8 +1943,23 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
             6,
         )
         self.assertEqual(
-            max(sample.inet_connection_count for sample in samples),
+            max(sample.external_inet_connection_count for sample in samples),
             0,
+        )
+
+    @staticmethod
+    def _synthetic_connection(
+        *,
+        local: object,
+        remote: object,
+        status: str = psutil.CONN_ESTABLISHED,
+    ) -> _SyntheticInetConnection:
+        return _SyntheticInetConnection(
+            family=int(socket.AF_INET),
+            type=int(socket.SOCK_STREAM),
+            laddr=local,
+            raddr=remote,
+            status=status,
         )
 
     @staticmethod
