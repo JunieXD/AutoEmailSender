@@ -29,7 +29,7 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 ### 1.2 B0 起点与当前基线
 
 - 原双进程 Goal 已取消，但 G0～G5 的实现与证据保留；G6 packaged QA 自动化已经完成开发验证。
-- 当前桌面仍默认 `combined`，通过 `AUTO_EMAIL_SENDER_BACKEND_MODE=split` 可进行开发/QA 切换。
+- B0 开始时桌面仍默认 `combined`，通过 `AUTO_EMAIL_SENDER_BACKEND_MODE=split` 可进行开发/QA 切换。
 - B0 开始时工作区位于 detached HEAD
   `6e06be9bfeae11b78eae78096782d84b3176c931`，包含大量未提交的本 Goal 前置改动，
   并比当时的 `master` 落后 5 个提交。
@@ -40,13 +40,17 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
   `2.6.0-beta.1`，但这不代表已经授权远端认证或公开发布。
 - 尚无外部候选 workflow 的 DMG、NSIS、`release-candidate.json` 或 run ID。
 
-### 1.3 Goal 当前检查点（2026-08-10）
+### 1.3 Goal 当前检查点（2026-08-11）
 
-- Goal 系统当前将 `019fe582-2dea-7e42-bd2e-684bae191421` 报告为 `active`。因此不创建第二个
-  相互冲突的 Goal；本次从既有 B2 工作区继续，已通过的 B0/B1 不重做。
-- 当前本地分支为 `beta/desktop-api-worker`。B3 收口提交为 `fd7ecb5`；最新
-  `origin/master@a4062f80ad75ed5661ab1362aaa8cf9681ebe1e6` 已在 B4 通过 `ab30799` 合入。
-  该分支名只描述本次开发工作，不会成为通用测试版发布条件。
+- Goal 系统当前将 `019fe582-2dea-7e42-bd2e-684bae191421` 报告为 `active`。另一个 Codex
+  进程意外关闭没有取消 Goal；继续沿用同一 Goal ID，不创建相互冲突的新 Goal。
+- 当前本地分支为 `beta/desktop-api-worker`。2026-08-11 重新 fetch 后，最新
+  `origin/master` 仍为 `2fcc431d25ba36b1de6380bb316589a750cebc2f`；它已通过 merge commit
+  `e313811528adc407211cfd8aa6f68e6a3c84749d` 合入。当前分支相对 master 为 ahead 37、behind 0，
+  merge-base 精确为该 master。该分支名只描述本次开发工作，不会成为通用测试版发布条件。
+- `e313811` 的五个文本冲突同时保留 Beta 的 powerMonitor、模式切换、页面外回退和本地诊断，
+  以及 master 的 Agent UI handoff 生命周期、IPC、preload 缓冲和文档入口；Alembic 通过
+  `20260810_merge_agent_ui_delivery` 合并两侧 revision，`alembic heads` 只有一个 head。
 - B2 已完成 Electron/Python 有界记录器、设置页/托盘/启动失败导出、API 宕机 partial ZIP、
   单包/多包安全 analyzer、恶意 ZIP 防护和最终 ZIP 跨语言 canary 零泄漏门禁。最终证据为
   Desktop 239/239、Frontend 完整 962/962 且最终聚焦 18/18、Backend 115/115、analyzer
@@ -57,16 +61,21 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - Windows VM 在精确 `fd7ecb5` 上完成 quick QA：Backend 1933/1933（7 skip）、冻结后端三角色与
   文档自检通过、Desktop 35 files / 237 tests（11 skip）通过。quick 模式未执行 NSIS 和安装后
   lifecycle，因此只关闭 B3，不替代 B5/B6 候选证据。
-- B4 已在合入最新 master 后完成连续两次完整全仓，结果均为 0 failures；Backend 每轮
-  1937/1937、CLI 每轮 225/225，Frontend/Desktop/Website 全部通过。split 模式切换集成
-  连续 20/20 轮通过，总计 420 次后端启动、400 次模式切换和 805.148 秒。
+- B4 已在 `e313811` 上完成连续两次完整全仓，Backend 每轮 1957/1957、CLI 每轮 234/234，
+  Frontend/Desktop/Website 全部通过；split 模式切换集成连续 20/20 轮通过，总计 420 次后端
+  启动和 400 次模式切换。此后候选代码又修复 Windows CLI 性能、Windows SQLite 测试句柄和
+  Frontend mutation/read 竞态；最终产品代码 `2123af58e20e0499abc19d7016e36d1647039927`
+  从零重新计数的两轮全仓也连续通过，Backend 每轮 1957/1957、CLI 每轮 235/235，其余套件
+  全部通过，总时长分别为 10m40s 和 11m09s。
 - B5 已在本地准备 `2.6.0-beta.1` 元数据和公告；Desktop/Frontend 使用 SemVer
   `2.6.0-beta.1`，Python CLI 使用等价 PEP 440 版本 `2.6.0b1`。本机发布合同、前端、CLI、
   Desktop、macOS 冻结后端和 Windows quick QA 均已通过。
-- Windows 在产品/打包输入 `202a0942c7bf16db29762376f2e127136c6a2669` 上完成 Backend
-  1937/1937（7 skip）、冻结后端 API/Worker/combined/document 自检和 Desktop 237/237
-  （11 skip）。此前两个只在完整 Windows 长压中出现的一次性调度超时均保留、精确重放并
-  通过；最终全套没有扩大产品 5 秒请求超时或 1.5/2.5 秒性能预算。
+- Windows 在 `f94c6669a7ddf6aa7cfefe1fbb9fd8b769041317` 上完成 Backend 1957/1957
+  （7 skip）、冻结后端 API/Worker/combined/document 自检和 Desktop 248/248（11 skip）。
+  期间真实发现并修复 Agent CLI 冻结包意图查询 p95 超标（`b27f6b2`）和迁移测试未显式关闭
+  SQLite 导致的 `WinError 32`（`f94c666`）；没有放宽 1000ms 性能门槛或忽略 Windows 文件锁。
+  Frontend 修复提交 `2123af5` 的 Windows quick QA 也通过，runner 对变更输入执行干净 Frontend
+  安装/生产构建，并安全复用其余输入完全相同的成功阶段。
 - B5 现在停在远端候选批准门前：本地 quick/source/frozen smoke 不替代同一 workflow 原始
   DMG/EXE 的覆盖升级、lifecycle、2h normal 和 1h seeded chaos。需要 push、远端 Certify
   workflow 或 exact candidate 资产时必须取得独立人工批准。
@@ -236,8 +245,8 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B1 | Electron 模式设置、UI、安全重启与页面外回退 | **已完成**：AC-MODE 全部通过；combined/split 同库回归和 macOS 隔离真机故障回退通过 |
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
-| B4 | 合并后的全仓与重复专项回归 | **已完成**：最新 master 已合入；完整全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：`2.6.0-beta.1` 本地准备与双平台开发/quick smoke 已通过；仍待远端同 run 的 DMG/EXE 完成两平台 lifecycle、2h normal、1h chaos 和诊断重建 |
+| B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：`2.6.0-beta.1` 本地准备与双平台开发/quick smoke 已通过，Windows 最终 quick 绑定 `2123af5`；仍待远端同 run 的 DMG/EXE 完成两平台 lifecycle、2h normal、1h chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -248,8 +257,8 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 2. **B3 已完成**：把 Release Skill、POSIX/PowerShell 入口、workflow、候选 manifest、恢复规则和
    合同测试一起改为“稳定版 + 通用 prerelease”双状态机。通用入口只认显式
    `source_branch + release_sha + version + channel`，不得绑定当前分支名。
-3. **B4 已完成**：合入届时最新 `origin/master` 后，运行连续两次全仓和连续 20 次 split 集成；
-   首次失败与修复原样记入验收报告。
+3. **B4 已完成**：最新 `origin/master@2fcc431` 已合入；最终产品代码的连续两次全仓和不受后续
+   Frontend-only 修复影响的连续 20 次 split 集成均已通过，首次失败与修复原样记入验收报告。
 4. **正在执行 B5**：`2.6.0-beta.1` 本地准备与安全 smoke 已完成；先对证据文档提交后的最终
    SHA 运行 release impact、prerelease preflight 和 certify dry-run。获得 push 与远端候选
    workflow 的独立授权后，两平台只使用同一 run、同一 SHA 对应的原始候选资产完成覆盖升级、

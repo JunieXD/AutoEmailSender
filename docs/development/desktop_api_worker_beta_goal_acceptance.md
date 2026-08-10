@@ -18,8 +18,9 @@
 
 ## Goal 恢复检查点
 
-- Goal 系统在 2026-08-10 返回当前 Goal 为 `active`，因此沿用同一 Goal ID，不并行创建第二个
-  Goal。恢复点为本地分支 `beta/desktop-api-worker` 的已提交基线 `7d9be0b` 加 B2 未提交工作区。
+- Goal 系统在 2026-08-11 再次返回当前 Goal 为 `active`。另一个 Codex 进程意外关闭没有取消
+  Goal，因此继续沿用同一 Goal ID，不并行创建第二个 Goal。当前分支为
+  `beta/desktop-api-worker`，当前产品代码收口提交为 `2123af5`。
 - B0/B1 已通过证据保持有效；只有受后续代码影响的检查才按 impact 重新执行，最终仍由 B4/B5
   的完整回归和 exact-package 证据统一收口。
 - 当前允许继续本地实现、测试、提交，以及把最新 `origin/master` 合入测试分支；仍未授权反向
@@ -33,8 +34,8 @@
 | B1：模式设置与安全重启 | 已完成 | Desktop 208/208；Frontend 956/956；后端聚焦 27/27；20 次切换；macOS 隔离 UI、初始启动失败及 group-restart 原生回退实测 |
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
-| B4：完整与重复回归 | 已完成 | `origin/master@a4062f8` 合入为 `ab30799`；全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
-| B5：Mac/Windows 内部 Beta | 执行中 | `2.6.0-beta.1` 本地准备、macOS 冻结 smoke、Windows Backend 1937/1937 + 冻结/Desktop quick QA 已通过；exact-package lifecycle 与 2h/1h 长稳仍受远端候选批准门约束 |
+| B4：完整与重复回归 | 已完成 | 最新 `origin/master@2fcc431` 合入为 `e313811`；最终产品代码 `2123af5` 全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
+| B5：Mac/Windows 内部 Beta | 执行中 | `2.6.0-beta.1` 本地准备、macOS 冻结 smoke、Windows Backend 1957/1957 + 冻结/Desktop quick QA 已通过；exact-package lifecycle 与 2h/1h 长稳仍受远端候选批准门约束 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -44,7 +45,7 @@
 
 | AC 组 | 当前状态 | 关闭要求 |
 | --- | --- | --- |
-| AC-BRANCH | 已通过 | 具名分支保护、最新 `origin/master@a4062f8` 语义合入、通用 source branch + exact SHA 合同均有证据 |
+| AC-BRANCH | 已通过 | 具名分支保护、最新 `origin/master@2fcc431` 通过 `e313811` 语义合入、通用 source branch + exact SHA 合同均有证据 |
 | AC-MODE | 已通过 | 原子设置、UI 当前/下次状态、20 次同库切换、发送窗口硬阻断、初始与运行中 split 故障原生回退 |
 | AC-OBS | 已通过 | Electron/API/Worker/combined 有界记录、六类工作摘要、API 宕机 partial ZIP、三类页面外导出入口和单包/多包 analyzer 均有自动化证据；B5 将用 exact package 重复故障注入 |
 | AC-PRIV | 已通过 | allowlist、固定自由文本标签、最终 ZIP canary 零命中、恶意 ZIP 拒绝和无远程上传源码合同均通过 |
@@ -545,3 +546,113 @@ NSIS 和安装后 lifecycle；macOS 本地冻结构建也不是远端候选 DMG�
 Certify workflow 后，才能取得同一 run 的原始 DMG/EXE/manifest，并继续两平台覆盖升级、
 lifecycle、2h normal、1h seeded chaos 与诊断重建。当前仍没有 push、tag、workflow dispatch、
 GitHub Release、稳定 feed 修改或合回 `master`。
+
+### B5 续：最新 master 再同步与最终候选代码收口
+
+#### `origin/master@2fcc431` 语义合并
+
+- 2026-08-11 最终复核前再次通过 GitHub SSH 443 临时 URL fetch，没有修改 `origin` 配置。
+  最新 master 仍为 `2fcc431d25ba36b1de6380bb316589a750cebc2f`；当前分支相对它 ahead 37、
+  behind 0，merge-base 精确为该提交。
+- 该 master 已在 `e313811528adc407211cfd8aa6f68e6a3c84749d` 合入，merge parents 为
+  `8c6682be260e0a0dc86be925bb8a48e98dca7956` 和 `2fcc431d25ba36b1de6380bb316589a750cebc2f`。
+- 五个文本冲突均按功能并集语义解决：
+  - `desktop/src/main/bootstrap/application.ts` 同时保留 Beta 的 `powerMonitor`、诊断记录、隔离
+    QA home、split 重启/combined 原生回退，以及 master 的 Agent UI handoff 创建、ready poll
+    和退出停止；
+  - `desktop/src/main/ipc/register.ts` 同时保留模式/诊断 IPC 与 Agent UI handoff 校验；
+  - `desktop/src/preload/bridge.ts` 同时保留后端连接保持语义、模式/诊断 bridge 与 handoff 缓冲；
+  - `desktop/test/ipcRegistration.test.ts` 同时保留 Beta 输入边界和 handoff acknowledgement 边界；
+  - `docs/architecture/README.md` 同时保留 API + Worker/Beta 计划和 Agent UI handoff 文档入口。
+- 两侧 Alembic heads 由 `20260810_merge_agent_ui_delivery` 合并，不额外执行 DDL；其 parents 为
+  `20260810_agent_ui_handoffs` 和 `20260810_merge_delivery_scale`。最终
+  `rtk uv run --no-sync alembic heads` 只报告这一个 head。
+
+`e313811` 上连续两次完整全仓均为 0 failures：Backend 每轮 1957/1957、CLI 每轮 234/234，
+Frontend、Desktop 和 Website 全部通过。split 集成随后以 20 个独立 Vitest 进程连续 20/20
+通过，累计 420 次后端启动和 400 次 combined↔split 切换；每轮继续核对所有 PID 退出、Worker
+descriptor 删除和 SQLite integrity/foreign key/WAL 不变量。
+
+#### Windows Agent CLI 冻结包性能首次失败
+
+最新 master 带来的 Agent CLI 查询路径在源码测试中正确，但 Windows 冻结包 benchmark 首次
+报告 intent routing p95 为 1082ms，超过既有 1000ms 门槛；同一聚焦场景重放为 1158ms，因此
+按真实性能缺陷处理，而不是记为调度噪声或提高预算。
+
+根因是每个 capability 都重复解析相同 query 的 resource matches 和 tokens。`b27f6b2` 改为每次
+查询只派生一次并传给逐 capability 评分，同时增加“每项查询特征只计算一次”的回归。修复后：
+
+- Windows 冻结包 intent p95 为 672ms，准确率 100%；
+- macOS 冻结包 intent p95 为 242ms，准确率 100%；
+- CLI 完整测试 235/235 通过；1000ms 门槛未改变。
+
+#### Windows SQLite 文件句柄首次失败
+
+随后 Windows quick QA 暴露 Agent UI handoff migration 测试使用普通
+`with sqlite3.connect(...)` 后仍可能由 Python 保留连接，测试清理临时数据库时出现
+`WinError 32`。这不是产品迁移失败，但会使 Windows 全套不可靠。`f94c666` 将四处连接改为
+`contextlib.closing(sqlite3.connect(...))`，确保离开作用域即显式关闭；Windows 原测试重放 1/1、
+macOS schema 模块 63/63 通过。
+
+精确 `f94c6669a7ddf6aa7cfefe1fbb9fd8b769041317` 的最终完整 Windows quick QA：
+
+| 检查 | 结果 |
+| --- | --- |
+| Backend full | 1957/1957，7 skipped，1608.622s |
+| Backend frozen build | API / Worker / combined / document self-check 全部通过 |
+| Desktop typecheck | 通过 |
+| Desktop full | 37 files / 248 tests 通过，3 files / 11 tests skipped |
+| Windows quick QA | 退出成功；精确 SHA 一致 |
+
+quick 仍明确跳过 NSIS、覆盖安装和 packaged lifecycle，不作为正式候选证据。
+
+#### Frontend 取消状态竞态首次失败与修复
+
+为满足“最终候选代码连续两次全仓”，在 `f94c666` 从零开始的新第 1 轮中，Backend 1957/1957、
+CLI 235/235、Desktop 和 Website 通过；Frontend 998/999，唯一失败为
+`supports canceling and retrying failed information enrichment items`，页面找不到“重试失败项”。
+精确单测首次重放通过，但 20 个独立 Vitest 进程中再次出现 1 次相同失败，因此没有把它当作
+单次测试噪声，也没有扩大 Testing Library 等待时间。
+
+根因是取消成功返回 `canceled` 后，取消前已经在途的任务列表读取仍可用旧 `running` 覆盖
+mutation 结果。`2123af5` 在提交取消结果前推进列表 request generation，使所有更早读取失效，
+并结束可能由失效读取留下的 loading 状态。测试同时做了两项收口：正常取消/重试 mock 在服务端
+提交后返回新状态；另一个可控 deferred-request 测试强制让取消前的旧 `running` 响应最后返回，
+验证 UI 仍保持 `canceled` 且提供“重试失败项”。
+
+修复后的证据：
+
+- 两个取消/竞态场景在 20 个独立 Vitest 进程中连续 20/20 通过；
+- TasksPage 模块 62/62；Frontend lint、production build 和完整 125 files / 1000 tests 通过；
+- Desktop typecheck 通过，完整 38 files / 256 tests 通过，2 files / 3 tests 按平台门禁跳过；
+- `release-impact.mjs --base f94c6669a7ddf6aa7cfefe1fbb9fd8b769041317 --head
+  2123af58e20e0499abc19d7016e36d1647039927` 将变更分类为 Frontend，要求
+  Frontend suite/build、Desktop suite 和 Windows quick；三项均已执行。Windows quick 在
+  `2123af5` 上做了干净 Frontend install/build，并只复用输入完全相同且此前成功的 CLI、Backend、
+  frozen build 和 Desktop 阶段，最终退出成功。
+
+#### 最终候选代码连续两次全仓
+
+重新 fetch 后 master 未前进，工作区干净。在同一产品代码提交
+`2123af58e20e0499abc19d7016e36d1647039927` 上串行执行：
+
+```bash
+rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py
+```
+
+| 套件 | 第 1 轮 | 第 2 轮 |
+| --- | --- | --- |
+| Backend | 1957/1957，9m27s | 1957/1957，9m51s |
+| CLI | 235/235，18s | 235/235，19s |
+| Frontend | PASS，15s | PASS，18s |
+| Desktop | PASS，38s | PASS，39s |
+| Website | PASS，<1s | PASS，<1s |
+| 合计 | 10m40s，0 failures | 11m09s，0 failures |
+
+两轮之间 SHA 未变化、工作区保持干净，未使用 retry。连续 20 次 split 证据位于 `e313811`；
+其后的三个提交分别只修改 CLI 查询计算、测试 SQLite 句柄和 Frontend 页面状态，均由各自 impact
+测试覆盖，没有修改 Electron backend topology、模式设置、runtime manager 或 split 集成输入。
+
+当前仍处于 B5 本地收口：本证据文档提交后必须以新的最终 `release_sha` 重跑 release impact、
+prerelease preflight、certify dry-run 和本地冻结 build identity。没有 push、远端 workflow、tag、
+GitHub Release、稳定 feed 修改或合回 `master`；取得 push 与 dispatch 的分别授权前必须停止。
