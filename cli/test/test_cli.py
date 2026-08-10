@@ -1367,7 +1367,7 @@ class CliTests(unittest.TestCase):
             frozenset(contract["x-supported-versions"]),
         )
 
-    def test_schema_v5_installation_verifies_onedir_bundle_and_macos_symlink(self) -> None:
+    def test_schema_v5_installation_verifies_onedir_bundle_and_platform_binding(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             bundle = root / "cli-bundle"
@@ -1376,9 +1376,17 @@ class CliTests(unittest.TestCase):
             source = bundle / "auto-email-sender"
             source.write_bytes(b"official cli executable")
             (internal / "base_library.zip").write_bytes(b"runtime")
-            target = root / "bin" / "auto-email-sender"
+            target = root / "bin" / (
+                "auto-email-sender.cmd" if os.name == "nt" else "auto-email-sender"
+            )
             target.parent.mkdir()
-            target.symlink_to(source)
+            if os.name == "nt":
+                escaped_source = str(source.resolve()).replace("%", "%%")
+                target.write_bytes(
+                    f'@echo off\r\n"{escaped_source}" %*\r\nexit /b %ERRORLEVEL%\r\n'.encode(),
+                )
+            else:
+                target.symlink_to(source)
             expected_hash = _sha256_directory(bundle)
             assert expected_hash is not None
             manifest_path = root / "installation.json"
@@ -1406,6 +1414,10 @@ class CliTests(unittest.TestCase):
         self.assertTrue(healthy["ok"])
         self.assertTrue(healthy["cli"]["ok"])
         self.assertEqual(healthy["cli"]["hash_kind"], "canonical_directory_v1")
+        self.assertEqual(
+            healthy["cli"]["checks"][-1]["binding_type"],
+            "windows_launcher" if os.name == "nt" else "symlink",
+        )
         self.assertFalse(outdated["cli"]["ok"])
         failed_checks = {
             check["id"]
