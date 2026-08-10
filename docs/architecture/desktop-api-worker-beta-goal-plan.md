@@ -36,7 +36,8 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - B0 已将前置改动保护到本地分支 `beta/desktop-api-worker`，并将
   `origin/master@4b54b5897d796bdb496432d1e3d41b7a3c32f2d3` 语义化合入。该分支名只是
   本次实现记录，不是通用 prerelease 发布规则。
-- 当前版本和最新稳定版均为 `2.5.4`；本计划不预先替所有者决定首个 Beta 版本号。
+- B0 开始时当前版本和最新稳定版均为 `2.5.4`；B5 已选择首个本地候选版本
+  `2.6.0-beta.1`，但这不代表已经授权远端认证或公开发布。
 - 尚无外部候选 workflow 的 DMG、NSIS、`release-candidate.json` 或 run ID。
 
 ### 1.3 Goal 当前检查点（2026-08-10）
@@ -59,8 +60,16 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - B4 已在合入最新 master 后完成连续两次完整全仓，结果均为 0 failures；Backend 每轮
   1937/1937、CLI 每轮 225/225，Frontend/Desktop/Website 全部通过。split 模式切换集成
   连续 20/20 轮通过，总计 420 次后端启动、400 次模式切换和 805.148 秒。
-- 下一步 B5 先准备本地开发候选并完成不会冒充正式候选证据的安全 smoke。需要 push、远端
-  Certify workflow 或 exact candidate 资产时必须停在独立人工批准门。
+- B5 已在本地准备 `2.6.0-beta.1` 元数据和公告；Desktop/Frontend 使用 SemVer
+  `2.6.0-beta.1`，Python CLI 使用等价 PEP 440 版本 `2.6.0b1`。本机发布合同、前端、CLI、
+  Desktop、macOS 冻结后端和 Windows quick QA 均已通过。
+- Windows 在产品/打包输入 `202a0942c7bf16db29762376f2e127136c6a2669` 上完成 Backend
+  1937/1937（7 skip）、冻结后端 API/Worker/combined/document 自检和 Desktop 237/237
+  （11 skip）。此前两个只在完整 Windows 长压中出现的一次性调度超时均保留、精确重放并
+  通过；最终全套没有扩大产品 5 秒请求超时或 1.5/2.5 秒性能预算。
+- B5 现在停在远端候选批准门前：本地 quick/source/frozen smoke 不替代同一 workflow 原始
+  DMG/EXE 的覆盖升级、lifecycle、2h normal 和 1h seeded chaos。需要 push、远端 Certify
+  workflow 或 exact candidate 资产时必须取得独立人工批准。
 - 当前没有获得 push、远端 workflow、tag、GitHub Prerelease、合回 `master` 或稳定版发布授权。
 
 ### 1.4 授权边界
@@ -228,7 +237,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：最新 master 已合入；完整全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先做本地候选安全 smoke；两平台 lifecycle、2h normal、1h chaos 和诊断重建通过 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：`2.6.0-beta.1` 本地准备与双平台开发/quick smoke 已通过；仍待远端同 run 的 DMG/EXE 完成两平台 lifecycle、2h normal、1h chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -241,8 +250,10 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
    `source_branch + release_sha + version + channel`，不得绑定当前分支名。
 3. **B4 已完成**：合入届时最新 `origin/master` 后，运行连续两次全仓和连续 20 次 split 集成；
    首次失败与修复原样记入验收报告。
-4. **正在执行 B5**：先构建本地开发候选并完成安全 smoke；获得远端候选授权后，两平台只使用同一
-   精确 SHA 对应的候选资产完成覆盖升级、lifecycle、2h normal 和 1h seeded chaos。
+4. **正在执行 B5**：`2.6.0-beta.1` 本地准备与安全 smoke 已完成；先对证据文档提交后的最终
+   SHA 运行 release impact、prerelease preflight 和 certify dry-run。获得 push 与远端候选
+   workflow 的独立授权后，两平台只使用同一 run、同一 SHA 对应的原始候选资产完成覆盖升级、
+   lifecycle、2h normal 和 1h seeded chaos。
 5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
    才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。
 6. **完成 B7**：收口可复现证据、已知限制和后续观察方式；仍不自动合回 `master` 或发布稳定版。

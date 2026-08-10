@@ -12,7 +12,8 @@
 - B0 开始时为 detached HEAD `6e06be9bfeae11b78eae78096782d84b3176c931`，工作区包含
   前置双进程改动。
 - B0 开始时本地 `master` 多 5 个提交；该风险已通过前置快照和语义化合并解除。
-- 当前 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`。
+- B0 开始时 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`；B5 已在本地
+  准备 `2.6.0-beta.1`，尚未形成远端候选或公开 Release。
 - 尚未授权 push、远端 workflow、tag、GitHub Prerelease 或 master 合并。
 
 ## Goal 恢复检查点
@@ -33,7 +34,7 @@
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
 | B4：完整与重复回归 | 已完成 | `origin/master@a4062f8` 合入为 `ab30799`；全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
-| B5：Mac/Windows 内部 Beta | 执行中 | 先准备本地开发候选与安全 smoke；exact-package 和长稳仍受远端候选批准门约束 |
+| B5：Mac/Windows 内部 Beta | 执行中 | `2.6.0-beta.1` 本地准备、macOS 冻结 smoke、Windows Backend 1937/1937 + 冻结/Desktop quick QA 已通过；exact-package lifecycle 与 2h/1h 长稳仍受远端候选批准门约束 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -473,3 +474,74 @@ rtk env AUTO_EMAIL_SENDER_MODE_SWITCH_QA=1 \
 B4 完成，AC-BRANCH 全部关闭。当前仍没有 push、tag、workflow dispatch、GitHub Release、
 稳定 feed 修改或合回 `master`。B5 从本地开发候选和安全 smoke 开始；需要远端 exact candidate
 时必须停在独立人工批准门。
+
+### B5：首个本地 Prerelease 准备与双平台开发验证
+
+#### 版本选择、Prepare 与发布合同缺陷
+
+- 首个本地候选选择 `2.6.0-beta.1`：core `2.6.0` 高于最新稳定版 `2.5.4`，channel 为
+  `beta`，序号为正整数 `1`。来源分支仍为本次显式输入 `beta/desktop-api-worker`，没有把该
+  分支名写入通用 Skill 或脚本。
+- Desktop、Frontend、公告和公开资产名使用 SemVer `2.6.0-beta.1`；Python CLI 的包版本使用
+  等价 PEP 440 `2.6.0b1`。第一次真实 Prepare 暴露 prerelease preflight 错把 CLI 也要求为
+  SemVer 的合同缺陷。`4288f4c` 统一限定 `alpha`/`beta`/`rc` 加正整数序号，并让校验器接受
+  对应 PEP 440 Python 版本；POSIX 与 PowerShell 夹具同步修正，发布合同 34/34 通过。
+- `050c1c8` 完成本地 Prepare：CLI/Desktop/Frontend 版本元数据、
+  `docs/releases/v2.6.0-beta.1.md` 和 `desktop/release-notes.md` 已同步，两个公告文件逐字一致。
+  本地 certify dry-run 曾在该 SHA 通过，并明确没有 push、tag 或 dispatch；最终文档提交形成
+  新 SHA 后必须重新运行，旧 dry-run 不作为最终冻结证据。
+- macOS 本机已通过前端公告/打包合同与 production build、Desktop 打包合同/类型检查/完整测试、
+  CLI 测试/lock/冻结构建与性能门槛，以及冻结 Backend 的 API/Worker/combined/document 自检。
+  完整 DMG development smoke 在启动前因本机环境未提供 `SPARKLE_PUBLIC_ED_KEY` 而安全停止；
+  没有读取、重建、打印或用占位 key 绕过。该环境门也不被记为产品通过或产品失败。
+
+#### Windows 两次首次失败、重放与测试看门狗修复
+
+Windows 始终使用专用 NTFS checkout、隔离数据和 loopback fake 服务；未修改 VM 代理。以下
+两次完整 Backend 首次现场都保留，没有用聚焦重放替代最终全套结果：
+
+1. 精确 `050c1c8` 的第一次完整 Backend 共 1937 项，结果为 1936 passed、7 skipped、1 error。
+   `test_run_queued_job_finishes_warmup_item_before_starting_remaining_items` 在 VM 已经历长时间压力后，
+   原 1 秒看门狗内没有调度到 mocked warm-up 事件。原测试精确重放 1/1、连续单项 20/20、
+   Matching 模块 25/25、模块连续五轮共 125/125 均通过。
+2. 该测试验证 warm-up 与剩余 item 的顺序，不声明 1 秒产品 SLA。`202a094` 只把测试内部过于
+   激进的 1 秒/2 秒事件看门狗统一改为 5 秒；排序断言、生产代码、产品 5 秒请求超时和
+   1.5/2.5 秒性能预算均未改变。
+3. 精确 `202a0942c7bf16db29762376f2e127136c6a2669` 的第二次完整 Backend 仍为
+   1936 passed、7 skipped、1 error，但失败项变为
+   `test_worker_kill_matrix_fences_results_and_converges_once`：`matching.after_final_commit` 场景的
+   `/startup-status` 单次请求超过既有 5 秒。完整强杀矩阵精确重放 1/1 通过，耗时 75.297 秒；
+   没有扩大 5 秒超时。
+4. 随后的五轮矩阵第一次运行被另一个 Codex 进程通过 `shutdown.exe` 正常关闭 Windows VM；
+   Windows Event 1074 与用户说明均确认这是外部关机，所以该退出码 255 和被打断的半轮不计入
+   产品结果。VM 重启后从头执行五轮，共覆盖 30 个故障点，5/5 全部通过，耗时 368.433 秒。
+
+#### Windows 最终完整 quick QA
+
+命令：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
+```
+
+产品/打包输入精确 SHA：`202a0942c7bf16db29762376f2e127136c6a2669`。
+
+| 检查 | 结果 |
+| --- | --- |
+| Backend full | 1937/1937，7 skipped，1502.069s |
+| Backend frozen build | API / Worker / combined / document self-check 全部通过，136.3s |
+| Desktop typecheck | 通过 |
+| Desktop full | 35 files / 237 tests 通过，3 files / 11 tests skipped，27.94s |
+| Desktop clean install + tests stage | 通过，77.6s |
+| Windows quick QA | 退出成功；精确 SHA 一致 |
+
+此次完整全套没有复现前两次一次性超时。quick runner 会安全复用输入和输出完全一致且已有成功
+记录的发布编排、Frontend 和 CLI 阶段；Backend 因前两次未成功留档而从头运行，随后进行了
+干净 PyInstaller 构建和真实三角色自检，Desktop 也执行了干净 `npm ci`、类型检查与完整测试。
+
+本节仍不是 AC-BETA-QA 的 exact-package 发布证据：quick 明确跳过 VC++ installer preparation、
+NSIS 和安装后 lifecycle；macOS 本地冻结构建也不是远端候选 DMG。证据文档提交后先运行
+`release-impact.mjs`、prerelease preflight 和 certify dry-run；只有用户分别批准 push 与远端
+Certify workflow 后，才能取得同一 run 的原始 DMG/EXE/manifest，并继续两平台覆盖升级、
+lifecycle、2h normal、1h seeded chaos 与诊断重建。当前仍没有 push、tag、workflow dispatch、
+GitHub Release、稳定 feed 修改或合回 `master`。
