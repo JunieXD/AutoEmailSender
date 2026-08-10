@@ -403,24 +403,30 @@ async def _build_mentor_section_from_database(
     ).limit(8)
     incomplete_rows = (await session.execute(incomplete_statement)).mappings().all()
 
-    university_label = _sql_professor_label(Professor.university, "学校未填写")
-    school_label = _sql_professor_label(Professor.school, "学院未填写")
+    trimmed_university = func.trim(Professor.university)
+    trimmed_school = func.trim(Professor.school)
     school_filter_rows = (
         await session.execute(
             select(
-                university_label.label("university"),
-                school_label.label("school"),
+                trimmed_university.label("university"),
+                trimmed_school.label("school"),
                 func.count(Professor.id).label("count"),
             )
             .where(Professor.archived_at.is_(None))
-            .group_by(university_label, school_label),
+            .group_by(trimmed_university, trimmed_school),
         )
     ).all()
-    schools_by_university: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    school_counts: Counter[tuple[str, str]] = Counter()
     for row in school_filter_rows:
-        schools_by_university[str(row.university)].append(
-            (str(row.school), int(row.count)),
-        )
+        school_counts[
+            (
+                _normalize_school_label(row.university),
+                _normalize_college_label(row.school),
+            )
+        ] += int(row.count)
+    schools_by_university: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for (university_name, school_name), count in school_counts.items():
+        schools_by_university[university_name].append((school_name, count))
     school_filters = [
         DashboardSchoolFilterRead(
             university=university_name,
