@@ -168,7 +168,8 @@ class BatchDraftProcessSafetyTests(unittest.TestCase):
 
                     thread_payload = fetch_json(
                         f"{api.base_url}/api/batch-tasks/"
-                        f"{batch_task_id}/items/{email_task_id}/thread"
+                        f"{batch_task_id}/items/{email_task_id}/thread",
+                        timeout_seconds=5.0,
                     )
                     self.assertEqual(
                         thread_payload["current_task"]["status"],
