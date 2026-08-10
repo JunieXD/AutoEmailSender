@@ -16,6 +16,7 @@ from app.modules.workspace.tasks.delivery import _has_future_scheduled_at
 from app.services.runtime_manager import (
     CRAWLER_WORK_ITEM_WORKER_COUNT,
     RuntimeManager,
+    SQLITE_MAINTENANCE_FAILURE_RETRY_SECONDS,
     _run_match_analysis_worker_once,
 )
 
@@ -108,8 +109,19 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
             self.assertEqual(worker_names.count(f"crawler-worker-{index}"), 1)
         self.assertIn("dispatcher", worker_names)
+        self.assertIn("sqlite-maintenance", worker_names)
         self.assertIn("imap-incremental-poller", worker_names)
         self.assertIn("imap-history-poller", worker_names)
+
+        sqlite_maintenance_call = next(
+            call
+            for call in mocked_loop.call_args_list
+            if call.args[0] == "sqlite-maintenance"
+        )
+        self.assertEqual(
+            sqlite_maintenance_call.kwargs["failure_retry_seconds"],
+            SQLITE_MAINTENANCE_FAILURE_RETRY_SECONDS,
+        )
 
         await manager.stop()
 
@@ -326,6 +338,45 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered["consecutive_failures"], 0)
         self.assertIsNotNone(recovered["last_succeeded_at"])
         self.assertIsNone(recovered["error"])
+        self.assertFalse(manager.is_degraded())
+
+    async def test_loop_uses_bounded_failure_retry_before_normal_interval(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        worker_calls = 0
+        wait_calls: list[float] = []
+
+        async def worker(session_factory_arg: object) -> int:
+            nonlocal worker_calls
+            self.assertIs(session_factory_arg, session_factory)
+            worker_calls += 1
+            if worker_calls == 1:
+                raise RuntimeError("database is locked")
+            manager._stopped.set()
+            return 0
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            wait_calls.append(timeout)
+            if len(wait_calls) == 1:
+                awaitable.close()
+                raise TimeoutError
+            return await awaitable
+
+        with patch(
+            "app.services.runtime_manager.asyncio.wait_for",
+            new=fake_wait_for,
+        ), patch(
+            "app.services.runtime_manager.write_backend_worker_error_log",
+        ):
+            await manager._loop(
+                "sqlite-maintenance",
+                21_600,
+                worker,
+                failure_retry_seconds=5,
+            )
+
+        self.assertEqual(worker_calls, 2)
+        self.assertEqual(wait_calls, [5, 21_600])
         self.assertFalse(manager.is_degraded())
 
     async def test_stop_allows_in_flight_loop_to_finish_within_grace(self) -> None:

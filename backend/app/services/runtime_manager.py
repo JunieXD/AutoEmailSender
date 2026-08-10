@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 CRAWLER_WORK_ITEM_WORKER_COUNT = 8
 CRAWLER_WORKER_ID_MAX_LENGTH = 128
 RUNTIME_STOP_GRACE_SECONDS = 5.0
+SQLITE_MAINTENANCE_FAILURE_RETRY_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +156,7 @@ class RuntimeManager:
         settings = get_settings()
         worker_settings = await self._resolve_worker_startup_settings(settings)
         loop_names = [
+            "sqlite-maintenance",
             "dispatcher",
             "imap-incremental-poller",
             "imap-history-poller",
@@ -213,6 +215,7 @@ class RuntimeManager:
                     "sqlite-maintenance",
                     getattr(settings, "sqlite_maintenance_interval_seconds", 21_600),
                     run_sqlite_maintenance_once,
+                    failure_retry_seconds=SQLITE_MAINTENANCE_FAILURE_RETRY_SECONDS,
                 ),
             ),
             asyncio.create_task(
@@ -313,20 +316,23 @@ class RuntimeManager:
     async def _loop(
         self,
         worker_name: str,
-        interval_seconds: int,
+        interval_seconds: float,
         worker: Callable[[async_sessionmaker[AsyncSession]], Awaitable[int]],
         *,
+        failure_retry_seconds: float | None = None,
         processed_jitter_seconds: tuple[float, float] | None = None,
         wait_after_processed: bool = False,
     ) -> None:
         while not self._stopped.is_set():
             processed = 0
+            failed = False
             self._mark_loop_started(worker_name)
             try:
                 processed = await worker(self._session_factory)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                failed = True
                 self._mark_loop_failed(worker_name, exc)
                 logger.exception("%s 执行失败", worker_name)
                 write_backend_worker_error_log(worker_name=worker_name, exc=exc)
@@ -349,8 +355,13 @@ class RuntimeManager:
                     continue
                 continue
 
+            wait_seconds = (
+                failure_retry_seconds
+                if failed and failure_retry_seconds is not None
+                else interval_seconds
+            )
             try:
-                await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
+                await asyncio.wait_for(self._stopped.wait(), timeout=wait_seconds)
             except TimeoutError:
                 continue
 

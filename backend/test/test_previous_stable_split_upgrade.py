@@ -12,7 +12,7 @@ from test.process_harness import DesktopBackendProcess
 
 
 PREVIOUS_STABLE_REVISION = "20260808_crawl_llm_snapshot"
-CURRENT_REVISION = "20260809_delivery_at_most_once"
+CURRENT_REVISION = "20260810_merge_delivery_scale"
 
 
 class PreviousStableSplitUpgradeTests(unittest.TestCase):
