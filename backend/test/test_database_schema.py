@@ -186,7 +186,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260810_agent_ui_handoffs"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             connection.execute(
                 """
                 INSERT INTO professors(name, email, research_direction)
@@ -196,7 +196,7 @@ class MigrationScriptTests(unittest.TestCase):
             connection.commit()
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -226,7 +226,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIn("ix_agent_ui_handoff_items_resource", item_indexes)
 
         self._run_alembic(env, "downgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             remaining_tables = {
                 row[0]
                 for row in connection.execute(
@@ -245,7 +245,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(professor, ("交接迁移导师",))
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             rebuilt_tables = {
                 row[0]
                 for row in connection.execute(
