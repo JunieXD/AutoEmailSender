@@ -90,9 +90,10 @@ from app.modules.workspace.public import (
     expire_batch_task_if_needed,
     regenerate_task_draft,
     rewrite_task_draft,
-    update_task_outreach_config,
 )
 import app.modules.llm.public as llm_runtime
+
+from .review import apply_batch_review_outreach_template
 
 
 router = APIRouter(prefix="/api/batch-tasks", tags=["batch-tasks"])
@@ -787,17 +788,11 @@ async def update_batch_task_item_outreach_config(
         session,
         task_id,
         item_id,
-        lambda: update_task_outreach_config(
+        lambda: apply_batch_review_outreach_template(
             get_session_factory(),
+            task_id,
             item_id,
-            outreach_generation_mode=payload.outreach_generation_mode,
             outreach_template_id=payload.outreach_template_id,
-            template_selection_explicit=(
-                "outreach_template_id" in payload.model_fields_set
-            ),
-            outreach_template_subject=payload.outreach_template_subject,
-            outreach_template_body_text=payload.outreach_template_body_text,
-            outreach_template_body_html=payload.outreach_template_body_html,
         ),
     )
     return await build_workspace_thread_for_task(session, task_id=item_id)

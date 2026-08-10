@@ -3851,6 +3851,23 @@ export const TasksPage = () => {
         activeBatchReviewItem,
         selectedBatchTask,
       );
+      setSelectedBatchTaskItems((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) {
+            return item;
+          }
+          const status = thread.current_task.status ?? item.status;
+          return {
+            ...item,
+            status,
+            draft_generation_source:
+              thread.current_task.draft_generation_source,
+            draft_fallback_reason: thread.current_task.draft_fallback_reason,
+            next_action:
+              status === "review_required" ? "review_draft" : item.next_action,
+          };
+        }),
+      );
       setBatchReviewItemId((currentItemId) => {
         if (currentItemId === itemId) {
           syncBatchDraftReview(thread);
@@ -4774,9 +4791,13 @@ export const TasksPage = () => {
     ) ?? null;
   const batchReviewSourceTemplateLabel = selectedBatchReviewOutreachTemplate
     ? `${selectedBatchReviewOutreachTemplate.name}${selectedBatchReviewOutreachTemplate.archived_at ? " · 已删除" : ""}`
-    : selectedBatchReviewOutreachTemplateId !== null && selectedBatchTask
-      ? getOutreachTemplateSourceLabel(selectedBatchTask)
-      : "未使用模板";
+    : selectedBatchReviewOutreachTemplateId !== null
+      ? getOutreachTemplateSourceLabel({
+          outreach_template_id: selectedBatchReviewOutreachTemplateId,
+        })
+      : selectedBatchTask
+        ? getOutreachTemplateSourceLabel(selectedBatchTask)
+        : "未使用模板";
   const batchReviewDraftSource =
     batchReviewThread?.current_task.draft?.source ??
     (batchReviewThread?.current_task.approved_body_text ||
@@ -5751,9 +5772,7 @@ export const TasksPage = () => {
                               </div>
                               <p className="mt-1">
                                 因缺少研究方向，已直接套用
-                                {selectedBatchTask
-                                  ? `「${getOutreachTemplateSourceLabel(selectedBatchTask)}」`
-                                  : "所选"}
+                                {`「${batchReviewSourceTemplateLabel}」`}
                                 模板。
                                 {batchReviewProfessorMissingResearchDirection
                                   ? "可编辑后审核或先补充资料。"
