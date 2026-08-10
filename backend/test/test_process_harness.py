@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.models import IdentityProfile
 from app.modules.communications.transport import (
@@ -32,6 +32,93 @@ from test.process_harness import (
 
 
 class FaultInjectionInfrastructureTests(unittest.TestCase):
+    def test_fault_completion_retries_transient_windows_sharing_locks(self) -> None:
+        from app.core.fault_injection import _complete_fault_hit
+
+        reached_path = Mock()
+        release_path = Mock()
+        completed_path = Mock()
+        release_path.unlink.side_effect = [PermissionError("release locked"), None]
+        reached_path.replace.side_effect = [PermissionError("reached locked"), None]
+        sleeps: list[float] = []
+
+        _complete_fault_hit(
+            reached_path,
+            release_path,
+            completed_path,
+            platform_name="nt",
+            sleep=sleeps.append,
+        )
+
+        self.assertEqual(release_path.unlink.call_count, 2)
+        release_path.unlink.assert_called_with(missing_ok=True)
+        self.assertEqual(reached_path.replace.call_count, 2)
+        reached_path.replace.assert_called_with(completed_path)
+        self.assertEqual(sleeps, [0.01, 0.01])
+
+    def test_fault_completion_reraises_persistent_windows_release_lock(self) -> None:
+        from app.core.fault_injection import _complete_fault_hit
+
+        reached_path = Mock()
+        release_path = Mock()
+        release_path.unlink.side_effect = PermissionError("release locked")
+        sleeps: list[float] = []
+
+        with self.assertRaisesRegex(PermissionError, "release locked"):
+            _complete_fault_hit(
+                reached_path,
+                release_path,
+                Mock(),
+                platform_name="nt",
+                sleep=sleeps.append,
+            )
+
+        self.assertEqual(release_path.unlink.call_count, 7)
+        reached_path.replace.assert_not_called()
+        self.assertEqual(sleeps, [0.01, 0.02, 0.04, 0.08, 0.16, 0.32])
+
+    def test_fault_completion_reraises_persistent_windows_replace_lock(self) -> None:
+        from app.core.fault_injection import _complete_fault_hit
+
+        reached_path = Mock()
+        release_path = Mock()
+        reached_path.replace.side_effect = PermissionError("reached locked")
+        sleeps: list[float] = []
+
+        with self.assertRaisesRegex(PermissionError, "reached locked"):
+            _complete_fault_hit(
+                reached_path,
+                release_path,
+                Mock(),
+                platform_name="nt",
+                sleep=sleeps.append,
+            )
+
+        release_path.unlink.assert_called_once_with(missing_ok=True)
+        self.assertEqual(reached_path.replace.call_count, 7)
+        self.assertEqual(sleeps, [0.01, 0.02, 0.04, 0.08, 0.16, 0.32])
+
+    def test_fault_completion_does_not_retry_non_windows_permission_error(self) -> None:
+        from app.core.fault_injection import _complete_fault_hit
+
+        reached_path = Mock()
+        release_path = Mock()
+        release_path.unlink.side_effect = PermissionError("release locked")
+        sleeps: list[float] = []
+
+        with self.assertRaisesRegex(PermissionError, "release locked"):
+            _complete_fault_hit(
+                reached_path,
+                release_path,
+                Mock(),
+                platform_name="posix",
+                sleep=sleeps.append,
+            )
+
+        release_path.unlink.assert_called_once_with(missing_ok=True)
+        reached_path.replace.assert_not_called()
+        self.assertEqual(sleeps, [])
+
     def test_managed_process_proxy_bypass_preserves_existing_hosts(self) -> None:
         environment = {
             "NO_PROXY": "existing.example,127.0.0.1",

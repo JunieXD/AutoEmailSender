@@ -538,7 +538,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                         controller.release(reached_path)
                         wait_until(
                             reached_path.with_suffix(".completed").exists,
-                            timeout_seconds=10,
+                            timeout_seconds=5,
                             description=f"released {kind} cancel fault point",
                         )
                         canceled_state = wait_until(
@@ -638,7 +638,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                         controller.release(reached_path)
                         wait_until(
                             reached_path.with_suffix(".completed").exists,
-                            timeout_seconds=10,
+                            timeout_seconds=5,
                             description=f"released stale {kind} result",
                         )
                         time.sleep(0.15)
@@ -768,7 +768,7 @@ class CrawlerProcessSafetyTests(unittest.TestCase):
                         controller.release(reached_path)
                         wait_until(
                             reached_path.with_suffix(".completed").exists,
-                            timeout_seconds=10,
+                            timeout_seconds=5,
                             description="released stale enrichment input result",
                         )
                         time.sleep(0.15)

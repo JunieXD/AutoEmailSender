@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,7 @@ _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 _MAX_TIMEOUT_SECONDS = 300.0
 _POLL_SECONDS = 0.01
+_WINDOWS_FILE_RETRY_DELAYS_SECONDS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32)
 _MAX_ABSOLUTE_CLOCK_OFFSET_SECONDS = 10 * 366 * 24 * 60 * 60
 
 
@@ -96,10 +98,46 @@ def _create_fault_hit(
     return reached_path, release_path, completed_path
 
 
-def _complete_fault_hit(reached_path: Path, release_path: Path, completed_path: Path) -> None:
-    release_path.unlink(missing_ok=True)
+def _run_fault_file_operation(
+    operation: Callable[[], object],
+    *,
+    platform_name: str,
+    sleep: Callable[[float], object],
+) -> None:
+    """Retry only the brief Windows sharing locks seen in test fault markers."""
+
+    retry_delays = (
+        _WINDOWS_FILE_RETRY_DELAYS_SECONDS if platform_name == "nt" else ()
+    )
+    for delay_seconds in (*retry_delays, None):
+        try:
+            operation()
+            return
+        except PermissionError:
+            if delay_seconds is None:
+                raise
+            sleep(delay_seconds)
+
+
+def _complete_fault_hit(
+    reached_path: Path,
+    release_path: Path,
+    completed_path: Path,
+    *,
+    platform_name: str = os.name,
+    sleep: Callable[[float], object] = time.sleep,
+) -> None:
+    _run_fault_file_operation(
+        lambda: release_path.unlink(missing_ok=True),
+        platform_name=platform_name,
+        sleep=sleep,
+    )
     try:
-        reached_path.replace(completed_path)
+        _run_fault_file_operation(
+            lambda: reached_path.replace(completed_path),
+            platform_name=platform_name,
+            sleep=sleep,
+        )
     except FileNotFoundError:
         return
 
