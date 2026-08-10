@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 验收记录
 
-- 状态：执行中（Goal active；B0～B4 已完成，当前阶段为 B5）
+- 状态：执行中（用户已恢复同一 Goal；B0～B4 已完成，当前阶段为 B5）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 计划：[`desktop-api-worker-beta-goal-plan.md`](../architecture/desktop-api-worker-beta-goal-plan.md)
 - 前置证据：[`desktop_api_worker_goal_acceptance.md`](./desktop_api_worker_goal_acceptance.md)
@@ -12,19 +12,22 @@
 - B0 开始时为 detached HEAD `6e06be9bfeae11b78eae78096782d84b3176c931`，工作区包含
   前置双进程改动。
 - B0 开始时本地 `master` 多 5 个提交；该风险已通过前置快照和语义化合并解除。
-- B0 开始时 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`；B5 已在本地
-  准备 `2.6.0-beta.1`，尚未形成远端候选或公开 Release。
-- 尚未授权 push、远端 workflow、tag、GitHub Prerelease 或 master 合并。
+- B0 开始时 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`；B5 已准备
+  `2.6.0-beta.1`。首个远端 candidate run `31417575421` 已完成认证，但因 Windows QA
+  传输层缺陷被拒绝用于发布；尚未形成公开 Release。
+- 首次 push 和 Certify dispatch 授权已用于冻结 SHA `bd19519d`。替代 SHA 的 push/dispatch
+  需要重新批准；tag、GitHub Prerelease、master 合并和稳定版发布始终未获授权。
 
 ## Goal 恢复检查点
 
-- Goal 系统在 2026-08-11 再次返回当前 Goal 为 `active`。另一个 Codex 进程意外关闭没有取消
-  Goal，因此继续沿用同一 Goal ID，不并行创建第二个 Goal。当前分支为
+- Goal 系统在 2026-08-11 仍返回同一 Goal ID，并保留上次批准门产生的 `blocked` 标记；用户已
+  明确恢复继续执行。另一个 Codex 进程意外关闭没有取消 Goal，因此继续沿用同一 Goal ID，不并行创建第二个 Goal。当前分支为
   `beta/desktop-api-worker`，当前产品代码收口提交为 `2123af5`。
 - B0/B1 已通过证据保持有效；只有受后续代码影响的检查才按 impact 重新执行，最终仍由 B4/B5
   的完整回归和 exact-package 证据统一收口。
-- 当前允许继续本地实现、测试、提交，以及把最新 `origin/master` 合入测试分支；仍未授权反向
-  合回 `master`、push、远端 workflow、tag、GitHub Release 或稳定版发布。
+- 当前允许继续本地 failure-recovery、测试和提交。`bd19519d` 的 push 与 Certify dispatch
+  已按一次性授权完成；该授权不覆盖修复后的替代 SHA。仍未授权反向合回 `master`、新的 push/
+  workflow、tag、GitHub Release 或稳定版发布。
 
 ## 阶段证据
 
@@ -35,7 +38,7 @@
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
 | B4：完整与重复回归 | 已完成 | 最新 `origin/master@2fcc431` 合入为 `e313811`；最终产品代码 `2123af5` 全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
-| B5：Mac/Windows 内部 Beta | 执行中 | `2.6.0-beta.1` 本地准备、macOS 冻结 smoke、Windows Backend 1957/1957 + 冻结/Desktop quick QA 已通过；exact-package lifecycle 与 2h/1h 长稳仍受远端候选批准门约束 |
+| B5：Mac/Windows 内部 Beta | 执行中 | run `31417575421` 认证成功但在 Windows 安装前因 transfer 改名缺陷被拒绝；`bd5e52e` 已修复并通过真实 Windows quick QA，替代 exact candidate 仍待新批准 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -656,3 +659,90 @@ rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_test
 当前仍处于 B5 本地收口：本证据文档提交后必须以新的最终 `release_sha` 重跑 release impact、
 prerelease preflight、certify dry-run 和本地冻结 build identity。没有 push、远端 workflow、tag、
 GitHub Release、稳定 feed 修改或合回 `master`；取得 push 与 dispatch 的分别授权前必须停止。
+
+### B5 续：首个远端候选、Windows 首次失败与传输修复
+
+#### 首个 Prerelease Certify
+
+- 用户明确批准 push 来源分支和 dispatch Prerelease Certify 后，远端
+  `beta/desktop-api-worker` 精确指向冻结 SHA
+  `bd19519d24cf372cd7a6d3e766a2c173c74ff2c6`。
+- `Release Desktop` run `31417575421` 的 Ubuntu prerelease preflight、Windows build、macOS
+  build 和 candidate certify 全部成功；publish job 按设计跳过。run 未创建 tag、draft 或
+  GitHub Release，也没有修改稳定 update feed。
+- 下载到仓库外的原始资产与 manifest 重新计算摘要后为：
+  - Windows EXE：`7985bae7929fefef7adb8371b3faeb192cc5ed2140215ab209d36aef7f59aa28`；
+  - macOS DMG：`7be7c61effd8430efe88b8c60fc27b030f2c68718acdd16d250c46c574348f5e`；
+  - `prerelease-candidate.json`：
+    `bcf4c31b02dea0a266031c3b72a73f49905a45ce0eead658e180f575399fdd33`。
+- manifest 同时绑定 run ID、冻结 SHA、`beta/desktop-api-worker`、默认 `split`、诊断 schema 1、
+  公告摘要和认证前稳定 Latest/feed 基线。上一稳定版 v2.5.4 EXE/DMG 也从公开 Release 下载到
+  仓库外并分别复核为
+  `245aadcdf63ccae80913ede6a4cda9571884f83da9f23b957c724a6fb3b15d21` 与
+  `c67fe772766751798163b16a985a9e3e97893c4ad906cde161c4e85bc6c9447b`。
+
+#### Windows exact-package 首次失败
+
+使用 run `31417575421` 的原始 EXE、manifest、上一稳定版 EXE、seed `20260810` 和
+Prerelease 2h/1h 时长门禁启动正式 runner。宿主首先成功输出：
+
+```text
+[ok] windows AutoEmailSender-Setup-2.6.0-beta.1.exe 已绑定候选 run 31417575421。
+```
+
+VM 随后在任何安装或长稳场景开始前失败：
+
+```text
+windows prerelease asset name 不匹配：AutoEmailSender-Candidate-64462.exe，
+预期 AutoEmailSender-Setup-2.6.0-beta.1.exe。
+candidate manifest and Windows installer binding failed with exit code 1
+```
+
+首次现场原样保存在仓库外
+`/Users/junie/Programs/AutoEmailSender-release-candidates/31417575421/windows-exact-package-first-failure.txt`。
+该运行没有启动安装器、lifecycle、normal soak 或 seeded chaos，不能计作正式 Windows 证据。
+
+根因不是候选字节、摘要或 run ID：host 在传输前已经用原始文件名通过严格 manifest 校验，但
+`run-windows-vm-release-qa.sh` 为避免共享目录重名，把同一 EXE staging 为
+`AutoEmailSender-Candidate-<pid>.exe`；guest 随后再次调用同一个严格校验器，必然因 manifest
+资产名不一致而拒绝。既有静态 packaging 测试只确认参数存在，没有覆盖跨 VM 后仍保留资产名。
+因此 run `31417575421` 已拒绝用于发布，其资产只保留为首次失败证据，不与后续 SHA/run 混用。
+
+#### 修复与原场景重放
+
+修复提交 `bd5e52e1bff20e73a2d322ef1fbfccb0899a3b3d` 使用 `mktemp -d` 在专用 Parallels 共享根下
+创建每次运行唯一的临时目录，并在目录内保留候选、上一稳定版和 manifest 的原始 basename；
+退出时只删除明确列出的临时文件并移除该空目录。这样同时满足并发隔离和 manifest 文件名合同。
+Desktop packaging 回归新增四项正向路径断言，并明确禁止恢复
+`AutoEmailSender-Candidate-<pid>.exe` 改名。
+
+本机修复验证：
+
+| 检查 | 结果 |
+| --- | --- |
+| Bash syntax / `git diff --check` | 通过 |
+| Desktop packaging 聚焦 | 24/24 |
+| Desktop typecheck / full | 通过；256/256，3 个平台门禁 skip |
+| 发布公告 | 2/2 |
+| POSIX prepare/release/prerelease 入口 | 全部通过 |
+| release candidate / prerelease / impact / workflow 合同 | 20/20 |
+
+真实共享目录探针随后把 run `31417575421` 的同一 EXE 和 manifest 放入唯一目录但保留原始文件名，
+由 VM 内 `bd19519d` checkout 的冻结校验器复核。guest 成功输出同一候选绑定信息；临时文件和目录
+随后删除，VM 恢复 suspended。该探针只证明传输根因已修复，不计作 formal QA。
+
+`release-impact.mjs --base bd19519d --head bd5e52e` 将变更分类为 `desktop` 和
+`release-orchestration`，要求 release contracts、Windows PowerShell contracts、Desktop suite
+和 Windows quick QA；可跳过 Windows formal QA 与 macOS Sparkle candidate。前三项本机已通过，
+真实 Windows quick QA 在精确 `bd5e52e` 上完成：
+
+- 唯一共享目录、增量 bundle 和 checkout 更新成功；
+- 输入未变的 Frontend、CLI、Backend 与冻结 build 阶段安全复用已有成功指纹；
+- Desktop 在 VM 内重新 `npm ci`、typecheck 和完整测试，248/248 通过，11 个环境/平台门禁 skip；
+- runner 以 0 退出并报告精确 SHA 一致。
+
+quick 明确跳过 VC++、NSIS 和 installed packaged lifecycle，仍不替代 AC-BETA-QA。虽然产品安装包
+输入没有变化，但修复提交改变了 `release_sha`，旧 manifest 仍不可绑定新 SHA；必须形成新的最终
+文档提交并在重新批准后 push、dispatch 新 Certify run，之后从同一个替代 run 重新取得三份原始
+资产。当前没有新的 push/dispatch 授权，也没有 tag、Release、稳定 feed、master 合并或稳定版
+发布授权。

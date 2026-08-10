@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（现有 Goal 为 active；B0～B4 已完成，当前阶段为 B5）
+- 状态：执行中（用户已恢复同一 Goal；B0～B4 已完成，当前阶段为 B5）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -36,14 +36,17 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - B0 已将前置改动保护到本地分支 `beta/desktop-api-worker`，并将
   `origin/master@4b54b5897d796bdb496432d1e3d41b7a3c32f2d3` 语义化合入。该分支名只是
   本次实现记录，不是通用 prerelease 发布规则。
-- B0 开始时当前版本和最新稳定版均为 `2.5.4`；B5 已选择首个本地候选版本
-  `2.6.0-beta.1`，但这不代表已经授权远端认证或公开发布。
-- 尚无外部候选 workflow 的 DMG、NSIS、`release-candidate.json` 或 run ID。
+- B0 开始时当前版本和最新稳定版均为 `2.5.4`；B5 已选择首个候选版本
+  `2.6.0-beta.1`。首个远端 candidate run `31417575421` 已完成构建认证，但随后在 Windows
+  exact-package 入口发现 QA 传输层改名缺陷，因此该 run 已拒绝用于发布并只保留为失败证据。
+- run `31417575421` 的原始 DMG、NSIS 和 `prerelease-candidate.json` 已下载到仓库外并复核摘要；
+  它们不得与修复后的 SHA 或任何替代 run 混用。
 
 ### 1.3 Goal 当前检查点（2026-08-11）
 
-- Goal 系统当前将 `019fe582-2dea-7e42-bd2e-684bae191421` 报告为 `active`。另一个 Codex
-  进程意外关闭没有取消 Goal；继续沿用同一 Goal ID，不创建相互冲突的新 Goal。
+- Goal 系统仍为 `019fe582-2dea-7e42-bd2e-684bae191421`，并保留上次批准门产生的 `blocked`
+  标记；用户已明确恢复继续执行。另一个 Codex 进程意外关闭没有取消或替换 Goal，因此继续沿用
+  同一 Goal ID，不创建相互冲突的新 Goal。
 - 当前本地分支为 `beta/desktop-api-worker`。2026-08-11 重新 fetch 后，最新
   `origin/master` 仍为 `2fcc431d25ba36b1de6380bb316589a750cebc2f`；它已通过 merge commit
   `e313811528adc407211cfd8aa6f68e6a3c84749d` 合入。当前分支相对 master 为 ahead 37、behind 0，
@@ -76,10 +79,20 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
   SQLite 导致的 `WinError 32`（`f94c666`）；没有放宽 1000ms 性能门槛或忽略 Windows 文件锁。
   Frontend 修复提交 `2123af5` 的 Windows quick QA 也通过，runner 对变更输入执行干净 Frontend
   安装/生产构建，并安全复用其余输入完全相同的成功阶段。
-- B5 现在停在远端候选批准门前：本地 quick/source/frozen smoke 不替代同一 workflow 原始
-  DMG/EXE 的覆盖升级、lifecycle、2h normal 和 1h seeded chaos。需要 push、远端 Certify
-  workflow 或 exact candidate 资产时必须取得独立人工批准。
-- 当前没有获得 push、远端 workflow、tag、GitHub Prerelease、合回 `master` 或稳定版发布授权。
+- 用户曾分别批准将冻结 SHA `bd19519d24cf372cd7a6d3e766a2c173c74ff2c6` push 到
+  `beta/desktop-api-worker` 并 dispatch Prerelease Certify；run `31417575421` 全部认证 job
+  通过且 publish job 按设计跳过，没有创建 tag 或 Release。该两项授权已执行完毕，不自动延伸到
+  后续替代 SHA。
+- 首次 Windows exact-package 运行在安装前失败：host 已成功绑定原始
+  `AutoEmailSender-Setup-2.6.0-beta.1.exe`，但 transfer staging 将同一字节改名为
+  `AutoEmailSender-Candidate-<pid>.exe`，guest 的第二次 manifest 校验因此正确拒绝。失败证据已
+  保留，run `31417575421` 不再是可发布候选。
+- `bd5e52e1bff20e73a2d322ef1fbfccb0899a3b3d` 用每次运行唯一的临时共享目录保留 manifest 原始
+  文件名，并增加禁止传输改名的回归合同。macOS/Windows 本机合同和真实 Windows quick QA
+  均通过；quick 仍不替代同一替代 workflow 原始 DMG/EXE 的覆盖升级、lifecycle、2h normal
+  和 1h seeded chaos。
+- 当前停在替代候选批准门前：新的最终文档提交形成后，push 新 SHA 和再次 dispatch Certify
+  都需要重新取得明确批准。尚未授权 tag、公开 GitHub Prerelease、合回 `master` 或稳定版发布。
 
 ### 1.4 授权边界
 
