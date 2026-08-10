@@ -4,6 +4,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import socket
 import ssl
 import subprocess
@@ -1022,7 +1023,10 @@ class ManagedProcess:
     def stop(self, *, timeout_seconds: float = 10.0) -> None:
         if self.process.poll() is not None:
             return
-        self.process.terminate()
+        if os.name == "nt":
+            self.process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            self.process.terminate()
         try:
             self.process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
@@ -1051,6 +1055,9 @@ def spawn_managed_process(
             stdin=subprocess.DEVNULL,
             stdout=stdout_file,
             stderr=stderr_file,
+            creationflags=(
+                subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            ),
         )
     return ManagedProcess(process, stdout_path, stderr_path)
 
