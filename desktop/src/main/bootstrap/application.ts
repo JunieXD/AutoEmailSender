@@ -4,19 +4,29 @@ import { pathToFileURL } from "node:url";
 import type {
   DesktopAgentSupportStatus as AgentSupportStatus,
   DesktopBackendConnection as BackendConnection,
+  DesktopBackendModeRestartOptions,
+  DesktopBackendModeRestartResult,
+  DesktopBackendModeStatus,
   DesktopBackendStatus as BackendStatus,
+  DesktopRestartSafety,
   DesktopStartupAtLoginStatus as StartupAtLoginStatus,
 } from "../../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
 import {
   getFrontendIndexPath,
-  resolveBackendMode,
   startBackend,
 } from "../backend/service.js";
 import { createDesktopBackendClient } from "../backend/client.js";
+import {
+  createIdleRestartSafety,
+  createUnavailableRestartSafety,
+  decideBackendModeRestart,
+  getBackendRestartSafety,
+} from "../backend/restart-safety.js";
 import type {
   BackendController,
   BackendExit,
+  BackendMode,
 } from "../backend/types.js";
 import {
   AGENT_RUNTIME_PROTOCOL_VERSION,
@@ -45,6 +55,13 @@ import {
 } from "../shell/window-lifecycle.js";
 import { createTrayIcon, getWindowIconPath } from "../shell/window-icon.js";
 import { getActivePackagedQaIsolatedHomePath } from "../packaged-qa/user-data.js";
+import {
+  buildBackendModeRelaunchArgs,
+  buildBackendModeStatus,
+  readBackendModeSetting,
+  resolveBackendModeSelection,
+  writeBackendModeSetting,
+} from "../settings/backend-mode.js";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -52,6 +69,9 @@ let backend: BackendController | null = null;
 let restartingBackend = false;
 let isQuitting = false;
 let backendStopPromise: Promise<void> | null = null;
+let currentBackendMode: BackendMode | null = null;
+let relaunchRequested = false;
+let nativeSplitRecoveryPromptVisible = false;
 const desktopStartedAt = new Date().toISOString();
 let currentBackendStatus: BackendStatus = createInitialBackendStatus();
 let currentBackendConnection: BackendConnection | null = null;
@@ -149,6 +169,177 @@ function getStartupInput() {
   };
 }
 
+async function resolveNextBackendMode() {
+  const setting = await readBackendModeSetting(app.getPath("userData"));
+  return resolveBackendModeSelection({
+    argv: process.argv,
+    environmentMode: process.env.AUTO_EMAIL_SENDER_BACKEND_MODE,
+    setting,
+    appVersion: app.getVersion(),
+  });
+}
+
+async function ensureCurrentBackendMode(): Promise<BackendMode> {
+  if (currentBackendMode !== null) {
+    return currentBackendMode;
+  }
+  const resolution = await resolveNextBackendMode();
+  currentBackendMode = resolution.mode;
+  if (resolution.warning) {
+    console.warn(resolution.warning);
+  }
+  return currentBackendMode;
+}
+
+async function getDesktopBackendModeStatus(): Promise<DesktopBackendModeStatus> {
+  const currentMode = await ensureCurrentBackendMode();
+  const next = await resolveNextBackendMode();
+  return buildBackendModeStatus(currentMode, next);
+}
+
+async function setDesktopBackendMode(mode: BackendMode): Promise<DesktopBackendModeStatus> {
+  await writeBackendModeSetting(app.getPath("userData"), mode);
+  return getDesktopBackendModeStatus();
+}
+
+async function getRestartSafetyForRelaunch(options?: {
+  allowUnavailableBackend?: boolean;
+}): Promise<DesktopRestartSafety> {
+  if (backend === null) {
+    return createIdleRestartSafety("后台进程当前未运行，可以进入兼容模式。");
+  }
+  try {
+    return await getBackendRestartSafety(desktopBackendClient);
+  } catch (error) {
+    if (
+      options?.allowUnavailableBackend
+      && (currentBackendStatus.state === "error" || currentBackendStatus.state === "restarting")
+    ) {
+      return createIdleRestartSafety(
+        "后台服务未成功启动，可以重启进入单进程兼容模式。",
+      );
+    }
+    return createUnavailableRestartSafety(
+      `无法确认当前是否可以安全重启：${getErrorMessage(error)}`,
+    );
+  }
+}
+
+async function requestDesktopBackendModeRestart(
+  options: DesktopBackendModeRestartOptions = {},
+  internalOptions?: {
+    forcedMode?: BackendMode;
+    allowUnavailableBackend?: boolean;
+  },
+): Promise<DesktopBackendModeRestartResult> {
+  const safety = await getRestartSafetyForRelaunch({
+    allowUnavailableBackend: internalOptions?.allowUnavailableBackend,
+  });
+  const decision = decideBackendModeRestart(safety, options);
+  if (decision.state === "restarting") {
+    scheduleDesktopRelaunch(internalOptions?.forcedMode);
+  }
+  return decision;
+}
+
+function scheduleDesktopRelaunch(forcedMode?: BackendMode): void {
+  if (relaunchRequested) {
+    return;
+  }
+  relaunchRequested = true;
+  const currentArgs = process.argv.slice(1);
+  app.relaunch({
+    args: forcedMode === undefined
+      ? currentArgs
+      : buildBackendModeRelaunchArgs(currentArgs, forcedMode),
+  });
+  setTimeout(() => {
+    isQuitting = true;
+    app.quit();
+  }, 0);
+}
+
+async function switchToCombinedModeFromNative(): Promise<void> {
+  try {
+    await writeBackendModeSetting(app.getPath("userData"), "combined");
+  } catch (error) {
+    console.warn(`无法保存单进程兼容模式：${getErrorMessage(error)}`);
+  }
+
+  let result = await requestDesktopBackendModeRestart(
+    {},
+    { forcedMode: "combined", allowUnavailableBackend: true },
+  );
+  if (result.state === "confirmation_required") {
+    const confirmation = await dialog.showMessageBox({
+      type: "warning",
+      title: "后台工作正在进行",
+      message: result.safety.message,
+      detail: "确认后将停止当前后台进程，并使用单进程兼容模式重启。",
+      buttons: ["安全重启", "取消"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (confirmation.response !== 0) {
+      return;
+    }
+    result = await requestDesktopBackendModeRestart(
+      { confirmActiveWork: true },
+      { forcedMode: "combined", allowUnavailableBackend: true },
+    );
+  }
+  if (result.state === "blocked") {
+    await dialog.showMessageBox({
+      type: "warning",
+      title: "现在不能重启",
+      message: result.safety.message,
+      buttons: ["知道了"],
+      defaultId: 0,
+      noLink: true,
+    });
+  }
+}
+
+async function offerNativeSplitRecovery(
+  detail: string,
+  quitOnDismiss: boolean,
+): Promise<void> {
+  if (
+    currentBackendMode !== "split"
+    || nativeSplitRecoveryPromptVisible
+    || relaunchRequested
+    || isQuitting
+  ) {
+    if (quitOnDismiss && !relaunchRequested) {
+      dialog.showErrorBox("启动失败", detail);
+      app.quit();
+    }
+    return;
+  }
+
+  nativeSplitRecoveryPromptVisible = true;
+  try {
+    const result = await dialog.showMessageBox({
+      type: "error",
+      title: "API + Worker 测试模式启动失败",
+      message: "可以改用单进程兼容模式重启。",
+      detail,
+      buttons: ["使用兼容模式重启", quitOnDismiss ? "退出" : "留在当前页面"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (result.response === 0) {
+      await switchToCombinedModeFromNative();
+    } else if (quitOnDismiss) {
+      app.quit();
+    }
+  } finally {
+    nativeSplitRecoveryPromptVisible = false;
+  }
+}
+
 function refreshTrayContextMenu(): void {
   tray?.setContextMenu(buildTrayContextMenu());
 }
@@ -169,6 +360,13 @@ function buildTrayContextMenu() {
     { label: "打开窗口", click: showMainWindow },
     { type: "separator" },
     startupMenuItem,
+    {
+      label: "使用单进程兼容模式并重启",
+      visible: currentBackendMode === "split",
+      click: () => {
+        void switchToCombinedModeFromNative();
+      },
+    },
     { type: "separator" },
     { label: "退出", click: quitFromTray },
   ]);
@@ -327,6 +525,7 @@ async function createWindow(): Promise<void> {
 
 async function startDesktopBackend(): Promise<BackendController> {
   const userDataPath = app.getPath("userData");
+  const mode = await ensureCurrentBackendMode();
   await clearAgentRuntimeDescriptor(userDataPath);
   const controller = await startBackend({
     isPackaged: app.isPackaged,
@@ -334,7 +533,7 @@ async function startDesktopBackend(): Promise<BackendController> {
     repoRoot,
     userDataPath,
     appVersion: app.getVersion(),
-    mode: resolveBackendMode(process.env.AUTO_EMAIL_SENDER_BACKEND_MODE),
+    mode,
     onUnexpectedExit: (exit) => {
       void restartBackendAfterUnexpectedExit(exit);
     },
@@ -424,6 +623,9 @@ async function restartBackendAfterUnexpectedExit(exit: BackendExit): Promise<voi
       phase: "error",
       elapsedSeconds: 0,
     });
+    if (currentBackendMode === "split") {
+      void offerNativeSplitRecovery(message, false);
+    }
   } finally {
     restartingBackend = false;
   }
@@ -437,6 +639,7 @@ function publishBackendReady(controller: BackendController): void {
   mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.backendConnection, currentBackendConnection);
   publishBackendStatus(createInitialBackendStatus());
   controller.onStatus((status) => {
+    const previousStatus = currentBackendStatus;
     publishBackendStatus(status);
     if (status.state === "restarting") {
       void removeAgentRuntime(controller);
@@ -446,6 +649,13 @@ function publishBackendReady(controller: BackendController): void {
       void finalizeAgentRuntimeDescriptor(controller).catch((error: unknown) => {
         console.warn(`Unable to refresh Agent runtime descriptor: ${getErrorMessage(error)}`);
       });
+    }
+    if (
+      status.state === "error"
+      && previousStatus.state === "restarting"
+      && controller.mode === "split"
+    ) {
+      void offerNativeSplitRecovery(status.message, false);
     }
   });
   controller.ready
@@ -458,6 +668,9 @@ function publishBackendReady(controller: BackendController): void {
     .catch((error: unknown) => {
       void removeAgentRuntime(controller);
       if (currentBackendStatus.state === "error") {
+        if (controller.mode === "split") {
+          void offerNativeSplitRecovery(currentBackendStatus.message, false);
+        }
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -467,6 +680,9 @@ function publishBackendReady(controller: BackendController): void {
         phase: "error",
         elapsedSeconds: 0,
       });
+      if (controller.mode === "split") {
+        void offerNativeSplitRecovery(message, false);
+      }
     });
 }
 
@@ -555,6 +771,9 @@ export function bootstrapDesktopApplication(): void {
   registerDesktopIpc({
     getVersion: () => app.getVersion(),
     quitApp: quitFromTray,
+    getBackendModeStatus: getDesktopBackendModeStatus,
+    setBackendMode: setDesktopBackendMode,
+    restartForBackendMode: requestDesktopBackendModeRestart,
     getStartupAtLoginStatus: async () => {
       currentStartupAtLoginStatus = await getStartupAtLoginStatus(getStartupInput());
       refreshTrayContextMenu();
@@ -605,8 +824,7 @@ export function bootstrapDesktopApplication(): void {
       });
       startWindowCreationOnce(windowCreationState, createWindow).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        dialog.showErrorBox("启动失败", message);
-        app.quit();
+        void offerNativeSplitRecovery(message, true);
       });
       void synchronizeAgentSupportOnStartup();
     });

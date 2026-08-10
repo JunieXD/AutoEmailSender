@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState, type TransitionEvent } from "react";
 import clsx from "clsx";
-import { ChevronDown, Loader2, Power, Save, Settings } from "lucide-react";
+import {
+  ChevronDown,
+  Loader2,
+  Power,
+  RefreshCw,
+  Save,
+  ServerCog,
+  Settings,
+  TriangleAlert,
+} from "lucide-react";
 
 import { quitDesktopApp } from "@/lib/desktopApi";
 import {
@@ -13,7 +22,12 @@ import {
 import { formatApiDateTime } from "@/lib/dateTime";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import { useNotification } from "@/context/NotificationContext";
-import type { DesktopStartupAtLoginStatus } from "@/types/desktop";
+import type {
+  DesktopBackendMode,
+  DesktopBackendModeRestartResult,
+  DesktopBackendModeStatus,
+  DesktopStartupAtLoginStatus,
+} from "@/types/desktop";
 
 type RuntimeSettingsKey = keyof RuntimeSettingsUpdateDTO;
 type NumberSettingsKey = {
@@ -126,6 +140,14 @@ export function OtherSettingsCard() {
   const [startupLoading, setStartupLoading] = useState(false);
   const [startupSaving, setStartupSaving] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [backendModeStatus, setBackendModeStatus] = useState<DesktopBackendModeStatus | null>(null);
+  const [selectedBackendMode, setSelectedBackendMode] = useState<DesktopBackendMode | null>(null);
+  const [backendModeLoading, setBackendModeLoading] = useState(false);
+  const [backendModeSaving, setBackendModeSaving] = useState(false);
+  const [backendModeRestarting, setBackendModeRestarting] = useState(false);
+  const [backendModeError, setBackendModeError] = useState<string | null>(null);
+  const [backendModeRestartConfirmation, setBackendModeRestartConfirmation] =
+    useState<DesktopBackendModeRestartResult | null>(null);
   const [quittingApp, setQuittingApp] = useState(false);
   const [quitError, setQuitError] = useState<string | null>(null);
 
@@ -178,6 +200,32 @@ export function OtherSettingsCard() {
     }
     void loadStartupStatus();
   }, [loadStartupStatus, open, startupLoading, startupStatus]);
+
+  const loadBackendModeStatus = useCallback(async () => {
+    const api = window.autoEmailSender;
+    if (!api?.getBackendModeStatus || !api.setBackendMode || !api.restartForBackendMode) {
+      return;
+    }
+
+    setBackendModeLoading(true);
+    setBackendModeError(null);
+    try {
+      const status = await api.getBackendModeStatus();
+      setBackendModeStatus(status);
+      setSelectedBackendMode(status.configuredMode ?? status.nextMode);
+    } catch (statusError) {
+      setBackendModeError(getErrorMessage(statusError, "读取后端运行模式失败"));
+    } finally {
+      setBackendModeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open || backendModeLoading || backendModeStatus !== null) {
+      return;
+    }
+    void loadBackendModeStatus();
+  }, [backendModeLoading, backendModeStatus, loadBackendModeStatus, open]);
 
   const toggleOpen = () => {
     setOpen((current) => {
@@ -237,6 +285,84 @@ export function OtherSettingsCard() {
       setStartupError(getErrorMessage(saveError, "保存开机自启动设置失败"));
     } finally {
       setStartupSaving(false);
+    }
+  };
+
+  const handleBackendModeSave = async (restartAfterSave: boolean) => {
+    const api = window.autoEmailSender;
+    if (
+      !selectedBackendMode
+      || !api?.setBackendMode
+      || !api.restartForBackendMode
+    ) {
+      setBackendModeError("当前桌面版不支持切换后端运行模式");
+      return;
+    }
+
+    setBackendModeSaving(true);
+    setBackendModeRestartConfirmation(null);
+    setBackendModeError(null);
+    try {
+      const status = await api.setBackendMode(selectedBackendMode);
+      setBackendModeStatus(status);
+      if (!restartAfterSave) {
+        notifySuccess(
+          status.overrideActive
+            ? "模式选择已保存，当前启动参数仍优先生效"
+            : "运行模式已保存，将在下次启动时生效",
+        );
+        return;
+      }
+      if (status.overrideActive || status.nextMode === status.currentMode) {
+        setBackendModeError(
+          status.overrideActive
+            ? "当前启动参数覆盖了用户设置，本次重启不会切换模式。"
+            : "当前已在所选模式，无需重启。",
+        );
+        return;
+      }
+
+      setBackendModeRestarting(true);
+      const result = await api.restartForBackendMode();
+      handleBackendModeRestartResult(result);
+    } catch (saveError) {
+      setBackendModeRestarting(false);
+      setBackendModeError(getErrorMessage(saveError, "保存并重启桌面应用失败"));
+    } finally {
+      setBackendModeSaving(false);
+    }
+  };
+
+  const handleBackendModeRestartResult = (
+    result: DesktopBackendModeRestartResult,
+  ) => {
+    if (result.state === "restarting") {
+      setBackendModeRestartConfirmation(null);
+      return;
+    }
+    setBackendModeRestarting(false);
+    if (result.state === "confirmation_required") {
+      setBackendModeRestartConfirmation(result);
+      return;
+    }
+    setBackendModeRestartConfirmation(null);
+    setBackendModeError(result.safety.message);
+  };
+
+  const handleConfirmedBackendModeRestart = async () => {
+    const api = window.autoEmailSender;
+    if (!api?.restartForBackendMode) {
+      return;
+    }
+    setBackendModeRestarting(true);
+    setBackendModeRestartConfirmation(null);
+    setBackendModeError(null);
+    try {
+      const result = await api.restartForBackendMode({ confirmActiveWork: true });
+      handleBackendModeRestartResult(result);
+    } catch (restartError) {
+      setBackendModeRestarting(false);
+      setBackendModeError(getErrorMessage(restartError, "重启桌面应用失败"));
     }
   };
 
@@ -384,6 +510,174 @@ export function OtherSettingsCard() {
 
                   <div className="space-y-3 border-t border-stone-200 pt-5">
                     <h3 className="text-base font-semibold text-stone-900">系统设置</h3>
+                    {window.autoEmailSender?.getBackendModeStatus
+                      && window.autoEmailSender.setBackendMode
+                      && window.autoEmailSender.restartForBackendMode ? (
+                      <div className="rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                              <ServerCog className="h-4 w-4" />
+                              后端运行模式
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-stone-500">
+                              模式由桌面应用保存，重启后才会生效。
+                            </div>
+                          </div>
+                          {backendModeLoading ? (
+                            <span className="inline-flex items-center gap-2 text-xs text-stone-500">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              读取中…
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {backendModeStatus && selectedBackendMode ? (
+                          <>
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-xl border border-stone-200 bg-white px-3 py-3 text-xs leading-5 text-stone-600">
+                                <span className="block text-stone-500">当前运行</span>
+                                <span className="mt-1 block font-semibold text-stone-900">
+                                  {backendModeLabel(backendModeStatus.currentMode)}
+                                </span>
+                              </div>
+                              <div className="rounded-xl border border-stone-200 bg-white px-3 py-3 text-xs leading-5 text-stone-600">
+                                <span className="block text-stone-500">下次启动</span>
+                                <span className="mt-1 block font-semibold text-stone-900">
+                                  {backendModeLabel(backendModeStatus.nextMode)}
+                                </span>
+                                <span className="mt-1 block text-stone-500">
+                                  {backendModeSourceLabel(backendModeStatus.source)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div
+                              role="radiogroup"
+                              aria-label="后端运行模式"
+                              className="mt-4 grid gap-3 sm:grid-cols-2"
+                            >
+                              {(["split", "combined"] as const).map((mode) => {
+                                const selected = selectedBackendMode === mode;
+                                return (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => {
+                                      setSelectedBackendMode(mode);
+                                      setBackendModeRestartConfirmation(null);
+                                      setBackendModeError(null);
+                                    }}
+                                    disabled={backendModeSaving || backendModeRestarting}
+                                    className={clsx(
+                                      "rounded-xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
+                                      selected
+                                        ? "border-primary bg-primary/5 ring-2 ring-primary/15"
+                                        : "border-stone-200 bg-white hover:border-stone-300",
+                                    )}
+                                  >
+                                    <span className="block text-sm font-semibold text-stone-900">
+                                      {backendModeLabel(mode)}
+                                    </span>
+                                    <span className="mt-1 block text-xs leading-5 text-stone-500">
+                                      {mode === "split"
+                                        ? "API 与后台任务分进程运行，用于 Beta 稳定性测试。"
+                                        : "API 与后台任务在一个进程运行，用于安全回退。"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {backendModeStatus.overrideActive ? (
+                              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                                当前存在{backendModeStatus.source === "command_line" ? "命令行" : "测试环境"}
+                                模式覆盖。用户选择会被保存，但覆盖移除前不会生效。
+                              </div>
+                            ) : null}
+                            {backendModeStatus.warning ? (
+                              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                                {backendModeStatus.warning}
+                              </div>
+                            ) : null}
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleBackendModeSave(false)}
+                                disabled={backendModeSaving || backendModeRestarting}
+                                className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {backendModeSaving && !backendModeRestarting ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Save className="h-4 w-4" />
+                                )}
+                                保存，稍后重启
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleBackendModeSave(true)}
+                                disabled={
+                                  backendModeSaving
+                                  || backendModeRestarting
+                                  || backendModeStatus.overrideActive
+                                  || selectedBackendMode === backendModeStatus.currentMode
+                                }
+                                className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {backendModeRestarting ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4" />
+                                )}
+                                保存并安全重启
+                              </button>
+                            </div>
+
+                            {backendModeRestartConfirmation?.state === "confirmation_required" ? (
+                              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                <div className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                                  <span>{backendModeRestartConfirmation.safety.message}</span>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleConfirmedBackendModeRestart()}
+                                    disabled={backendModeRestarting}
+                                    className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {backendModeRestarting ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-4 w-4" />
+                                    )}
+                                    继续安全重启
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setBackendModeRestartConfirmation(null)}
+                                    disabled={backendModeRestarting}
+                                    className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    取消
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : null}
+
+                        {backendModeError ? (
+                          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                            {backendModeError}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label className="flex items-start gap-3 rounded-2xl border border-stone-200 bg-[#fcfbf8] px-4 py-4">
                       <SelectionToggleButton
                         label="开机自启动"
@@ -528,4 +822,20 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+function backendModeLabel(mode: DesktopBackendMode): string {
+  return mode === "split"
+    ? "API + Worker 测试模式"
+    : "单进程兼容模式";
+}
+
+function backendModeSourceLabel(source: DesktopBackendModeStatus["source"]): string {
+  const labels: Record<DesktopBackendModeStatus["source"], string> = {
+    command_line: "由命令行安全参数决定",
+    environment: "由开发或 QA 环境变量决定",
+    settings: "由桌面用户设置决定",
+    channel_default: "由当前发布通道默认值决定",
+  };
+  return labels[source];
 }

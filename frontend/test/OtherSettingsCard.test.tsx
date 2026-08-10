@@ -219,6 +219,7 @@ describe("OtherSettingsCard", () => {
     expect(await screen.findByText("开机自启动")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /开机自启动/ })).toBeDisabled();
     expect(screen.getByText("仅安装后的 Windows 桌面版支持开机自启动。")).toBeInTheDocument();
+    expect(screen.queryByText("后端运行模式")).not.toBeInTheDocument();
   });
 
   it("keeps one global save action available in a sticky footer", async () => {
@@ -280,7 +281,141 @@ describe("OtherSettingsCard", () => {
     });
     await waitFor(() => expect(startupCheckbox).not.toBeChecked());
   });
+
+  it("shows current and next backend modes and can save without restarting", async () => {
+    const getBackendModeStatus = vi.fn(async () => backendModeStatus());
+    const setBackendMode = vi.fn(async () => backendModeStatus({
+      configuredMode: "split",
+      nextMode: "split",
+      restartRequired: true,
+      source: "settings",
+    }));
+    const restartForBackendMode = vi.fn();
+    window.autoEmailSender = buildDesktopApi({
+      getBackendModeStatus,
+      setBackendMode,
+      restartForBackendMode,
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+
+    expect(await screen.findByText("后端运行模式")).toBeInTheDocument();
+    expect(screen.getAllByText("单进程兼容模式").length).toBeGreaterThan(0);
+    const splitMode = screen.getByRole("radio", { name: /API \+ Worker 测试模式/ });
+    fireEvent.click(splitMode);
+    fireEvent.click(screen.getByRole("button", { name: "保存，稍后重启" }));
+
+    await waitFor(() => expect(setBackendMode).toHaveBeenCalledWith("split"));
+    expect(restartForBackendMode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("notification-title")).toHaveTextContent(
+      "运行模式已保存",
+    );
+  });
+
+  it("requires a second confirmation for recoverable work before restarting", async () => {
+    const restartForBackendMode = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: "confirmation_required",
+        safety: restartSafety({
+          confirmationRequired: true,
+          activeWorkCount: 3,
+          message: "当前有 3 项后台工作正在进行。",
+        }),
+      })
+      .mockResolvedValueOnce({
+        state: "restarting",
+        safety: restartSafety(),
+      });
+    window.autoEmailSender = buildDesktopApi({
+      getBackendModeStatus: vi.fn(async () => backendModeStatus()),
+      setBackendMode: vi.fn(async () => backendModeStatus({
+        configuredMode: "split",
+        nextMode: "split",
+        restartRequired: true,
+        source: "settings",
+      })),
+      restartForBackendMode,
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: /API \+ Worker 测试模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并安全重启" }));
+
+    expect(await screen.findByText("当前有 3 项后台工作正在进行。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续安全重启" }));
+
+    await waitFor(() => {
+      expect(restartForBackendMode).toHaveBeenNthCalledWith(1);
+      expect(restartForBackendMode).toHaveBeenNthCalledWith(2, {
+        confirmActiveWork: true,
+      });
+    });
+  });
+
+  it("blocks restart during the email send and commit window without an override", async () => {
+    const restartForBackendMode = vi.fn(async () => ({
+      state: "blocked" as const,
+      safety: restartSafety({
+        safeToRestart: false,
+        sendingCount: 1,
+        activeWorkCount: 1,
+        message: "有 1 封邮件正处于发送与本地提交窗口。",
+      }),
+    }));
+    window.autoEmailSender = buildDesktopApi({
+      getBackendModeStatus: vi.fn(async () => backendModeStatus()),
+      setBackendMode: vi.fn(async () => backendModeStatus({
+        configuredMode: "split",
+        nextMode: "split",
+        restartRequired: true,
+        source: "settings",
+      })),
+      restartForBackendMode,
+    });
+
+    renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: /其他设置/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: /API \+ Worker 测试模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并安全重启" }));
+
+    expect(await screen.findByText(/有 1 封邮件正处于发送/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "继续安全重启" })).not.toBeInTheDocument();
+    expect(restartForBackendMode).toHaveBeenCalledOnce();
+  });
 });
+
+function backendModeStatus(overrides = {}) {
+  return {
+    currentMode: "combined" as const,
+    nextMode: "combined" as const,
+    configuredMode: "combined" as const,
+    defaultMode: "combined" as const,
+    source: "settings" as const,
+    restartRequired: false,
+    overrideActive: false,
+    ...overrides,
+  };
+}
+
+function restartSafety(overrides = {}) {
+  return {
+    safeToRestart: true,
+    confirmationRequired: false,
+    activeWorkCount: 0,
+    sendingCount: 0,
+    workCounts: {
+      draftGeneration: 0,
+      matchAnalysis: 0,
+      crawler: 0,
+      imapSync: 0,
+    },
+    message: "可以安全重启。",
+    ...overrides,
+  };
+}
 
 function buildDesktopApi(overrides: Partial<NonNullable<typeof window.autoEmailSender>> = {}) {
   return {

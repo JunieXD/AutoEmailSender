@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（B0 已完成，B1 进行中）
+- 状态：执行中（B0～B1 已完成，B2 进行中）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
 - 前置验收证据：[`desktop_api_worker_goal_acceptance.md`](../development/desktop_api_worker_goal_acceptance.md)
@@ -198,7 +198,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | 阶段 | 范围 | 完成条件 |
 | --- | --- | --- |
 | B0 | 文档、当前工作保护、分支与 master 集成 | **已完成**：前置快照 `e062f36`；master 合并 `c51df44`；合并修复 `4fe1bdf` |
-| B1 | Electron 模式设置、UI、安全重启与页面外回退 | AC-MODE 全部通过；combined/split 同库回归通过 |
+| B1 | Electron 模式设置、UI、安全重启与页面外回退 | **已完成**：AC-MODE 全部通过；combined/split 同库回归和 macOS 隔离真机故障回退通过 |
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | 完整全仓连续 2 次通过；split 集成连续 20 次通过 |

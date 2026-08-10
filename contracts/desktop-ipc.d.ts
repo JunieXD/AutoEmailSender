@@ -50,6 +50,48 @@ export type DesktopBackendConnection = {
   accessToken: string;
 };
 
+export type DesktopBackendMode = "combined" | "split";
+
+export type DesktopBackendModeSource =
+  | "command_line"
+  | "environment"
+  | "settings"
+  | "channel_default";
+
+export type DesktopBackendModeStatus = {
+  currentMode: DesktopBackendMode;
+  nextMode: DesktopBackendMode;
+  configuredMode: DesktopBackendMode | null;
+  defaultMode: DesktopBackendMode;
+  source: DesktopBackendModeSource;
+  restartRequired: boolean;
+  overrideActive: boolean;
+  warning?: string;
+};
+
+export type DesktopRestartSafety = {
+  safeToRestart: boolean;
+  confirmationRequired: boolean;
+  activeWorkCount: number;
+  sendingCount: number;
+  workCounts: {
+    draftGeneration: number;
+    matchAnalysis: number;
+    crawler: number;
+    imapSync: number;
+  };
+  message: string;
+};
+
+export type DesktopBackendModeRestartOptions = {
+  confirmActiveWork?: boolean;
+};
+
+export type DesktopBackendModeRestartResult = {
+  state: "blocked" | "confirmation_required" | "restarting";
+  safety: DesktopRestartSafety;
+};
+
 export type DesktopBackendDatabaseError = {
   code: "DATABASE_REQUIRES_NEWER_APP";
   message: string;
@@ -170,6 +212,11 @@ export type DesktopBridge = {
   backendBaseUrl?: string | null;
   getBackendBaseUrl?: () => string | undefined;
   getBackendAccessToken?: () => string | null | undefined;
+  getBackendModeStatus?: () => Promise<DesktopBackendModeStatus>;
+  setBackendMode?: (mode: DesktopBackendMode) => Promise<DesktopBackendModeStatus>;
+  restartForBackendMode?: (
+    options?: DesktopBackendModeRestartOptions,
+  ) => Promise<DesktopBackendModeRestartResult>;
   getAgentSupportStatus?: () => Promise<DesktopAgentSupportStatus>;
   enableAgentSupport?: (options?: DesktopAgentSupportEnableOptions) => Promise<DesktopAgentSupportStatus>;
   repairAgentSupport?: () => Promise<DesktopAgentSupportStatus>;

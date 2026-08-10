@@ -3,6 +3,10 @@ import type {
   DesktopAgentSupportEnableOptions,
   DesktopAgentSupportStatus,
   DesktopBackendConnection,
+  DesktopBackendMode,
+  DesktopBackendModeRestartOptions,
+  DesktopBackendModeRestartResult,
+  DesktopBackendModeStatus,
   DesktopBackendStatus,
   DesktopBridge,
   DesktopCommunityShareSaveResult,
@@ -67,6 +71,15 @@ export function installDesktopBridge(): void {
     backendBaseUrl,
     getBackendBaseUrl: () => backendBaseUrl ?? undefined,
     getBackendAccessToken: () => backendConnection?.accessToken ?? null,
+    getBackendModeStatus: () =>
+      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.backendModeGetStatus) as Promise<DesktopBackendModeStatus>,
+    setBackendMode: (mode: DesktopBackendMode) =>
+      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.backendModeSet, mode) as Promise<DesktopBackendModeStatus>,
+    restartForBackendMode: (options?: DesktopBackendModeRestartOptions) =>
+      ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.backendModeRestart,
+        options,
+      ) as Promise<DesktopBackendModeRestartResult>,
     getAgentSupportStatus: () =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.agentSupportGetStatus) as Promise<DesktopAgentSupportStatus>,
     enableAgentSupport: (options?: DesktopAgentSupportEnableOptions) =>
