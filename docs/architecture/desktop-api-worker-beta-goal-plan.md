@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（B0）
+- 状态：执行中（B0 已完成，B1 进行中）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
 - 前置验收证据：[`desktop_api_worker_goal_acceptance.md`](../development/desktop_api_worker_goal_acceptance.md)
@@ -25,12 +25,16 @@
 dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定版本。
 ```
 
-### 1.2 当前起点
+### 1.2 B0 起点与当前基线
 
 - 原双进程 Goal 已取消，但 G0～G5 的实现与证据保留；G6 packaged QA 自动化已经完成开发验证。
 - 当前桌面仍默认 `combined`，通过 `AUTO_EMAIL_SENDER_BACKEND_MODE=split` 可进行开发/QA 切换。
-- 当前工作区位于 detached HEAD `6e06be9bfeae11b78eae78096782d84b3176c931`，包含大量未提交的
-  本 Goal 前置改动，并比本地 `master` 落后 5 个提交。
+- B0 开始时工作区位于 detached HEAD
+  `6e06be9bfeae11b78eae78096782d84b3176c931`，包含大量未提交的本 Goal 前置改动，
+  并比当时的 `master` 落后 5 个提交。
+- B0 已将前置改动保护到本地分支 `beta/desktop-api-worker`，并将
+  `origin/master@4b54b5897d796bdb496432d1e3d41b7a3c32f2d3` 语义化合入。该分支名只是
+  本次实现记录，不是通用 prerelease 发布规则。
 - 当前版本和最新稳定版均为 `2.5.4`；本计划不预先替所有者决定首个 Beta 版本号。
 - 尚无外部候选 workflow 的 DMG、NSIS、`release-candidate.json` 或 run ID。
 
@@ -193,7 +197,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 
 | 阶段 | 范围 | 完成条件 |
 | --- | --- | --- |
-| B0 | 文档、当前工作保护、分支与 master 集成 | 当前改动进入具名本地分支；合入最新 master；冲突逐项验证 |
+| B0 | 文档、当前工作保护、分支与 master 集成 | **已完成**：前置快照 `e062f36`；master 合并 `c51df44`；合并修复 `4fe1bdf` |
 | B1 | Electron 模式设置、UI、安全重启与页面外回退 | AC-MODE 全部通过；combined/split 同库回归通过 |
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | AC-REL 全部通过；未触及稳定 feed |
