@@ -404,18 +404,6 @@ async def _build_mentor_section_from_database(
 
     university_label = _sql_professor_label(Professor.university, "学校未填写")
     school_label = _sql_professor_label(Professor.school, "学院未填写")
-    distribution_rows = (
-        await session.execute(
-            select(
-                university_label.label("university"),
-                func.count(Professor.id).label("count"),
-            )
-            .where(Professor.archived_at.is_(None))
-            .group_by(university_label)
-            .order_by(func.count(Professor.id).desc(), university_label.asc())
-            .limit(DASHBOARD_DISTRIBUTION_LIMIT),
-        )
-    ).all()
     school_filter_rows = (
         await session.execute(
             select(
@@ -551,10 +539,10 @@ async def _build_mentor_section_from_database(
         ],
         school_distribution=[
             DashboardSchoolDistributionRead(
-                school_name=str(row.university),
-                count=int(row.count),
+                school_name=item.university,
+                count=item.count,
             )
-            for row in distribution_rows
+            for item in school_filters[:DASHBOARD_DISTRIBUTION_LIMIT]
         ],
         school_filters=school_filters,
         active_filter=DashboardMentorFilterRead(
