@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 验收记录
 
-- 状态：执行中（Goal active；B0～B2 已完成，下一阶段为 B3）
+- 状态：执行中（Goal active；B0～B3 已完成，当前阶段为 B4）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
 - 计划：[`desktop-api-worker-beta-goal-plan.md`](../architecture/desktop-api-worker-beta-goal-plan.md)
 - 前置证据：[`desktop_api_worker_goal_acceptance.md`](./desktop_api_worker_goal_acceptance.md)
@@ -31,8 +31,8 @@
 | B0：分支与 master 集成 | 已完成 | `e062f36`、`c51df44`、`4fe1bdf`；聚焦 291/291；修复后全仓 0 failures |
 | B1：模式设置与安全重启 | 已完成 | Desktop 208/208；Frontend 956/956；后端聚焦 27/27；20 次切换；macOS 隔离 UI、初始启动失败及 group-restart 原生回退实测 |
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
-| B3：通用 prerelease 发布体系 | 待执行 | — |
-| B4：完整与重复回归 | 待执行 | — |
+| B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
+| B4：完整与重复回归 | 执行中 | 待刷新最新 `origin/master` 后执行连续 2 次全仓与连续 20 次 split 集成 |
 | B5：Mac/Windows 内部 Beta | 待执行 | — |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
@@ -43,12 +43,12 @@
 
 | AC 组 | 当前状态 | 关闭要求 |
 | --- | --- | --- |
-| AC-BRANCH | 部分通过 | AC-BRANCH-01/02 已通过；AC-BRANCH-03 随 B3 的通用 source branch/SHA 合同关闭 |
+| AC-BRANCH | 部分通过 | AC-BRANCH-01/03 已通过；AC-BRANCH-02 在 B0 对当时 master 通过，B4 仍须对届时最新 `origin/master` 刷新证据 |
 | AC-MODE | 已通过 | 原子设置、UI 当前/下次状态、20 次同库切换、发送窗口硬阻断、初始与运行中 split 故障原生回退 |
 | AC-OBS | 已通过 | Electron/API/Worker/combined 有界记录、六类工作摘要、API 宕机 partial ZIP、三类页面外导出入口和单包/多包 analyzer 均有自动化证据；B5 将用 exact package 重复故障注入 |
 | AC-PRIV | 已通过 | allowlist、固定自由文本标签、最终 ZIP canary 零命中、恶意 ZIP 拒绝和无远程上传源码合同均通过 |
-| AC-REL | 未通过 | Skill、脚本、workflow、候选 manifest 与恢复合同 |
-| AC-ISO | 未通过 | Prerelease 非 Latest，稳定 feed/客户端完全隔离 |
+| AC-REL | 已通过 | Skill、POSIX/PowerShell、workflow、候选 manifest、immutable promote、supersede/withdraw 与稳定入口隔离合同均通过 |
+| AC-ISO | 未通过 | 自动合同已实现；仍须用真实公开 Prerelease 证明非 Latest、稳定 feed 摘要不变及两平台 v2.5.4 客户端不可见 |
 | AC-BETA-QA | 未通过 | 双平台 exact-package lifecycle、2h normal、1h chaos |
 
 ## 首次失败与修复记录
@@ -317,3 +317,104 @@ rtk uv lock --check
 
 B2 完成。这里关闭 AC-OBS 和 AC-PRIV 的实现与自动化门禁；B5 仍须在两平台 exact package 上
 重复页面外导出、强杀、API 不可用、磁盘/权限故障和最终 ZIP canary，不能用本节代替真实候选证据。
+
+### B3：通用 prerelease 双状态机与 Windows 收口
+
+#### 通用发布合同
+
+- `17d5b41` 起将 Release Skill、稳定入口和新增 prerelease 入口统一成两个相互隔离的状态机。
+  prerelease 不绑定 `beta/desktop-api-worker` 或任何固定业务分支，而是要求调用者显式给出
+  `source_branch`、40 位 `release_sha`、`version` 与匹配的 `alpha`/`beta`/`rc` channel。
+- Certify 只从远端来源分支的 exact SHA 构建一次 Windows/macOS 候选和
+  `prerelease-candidate.json`，不会创建 tag 或 Release；Publish 只能按候选 run ID 提升同一批
+  字节，不得重建或替换公开资产。修复必须使用更高的同 core prerelease 版本。
+- manifest 绑定来源分支、SHA、run、channel、默认 `split`、诊断 schema、工具链和两平台资产
+  SHA-256。打包资源另嵌入 exact prerelease build identity，packaged QA 再反向核对 manifest、
+  run ID、版本和资产摘要。
+- 公开 workflow 只允许 `prerelease=true`、`make_latest=false`，拒绝 `latest.yml`、`appcast.xml`
+  等稳定更新资产；公开前后捕获并比较稳定 Latest 与更新 metadata 摘要。稳定 tag 发现明确排除
+  所有 prerelease tag，稳定发布入口仍只允许 `master` 和 `x.y.z`。
+- Release Skill 已加入通用 Prepare、Certify、Publish Prerelease、Verify Isolation、Observe、
+  Supersede/Withdraw 流程和独立人工批准门；文档明确本地诊断不会自动上传。分支命名只作为每次
+  调用的显式输入，不成为通用规则。
+- POSIX、PowerShell、`.github/workflows/release.yml`、可复用 `prerelease.yml`、候选/隔离工具、
+  Windows VM runner 和运维文档共同执行同一合同，不存在只写在说明中的软约束。
+
+#### Windows 首次失败与修复
+
+Windows 专项始终使用专用 NTFS checkout、隔离数据和 loopback fake 服务，未修改 VM 代理设置。
+所有失败均保留首次现场，先精确重放再决定是否修改；没有通过放宽性能预算或跳过测试收口。
+
+1. 早期 quick QA 暴露 Windows 专属生命周期和测试夹具差异。`ed4a192`～`2a9820a` 依次修复
+   QA cache 输入、CLI 原生 install binding、退出 PID 保留、角色优雅停止、Worker break shutdown、
+   CRLF/进程日志、runtime status 瞬时锁、Batch recovery read、Proactor socket pair、loopback
+   proxy bypass、合法 PID 复用与 fault release 上界。其中生产相关的退出/锁行为有独立回归，
+   平台夹具修复没有改变产品语义。
+2. `697e0b4` 为 Windows `.release` 删除和 `.reached→.completed` 原子替换的瞬时
+   `PermissionError` 加入仅 Windows 生效的有界重试，总等待 0.63 秒；持续失败仍抛出，五处
+   临时放宽的 completion timeout 恢复为 5 秒。
+3. 第一轮完整 Windows backend 为 1931 tests，1 failure + 2 errors + 7 skipped，
+   1693.464 秒。三项分别是迁移测试未关闭 SQLite connection、packaged workload 过早认定
+   IMAP claim 已释放，以及 10 万教授仪表盘 3.557 秒超过 2.5 秒门槛。`89b8d52` 收口句柄和
+   IMAP 终态竞态，`112a2ea` 删除一次重复学校聚合；三项原测试精确重放 3/3，61.728 秒。
+4. Crawler/Batch/Matching 三轮真实进程矩阵随后发现 Matching 在“失败、通过、失败”中可能让
+   detached 计算对应的 `MatchAnalysisRun` 短暂保留 `running`。`27a2dac` 在取消宽限耗尽后，
+   将底层 run 与 item 在同一事务收口；确定性单测和 Windows API cancel 连续 20 次通过。
+5. 第二轮完整 Windows backend 为 1933 tests，2 failures + 1 error + 7 skipped，
+   1865.932 秒。失败为仪表盘 3.2169 秒、全选 ID 1.6099 秒，以及 SQLite 锁竞争压力下一个
+   loopback 请求超过 5 秒。`984ba1c` 复用导师页已有学校汇总并在 SQLite 下把有序 ID 聚合为
+   JSON 一次解析；`fd7ecb5` 改用现有 trimmed hierarchy 表达式索引，学校汇总在 Windows
+   profile 中由 0.7917 秒降至 0.0261 秒，完整仪表盘为 0.9941 秒。
+6. 精确 `fd7ecb5` 上连续 5 轮冷启动规模测试全部通过，每轮重新迁移、写入 10 万教授；独立
+   API + Worker SQLite 锁竞争连续 10 轮全部通过。由于锁场景没有复现，且最终完整组合负载也
+   通过，没有增加生产锁、没有扩大 5 秒请求超时，也没有降低 1.5/2.5 秒性能预算。
+
+#### B3 最终证据
+
+本机复核：
+
+```bash
+rtk node --test \
+  scripts/release/check-release-version.test.mjs \
+  scripts/release/release-preflight.test.mjs \
+  scripts/release/prerelease-contract.test.mjs \
+  scripts/release/prerelease-notes.test.mjs \
+  scripts/release/prerelease-preflight.test.mjs \
+  scripts/release/prerelease-build-identity.test.mjs \
+  scripts/release/prerelease-candidate.test.mjs \
+  scripts/release/prerelease-isolation.test.mjs \
+  scripts/release/prerelease-workflow.test.mjs \
+  scripts/quality/script-topology.test.mjs \
+  scripts/quality/document-topology.test.mjs
+rtk bash scripts/release/prepare-prerelease.test.sh
+rtk bash scripts/release/prerelease-script.test.sh
+```
+
+- Node 合同 34/34 通过；两套 POSIX 入口通过。
+- 本机未安装 `pwsh`，因此本机 PowerShell 命令无法启动；这不计为产品失败。当前 Windows
+  checkout 上直接重跑 `prerelease-script.test.ps1` 通过，quick QA 的完整
+  `release-orchestration-contracts` 输入指纹也命中此前同输入成功证据。
+
+Windows 最终命令：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
+```
+
+精确提交：`fd7ecb5c4dc6895c2db9c9f1f64a748f409cc7f9`。
+
+| 检查 | 结果 |
+| --- | --- |
+| Backend full | 1933/1933，7 skipped，1886.357s |
+| Backend frozen build | API / Worker / combined / document self-check 全部通过，157.7s |
+| Desktop typecheck | 通过 |
+| Desktop full | 35 files / 237 tests 通过，3 files / 11 tests skipped，46.03s |
+| Desktop clean install + tests stage | 通过，125.1s |
+| Windows quick QA | 退出成功；精确 SHA 一致 |
+
+quick QA 明确跳过 VC++ installer preparation、NSIS 和安装后 packaged lifecycle，因此不是 B5
+或公开发布的正式候选证据。B3 只关闭 AC-BRANCH-03 与 AC-REL；AC-ISO 仍等待真实 Prerelease
+和稳定客户端隔离验证，B5 仍等待同一 exact package 的双平台覆盖升级与长稳。
+
+B3 完成。当前没有 push、tag、workflow dispatch、GitHub Release、稳定 feed 修改或合回
+`master`；B4 从刷新最新 `origin/master`、连续两次全仓和连续 20 次 split 集成开始。
