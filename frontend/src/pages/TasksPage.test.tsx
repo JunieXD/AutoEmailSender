@@ -42,6 +42,10 @@ const apiMocks = vi.hoisted(() => ({
   restoreBatchTask: vi.fn(),
   getBatchTaskItemThread: vi.fn(),
   regenerateBatchTaskItemDraft: vi.fn(),
+  listOutreachTemplates: vi.fn(),
+  getOutreachTemplate: vi.fn(),
+  updateTaskOutreachConfig: vi.fn(),
+  rewriteDraft: vi.fn(),
   approveBatchTaskItemDraft: vi.fn(),
   approveAllBatchTaskDrafts: vi.fn(),
   approveAndSendBatchTaskItemDraft: vi.fn(),
@@ -160,6 +164,11 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   retryBatchTaskItemDraft: apiMocks.retryBatchTaskItemDraft,
 }));
 
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: apiMocks.listOutreachTemplates,
+  getOutreachTemplate: apiMocks.getOutreachTemplate,
+}));
+
 vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlJobs: apiMocks.listCrawlJobs,
   getCrawlJob: apiMocks.getCrawlJob,
@@ -218,6 +227,8 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
   regenerateDraft: apiMocks.regenerateDraft,
   approveDraft: apiMocks.approveDraft,
   approveAndSend: apiMocks.approveAndSend,
+  updateTaskOutreachConfig: apiMocks.updateTaskOutreachConfig,
+  rewriteDraft: apiMocks.rewriteDraft,
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -904,6 +915,7 @@ beforeEach(() => {
   selectionMock.selectedLlmProfileId = 2;
   apiMocks.listBatchTasks.mockResolvedValue([]);
   apiMocks.listBatchTaskItems.mockResolvedValue([]);
+  apiMocks.listOutreachTemplates.mockResolvedValue([]);
   apiMocks.listCrawlJobs.mockResolvedValue([]);
   apiMocks.getCrawlJob.mockResolvedValue(buildCrawlJob());
   apiMocks.getCrawlJobEvents.mockResolvedValue([]);
@@ -2073,6 +2085,165 @@ describe("TasksPage batch draft review", () => {
     expect(
       within(professorCard).getByRole("link", { name: "https://example.edu/mentor" }),
     ).toHaveAttribute("href", "https://example.edu/mentor");
+  });
+
+  it("applies a template over the review editor before AI rewriting", async () => {
+    const task = buildBatchTask({
+      name: "审核时恢复模板任务",
+      review_required_count: 1,
+      approved_count: 0,
+    });
+    const item = buildBatchItem({
+      id: 81,
+      status: "review_required",
+      next_action: "review_draft",
+      draft_generation_source: "llm",
+    });
+    const template = {
+      id: 88,
+      name: "博士申请恢复模板",
+      recommended_generation_mode: "template" as const,
+      subject: "申请加入 {{ professor_name }} 老师课题组",
+      body_text: "{{ professor_name }} 老师您好，我想申请加入您的课题组。",
+      body_html: "<p>{{ professor_name }} 老师您好，我想申请加入您的课题组。</p>",
+      is_ready: true,
+      is_default: true,
+      archived_at: null,
+      created_at: "2026-05-08T00:00:00",
+      updated_at: "2026-05-08T00:00:00",
+    };
+    const initialThread = buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: item.id,
+        batch_task_id: task.id,
+      },
+    });
+    const appliedThread = buildWorkspaceThread({
+      current_task: {
+        ...initialThread.current_task,
+        status: "matched",
+        outreach_template_id: template.id,
+        outreach_generation_mode: template.recommended_generation_mode,
+        outreach_template_subject: template.subject,
+        outreach_template_body_text: template.body_text,
+        outreach_template_body_html: template.body_html,
+        rendered_template_subject: "申请加入模板直通导师老师课题组",
+        rendered_template_body_text:
+          "模板直通导师老师您好，我想申请加入您的课题组。",
+        rendered_template_body_html:
+          "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+        generated_subject: null,
+        generated_content_text: null,
+        generated_content_html: null,
+        draft_generation_source: null,
+        draft: {
+          subject: "申请加入模板直通导师老师课题组",
+          body_text: "模板直通导师老师您好，我想申请加入您的课题组。",
+          body_html:
+            "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+          source: "template",
+          sendable: true,
+          editable: true,
+        },
+      },
+    });
+    const rewrittenThread = buildWorkspaceThread({
+      current_task: {
+        ...appliedThread.current_task,
+        status: "review_required",
+        generated_subject: "AI 改写后的申请主题",
+        generated_content_text: "AI 改写后的申请正文",
+        generated_content_html: "<p>AI 改写后的申请正文</p>",
+        draft_generation_source: "llm",
+        draft: {
+          subject: "AI 改写后的申请主题",
+          body_text: "AI 改写后的申请正文",
+          body_html: "<p>AI 改写后的申请正文</p>",
+          source: "ai_rewrite",
+          sendable: true,
+          editable: true,
+        },
+      },
+    });
+
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(initialThread);
+    apiMocks.listOutreachTemplates.mockResolvedValue([template]);
+    apiMocks.getOutreachTemplate.mockResolvedValue(template);
+    apiMocks.updateTaskOutreachConfig.mockResolvedValue(appliedThread);
+    apiMocks.rewriteDraft.mockResolvedValue(rewrittenThread);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+
+    fireEvent.change(await screen.findByLabelText("邮件主题"), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText("邮件正文"), {
+      target: { value: "" },
+    });
+
+    const templateSelector = await screen.findByRole("button", {
+      name: "选择模板重新套用",
+    });
+    await waitFor(() => expect(templateSelector).toBeEnabled());
+    fireEvent.click(templateSelector);
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: "博士申请恢复模板 · 全局默认",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.updateTaskOutreachConfig).toHaveBeenCalledWith(item.id, {
+        outreach_generation_mode: "template",
+        outreach_template_id: template.id,
+        outreach_template_subject: template.subject,
+        outreach_template_body_text: template.body_text,
+        outreach_template_body_html: template.body_html,
+      });
+    });
+    expect(confirmMock).toHaveBeenCalledWith({
+      title: "用模板替换当前草稿？",
+      description:
+        "将用“博士申请恢复模板”的最新内容替换当前主题和正文，现有草稿不会保留。",
+      confirmLabel: "套用并替换",
+      cancelLabel: "取消",
+      tone: "danger",
+    });
+    expect(screen.getByLabelText("邮件主题")).toHaveValue(
+      "申请加入模板直通导师老师课题组",
+    );
+    expect(screen.getByLabelText("邮件正文")).toHaveValue(
+      "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+    );
+    expect(screen.getByText("当前草稿：来自模板")).toBeInTheDocument();
+
+    confirmMock.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
+    await waitFor(() => {
+      expect(apiMocks.rewriteDraft).toHaveBeenCalledWith(item.id, {
+        subject: "申请加入模板直通导师老师课题组",
+        body_text: "模板直通导师老师您好，我想申请加入您的课题组。",
+        body_html:
+          "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+        selected_material_ids: [7],
+        llm_profile_id: 2,
+      });
+    });
+    expect(apiMocks.regenerateBatchTaskItemDraft).not.toHaveBeenCalled();
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "确认使用 AI 改写？" }),
+    );
   });
 
   it("reviews template fallback drafts and blocks AI rewrite without research direction", async () => {

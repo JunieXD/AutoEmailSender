@@ -46,6 +46,11 @@ vi.mock("@/lib/api/batchTasksApi", () => ({
   stopBatchTask: vi.fn(),
 }));
 
+vi.mock("@/lib/api/outreachTemplates", () => ({
+  listOutreachTemplates: vi.fn().mockResolvedValue([]),
+  getOutreachTemplate: vi.fn(),
+}));
+
 vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
   listMatchAnalysisJobItems: vi.fn(),
   listMatchAnalysisJobs: vi.fn(),

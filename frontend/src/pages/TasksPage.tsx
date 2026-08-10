@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Clock3,
   FileSearch,
+  FileText,
   Loader2,
   Mail,
   Pause,
@@ -68,6 +69,14 @@ import {
   resumeBatchTask,
   stopBatchTask,
 } from "@/lib/api/batchTasksApi";
+import {
+  rewriteDraft,
+  updateTaskOutreachConfig,
+} from "@/lib/api/emailTasksApi";
+import {
+  getOutreachTemplate,
+  listOutreachTemplates,
+} from "@/lib/api/outreachTemplates";
 import {
   writeBatchResendPrefillContext,
   writeSelectedProfessorIdsForBatchTask,
@@ -178,6 +187,7 @@ import {
   type MatchAnalysisJobItemsPageDTO,
   type MatchAnalysisJobItemStatus,
   type MatchAnalysisJobStatus,
+  type OutreachTemplateDTO,
   type ProfessorInformationEnrichmentItemDTO,
   type ProfessorInformationEnrichmentItemsPageDTO,
   type ProfessorInformationEnrichmentItemStatus,
@@ -192,7 +202,7 @@ import {
 
 type TasksTab = "batch" | "crawl" | "match" | "enrichment";
 type TaskListViews = Record<TasksTab, TaskListView>;
-type BatchReviewItemActionType = "regenerate" | "delete" | "submit";
+type BatchReviewItemActionType = "template" | "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
 type BatchSendItemAction = {
   itemId: number;
@@ -939,6 +949,17 @@ const formatDuration = (seconds: number) => {
 
 type RichEmailValue = { html: string; text: string };
 
+const BATCH_REVIEW_DRAFT_SOURCE_LABELS: Record<
+  WorkspaceThreadDTO["current_task"]["draft"]["source"],
+  string
+> = {
+  saved: "已保存草稿",
+  ai_rewrite: "AI 改写结果",
+  template: "来自模板",
+  manual_empty: "空草稿",
+  rewrite_source: "改写前草稿",
+};
+
 const getLatestDraftMessage = (thread: WorkspaceThreadDTO) => {
   for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
     if (thread.messages[index].direction === "draft") {
@@ -963,18 +984,25 @@ const getBatchReviewDraft = (thread: WorkspaceThreadDTO) => {
   const subject =
     task.approved_subject ??
     task.generated_subject ??
+    task.draft?.subject ??
     latestDraft?.subject ??
+    task.rendered_template_subject ??
+    task.outreach_template_subject ??
     "";
   const html =
     task.approved_body_html ??
     task.generated_content_html ??
+    task.draft?.body_html ??
     latestDraft?.content_html ??
+    task.rendered_template_body_html ??
     task.outreach_template_body_html ??
     "";
   const text = deriveBatchReviewText(
     task.approved_body_text ??
       task.generated_content_text ??
+      task.draft?.body_text ??
       latestDraft?.content ??
+      task.rendered_template_body_text ??
       task.outreach_template_body_text,
     html,
   );
@@ -1049,6 +1077,13 @@ export const TasksPage = () => {
   const [batchReviewSubject, setBatchReviewSubject] = useState("");
   const [batchReviewContentText, setBatchReviewContentText] = useState("");
   const [batchReviewContentHtml, setBatchReviewContentHtml] = useState("");
+  const [batchReviewOutreachTemplates, setBatchReviewOutreachTemplates] = useState<
+    OutreachTemplateDTO[]
+  >([]);
+  const [batchReviewOutreachTemplatesLoaded, setBatchReviewOutreachTemplatesLoaded] =
+    useState(false);
+  const [loadingBatchReviewOutreachTemplates, setLoadingBatchReviewOutreachTemplates] =
+    useState(false);
   const [batchReviewSelectedMaterialIds, setBatchReviewSelectedMaterialIds] =
     useState<number[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2515,6 +2550,44 @@ export const TasksPage = () => {
   }, [activeTab, loadTasks, taskCenterSection]);
 
   useEffect(() => {
+    if (batchReviewItemId === null || batchReviewOutreachTemplatesLoaded) {
+      return undefined;
+    }
+
+    let ignore = false;
+    const loadTemplates = async () => {
+      setLoadingBatchReviewOutreachTemplates(true);
+      try {
+        const templates = await listOutreachTemplates(true);
+        if (!ignore) {
+          setBatchReviewOutreachTemplates(templates);
+          setBatchReviewOutreachTemplatesLoaded(true);
+        }
+      } catch (error) {
+        if (!ignore) {
+          notifyError(
+            "加载发信模板失败",
+            error instanceof Error ? error.message : "加载发信模板失败",
+          );
+        }
+      } finally {
+        if (!ignore) {
+          setLoadingBatchReviewOutreachTemplates(false);
+        }
+      }
+    };
+
+    void loadTemplates();
+    return () => {
+      ignore = true;
+    };
+  }, [
+    batchReviewItemId,
+    batchReviewOutreachTemplatesLoaded,
+    notifyError,
+  ]);
+
+  useEffect(() => {
     setBatchPage((currentPage) =>
       Math.min(currentPage, getTotalPages(tasks.length, batchPageSize)),
     );
@@ -3725,17 +3798,88 @@ export const TasksPage = () => {
     });
   };
 
+  const handleApplyBatchReviewOutreachTemplate = async (templateId: number) => {
+    const itemId = batchReviewItemId;
+    if (!selectedBatchTask || !activeBatchReviewItem || itemId === null) {
+      return;
+    }
+
+    const selectedTemplateSummary = batchReviewOutreachTemplates.find(
+      (template) => template.id === templateId && !template.archived_at,
+    );
+    if (!selectedTemplateSummary) {
+      notifyError("套用模板失败", "所选模板已不可用，请刷新后重试。");
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: "用模板替换当前草稿？",
+      description: `将用“${selectedTemplateSummary.name}”的最新内容替换当前主题和正文，现有草稿不会保留。`,
+      confirmLabel: "套用并替换",
+      cancelLabel: "取消",
+      tone: "danger",
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    setBatchReviewItemAction(itemId, "template");
+    try {
+      const latestTemplate = await getOutreachTemplate(templateId);
+      if (latestTemplate.archived_at) {
+        throw new Error("所选模板已被删除，不能重新套用。");
+      }
+      setBatchReviewOutreachTemplates((templates) =>
+        templates.some((template) => template.id === latestTemplate.id)
+          ? templates.map((template) =>
+              template.id === latestTemplate.id ? latestTemplate : template,
+            )
+          : [...templates, latestTemplate],
+      );
+
+      const thread = await updateTaskOutreachConfig(itemId, {
+        outreach_generation_mode: latestTemplate.recommended_generation_mode,
+        outreach_template_id: latestTemplate.id,
+        outreach_template_subject: latestTemplate.subject,
+        outreach_template_body_text: latestTemplate.body_text,
+        outreach_template_body_html: latestTemplate.body_html,
+      });
+      ensureBatchReviewThreadMatchesItem(
+        thread,
+        activeBatchReviewItem,
+        selectedBatchTask,
+      );
+      setBatchReviewItemId((currentItemId) => {
+        if (currentItemId === itemId) {
+          syncBatchDraftReview(thread);
+        }
+        return currentItemId;
+      });
+      notifySuccess(`已套用“${latestTemplate.name}”`);
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "重新套用模板失败";
+      notifyError("套用模板失败", message);
+    } finally {
+      clearBatchReviewItemAction(itemId, "template");
+    }
+  };
+
   const handleRegenerateBatchDraft = async () => {
     const itemId = batchReviewItemId;
     if (!selectedBatchTask || !activeBatchReviewItem || itemId === null) {
       return;
     }
-    const usesTemplateFallback =
+    const usesRenderedTemplateDraft =
+      batchReviewThread?.current_task.draft?.source === "template";
+    const usesTemplateDraft =
+      usesRenderedTemplateDraft ||
       batchReviewThread?.current_task.draft_generation_source ===
         "template_fallback" ||
-      activeBatchReviewItem.draft_generation_source === "template_fallback";
+      (!batchReviewThread &&
+        activeBatchReviewItem.draft_generation_source === "template_fallback");
     if (
-      usesTemplateFallback &&
+      usesTemplateDraft &&
       !batchReviewThread?.professor.research_direction?.trim()
     ) {
       notifyError(
@@ -3745,19 +3889,24 @@ export const TasksPage = () => {
       return;
     }
     const confirmed = await confirm({
-      title: usesTemplateFallback ? "确认使用 AI 改写？" : "确认重新生成草稿？",
-      description: usesTemplateFallback
+      title: usesTemplateDraft ? "确认使用 AI 改写？" : "确认重新生成草稿？",
+      description: usesTemplateDraft
         ? "AI 改写会覆盖当前模板草稿，当前编辑内容将无法保留。"
         : "重新生成后会覆盖当前草稿内容，原草稿将无法保留。",
-      confirmLabel: usesTemplateFallback ? "确认使用 AI 改写" : "确认重新生成",
-      cancelLabel: usesTemplateFallback ? "继续审核模板草稿" : "先不重新生成",
+      confirmLabel: usesTemplateDraft ? "确认使用 AI 改写" : "确认重新生成",
+      cancelLabel: usesTemplateDraft ? "继续审核模板草稿" : "先不重新生成",
     });
     if (!confirmed) {
       return;
     }
     setBatchReviewItemAction(itemId, "regenerate");
     try {
-      const thread = await regenerateBatchTaskItemDraft(selectedBatchTask.id, itemId);
+      const thread = usesRenderedTemplateDraft
+        ? await rewriteDraft(itemId, {
+            ...buildBatchReviewPayload(),
+            llm_profile_id: batchReviewThread?.llm_profile.id ?? selectedBatchTask.llm_profile_id,
+          })
+        : await regenerateBatchTaskItemDraft(selectedBatchTask.id, itemId);
       ensureBatchReviewThreadMatchesItem(thread, activeBatchReviewItem, selectedBatchTask);
       setBatchReviewItemId((currentItemId) => {
         if (currentItemId === itemId) {
@@ -3765,7 +3914,7 @@ export const TasksPage = () => {
         }
         return currentItemId;
       });
-      notifySuccess(usesTemplateFallback ? "AI 改写已完成" : "草稿已重新生成");
+      notifySuccess(usesTemplateDraft ? "AI 改写已完成" : "草稿已重新生成");
       if (selectedBatchTask) {
         await loadBatchTaskDetails(selectedBatchTask.id);
       }
@@ -4612,10 +4761,44 @@ export const TasksPage = () => {
     batchReviewItemId !== null
       ? batchReviewItemActions[batchReviewItemId] ?? null
       : null;
+  const activeBatchReviewOutreachTemplates = batchReviewOutreachTemplates.filter(
+    (template) => !template.archived_at,
+  );
+  const selectedBatchReviewOutreachTemplateId =
+    batchReviewThread?.current_task.outreach_template_id ?? null;
+  const selectedBatchReviewOutreachTemplate =
+    batchReviewOutreachTemplates.find(
+      (template) => template.id === selectedBatchReviewOutreachTemplateId,
+    ) ?? null;
+  const batchReviewSourceTemplateLabel = selectedBatchReviewOutreachTemplate
+    ? `${selectedBatchReviewOutreachTemplate.name}${selectedBatchReviewOutreachTemplate.archived_at ? " · 已删除" : ""}`
+    : selectedBatchReviewOutreachTemplateId !== null && selectedBatchTask
+      ? getOutreachTemplateSourceLabel(selectedBatchTask)
+      : "未使用模板";
+  const batchReviewDraftSource =
+    batchReviewThread?.current_task.draft?.source ??
+    (batchReviewThread?.current_task.approved_body_text ||
+    batchReviewThread?.current_task.approved_body_html
+      ? "saved"
+      : batchReviewThread?.current_task.generated_content_text ||
+          batchReviewThread?.current_task.generated_content_html
+        ? "ai_rewrite"
+        : batchReviewThread?.current_task.rendered_template_body_text ||
+            batchReviewThread?.current_task.rendered_template_body_html ||
+            batchReviewThread?.current_task.outreach_template_body_text ||
+            batchReviewThread?.current_task.outreach_template_body_html
+          ? "template"
+          : "manual_empty");
+  const batchReviewDraftSourceLabel =
+    BATCH_REVIEW_DRAFT_SOURCE_LABELS[batchReviewDraftSource];
   const batchReviewUsesTemplateFallback =
-    batchReviewThread?.current_task.draft_generation_source ===
-      "template_fallback" ||
-    activeBatchReviewItem?.draft_generation_source === "template_fallback";
+    batchReviewThread
+      ? batchReviewThread.current_task.draft_generation_source ===
+        "template_fallback"
+      : activeBatchReviewItem?.draft_generation_source === "template_fallback";
+  const batchReviewUsesTemplateDraft =
+    batchReviewDraftSource === "template" ||
+    batchReviewUsesTemplateFallback;
   const batchReviewProfessorMissingResearchDirection =
     !batchReviewThread?.professor.research_direction?.trim();
   const batchReviewTemplateReferencesResearchDirection = [
@@ -5613,6 +5796,66 @@ export const TasksPage = () => {
                             </div>
                           </div>
                           <div className="space-y-4">
+                            <section
+                              aria-label="模板"
+                              className="rounded-2xl border border-stone-200/80 bg-stone-50/75 p-4"
+                            >
+                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.72fr)] lg:items-end">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                                    <FileText className="h-4 w-4 text-primary" />
+                                    来源模板
+                                  </div>
+                                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                                    <span className="min-w-0 truncate text-sm font-semibold text-stone-900">
+                                      {batchReviewSourceTemplateLabel}
+                                    </span>
+                                    <span className="shrink-0 rounded-lg border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-medium text-stone-600">
+                                      当前草稿：{batchReviewDraftSourceLabel}
+                                    </span>
+                                  </div>
+                                </div>
+                                <NativeSelectField
+                                  label="重新套用模板"
+                                  value=""
+                                  ariaLabel="选择模板重新套用"
+                                  selectedLabel={
+                                    activeBatchReviewAction === "template"
+                                      ? "正在套用模板…"
+                                      : loadingBatchReviewOutreachTemplates ||
+                                          !batchReviewOutreachTemplatesLoaded
+                                        ? "正在加载模板库…"
+                                        : activeBatchReviewOutreachTemplates.length > 0
+                                          ? "选择模板重新套用…"
+                                          : "暂无可用模板"
+                                  }
+                                  disabled={
+                                    Boolean(activeBatchReviewAction) ||
+                                    loadingBatchReviewOutreachTemplates ||
+                                    !batchReviewOutreachTemplatesLoaded ||
+                                    activeBatchReviewOutreachTemplates.length === 0
+                                  }
+                                  onChange={(event) => {
+                                    if (event.target.value) {
+                                      void handleApplyBatchReviewOutreachTemplate(
+                                        Number(event.target.value),
+                                      );
+                                    }
+                                  }}
+                                >
+                                  {activeBatchReviewOutreachTemplates.map((template) => (
+                                    <option key={template.id} value={template.id}>
+                                      {template.name}
+                                      {template.id === selectedBatchReviewOutreachTemplateId
+                                        ? " · 当前来源"
+                                        : ""}
+                                      {template.is_default ? " · 全局默认" : ""}
+                                      {template.is_ready ? "" : " · 内容待完善"}
+                                    </option>
+                                  ))}
+                                </NativeSelectField>
+                              </div>
+                            </section>
                             <SubjectTemplateInput
                               key={`batch-review-subject-${batchReviewThread.current_task.id}`}
                               label="邮件主题"
@@ -5698,12 +5941,12 @@ export const TasksPage = () => {
                                 disabled={Boolean(activeBatchReviewAction) || !batchReviewThread}
                                 className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {batchReviewUsesTemplateFallback ? (
+                                {batchReviewUsesTemplateDraft ? (
                                   <Sparkles className="h-4 w-4" />
                                 ) : (
                                   <RotateCcw className="h-4 w-4" />
                                 )}
-                                {batchReviewUsesTemplateFallback
+                                {batchReviewUsesTemplateDraft
                                   ? "使用 AI 改写"
                                   : "重新生成"}
                               </button>
