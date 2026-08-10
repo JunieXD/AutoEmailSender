@@ -80,6 +80,8 @@ from app.modules.communications.public import explain_smtp_error
 from app.modules.workspace.public import (
     BatchDraftApprovalConflictError,
     EmailTaskApprovalRequest,
+    EmailTaskOutreachConfigRequest,
+    EmailTaskRewriteDraftRequest,
     WorkspaceThreadRead,
     approve_and_send_task,
     approve_draft_task,
@@ -87,6 +89,8 @@ from app.modules.workspace.public import (
     build_workspace_thread_for_task,
     expire_batch_task_if_needed,
     regenerate_task_draft,
+    rewrite_task_draft,
+    update_task_outreach_config,
 )
 import app.modules.llm.public as llm_runtime
 
@@ -752,6 +756,49 @@ async def regenerate_batch_task_item_draft(
         task_id,
         item_id,
         lambda: regenerate_task_draft(get_session_factory(), item_id),
+    )
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post("/{task_id}/items/{item_id}/rewrite-draft", response_model=WorkspaceThreadRead)
+async def rewrite_batch_task_item_draft(
+    task_id: int,
+    item_id: int,
+    payload: EmailTaskRewriteDraftRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _run_batch_task_item_workspace_action(
+        session,
+        task_id,
+        item_id,
+        lambda: rewrite_task_draft(get_session_factory(), item_id, payload),
+    )
+    return await build_workspace_thread_for_task(session, task_id=item_id)
+
+
+@router.post("/{task_id}/items/{item_id}/outreach-config", response_model=WorkspaceThreadRead)
+async def update_batch_task_item_outreach_config(
+    task_id: int,
+    item_id: int,
+    payload: EmailTaskOutreachConfigRequest,
+    session: AsyncSession = Depends(get_async_session),
+) -> WorkspaceThreadRead:
+    await _run_batch_task_item_workspace_action(
+        session,
+        task_id,
+        item_id,
+        lambda: update_task_outreach_config(
+            get_session_factory(),
+            item_id,
+            outreach_generation_mode=payload.outreach_generation_mode,
+            outreach_template_id=payload.outreach_template_id,
+            template_selection_explicit=(
+                "outreach_template_id" in payload.model_fields_set
+            ),
+            outreach_template_subject=payload.outreach_template_subject,
+            outreach_template_body_text=payload.outreach_template_body_text,
+            outreach_template_body_html=payload.outreach_template_body_html,
+        ),
     )
     return await build_workspace_thread_for_task(session, task_id=item_id)
 

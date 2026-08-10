@@ -30,6 +30,7 @@ from app.modules.community.public import (
     CommunityPreviewPayload,
     CommunityRelocationRecord,
     CommunityRevocationRecord,
+    CommunitySharePackagePayload,
 )
 from app.modules.community.public import (
     CommunityDataError,
@@ -344,6 +345,28 @@ class CommunitySelectionLimitTests(unittest.TestCase):
                     ],
                 }
             )
+
+    def test_share_package_accepts_500_unique_ids_but_rejects_invalid_selections(
+        self,
+    ) -> None:
+        accepted_ids = list(range(1, 501))
+
+        payload = CommunitySharePackagePayload.model_validate(
+            {"professor_ids": accepted_ids},
+        )
+
+        self.assertEqual(payload.professor_ids, accepted_ids)
+        for invalid_ids in (
+            [],
+            list(range(1, 502)),
+            [1, 1],
+            [0],
+        ):
+            with self.subTest(invalid_ids_length=len(invalid_ids)):
+                with self.assertRaises(ValueError):
+                    CommunitySharePackagePayload.model_validate(
+                        {"professor_ids": invalid_ids},
+                    )
 
 
 class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
@@ -1685,6 +1708,33 @@ class CommunityImportTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(f"Paper {index}" for index in range(1, 9)),
         )
 
+    def test_share_package_keeps_all_82_selected_professors(self) -> None:
+        professors = [
+            Professor(
+                name=f"导师 {index}",
+                email=f"professor-{index}@example.edu",
+                university="示例大学",
+                school="计算机学院",
+                source_url=f"https://example.edu/faculty/{index}",
+            )
+            for index in range(1, 83)
+        ]
+
+        payload = build_community_share_package(professors)
+        workbook = load_workbook(
+            io.BytesIO(payload),
+            read_only=True,
+            data_only=False,
+        )
+        try:
+            rows = list(workbook.active.iter_rows(values_only=True))
+        finally:
+            workbook.close()
+
+        self.assertEqual(len(rows), 83)
+        self.assertEqual(rows[1][0], "导师 1")
+        self.assertEqual(rows[-1][0], "导师 82")
+
     def test_share_package_rejects_payload_above_community_upload_limit(self) -> None:
         professor = Professor(
             name="张老师",
@@ -1995,6 +2045,23 @@ class CommunityApiTests(unittest.TestCase):
         management = self.client.get("/api/professors/management").json()
         self.assertEqual(len(management), 1)
         self.assertEqual(management[0]["email"], "zhang@example.edu")
+
+        share_response = self.client.post(
+            "/api/community-mentors/share-package",
+            json={"professor_ids": [management[0]["id"]]},
+        )
+        self.assertEqual(share_response.status_code, 200, msg=share_response.text)
+        workbook = load_workbook(
+            io.BytesIO(share_response.content),
+            read_only=True,
+            data_only=False,
+        )
+        try:
+            share_rows = list(workbook.active.iter_rows(values_only=True))
+        finally:
+            workbook.close()
+        self.assertEqual(len(share_rows), 2)
+        self.assertEqual(share_rows[1][0], "张老师")
 
         recheck_response = self.client.post(
             "/api/community-mentors/records",

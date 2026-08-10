@@ -8,6 +8,7 @@ from .schemas import (
     DATASET_VERSION_PATTERN,
     MANIFEST_FILE_PATTERN,
     MAX_COMMUNITY_LOADED_RECORDS,
+    MAX_COMMUNITY_SHARE_PROFESSORS,
     MENTOR_ID_PATTERN,
     ORGANIZATION_ID_PATTERN,
     RELEASE_FILE_PATTERN,
@@ -45,6 +46,7 @@ from .schemas import (
     CommunityShardDocument,
     CommunityShardOrganization,
     CommunityShardUnit,
+    CommunitySharePackagePayload,
 )
 from .service import (
     CACHE_INDEX_NAME,
@@ -106,6 +108,7 @@ __all__ = [
     "MANIFEST_FILE_PATTERN",
     "MANIFEST_MAX_BYTES",
     "MAX_COMMUNITY_LOADED_RECORDS",
+    "MAX_COMMUNITY_SHARE_PROFESSORS",
     "MAX_LOADED_RECORDS",
     "MENTOR_ID_PATTERN",
     "ORGANIZATION_ID_PATTERN",
@@ -157,6 +160,7 @@ __all__ = [
     "CommunityShardDocument",
     "CommunityShardOrganization",
     "CommunityShardUnit",
+    "CommunitySharePackagePayload",
     "build_community_comparisons",
     "build_community_records_response",
     "build_community_share_package",

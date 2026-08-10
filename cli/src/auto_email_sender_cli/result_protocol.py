@@ -23,6 +23,7 @@ RESULT_PROTOCOL_FIELDS = frozenset(
         "truncated",
         "omitted_paths",
         "omitted_paths_total",
+        "recovery_action",
     },
 )
 
@@ -61,7 +62,6 @@ _STRUCTURED_FIELDS = frozenset(
         "messages",
         "metadata",
         "records",
-        "result",
     },
 )
 _MAX_DETAIL_PREVIEW_CHARS = 480
@@ -174,6 +174,18 @@ def prepare_result_data(
         max_output_bytes=max_output_bytes,
     )
     omitted_paths.extend(budget_omitted_paths)
+    items_value = summarized.get("items")
+    collection_records_omitted = (
+        isinstance(projection_input.get("items"), list)
+        and (
+            original_item_count is not None
+            or budget_compacted
+            or (
+                isinstance(items_value, dict)
+                and items_value.get("kind") == "array_summary"
+            )
+        )
+    )
     limit = _result_limit(summarized)
     continuation = _continuation(
         command,
@@ -200,12 +212,20 @@ def prepare_result_data(
         if item_limit_compacted:
             result["projection"]["max_items"] = max_items
             result["projection"]["input_items"] = original_item_count
-        if budget_compacted or item_limit_compacted:
+        if budget_compacted or item_limit_compacted or collection_records_omitted:
             result["projection"]["recovery"] = (
                 "add --output-file <path>.jsonl for complete collection records"
-                if isinstance(result.get("items"), list)
+                if isinstance(projection_input.get("items"), list)
                 else "increase --max-output-bytes or request a narrower --expand path"
             )
+    if collection_records_omitted:
+        result["recovery_action"] = {
+            "action": "export_complete_collection",
+            "command": command,
+            "reuse_previous_input": True,
+            "required_input": ["output_file"],
+            "global_options": {"output_file": "<path>.jsonl"},
+        }
     if limit is not None:
         result["limit"] = limit
     if continuation is not None:
@@ -235,6 +255,7 @@ def result_protocol_metadata(data: Any) -> dict[str, object] | None:
             "truncated",
             "omitted_paths",
             "omitted_paths_total",
+            "recovery_action",
             "action_groups",
         )
         if key in data

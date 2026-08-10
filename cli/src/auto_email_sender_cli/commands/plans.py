@@ -45,6 +45,13 @@ def execute_plan(
             help="仅在用户明确确认所展示的这一计划后使用。",
         ),
     ] = False,
+    confirmed_fingerprint: Annotated[
+        str | None,
+        typer.Option(
+            "--confirmed-fingerprint",
+            help="绑定用户实际确认的计划 content_fingerprint；推荐从 plans show 结果原样传入。",
+        ),
+    ] = None,
 ) -> None:
     if not confirm:
         error = CliError(
@@ -64,7 +71,14 @@ def execute_plan(
         ctx,
         command="plans.execute",
         path=f"/api/agent/v1/plans/{plan_id}/execute",
-        json_body={"confirm": True},
+        json_body={
+            "confirm": True,
+            **(
+                {"confirmed_fingerprint": confirmed_fingerprint}
+                if confirmed_fingerprint is not None
+                else {}
+            ),
+        },
         guide_topic="sending",
         human_formatter=format_detail,
     )

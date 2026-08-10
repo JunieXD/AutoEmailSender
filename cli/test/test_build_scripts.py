@@ -27,7 +27,7 @@ class CliBuildScriptTests(unittest.TestCase):
         intent_cases = dict(namespace["INTENT_CASES"])
 
         def fake_invoke(_executable: Path, arguments: list[str]):
-            query = arguments[arguments.index("--query") + 1] if "--query" in arguments else None
+            query = arguments[arguments.index("--intent") + 1] if "--intent" in arguments else None
             data = (
                 {"items": [{"command": intent_cases[query]}]}
                 if query is not None

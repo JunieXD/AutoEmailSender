@@ -9970,45 +9970,70 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()[0]["status"], "approved")
 
-    def test_batch_task_item_thread_and_approval_are_scoped_to_batch_item(self) -> None:
+    def test_batch_task_item_workspace_actions_are_scoped_to_batch_item(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="scoped-batch-review-resume.txt",
+            content=b"My background covers AI agents and research workflows.",
+            material_type="resume",
+        )
         professor_id = self._create_professor(email="scoped-batch-review@example.edu")
+        template_response = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "批量审核指定模板",
+                "recommended_generation_mode": "template",
+                "subject": "第一批模板主题",
+                "body_text": "第一批模板正文",
+                "body_html": "<p>第一批模板正文</p>",
+                "is_default": False,
+            },
+        )
+        self.assertEqual(template_response.status_code, 201, msg=template_response.text)
+        template_id = template_response.json()["id"]
         first_batch_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
             status="running",
-            primary_material_id=None,
+            primary_material_id=material_id,
         )
         second_batch_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
             status="running",
-            primary_material_id=None,
+            primary_material_id=material_id,
         )
         first_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
             professor_id=professor_id,
             status="review_required",
-            primary_material_id=None,
+            primary_material_id=material_id,
+            selected_material_ids=[],
             batch_task_id=first_batch_id,
             source="batch",
             generated_subject="第一批草稿",
             generated_content_text="第一批正文",
             generated_content_html="<p>第一批正文</p>",
+            match_score=82,
+            match_reason="第一批方向匹配",
         )
         second_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
             professor_id=professor_id,
             status="review_required",
-            primary_material_id=None,
+            primary_material_id=material_id,
+            selected_material_ids=[],
             batch_task_id=second_batch_id,
             source="batch",
             generated_subject="第二批草稿",
             generated_content_text="第二批正文",
             generated_content_html="<p>第二批正文</p>",
+            match_score=82,
+            match_reason="第二批方向匹配",
         )
 
         thread_response = self.client.get(
@@ -10025,6 +10050,95 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/batch-tasks/{first_batch_id}/items/{second_task_id}/thread",
         )
         self.assertEqual(mismatch_response.status_code, 404, msg=mismatch_response.text)
+
+        outreach_payload = {
+            "outreach_generation_mode": "template",
+            "outreach_template_id": template_id,
+            "outreach_template_subject": "第一批模板主题",
+            "outreach_template_body_text": "第一批模板正文",
+            "outreach_template_body_html": "<p>第一批模板正文</p>",
+        }
+        mismatch_outreach_response = self.client.post(
+            f"/api/batch-tasks/{first_batch_id}/items/{second_task_id}/outreach-config",
+            json=outreach_payload,
+        )
+        self.assertEqual(
+            mismatch_outreach_response.status_code,
+            404,
+            msg=mismatch_outreach_response.text,
+        )
+
+        outreach_response = self.client.post(
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/outreach-config",
+            json=outreach_payload,
+        )
+
+        self.assertEqual(outreach_response.status_code, 200, msg=outreach_response.text)
+        outreach_task = outreach_response.json()["current_task"]
+        self.assertEqual(outreach_task["id"], first_task_id)
+        self.assertEqual(outreach_task["batch_task_id"], first_batch_id)
+        self.assertEqual(outreach_task["outreach_template_id"], template_id)
+        self.assertEqual(outreach_task["draft"]["source"], "template")
+        self.assertEqual(outreach_task["draft"]["subject"], "第一批模板主题")
+        self.assertEqual(outreach_task["draft"]["body_text"], "第一批模板正文")
+
+        second_thread_after_outreach = self.client.get(
+            f"/api/batch-tasks/{second_batch_id}/items/{second_task_id}/thread",
+        )
+        self.assertEqual(
+            second_thread_after_outreach.status_code,
+            200,
+            msg=second_thread_after_outreach.text,
+        )
+        second_task_after_outreach = second_thread_after_outreach.json()["current_task"]
+        self.assertEqual(second_task_after_outreach["id"], second_task_id)
+        self.assertIsNone(second_task_after_outreach["outreach_template_id"])
+        self.assertEqual(second_task_after_outreach["generated_subject"], "第二批草稿")
+
+        async def _fake_generate_draft_content(**kwargs):
+            self.assertEqual(kwargs["custom_subject"], "第一批模板主题")
+            self.assertEqual(kwargs["custom_body"], "第一批模板正文")
+            self.assertEqual(kwargs["custom_body_html"], "<p>第一批模板正文</p>")
+            return self._build_draft_generation_result(
+                subject="第一批 AI 改写主题",
+                body_text="第一批 AI 改写正文",
+                body_html="<p>第一批 AI 改写正文</p>",
+            )
+
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=_fake_generate_draft_content),
+        ):
+            rewrite_response = self.client.post(
+                f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/rewrite-draft",
+                json={
+                    "subject": "第一批模板主题",
+                    "body_text": "第一批模板正文",
+                    "body_html": "<p>第一批模板正文</p>",
+                    "selected_material_ids": [],
+                    "llm_profile_id": llm_id,
+                },
+            )
+
+        self.assertEqual(rewrite_response.status_code, 200, msg=rewrite_response.text)
+        rewritten_task = rewrite_response.json()["current_task"]
+        self.assertEqual(rewritten_task["id"], first_task_id)
+        self.assertEqual(rewritten_task["batch_task_id"], first_batch_id)
+        self.assertEqual(rewritten_task["draft"]["source"], "ai_rewrite")
+        self.assertEqual(rewritten_task["draft"]["subject"], "第一批 AI 改写主题")
+
+        second_thread_after_rewrite = self.client.get(
+            f"/api/batch-tasks/{second_batch_id}/items/{second_task_id}/thread",
+        )
+        self.assertEqual(
+            second_thread_after_rewrite.status_code,
+            200,
+            msg=second_thread_after_rewrite.text,
+        )
+        self.assertEqual(
+            second_thread_after_rewrite.json()["current_task"]["generated_subject"],
+            "第二批草稿",
+        )
 
         approve_response = self.client.post(
             f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/approve",

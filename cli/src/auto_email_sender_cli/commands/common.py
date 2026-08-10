@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from auto_email_sender_cli.action_links import resolve_action_links
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.capabilities import (
     collection_filter_fields,
+    collection_filter_operator_fields,
     collection_filter_operators,
     supports_dynamic_action_links,
     supports_if_revision,
@@ -119,6 +121,10 @@ _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
         "source": "source",
         "status": "status",
     },
+}
+
+_SERVER_OPERATOR_FILTER_PARAMETERS: dict[tuple[str, str, str], str] = {
+    ("professors.list", "name", "contains_script"): "name_script",
 }
 
 _SERVER_FIELD_PROJECTION_COMMANDS = frozenset(
@@ -246,6 +252,7 @@ def run_read_command(
         )
         request_params = _without_none(params)
         request_params = _cap_request_page_size(request_params, context)
+        pushed_filter_params: dict[str, object] = {}
         if fields:
             # Validate against the locally published DTO contract before any
             # runtime discovery or network request. A projected backend
@@ -270,10 +277,11 @@ def run_read_command(
                 context.filter_expression,
                 command=command,
             )
-            request_params = _merge_server_filter_params(
-                request_params,
-                server_filter_params(context.filter_expression, command=command),
+            pushed_filter_params = server_filter_params(
+                context.filter_expression,
+                command=command,
             )
+            request_params = _merge_server_filter_params(request_params, pushed_filter_params)
         client = AgentApiClient(timeout=timeout)
         # A structured filter is evaluated locally after the complete
         # collection has been read, but only paged collection commands can be
@@ -291,6 +299,11 @@ def run_read_command(
                 context=context,
                 command=command,
                 fields=fields,
+            )
+            data = _annotate_filter_execution(
+                data,
+                expression=context.filter_expression,
+                server_params=pushed_filter_params,
             )
             emit_success(
                 context,
@@ -328,6 +341,11 @@ def run_read_command(
         data = normalize_collection_response(data, command=command)
         if not streamed_filter:
             data = apply_structured_filter(data, context.filter_expression, command=command)
+        data = _annotate_filter_execution(
+            data,
+            expression=context.filter_expression,
+            server_params=pushed_filter_params,
+        )
         # Compute the optimistic-concurrency token from the complete record
         # before applying a caller's field projection.  Otherwise
         # ``--fields id,name`` would produce a different revision from the
@@ -818,7 +836,20 @@ def normalize_collection_response(data: Any, *, command: str | None = None) -> A
     }
 
 
-_FILTER_OPERATORS = {"eq", "ne", "in", "contains", "empty", "exists", "gt", "gte", "lt", "lte"}
+_FILTER_OPERATORS = {
+    "eq",
+    "ne",
+    "in",
+    "contains",
+    "contains_script",
+    "empty",
+    "exists",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+}
+_UNICODE_SCRIPTS = frozenset({"latin", "han", "cyrillic", "arabic", "digit"})
 
 
 def apply_structured_filter(
@@ -907,6 +938,26 @@ def apply_structured_filter(
                 message=f"字段 {field} 的运算符 contains 需要字符串或标量。",
                 exit_code=2,
             )
+        if operator == "contains_script":
+            allowed_fields = collection_filter_operator_fields(command or "", operator)
+            if field not in allowed_fields:
+                raise CliError(
+                    code="INVALID_FILTER",
+                    message=f"字段 {field} 不支持运算符 contains_script。",
+                    exit_code=2,
+                    details={"allowed_fields": sorted(allowed_fields)},
+                )
+            if not isinstance(expected, str) or expected.strip().lower() not in _UNICODE_SCRIPTS:
+                raise CliError(
+                    code="INVALID_FILTER",
+                    message=(
+                        f"字段 {field} 的运算符 contains_script 仅支持："
+                        f"{', '.join(sorted(_UNICODE_SCRIPTS))}。"
+                    ),
+                    exit_code=2,
+                    details={"allowed_scripts": sorted(_UNICODE_SCRIPTS)},
+                )
+            expected = expected.strip().lower()
         filters.append((field, str(operator), expected))
 
     def matches(item: object) -> bool:
@@ -938,6 +989,28 @@ def apply_structured_filter(
     return result
 
 
+def _annotate_filter_execution(
+    data: Any,
+    *,
+    expression: str | None,
+    server_params: dict[str, object],
+) -> Any:
+    if not expression or not isinstance(data, dict):
+        return data
+    return {
+        **data,
+        "filter_execution": {
+            "mode": (
+                "server_requested_local_validated"
+                if server_params
+                else "local_complete_scan"
+            ),
+            "server_parameters": sorted(server_params),
+            "local_validation": True,
+        },
+    }
+
+
 def server_filter_params(expression: str | None, *, command: str) -> dict[str, object]:
     """Translate safe native equality filters into backend query parameters.
 
@@ -957,22 +1030,31 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
         return {}
     result: dict[str, object] = {}
     for field, condition in parsed.items():
-        parameter = mapping.get(field) if isinstance(field, str) else None
-        if parameter is None:
+        if not isinstance(field, str):
             continue
         if isinstance(condition, dict):
+            if len(condition) != 1:
+                continue
+            operator, expected = next(iter(condition.items()))
+        else:
+            operator = "eq"
+            expected = condition
+        parameter = _SERVER_OPERATOR_FILTER_PARAMETERS.get((command, field, str(operator)))
+        if parameter is None:
+            parameter = mapping.get(field)
             allowed_operator = (
                 "contains"
                 if command == "crawler.jobs.list" and field == "effective_models"
                 else "eq"
             )
-            if set(condition) != {allowed_operator}:
+            if parameter is None or operator != allowed_operator:
                 continue
-            expected = condition[allowed_operator]
-        else:
-            expected = condition
         if expected is None or isinstance(expected, dict | list):
             continue
+        if operator == "contains_script":
+            if not isinstance(expected, str) or expected.strip().lower() not in _UNICODE_SCRIPTS:
+                continue
+            expected = expected.strip().lower()
         if not _server_filter_value_is_safe(command, field, expected):
             continue
         result[parameter] = expected
@@ -1090,6 +1172,8 @@ def _matches_filter(value: object, operator: str, expected: object) -> bool:
         if isinstance(value, list):
             return expected in value
         return str(expected).lower() in str(value or "").lower()
+    if operator == "contains_script":
+        return _contains_unicode_script(value, expected)
     if operator == "eq":
         return value == expected
     if operator == "ne":
@@ -1105,6 +1189,27 @@ def _matches_filter(value: object, operator: str, expected: object) -> bool:
             return value is not None and value <= expected
     except TypeError:
         return False
+    return False
+
+
+def _contains_unicode_script(value: object, expected: object) -> bool:
+    if not isinstance(value, str) or not isinstance(expected, str):
+        return False
+    script = expected.lower()
+    for character in value:
+        if script == "digit" and character.isdigit():
+            return True
+        unicode_name = unicodedata.name(character, "")
+        if script == "latin" and unicode_name.startswith("LATIN"):
+            return True
+        if script == "han" and unicode_name.startswith(
+            ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH"),
+        ):
+            return True
+        if script == "cyrillic" and "CYRILLIC" in unicode_name:
+            return True
+        if script == "arabic" and "ARABIC" in unicode_name:
+            return True
     return False
 
 

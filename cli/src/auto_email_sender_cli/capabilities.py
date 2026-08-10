@@ -14,9 +14,11 @@ from auto_email_sender_cli.version import get_build_identity
 
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
+SearchConfidence = Literal["high", "medium", "low"]
 
 CONTRACT_VERSION: Final = "4"
 CAPABILITY_CATALOG_VERSION: Final = "4"
+CAPABILITY_SEARCH_MODE: Final = "deterministic_multilingual_v2"
 
 
 # Discovery must be cheap enough to use at the start of every Agent turn.
@@ -77,6 +79,31 @@ _DISCOVERY_RESOURCE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
 }
 
 _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "professors.list": (
+        "列出导师",
+        "查询导师",
+        "搜索导师",
+        "筛选导师",
+        "全部导师",
+        "所有导师",
+        "导师姓名",
+        "按姓名筛选",
+        "姓名包含",
+        "英文字母姓名",
+        "英文姓名",
+        "latin name",
+        "list professors",
+        "search faculty",
+    ),
+    "professors.prepare-bulk-archive": (
+        "批量移入回收站",
+        "批量归档导师",
+        "批量删除导师",
+        "批量回收站",
+        "指定导师批量归档",
+        "生成批量归档计划",
+        "bulk archive professors",
+    ),
     "professors.import": ("导入导师", "导入教授", "excel 导入", "xlsx 导入"),
     "professors.export": ("导出导师", "导师表格", "导出 excel"),
     "professors.download-template": ("下载导师模板", "空白导入表", "import template"),
@@ -95,8 +122,53 @@ _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "deliveries.list": ("查看发送计划", "查看待发送邮件", "异常邮件"),
     "deliveries.reschedule": ("修改发送时间", "邮件改期", "重新排程"),
     "plans.show": ("查看发送计划", "查看确认计划", "影响预览"),
-    "plans.execute": ("确认执行计划", "确认发送", "执行发送计划"),
+    "plans.execute": (
+        "确认执行计划",
+        "确认并执行",
+        "执行已有计划",
+        "执行变更计划",
+        "确认发送",
+        "执行发送计划",
+        "apply existing plan",
+        "execute plan",
+    ),
 }
+
+
+# Operation vocabulary is shared across resources.  Combining these phrases
+# with resource aliases lets discovery route previously unseen intents (for
+# example “筛选模板” or “restore archived material”) without maintaining one
+# full-sentence alias for every command.
+_DISCOVERY_OPERATION_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "list": ("列出", "查询", "搜索", "筛选", "读取全部", "所有", "list", "search", "filter", "find"),
+    "get": ("读取详情", "查看详情", "按 id 读取", "get", "show details"),
+    "create": ("创建", "新增", "create", "add"),
+    "update": ("修改", "更新", "编辑", "update", "edit"),
+    "archive": ("移入回收站", "归档", "archive", "trash"),
+    "restore": ("从回收站恢复", "恢复归档", "restore", "unarchive"),
+    "prepare-bulk-archive": (
+        "批量",
+        "批量移入回收站",
+        "批量归档",
+        "批量删除",
+        "bulk archive",
+        "bulk trash",
+    ),
+    "show": ("查看计划", "读取计划", "预览计划", "show plan", "inspect plan"),
+    "execute": ("确认执行", "确认并执行", "执行计划", "apply plan", "execute plan"),
+    "cancel": ("取消", "撤销", "cancel"),
+    "export": ("导出", "export"),
+    "import": ("导入", "import"),
+    "download": ("下载", "download"),
+    "generate": ("生成", "起草", "generate", "draft"),
+    "approve": ("批准", "审核通过", "approve"),
+    "prepare-send": ("准备发送", "安排发送", "排程发送", "schedule send"),
+    "reschedule": ("改期", "修改发送时间", "重新排程", "reschedule"),
+}
+
+_GENERIC_RESOURCE_SEARCH_ALIASES: Final[frozenset[str]] = frozenset(
+    {"系统", "邮件", "批量", "任务", "设置", "状态", "概览"},
+)
 
 _SYSTEM_DISCOVERY_COMMANDS: Final[frozenset[str]] = frozenset(
     {"version", "status", "doctor", "guide", "capabilities", "describe", "invoke", "wait"},
@@ -230,6 +302,10 @@ _COMMON_FILTER_OPERATORS: Final[tuple[str, ...]] = (
     "lt",
     "lte",
 )
+
+_SCRIPT_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
+    "professors.list": frozenset({"name"}),
+}
 
 
 # The field names form part of the public contract.  They are intentionally
@@ -473,9 +549,7 @@ class Capability:
                 "supports_structured_filter": supports_structured_filter(self.command),
                 "supports_file_export": supports_file_export(self.command),
                 "filter_fields": sorted(collection_filter_fields(self.command)),
-                "filter_operators": list(_COMMON_FILTER_OPERATORS)
-                if supports_structured_filter(self.command)
-                else [],
+                "filter_operators": list(collection_filter_operators(self.command)),
                 "supports_wait": supports_wait(self.command),
                 "supports_if_revision": supports_if_revision(self.command),
                 "supports_idempotent_retry": spec.idempotency.supports_idempotent_retry,
@@ -1544,7 +1618,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "plans.show",
-        "读取发送计划、最终正文和确认状态",
+        "读取高风险确认计划、内容指纹、影响预览和确认状态",
         "L0",
         "available",
         guide_topic="sending",
@@ -1561,7 +1635,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "plans.cancel",
-        "取消尚未执行的发送计划",
+        "取消尚未执行的高风险确认计划",
         "L1",
         "available",
         mutates=True,
@@ -1736,7 +1810,46 @@ def search_capabilities(
     resource_exact: bool = False,
     limit: int = 8,
 ) -> tuple[Capability, ...]:
-    """Rank capability cards with deterministic multilingual text matching."""
+    """Return capabilities ranked by deterministic multilingual intent matching."""
+
+    return tuple(
+        match.capability
+        for match in search_capability_matches(
+            query,
+            resource=resource,
+            resource_exact=resource_exact,
+            limit=limit,
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilitySearchMatch:
+    capability: Capability
+    score: int
+    similarity: float
+    confidence: SearchConfidence
+    reasons: tuple[str, ...]
+    matched_terms: tuple[str, ...]
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "mode": CAPABILITY_SEARCH_MODE,
+            "confidence": self.confidence,
+            "score": self.score,
+            "reasons": list(self.reasons),
+            "matched_terms": list(self.matched_terms),
+        }
+
+
+def search_capability_matches(
+    query: str,
+    *,
+    resource: str | None = None,
+    resource_exact: bool = False,
+    limit: int = 8,
+) -> tuple[CapabilitySearchMatch, ...]:
+    """Rank commands and retain compact evidence an Agent can inspect."""
 
     normalized_query = _normalize_search_text(query)
     if not normalized_query:
@@ -1745,16 +1858,23 @@ def search_capabilities(
         resource=resource,
         resource_exact=resource_exact,
     )
-    ranked: list[tuple[int, float, int, Capability]] = []
+    ranked: list[tuple[int, float, int, CapabilitySearchMatch]] = []
     for index, capability in enumerate(candidates):
-        score, similarity = _capability_search_score(capability, normalized_query)
-        # A single common Chinese bigram can otherwise pull unrelated system
-        # commands into the tail of a result.  Keep direct/token matches and
-        # genuine fuzzy command matches, but discard that low-signal noise.
-        if score >= 100 or similarity >= 0.55:
-            ranked.append((score, similarity, -index, capability))
+        match = _capability_search_evidence(capability, normalized_query)
+        # Low-confidence token collisions are intentionally omitted.  An empty
+        # result is more actionable than a long list of plausible-looking but
+        # unrelated commands.
+        if match.confidence != "low":
+            ranked.append((match.score, match.similarity, -index, match))
     ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return tuple(item[3] for item in ranked[:limit])
+    if not ranked:
+        return ()
+    # Suppress the long tail relative to the best-supported interpretation.
+    # This adapts to both strong phrase matches and low-scoring typo recovery;
+    # a fixed top-N list would reintroduce irrelevant resource-only matches.
+    relevance_floor = ranked[0][0] * 0.55
+    relevant = [item for item in ranked if item[0] >= relevance_floor]
+    return tuple(item[3] for item in relevant[:limit])
 
 
 def search_capability_cards(
@@ -1765,30 +1885,41 @@ def search_capability_cards(
     limit: int = 8,
     contract_revisions: Mapping[str, str] | None = None,
 ) -> list[dict[str, object]]:
-    return [
-        _capability_card(
-            item,
-            contract_revision=_contract_revision_for(item, contract_revisions),
+    cards: list[dict[str, object]] = []
+    for match in search_capability_matches(
+        query,
+        resource=resource,
+        resource_exact=resource_exact,
+        limit=limit,
+    ):
+        card = _capability_card(
+            match.capability,
+            contract_revision=_contract_revision_for(match.capability, contract_revisions),
         )
-        for item in search_capabilities(
-            query,
-            resource=resource,
-            resource_exact=resource_exact,
-            limit=limit,
-        )
-    ]
+        card["match"] = match.metadata()
+        cards.append(card)
+    return cards
 
 
 def _capability_search_score(
     capability: Capability,
     normalized_query: str,
 ) -> tuple[int, float]:
+    match = _capability_search_evidence(capability, normalized_query)
+    return match.score, match.similarity
+
+
+def _capability_search_evidence(
+    capability: Capability,
+    normalized_query: str,
+) -> CapabilitySearchMatch:
     command = _normalize_search_text(capability.command.replace(".", " "))
     resource = discovery_resource(capability.command)
-    aliases = (
-        *_DISCOVERY_RESOURCE_ALIASES.get(resource, ()),
-        *_DISCOVERY_COMMAND_ALIASES.get(capability.command, ()),
-    )
+    operation = capability_operation(capability.command)
+    resource_aliases = _DISCOVERY_RESOURCE_ALIASES.get(resource, ())
+    command_aliases = _DISCOVERY_COMMAND_ALIASES.get(capability.command, ())
+    operation_aliases = _DISCOVERY_OPERATION_ALIASES.get(operation, ())
+    aliases = (*resource_aliases, *operation_aliases, *command_aliases)
     document = _normalize_search_text(
         " ".join(
             (
@@ -1802,21 +1933,103 @@ def _capability_search_score(
     compact_query = normalized_query.replace(" ", "")
     compact_document = document.replace(" ", "")
     score = 0
+    reasons: list[str] = []
+    matched_terms: list[str] = []
+
+    def record(reason: str, term: str | None = None) -> None:
+        if reason not in reasons:
+            reasons.append(reason)
+        if term and term not in matched_terms and len(matched_terms) < 8:
+            matched_terms.append(term)
+
     if normalized_query == command or normalized_query == capability.command:
         score += 10_000
+        record("exact_command", capability.command)
     if normalized_query in document:
         score += 1_000
+        record("document_phrase", normalized_query)
     if compact_query and compact_query in compact_document:
         score += 700
+        record("compact_phrase", normalized_query)
+
+    phrase_groups = (
+        ("command_alias", command_aliases, 700),
+        ("operation_alias", operation_aliases, 450),
+        ("resource_alias", resource_aliases, 300),
+    )
+    for reason, phrases, base_score in phrase_groups:
+        for phrase in phrases:
+            normalized_phrase = _normalize_search_text(phrase)
+            compact_phrase = normalized_phrase.replace(" ", "")
+            if not compact_phrase:
+                continue
+            if normalized_phrase == normalized_query:
+                score += base_score + 900
+                record(f"exact_{reason}", phrase)
+            elif compact_phrase in compact_query:
+                score += base_score + min(240, len(compact_phrase) * 12)
+                record(reason, phrase)
+            elif len(compact_query) >= 4 and compact_query in compact_phrase:
+                score += base_score // 2
+                record(f"partial_{reason}", phrase)
+
+    matched_token_count = 0
     for token in _search_tokens(normalized_query):
         if token in command:
             score += 180
+            matched_token_count += 1
+            record("command_token", token)
         elif token in document:
-            score += 70
+            score += 45
+            matched_token_count += 1
+            record("document_token", token)
+    if matched_token_count:
+        score += min(180, matched_token_count * 20)
+
     similarity = SequenceMatcher(None, normalized_query, command).ratio()
     if similarity >= 0.55:
         score += round(similarity * 100)
-    return score, similarity
+        record("command_similarity")
+
+    explicit_resources = _query_resource_matches(normalized_query)
+    has_command_alias_match = any("command_alias" in reason for reason in reasons)
+    if explicit_resources and resource not in explicit_resources and not has_command_alias_match:
+        # A clear resource noun such as “导师” or “模板” should suppress
+        # commands that matched only generic verbs such as “列出” or “批量”.
+        # Strong command-specific phrases remain eligible for cross-resource
+        # workflows (for example “给导师写信” -> drafts.generate).
+        score = round(score * 0.2)
+        record("resource_scope_mismatch")
+
+    if "exact_command" in reasons or score >= 1_200:
+        confidence: SearchConfidence = "high"
+    elif score >= 350 or similarity >= 0.65:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    return CapabilitySearchMatch(
+        capability=capability,
+        score=score,
+        similarity=similarity,
+        confidence=confidence,
+        reasons=tuple(reasons),
+        matched_terms=tuple(matched_terms),
+    )
+
+
+def _query_resource_matches(normalized_query: str) -> frozenset[str]:
+    compact_query = normalized_query.replace(" ", "")
+    matches: set[str] = set()
+    for resource, aliases in _DISCOVERY_RESOURCE_ALIASES.items():
+        for alias in aliases:
+            normalized_alias = _normalize_search_text(alias)
+            if normalized_alias in _GENERIC_RESOURCE_SEARCH_ALIASES:
+                continue
+            compact_alias = normalized_alias.replace(" ", "")
+            if compact_alias and compact_alias in compact_query:
+                matches.add(resource)
+                break
+    return frozenset(matches)
 
 
 def _normalize_search_text(value: str) -> str:
@@ -2051,7 +2264,21 @@ def collection_output_fields(command: str) -> frozenset[str]:
 
 
 def collection_filter_operators(command: str) -> tuple[str, ...]:
-    return _COMMON_FILTER_OPERATORS if supports_structured_filter(command) else ()
+    normalized = normalize_capability_command(command)
+    if not supports_structured_filter(normalized):
+        return ()
+    if normalized in _SCRIPT_FILTER_FIELDS:
+        return (*_COMMON_FILTER_OPERATORS, "contains_script")
+    return _COMMON_FILTER_OPERATORS
+
+
+def collection_filter_operator_fields(command: str, operator: str) -> frozenset[str]:
+    """Return fields on which a field-sensitive operator is valid."""
+
+    normalized = normalize_capability_command(command)
+    if operator == "contains_script":
+        return _SCRIPT_FILTER_FIELDS.get(normalized, frozenset())
+    return collection_filter_fields(normalized)
 
 
 def capability_stateful(command: str) -> bool:

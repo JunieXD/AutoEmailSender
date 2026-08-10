@@ -15,6 +15,7 @@ from typer.core import TyperGroup
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
     CAPABILITY_CATALOG_VERSION,
+    CAPABILITY_SEARCH_MODE,
     CONTRACT_VERSION,
     capability_catalog_revision,
     list_capability_cards,
@@ -114,6 +115,7 @@ _CAPABILITY_CARD_SELECT_FIELDS = (
     "unavailable_reason",
     "manual_action",
     "lifecycle",
+    "match",
 )
 _COMMAND_CONTRACT_REVISION_CACHE: dict[str, str] = {}
 
@@ -667,7 +669,11 @@ def capabilities_command(
     ] = None,
     query: Annotated[
         str | None,
-        typer.Option("--query", help="按中文或英文意图检索并排序最相关命令。"),
+        typer.Option(
+            "--query",
+            "--intent",
+            help="按中文或英文任务意图检索并排序最相关命令；--intent 含义更明确。",
+        ),
     ] = None,
     limit: Annotated[
         int | None,
@@ -715,7 +721,7 @@ def capabilities_command(
     if query is not None and not normalized_query:
         error = CliError(
             code="INVALID_ARGUMENT",
-            message="--query 不能为空。",
+            message="--query 不能为空（--intent 是其同义别名）。",
             exit_code=2,
             details={"query": query},
         )
@@ -724,7 +730,7 @@ def capabilities_command(
     if query is not None and command is not None:
         error = CliError(
             code="INVALID_ARGUMENT",
-            message="--query 与 --command 不能同时使用。",
+            message="--query 与 --command 不能同时使用（--intent 是 --query 的同义别名）。",
             exit_code=2,
             details={"query": query, "command": command},
         )
@@ -741,7 +747,7 @@ def capabilities_command(
     if limit is not None and query is None:
         error = CliError(
             code="INVALID_ARGUMENT",
-            message="--limit 只能与 --query 一起使用。",
+            message="--limit 只能与 --query 一起使用（也可使用同义别名 --intent）。",
             exit_code=2,
         )
         emit_error(context, command="capabilities", error=error)
@@ -779,7 +785,7 @@ def capabilities_command(
     if query is not None and (all_details or requested_view not in {None, "commands"}):
         error = CliError(
             code="INVALID_ARGUMENT",
-            message="--query 返回精简命令卡，只能使用 --view commands。",
+            message="--query 返回精简命令卡，只能使用 --view commands（--intent 同义）。",
             exit_code=2,
             details={"view": "full" if all_details else requested_view},
         )
@@ -854,18 +860,47 @@ def capabilities_command(
             )
         )
         if (command or resource or query) and not full_items:
-            requested = command or resource or query or ""
+            requested = command or query or resource or ""
             normalized = normalize_capability_command(requested)
+            normalized_resource = normalize_capability_command(resource) if resource else None
+            resource_exists = bool(
+                list_capabilities(
+                    resource=resource,
+                    resource_exact=resource_exact,
+                )
+            ) if resource else None
+            if query is not None:
+                if resource is not None and resource_exists is False:
+                    message = f"没有找到资源能力：{resource}"
+                else:
+                    scope_label = f"资源 {resource} 范围" if resource else "当前能力目录"
+                    message = f"在{scope_label}内没有找到与任务意图匹配的命令：{query}"
+                suggestions = [
+                    item.command
+                    for item in search_capabilities(normalized_query or "", limit=3)
+                ]
+            elif command is not None:
+                message = f"没有找到能力：{command}"
+                suggestions = suggest_capabilities(normalized)
+            else:
+                message = f"没有找到资源能力：{resource}"
+                suggestions = suggest_capabilities(normalized)
             error = CliError(
                 code="CAPABILITY_NOT_FOUND",
-                message=f"没有找到能力：{requested}",
+                message=message,
                 exit_code=4,
                 details={
                     "request": requested,
                     "normalized_request": normalized,
                     "command": requested if command is not None else None,
                     "normalized_command": normalized if command is not None else None,
-                    "suggestions": suggest_capabilities(normalized),
+                    "query": normalized_query,
+                    "resource": resource,
+                    "normalized_resource": normalized_resource,
+                    "resource_exact": resource_exact,
+                    "resource_exists": resource_exists,
+                    "search_mode": CAPABILITY_SEARCH_MODE if query is not None else None,
+                    "suggestions": suggestions,
                 },
             )
             emit_error(context, command="capabilities", error=error)
@@ -914,6 +949,7 @@ def capabilities_command(
         "resource": normalize_capability_command(resource) if resource else None,
         "resource_exact": resource_exact,
         "query": normalized_query,
+        "search_mode": CAPABILITY_SEARCH_MODE if query is not None else None,
         "limit": (limit or 8) if query is not None else None,
         "select": selected_fields,
         "minimal": minimal,
@@ -1035,6 +1071,14 @@ def capabilities_command(
         "items": items,
         "summary": summary,
     }
+    if query is not None:
+        data["query_scope"] = {
+            "intent": normalized_query,
+            "resource": normalize_capability_command(resource) if resource else None,
+            "resource_exact": resource_exact,
+            "limit": limit or 8,
+            "mode": CAPABILITY_SEARCH_MODE,
+        }
     if not minimal:
         data["build"] = get_build_identity()
         data["next"] = {

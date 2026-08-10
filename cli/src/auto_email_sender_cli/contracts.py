@@ -363,6 +363,19 @@ def _input_contract(
             "global_options": "--request-id/--operation-id、--if-revision、--projection、--expand、--max-output-bytes 和 --max-items 是根选项，可放在命令前后，但不写入 JSON 对象。",
             "execution": "复用目标命令的 Click/Typer 解析、业务校验、确认计划和幂等保护。",
         }
+    if command == "professors.prepare-bulk-archive":
+        schema = contract["schema"]
+        assert isinstance(schema, dict)
+        schema["oneOf"] = [
+            {
+                "required": ["professor_ids"],
+                "properties": {"professor_ids": {"minItems": 1}},
+            },
+            {"required": ["selection_filter"]},
+        ]
+        contract["selection_semantics"] = (
+            "exactly one of professor_ids or selection_filter is required"
+        )
     return contract
 
 
@@ -413,7 +426,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         data_schema = {
             "type": "object",
             "properties": {
-                "items": {"type": "array", "items": item_schema},
+                "items": {"type": ["array", "object"], "items": item_schema},
                 "next_cursor": {"type": ["string", "null"]},
                 "has_more": {"type": "boolean"},
                 "total": {"type": ["integer", "null"]},
@@ -424,6 +437,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "selected_fields": {"type": "array"},
                 "filter": {"type": ["object", "null"]},
                 "filtered_count": {"type": ["integer", "null"]},
+                "filter_execution": {"type": "object"},
                 "records": {"type": "array"},
                 "pagination": {"type": ["object", "null"]},
                 "summary": {"type": ["object", "null"]},
@@ -434,6 +448,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "truncated": {"type": "boolean"},
                 "omitted_paths": {"type": "array", "items": {"type": "string"}},
                 "omitted_paths_total": {"type": "integer"},
+                "recovery_action": {"type": "object"},
             },
             "required": ["items", "next_cursor", "has_more"],
         }
@@ -513,8 +528,8 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         "result_protocol": {
             "version": "2",
             "default_projection": "summary",
-            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths", "omitted_paths_total"],
-            "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
+            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths", "omitted_paths_total", "recovery_action"],
+            "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，recovery_action 仅在可结构化恢复完整结果时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
             "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据；所有视图仍受 --max-output-bytes 约束。",
             "budgets": {
@@ -554,6 +569,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "selected_fields",
             "filter",
             "filtered_count",
+            "filter_execution",
             "records",
             "pagination",
             "summary",
@@ -563,6 +579,7 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             "truncated",
             "omitted_paths",
             "omitted_paths_total",
+            "recovery_action",
         ]
         if supports_list
         else [],
@@ -784,7 +801,13 @@ def _object_schema(
 
 def _field_schema(field: str, *, command: str | None = None) -> dict[str, object]:
     normalized = field.lower()
-    if normalized in {"projection", "continuation", "blocked_actions"}:
+    if normalized in {
+        "projection",
+        "continuation",
+        "blocked_actions",
+        "recovery_action",
+        "filter_execution",
+    }:
         return {"type": ["object", "null"]}
     if normalized in {"truncated"}:
         return {"type": "boolean"}

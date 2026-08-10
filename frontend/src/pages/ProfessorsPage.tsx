@@ -1364,17 +1364,21 @@ export const ProfessorsPage = () => {
   };
 
   const handleBulkExportCommunitySharePackage = async () => {
-    const selectedProfessors = professors.filter((professor) =>
-      selectedIds.has(professor.id),
-    );
-    if (selectedProfessors.length === 0) {
+    const selectedProfessorIds = Array.from(selectedIds);
+    if (selectedProfessorIds.length === 0) {
       return;
     }
-    if (selectedProfessors.length > 500) {
+    if (selectedProfessorIds.length > 500) {
       notifyWarning("选择数量过多", "一次最多导出 500 位导师的社区共享包。");
       return;
     }
-    const incompleteProfessor = selectedProfessors.find(
+
+    // `professors` is only the current server-paginated page. It is safe for
+    // immediate UI hints, but the export itself must use the complete ID set.
+    const selectedProfessorsOnCurrentPage = professors.filter((professor) =>
+      selectedIds.has(professor.id),
+    );
+    const incompleteProfessor = selectedProfessorsOnCurrentPage.find(
       (professor) => !professor.email || !professor.source_url,
     );
     if (incompleteProfessor) {
@@ -1386,9 +1390,7 @@ export const ProfessorsPage = () => {
     }
     setExportingCommunitySharePackage(true);
     try {
-      const blob = await downloadCommunitySharePackage(
-        selectedProfessors.map((professor) => professor.id),
-      );
+      const blob = await downloadCommunitySharePackage(selectedProfessorIds);
       const saveStatus = await saveCommunitySharePackageBlob(blob);
       if (saveStatus === "canceled") {
         notifyWarning(
@@ -1397,10 +1399,12 @@ export const ProfessorsPage = () => {
         );
         return;
       }
-      openExternalHttpUrl(buildCommunityBatchContributionUrl(selectedProfessors));
+      openExternalHttpUrl(
+        buildCommunityBatchContributionUrl(selectedProfessorsOnCurrentPage),
+      );
       notifySuccess(
         "共享包已保存",
-        `请将包含 ${selectedProfessors.length} 位导师的 XLSX 拖入已打开的 GitHub 表单；私有数据未导出。`,
+        `请将包含 ${selectedProfessorIds.length} 位导师的 XLSX 拖入已打开的 GitHub 表单；私有数据未导出。`,
       );
     } catch (error) {
       notifyError(

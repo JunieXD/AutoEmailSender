@@ -96,7 +96,11 @@ def _resolve_target(
     source = source_command.strip().lower()
     plan_id = _string_identifier(item.get("plan_id"))
     if plan_id is not None:
-        return _plan_target(action, plan_id)
+        return _plan_target(
+            action,
+            plan_id,
+            _string_identifier(item.get("content_fingerprint")),
+        )
 
     task_id = _positive_integer(item.get("task_id"))
     if task_id is not None or source.startswith(("drafts.", "tasks.", "workspaces.")):
@@ -133,13 +137,17 @@ def _resolve_target(
 def _plan_target(
     action: str,
     plan_id: str,
+    content_fingerprint: str | None,
 ) -> tuple[str, dict[str, object], list[str], str] | None:
     if action == "read":
         return "plans.show", {"plan_id": plan_id}, [], "invoke"
     if action == "execute":
         # Do not pre-fill --confirm.  It is supplied only after the Agent has
         # obtained an explicit confirmation for this exact plan.
-        return "plans.execute", {"plan_id": plan_id}, ["confirm"], "invoke"
+        arguments = {"plan_id": plan_id}
+        if content_fingerprint is not None:
+            arguments["confirmed_fingerprint"] = content_fingerprint
+        return "plans.execute", arguments, ["confirm"], "invoke"
     if action == "cancel":
         return "plans.cancel", {"plan_id": plan_id}, [], "invoke"
     return None

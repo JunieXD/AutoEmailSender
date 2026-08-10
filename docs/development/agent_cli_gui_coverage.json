@@ -19,6 +19,8 @@
         "getBatchTaskItemThread",
         "approveAllBatchTaskDrafts",
         "regenerateBatchTaskItemDraft",
+        "rewriteBatchTaskItemDraft",
+        "updateBatchTaskItemOutreachConfig",
         "approveBatchTaskItemDraft",
         "approveAndSendBatchTaskItemDraft",
         "deleteBatchTaskItem",

@@ -16,6 +16,7 @@ from auto_email_sender_cli.capabilities import (
     capability_catalog_revision,
     capability_stateful,
     collection_filter_fields,
+    collection_filter_operators,
     supports_if_revision,
     supports_pagination,
     supports_wait,
@@ -578,7 +579,6 @@ class ContractTests(unittest.TestCase):
             "campaigns.prepare-send": "item_ids",
             "enrichment.jobs.create": "professor_ids",
             "matching.jobs.create": "professor_ids",
-            "professors.prepare-bulk-archive": "professor_ids",
             "professors.tags.prepare-bulk": "professor_ids",
         }
         for command, parameter_name in expected.items():
@@ -591,6 +591,19 @@ class ContractTests(unittest.TestCase):
             )
             self.assertTrue(parameter["required"], command)
             self.assertIn(parameter_name, description["input"]["schema"]["required"], command)
+
+        bulk_archive = describe_command(app, "professors.prepare-bulk-archive")
+        assert bulk_archive is not None
+        bulk_parameters = {
+            item["name"]: item for item in bulk_archive["parameters"]
+        }
+        self.assertFalse(bulk_parameters["professor_ids"]["required"])
+        self.assertFalse(bulk_parameters["selection_filter"]["required"])
+        self.assertEqual(
+            bulk_archive["input"]["selection_semantics"],
+            "exactly one of professor_ids or selection_filter is required",
+        )
+        self.assertEqual(len(bulk_archive["input"]["schema"]["oneOf"]), 2)
 
         enrich = describe_command(app, "crawler.jobs.enrich")
         approve = describe_command(app, "crawler.jobs.approve")
@@ -1303,6 +1316,104 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(invalid_type.exit_code, 2, msg=invalid_type.output)
         self.assertEqual(json.loads(invalid_type.stdout)["error"]["code"], "INVALID_FILTER")
 
+    def test_contains_script_filter_handles_unicode_and_pushes_safe_name_predicate(self) -> None:
+        data = {
+            "items": [
+                {"id": 1, "name": "李雷"},
+                {"id": 2, "name": "José"},
+                {"id": 3, "name": "李 Ada"},
+                {"id": 4, "name": "Мария"},
+                {"id": 5, "name": "أحمد"},
+                {"id": 6, "name": "导师２"},
+            ],
+            "next_cursor": None,
+            "has_more": False,
+        }
+        latin = apply_structured_filter(
+            data,
+            '{"name":{"contains_script":"latin"}}',
+            command="professors.list",
+        )
+        self.assertEqual([item["id"] for item in latin["items"]], [2, 3])
+        self.assertEqual(
+            server_filter_params(
+                '{"name":{"contains_script":"latin"}}',
+                command="professors.list",
+            ),
+            {"name_script": "latin"},
+        )
+        self.assertIn("contains_script", collection_filter_operators("professors.list"))
+        self.assertNotIn("contains_script", collection_filter_operators("templates.list"))
+
+        for script, expected_id in (
+            ("han", 1),
+            ("cyrillic", 4),
+            ("arabic", 5),
+            ("digit", 6),
+        ):
+            with self.subTest(script=script):
+                filtered = apply_structured_filter(
+                    data,
+                    json.dumps({"name": {"contains_script": script}}),
+                    command="professors.list",
+                )
+                self.assertIn(expected_id, [item["id"] for item in filtered["items"]])
+
+        with self.assertRaises(CliError) as invalid_field:
+            apply_structured_filter(
+                data,
+                '{"email":{"contains_script":"latin"}}',
+                command="professors.list",
+            )
+        self.assertEqual(invalid_field.exception.code, "INVALID_FILTER")
+
+    def test_contains_script_filter_reports_server_pushdown_and_local_validation(self) -> None:
+        class ScriptFilterClient(_FakeClient):
+            calls: list[dict[str, object]] = []
+
+            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+                self.calls.append(dict(kwargs.get("params", {})))
+                return {
+                    "items": [
+                        {"id": 1, "name": "李雷"},
+                        {"id": 2, "name": "José"},
+                    ],
+                    "next_cursor": None,
+                    "has_more": False,
+                }
+
+        client = ScriptFilterClient()
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=client,
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "--filter",
+                    '{"name":{"contains_script":"latin"}}',
+                    "professors",
+                    "list",
+                    "--fields",
+                    "id,name",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)["data"]
+        self.assertEqual(client.calls[0]["name_script"], "latin")
+        self.assertEqual(payload["items"], [{"id": 2, "name": "José"}])
+        self.assertEqual(
+            payload["filter_execution"],
+            {
+                "mode": "server_requested_local_validated",
+                "server_parameters": ["name_script"],
+                "local_validation": True,
+            },
+        )
+
     def test_local_filter_streams_pages_and_limits_matching_not_scanned_items(self) -> None:
         class PagedClient:
             descriptor = type("Descriptor", (), {"app_version": "test"})()
@@ -1854,12 +1965,22 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(all("arguments" not in action for action in actions))
 
         plan = augment_state_metadata(
-            {"plan_id": "plan-7", "status": "pending"},
+            {
+                "plan_id": "plan-7",
+                "status": "pending",
+                "content_fingerprint": "fingerprint-7",
+            },
             command="plans.show",
         )
         plan_actions = {item["action"]: item for item in plan["available_actions"]}
         self.assertEqual(plan_actions["execute"]["command"], "plans.execute")
-        self.assertEqual(plan_actions["execute"]["arguments"], {"plan_id": "plan-7"})
+        self.assertEqual(
+            plan_actions["execute"]["arguments"],
+            {
+                "plan_id": "plan-7",
+                "confirmed_fingerprint": "fingerprint-7",
+            },
+        )
         self.assertTrue(
             plan_actions["execute"]["confirmation_required_before_invocation"],
         )

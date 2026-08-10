@@ -380,6 +380,74 @@ describe("ProfessorsPage layout", () => {
     expect(window.location.href).toBe(locationBeforeContribution);
   });
 
+  it("exports all selected professors across server-paginated pages", async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue(undefined);
+    const saveCommunitySharePackage = vi
+      .fn()
+      .mockResolvedValue({ status: "saved" as const });
+    window.autoEmailSender = {
+      getVersion: async () => "0.1.0",
+      openExternalUrl,
+      saveCommunitySharePackage,
+      checkForUpdate: vi.fn(),
+      downloadUpdate: vi.fn(),
+      switchToFullDownload: vi.fn(),
+      quitAndInstall: vi.fn(),
+      onUpdateStatus: () => () => undefined,
+    };
+    const selectedProfessors = Array.from({ length: 82 }, (_, index) => ({
+      ...buildProfessor(index + 1),
+      source_url: `https://example.edu/faculty/${index + 1}`,
+    }));
+    listProfessorsForManagement.mockResolvedValue(selectedProfessors);
+    renderPage("/professors?community_contribution=batch");
+
+    const tableHeader = await screen.findByTestId("professor-table-header");
+    fireEvent.click(
+      within(tableHeader).getByRole("button", { name: "全选当前结果" }),
+    );
+    expect(await screen.findByText("已选中 82 位导师")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "贡献到社区" }));
+
+    await waitFor(() => {
+      expect(downloadCommunitySharePackage).toHaveBeenCalledWith(
+        selectedProfessors.map((item) => item.id),
+      );
+      expect(saveCommunitySharePackage).toHaveBeenCalledOnce();
+    });
+    expect(
+      await screen.findByText(
+        "请将包含 82 位导师的 XLSX 拖入已打开的 GitHub 表单；私有数据未导出。",
+      ),
+    ).toBeInTheDocument();
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      expect.stringContaining("template=batch-contribution.yml"),
+    );
+  });
+
+  it("enforces the community share limit against the complete selection", async () => {
+    const selectedProfessors = Array.from({ length: 501 }, (_, index) => ({
+      ...buildProfessor(index + 1),
+      source_url: `https://example.edu/faculty/${index + 1}`,
+    }));
+    listProfessorsForManagement.mockResolvedValue(selectedProfessors);
+    renderPage("/professors?community_contribution=batch");
+
+    const tableHeader = await screen.findByTestId("professor-table-header");
+    fireEvent.click(
+      within(tableHeader).getByRole("button", { name: "全选当前结果" }),
+    );
+    expect(await screen.findByText("已选中 501 位导师")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "贡献到社区" }));
+
+    expect(
+      await screen.findByText("一次最多导出 500 位导师的社区共享包。"),
+    ).toBeInTheDocument();
+    expect(downloadCommunitySharePackage).not.toHaveBeenCalled();
+  });
+
   it("does not open GitHub when desktop share package saving is canceled", async () => {
     const openExternalUrl = vi.fn().mockResolvedValue(undefined);
     const saveCommunitySharePackage = vi

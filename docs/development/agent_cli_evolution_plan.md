@@ -551,3 +551,47 @@ Windows x64、macOS Apple Silicon 的安装包端到端验证，以及发布构�
 3. 任何计划将用户例子固化为专用命令的提案，都必须先说明为什么通用读取、筛选、写入、批量或状态原语不足。
 4. 每个版本发布前，以实时 `capabilities` 为准复核本文中的状态性描述。
 5. 发现本文与实际安全边界冲突时，以“秘密不泄露、桌面不自动启动、真实发送必须确认、业务规则不能绕过”为最高优先级，并立即修正文档和实现。
+
+## 16. Agent 检索与执行连续性改进（2026-08-10）
+
+### 16.1 从本次真实任务暴露的问题
+
+“找出姓名含英文字母的导师并批量移入回收站”同时经过能力发现、数据筛选、批量选择、计划确认和结果核验。原实现分别存在以下摩擦：
+
+- `capabilities --query` 只是词法近似搜索，但输出没有置信度或命中原因；通用词会把无关命令混进前列。
+- `--query` 同时用于“搜索 CLI 能力”和“搜索导师数据”，Agent 很难仅从参数名判断层级。
+- 没有安全的 Unicode 字符类别筛选，只能先读取全部导师再自行匹配；超过 500 项时 stdout 又只保留数组摘要。
+- 批量计划只接受显式 ID，导致 Agent 必须把数千个 ID 从读取结果复制到下一次调用。
+- 计划确认只绑定 `plan_id`，没有绑定用户实际看到的计划内容版本；执行结果也会默认把小型 `result` 对象摘要掉。
+
+这里的 `capabilities --query`（现推荐写作 `--intent`）只在本地能力目录中做确定性意图路由，不查询导师、邮件或其他业务数据。`professors list --query`（现也可写作 `--search`）才会查询导师数据。两个旧参数均保留兼容。
+
+### 16.2 参考的 Agent 友好 CLI 设计
+
+- [OpenAI：Create a CLI Codex can use](https://developers.openai.com/codex/use-cases/agent-friendly-clis)：默认输出小而稳定，优先显式字段，完整大结果写文件。
+- [GitHub CLI JSON formatting](https://cli.github.com/manual/gh_help_formatting)：通过 `--json`/字段选择控制机器输出，而不是让调用方解析人类表格。
+- [Kubernetes field selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/)：筛选字段和运算符由资源合同声明并由服务端验证。
+- [Terraform saved plans](https://developer.hashicorp.com/terraform/cli/commands/apply)：先查看不可变计划，再执行同一份计划，而不是确认后重新解析动态范围。
+- [Claude Code headless mode](https://code.claude.com/docs/en/headless) 与 [Gemini CLI headless mode](https://geminicli.com/docs/cli/headless/)：机器模式保持单一结构化输出、稳定退出码，并把进度噪声与结果分离。
+
+本项目不照搬任何一个工具的命令形态，而是采用其中可通用验证的合同：小默认输出、可解释路由、白名单选择器、文件恢复动作、不可变计划和版本绑定确认。
+
+### 16.3 实施计划与验收合同
+
+| 阶段 | 改进 | 验收方式 |
+|---|---|---|
+| 意图发现 | 增加 `--intent`/`--search` 清晰别名；搜索卡返回模式、分数、置信度、理由与命中词；按最强匹配相对阈值去除长尾噪声。 | 三条真实中文任务意图均稳定 Top 1；姓名筛选任务不再返回无关命令。 |
+| 结构筛选 | 增加固定白名单 `contains_script`，首批支持 `latin`、`han`、`cyrillic`、`arabic`、`digit`；仅在合同声明的文本字段使用。 | `José` 与中英混合姓名命中 latin；纯汉字不命中；非法字段/脚本在联网前失败。 |
+| 服务端下推 | 将导师姓名脚本条件下推为 `name_script`，CLI 仍做完整本地复核并报告执行模式。 | 新后端减少扫描；模拟忽略参数的旧后端仍得到相同结果。 |
+| 批量连续性 | 批量归档接受 `SelectionSpec`、筛选范围与排除项；生成计划时冻结精确 ID 和哈希。 | 计划生成后新增的匹配导师不会被执行；排除项保持不变。 |
+| 大结果恢复 | 顶层集合被摘要或预算压缩时返回机器可执行 `recovery_action`。 | 501 项集合返回 `export_complete_collection` 与所需 `output_file`，不要求 Agent 猜重试方式。 |
+| 确认与回执 | 变更计划计算 `content_fingerprint`；执行可提交 `confirmed_fingerprint`；小型执行结果直接显示，批量归档返回最终状态。 | 错误指纹返回 `PLAN_CONFIRMATION_MISMATCH` 且零副作用；正确指纹执行一次；旧调用保持兼容。 |
+| 分发与防回归 | 同步 Skill、命令合同、意图基准和单元/集成测试。 | CLI 全量、相关后端测试与仓库质量门禁全部通过。 |
+
+这些改进仍遵守第 2 节的安全边界：不开放任意正则、SQL 或 HTTP；不自动启动桌面软件；批量归档仍只生成计划，必须经过用户明确确认后才执行。
+
+### 16.4 本次验证结果
+
+- 冷进程意图基准 8/8 正确，准确率 100%；40 次样本的 p95 为 204.94 ms，最大单次意图输出 1289 bytes。
+- 统一质量门禁通过：后端 1796 项、CLI 225 项，以及前端、桌面端和网站测试全部通过。
+- 分发 Skill 通过 `skill-creator` 的 `quick_validate.py`；最终差异通过 `git diff --check`。

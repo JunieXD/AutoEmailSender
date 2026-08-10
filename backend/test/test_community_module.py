@@ -9,6 +9,10 @@ class CommunityModuleBoundaryTest(unittest.TestCase):
         from app.modules.community.mentors import schemas, service
 
         self.assertIs(public.CommunityImportPayload, schemas.CommunityImportPayload)
+        self.assertIs(
+            public.CommunitySharePackagePayload,
+            schemas.CommunitySharePackagePayload,
+        )
         self.assertIs(public.CommunityDataError, service.CommunityDataError)
         self.assertIs(
             public.build_community_share_package,
