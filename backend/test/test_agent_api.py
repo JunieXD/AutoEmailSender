@@ -4259,11 +4259,11 @@ class AgentApiTests(unittest.TestCase):
 
     def test_agent_draft_rewrite_forwards_current_text_without_sending(self) -> None:
         draft = self._create_template_draft()
-        captured: dict[str, object] = {}
+        captured: dict[str, object] = {"payloads": []}
 
         async def fake_rewrite(session_factory, task_id, payload):
             captured["task_id"] = task_id
-            captured["payload"] = payload
+            captured["payloads"].append(payload)
             from app.services.agent_drafts import load_agent_draft_task
 
             return await load_agent_draft_task(session_factory, task_id)
@@ -4283,17 +4283,162 @@ class AgentApiTests(unittest.TestCase):
                     "attachment_material_ids": [],
                 },
             )
+            omitted_response = self.client.post(
+                f"/api/agent/v1/drafts/{draft['task_id']}/rewrite",
+                headers=self._agent_headers(),
+                json={
+                    "subject": "保留附件主题",
+                    "body_text": "省略附件参数。",
+                    "body_html": "<p>省略附件参数。</p>",
+                },
+            )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(omitted_response.status_code, 200, msg=omitted_response.text)
         self.assertEqual(captured["task_id"], draft["task_id"])
-        rewrite_payload = captured["payload"]
+        rewrite_payload, omitted_payload = captured["payloads"]
         self.assertEqual(rewrite_payload.body_text, "请将这封邮件改得更简洁。")
         self.assertEqual(rewrite_payload.attachment_material_ids, [])
+        self.assertIsNone(omitted_payload.attachment_material_ids)
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             sent_count = connection.execute(
                 "SELECT COUNT(*) FROM email_logs WHERE direction = 'sent'",
             ).fetchone()[0]
         self.assertEqual(sent_count, 0)
+
+    def test_agent_draft_attachment_updates_preserve_and_explicitly_clear(self) -> None:
+        preserved_draft = self._create_template_draft()
+        preserved_ids = preserved_draft["attachment_material_ids"]
+        preserved = self.client.put(
+            f"/api/agent/v1/drafts/{preserved_draft['task_id']}",
+            headers=self._agent_headers(),
+            json={"subject": "保留附件", "body_text": "只修改正文"},
+        )
+
+        cleared = self.client.put(
+            f"/api/agent/v1/drafts/{preserved_draft['task_id']}",
+            headers=self._agent_headers(),
+            json={
+                "subject": "清空附件",
+                "body_text": "明确清空附件",
+                "attachment_material_ids": [],
+            },
+        )
+
+        self.assertEqual(preserved.status_code, 200, msg=preserved.text)
+        self.assertEqual(preserved.json()["attachment_material_ids"], preserved_ids)
+        self.assertEqual(cleared.status_code, 200, msg=cleared.text)
+        self.assertEqual(cleared.json()["attachment_material_ids"], [])
+
+    def test_agent_approval_attachment_updates_preserve_and_explicitly_clear(self) -> None:
+        preserved_draft = self._create_template_draft()
+        preserved_ids = preserved_draft["attachment_material_ids"]
+        approved = self.client.post(
+            f"/api/agent/v1/tasks/{preserved_draft['task_id']}/approve-draft",
+            headers=self._agent_headers(),
+            json={"subject": "批准主题", "body_text": "批准正文"},
+        )
+
+        cleared = self.client.post(
+            f"/api/agent/v1/tasks/{preserved_draft['task_id']}/approve-draft",
+            headers=self._agent_headers(),
+            json={
+                "subject": "批准并清空",
+                "body_text": "批准正文",
+                "attachment_material_ids": [],
+            },
+        )
+
+        campaign_id, item_id = self._create_template_campaign(
+            key_suffix="preserve-attachments",
+        )
+        campaign_draft = self._agent_get(f"/api/agent/v1/drafts/{item_id}").json()
+        campaign_approved = self.client.post(
+            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft",
+            headers=self._agent_headers(),
+            json={"subject": "活动主题", "body_text": "活动正文"},
+        )
+
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(
+            approved.json()["current_task"]["selected_material_ids"],
+            preserved_ids,
+        )
+        self.assertEqual(cleared.status_code, 200, msg=cleared.text)
+        self.assertEqual(cleared.json()["current_task"]["selected_material_ids"], [])
+        self.assertEqual(campaign_approved.status_code, 200, msg=campaign_approved.text)
+        self.assertEqual(
+            campaign_approved.json()["current_task"]["selected_material_ids"],
+            campaign_draft["attachment_material_ids"],
+        )
+
+    def test_agent_attachment_schemas_reject_duplicate_and_nonpositive_ids(self) -> None:
+        cases = [
+            (
+                "POST",
+                "/api/agent/v1/drafts",
+                {
+                    "professor_id": 1,
+                    "identity_id": 1,
+                    "llm_profile_id": 1,
+                    "generation_mode": "template",
+                    "attachment_material_ids": [2, 2],
+                },
+            ),
+            (
+                "POST",
+                "/api/agent/v1/drafts",
+                {
+                    "professor_id": 1,
+                    "identity_id": 1,
+                    "llm_profile_id": 1,
+                    "generation_mode": "template",
+                    "attachment_material_ids": [0],
+                },
+            ),
+            (
+                "PUT",
+                "/api/agent/v1/drafts/1",
+                {"body_text": "正文", "attachment_material_ids": [2, 2]},
+            ),
+            (
+                "PUT",
+                "/api/agent/v1/drafts/1",
+                {"body_text": "正文", "attachment_material_ids": [-1]},
+            ),
+            (
+                "POST",
+                "/api/agent/v1/campaigns/prepare-create",
+                {
+                    "name": "非法附件",
+                    "identity_id": 1,
+                    "llm_profile_id": 1,
+                    "professor_ids": [1],
+                    "generation_mode": "template",
+                    "attachment_material_ids": [2, 2],
+                },
+            ),
+            (
+                "PUT",
+                "/api/agent/v1/test-email/1/1/draft",
+                {"body_text": "正文", "selected_material_ids": [2, 2]},
+            ),
+            (
+                "POST",
+                "/api/agent/v1/test-email/1/1/prepare-send",
+                {"body_text": "正文", "selected_material_ids": [0]},
+            ),
+        ]
+
+        for method, path, payload in cases:
+            with self.subTest(method=method, path=path, payload=payload):
+                response = self.client.request(
+                    method,
+                    path,
+                    headers=self._agent_headers(),
+                    json=payload,
+                )
+                self.assertEqual(response.status_code, 422, msg=response.text)
 
     def test_agent_revision_precondition_rejects_stale_draft_save(self) -> None:
         draft = self._create_template_draft()
@@ -5200,6 +5345,68 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
 
+    def test_agent_task_actions_return_requested_batch_item(self) -> None:
+        _campaign_id, item_id = self._create_template_campaign(
+            key_suffix="exact-task-response",
+        )
+        draft = self._agent_get(f"/api/agent/v1/drafts/{item_id}").json()
+        approved = self.client.post(
+            f"/api/agent/v1/tasks/{item_id}/approve-draft",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-exact-task-approve",
+                "If-Revision": draft["revision"],
+            },
+            json={
+                "subject": "指定批量项主题",
+                "body_text": "指定批量项正文",
+                "body_html": "<p>指定批量项正文</p>",
+                "attachment_material_ids": draft["attachment_material_ids"],
+            },
+        )
+
+        self.assertEqual(approved.status_code, 200, msg=approved.text)
+        self.assertEqual(approved.json()["current_task"]["id"], item_id)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            professor_id, identity_id, llm_profile_id = connection.execute(
+                """
+                SELECT professor_id, identity_id, llm_profile_id
+                FROM email_tasks
+                WHERE id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        calculation = SimpleNamespace(
+            professor_id=professor_id,
+            identity_id=identity_id,
+            match_source_identity_id=identity_id,
+            llm_profile_id=llm_profile_id,
+            usage=SimpleNamespace(
+                prompt_tokens=5,
+                completion_tokens=3,
+                total_tokens=8,
+                cached_tokens=0,
+            ),
+            run_id=91,
+        )
+        with patch(
+            "app.api.agent_v1.router.calculate_task_match_once",
+            new=AsyncMock(return_value=calculation),
+        ):
+            calculated = self.client.post(
+                f"/api/agent/v1/tasks/{item_id}/calculate-match",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-exact-task-calculate-match",
+                },
+                json={"llm_profile_id": llm_profile_id},
+            )
+
+        self.assertEqual(calculated.status_code, 200, msg=calculated.text)
+        self.assertEqual(calculated.json()["task_id"], item_id)
+        self.assertEqual(calculated.json()["thread"]["current_task"]["id"], item_id)
+
     def test_agent_can_list_and_concurrency_protect_delivery_rescheduling(self) -> None:
         draft = self._create_template_draft()
         task_id = int(draft["task_id"])
@@ -5409,6 +5616,134 @@ class AgentApiTests(unittest.TestCase):
             f"/api/agent/v1/test-email/{identity_id}/status",
         )
         self.assertTrue(status_response.json()["completed"])
+
+    def test_agent_test_email_preserves_omitted_attachments_and_template(self) -> None:
+        identity_id = self._create_identity(email="preserve-test@example.com")
+        llm_profile_id = self._create_llm_profile()
+        material_id = self._upload_material(identity_id)
+        template_id = self._create_template()
+
+        initial = self.client.put(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/draft",
+            headers=self._agent_headers(),
+            json={
+                "outreach_template_id": template_id,
+                "subject": "初始测试主题",
+                "body_text": "初始测试正文",
+                "selected_material_ids": [material_id],
+            },
+        )
+        preserved = self.client.put(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/draft",
+            headers=self._agent_headers(),
+            json={"subject": "更新测试主题", "body_text": "更新测试正文"},
+        )
+        prepared = self.client.post(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/prepare-send",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-test-email-preserve-attachments",
+            },
+            json={"subject": "发送测试主题", "body_text": "发送测试正文"},
+        )
+
+        self.assertEqual(initial.status_code, 200, msg=initial.text)
+        self.assertEqual(preserved.status_code, 200, msg=preserved.text)
+        self.assertEqual(preserved.json()["draft"]["selected_material_ids"], [material_id])
+        self.assertEqual(preserved.json()["draft"]["outreach_template_id"], template_id)
+        self.assertEqual(prepared.status_code, 201, msg=prepared.text)
+        plan = prepared.json()
+        self.assertEqual(plan["summary"]["attachments"][0]["id"], material_id)
+        self.assertEqual(plan["summary"]["template"]["id"], template_id)
+
+        send_result = SimpleNamespace(
+            message_id="<preserved-attachment@example.com>",
+            provider_payload={"recipient": "preserve-test@example.com"},
+        )
+        with patch(
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
+            AsyncMock(return_value=send_result),
+        ) as mocked_send:
+            executed = self.client.post(
+                f"/api/agent/v1/plans/{plan['plan_id']}/execute",
+                headers=self._agent_headers(),
+                json={"confirm": True},
+            )
+
+        self.assertEqual(executed.status_code, 200, msg=executed.text)
+        self.assertEqual(
+            len(mocked_send.await_args.kwargs["attachments"]),
+            1,
+        )
+
+        cleared = self.client.put(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/draft",
+            headers=self._agent_headers(),
+            json={
+                "subject": "清空附件",
+                "body_text": "清空附件后的正文",
+                "selected_material_ids": [],
+            },
+        )
+        cleared_plan = self.client.post(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/prepare-send",
+            headers=self._agent_headers(),
+            json={"subject": "无附件测试", "body_text": "无附件正文"},
+        )
+
+        self.assertEqual(cleared.status_code, 200, msg=cleared.text)
+        self.assertEqual(cleared.json()["draft"]["selected_material_ids"], [])
+        self.assertEqual(cleared.json()["draft"]["outreach_template_id"], template_id)
+        self.assertEqual(cleared_plan.status_code, 201, msg=cleared_plan.text)
+        self.assertEqual(cleared_plan.json()["summary"]["attachments"], [])
+        self.assertEqual(cleared_plan.json()["summary"]["template"]["id"], template_id)
+
+    def test_agent_test_email_plan_resolves_defaults_without_creating_a_session(self) -> None:
+        identity_id = self._create_identity(email="new-test-session@example.com")
+        llm_profile_id = self._create_llm_profile()
+        template_id = self._create_template()
+
+        prepared = self.client.post(
+            f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/prepare-send",
+            headers=self._agent_headers(),
+            json={"subject": "首次测试", "body_text": "首次测试正文"},
+        )
+
+        self.assertEqual(prepared.status_code, 201, msg=prepared.text)
+        self.assertEqual(prepared.json()["summary"]["template"]["id"], template_id)
+        self.assertEqual(prepared.json()["summary"]["attachments"], [])
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            session_count = connection.execute(
+                "SELECT COUNT(*) FROM test_compose_sessions WHERE identity_id = ?",
+                (identity_id,),
+            ).fetchone()[0]
+        self.assertEqual(session_count, 0)
+
+        send_result = SimpleNamespace(
+            message_id="<new-test-session@example.com>",
+            provider_payload={"recipient": "new-test-session@example.com"},
+        )
+        with patch(
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
+            AsyncMock(return_value=send_result),
+        ):
+            executed = self.client.post(
+                f"/api/agent/v1/plans/{prepared.json()['plan_id']}/execute",
+                headers=self._agent_headers(),
+                json={"confirm": True},
+            )
+
+        self.assertEqual(executed.status_code, 200, msg=executed.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            stored_template_id = connection.execute(
+                """
+                SELECT outreach_template_id
+                FROM test_compose_sessions
+                WHERE identity_id = ?
+                """,
+                (identity_id,),
+            ).fetchone()[0]
+        self.assertEqual(stored_template_id, template_id)
 
     def _create_identity(self, *, email: str = "sender@example.com") -> int:
         response = self.client.post(

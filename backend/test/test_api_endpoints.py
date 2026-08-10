@@ -3219,6 +3219,57 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(metadata["stable_prefix_hash"], "d" * 64)
         self.assertEqual(metadata["prompt_cache_key"], "draft-rewrite:v5:rewrite-test")
 
+    def test_rewrite_draft_preserves_omitted_attachments_after_failure(self) -> None:
+        from app.modules.llm import runtime as llm_runtime
+
+        task_id = self._create_rewrite_ready_task()
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            material_id = connection.execute(
+                "SELECT primary_material_id FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE email_tasks SET selected_material_ids = ? WHERE id = ?",
+                (json.dumps([material_id]), task_id),
+            )
+
+        async def fail_after_claim(**_kwargs: object):
+            with closing(sqlite3.connect(self.db_path)) as connection:
+                selected_ids, source_ids = connection.execute(
+                    """
+                    SELECT selected_material_ids,
+                           draft_rewrite_source_selected_material_ids
+                    FROM email_tasks
+                    WHERE id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            self.assertEqual(json.loads(selected_ids), [material_id])
+            self.assertEqual(json.loads(source_ids), [material_id])
+            raise llm_runtime.LLMRuntimeError("模型请求失败: 验证附件回滚")
+
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            AsyncMock(side_effect=fail_after_claim),
+        ):
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/rewrite-draft",
+                json={
+                    "subject": "保留附件主题",
+                    "body_text": "保留附件正文",
+                    "body_html": "<p>保留附件正文</p>",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            status, selected_ids = connection.execute(
+                "SELECT status, selected_material_ids FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(status, "matched")
+        self.assertEqual(json.loads(selected_ids), [material_id])
+
     def test_rewrite_draft_resolves_thinking_adaptation_once(self) -> None:
         task_id = self._create_rewrite_ready_task()
         extra_body = {"thinking": {"type": "disabled"}}
@@ -6976,6 +7027,90 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(row[1], "模型未返回可用改写内容")
         self.assertIsNone(row[2])
 
+    def test_email_task_actions_return_requested_batch_item(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="exact-task-response-resume.txt",
+            content=b"My background covers information extraction and agents.",
+            material_type="resume",
+        )
+        professor_id = self._create_professor(email="exact-task-response@example.edu")
+        requested_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        newer_batch_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="running",
+            primary_material_id=material_id,
+        )
+        requested_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[],
+            batch_task_id=requested_batch_id,
+            source="batch",
+            generated_subject="待操作旧任务",
+            generated_content_text="待操作旧正文",
+            generated_content_html="<p>待操作旧正文</p>",
+        )
+        newer_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=material_id,
+            selected_material_ids=[],
+            batch_task_id=newer_batch_id,
+            source="batch",
+            generated_subject="不应返回的新任务",
+            generated_content_text="不应修改的新正文",
+            generated_content_html="<p>不应修改的新正文</p>",
+        )
+
+        save_response = self.client.post(
+            f"/api/email-tasks/{requested_task_id}/save-draft",
+            json={
+                "subject": "明确保存到旧任务",
+                "body_text": "明确保存到旧正文",
+                "body_html": "<p>明确保存到旧正文</p>",
+                "selected_material_ids": [],
+            },
+        )
+
+        self.assertEqual(save_response.status_code, 200, msg=save_response.text)
+        saved_task = save_response.json()["current_task"]
+        self.assertEqual(saved_task["id"], requested_task_id)
+        self.assertEqual(saved_task["approved_subject"], "明确保存到旧任务")
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=81)),
+        ):
+            match_response = self.client.post(
+                f"/api/email-tasks/{requested_task_id}/calculate-match",
+            )
+
+        self.assertEqual(match_response.status_code, 200, msg=match_response.text)
+        matched_task = match_response.json()["thread"]["current_task"]
+        self.assertEqual(matched_task["id"], requested_task_id)
+        self.assertEqual(matched_task["match_score"], 81)
+
+        newer_thread = self.client.get(f"/api/email-tasks/{newer_task_id}/thread")
+        self.assertEqual(newer_thread.status_code, 200, msg=newer_thread.text)
+        newer_task = newer_thread.json()["current_task"]
+        self.assertEqual(newer_task["id"], newer_task_id)
+        self.assertEqual(newer_task["generated_subject"], "不应返回的新任务")
+        self.assertIsNone(newer_task["approved_subject"])
+
     def test_calculate_match_keeps_low_score_task_in_matched_state(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -10035,6 +10170,16 @@ class ApiEndpointTests(unittest.TestCase):
             match_score=82,
             match_reason="第二批方向匹配",
         )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            scheduled_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+            connection.execute(
+                "UPDATE email_tasks SET scheduled_at = ? WHERE id = ?",
+                (scheduled_at, first_task_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
         thread_response = self.client.get(
             f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/thread",
@@ -10077,10 +10222,49 @@ class ApiEndpointTests(unittest.TestCase):
         outreach_task = outreach_response.json()["current_task"]
         self.assertEqual(outreach_task["id"], first_task_id)
         self.assertEqual(outreach_task["batch_task_id"], first_batch_id)
+        self.assertEqual(outreach_task["status"], "review_required")
         self.assertEqual(outreach_task["outreach_template_id"], template_id)
+        self.assertEqual(outreach_task["draft_generation_source"], "template")
+        self.assertIsNone(outreach_task["draft_fallback_reason"])
         self.assertEqual(outreach_task["draft"]["source"], "template")
         self.assertEqual(outreach_task["draft"]["subject"], "第一批模板主题")
         self.assertEqual(outreach_task["draft"]["body_text"], "第一批模板正文")
+        self.assertEqual(outreach_task["generated_subject"], "第一批模板主题")
+        self.assertEqual(outreach_task["generated_content_text"], "第一批模板正文")
+        self.assertIsNotNone(outreach_task["scheduled_at"])
+
+        reopened_first_thread = self.client.get(
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/thread",
+        )
+        self.assertEqual(
+            reopened_first_thread.status_code,
+            200,
+            msg=reopened_first_thread.text,
+        )
+        reopened_first_task = reopened_first_thread.json()["current_task"]
+        self.assertEqual(reopened_first_task["status"], "review_required")
+        self.assertEqual(reopened_first_task["draft"]["source"], "template")
+        self.assertEqual(reopened_first_task["draft"]["subject"], "第一批模板主题")
+        self.assertIsNotNone(reopened_first_task["scheduled_at"])
+
+        first_batch_items = self.client.get(
+            f"/api/batch-tasks/{first_batch_id}/items",
+        )
+        self.assertEqual(
+            first_batch_items.status_code,
+            200,
+            msg=first_batch_items.text,
+        )
+        first_batch_item = first_batch_items.json()[0]
+        self.assertEqual(first_batch_item["status"], "review_required")
+        self.assertEqual(first_batch_item["next_action"], "review_draft")
+        self.assertEqual(first_batch_item["draft_generation_source"], "template")
+        batch_cards = self.client.get("/api/batch-tasks")
+        self.assertEqual(batch_cards.status_code, 200, msg=batch_cards.text)
+        first_batch_card = next(
+            card for card in batch_cards.json() if card["id"] == first_batch_id
+        )
+        self.assertEqual(first_batch_card["review_required_count"], 1)
 
         second_thread_after_outreach = self.client.get(
             f"/api/batch-tasks/{second_batch_id}/items/{second_task_id}/thread",
@@ -10163,6 +10347,16 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(first_state["approved_subject"], "第一批已审核")
         self.assertEqual(second_state["status"], "review_required")
         self.assertIsNone(second_state["approved_subject"])
+
+        stale_apply = self.client.post(
+            f"/api/batch-tasks/{first_batch_id}/items/{first_task_id}/outreach-config",
+            json=outreach_payload,
+        )
+        self.assertEqual(stale_apply.status_code, 400, msg=stale_apply.text)
+        self.assertIn("草稿状态已发生变化", stale_apply.json()["detail"])
+        approved_state = self._get_email_task_delete_state(first_task_id)
+        self.assertEqual(approved_state["status"], "approved")
+        self.assertEqual(approved_state["approved_subject"], "第一批已审核")
 
     def test_bulk_approve_batch_drafts_snapshots_all_confirmed_items(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -10567,15 +10761,115 @@ class ApiEndpointTests(unittest.TestCase):
             "template_fallback",
         )
 
+        replacement_template = self.client.post(
+            "/api/outreach-templates",
+            json={
+                "name": "缺方向审核替换模板",
+                "recommended_generation_mode": "template",
+                "subject": "重新申请与{{name}}老师交流",
+                "body_text": "{{name}}老师您好，这是重新套用的模板。",
+                "body_html": "<p>{{name}}老师您好，这是重新套用的模板。</p>",
+                "is_default": False,
+            },
+        )
+        self.assertEqual(
+            replacement_template.status_code,
+            201,
+            msg=replacement_template.text,
+        )
+        replacement_template_id = replacement_template.json()["id"]
+        applied = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/outreach-config",
+            json={
+                "outreach_generation_mode": "llm",
+                "outreach_template_id": replacement_template_id,
+                "outreach_template_subject": "客户端过期主题",
+                "outreach_template_body_text": "客户端过期正文",
+                "outreach_template_body_html": "<p>客户端过期正文</p>",
+            },
+        )
+        self.assertEqual(applied.status_code, 200, msg=applied.text)
+        applied_task = applied.json()["current_task"]
+        self.assertEqual(applied_task["status"], "review_required")
+        self.assertEqual(applied_task["outreach_generation_mode"], "template")
+        self.assertEqual(
+            applied_task["outreach_template_id"],
+            replacement_template_id,
+        )
+        self.assertEqual(
+            applied_task["generated_subject"],
+            "重新申请与缺研究方向导师老师交流",
+        )
+        self.assertEqual(
+            applied_task["generated_content_text"],
+            "缺研究方向导师老师您好，这是重新套用的模板。",
+        )
+        self.assertEqual(applied_task["draft"]["source"], "template")
+        self.assertEqual(
+            applied_task["draft_generation_source"],
+            "template_fallback",
+        )
+        self.assertEqual(
+            applied_task["draft_fallback_reason"],
+            "missing_research_direction",
+        )
+
+        reopened_after_apply = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/thread",
+        )
+        self.assertEqual(
+            reopened_after_apply.status_code,
+            200,
+            msg=reopened_after_apply.text,
+        )
+        reopened_task = reopened_after_apply.json()["current_task"]
+        self.assertEqual(reopened_task["status"], "review_required")
+        self.assertEqual(
+            reopened_task["generated_subject"],
+            "重新申请与缺研究方向导师老师交流",
+        )
+        self.assertEqual(
+            reopened_task["draft_generation_source"],
+            "template_fallback",
+        )
+        refreshed_items = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items",
+        )
+        self.assertEqual(
+            refreshed_items.status_code,
+            200,
+            msg=refreshed_items.text,
+        )
+        refreshed_item = refreshed_items.json()[0]
+        self.assertEqual(refreshed_item["status"], "review_required")
+        self.assertEqual(refreshed_item["next_action"], "review_draft")
+        self.assertEqual(
+            refreshed_item["draft_generation_source"],
+            "template_fallback",
+        )
+        refreshed_cards = self.client.get("/api/batch-tasks")
+        self.assertEqual(refreshed_cards.status_code, 200, msg=refreshed_cards.text)
+        refreshed_card = next(
+            card for card in refreshed_cards.json() if card["id"] == batch_task_id
+        )
+        self.assertEqual(refreshed_card["review_required_count"], 1)
+
         with patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=AssertionError("缺研究方向时不应调用模型")),
         ) as mocked_generate:
-            regenerate = self.client.post(
-                f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/regenerate-draft",
+            rewrite = self.client.post(
+                f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/rewrite-draft",
+                json={
+                    "subject": applied_task["generated_subject"],
+                    "body_text": applied_task["generated_content_text"],
+                    "body_html": applied_task["generated_content_html"],
+                    "selected_material_ids": [],
+                    "llm_profile_id": llm_id,
+                },
             )
-        self.assertEqual(regenerate.status_code, 400, msg=regenerate.text)
-        self.assertIn("请先补充导师研究方向", regenerate.json()["detail"])
+        self.assertEqual(rewrite.status_code, 400, msg=rewrite.text)
+        self.assertIn("请先补充导师研究方向", rewrite.json()["detail"])
         mocked_generate.assert_not_awaited()
 
         preserved = self.client.get(
@@ -10584,7 +10878,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(preserved["current_task"]["status"], "review_required")
         self.assertEqual(
             preserved["current_task"]["generated_content_text"],
-            "缺研究方向导师老师您好，我是测试身份。",
+            "缺研究方向导师老师您好，这是重新套用的模板。",
         )
         self.assertEqual(
             preserved["current_task"]["draft_generation_source"],

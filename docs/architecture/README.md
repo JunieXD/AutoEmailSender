@@ -36,6 +36,7 @@
   前置目标进程拓扑、邮件 at-most-once 取舍、实施阶段、故障矩阵和已有验收门槛。
 - [桌面 API + Worker 通用 Beta 验证 Goal 执行计划](./desktop-api-worker-beta-goal-plan.md)：
   当前 Goal 的通用 Prerelease、拓扑设置、本地诊断、双平台 Dogfood 和人工批准门。
+- [Agent UI handoff](./agent-ui-handoffs.md)：CLI 到桌面页面的短期、类型化导航与临时选择协议。
 
 ## 更新规则
 

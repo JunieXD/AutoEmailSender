@@ -62,6 +62,7 @@ async def regenerate_draft(
             task_id,
             llm_profile_id=payload.llm_profile_id if payload else None,
         ),
+        response_task_id=task_id,
     )
 
 
@@ -84,12 +85,8 @@ async def calculate_match(
         status_code = 404 if "不存在" in detail else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
-    thread = await build_workspace_thread(
-        session,
-        professor_id=result.professor_id,
-        identity_id=result.identity_id,
-        llm_profile_id=result.llm_profile_id,
-    )
+    session.expire_all()
+    thread = await build_workspace_thread_for_task(session, task_id=task_id)
     return MatchCalculationResultRead(
         thread=thread,
         usage=TokenUsageRead(
@@ -115,6 +112,7 @@ async def generate_draft(
             task_id,
             llm_profile_id=payload.llm_profile_id if payload else None,
         ),
+        response_task_id=task_id,
     )
 
 
@@ -127,6 +125,7 @@ async def rewrite_draft(
     return await _run_workspace_action(
         session,
         lambda: rewrite_task_draft(get_session_factory(), task_id, payload),
+        response_task_id=task_id,
     )
 
 
@@ -175,6 +174,7 @@ async def change_primary_material(
             task_id,
             payload.primary_material_id,
         ),
+        response_task_id=task_id,
     )
 
 
@@ -198,6 +198,7 @@ async def change_outreach_config(
             outreach_template_body_text=payload.outreach_template_body_text,
             outreach_template_body_html=payload.outreach_template_body_html,
         ),
+        response_task_id=task_id,
     )
 
 
@@ -210,6 +211,7 @@ async def approve_draft(
     return await _run_workspace_action(
         session,
         lambda: approve_draft_task(get_session_factory(), task_id, payload),
+        response_task_id=task_id,
     )
 
 
@@ -222,6 +224,7 @@ async def save_draft(
     return await _run_workspace_action(
         session,
         lambda: save_task_draft(get_session_factory(), task_id, payload),
+        response_task_id=task_id,
     )
 
 
@@ -234,6 +237,7 @@ async def approve_and_send(
     return await _run_workspace_action(
         session,
         lambda: approve_and_send_task(get_session_factory(), task_id, payload),
+        response_task_id=task_id,
     )
 
 
@@ -246,6 +250,7 @@ async def approve_and_schedule(
     return await _run_workspace_action(
         session,
         lambda: approve_and_schedule_task(get_session_factory(), task_id, payload),
+        response_task_id=task_id,
     )
 
 
@@ -257,6 +262,7 @@ async def cancel_schedule(
     return await _run_workspace_action(
         session,
         lambda: cancel_scheduled_task(get_session_factory(), task_id),
+        response_task_id=task_id,
     )
 
 
@@ -285,6 +291,8 @@ async def start_follow_up(
 async def _run_workspace_action(
     session: AsyncSession,
     action,
+    *,
+    response_task_id: int | None = None,
 ) -> WorkspaceThreadRead:
     try:
         professor_id, identity_id, llm_profile_id = await action()
@@ -296,6 +304,11 @@ async def _run_workspace_action(
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
     session.expire_all()
+    if response_task_id is not None:
+        return await build_workspace_thread_for_task(
+            session,
+            task_id=response_task_id,
+        )
     return await build_workspace_thread(
         session,
         professor_id=professor_id,

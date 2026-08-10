@@ -1065,7 +1065,7 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(exact.exit_code, 0, msg=exact.output)
         payload = json.loads(exact.stdout)["data"]
-        self.assertEqual(len(payload["items"]), 10)
+        self.assertEqual(len(payload["items"]), 11)
         self.assertTrue(all(set(item) <= {"command", "summary", "risk"} for item in payload["items"]))
         self.assertTrue(all(not item["command"].startswith("professors.tags.") for item in payload["items"]))
         self.assertIn("scope_revision", payload)
@@ -2694,6 +2694,197 @@ class CliTests(unittest.TestCase):
                 "attachment_material_ids": [3],
             },
         )
+
+    def test_attachment_updates_distinguish_omitted_from_explicit_clear(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/drafts/17": {"task_id": 17},
+                "/api/agent/v1/tasks/17/approve-draft": {
+                    "current_task": {"id": 17},
+                },
+                "/api/agent/v1/drafts/17/rewrite": {"task_id": 17},
+                "/api/agent/v1/campaigns/8/items/19/approve-draft": {
+                    "current_task": {"id": 19},
+                },
+                "/api/agent/v1/test-email/2/3/draft": {
+                    "draft": {"body_text": "测试正文"},
+                },
+                "/api/agent/v1/test-email/2/3/prepare-send": {
+                    "plan_id": "change_test_email_attachments",
+                    "status": "awaiting_confirmation",
+                },
+            },
+        )
+        command_arguments = [
+            ["drafts", "save", "17", "--body-text", "保存正文"],
+            ["drafts", "approve", "17", "--body-text", "批准正文"],
+            ["drafts", "rewrite", "17", "--body-text", "改写正文"],
+            [
+                "campaigns",
+                "approve-item-draft",
+                "8",
+                "19",
+                "--body-text",
+                "活动正文",
+            ],
+            [
+                "test-email",
+                "save",
+                "--identity-id",
+                "2",
+                "--llm-profile-id",
+                "3",
+                "--body-text",
+                "测试正文",
+            ],
+            [
+                "test-email",
+                "prepare-send",
+                "--identity-id",
+                "2",
+                "--llm-profile-id",
+                "3",
+                "--body-text",
+                "测试正文",
+            ],
+        ]
+
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            omitted_results = [
+                self.runner.invoke(app, ["--format", "json", *arguments])
+                for arguments in command_arguments
+            ]
+            clear_results = [
+                self.runner.invoke(
+                    app,
+                    ["--format", "json", *arguments, "--clear-attachments"],
+                )
+                for arguments in command_arguments
+            ]
+            invoked_clear = self.runner.invoke(
+                app,
+                [
+                    "--format",
+                    "json",
+                    "invoke",
+                    "--command",
+                    "drafts.save",
+                    "--input",
+                    "-",
+                ],
+                input=json.dumps(
+                    {
+                        "task_id": 17,
+                        "body_text": "通过 invoke 清空",
+                        "clear_attachments": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+
+        for result in [*omitted_results, *clear_results, invoked_clear]:
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+        for request_body in fake_client.json_bodies[:4]:
+            self.assertNotIn("attachment_material_ids", request_body)
+        for request_body in fake_client.json_bodies[4:6]:
+            self.assertNotIn("selected_material_ids", request_body)
+        for request_body in fake_client.json_bodies[6:10]:
+            self.assertEqual(request_body["attachment_material_ids"], [])
+        for request_body in fake_client.json_bodies[10:12]:
+            self.assertEqual(request_body["selected_material_ids"], [])
+        self.assertEqual(fake_client.json_bodies[12]["attachment_material_ids"], [])
+
+        for command in (
+            "drafts.save",
+            "drafts.approve",
+            "drafts.rewrite",
+            "campaigns.approve-item-draft",
+            "test-email.save",
+            "test-email.prepare-send",
+        ):
+            description = describe_command(app, command)
+            self.assertIsNotNone(description)
+            clear_contract = description["input"]["schema"]["properties"][
+                "clear_attachments"
+            ]
+            self.assertEqual(clear_contract["flags"], ["--clear-attachments"])
+
+    def test_attachment_options_reject_conflicts_and_duplicate_ids_locally(self) -> None:
+        fake_client = _FakeAgentClient({})
+        invalid_commands = [
+            [
+                "drafts",
+                "save",
+                "17",
+                "--body-text",
+                "正文",
+                "--attachment-material-id",
+                "3",
+                "--clear-attachments",
+            ],
+            [
+                "drafts",
+                "generate",
+                "--professor-id",
+                "1",
+                "--identity-id",
+                "2",
+                "--llm-profile-id",
+                "3",
+                "--generation-mode",
+                "template",
+                "--attachment-material-id",
+                "4",
+                "--attachment-material-id",
+                "4",
+            ],
+            [
+                "campaigns",
+                "create",
+                "--name",
+                "重复附件",
+                "--identity-id",
+                "2",
+                "--llm-profile-id",
+                "3",
+                "--professor-id",
+                "7",
+                "--attachment-material-id",
+                "4",
+                "--attachment-material-id",
+                "4",
+            ],
+            [
+                "test-email",
+                "save",
+                "--identity-id",
+                "2",
+                "--llm-profile-id",
+                "3",
+                "--body-text",
+                "正文",
+                "--material-id",
+                "5",
+                "--material-id",
+                "5",
+            ],
+        ]
+
+        with patch(
+            "auto_email_sender_cli.commands.common.AgentApiClient",
+            return_value=fake_client,
+        ):
+            results = [
+                self.runner.invoke(app, ["--format", "json", *arguments])
+                for arguments in invalid_commands
+            ]
+
+        for result in results:
+            self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertEqual(fake_client.calls, [])
 
     def test_approve_only_commands_use_scoped_agent_routes_without_sending(self) -> None:
         fake_client = _FakeAgentClient(

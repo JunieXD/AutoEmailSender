@@ -31,6 +31,13 @@ import { SelectionToggleButton } from "@/components/molecules/SelectionToggleBut
 import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
+import { AgentProfessorSelectionBanner } from "@/features/agent-ui-handoffs/AgentProfessorSelectionBanner";
+import {
+  isAgentProfessorHomeHandoff,
+  type AgentProfessorSelectionMode,
+} from "@/features/agent-ui-handoffs/types";
+import { useAgentUiHandoffSurface } from "@/features/agent-ui-handoffs/useAgentUiHandoffSurface";
+import { writeCreateTaskNavigationHandoff } from "@/features/navigation-handoffs/client/navigationHandoff";
 import {
   DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS,
   createDefaultDashboardFilters,
@@ -97,9 +104,26 @@ import type {
   ProfessorTagPayloadDTO,
 } from "@/types";
 
-const SESSION_KEY = "selected_professor_ids";
 const FILTERS_SESSION_KEY_PREFIX = "home_dashboard_filters";
 const HOME_PAGE_SIZE_STORAGE_KEY = "home-dashboard:page-size";
+type HomeAgentSelectionState = {
+  handoffId: string;
+  identityId: number;
+  selectionCount: number;
+  selectionMode: AgentProfessorSelectionMode;
+  selectedOnly: boolean;
+  previous: {
+    selectedIds: number[];
+    filters: DashboardFilterState;
+    advancedFiltersOpen: boolean;
+    sortKey: ProfessorDashboardSortKey;
+    sortDirections: Record<
+      ProfessorDashboardSortKey,
+      ProfessorDashboardSortDirection
+    >;
+    currentPage: number;
+  };
+};
 const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "未填写" };
 const dashboardStatusOptionLabels = Object.fromEntries(
   PROFESSOR_DASHBOARD_STATUS_OPTIONS.map(([value, label]) => [value, label]),
@@ -330,6 +354,8 @@ export const HomePage = () => {
   );
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [agentSelection, setAgentSelection] =
+    useState<HomeAgentSelectionState | null>(null);
   const [filters, setFilters] = useState<DashboardFilterState>(() =>
     readStoredDashboardFilters(dashboardFiltersSessionKey),
   );
@@ -378,6 +404,14 @@ export const HomePage = () => {
   const skipNextFiltersPersistRef = useRef(false);
   const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
   const selectedAllIdsRef = useRef<number[]>([]);
+  const agentSelectionRef = useRef<HomeAgentSelectionState | null>(null);
+  agentSelectionRef.current = agentSelection;
+  const pendingAgentSelectionLoadRef = useRef<{
+    handoffId: string;
+    resolve: (visibleCount: number) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  } | null>(null);
   const professorsRequestKey =
     selectedIdentityId
       ? `${selectedIdentityId}:${communicationScopeKey || selectedIdentityId}:${
@@ -385,6 +419,8 @@ export const HomePage = () => {
         }`
       : null;
   const professorPageQueryKey = JSON.stringify({
+    uiHandoffId:
+      agentSelection?.selectedOnly === true ? agentSelection.handoffId : null,
     professorsRequestKey,
     filters,
     sortKey,
@@ -392,6 +428,57 @@ export const HomePage = () => {
     pageSize,
   });
   const cursorQueryKeyRef = useRef(professorPageQueryKey);
+
+  const settleAgentSelectionLoad = useCallback(
+    (handoffId: string, error?: Error, visibleCount = 0) => {
+      const pending = pendingAgentSelectionLoadRef.current;
+      if (!pending || pending.handoffId !== handoffId) {
+        return;
+      }
+      pendingAgentSelectionLoadRef.current = null;
+      window.clearTimeout(pending.timeoutId);
+      if (error) {
+        pending.reject(error);
+      } else {
+        pending.resolve(visibleCount);
+      }
+    },
+    [],
+  );
+
+  const waitForAgentSelectionLoad = useCallback((handoffId: string) => {
+    const previous = pendingAgentSelectionLoadRef.current;
+    if (previous) {
+      window.clearTimeout(previous.timeoutId);
+      previous.reject(new Error("新的 Agent 导师选择替换了尚未完成的页面加载。"));
+    }
+    return new Promise<number>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        if (pendingAgentSelectionLoadRef.current?.handoffId === handoffId) {
+          pendingAgentSelectionLoadRef.current = null;
+          reject(new Error("加载 Agent 选择的导师超时，请重试。"));
+        }
+      }, 20_000);
+      pendingAgentSelectionLoadRef.current = {
+        handoffId,
+        resolve,
+        reject,
+        timeoutId,
+      };
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      const pending = pendingAgentSelectionLoadRef.current;
+      if (pending) {
+        pendingAgentSelectionLoadRef.current = null;
+        window.clearTimeout(pending.timeoutId);
+        pending.reject(new Error("首页导师看板已关闭。"));
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (filtersSessionKeyRef.current === dashboardFiltersSessionKey) {
@@ -404,13 +491,16 @@ export const HomePage = () => {
   }, [dashboardFiltersSessionKey]);
 
   useEffect(() => {
+    if (agentSelection?.selectedOnly) {
+      return;
+    }
     if (skipNextFiltersPersistRef.current) {
       skipNextFiltersPersistRef.current = false;
       return;
     }
 
     writeStoredDashboardFilters(dashboardFiltersSessionKey, filters);
-  }, [dashboardFiltersSessionKey, filters]);
+  }, [agentSelection?.selectedOnly, dashboardFiltersSessionKey, filters]);
 
   const loadProfessors = useCallback(async () => {
     if (!professorsRequestKey || !selectedIdentityId) {
@@ -424,6 +514,15 @@ export const HomePage = () => {
       setSelectedIds(new Set());
       setSelectedAllQueryKey(null);
       selectedAllIdsRef.current = [];
+      const pending = pendingAgentSelectionLoadRef.current;
+      if (pending) {
+        settleAgentSelectionLoad(
+          pending.handoffId,
+          new Error("首页发件身份已切换。"),
+        );
+      }
+      agentSelectionRef.current = null;
+      setAgentSelection(null);
       setLoading(false);
       return;
     }
@@ -449,6 +548,10 @@ export const HomePage = () => {
         ? Number(filters.maxMatchScore)
         : null;
       const data = await searchDashboardProfessors({
+        ui_handoff_id:
+          agentSelection?.selectedOnly === true
+            ? agentSelection.handoffId
+            : null,
         identity_id: selectedIdentityId,
         page: currentPage,
         page_size: pageSize,
@@ -482,13 +585,23 @@ export const HomePage = () => {
         cursorByPageRef.current.set(data.page + 1, data.next_cursor);
       }
       setSelectedIds((previous) => {
-        if (previousLoadedKey !== professorsRequestKey) {
+        if (
+          previousLoadedKey !== professorsRequestKey &&
+          agentSelectionRef.current === null
+        ) {
           return new Set();
         }
         return previous;
       });
       loadedProfessorsKeyRef.current = professorsRequestKey;
       setHasLoadedProfessors(true);
+      if (agentSelection?.selectedOnly === true) {
+        settleAgentSelectionLoad(
+          agentSelection.handoffId,
+          undefined,
+          data.total_count,
+        );
+      }
     } catch (loadError) {
       if (
         latestProfessorsRequestIdRef.current !== requestId ||
@@ -504,6 +617,12 @@ export const HomePage = () => {
       }
       const message =
         loadError instanceof Error ? loadError.message : "加载导师列表失败";
+      if (agentSelection?.selectedOnly === true) {
+        settleAgentSelectionLoad(
+          agentSelection.handoffId,
+          new Error(message),
+        );
+      }
       notifyError("加载导师列表失败", message);
     } finally {
       if (
@@ -515,6 +634,7 @@ export const HomePage = () => {
     }
   }, [
     notifyError,
+    agentSelection,
     currentPage,
     filters,
     pageSize,
@@ -523,6 +643,7 @@ export const HomePage = () => {
     selectedIdentityId,
     sortDirections,
     sortKey,
+    settleAgentSelectionLoad,
   ]);
 
   useEffect(() => {
@@ -550,6 +671,186 @@ export const HomePage = () => {
       active = false;
     };
   }, [notifyError]);
+
+  useAgentUiHandoffSurface("professors.home", async (handoff) => {
+    if (!isAgentProfessorHomeHandoff(handoff)) {
+      return {
+        status: "failed",
+        failureMessage: "首页收到的导师界面交接类型不匹配。",
+      };
+    }
+    if (selectedIdentityId !== handoff.payload.identity_id) {
+      return {
+        status: "failed",
+        failureMessage: "首页尚未切换到界面交接指定的发件身份。",
+      };
+    }
+
+    const previous: HomeAgentSelectionState["previous"] = {
+      selectedIds: Array.from(selectedIds),
+      filters: {
+        ...filters,
+        keywordSearchScopes: [...filters.keywordSearchScopes],
+        universities: [...filters.universities],
+        schools: [...filters.schools],
+        departments: [...filters.departments],
+        titles: [...filters.titles],
+        statuses: [...filters.statuses],
+        tagIds: [...filters.tagIds],
+      },
+      advancedFiltersOpen,
+      sortKey,
+      sortDirections: { ...sortDirections },
+      currentPage,
+    };
+    const nextSelectedIds =
+      handoff.payload.selection_mode === "replace"
+        ? new Set(handoff.selectedIds)
+        : new Set([...selectedIds, ...handoff.selectedIds]);
+    const selectedOnly = handoff.payload.display === "selected_only";
+    const loadPromise = selectedOnly
+      ? waitForAgentSelectionLoad(handoff.handoffId)
+      : Promise.resolve(handoff.selectionCount);
+    const nextAgentSelection: HomeAgentSelectionState = {
+      handoffId: handoff.handoffId,
+      identityId: handoff.payload.identity_id,
+      selectionCount: handoff.selectionCount,
+      selectionMode: handoff.payload.selection_mode,
+      selectedOnly,
+      previous,
+    };
+
+    latestProfessorsRequestIdRef.current += 1;
+    setSelectedIds(nextSelectedIds);
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
+    agentSelectionRef.current = nextAgentSelection;
+    setAgentSelection(nextAgentSelection);
+    if (selectedOnly) {
+      setFilters(createDefaultDashboardFilters());
+      setAdvancedFiltersOpen(false);
+      setSortKey("latest");
+      setSortDirections({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS });
+      setCurrentPage(1);
+    }
+
+    try {
+      const visibleCount = await loadPromise;
+      if (selectedOnly && visibleCount !== handoff.selectionCount) {
+        throw new Error(
+          `Agent 选择包含 ${handoff.selectionCount} 位导师，但当前只能显示 ${visibleCount} 位；请重新筛选。`,
+        );
+      }
+    } catch (error) {
+      if (agentSelectionRef.current === nextAgentSelection) {
+        latestProfessorsRequestIdRef.current += 1;
+        setFilters(previous.filters);
+        setAdvancedFiltersOpen(previous.advancedFiltersOpen);
+        setSortKey(previous.sortKey);
+        setSortDirections(previous.sortDirections);
+        setCurrentPage(previous.currentPage);
+        setSelectedIds(new Set(previous.selectedIds));
+        setSelectedAllQueryKey(null);
+        selectedAllIdsRef.current = [];
+        agentSelectionRef.current = null;
+        setAgentSelection(null);
+      }
+      throw error;
+    }
+    return {
+      status: "applied",
+      result: {
+        selected_count: nextSelectedIds.size,
+        handoff_selection_count: handoff.selectionCount,
+        selection_mode: handoff.payload.selection_mode,
+        display: handoff.payload.display,
+        identity_id: handoff.payload.identity_id,
+        surface: handoff.surface,
+      },
+    };
+  });
+
+  useEffect(() => {
+    if (
+      agentSelection !== null &&
+      selectedIdentityId !== agentSelection.identityId
+    ) {
+      setAdvancedFiltersOpen(agentSelection.previous.advancedFiltersOpen);
+      setSortKey(agentSelection.previous.sortKey);
+      setSortDirections(agentSelection.previous.sortDirections);
+      setCurrentPage(agentSelection.previous.currentPage);
+      setSelectedIds(new Set());
+      setSelectedAllQueryKey(null);
+      selectedAllIdsRef.current = [];
+      agentSelectionRef.current = null;
+      setAgentSelection(null);
+      const pending = pendingAgentSelectionLoadRef.current;
+      if (pending) {
+        settleAgentSelectionLoad(
+          pending.handoffId,
+          new Error("首页发件身份已切换。"),
+        );
+      }
+    }
+  }, [agentSelection, selectedIdentityId, settleAgentSelectionLoad]);
+
+  const restoreAgentSelectionView = (selection: HomeAgentSelectionState) => {
+    setFilters(selection.previous.filters);
+    setAdvancedFiltersOpen(selection.previous.advancedFiltersOpen);
+    setSortKey(selection.previous.sortKey);
+    setSortDirections(selection.previous.sortDirections);
+    setCurrentPage(selection.previous.currentPage);
+  };
+
+  const exitAgentSelectedOnly = () => {
+    if (!agentSelection?.selectedOnly) {
+      return;
+    }
+    settleAgentSelectionLoad(
+      agentSelection.handoffId,
+      new Error("用户在页面加载完成前退出了仅看已选。"),
+    );
+    restoreAgentSelectionView(agentSelection);
+    const next = { ...agentSelection, selectedOnly: false };
+    agentSelectionRef.current = next;
+    setAgentSelection(next);
+  };
+
+  const undoAgentSelection = () => {
+    if (!agentSelection) {
+      return;
+    }
+    settleAgentSelectionLoad(
+      agentSelection.handoffId,
+      new Error("用户在页面加载完成前撤销了 Agent 选择。"),
+    );
+    if (agentSelection.selectedOnly) {
+      restoreAgentSelectionView(agentSelection);
+    }
+    setSelectedIds(new Set(agentSelection.previous.selectedIds));
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
+    agentSelectionRef.current = null;
+    setAgentSelection(null);
+  };
+
+  const clearAgentSelection = () => {
+    if (!agentSelection) {
+      return;
+    }
+    settleAgentSelectionLoad(
+      agentSelection.handoffId,
+      new Error("用户在页面加载完成前清除了 Agent 选择。"),
+    );
+    if (agentSelection.selectedOnly) {
+      restoreAgentSelectionView(agentSelection);
+    }
+    setSelectedIds(new Set());
+    setSelectedAllQueryKey(null);
+    selectedAllIdsRef.current = [];
+    agentSelectionRef.current = null;
+    setAgentSelection(null);
+  };
 
   const saveProfessorTags = async (
     professor: ProfessorDashboardItemDTO,
@@ -920,6 +1221,10 @@ export const HomePage = () => {
         ? Number(filters.maxMatchScore)
         : null;
       const result = await searchDashboardProfessorIds({
+        ui_handoff_id:
+          agentSelection?.selectedOnly === true
+            ? agentSelection.handoffId
+            : null,
         identity_id: selectedIdentityId,
         page: 1,
         page_size: pageSize,
@@ -1010,11 +1315,17 @@ export const HomePage = () => {
       });
       return;
     }
-    window.sessionStorage.setItem(
-      SESSION_KEY,
-      JSON.stringify([...selectedIds]),
-    );
-    navigate("/create-task");
+    try {
+      writeCreateTaskNavigationHandoff([...selectedIds]);
+      navigate("/create-task");
+    } catch (handoffError) {
+      notifyError(
+        "无法打开任务创建页",
+        handoffError instanceof Error
+          ? handoffError.message
+          : "导师选择暂时无法交给任务创建页。",
+      );
+    }
   };
 
   const hasIdentityPrimaryMaterial = Boolean(
@@ -1041,7 +1352,9 @@ export const HomePage = () => {
     hasFirstTask: false,
   });
   const shouldSkipHomeOnboardingForCurrentStage =
-    onboardingState.completed || onboardingState.stage === "first_task";
+    agentSelection !== null ||
+    onboardingState.completed ||
+    onboardingState.stage === "first_task";
   const canEvaluateProfessorOnboarding =
     professorsRequestKey === null || hasLoadedProfessors;
 
@@ -1220,9 +1533,13 @@ export const HomePage = () => {
         "已创建批量匹配分析任务",
         `任务中心会继续后台分析 ${job.target_count} 位导师。`,
       );
-      setSelectedIds(new Set());
-      setSelectedAllQueryKey(null);
-      selectedAllIdsRef.current = [];
+      if (agentSelection) {
+        clearAgentSelection();
+      } else {
+        setSelectedIds(new Set());
+        setSelectedAllQueryKey(null);
+        selectedAllIdsRef.current = [];
+      }
     } catch (createError) {
       notifyError(
         "创建批量匹配任务失败",
@@ -1610,6 +1927,19 @@ export const HomePage = () => {
           className="mt-6 scroll-mt-24 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
         >
           <div className="flex flex-wrap items-center gap-3 border-b border-stone-100 px-6 py-4">
+            {agentSelection ? (
+              <div className="w-full">
+                <AgentProfessorSelectionBanner
+                  selectionCount={agentSelection.selectionCount}
+                  totalSelectedCount={selectedIds.size}
+                  selectionMode={agentSelection.selectionMode}
+                  selectedOnly={agentSelection.selectedOnly}
+                  onExitSelectedOnly={exitAgentSelectedOnly}
+                  onUndo={undoAgentSelection}
+                  onClear={clearAgentSelection}
+                />
+              </div>
+            ) : null}
             {totalProfessorCount > 0 ? (
               <button
                 type="button"
@@ -1725,9 +2055,13 @@ export const HomePage = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedIds(new Set());
-                    setSelectedAllQueryKey(null);
-                    selectedAllIdsRef.current = [];
+                    if (agentSelection) {
+                      clearAgentSelection();
+                    } else {
+                      setSelectedIds(new Set());
+                      setSelectedAllQueryKey(null);
+                      selectedAllIdsRef.current = [];
+                    }
                   }}
                   className="ui-btn-secondary"
                 >

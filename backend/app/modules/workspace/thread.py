@@ -798,7 +798,12 @@ def _build_workspace_draft(
         subject = task.generated_subject
         body_text = task.generated_content_text or ""
         body_html = task.generated_content_html
-        source = "ai_rewrite"
+        source = (
+            "template"
+            if getattr(task, "draft_generation_source", None)
+            in {"template", "template_fallback"}
+            else "ai_rewrite"
+        )
     elif rendered_template is not None and _has_meaningful_body(
         rendered_template.body_text,
         rendered_template.body_html,

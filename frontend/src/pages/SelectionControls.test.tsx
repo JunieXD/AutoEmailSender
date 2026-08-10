@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -26,6 +27,17 @@ import type {
   ProfessorDashboardItemDTO,
   ProfessorManagementItemDTO,
 } from "@/types";
+import type {
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffSurface,
+} from "@/types/desktop";
+import {
+  validateAgentUiHandoff,
+  type AgentProfessorArchiveScope,
+  type AgentProfessorSelectionDisplay,
+  type AgentProfessorSelectionMode,
+  type AgentUiHandoffSurfaceHandler,
+} from "@/features/agent-ui-handoffs/types";
 import { HomePage } from "./HomePage";
 import { ProfessorsPage } from "./ProfessorsPage";
 
@@ -35,6 +47,12 @@ const notifyMock = {
   notifyWarning: vi.fn(),
 };
 const scrollIntoView = vi.fn();
+const agentUiHandoffMocks = vi.hoisted(() => ({
+  handlers: new Map<
+    DesktopAgentUiHandoffSurface,
+    AgentUiHandoffSurfaceHandler
+  >(),
+}));
 
 const ProfessorsPageWithLinkedNavigation = () => {
   const navigate = useNavigate();
@@ -162,6 +180,60 @@ const managementProfessors: ProfessorManagementItemDTO[] =
     updated_at: "2026-05-01T00:00:00",
   }));
 
+const buildProfessorHandoff = ({
+  handoffId,
+  surface,
+  selectedIds,
+  selectionMode = "replace",
+  display = "selected_only",
+  archiveScope = "active",
+  identityId,
+}: {
+  handoffId: string;
+  surface: "professors.management" | "professors.home";
+  selectedIds: number[];
+  selectionMode?: AgentProfessorSelectionMode;
+  display?: AgentProfessorSelectionDisplay;
+  archiveScope?: AgentProfessorArchiveScope;
+  identityId?: number;
+}) =>
+  validateAgentUiHandoff({
+    handoffId,
+    schemaVersion: 1,
+    surface,
+    route: surface === "professors.management" ? "/professors" : "/",
+    status: "claimed",
+    selectionCount: selectedIds.length,
+    selectionFingerprint: `selection-${handoffId}`,
+    uiEffects: ["focus_window", "navigate", `${selectionMode}_selection`],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "professor_selection",
+      resource: "professors",
+      selection_mode: selectionMode,
+      display,
+      archive_scope: archiveScope,
+      matched_count: selectedIds.length,
+      excluded_count: 0,
+      ...(identityId === undefined ? {} : { identity_id: identityId }),
+      ui_effects: ["focus_window", "navigate", `${selectionMode}_selection`],
+    },
+    selectedIds,
+  } satisfies DesktopAgentUiHandoff);
+
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notifyMock,
 }));
@@ -178,6 +250,15 @@ vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionContextValue,
+}));
+
+vi.mock("@/features/agent-ui-handoffs/useAgentUiHandoffSurface", () => ({
+  useAgentUiHandoffSurface: (
+    surface: DesktopAgentUiHandoffSurface,
+    handler: AgentUiHandoffSurfaceHandler,
+  ) => {
+    agentUiHandoffMocks.handlers.set(surface, handler);
+  },
 }));
 
 vi.mock("@/features/onboarding/client/getOnboardingState", () => ({
@@ -436,6 +517,7 @@ describe("selection controls", () => {
     });
     window.localStorage.clear();
     window.sessionStorage.clear();
+    agentUiHandoffMocks.handlers.clear();
     vi.mocked(createProfessorTag).mockResolvedValue({
       id: 2,
       name: "已联系",
@@ -521,6 +603,329 @@ describe("selection controls", () => {
       communicationScopeKey: String(selectedIdentity.id),
       loading: false,
     });
+  });
+
+  it("applies add and replace handoffs, scopes mixed archives, and restores prior selection", async () => {
+    const archivedProfessor = {
+      ...managementProfessors[1],
+      archived_at: "2026-08-09T12:00:00Z",
+    };
+    const handoffItems = [archivedProfessor, managementProfessors[10]];
+    vi.mocked(searchManagementProfessors).mockImplementation(async (payload) => {
+      const source =
+        payload.ui_handoff_id === "uih_management_add"
+          ? handoffItems
+          : managementProfessors;
+      return {
+        items: pageItems(source, payload.page, payload.page_size),
+        total_count: source.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+    const existingSelection = await screen.findByRole("button", {
+      name: "选择 导师 11",
+    });
+    fireEvent.click(existingSelection);
+    expect(existingSelection).toHaveAttribute("aria-pressed", "true");
+
+    const addHandoff = buildProfessorHandoff({
+      handoffId: "uih_management_add",
+      surface: "professors.management",
+      selectedIds: [12, 21],
+      selectionMode: "add",
+      archiveScope: "all",
+    });
+    const addHandler = agentUiHandoffMocks.handlers.get(
+      "professors.management",
+    );
+    expect(addHandler).toBeDefined();
+    let addPromise:
+      | Promise<Awaited<ReturnType<AgentUiHandoffSurfaceHandler>>>
+      | undefined;
+    act(() => {
+      addPromise = Promise.resolve(addHandler!(addHandoff));
+    });
+
+    await waitFor(() =>
+      expect(searchManagementProfessors).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ui_handoff_id: "uih_management_add",
+          archived: "all",
+        }),
+      ),
+    );
+    let addResult: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      addResult = await addPromise;
+    });
+    expect(addResult).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({
+          selected_count: 3,
+          handoff_selection_count: 2,
+          selection_mode: "add",
+        }),
+      }),
+    );
+    expect(await screen.findByText("Agent 新增选择 2 位导师")).toBeInTheDocument();
+    expect(screen.getByText(/当前共勾选 3 位/)).toBeInTheDocument();
+    expect(screen.getByText("导师 12")).toBeInTheDocument();
+    expect(screen.getByText("导师 21")).toBeInTheDocument();
+    expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "退出仅看已选" }));
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+    expect(screen.getByText(/保留当前列表视图/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "撤销 Agent 选择" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("agent-professor-selection")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "选择 导师 11" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    const replaceHandoff = buildProfessorHandoff({
+      handoffId: "uih_management_replace",
+      surface: "professors.management",
+      selectedIds: [13],
+      selectionMode: "replace",
+      display: "keep_current",
+    });
+    const replaceHandler = agentUiHandoffMocks.handlers.get(
+      "professors.management",
+    );
+    let replaceResult:
+      | Awaited<ReturnType<AgentUiHandoffSurfaceHandler>>
+      | undefined;
+    await act(async () => {
+      replaceResult = await replaceHandler?.(replaceHandoff);
+    });
+    expect(replaceResult).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({ selected_count: 1 }),
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "选择 导师 13" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "选择 导师 11" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "清除全部选择" }));
+    expect(
+      screen.getByRole("button", { name: "选择 导师 13" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("rolls back a management handoff when frozen professors disappeared", async () => {
+    vi.mocked(searchManagementProfessors).mockImplementation(async (payload) => {
+      const source =
+        payload.ui_handoff_id === "uih_management_incomplete"
+          ? [managementProfessors[1]]
+          : managementProfessors;
+      return {
+        items: pageItems(source, payload.page, payload.page_size),
+        total_count: source.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+    const previousSelection = await screen.findByRole("button", {
+      name: "选择 导师 11",
+    });
+    fireEvent.click(previousSelection);
+    const handler = agentUiHandoffMocks.handlers.get("professors.management");
+    const handoff = buildProfessorHandoff({
+      handoffId: "uih_management_incomplete",
+      surface: "professors.management",
+      selectedIds: [12, 13],
+    });
+
+    let failure: unknown;
+    let application: Promise<unknown> | undefined;
+    act(() => {
+      application = Promise.resolve(handler?.(handoff)).catch((error) => {
+        failure = error;
+      });
+    });
+    await waitFor(() =>
+      expect(searchManagementProfessors).toHaveBeenCalledWith(
+        expect.objectContaining({ ui_handoff_id: "uih_management_incomplete" }),
+      ),
+    );
+    await act(async () => {
+      await application;
+    });
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("当前只能显示 1 位");
+    await waitFor(() =>
+      expect(screen.queryByTestId("agent-professor-selection")).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByRole("button", { name: "选择 导师 11" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("enforces the home identity and loads only the handed-off professors", async () => {
+    const handoffItems = dashboardProfessors.filter((item) =>
+      [15, 16].includes(item.id),
+    );
+    vi.mocked(searchDashboardProfessors).mockImplementation(async (payload) => {
+      const source =
+        payload.ui_handoff_id === "uih_home_selection"
+          ? handoffItems
+          : dashboardProfessors;
+      return {
+        items: pageItems(source, payload.page, payload.page_size),
+        total_count: source.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
+    const handler = agentUiHandoffMocks.handlers.get("professors.home");
+    expect(handler).toBeDefined();
+
+    const identityMismatch = buildProfessorHandoff({
+      handoffId: "uih_home_wrong_identity",
+      surface: "professors.home",
+      selectedIds: [15],
+      identityId: 2,
+    });
+    let mismatchResult:
+      | Awaited<ReturnType<AgentUiHandoffSurfaceHandler>>
+      | undefined;
+    await act(async () => {
+      mismatchResult = await handler?.(identityMismatch);
+    });
+    expect(mismatchResult).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        failureMessage: expect.stringContaining("发件身份"),
+      }),
+    );
+
+    const handoff = buildProfessorHandoff({
+      handoffId: "uih_home_selection",
+      surface: "professors.home",
+      selectedIds: [15, 16],
+      identityId: 1,
+    });
+    let applyPromise:
+      | Promise<Awaited<ReturnType<AgentUiHandoffSurfaceHandler>>>
+      | undefined;
+    act(() => {
+      applyPromise = Promise.resolve(handler!(handoff));
+    });
+    await waitFor(() =>
+      expect(searchDashboardProfessors).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ui_handoff_id: "uih_home_selection",
+          identity_id: 1,
+        }),
+      ),
+    );
+    let applyResult:
+      | Awaited<ReturnType<AgentUiHandoffSurfaceHandler>>
+      | undefined;
+    await act(async () => {
+      applyResult = await applyPromise;
+    });
+
+    expect(applyResult).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({ selected_count: 2, identity_id: 1 }),
+      }),
+    );
+    expect(await screen.findByText("Agent 已选择 2 位导师")).toBeInTheDocument();
+    expect(screen.getByText("导师 15")).toBeInTheDocument();
+    expect(screen.getByText("导师 16")).toBeInTheDocument();
+    expect(screen.queryByText("导师 11")).not.toBeInTheDocument();
+  });
+
+  it("rolls back a home handoff when its frozen selection is incomplete", async () => {
+    vi.mocked(searchDashboardProfessors).mockImplementation(async (payload) => {
+      const source =
+        payload.ui_handoff_id === "uih_home_incomplete"
+          ? [dashboardProfessors[4]]
+          : dashboardProfessors;
+      return {
+        items: pageItems(source, payload.page, payload.page_size),
+        total_count: source.length,
+        page: payload.page,
+        page_size: payload.page_size,
+        total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
+        next_cursor: null,
+        filter_options: buildFilterOptions(source),
+      };
+    });
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+    await screen.findByText("导师 11");
+    const handler = agentUiHandoffMocks.handlers.get("professors.home");
+    const handoff = buildProfessorHandoff({
+      handoffId: "uih_home_incomplete",
+      surface: "professors.home",
+      selectedIds: [15, 16],
+      identityId: selectedIdentity.id,
+    });
+
+    let failure: unknown;
+    let application: Promise<unknown> | undefined;
+    act(() => {
+      application = Promise.resolve(handler?.(handoff)).catch((error) => {
+        failure = error;
+      });
+    });
+    await waitFor(() =>
+      expect(searchDashboardProfessors).toHaveBeenCalledWith(
+        expect.objectContaining({ ui_handoff_id: "uih_home_incomplete" }),
+      ),
+    );
+    await act(async () => {
+      await application;
+    });
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("当前只能显示 1 位");
+    await waitFor(() =>
+      expect(screen.queryByTestId("agent-professor-selection")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("导师 11")).toBeInTheDocument();
   });
 
   it("shows a skeleton in the content area while the desktop backend is still loading", () => {

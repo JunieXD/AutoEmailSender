@@ -12,7 +12,7 @@ from auto_email_sender_cli.commands.common import (
     run_read_command,
     run_write_command,
 )
-
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 
 crawler_app = typer.Typer(
     help="创建、查看和管理导师抓取任务；开始或继续任务会访问网页并调用已配置的 LLM，但不会发送邮件。",
@@ -119,6 +119,19 @@ def get_faculty_crawl_job(
         path=f"/api/agent/v1/crawler/jobs/{job_id}",
         guide_topic="crawler",
         human_formatter=format_detail,
+    )
+
+
+@jobs_app.command("present")
+def present_faculty_crawl_job(
+    ctx: typer.Context,
+    job_id: Annotated[int, typer.Argument(min=1)],
+) -> None:
+    run_ui_handoff_command(
+        ctx,
+        command="crawler.jobs.present",
+        path=f"/api/agent/v1/crawler/jobs/{job_id}/present",
+        use_idempotency_key=True,
     )
 
 

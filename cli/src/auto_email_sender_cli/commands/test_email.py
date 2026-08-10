@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 
+from auto_email_sender_cli.commands.attachment_options import build_attachment_payload
 from auto_email_sender_cli.commands.common import (
     format_detail,
     run_read_command,
@@ -86,16 +87,25 @@ def save_test_email_draft(
     subject: Annotated[str | None, typer.Option("--subject")] = None,
     body_html: Annotated[str | None, typer.Option("--body-html")] = None,
     material_ids: Annotated[
-        list[int],
+        list[int] | None,
         typer.Option("--material-id", min=1, help="重复指定真实测试邮件附件。"),
-    ] = [],
+    ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部测试邮件附件。"),
+    ] = False,
 ) -> None:
     payload = {
         **_template_selection_payload(template_id, clear_template),
         "subject": subject,
         "body_text": body_text,
         "body_html": body_html,
-        "selected_material_ids": material_ids,
+        **build_attachment_payload(
+            material_ids,
+            field_name="selected_material_ids",
+            material_option="--material-id",
+            clear_attachments=clear_attachments,
+        ),
     }
     run_write_command(
         ctx,
@@ -119,16 +129,25 @@ def prepare_test_email_send(
     subject: Annotated[str | None, typer.Option("--subject")] = None,
     body_html: Annotated[str | None, typer.Option("--body-html")] = None,
     material_ids: Annotated[
-        list[int],
+        list[int] | None,
         typer.Option("--material-id", min=1, help="重复指定真实测试邮件附件。"),
-    ] = [],
+    ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部测试邮件附件。"),
+    ] = False,
 ) -> None:
     payload = {
         **_template_selection_payload(template_id, clear_template),
         "subject": subject,
         "body_text": body_text,
         "body_html": body_html,
-        "selected_material_ids": material_ids,
+        **build_attachment_payload(
+            material_ids,
+            field_name="selected_material_ids",
+            material_option="--material-id",
+            clear_attachments=clear_attachments,
+        ),
     }
     run_write_command(
         ctx,

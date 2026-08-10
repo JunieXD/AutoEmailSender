@@ -3,6 +3,8 @@ import type {
   DesktopAgentIntegrationId,
   DesktopAgentSupportEnableOptions,
   DesktopAgentSupportStatus,
+  DesktopAgentUiHandoffAcknowledgeRequest,
+  DesktopAgentUiHandoffState,
   DesktopBackendMode,
   DesktopBackendModeRestartOptions,
   DesktopBackendModeRestartResult,
@@ -51,6 +53,9 @@ export type DesktopIpcRegistrationOptions = {
   installAgentSkill: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;
   uninstallAgentSkill: (agentId: DesktopAgentIntegrationId) => Promise<DesktopAgentSupportStatus>;
   dismissAgentSupportOnboarding: () => Promise<DesktopAgentSupportStatus>;
+  acknowledgeAgentUiHandoff: (
+    request: DesktopAgentUiHandoffAcknowledgeRequest,
+  ) => Promise<DesktopAgentUiHandoffState>;
   getWindow: () => BrowserWindow | null;
   materialOpen: MaterialOpenServiceOptions;
 };
@@ -122,6 +127,15 @@ export function registerDesktopIpc(options: DesktopIpcRegistrationOptions): void
   ipcMain.handle(
     DESKTOP_IPC_CHANNELS.agentSupportDismissOnboarding,
     options.dismissAgentSupportOnboarding,
+  );
+  ipcMain.handle(
+    DESKTOP_IPC_CHANNELS.agentUiHandoffAcknowledge,
+    (_event, request: unknown) => {
+      if (!isAgentUiHandoffAcknowledgeRequest(request)) {
+        throw new Error("无效的 Agent 界面交接回执。");
+      }
+      return options.acknowledgeAgentUiHandoff(request);
+    },
   );
 
   registerUpdateIpc(options.getWindow);
@@ -215,4 +229,38 @@ export function isAgentSupportEnableOptions(
       candidate.installDetectedAgents === undefined
       || typeof candidate.installDetectedAgents === "boolean"
     );
+}
+
+export function isAgentUiHandoffAcknowledgeRequest(
+  value: unknown,
+): value is DesktopAgentUiHandoffAcknowledgeRequest {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.handoffId !== "string"
+    || !/^uih_[A-Za-z0-9_-]+$/.test(candidate.handoffId)
+    || !["applied", "awaiting_user", "failed"].includes(String(candidate.status))
+    || (
+      candidate.result !== undefined
+      && (
+        candidate.result === null
+        || typeof candidate.result !== "object"
+        || Array.isArray(candidate.result)
+      )
+    )
+    || (
+      candidate.failureMessage !== undefined
+      && typeof candidate.failureMessage !== "string"
+    )
+  ) {
+    return false;
+  }
+  if (candidate.status === "failed") {
+    return typeof candidate.failureMessage === "string"
+      && candidate.failureMessage.trim().length > 0
+      && candidate.failureMessage.length <= 2_000;
+  }
+  return candidate.failureMessage === undefined;
 }

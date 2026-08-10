@@ -543,6 +543,21 @@ class WorkspaceSupportTest(unittest.TestCase):
         self.assertEqual(draft.subject, "AI 主题")
         self.assertEqual(draft.body_text, "AI 正文")
 
+    def test_workspace_draft_identifies_materialized_template_content(self) -> None:
+        draft = _build_workspace_draft(
+            task=self._task(
+                generated_subject="模板主题",
+                generated_content_text="模板正文",
+                generated_content_html="<p>模板正文</p>",
+                draft_generation_source="template_fallback",
+            ),
+            rendered_template=self._rendered_template(),
+        )
+
+        self.assertEqual(draft.source, "template")
+        self.assertEqual(draft.subject, "模板主题")
+        self.assertEqual(draft.body_text, "模板正文")
+
     def test_workspace_draft_uses_rewrite_source_while_generating(self) -> None:
         draft = _build_workspace_draft(
             task=self._task(

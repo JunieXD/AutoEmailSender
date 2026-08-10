@@ -351,6 +351,12 @@ async def generate_task_draft(
                         await session.commit()
                         return task.professor_id, task.identity_id, task.llm_profile_id
         except asyncio.CancelledError:
+            if automatic_batch and draft_claim_id is not None:
+                # The batch scheduler owns claim failure/release after it cancels
+                # this worker. Roll back this session first so its read transaction
+                # cannot block the scheduler's cleanup write on SQLite.
+                await session.rollback()
+                raise
             await session.refresh(task)
             if draft_claim_id is not None and task.draft_claim_id != draft_claim_id:
                 raise
@@ -569,8 +575,16 @@ async def rewrite_task_draft(
             raise ValueError("请选择 AI 写信参考材料后再使用 AI 改写")
         if not _has_professor_research_direction(task.professor):
             raise ValueError("请先补充导师研究方向，再使用 AI 改写")
+        if payload.selected_material_ids is None:
+            selected_material_ids = (
+                list(task.selected_material_ids)
+                if task.selected_material_ids is not None
+                else None
+            )
+        else:
+            selected_material_ids = list(payload.selected_material_ids)
         await _validate_selected_material_ids(
-            session, task.identity_id, payload.selected_material_ids
+            session, task.identity_id, selected_material_ids
         )
         ensure_material_extracted_text(task.primary_material)
 
@@ -612,8 +626,8 @@ async def rewrite_task_draft(
                 draft_rewrite_source_subject=source_subject,
                 draft_rewrite_source_body_text=source_body_text,
                 draft_rewrite_source_body_html=source_body_html or None,
-                draft_rewrite_source_selected_material_ids=payload.selected_material_ids,
-                selected_material_ids=payload.selected_material_ids,
+                draft_rewrite_source_selected_material_ids=selected_material_ids,
+                selected_material_ids=selected_material_ids,
                 status=EmailTaskStatus.GENERATING_DRAFT.value,
                 last_error=None,
                 updated_at=now,
@@ -1454,6 +1468,12 @@ async def _validate_selected_material_ids(
     identity_id: int,
     material_ids: list[int] | None,
 ) -> None:
+    if material_ids is None:
+        return
+    if any(material_id < 1 for material_id in material_ids):
+        raise ValueError("随信材料 ID 必须是正整数")
+    if len(material_ids) != len(set(material_ids)):
+        raise ValueError("随信材料 ID 不能重复")
     if not material_ids:
         return
     materials: list[int] = []

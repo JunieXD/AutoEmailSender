@@ -8,9 +8,11 @@ from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from typing import Final, Literal
 
-from auto_email_sender_cli.operation_specs import effect_has_external_action, get_operation_spec
+from auto_email_sender_cli.operation_specs import (
+    effect_has_external_action,
+    get_operation_spec,
+)
 from auto_email_sender_cli.version import get_build_identity
-
 
 RiskLevel = Literal["L0", "L1", "L2", "L3"]
 Availability = Literal["available", "planned", "ui_only", "unsupported_on_platform"]
@@ -49,6 +51,7 @@ _DISCOVERY_RESOURCE_SUMMARIES: Final[dict[str, str]] = {
     "tasks": "单封任务的状态和写信设置",
     "deliveries": "统一发送计划、异常项和安全改期",
     "plans": "高风险操作的确认计划",
+    "ui-handoffs": "Agent 发给桌面窗口的短期导航、聚焦和选择状态",
 }
 
 _DISCOVERY_RESOURCE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
@@ -76,6 +79,7 @@ _DISCOVERY_RESOURCE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "tasks": ("任务", "单封任务", "跟进", "排程"),
     "deliveries": ("发送计划", "邮件排程", "改期", "delivery", "reschedule"),
     "plans": ("计划", "确认计划", "发送计划", "高风险确认"),
+    "ui-handoffs": ("界面交接", "前端勾选", "打开软件页面", "定位到页面", "ui handoff"),
 }
 
 _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
@@ -103,6 +107,27 @@ _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "指定导师批量归档",
         "生成批量归档计划",
         "bulk archive professors",
+    ),
+    "professors.present-selection": (
+        "在软件里筛选导师",
+        "在页面勾选导师",
+        "勾选",
+        "只筛选",
+        "只勾选不操作",
+        "筛选出来但不归档",
+        "不做后续操作",
+        "不要后续操作",
+        "打开导师管理并选中",
+        "select professors in app",
+        "show selected faculty",
+    ),
+    "tasks.present": ("在软件里打开任务", "定位任务中心", "show task in app"),
+    "drafts.present": ("在软件里打开草稿", "定位草稿工作区", "show draft in app"),
+    "crawler.jobs.present": ("在软件里打开抓取任务", "定位抓取任务", "show crawl job in app"),
+    "communications.threads.present": (
+        "在软件里打开邮件线程",
+        "定位通信记录",
+        "show communication thread in app",
     ),
     "professors.import": ("导入导师", "导入教授", "excel 导入", "xlsx 导入"),
     "professors.export": ("导出导师", "导师表格", "导出 excel"),
@@ -164,6 +189,8 @@ _DISCOVERY_OPERATION_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "approve": ("批准", "审核通过", "approve"),
     "prepare-send": ("准备发送", "安排发送", "排程发送", "schedule send"),
     "reschedule": ("改期", "修改发送时间", "重新排程", "reschedule"),
+    "present": ("在软件中打开", "定位到页面", "界面聚焦", "show in app", "open in app"),
+    "present-selection": ("勾选", "在界面勾选", "只筛选不操作", "show selection", "select in app"),
 }
 
 _GENERIC_RESOURCE_SEARCH_ALIASES: Final[frozenset[str]] = frozenset(
@@ -593,8 +620,39 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         external_action=True,
     ),
     Capability("wait", "等待已运行的后台任务停止运行或进入终态，不会启动桌面应用", "L0", "available", long_running=True),
+    Capability(
+        "ui-handoffs.get",
+        "读取一个桌面界面交接的投递状态和回执",
+        "L0",
+        "available",
+    ),
+    Capability(
+        "ui-handoffs.wait",
+        "等待桌面界面交接被应用、需要用户处理或进入终态",
+        "L0",
+        "available",
+        long_running=True,
+    ),
+    Capability(
+        "ui-handoffs.cancel",
+        "取消一个尚未应用的桌面界面交接；不修改业务数据",
+        "L1",
+        "available",
+    ),
+    Capability(
+        "ui-handoffs.retry",
+        "重新投递 failed 或 awaiting_user 的桌面界面交接",
+        "L1",
+        "available",
+    ),
     Capability("professors.list", "分页查询或读取全部导师档案", "L0", "available"),
     Capability("professors.get", "按 ID 读取导师完整档案", "L0", "available"),
+    Capability(
+        "professors.present-selection",
+        "冻结一组导师并在首页或导师管理页直接勾选；不归档、不编辑、不发送",
+        "L1",
+        "available",
+    ),
     Capability("professors.tags.list", "读取导师标签", "L0", "available"),
     Capability("professors.tags.usage", "读取一个标签及其关联导师", "L0", "available"),
     Capability("professors.create", "新增一位导师", "L1", "available", mutates=True),
@@ -700,6 +758,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "communications.threads.get",
         "读取一个通信线程及其邮件，可按需包含正文",
         "L0",
+        "available",
+        guide_topic="communications",
+    ),
+    Capability(
+        "communications.threads.present",
+        "在桌面工作区定位一个通信线程；不修改邮件或任务",
+        "L1",
         "available",
         guide_topic="communications",
     ),
@@ -968,6 +1033,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability("drafts.get", "按任务 ID 读取草稿、参考材料和附件", "L0", "available", guide_topic="drafts"),
     Capability(
+        "drafts.present",
+        "在桌面工作区定位一封草稿；不修改或发送邮件",
+        "L1",
+        "available",
+        guide_topic="drafts",
+    ),
+    Capability(
         "drafts.generate",
         "按导师、身份、模板、参考材料和附件生成 draft_only 草稿",
         "L1",
@@ -1174,6 +1246,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "crawler.jobs.get",
         "读取导师抓取任务的状态、进度、候选数量和 Token 用量",
         "L0",
+        "available",
+        guide_topic="crawler",
+    ),
+    Capability(
+        "crawler.jobs.present",
+        "在桌面任务中心定位一个抓取任务；不启动、暂停或修改任务",
+        "L1",
         "available",
         guide_topic="crawler",
     ),
@@ -1570,6 +1649,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
+        guide_topic="tasks",
+    ),
+    Capability(
+        "tasks.present",
+        "在桌面任务中心定位一封邮件任务；不修改任务状态",
+        "L1",
+        "available",
         guide_topic="tasks",
     ),
     Capability(
@@ -2292,7 +2378,14 @@ def supports_dynamic_action_links(command: str) -> bool:
     normalized = normalize_capability_command(command)
     spec = get_operation_spec(normalized)
     return bool(
-        normalized in {"plans.show", "wait"}
+        normalized
+        in {
+            "plans.show",
+            "wait",
+            "communications.threads.list",
+            "communications.threads.get",
+            "professors.get",
+        }
         or (
             normalized != "invoke"
             and

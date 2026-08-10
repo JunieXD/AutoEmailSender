@@ -4,7 +4,7 @@
 - 日期：2026-08-09
 - 适用项目：Auto Email Sender
 - 关联基线：[Agent 通用 CLI 产品与技术设计](../product/agent_cli_design.md)
-- 当前快照：CLI 协议 v3；当前注册表显示 158 项能力，其中 156 项可用、2 项因凭据安全限制仅桌面端可用。22 个分页集合已统一支持字段选择、结构化筛选与文件导出；该数字会随版本变化，实际能力始终以 `auto-email-sender --format json capabilities` 为准。
+- 当前快照：CLI 协议 v3；当前注册表显示 167 项能力，其中 165 项可用、2 项因凭据安全限制仅桌面端可用。22 个分页集合已统一支持字段选择、结构化筛选与文件导出；该数字会随版本变化，实际能力始终以 `auto-email-sender --format json capabilities` 为准。
 - 本次验收报告：[agent_cli_goal_acceptance.md](agent_cli_goal_acceptance.md)
 
 ## 1. 本文档解决什么问题
@@ -595,3 +595,37 @@ Windows x64、macOS Apple Silicon 的安装包端到端验证，以及发布构�
 - 冷进程意图基准 8/8 正确，准确率 100%；40 次样本的 p95 为 204.94 ms，最大单次意图输出 1289 bytes。
 - 统一质量门禁通过：后端 1796 项、CLI 225 项，以及前端、桌面端和网站测试全部通过。
 - 分发 Skill 通过 `skill-creator` 的 `quick_validate.py`；最终差异通过 `git diff --check`。
+
+## 17. CLI → 桌面 UI handoff（2026-08-10）
+
+### 17.1 新增的通用原语
+
+“筛选”可能有两种不同交付物：一种是把数据返回给 Agent 继续推理，另一种是把结果直接交给用户在软件里检查。后者不能用聊天窗口中的名单代替，也不能为了产生可见效果而偷偷执行归档、编辑或发送。
+
+本轮增加 `present` 原语：CLI 创建短期、类型化、可观察的 UI handoff，Desktop 聚焦窗口并导航，目标页面只应用临时选择或定位状态。第一批覆盖导师管理、首页看板、发送计划、抓取任务、通信线程和草稿工作区；完整协议见 [Agent UI handoff 架构](../architecture/agent-ui-handoffs.md)。
+
+导师筛选的标准调用形态为：
+
+```text
+auto-email-sender --format json professors present-selection \
+  --selection-filter '{"name":{"contains_script":"latin"}}' \
+  --display selected-only
+```
+
+CLI 由后端冻结精确 ID 并返回 `handoff_id`。需要确认页面是否实际应用时，调用返回的 `ui-handoffs.wait` action；`awaiting_user` 表示草稿保护或页面交互阻止了自动导航，应把决定权留给用户。
+
+### 17.2 设计与安全合同
+
+- `present` 的 `effects.mutates` 为 false，但会聚焦窗口、导航并应用临时 UI 状态，因此要求用户意图明确。
+- 创建响应不输出冻结 ID；Desktop 以 30 秒租约一次领取，Renderer 使用 sessionStorage 去重并持久化 ACK，支持刷新和暂时断连恢复。
+- `professors.present-selection` 同时接受显式 ID、结构化筛选或受控 `--all`，并支持 replace/add 与 selected-only/keep-current。
+- 首页 handoff 必须绑定发件身份且不接受已归档导师；管理页可自动切换 active、archived 或混合范围。
+- 通信线程以 presentation-only 打开，不能因为“展示历史”而创建新的邮件任务；草稿则必须按冻结的 `task_id` 精确加载。
+- 未保存草稿统一经过工作区 guard；用户拒绝导航时 ACK 为 `awaiting_user`，不会丢失编辑内容或形成重复确认。
+- 需要归档、编辑、生成或发送时仍使用对应业务命令和计划，不能把副作用塞入页面适配器。
+
+### 17.3 可发现性与回归门禁
+
+`capabilities --intent "只筛选出名字有英文的导师，在软件页面里勾选，不要后续操作"` 必须把 `professors.present-selection` 稳定排在首位；已有资源详情会返回 `present-in-app` action。CLI、后端、Desktop 和 Frontend 分层测试覆盖幂等创建、选择冻结、surface/身份校验、并发领取、租约恢复、重复投递、过期缓存、ACK 重试、草稿保护、混合归档分页以及各页面适配器。
+
+未来新增可在 GUI 中直接定位的资源时，应优先扩展同一 handoff 协议和类型化 surface，而不是新增一次性的跳转参数或 sessionStorage key。任何新 surface 都必须声明固定 route、冻结资源、页面效果、身份约束、ACK 结果和失败恢复方式。

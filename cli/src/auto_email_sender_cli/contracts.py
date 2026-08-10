@@ -9,22 +9,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
 
 from auto_email_sender_cli.capabilities import (
     CONTRACT_VERSION,
     capability_operation,
-    discovery_resource,
     capability_stateful,
-    collection_output_fields,
     collection_filter_fields,
     collection_filter_operators,
+    collection_output_fields,
+    discovery_resource,
+    supports_dynamic_action_links,
     supports_field_selection,
     supports_file_export,
     supports_if_revision,
     supports_pagination,
     supports_structured_filter,
-    supports_dynamic_action_links,
 )
 from auto_email_sender_cli.operation_specs import get_operation_spec
 from auto_email_sender_cli.result_protocol import (
@@ -36,7 +35,6 @@ from auto_email_sender_cli.result_protocol import (
     RESULT_PROTOCOL_FIELDS,
     is_business_result,
 )
-
 
 CONTRACT_REQUIRED_KEYS = (
     "command",
@@ -165,6 +163,7 @@ def _fallback_effects() -> dict[str, object]:
         "risk_mode": "static",
         "delegated_effects": False,
         "requires_target_contract": False,
+        "ui_effects": [],
         "impact_scope": "当前命令的读取范围",
         "confirmation_rule": "none",
         "unknown_external_result_protection": False,
@@ -174,6 +173,7 @@ def _fallback_effects() -> dict[str, object]:
             "cost_may_apply": False,
             "reversible": True,
             "unknown_external_result_protection": False,
+            "ui_effects": [],
         },
         "downstream_effects": {
             "mutates": False,
@@ -416,7 +416,11 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         # Collection revisions are available on demand, while detail reads
         # expose the token by default on identified objects.
         output_fields = output_fields | {"revision"}
-    if supports_dynamic_action_links(command) and (supports_list or "status" in output_fields):
+    if supports_dynamic_action_links(command) and (
+        supports_list
+        or "status" in output_fields
+        or command in {"communications.threads.get", "professors.get"}
+    ):
         # ``augment_state_metadata`` adds these fields to every identified
         # stateful object, including collection items and nested task items.
         output_fields = output_fields | {"available_actions", "blocked_actions", "blocked_reason"}
@@ -617,6 +621,15 @@ _REVISION_EXCLUDED_COMMANDS = frozenset(
 
 
 _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
+    "ui-handoffs": frozenset(
+        {
+            "handoff_id", "schema_version", "surface", "route", "status",
+            "selection_count", "selection_fingerprint", "ui_effects", "result",
+            "failure_message", "delivery_attempts", "expires_at", "claimed_at",
+            "awaiting_user_at", "applied_at", "failed_at", "canceled_at",
+            "created_at", "updated_at", "idempotent_replay", "available_actions",
+        },
+    ),
     "drafts": frozenset(
         {
             "task_id", "revision", "source", "batch_task_id", "parent_task_id",
@@ -686,7 +699,20 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "capabilities": frozenset({"catalog_version", "catalog_revision", "build", "scope", "scope_revision", "view", "items", "summary", "cache", "next"}),
     "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "unavailability", "unchanged", "cache", "contract_version", "contract_revision", "resource", "operation", "input", "output", "effects", "trust", "state_transitions", "errors", "next_actions", "idempotency", "lifecycle", "details_available", "details"}),
     "doctor": frozenset({"healthy", "checks", "recommended_action", "repair_command"}),
-    "wait": frozenset({"resource", "id", "ids", "status", "state_category", "settled", "terminal", "timed_out", "until", "poll_count", "poll_rounds", "elapsed_seconds", "result", "available_actions", "total_count", "settled_count", "terminal_count", "by_status", "failed_ids", "attention_required_ids", "query_failed_ids", "query_failures", "timed_out_ids", "resources", "action_groups"}),
+    "wait": frozenset({"resource", "id", "ids", "status", "state_category", "settled", "terminal", "condition_met", "timed_out", "until", "poll_count", "poll_rounds", "elapsed_seconds", "result", "available_actions", "total_count", "settled_count", "terminal_count", "by_status", "failed_ids", "attention_required_ids", "query_failed_ids", "query_failures", "timed_out_ids", "resources", "action_groups"}),
+    "ui-handoffs.wait": _SPECIAL_OUTPUT_FIELDS["ui-handoffs"]
+    | frozenset(
+        {
+            "state_category",
+            "settled",
+            "terminal",
+            "condition_met",
+            "timed_out",
+            "until",
+            "poll_count",
+            "elapsed_seconds",
+        },
+    ),
     "professors.tags.usage": frozenset({"tag", "professors"}),
     "communications.threads.get": frozenset({"id", "identity_id", "identity_name", "identity_email_address", "professor_id", "professor_name", "professor_email", "sent_count", "received_count", "has_sent", "has_reply", "last_message_at", "messages", "messages_next_cursor", "messages_has_more"}),
     "communications.sync": frozenset({"identity_id", "detected_count", "completed_at", "message"}),
@@ -782,6 +808,7 @@ def _has_revision_output(fields: frozenset[str]) -> bool:
             "template_id",
             "material_id",
             "thread_id",
+            "handoff_id",
         }
     )
 
@@ -801,6 +828,12 @@ def _object_schema(
 
 def _field_schema(field: str, *, command: str | None = None) -> dict[str, object]:
     normalized = field.lower()
+    if (
+        normalized == "schema_version"
+        and command is not None
+        and command.startswith("ui-handoffs.")
+    ):
+        return {"type": "integer"}
     if normalized in {
         "projection",
         "continuation",
@@ -811,7 +844,7 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         return {"type": ["object", "null"]}
     if normalized in {"truncated"}:
         return {"type": "boolean"}
-    if normalized in {"omitted_paths", "available_actions"}:
+    if normalized in {"omitted_paths", "available_actions", "ui_effects"}:
         return {"type": "array"}
     if normalized == "blocked_reason":
         return {"type": ["string", "null"]}
@@ -819,11 +852,11 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         return {"type": ["object", "null"]}
     if normalized in {"id", "task_id", "job_id", "plan_id", "professor_id", "identity_id", "llm_profile_id", "template_id", "material_id", "thread_id", "email_task_id", "campaign_id"} or normalized.endswith("_id"):
         return {"type": ["integer", "string", "null"]}
-    if normalized.endswith(("_count", "_tokens", "size_bytes", "_ms")) or normalized in {"count", "record_count", "target_count", "total", "status_code", "duration_ms", "offset", "limit", "page", "page_size", "total_pages", "total_records", "poll_count", "poll_rounds"}:
+    if normalized.endswith(("_count", "_tokens", "size_bytes", "_ms")) or normalized in {"count", "record_count", "target_count", "total", "status_code", "duration_ms", "offset", "limit", "page", "page_size", "total_pages", "total_records", "poll_count", "poll_rounds", "delivery_attempts"}:
         return {"type": ["integer", "null"]}
     if normalized.endswith("_seconds") or normalized in {"match_score", "score", "temperature", "confidence"}:
         return {"type": ["number", "null"]}
-    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "settled", "terminal", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated"}:
+    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "settled", "terminal", "condition_met", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated", "idempotent_replay"}:
         return {"type": "boolean"}
     if normalized in {"professor", "identity", "llm_profile", "llm_context", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters", "next", "replacement", "details_available", "details"}:
         return {"type": ["object", "null"]}

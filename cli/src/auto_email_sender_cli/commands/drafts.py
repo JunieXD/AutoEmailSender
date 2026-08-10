@@ -5,11 +5,13 @@ from typing import Annotated
 
 import typer
 
+from auto_email_sender_cli.commands.attachment_options import build_attachment_payload
 from auto_email_sender_cli.commands.common import (
     format_detail,
     run_read_command,
     run_write_command,
 )
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 
 
 class DraftGenerationMode(StrEnum):
@@ -27,6 +29,19 @@ drafts_app = typer.Typer(
     help="生成、保存和读取 draft_only 草稿，并准备发送计划。",
     no_args_is_help=True,
 )
+
+
+@drafts_app.command("present")
+def present_draft(
+    ctx: typer.Context,
+    task_id: Annotated[int, typer.Argument(min=1)],
+) -> None:
+    run_ui_handoff_command(
+        ctx,
+        command="drafts.present",
+        path=f"/api/agent/v1/drafts/{task_id}/present",
+        use_idempotency_key=True,
+    )
 
 
 @drafts_app.command("get")
@@ -74,6 +89,12 @@ def generate_draft(
     body_text: Annotated[str | None, typer.Option("--body-text")] = None,
     body_html: Annotated[str | None, typer.Option("--body-html")] = None,
 ) -> None:
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        preserve_when_omitted=False,
+    )
     run_write_command(
         ctx,
         command="drafts.generate",
@@ -85,7 +106,7 @@ def generate_draft(
             "generation_mode": generation_mode.value,
             "template_id": template_id,
             "reference_material_id": reference_material_id,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
             "subject": subject,
             "body_text": body_text,
             "body_html": body_html,
@@ -106,7 +127,17 @@ def save_draft(
         list[int] | None,
         typer.Option("--attachment-material-id", min=1),
     ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部随信附件。"),
+    ] = False,
 ) -> None:
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        clear_attachments=clear_attachments,
+    )
     run_write_command(
         ctx,
         command="drafts.save",
@@ -116,7 +147,7 @@ def save_draft(
             "subject": subject,
             "body_text": body_text,
             "body_html": body_html,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
         },
         guide_topic="drafts",
         human_formatter=format_detail,
@@ -153,7 +184,17 @@ def approve_draft(
         list[int] | None,
         typer.Option("--attachment-material-id", min=1),
     ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部随信附件。"),
+    ] = False,
 ) -> None:
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        clear_attachments=clear_attachments,
+    )
     run_write_command(
         ctx,
         command="drafts.approve",
@@ -162,7 +203,7 @@ def approve_draft(
             "subject": subject,
             "body_text": body_text,
             "body_html": body_html,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
         },
         guide_topic="drafts",
         human_formatter=format_detail,
@@ -181,7 +222,17 @@ def rewrite_draft(
         list[int] | None,
         typer.Option("--attachment-material-id", min=1),
     ] = None,
+    clear_attachments: Annotated[
+        bool,
+        typer.Option("--clear-attachments", help="明确移除全部随信附件。"),
+    ] = False,
 ) -> None:
+    attachment_payload = build_attachment_payload(
+        attachment_material_ids,
+        field_name="attachment_material_ids",
+        material_option="--attachment-material-id",
+        clear_attachments=clear_attachments,
+    )
     run_write_command(
         ctx,
         command="drafts.rewrite",
@@ -191,7 +242,7 @@ def rewrite_draft(
             "body_text": body_text,
             "body_html": body_html,
             "llm_profile_id": llm_profile_id,
-            "attachment_material_ids": attachment_material_ids or [],
+            **attachment_payload,
         },
         guide_topic="drafts",
         human_formatter=format_detail,

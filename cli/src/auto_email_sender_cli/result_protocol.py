@@ -9,10 +9,9 @@ what was summarized or remains to be fetched.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any
-
 
 RESULT_PROTOCOL_VERSION = "2"
 RESULT_PROTOCOL_FIELDS = frozenset(
@@ -94,6 +93,7 @@ _SMALL_STRUCTURAL_ARRAY_FIELDS = frozenset(
         "terminal_states",
         "key_fields",
         "available_actions",
+        "ui_effects",
     },
 )
 

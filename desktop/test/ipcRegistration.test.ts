@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAgentIntegrationId,
   isAgentSupportEnableOptions,
+  isAgentUiHandoffAcknowledgeRequest,
   isBetaDiagnosticsProblemInput,
   isBetaDiagnosticsRange,
 } from "../src/main/ipc/register.js";
@@ -49,5 +50,32 @@ describe("desktop IPC registration", () => {
       note: "bad\u0000note",
     })).toBe(false);
     expect(isBetaDiagnosticsProblemInput({ category: "general", extra: true })).toBe(false);
+  });
+
+  it("validates Agent UI handoff acknowledgements before IPC dispatch", () => {
+    expect(isAgentUiHandoffAcknowledgeRequest({
+      handoffId: "uih_valid-123",
+      status: "applied",
+      result: { route: "/professors" },
+    })).toBe(true);
+    expect(isAgentUiHandoffAcknowledgeRequest({
+      handoffId: "uih_valid-123",
+      status: "failed",
+      failureMessage: "adapter failed",
+    })).toBe(true);
+    expect(isAgentUiHandoffAcknowledgeRequest({
+      handoffId: "uih_valid-123",
+      status: "failed",
+    })).toBe(false);
+    expect(isAgentUiHandoffAcknowledgeRequest({
+      handoffId: "../../invalid",
+      status: "applied",
+    })).toBe(false);
+    expect(isAgentUiHandoffAcknowledgeRequest({
+      handoffId: "uih_valid-123",
+      status: "applied",
+      failureMessage: "not allowed",
+    })).toBe(false);
+    expect(isAgentUiHandoffAcknowledgeRequest(null)).toBe(false);
   });
 });

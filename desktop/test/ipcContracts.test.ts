@@ -16,6 +16,8 @@ const expectedChannels = [
   "agent-support:repair",
   "agent-support:status",
   "agent-support:uninstall-skill",
+  "agent-ui-handoff:acknowledge",
+  "agent-ui-handoff:deliver",
   "app:get-version",
   "app:quit",
   "backend-mode:get-status",

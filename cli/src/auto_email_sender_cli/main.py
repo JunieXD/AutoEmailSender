@@ -12,25 +12,25 @@ from typer._click.core import ParameterSource
 from typer._click.exceptions import UsageError
 from typer.core import TyperGroup
 
+from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
 from auto_email_sender_cli.capabilities import (
     CAPABILITIES,
     CAPABILITY_CATALOG_VERSION,
     CAPABILITY_SEARCH_MODE,
     CONTRACT_VERSION,
     capability_catalog_revision,
-    list_capability_cards,
     list_capabilities,
+    list_capability_cards,
     list_resource_catalog,
     normalize_capability_command,
     search_capabilities,
     search_capability_cards,
     suggest_capabilities,
 )
-from auto_email_sender_cli.agent_installation import inspect_agent_skill_installation
 from auto_email_sender_cli.commands import (
     campaigns_app,
-    communications_app,
     communication_groups_app,
+    communications_app,
     crawler_app,
     dashboard_app,
     deliveries_app,
@@ -45,21 +45,23 @@ from auto_email_sender_cli.commands import (
     professors_app,
     settings_app,
     tasks_app,
-    test_email_app,
     templates_app,
+    test_email_app,
+    ui_handoffs_app,
     usage_app,
     workspaces_app,
 )
-from auto_email_sender_cli.commands.wait import wait_for_resource
 from auto_email_sender_cli.commands.common import validate_context_options
-from auto_email_sender_cli.errors import CliError, RuntimeProtocolMismatchError
+from auto_email_sender_cli.commands.wait import wait_for_resource
 from auto_email_sender_cli.describe import (
+    DESCRIPTION_SECTIONS,
     DESCRIPTION_VIEWS,
     compact_command_description,
     describe_command,
     describe_command_revisions,
     description_sections,
 )
+from auto_email_sender_cli.errors import CliError, RuntimeProtocolMismatchError
 from auto_email_sender_cli.guide import GUIDE_TOPICS, get_guide
 from auto_email_sender_cli.invoke import invoke_json_command
 from auto_email_sender_cli.output import (
@@ -87,7 +89,6 @@ from auto_email_sender_cli.version import (
     get_build_identity,
     get_cli_version,
 )
-
 
 _ROOT_VALUE_OPTIONS = frozenset(
     {
@@ -405,6 +406,7 @@ app.add_typer(settings_app, name="settings")
 app.add_typer(tasks_app, name="tasks")
 app.add_typer(test_email_app, name="test-email")
 app.add_typer(usage_app, name="usage")
+app.add_typer(ui_handoffs_app, name="ui-handoffs")
 app.add_typer(workspaces_app, name="workspaces")
 app.command("wait", help="等待一个已运行的后台任务进入终态；不会启动桌面应用。", no_args_is_help=True)(wait_for_resource)
 
@@ -960,9 +962,16 @@ def capabilities_command(
         view=effective_view,
         scope=scope_options,
     )
+    # The scope hash keeps every normalized default, while routine output only
+    # emits non-default selectors.  This preserves cache identity without
+    # spending Agent context on nulls, empty lists, or false flags.
     scope = {
-        **scope_options,
         "view": effective_view,
+        **{
+            key: value
+            for key, value in scope_options.items()
+            if value is not None and value not in (False, [], "")
+        },
     }
     if since is not None and since == scope_revision:
         data = {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 import ctypes
 import errno
 import hashlib
@@ -9,13 +8,13 @@ import os
 import secrets
 import sys
 import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import typer
 
 from auto_email_sender_cli.action_links import resolve_action_links
-from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.capabilities import (
     collection_filter_fields,
     collection_filter_operator_fields,
@@ -24,13 +23,18 @@ from auto_email_sender_cli.capabilities import (
     supports_if_revision,
     supports_pagination,
 )
+from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.errors import CliError
-from auto_email_sender_cli.output import CliContext, OutputFormat, emit_error, emit_success
-from auto_email_sender_cli.result_protocol import (
-    MAX_EXPANDED_PATHS,
-    MAX_EXPAND_SELECTOR_CHARS,
+from auto_email_sender_cli.output import (
+    CliContext,
+    OutputFormat,
+    emit_error,
+    emit_success,
 )
-
+from auto_email_sender_cli.result_protocol import (
+    MAX_EXPAND_SELECTOR_CHARS,
+    MAX_EXPANDED_PATHS,
+)
 
 HumanFormatter = Callable[[Any], str]
 _MAX_FETCH_PAGES = 10_000
@@ -1513,6 +1517,15 @@ def _augment_state_value(value: Any, *, command: str) -> Any:
     result = {key: _augment_state_value(item, command=command) for key, item in value.items()}
     if isinstance(result.get("status"), str):
         result = _augment_state_item(result, command=command)
+    elif _supports_present_in_app(command, result):
+        action_links, blocked_actions = resolve_action_links(
+            command,
+            result,
+            actions=["present-in-app"],
+        )
+        result["available_actions"] = action_links
+        result["blocked_actions"] = blocked_actions
+        result["blocked_reason"] = None if action_links else "当前结果无法定位到桌面页面"
     return result
 
 
@@ -1528,7 +1541,10 @@ def add_revisions(data: Any, *, include_collection: bool = True) -> Any:
                 _with_revision(item) if isinstance(item, dict) else item
                 for item in result["items"]
             ]
-    elif "revision" not in result and any(key in result for key in ("id", "task_id", "job_id", "plan_id")):
+    elif "revision" not in result and any(
+        key in result
+        for key in ("id", "task_id", "job_id", "plan_id", "handoff_id")
+    ):
         result = _with_revision(result)
     return result
 
@@ -1573,6 +1589,8 @@ def _augment_state_item(item: dict[str, object], *, command: str) -> dict[str, o
             status_value,
             result,
         )
+    if _supports_present_in_app(command, result) and "present-in-app" not in actions:
+        actions.append("present-in-app")
     action_links, resolved_blocked_actions = resolve_action_links(
         command,
         result,
@@ -1586,6 +1604,29 @@ def _augment_state_item(item: dict[str, object], *, command: str) -> dict[str, o
             None if result["available_actions"] else "当前状态没有可执行动作"
         )
     return result
+
+
+def _supports_present_in_app(command: str, item: dict[str, object]) -> bool:
+    normalized = command.strip().lower()
+    if normalized.startswith("ui-handoffs."):
+        return False
+    if normalized == "professors.get":
+        return _positive_state_identifier(
+            item.get("professor_id") or item.get("id"),
+        )
+    if normalized.startswith("communications.threads."):
+        return isinstance(item.get("id") or item.get("thread_id"), str)
+    if normalized.startswith("crawler.jobs."):
+        return _positive_state_identifier(item.get("job_id") or item.get("id"))
+    if normalized.startswith(("drafts.", "tasks.", "workspaces.")):
+        return _positive_state_identifier(item.get("task_id") or item.get("id"))
+    if normalized == "campaigns.item-thread":
+        return _positive_state_identifier(item.get("task_id"))
+    return False
+
+
+def _positive_state_identifier(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _normalize_existing_action_metadata(

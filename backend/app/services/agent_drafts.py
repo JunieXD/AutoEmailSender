@@ -346,8 +346,14 @@ async def _validate_reference_material_id(
 async def _validate_attachment_material_ids(
     session: AsyncSession,
     identity_id: int,
-    material_ids: list[int],
+    material_ids: list[int] | None,
 ) -> None:
+    if material_ids is None:
+        return
+    if any(material_id < 1 for material_id in material_ids):
+        raise ValueError("随信附件 ID 必须是正整数")
+    if len(material_ids) != len(set(material_ids)):
+        raise ValueError("随信附件 ID 不能重复")
     if not material_ids:
         return
     unique_ids = set(material_ids)

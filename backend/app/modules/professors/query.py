@@ -6,12 +6,14 @@ import json
 import re
 from typing import Any, Iterable, Literal
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select, text
+from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import (
+    AgentUiHandoff,
+    AgentUiHandoffItem,
     BatchTask,
     BatchTaskStatus,
     EmailDirection,
@@ -23,6 +25,8 @@ from app.models import (
     ProfessorTag,
     ProfessorTagLink,
 )
+from app.core.agent_api_errors import AgentApiError
+from app.core.time import as_utc_aware, utc_now
 from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.contact_status import build_contact_status_by_professor
@@ -58,6 +62,53 @@ def _archive_condition(archived: Literal["active", "archived", "all"]):
     if archived == "archived":
         return Professor.archived_at.is_not(None)
     return literal(True)
+
+
+async def _ui_handoff_professor_condition(
+    session: AsyncSession,
+    handoff_id: str | None,
+    *,
+    surface: Literal["professors.management", "professors.home"],
+    identity_id: int | None = None,
+) -> ColumnElement[bool] | None:
+    if handoff_id is None:
+        return None
+    handoff = await session.get(AgentUiHandoff, handoff_id)
+    if handoff is None or handoff.surface != surface:
+        raise AgentApiError(
+            status_code=404,
+            code="UI_HANDOFF_NOT_FOUND",
+            message="未找到可用于当前导师页面的界面交接。",
+        )
+    if as_utc_aware(handoff.expires_at) <= as_utc_aware(utc_now()):
+        raise AgentApiError(
+            status_code=410,
+            code="UI_HANDOFF_EXPIRED",
+            message="导师界面交接已经过期，请重新生成。",
+        )
+    if handoff.status in {"failed", "canceled", "expired"}:
+        raise AgentApiError(
+            status_code=409,
+            code="UI_HANDOFF_UNAVAILABLE",
+            message=f"状态 {handoff.status} 的界面交接不能用于筛选导师。",
+        )
+    if surface == "professors.home":
+        payload = handoff.payload if isinstance(handoff.payload, dict) else {}
+        handoff_identity_id = payload.get("identity_id")
+        if handoff_identity_id != identity_id:
+            raise AgentApiError(
+                status_code=409,
+                code="UI_HANDOFF_IDENTITY_MISMATCH",
+                message="该导师界面交接属于其他发件身份，请重新发起页面定位。",
+            )
+    selected_ids = (
+        select(cast(AgentUiHandoffItem.resource_id, Integer))
+        .where(
+            AgentUiHandoffItem.handoff_id == handoff_id,
+            AgentUiHandoffItem.resource_type == "professor",
+        )
+    )
+    return Professor.id.in_(selected_ids)
 
 
 async def _sqlite_professor_fts_available(session: AsyncSession) -> bool:
@@ -499,6 +550,13 @@ async def list_management_professor_page(
         archived=request.archived,
         use_fts=await _sqlite_professor_fts_available(session),
     )
+    handoff_condition = await _ui_handoff_professor_condition(
+        session,
+        request.ui_handoff_id,
+        surface="professors.management",
+    )
+    if handoff_condition is not None:
+        conditions.append(handoff_condition)
     total_count = int(
         (await session.scalar(select(func.count(Professor.id)).where(*conditions))) or 0
     )
@@ -1001,6 +1059,14 @@ async def list_dashboard_professor_page(
         expressions,
         use_fts=await _sqlite_professor_fts_available(session),
     )
+    handoff_condition = await _ui_handoff_professor_condition(
+        session,
+        request.ui_handoff_id,
+        surface="professors.home",
+        identity_id=request.identity_id,
+    )
+    if handoff_condition is not None:
+        conditions.append(handoff_condition)
     count_statement = _join_dashboard_summaries(
         select(func.count(Professor.id)).select_from(Professor),
         expressions["joins"],
@@ -1143,6 +1209,13 @@ async def list_management_professor_ids(
         archived=request.archived,
         use_fts=await _sqlite_professor_fts_available(session),
     )
+    handoff_condition = await _ui_handoff_professor_condition(
+        session,
+        request.ui_handoff_id,
+        surface="professors.management",
+    )
+    if handoff_condition is not None:
+        conditions.append(handoff_condition)
     if request.archived == "all":
         conditions.append(Professor.archived_at.is_(None))
     statement = (
@@ -1184,6 +1257,14 @@ async def list_dashboard_professor_ids(
         expressions,
         use_fts=await _sqlite_professor_fts_available(session),
     )
+    handoff_condition = await _ui_handoff_professor_condition(
+        session,
+        request.ui_handoff_id,
+        surface="professors.home",
+        identity_id=request.identity_id,
+    )
+    if handoff_condition is not None:
+        conditions.append(handoff_condition)
     statement = (
         _join_dashboard_summaries(
             select(Professor.id).select_from(Professor),

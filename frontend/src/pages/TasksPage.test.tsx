@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { Activity, type ReactNode } from "react";
 import { MemoryRouter as RouterMemoryRouter } from "react-router-dom";
@@ -18,6 +18,14 @@ import type {
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
+import type {
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffSurface,
+} from "@/types/desktop";
+import {
+  validateAgentUiHandoff,
+  type AgentUiHandoffSurfaceHandler,
+} from "@/features/agent-ui-handoffs/types";
 import {
   buildBatchPendingItemAction,
   getBatchTaskItemCancellationText,
@@ -84,6 +92,7 @@ const apiMocks = vi.hoisted(() => ({
   getProfessor: vi.fn(),
   updateProfessor: vi.fn(),
   getWorkspaceThread: vi.fn(),
+  getEmailTaskThread: vi.fn(),
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
   approveAndSend: vi.fn(),
@@ -110,6 +119,12 @@ const selectionMock = vi.hoisted(() => ({
   setSelectedIdentityId: vi.fn(),
   setSelectedLlmProfileId: vi.fn(),
 }));
+const agentUiHandoffMocks = vi.hoisted(() => ({
+  handlers: new Map<
+    DesktopAgentUiHandoffSurface,
+    AgentUiHandoffSurfaceHandler
+  >(),
+}));
 const scrollIntoView = vi.fn();
 
 const MemoryRouter = ({ children }: { children: ReactNode }) => (
@@ -131,6 +146,15 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMocks,
+}));
+
+vi.mock("@/features/agent-ui-handoffs/useAgentUiHandoffSurface", () => ({
+  useAgentUiHandoffSurface: (
+    surface: DesktopAgentUiHandoffSurface,
+    handler: AgentUiHandoffSurfaceHandler,
+  ) => {
+    agentUiHandoffMocks.handlers.set(surface, handler);
+  },
 }));
 
 vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
@@ -227,9 +251,14 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
+  getEmailTaskThread: apiMocks.getEmailTaskThread,
   regenerateDraft: apiMocks.regenerateDraft,
   approveDraft: apiMocks.approveDraft,
   approveAndSend: apiMocks.approveAndSend,
+}));
+
+vi.mock("@/features/email-deliveries/components/EmailDeliveryPlan", () => ({
+  EmailDeliveryPlan: () => <div>发送计划定位结果</div>,
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -309,6 +338,74 @@ const buildCrawlJob = (
   duration_seconds: 0,
   ...overrides,
 });
+
+const buildCrawlJobHandoff = (jobId = 9) =>
+  validateAgentUiHandoff({
+    handoffId: "uih_crawl_job_test",
+    schemaVersion: 1,
+    surface: "crawler.job",
+    route: "/tasks",
+    status: "claimed",
+    selectionCount: 1,
+    selectionFingerprint: null,
+    uiEffects: ["focus_window", "navigate", "focus_resource"],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "crawl_job_context",
+      resource: "crawler.jobs",
+      job_id: jobId,
+      ui_effects: ["focus_window", "navigate", "focus_resource"],
+    },
+    selectedIds: [],
+  } satisfies DesktopAgentUiHandoff);
+
+const buildTaskCenterHandoff = (taskId = 101) =>
+  validateAgentUiHandoff({
+    handoffId: "uih_task_center_test",
+    schemaVersion: 1,
+    surface: "tasks.center",
+    route: "/tasks",
+    status: "claimed",
+    selectionCount: 1,
+    selectionFingerprint: null,
+    uiEffects: ["focus_window", "navigate", "focus_resource"],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "task_context",
+      resource: "tasks",
+      task_id: taskId,
+      professor_id: 21,
+      identity_id: 1,
+      ui_effects: ["focus_window", "navigate", "focus_resource"],
+    },
+    selectedIds: [],
+  } satisfies DesktopAgentUiHandoff);
 
 describe("CrawlJobCard", () => {
   it("uses a separated responsive layout and truncates long latest events", () => {
@@ -914,6 +1011,7 @@ beforeEach(() => {
   confirmMock.mockResolvedValue(true);
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
+  agentUiHandoffMocks.handlers.clear();
   apiMocks.listBatchTasks.mockResolvedValue([]);
   apiMocks.listBatchTaskItems.mockResolvedValue([]);
   apiMocks.listOutreachTemplates.mockResolvedValue([]);
@@ -940,6 +1038,7 @@ beforeEach(() => {
   apiMocks.getProfessor.mockResolvedValue(buildProfessor());
   apiMocks.updateProfessor.mockResolvedValue(buildProfessorManagementItem());
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.getEmailTaskThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
     current_task: {
@@ -1006,6 +1105,69 @@ beforeEach(() => {
       review_required_count: 0,
       approved_count: 0,
     }),
+  });
+});
+
+describe("TasksPage Agent UI handoffs", () => {
+  it("verifies and locates the exact email task before acknowledging", async () => {
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const handler = agentUiHandoffMocks.handlers.get("tasks.center");
+    expect(handler).toBeDefined();
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(buildTaskCenterHandoff(101));
+    });
+
+    expect(apiMocks.getEmailTaskThread).toHaveBeenCalledWith(101);
+    expect(result).toEqual(expect.objectContaining({
+      status: "applied",
+      result: expect.objectContaining({
+        task_id: 101,
+        resource_verified: true,
+      }),
+    }));
+    expect(await screen.findByText("发送计划定位结果")).toBeInTheDocument();
+  });
+
+  it("opens an archived crawl job from the trash view", async () => {
+    const archivedJob = buildCrawlJob({
+      deleted_at: "2026-08-09T12:00:00Z",
+    });
+    apiMocks.getCrawlJob.mockResolvedValue(archivedJob);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const handler = agentUiHandoffMocks.handlers.get("crawler.job");
+    expect(handler).toBeDefined();
+    const handoff = buildCrawlJobHandoff(archivedJob.id);
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(handoff);
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({
+          job_id: archivedJob.id,
+          task_view: "trash",
+          details_open: true,
+        }),
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "抓取任务详情" }),
+    ).toBeInTheDocument();
+    expect(apiMocks.getCrawlJobDetails).toHaveBeenCalledWith(archivedJob.id);
   });
 });
 
@@ -1712,10 +1874,13 @@ describe("TasksPage batch draft review", () => {
     );
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/create-task"));
     expect(
-      JSON.parse(window.sessionStorage.getItem("batch_resend_prefill_context") ?? "{}"),
+      JSON.parse(window.sessionStorage.getItem("app_navigation_handoff_v1") ?? "{}"),
     ).toEqual(expect.objectContaining({
       professorIds: [21],
-      requiresRegeneration: false,
+      resendContext: expect.objectContaining({
+        professorIds: [21],
+        requiresRegeneration: false,
+      }),
     }));
   });
 
@@ -2123,7 +2288,7 @@ describe("TasksPage batch draft review", () => {
     const appliedThread = buildWorkspaceThread({
       current_task: {
         ...initialThread.current_task,
-        status: "matched",
+        status: "review_required",
         outreach_template_id: template.id,
         outreach_generation_mode: template.recommended_generation_mode,
         outreach_template_subject: template.subject,
@@ -2134,10 +2299,13 @@ describe("TasksPage batch draft review", () => {
           "模板直通导师老师您好，我想申请加入您的课题组。",
         rendered_template_body_html:
           "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
-        generated_subject: null,
-        generated_content_text: null,
-        generated_content_html: null,
-        draft_generation_source: null,
+        generated_subject: "申请加入模板直通导师老师课题组",
+        generated_content_text:
+          "模板直通导师老师您好，我想申请加入您的课题组。",
+        generated_content_html:
+          "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+        draft_generation_source: "template",
+        draft_fallback_reason: null,
         draft: {
           subject: "申请加入模板直通导师老师课题组",
           body_text: "模板直通导师老师您好，我想申请加入您的课题组。",
@@ -2170,7 +2338,9 @@ describe("TasksPage batch draft review", () => {
 
     apiMocks.listBatchTasks.mockResolvedValue([task]);
     apiMocks.listBatchTaskItems.mockResolvedValue([item]);
-    apiMocks.getBatchTaskItemThread.mockResolvedValue(initialThread);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(initialThread)
+      .mockResolvedValue(appliedThread);
     apiMocks.listOutreachTemplates.mockResolvedValue([template]);
     apiMocks.getOutreachTemplate.mockResolvedValue(template);
     apiMocks.updateBatchTaskItemOutreachConfig.mockResolvedValue(appliedThread);
@@ -2234,6 +2404,19 @@ describe("TasksPage batch draft review", () => {
     );
     expect(screen.getByText("当前草稿：来自模板")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "返回详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    await waitFor(() => {
+      expect(apiMocks.getBatchTaskItemThread).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByLabelText("邮件主题")).toHaveValue(
+      "申请加入模板直通导师老师课题组",
+    );
+    expect(screen.getByLabelText("邮件正文")).toHaveValue(
+      "<p>模板直通导师老师您好，我想申请加入您的课题组。</p>",
+    );
+    expect(screen.getByText("当前草稿：来自模板")).toBeInTheDocument();
+
     confirmMock.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
     await waitFor(() => {
@@ -2272,6 +2455,21 @@ describe("TasksPage batch draft review", () => {
       draft_generation_source: "template_fallback",
       draft_fallback_reason: "missing_research_direction",
     });
+    const replacementTemplate = {
+      id: 89,
+      name: "缺方向审核替换模板",
+      recommended_generation_mode: "template" as const,
+      subject: "重新申请与 {{ professor_name }} 老师交流",
+      body_text:
+        "关注到您在{{ research_direction }}方向的工作，想进一步交流。",
+      body_html:
+        "<p>关注到您在{{ research_direction }}方向的工作，想进一步交流。</p>",
+      is_ready: true,
+      is_default: false,
+      archived_at: null,
+      created_at: "2026-05-08T00:00:00",
+      updated_at: "2026-05-08T00:00:00",
+    };
     const fallbackThread = buildWorkspaceThread({
       professor: {
         ...buildWorkspaceThread().professor,
@@ -2291,9 +2489,47 @@ describe("TasksPage batch draft review", () => {
         draft_fallback_reason: "missing_research_direction",
       },
     });
+    const appliedFallbackThread = buildWorkspaceThread({
+      ...fallbackThread,
+      current_task: {
+        ...fallbackThread.current_task,
+        status: "review_required",
+        outreach_template_id: replacementTemplate.id,
+        outreach_generation_mode: replacementTemplate.recommended_generation_mode,
+        outreach_template_subject: replacementTemplate.subject,
+        outreach_template_body_text: replacementTemplate.body_text,
+        outreach_template_body_html: replacementTemplate.body_html,
+        rendered_template_subject: "重新申请与缺研究方向导师老师交流",
+        rendered_template_body_text:
+          "关注到您在方向的工作，想进一步交流。",
+        rendered_template_body_html:
+          "<p>关注到您在方向的工作，想进一步交流。</p>",
+        generated_subject: "重新申请与缺研究方向导师老师交流",
+        generated_content_text: "关注到您在方向的工作，想进一步交流。",
+        generated_content_html:
+          "<p>关注到您在方向的工作，想进一步交流。</p>",
+        draft_generation_source: "template_fallback",
+        draft_fallback_reason: "missing_research_direction",
+        draft: {
+          subject: "重新申请与缺研究方向导师老师交流",
+          body_text: "关注到您在方向的工作，想进一步交流。",
+          body_html: "<p>关注到您在方向的工作，想进一步交流。</p>",
+          source: "template",
+          sendable: true,
+          editable: true,
+        },
+      },
+    });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
     apiMocks.listBatchTaskItems.mockResolvedValue([item]);
-    apiMocks.getBatchTaskItemThread.mockResolvedValue(fallbackThread);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(fallbackThread)
+      .mockResolvedValue(appliedFallbackThread);
+    apiMocks.listOutreachTemplates.mockResolvedValue([replacementTemplate]);
+    apiMocks.getOutreachTemplate.mockResolvedValue(replacementTemplate);
+    apiMocks.updateBatchTaskItemOutreachConfig.mockResolvedValue(
+      appliedFallbackThread,
+    );
     apiMocks.getProfessor.mockResolvedValue(
       buildProfessor({
         name: "缺研究方向导师",
@@ -2303,9 +2539,9 @@ describe("TasksPage batch draft review", () => {
     );
     apiMocks.approveBatchTaskItemDraft.mockResolvedValue(
       buildWorkspaceThread({
-        ...fallbackThread,
+        ...appliedFallbackThread,
         current_task: {
-          ...fallbackThread.current_task,
+          ...appliedFallbackThread.current_task,
           status: "approved",
         },
       }),
@@ -2338,8 +2574,56 @@ describe("TasksPage batch draft review", () => {
       within(fallbackNotice).getByRole("button", { name: "补充资料" }),
     ).toBeInTheDocument();
 
+    const templateSelector = await screen.findByRole("button", {
+      name: "选择模板重新套用",
+    });
+    await waitFor(() => expect(templateSelector).toBeEnabled());
+    fireEvent.click(templateSelector);
     fireEvent.click(
-      within(fallbackNotice).getByRole("button", { name: "补充资料" }),
+      await screen.findByRole("option", {
+        name: replacementTemplate.name,
+      }),
+    );
+    await waitFor(() => {
+      expect(apiMocks.updateBatchTaskItemOutreachConfig).toHaveBeenCalledWith(
+        task.id,
+        item.id,
+        {
+          outreach_generation_mode: replacementTemplate.recommended_generation_mode,
+          outreach_template_id: replacementTemplate.id,
+          outreach_template_subject: replacementTemplate.subject,
+          outreach_template_body_text: replacementTemplate.body_text,
+          outreach_template_body_html: replacementTemplate.body_html,
+        },
+      );
+    });
+    expect(fallbackNotice).toHaveTextContent(
+      "因缺少研究方向，已直接套用「缺方向审核替换模板」模板",
+    );
+    expect(
+      within(fallbackNotice).getByText("未进行 AI 改写"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("邮件主题")).toHaveValue(
+      "重新申请与缺研究方向导师老师交流",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "返回详情" }));
+    fireEvent.click(await screen.findByRole("button", { name: "审核草稿" }));
+    await waitFor(() => {
+      expect(apiMocks.getBatchTaskItemThread).toHaveBeenCalledTimes(2);
+    });
+    const reopenedFallbackNotice = await screen.findByRole("region", {
+      name: "未进行 AI 改写提示",
+    });
+    expect(reopenedFallbackNotice).toHaveTextContent(
+      "因缺少研究方向，已直接套用「缺方向审核替换模板」模板",
+    );
+    expect(screen.getByLabelText("邮件主题")).toHaveValue(
+      "重新申请与缺研究方向导师老师交流",
+    );
+
+    fireEvent.click(
+      within(reopenedFallbackNotice).getByRole("button", { name: "补充资料" }),
     );
     const editDialog = await screen.findByRole("dialog", {
       name: "补充导师资料：缺研究方向导师",
@@ -2356,7 +2640,7 @@ describe("TasksPage batch draft review", () => {
     expect(confirmMock).not.toHaveBeenCalled();
     expect(apiMocks.regenerateBatchTaskItemDraft).not.toHaveBeenCalled();
     expect(screen.getByLabelText("邮件正文")).toHaveValue(
-      "<p>缺研究方向导师老师您好，我是申请人。</p>",
+      "<p>关注到您在方向的工作，想进一步交流。</p>",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "审核通过" }));
@@ -2365,8 +2649,8 @@ describe("TasksPage batch draft review", () => {
         task.id,
         item.id,
         expect.objectContaining({
-          subject: "申请与缺研究方向导师老师交流",
-          body_text: "缺研究方向导师老师您好，我是申请人。",
+          subject: "重新申请与缺研究方向导师老师交流",
+          body_text: "关注到您在方向的工作，想进一步交流。",
         }),
       );
     });
@@ -2401,14 +2685,52 @@ describe("TasksPage batch draft review", () => {
         batch_task_id: task.id,
         draft_generation_source: "template_fallback",
         draft_fallback_reason: "missing_research_direction",
+        draft: {
+          ...buildWorkspaceThread().current_task.draft,
+          source: "template",
+        },
       },
     });
     const completedProfessor = buildProfessorManagementItem({
       name: item.professor_name,
       research_direction: "Machine Learning Systems",
     });
+    const completedItem = {
+      ...item,
+      professor_research_direction: completedProfessor.research_direction,
+    };
+    const rewrittenItem = {
+      ...completedItem,
+      draft_generation_source: "llm" as const,
+      draft_fallback_reason: null,
+    };
+    const rewrittenThread = buildWorkspaceThread({
+      professor: {
+        ...fallbackThread.professor,
+        research_direction: completedProfessor.research_direction,
+      },
+      current_task: {
+        ...fallbackThread.current_task,
+        draft_generation_source: "llm",
+        draft_fallback_reason: null,
+        generated_subject: "AI 改写后的主题",
+        generated_content_text: "AI 改写后的正文",
+        generated_content_html: "<p>AI 改写后的正文</p>",
+        draft: {
+          subject: "AI 改写后的主题",
+          body_text: "AI 改写后的正文",
+          body_html: "<p>AI 改写后的正文</p>",
+          source: "ai_rewrite",
+          sendable: true,
+          editable: true,
+        },
+      },
+    });
     apiMocks.listBatchTasks.mockResolvedValue([task]);
-    apiMocks.listBatchTaskItems.mockResolvedValue([item]);
+    apiMocks.listBatchTaskItems
+      .mockResolvedValueOnce([item])
+      .mockResolvedValueOnce([completedItem])
+      .mockResolvedValue([rewrittenItem]);
     apiMocks.getBatchTaskItemThread.mockResolvedValue(fallbackThread);
     apiMocks.getProfessor.mockResolvedValue(
       buildProfessor({
@@ -2417,22 +2739,7 @@ describe("TasksPage batch draft review", () => {
       }),
     );
     apiMocks.updateProfessor.mockResolvedValue(completedProfessor);
-    apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(
-      buildWorkspaceThread({
-        professor: {
-          ...fallbackThread.professor,
-          research_direction: completedProfessor.research_direction,
-        },
-        current_task: {
-          ...fallbackThread.current_task,
-          draft_generation_source: "llm",
-          draft_fallback_reason: null,
-          generated_subject: "AI 改写后的主题",
-          generated_content_text: "AI 改写后的正文",
-          generated_content_html: "<p>AI 改写后的正文</p>",
-        },
-      }),
-    );
+    apiMocks.rewriteBatchTaskItemDraft.mockResolvedValue(rewrittenThread);
 
     render(
       <MemoryRouter>
@@ -2467,14 +2774,24 @@ describe("TasksPage batch draft review", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "使用 AI 改写" }));
     await waitFor(() => {
-      expect(apiMocks.regenerateBatchTaskItemDraft).toHaveBeenCalledWith(
+      expect(apiMocks.rewriteBatchTaskItemDraft).toHaveBeenCalledWith(
         task.id,
         item.id,
+        expect.objectContaining({
+          llm_profile_id: fallbackThread.llm_profile.id,
+        }),
       );
     });
+    expect(apiMocks.regenerateBatchTaskItemDraft).not.toHaveBeenCalled();
     expect(confirmMock).toHaveBeenCalledWith(
       expect.objectContaining({ title: "确认使用 AI 改写？" }),
     );
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "未进行 AI 改写提示" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("未进行 AI 改写")).not.toBeInTheDocument();
+    });
   });
 
   it("keeps the current draft visible until the next professor is ready", async () => {

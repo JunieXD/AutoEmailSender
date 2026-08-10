@@ -18,6 +18,8 @@ export const DESKTOP_IPC_CHANNELS = {
   agentSupportUninstallSkill: "agent-support:uninstall-skill",
   agentSupportDismissOnboarding: "agent-support:dismiss-onboarding",
   agentSupportStatus: "agent-support:status",
+  agentUiHandoffDeliver: "agent-ui-handoff:deliver",
+  agentUiHandoffAcknowledge: "agent-ui-handoff:acknowledge",
   professorSelectImportFile: "professors:select-import-file",
   communityShareSave: "community-share:save",
   materialOpen: "materials:open",

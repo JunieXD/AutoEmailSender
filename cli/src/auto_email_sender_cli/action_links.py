@@ -10,11 +10,9 @@ into an executable argument.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
 
 from auto_email_sender_cli.capabilities import get_capability
 from auto_email_sender_cli.operation_specs import get_operation_spec
-
 
 ActionLink = dict[str, object]
 
@@ -94,6 +92,11 @@ def _resolve_target(
     """Map a resource-specific action name to a registered leaf command."""
 
     source = source_command.strip().lower()
+    handoff_id = _string_identifier(item.get("handoff_id"))
+    if handoff_id is not None:
+        return _ui_handoff_target(action, handoff_id)
+    if action == "present-in-app":
+        return _present_in_app_target(source, item)
     plan_id = _string_identifier(item.get("plan_id"))
     if plan_id is not None:
         return _plan_target(
@@ -131,6 +134,61 @@ def _resolve_target(
         return _campaign_target(source, action, item)
     if source.startswith("deliveries."):
         return _delivery_target(action, item)
+    return None
+
+
+def _ui_handoff_target(
+    action: str,
+    handoff_id: str,
+) -> tuple[str, dict[str, object], list[str], str] | None:
+    arguments = {"handoff_id": handoff_id}
+    if action == "read":
+        return "ui-handoffs.get", arguments, [], "invoke"
+    if action == "wait":
+        return "ui-handoffs.wait", arguments, [], "invoke"
+    if action == "cancel":
+        return "ui-handoffs.cancel", arguments, [], "invoke"
+    if action == "retry":
+        return "ui-handoffs.retry", arguments, [], "invoke"
+    return None
+
+
+def _present_in_app_target(
+    source: str,
+    item: Mapping[str, object],
+) -> tuple[str, dict[str, object], list[str], str] | None:
+    if source == "professors.get":
+        professor_id = _positive_integer(item.get("professor_id")) or _positive_integer(
+            item.get("id"),
+        )
+        if professor_id is not None:
+            return (
+                "professors.present-selection",
+                {"professor_ids": [professor_id]},
+                [],
+                "invoke",
+            )
+        return None
+    if source.startswith("communications.threads."):
+        thread_id = _string_identifier(item.get("thread_id") or item.get("id"))
+        if thread_id is not None:
+            return "communications.threads.present", {"thread_id": thread_id}, [], "invoke"
+        return None
+    if source.startswith("crawler.jobs."):
+        job_id = _job_identifier(
+            item,
+            nested=source.endswith((".pages", ".events", ".candidates")),
+        )
+        if job_id is not None:
+            return "crawler.jobs.present", {"job_id": job_id}, [], "invoke"
+        return None
+    task_id = _positive_integer(item.get("task_id")) or _positive_integer(item.get("id"))
+    if task_id is None:
+        return None
+    if source.startswith("tasks."):
+        return "tasks.present", {"task_id": task_id}, [], "invoke"
+    if source.startswith(("drafts.", "workspaces.")) or source == "campaigns.item-thread":
+        return "drafts.present", {"task_id": task_id}, [], "invoke"
     return None
 
 

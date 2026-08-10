@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.base import ApiSchema
 from app.schemas.selection import SelectionSpec
@@ -22,6 +22,14 @@ AgentPlanStatus = Literal[
 ]
 
 
+def _validate_attachment_material_ids(material_ids: list[int]) -> list[int]:
+    if any(material_id < 1 for material_id in material_ids):
+        raise ValueError("attachment_material_ids 必须是正整数")
+    if len(set(material_ids)) != len(material_ids):
+        raise ValueError("attachment_material_ids 不能包含重复的材料 ID")
+    return material_ids
+
+
 class AgentDraftGenerateRequest(ApiSchema):
     professor_id: int = Field(ge=1)
     identity_id: int = Field(ge=1)
@@ -33,6 +41,11 @@ class AgentDraftGenerateRequest(ApiSchema):
     subject: str | None = None
     body_text: str | None = None
     body_html: str | None = None
+
+    @field_validator("attachment_material_ids")
+    @classmethod
+    def validate_attachment_material_ids(cls, value: list[int]) -> list[int]:
+        return _validate_attachment_material_ids(value)
 
     @model_validator(mode="after")
     def validate_mode_requirements(self) -> "AgentDraftGenerateRequest":
@@ -49,7 +62,17 @@ class AgentDraftSaveRequest(ApiSchema):
     subject: str | None = None
     body_text: str = ""
     body_html: str | None = None
-    attachment_material_ids: list[int] = Field(default_factory=list)
+    attachment_material_ids: list[int] | None = None
+
+    @field_validator("attachment_material_ids")
+    @classmethod
+    def validate_attachment_material_ids(
+        cls,
+        value: list[int] | None,
+    ) -> list[int] | None:
+        if value is None:
+            return None
+        return _validate_attachment_material_ids(value)
 
 
 class AgentDraftRewriteRequest(AgentDraftSaveRequest):
@@ -374,10 +397,7 @@ class AgentCampaignCreateRequest(ApiSchema):
             raise ValueError("professor_ids 不能包含重复的导师 ID")
         if any(professor_id < 1 for professor_id in self.professor_ids):
             raise ValueError("professor_ids 必须是正整数")
-        if len(set(self.attachment_material_ids)) != len(self.attachment_material_ids):
-            raise ValueError("attachment_material_ids 不能包含重复的材料 ID")
-        if any(material_id < 1 for material_id in self.attachment_material_ids):
-            raise ValueError("attachment_material_ids 必须是正整数")
+        _validate_attachment_material_ids(self.attachment_material_ids)
         if self.generation_mode == "ai_rewrite" and self.reference_material_id is None:
             raise ValueError("AI 改写必须明确指定 reference_material_id")
         if self.schedule_type == "scheduled":

@@ -17,9 +17,9 @@ from auto_email_sender_cli.commands.common import (
     run_write_command,
     validate_context_options,
 )
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
-
 
 communications_app = typer.Typer(help="读取通信线程、发件和完整回信。", no_args_is_help=True)
 threads_app = typer.Typer(help="查询按身份和导师归并的通信线程。", no_args_is_help=True)
@@ -104,6 +104,19 @@ def get_thread(
         },
         guide_topic="communications",
         human_formatter=format_detail,
+    )
+
+
+@threads_app.command("present")
+def present_thread(
+    ctx: typer.Context,
+    thread_id: Annotated[str, typer.Argument(help="通信线程 ID，例如 2:17。")],
+) -> None:
+    run_ui_handoff_command(
+        ctx,
+        command="communications.threads.present",
+        path=f"/api/agent/v1/communications/threads/{thread_id}/present",
+        use_idempotency_key=True,
     )
 
 
@@ -238,7 +251,7 @@ def export_messages(
                 code="OUTPUT_EXISTS",
                 message=f"输出文件已存在：{destination}",
                 exit_code=2,
-                suggested_command=f"重新选择 --output，或明确使用 --force 覆盖。",
+                suggested_command="重新选择 --output，或明确使用 --force 覆盖。",
             ) from exc
         except OSError as exc:
             raise CliError(
