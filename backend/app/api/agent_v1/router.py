@@ -95,6 +95,7 @@ from app.schemas.agent import (
     AgentPlanExecuteRequest,
     AgentProfessorBulkArchiveRequest,
     AgentProfessorBulkTagsRequest,
+    AgentProfessorPresentSelectionRequest,
     AgentPrepareSendRequest,
     AgentProfessorRead,
     AgentProfessorTagRead,
@@ -112,6 +113,10 @@ from app.schemas.agent import (
     AgentTemplateImportRead,
     AgentTemplateRead,
     AgentTemplateUpdateRequest,
+    AgentUiHandoffAcknowledgeRequest,
+    AgentUiHandoffClaimRead,
+    AgentUiHandoffClaimRequest,
+    AgentUiHandoffRead,
     AgentWorkspaceThreadRead,
 )
 from app.schemas.dashboard import DashboardOverviewRead
@@ -259,6 +264,18 @@ from app.services.agent_change_plans import (
     create_template_archive_change_plan,
     execute_change_plan,
     get_change_plan,
+)
+from app.services.agent_ui_handoffs import (
+    acknowledge_ui_handoff,
+    cancel_ui_handoff,
+    claim_next_ui_handoff,
+    create_communication_thread_ui_handoff,
+    create_crawl_job_ui_handoff,
+    create_draft_workspace_ui_handoff,
+    create_professor_selection_ui_handoff,
+    create_task_center_ui_handoff,
+    get_ui_handoff,
+    retry_ui_handoff,
 )
 from app.modules.community.public import (
     CommunityDataError,
@@ -702,6 +719,133 @@ async def prepare_agent_professor_bulk_archive(
         get_session_factory(),
         payload.resolved_selection(),
         idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/professors/present-selection",
+    response_model=AgentUiHandoffRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def present_agent_professor_selection(
+    payload: AgentProfessorPresentSelectionRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentUiHandoffRead:
+    return await create_professor_selection_ui_handoff(
+        get_session_factory(),
+        payload,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/present",
+    response_model=AgentUiHandoffRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def present_agent_task(
+    task_id: int,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentUiHandoffRead:
+    return await create_task_center_ui_handoff(
+        get_session_factory(),
+        task_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/drafts/{task_id}/present",
+    response_model=AgentUiHandoffRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def present_agent_draft(
+    task_id: int,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentUiHandoffRead:
+    return await create_draft_workspace_ui_handoff(
+        get_session_factory(),
+        task_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/crawler/jobs/{job_id}/present",
+    response_model=AgentUiHandoffRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def present_agent_crawl_job(
+    job_id: int,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentUiHandoffRead:
+    return await create_crawl_job_ui_handoff(
+        get_session_factory(),
+        job_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/communications/threads/{thread_id}/present",
+    response_model=AgentUiHandoffRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def present_agent_communication_thread(
+    thread_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AgentUiHandoffRead:
+    return await create_communication_thread_ui_handoff(
+        get_session_factory(),
+        thread_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.get("/ui-handoffs/{handoff_id}", response_model=AgentUiHandoffRead)
+async def read_agent_ui_handoff(handoff_id: str) -> AgentUiHandoffRead:
+    return await get_ui_handoff(get_session_factory(), handoff_id)
+
+
+@router.post("/ui-handoffs/{handoff_id}/cancel", response_model=AgentUiHandoffRead)
+async def cancel_agent_ui_handoff(handoff_id: str) -> AgentUiHandoffRead:
+    return await cancel_ui_handoff(get_session_factory(), handoff_id)
+
+
+@router.post("/ui-handoffs/{handoff_id}/retry", response_model=AgentUiHandoffRead)
+async def retry_agent_ui_handoff(handoff_id: str) -> AgentUiHandoffRead:
+    return await retry_ui_handoff(get_session_factory(), handoff_id)
+
+
+@router.post(
+    "/ui-handoffs/claim-next",
+    response_model=AgentUiHandoffClaimRead,
+    responses={status.HTTP_204_NO_CONTENT: {"description": "没有待交付界面状态"}},
+)
+async def claim_agent_ui_handoff(
+    payload: AgentUiHandoffClaimRequest,
+) -> AgentUiHandoffClaimRead | Response:
+    handoff = await claim_next_ui_handoff(
+        get_session_factory(),
+        payload.consumer_id,
+    )
+    if handoff is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return handoff
+
+
+@router.post(
+    "/ui-handoffs/{handoff_id}/acknowledge",
+    response_model=AgentUiHandoffRead,
+)
+async def acknowledge_agent_ui_handoff(
+    handoff_id: str,
+    payload: AgentUiHandoffAcknowledgeRequest,
+) -> AgentUiHandoffRead:
+    return await acknowledge_ui_handoff(
+        get_session_factory(),
+        handoff_id,
+        payload,
     )
 
 

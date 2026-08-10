@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { Activity, type ReactNode } from "react";
 import { MemoryRouter as RouterMemoryRouter } from "react-router-dom";
@@ -18,6 +18,14 @@ import type {
   ProfessorInformationEnrichmentJobDTO,
   WorkspaceThreadDTO,
 } from "@/types";
+import type {
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffSurface,
+} from "@/types/desktop";
+import {
+  validateAgentUiHandoff,
+  type AgentUiHandoffSurfaceHandler,
+} from "@/features/agent-ui-handoffs/types";
 import {
   buildBatchPendingItemAction,
   getBatchTaskItemCancellationText,
@@ -84,6 +92,7 @@ const apiMocks = vi.hoisted(() => ({
   getProfessor: vi.fn(),
   updateProfessor: vi.fn(),
   getWorkspaceThread: vi.fn(),
+  getEmailTaskThread: vi.fn(),
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
   approveAndSend: vi.fn(),
@@ -110,6 +119,12 @@ const selectionMock = vi.hoisted(() => ({
   setSelectedIdentityId: vi.fn(),
   setSelectedLlmProfileId: vi.fn(),
 }));
+const agentUiHandoffMocks = vi.hoisted(() => ({
+  handlers: new Map<
+    DesktopAgentUiHandoffSurface,
+    AgentUiHandoffSurfaceHandler
+  >(),
+}));
 const scrollIntoView = vi.fn();
 
 const MemoryRouter = ({ children }: { children: ReactNode }) => (
@@ -131,6 +146,15 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/context/NotificationContext", () => ({
   useNotification: () => notificationMocks,
+}));
+
+vi.mock("@/features/agent-ui-handoffs/useAgentUiHandoffSurface", () => ({
+  useAgentUiHandoffSurface: (
+    surface: DesktopAgentUiHandoffSurface,
+    handler: AgentUiHandoffSurfaceHandler,
+  ) => {
+    agentUiHandoffMocks.handlers.set(surface, handler);
+  },
 }));
 
 vi.mock("@/app/providers/BackgroundTaskNotificationContext", () => ({
@@ -227,9 +251,14 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
+  getEmailTaskThread: apiMocks.getEmailTaskThread,
   regenerateDraft: apiMocks.regenerateDraft,
   approveDraft: apiMocks.approveDraft,
   approveAndSend: apiMocks.approveAndSend,
+}));
+
+vi.mock("@/features/email-deliveries/components/EmailDeliveryPlan", () => ({
+  EmailDeliveryPlan: () => <div>发送计划定位结果</div>,
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -309,6 +338,74 @@ const buildCrawlJob = (
   duration_seconds: 0,
   ...overrides,
 });
+
+const buildCrawlJobHandoff = (jobId = 9) =>
+  validateAgentUiHandoff({
+    handoffId: "uih_crawl_job_test",
+    schemaVersion: 1,
+    surface: "crawler.job",
+    route: "/tasks",
+    status: "claimed",
+    selectionCount: 1,
+    selectionFingerprint: null,
+    uiEffects: ["focus_window", "navigate", "focus_resource"],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "crawl_job_context",
+      resource: "crawler.jobs",
+      job_id: jobId,
+      ui_effects: ["focus_window", "navigate", "focus_resource"],
+    },
+    selectedIds: [],
+  } satisfies DesktopAgentUiHandoff);
+
+const buildTaskCenterHandoff = (taskId = 101) =>
+  validateAgentUiHandoff({
+    handoffId: "uih_task_center_test",
+    schemaVersion: 1,
+    surface: "tasks.center",
+    route: "/tasks",
+    status: "claimed",
+    selectionCount: 1,
+    selectionFingerprint: null,
+    uiEffects: ["focus_window", "navigate", "focus_resource"],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "task_context",
+      resource: "tasks",
+      task_id: taskId,
+      professor_id: 21,
+      identity_id: 1,
+      ui_effects: ["focus_window", "navigate", "focus_resource"],
+    },
+    selectedIds: [],
+  } satisfies DesktopAgentUiHandoff);
 
 describe("CrawlJobCard", () => {
   it("uses a separated responsive layout and truncates long latest events", () => {
@@ -914,6 +1011,7 @@ beforeEach(() => {
   confirmMock.mockResolvedValue(true);
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
+  agentUiHandoffMocks.handlers.clear();
   apiMocks.listBatchTasks.mockResolvedValue([]);
   apiMocks.listBatchTaskItems.mockResolvedValue([]);
   apiMocks.listOutreachTemplates.mockResolvedValue([]);
@@ -940,6 +1038,7 @@ beforeEach(() => {
   apiMocks.getProfessor.mockResolvedValue(buildProfessor());
   apiMocks.updateProfessor.mockResolvedValue(buildProfessorManagementItem());
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.getEmailTaskThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.getBatchTaskItemThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.regenerateBatchTaskItemDraft.mockResolvedValue(buildWorkspaceThread({
     current_task: {
@@ -1006,6 +1105,69 @@ beforeEach(() => {
       review_required_count: 0,
       approved_count: 0,
     }),
+  });
+});
+
+describe("TasksPage Agent UI handoffs", () => {
+  it("verifies and locates the exact email task before acknowledging", async () => {
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const handler = agentUiHandoffMocks.handlers.get("tasks.center");
+    expect(handler).toBeDefined();
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(buildTaskCenterHandoff(101));
+    });
+
+    expect(apiMocks.getEmailTaskThread).toHaveBeenCalledWith(101);
+    expect(result).toEqual(expect.objectContaining({
+      status: "applied",
+      result: expect.objectContaining({
+        task_id: 101,
+        resource_verified: true,
+      }),
+    }));
+    expect(await screen.findByText("发送计划定位结果")).toBeInTheDocument();
+  });
+
+  it("opens an archived crawl job from the trash view", async () => {
+    const archivedJob = buildCrawlJob({
+      deleted_at: "2026-08-09T12:00:00Z",
+    });
+    apiMocks.getCrawlJob.mockResolvedValue(archivedJob);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+    const handler = agentUiHandoffMocks.handlers.get("crawler.job");
+    expect(handler).toBeDefined();
+    const handoff = buildCrawlJobHandoff(archivedJob.id);
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(handoff);
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({
+          job_id: archivedJob.id,
+          task_view: "trash",
+          details_open: true,
+        }),
+      }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "抓取任务详情" }),
+    ).toBeInTheDocument();
+    expect(apiMocks.getCrawlJobDetails).toHaveBeenCalledWith(archivedJob.id);
   });
 });
 
@@ -1712,10 +1874,13 @@ describe("TasksPage batch draft review", () => {
     );
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/create-task"));
     expect(
-      JSON.parse(window.sessionStorage.getItem("batch_resend_prefill_context") ?? "{}"),
+      JSON.parse(window.sessionStorage.getItem("app_navigation_handoff_v1") ?? "{}"),
     ).toEqual(expect.objectContaining({
       professorIds: [21],
-      requiresRegeneration: false,
+      resendContext: expect.objectContaining({
+        professorIds: [21],
+        requiresRegeneration: false,
+      }),
     }));
   });
 

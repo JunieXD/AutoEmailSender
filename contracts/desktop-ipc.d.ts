@@ -93,6 +93,60 @@ export type DesktopBackendStatus =
       databaseError?: DesktopBackendDatabaseError;
     };
 
+export type DesktopAgentUiHandoffStatus =
+  | "pending"
+  | "claimed"
+  | "awaiting_user"
+  | "applied"
+  | "failed"
+  | "canceled"
+  | "expired";
+
+export type DesktopAgentUiHandoffSurface =
+  | "professors.management"
+  | "professors.home"
+  | "tasks.center"
+  | "crawler.job"
+  | "communications.thread"
+  | "draft.workspace";
+
+export type DesktopAgentUiHandoffState = {
+  handoffId: string;
+  schemaVersion: number;
+  surface: DesktopAgentUiHandoffSurface;
+  route: string;
+  status: DesktopAgentUiHandoffStatus;
+  selectionCount: number;
+  selectionFingerprint: string | null;
+  uiEffects: string[];
+  result: Record<string, unknown> | null;
+  failureMessage: string | null;
+  deliveryAttempts: number;
+  expiresAt: string;
+  claimedAt: string | null;
+  awaitingUserAt: string | null;
+  appliedAt: string | null;
+  failedAt: string | null;
+  canceledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  availableActions: string[];
+};
+
+export type DesktopAgentUiHandoff = DesktopAgentUiHandoffState & {
+  consumerId: string;
+  claimExpiresAt: string;
+  payload: Record<string, unknown>;
+  selectedIds: number[];
+};
+
+export type DesktopAgentUiHandoffAcknowledgeRequest = {
+  handoffId: string;
+  status: "applied" | "awaiting_user" | "failed";
+  result?: Record<string, unknown>;
+  failureMessage?: string;
+};
+
 export type DesktopStartupAtLoginStatus = {
   supported: boolean;
   enabled: boolean;
@@ -178,5 +232,9 @@ export type DesktopBridge = {
   quitAndInstall: () => Promise<void>;
   onBackendStatus?: (callback: (status: DesktopBackendStatus) => void) => () => void;
   onAgentSupportStatus?: (callback: (status: DesktopAgentSupportStatus) => void) => () => void;
+  onAgentUiHandoff?: (callback: (handoff: DesktopAgentUiHandoff) => void) => () => void;
+  acknowledgeAgentUiHandoff?: (
+    request: DesktopAgentUiHandoffAcknowledgeRequest,
+  ) => Promise<DesktopAgentUiHandoffState>;
   onUpdateStatus: (callback: (status: DesktopUpdateStatus) => void) => () => void;
 };

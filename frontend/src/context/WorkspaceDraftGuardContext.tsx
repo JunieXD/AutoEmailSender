@@ -18,20 +18,20 @@ export const WorkspaceDraftGuardProvider = ({ children }: PropsWithChildren) => 
     };
   }, []);
 
-  const requestWorkspaceDraftGuard = useCallback(() => {
+  const requestWorkspaceDraftGuard = useCallback((request?: Parameters<WorkspaceDraftGuard>[0]) => {
     if (!guardRef.current) {
       return Promise.resolve(true);
     }
     if (pendingGuardRef.current) {
       return pendingGuardRef.current;
     }
-    const request = guardRef.current().finally(() => {
-      if (pendingGuardRef.current === request) {
+    const pendingRequest = guardRef.current(request).finally(() => {
+      if (pendingGuardRef.current === pendingRequest) {
         pendingGuardRef.current = null;
       }
     });
-    pendingGuardRef.current = request;
-    return request;
+    pendingGuardRef.current = pendingRequest;
+    return pendingRequest;
   }, []);
 
   const value = useMemo(

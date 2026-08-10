@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, type MenuItemConstructorOptions } from "electron";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -21,6 +22,7 @@ import {
   writeAgentRuntimeDescriptor,
 } from "../agent-support/runtime.js";
 import { createAgentSupportService } from "../agent-support/service.js";
+import { createAgentUiHandoffService } from "../agent-ui-handoffs/service.js";
 import { registerDesktopIpc } from "../ipc/register.js";
 import { getStartupAtLoginStatus, isLaunchedAtStartup, setStartupAtLoginEnabled } from "../shell/startup-at-login.js";
 import { bindTrayInteractions } from "../shell/tray.js";
@@ -64,6 +66,22 @@ const desktopBackendClient = createDesktopBackendClient({
         }
   ),
 });
+const agentUiHandoffBackendClient = createDesktopBackendClient({
+  getConnection: () => (
+    backend === null
+      ? null
+      : {
+          baseUrl: backend.baseUrl,
+          accessToken: backend.agentAccessToken,
+        }
+  ),
+});
+const agentUiHandoffService = createAgentUiHandoffService({
+  backendClient: agentUiHandoffBackendClient,
+  consumerId: `desktop:${process.pid}:${randomUUID()}`,
+  getRenderer: () => mainWindow,
+  showWindow: showMainWindow,
+});
 
 
 const repoRoot = path.resolve(app.getAppPath(), "..");
@@ -103,6 +121,7 @@ function quitFromTray(): void {
 
 function stopBackendAndExit(exitCode: number): void {
   isQuitting = true;
+  agentUiHandoffService.stop();
   if (backendStopPromise !== null) {
     return;
   }
@@ -282,6 +301,11 @@ async function createWindow(): Promise<void> {
     if (currentAgentSupportStatus !== null) {
       mainWindow?.webContents.send(DESKTOP_IPC_CHANNELS.agentSupportStatus, currentAgentSupportStatus);
     }
+    agentUiHandoffService.start();
+    agentUiHandoffService.setRendererReady(true);
+  });
+  mainWindow.webContents.on("did-start-loading", () => {
+    agentUiHandoffService.setRendererReady(false);
   });
   mainWindow.on("close", (event) => {
     if (!shouldHideWindowOnClose({
@@ -421,6 +445,7 @@ function publishBackendReady(controller: BackendController): void {
   controller.ready
     .then(() => {
       unsubscribe();
+      agentUiHandoffService.pollNow();
       void finalizeAgentRuntimeDescriptor(controller).catch(async (error: unknown) => {
         await removeAgentRuntime(controller);
         console.warn(`Unable to finalize Agent runtime descriptor: ${getErrorMessage(error)}`);
@@ -559,6 +584,7 @@ export function bootstrapDesktopApplication(): void {
       ),
     dismissAgentSupportOnboarding: async () =>
       publishAgentSupportStatus(await agentSupportService.dismissOnboarding()),
+    acknowledgeAgentUiHandoff: agentUiHandoffService.acknowledge,
     getWindow: () => mainWindow,
     materialOpen: {
       backendClient: desktopBackendClient,
@@ -589,6 +615,7 @@ export function bootstrapDesktopApplication(): void {
 
   app.on("before-quit", (event) => {
     isQuitting = true;
+    agentUiHandoffService.stop();
     if (backend === null) {
       return;
     }

@@ -2,6 +2,7 @@ from app.models.app_setting import AppSetting
 from app.models.agent_action_plan import AgentActionPlan
 from app.models.agent_change_plan import AgentChangePlan
 from app.models.agent_mutation_receipt import AgentMutationReceipt
+from app.models.agent_ui_handoff import AgentUiHandoff, AgentUiHandoffItem
 from app.models.base import Base
 from app.models.batch_task import BatchTask, BatchTaskStatus
 from app.models.crawl_chunk import CrawlPageChunk, CrawlPageChunkStatus
@@ -69,6 +70,8 @@ __all__ = [
     "AgentActionPlan",
     "AgentChangePlan",
     "AgentMutationReceipt",
+    "AgentUiHandoff",
+    "AgentUiHandoffItem",
     "AppSetting",
     "Base",
     "BatchTask",

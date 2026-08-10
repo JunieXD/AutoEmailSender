@@ -158,6 +158,12 @@ class ProfessorPageRequestBase(BaseModel):
     titles: list[str] = Field(default_factory=list, max_length=200)
     tag_ids: list[str] = Field(default_factory=list, max_length=200)
     sort_direction: ProfessorSortDirection = "desc"
+    ui_handoff_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^uih_[A-Za-z0-9_-]+$",
+    )
 
     @field_validator(
         "universities",

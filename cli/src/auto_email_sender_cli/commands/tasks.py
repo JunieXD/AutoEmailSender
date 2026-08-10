@@ -5,12 +5,25 @@ from typing import Annotated
 import typer
 
 from auto_email_sender_cli.commands.common import format_detail, run_write_command
-
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 
 tasks_app = typer.Typer(
     help="处理单封邮件任务；真实发送仍必须使用 drafts 和 plans。",
     no_args_is_help=True,
 )
+
+
+@tasks_app.command("present")
+def present_task(
+    ctx: typer.Context,
+    task_id: Annotated[int, typer.Argument(min=1)],
+) -> None:
+    run_ui_handoff_command(
+        ctx,
+        command="tasks.present",
+        path=f"/api/agent/v1/tasks/{task_id}/present",
+        use_idempotency_key=True,
+    )
 
 
 @tasks_app.command("cancel-schedule")

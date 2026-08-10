@@ -81,6 +81,13 @@ from app.schemas.agent.reads import (
     AgentTaskMatchCalculationRead,
     AgentTaskTokenUsageRead,
 )
+from app.schemas.agent.ui_handoffs import (
+    AgentProfessorPresentSelectionRequest,
+    AgentUiHandoffAcknowledgeRequest,
+    AgentUiHandoffClaimRead,
+    AgentUiHandoffClaimRequest,
+    AgentUiHandoffRead,
+)
 
 __all__ = [
     "AgentActionPlanRead",
@@ -134,6 +141,7 @@ __all__ = [
     "AgentPlanEffectsRead",
     "AgentProfessorBulkArchiveRequest",
     "AgentProfessorBulkTagsRequest",
+    "AgentProfessorPresentSelectionRequest",
     "AgentPlanSummaryRead",
     "AgentProfessorTagCreateRequest",
     "AgentProfessorTagSetRequest",
@@ -162,4 +170,8 @@ __all__ = [
     "AgentWorkspaceThreadRead",
     "AgentTaskMatchCalculationRead",
     "AgentTaskTokenUsageRead",
+    "AgentUiHandoffAcknowledgeRequest",
+    "AgentUiHandoffClaimRead",
+    "AgentUiHandoffClaimRequest",
+    "AgentUiHandoffRead",
 ]

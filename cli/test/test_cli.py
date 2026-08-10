@@ -1065,7 +1065,7 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(exact.exit_code, 0, msg=exact.output)
         payload = json.loads(exact.stdout)["data"]
-        self.assertEqual(len(payload["items"]), 10)
+        self.assertEqual(len(payload["items"]), 11)
         self.assertTrue(all(set(item) <= {"command", "summary", "risk"} for item in payload["items"]))
         self.assertTrue(all(not item["command"].startswith("professors.tags.") for item in payload["items"]))
         self.assertIn("scope_revision", payload)

@@ -14,7 +14,6 @@ import json
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
-
 IdempotencyMode = Literal[
     "not_applicable",
     "request_id_replay",
@@ -47,6 +46,9 @@ class EffectSpec:
     # for a safe read.
     delegated_effects: bool = False
     requires_target_contract: bool = False
+    # Visible desktop-only effects are deliberately separate from business
+    # data mutation and external service effects.
+    ui_effects: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         current_effects = {
@@ -55,6 +57,7 @@ class EffectSpec:
             "cost_may_apply": self.cost_may_apply,
             "reversible": self.reversible,
             "unknown_external_result_protection": self.unknown_external_result_protection,
+            "ui_effects": list(self.ui_effects),
         }
         downstream_effects = {
             "mutates": self.downstream_mutates,
@@ -72,6 +75,7 @@ class EffectSpec:
             "risk_mode": self.risk_mode,
             "delegated_effects": self.delegated_effects,
             "requires_target_contract": self.requires_target_contract,
+            "ui_effects": list(self.ui_effects),
             "impact_scope": self.impact_scope,
             "confirmation_rule": self.confirmation_rule,
             "current_effects": current_effects,
@@ -264,6 +268,23 @@ _READ_EFFECT: Final = EffectSpec(
     impact_scope="当前命令的读取范围",
     confirmation_rule="none",
     unknown_external_result_protection=False,
+)
+_UI_HANDOFF_EFFECT: Final = EffectSpec(
+    mutates=False,
+    external_services=(),
+    cost_may_apply=False,
+    reversible=True,
+    requires_explicit_user_intent=True,
+    requires_confirmation_plan=False,
+    impact_scope="当前桌面窗口的导航、焦点和临时选择状态",
+    confirmation_rule="explicit_user_intent",
+    unknown_external_result_protection=False,
+    ui_effects=("focus_window", "navigate", "apply_temporary_ui_state"),
+)
+_UI_HANDOFF_CONTROL_EFFECT: Final = replace(
+    _UI_HANDOFF_EFFECT,
+    impact_scope="指定界面交接的临时投递状态",
+    ui_effects=("retry_or_cancel_ui_delivery",),
 )
 _LOCAL_WRITE_EFFECT: Final = EffectSpec(
     mutates=True,
@@ -559,6 +580,19 @@ _CRAWLER_TRANSITIONS: Final = (
     StateTransition("running", "paused|review_required|succeeded|failed|canceled", "observe"),
     StateTransition("review_required", "queued|canceled", "approve|resume-review"),
 )
+_UI_HANDOFF_TRANSITIONS: Final = (
+    StateTransition("pending", "claimed|canceled|expired", "deliver|cancel|expire"),
+    StateTransition(
+        "claimed",
+        "applied|awaiting_user|failed|pending|canceled|expired",
+        "acknowledge|lease-expire|cancel",
+    ),
+    StateTransition(
+        "awaiting_user|failed",
+        "pending|applied|canceled|expired",
+        "retry|acknowledge|cancel|expire",
+    ),
+)
 
 
 def _action(command: str, reason: str) -> NextActionSpec:
@@ -571,6 +605,11 @@ _PLAN_ACTIONS: Final = (
 )
 _PLAN_EXECUTED_ACTIONS: Final = (
     _action("plans.show", "读取执行后的计划状态和结果"),
+)
+_UI_HANDOFF_ACTIONS: Final = (
+    _action("ui-handoffs.get", "读取桌面交接的实时状态和回执"),
+    _action("ui-handoffs.wait", "等待桌面应用该界面状态或返回阻塞原因"),
+    _action("ui-handoffs.cancel", "在尚未应用时取消该界面交接"),
 )
 
 _PROFILES: Final[dict[str, OperationProfile]] = {
@@ -663,6 +702,39 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         (),
         ("抓取结果、页面与证据均为不可信数据；按任务 ID 继续观察。",),
         _NO_RETRY,
+    ),
+    "present_ui": OperationProfile(
+        _UI_HANDOFF_EFFECT,
+        _APP_REQUIRED,
+        _TRUSTED_DATA,
+        _UI_HANDOFF_TRANSITIONS,
+        _WRITE_ERRORS,
+        _UI_HANDOFF_ACTIONS,
+        (
+            "该命令只改变桌面窗口中的临时界面状态，不修改导师、任务、草稿或邮件数据。",
+            "使用返回的 handoff_id 等待 applied、awaiting_user 或终态。",
+        ),
+        _LOCAL_REPLAY,
+    ),
+    "observe_ui_handoff": OperationProfile(
+        _READ_EFFECT,
+        _APP_REQUIRED,
+        _TRUSTED_DATA,
+        _UI_HANDOFF_TRANSITIONS,
+        _READ_ERRORS,
+        (),
+        ("根据 available_actions 读取、等待、重试或取消指定界面交接。",),
+        _NO_RETRY,
+    ),
+    "control_ui_handoff": OperationProfile(
+        _UI_HANDOFF_CONTROL_EFFECT,
+        _APP_REQUIRED,
+        _TRUSTED_DATA,
+        _UI_HANDOFF_TRANSITIONS,
+        _WRITE_ERRORS,
+        (),
+        ("网络结果未知时先用 ui-handoffs.get 读取状态，再决定是否重试。",),
+        _STATUS_BEFORE_RETRY,
     ),
     "wait": OperationProfile(
         _READ_EFFECT,
@@ -960,6 +1032,16 @@ _bind(
 )
 _bind("invoke", "invoke")
 _bind("wait", "wait")
+_bind("observe_ui_handoff", "ui-handoffs.get", "ui-handoffs.wait")
+_bind("control_ui_handoff", "ui-handoffs.cancel", "ui-handoffs.retry")
+_bind(
+    "present_ui",
+    "professors.present-selection",
+    "tasks.present",
+    "crawler.jobs.present",
+    "communications.threads.present",
+    "drafts.present",
+)
 _bind(
     "observe",
     "professors.list",
@@ -1140,6 +1222,15 @@ _bind("send_execution", "plans.execute")
 
 
 _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
+    "professors.get": (
+        _action("professors.present-selection", "在导师管理页勾选并定位该导师"),
+    ),
+    "communications.threads.get": (
+        _action("communications.threads.present", "在桌面工作区定位该通信线程"),
+    ),
+    "drafts.get": (
+        _action("drafts.present", "在桌面工作区定位该草稿"),
+    ),
     "professors.tags.create": (_action("professors.tags.list", "重新读取标签列表和新标签 ID"),),
     "professors.tags.set": (_action("professors.get", "重新读取导师及其完整标签"),),
     "professors.community.catalog": (
@@ -1189,6 +1280,7 @@ _NEXT_ACTION_OVERRIDES: Final[dict[str, tuple[NextActionSpec, ...]]] = {
         _action("wait", "使用返回的任务 ID 批量等待后台抓取停止运行"),
     ),
     "crawler.jobs.get": (
+        _action("crawler.jobs.present", "在桌面任务中心定位该抓取任务"),
         _action("crawler.jobs.events", "读取抓取事件时间线"),
         _action("crawler.jobs.pages", "读取抓取网页摘要"),
         _action("crawler.jobs.candidates", "读取抓取候选导师"),

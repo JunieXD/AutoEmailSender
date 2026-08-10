@@ -1,14 +1,24 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { WorkspaceThreadDTO } from "@/types";
+import type {
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffSurface,
+} from "@/types/desktop";
+import {
+  validateAgentUiHandoff,
+  type AgentUiHandoffSurfaceHandler,
+  type ValidatedAgentUiHandoff,
+} from "@/features/agent-ui-handoffs/types";
 import { WorkspacePage } from "./WorkspacePage";
 
 const apiMocks = vi.hoisted(() => ({
   getEmailTaskThread: vi.fn(),
   getWorkspaceThread: vi.fn(),
+  ensureWorkspaceTask: vi.fn(),
   refreshWorkspaceReplies: vi.fn(),
   saveDraft: vi.fn(),
   rewriteDraft: vi.fn(),
@@ -61,6 +71,14 @@ const editorMockState = vi.hoisted(() => ({
   initialHtmlOverride: null as string | null,
 }));
 
+const agentUiHandoffMocks = vi.hoisted(() => ({
+  activeHandoff: null as ValidatedAgentUiHandoff | null,
+  handlers: new Map<
+    DesktopAgentUiHandoffSurface,
+    AgentUiHandoffSurfaceHandler
+  >(),
+}));
+
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: () => selectionMock,
 }));
@@ -74,8 +92,19 @@ vi.mock("@/context/useWorkspaceDraftGuard", () => ({
 }));
 
 vi.mock("@/lib/api/workspacesApi", () => ({
+  ensureWorkspaceTask: apiMocks.ensureWorkspaceTask,
   getWorkspaceThread: apiMocks.getWorkspaceThread,
   refreshWorkspaceReplies: apiMocks.refreshWorkspaceReplies,
+}));
+
+vi.mock("@/features/agent-ui-handoffs/useAgentUiHandoffSurface", () => ({
+  useActiveAgentUiHandoff: () => agentUiHandoffMocks.activeHandoff,
+  useAgentUiHandoffSurface: (
+    surface: DesktopAgentUiHandoffSurface,
+    handler: AgentUiHandoffSurfaceHandler,
+  ) => {
+    agentUiHandoffMocks.handlers.set(surface, handler);
+  },
 }));
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
@@ -255,6 +284,44 @@ const buildWorkspaceThread = (
   ...overrides,
 });
 
+const buildClaimedUiHandoff = (
+  overrides: Partial<DesktopAgentUiHandoff>,
+): ValidatedAgentUiHandoff =>
+  validateAgentUiHandoff({
+    handoffId: "uih_workspace_test",
+    schemaVersion: 1,
+    surface: "communications.thread",
+    route: "/workspace/21",
+    status: "claimed",
+    selectionCount: 1,
+    selectionFingerprint: null,
+    uiEffects: ["focus_window", "navigate", "focus_resource"],
+    result: null,
+    failureMessage: null,
+    deliveryAttempts: 1,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    claimedAt: new Date().toISOString(),
+    awaitingUserAt: null,
+    appliedAt: null,
+    failedAt: null,
+    canceledAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    availableActions: ["read", "wait", "cancel"],
+    consumerId: "desktop:test",
+    claimExpiresAt: new Date(Date.now() + 30_000).toISOString(),
+    payload: {
+      kind: "communication_thread_context",
+      resource: "communications.threads",
+      thread_id: "1:21",
+      professor_id: 21,
+      identity_id: 1,
+      ui_effects: ["focus_window", "navigate", "focus_resource"],
+    },
+    selectedIds: [],
+    ...overrides,
+  });
+
 const renderWorkspace = (initialEntry = "/workspace/21") => {
   const router = createMemoryRouter(
     [
@@ -276,7 +343,10 @@ beforeEach(() => {
   selectionMock.selectedIdentityId = 1;
   selectionMock.selectedLlmProfileId = 2;
   selectionMock.communicationScopeKey = "1";
+  agentUiHandoffMocks.activeHandoff = null;
+  agentUiHandoffMocks.handlers.clear();
   apiMocks.getWorkspaceThread.mockResolvedValue(buildWorkspaceThread());
+  apiMocks.ensureWorkspaceTask.mockResolvedValue(buildWorkspaceThread());
   apiMocks.getEmailTaskThread.mockResolvedValue(buildWorkspaceThread());
   apiMocks.refreshWorkspaceReplies.mockResolvedValue(buildWorkspaceThread());
   apiMocks.listOutreachTemplates.mockResolvedValue([
@@ -338,6 +408,88 @@ beforeEach(() => {
       },
     }),
   );
+});
+
+describe("WorkspacePage Agent UI handoffs", () => {
+  it("presents a communication thread without creating a workspace task", async () => {
+    const handoff = buildClaimedUiHandoff({});
+    agentUiHandoffMocks.activeHandoff = handoff;
+    apiMocks.getWorkspaceThread.mockResolvedValue(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          id: null,
+          source: null,
+          status: null,
+        },
+      }),
+    );
+
+    renderWorkspace();
+    await waitFor(() => expect(apiMocks.getWorkspaceThread).toHaveBeenCalled());
+    const handler = agentUiHandoffMocks.handlers.get("communications.thread");
+    expect(handler).toBeDefined();
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(handoff);
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({ presentation_only: true }),
+      }),
+    );
+    expect(apiMocks.ensureWorkspaceTask).not.toHaveBeenCalled();
+    expect(apiMocks.getEmailTaskThread).not.toHaveBeenCalled();
+  });
+
+  it("loads the exact task and expands the composer for a draft handoff", async () => {
+    const handoff = buildClaimedUiHandoff({
+      surface: "draft.workspace",
+      payload: {
+        kind: "task_context",
+        resource: "tasks",
+        task_id: 404,
+        professor_id: 21,
+        identity_id: 1,
+        ui_effects: ["focus_window", "navigate", "focus_resource"],
+      },
+    });
+    agentUiHandoffMocks.activeHandoff = handoff;
+    apiMocks.getEmailTaskThread.mockResolvedValue(
+      buildWorkspaceThread({
+        current_task: {
+          ...buildWorkspaceThread().current_task,
+          id: 404,
+        },
+      }),
+    );
+
+    renderWorkspace();
+    const handler = agentUiHandoffMocks.handlers.get("draft.workspace");
+    expect(handler).toBeDefined();
+
+    let result: Awaited<ReturnType<AgentUiHandoffSurfaceHandler>> | undefined;
+    await act(async () => {
+      result = await handler?.(handoff);
+    });
+
+    await waitFor(() =>
+      expect(apiMocks.getEmailTaskThread).toHaveBeenCalledWith(404),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        result: expect.objectContaining({
+          task_id: 404,
+          composer_expanded: true,
+        }),
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "收起" })).toBeInTheDocument();
+  });
 });
 
 describe("WorkspacePage draft saving", () => {

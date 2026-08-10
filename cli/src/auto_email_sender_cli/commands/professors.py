@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import secrets
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -18,15 +19,30 @@ from auto_email_sender_cli.commands.common import (
     run_write_command,
     validate_context_options,
 )
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
-
 
 professors_app = typer.Typer(help="查询导师档案与标签。", no_args_is_help=True)
 tags_app = typer.Typer(help="查询导师标签。", no_args_is_help=True)
 community_app = typer.Typer(help="查询、比对和导入社区导师。", no_args_is_help=True)
 professors_app.add_typer(tags_app, name="tags")
 professors_app.add_typer(community_app, name="community")
+
+
+class ProfessorUiSurface(StrEnum):
+    MANAGEMENT = "management"
+    HOME = "home"
+
+
+class UiSelectionMode(StrEnum):
+    REPLACE = "replace"
+    ADD = "add"
+
+
+class UiSelectionDisplay(StrEnum):
+    SELECTED_ONLY = "selected-only"
+    KEEP_CURRENT = "keep-current"
 
 
 @professors_app.command("list")
@@ -614,6 +630,144 @@ def prepare_bulk_professor_archive(
         json_body=json_body,
         guide_topic="safety",
         human_formatter=format_detail,
+    )
+
+
+@professors_app.command("present-selection")
+def present_professor_selection(
+    ctx: typer.Context,
+    professor_ids: Annotated[
+        list[int],
+        typer.Option("--professor-id", min=1, help="重复指定要在界面中勾选的导师 ID。"),
+    ] = [],
+    selection_filter: Annotated[
+        str | None,
+        typer.Option(
+            "--selection-filter",
+            help=(
+                "按结构化 JSON 条件冻结选择；例如 "
+                "{\"name\":{\"contains_script\":\"latin\"}}。"
+            ),
+        ),
+    ] = None,
+    all_professors: Annotated[
+        bool,
+        typer.Option("--all", help="选择当前归档范围中的全部导师。"),
+    ] = False,
+    exclude_ids: Annotated[
+        list[int],
+        typer.Option("--exclude-id", min=1, help="从冻结选择中排除导师 ID；可重复。"),
+    ] = [],
+    archived: Annotated[
+        str,
+        typer.Option("--archived", help="筛选或 --all 的范围：active、archived 或 all。"),
+    ] = "active",
+    surface: Annotated[
+        ProfessorUiSurface,
+        typer.Option("--surface", help="management 或 home。"),
+    ] = ProfessorUiSurface.MANAGEMENT,
+    identity_id: Annotated[
+        int | None,
+        typer.Option("--identity-id", min=1, help="home 页面必须指定的发件身份 ID。"),
+    ] = None,
+    selection_mode: Annotated[
+        UiSelectionMode,
+        typer.Option("--selection-mode", help="replace 或 add。"),
+    ] = UiSelectionMode.REPLACE,
+    display: Annotated[
+        UiSelectionDisplay,
+        typer.Option("--display", help="selected-only 或 keep-current。"),
+    ] = UiSelectionDisplay.SELECTED_ONLY,
+) -> None:
+    if archived not in {"active", "archived", "all"}:
+        raise typer.BadParameter(
+            "--archived 仅支持 active、archived 或 all。",
+            param_hint="--archived",
+        )
+    if len(set(professor_ids)) != len(professor_ids):
+        raise typer.BadParameter("--professor-id 不能包含重复 ID。", param_hint="--professor-id")
+    if len(set(exclude_ids)) != len(exclude_ids):
+        raise typer.BadParameter("--exclude-id 不能包含重复 ID。", param_hint="--exclude-id")
+    selection_inputs = sum(
+        (bool(professor_ids), selection_filter is not None, all_professors),
+    )
+    if selection_inputs != 1:
+        raise typer.BadParameter(
+            "请且只能使用一种选择方式：--professor-id、--selection-filter 或 --all。",
+            param_hint="--professor-id",
+        )
+    if surface is ProfessorUiSurface.HOME and identity_id is None:
+        raise typer.BadParameter("--surface home 必须提供 --identity-id。", param_hint="--identity-id")
+    if surface is ProfessorUiSurface.MANAGEMENT and identity_id is not None:
+        raise typer.BadParameter(
+            "--surface management 不能提供 --identity-id。",
+            param_hint="--identity-id",
+        )
+    if surface is ProfessorUiSurface.HOME and archived != "active":
+        raise typer.BadParameter(
+            "--surface home 只支持 --archived active；已归档导师请在 management 页面查看。",
+            param_hint="--archived",
+        )
+
+    if selection_filter is not None:
+        try:
+            parsed_filter = json.loads(selection_filter)
+        except json.JSONDecodeError as exc:
+            raise typer.BadParameter(
+                "--selection-filter 必须是合法 JSON 对象。",
+                param_hint="--selection-filter",
+            ) from exc
+        if not isinstance(parsed_filter, dict) or not parsed_filter:
+            raise typer.BadParameter(
+                "--selection-filter 必须是非空 JSON 对象。",
+                param_hint="--selection-filter",
+            )
+        selection: dict[str, object] = {
+            "mode": "filter",
+            "filter": {"archived": archived, "where": parsed_filter},
+            "exclude_ids": exclude_ids,
+        }
+    elif all_professors:
+        if archived == "active":
+            selection = {
+                "mode": "all",
+                "exclude_ids": exclude_ids,
+            }
+        else:
+            selection = {
+                "mode": "filter",
+                "filter": {"archived": archived},
+                "exclude_ids": exclude_ids,
+            }
+    else:
+        if archived != "active":
+            raise typer.BadParameter(
+                "显式 --professor-id 不使用 --archived；导师状态由 ID 自身决定。",
+                param_hint="--archived",
+            )
+        if not set(exclude_ids).issubset(professor_ids):
+            raise typer.BadParameter(
+                "显式 ID 模式中的 --exclude-id 必须属于 --professor-id。",
+                param_hint="--exclude-id",
+            )
+        selection = {
+            "mode": "ids",
+            "ids": professor_ids,
+            "exclude_ids": exclude_ids,
+        }
+
+    run_ui_handoff_command(
+        ctx,
+        command="professors.present-selection",
+        path="/api/agent/v1/professors/present-selection",
+        json_body={
+            "selection": selection,
+            "surface": f"professors.{surface.value}",
+            "selection_mode": selection_mode.value,
+            "display": display.value.replace("-", "_"),
+            "identity_id": identity_id,
+        },
+        use_idempotency_key=True,
     )
 
 

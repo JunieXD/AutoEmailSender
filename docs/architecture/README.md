@@ -30,6 +30,7 @@
 - [模块化重构总计划](./modularization-plan.md)：目标拓扑、批次、验收命令和停止条件。
 - [模块地图](./module-map.md)：领域所有权、跨模块关系与现有文件归属。
 - [依赖规则](./dependency-rules.md)：允许的依赖方向、当前技术债基线和自动门禁要求。
+- [Agent UI handoff](./agent-ui-handoffs.md)：CLI 到桌面页面的短期、类型化导航与临时选择协议。
 
 ## 更新规则
 

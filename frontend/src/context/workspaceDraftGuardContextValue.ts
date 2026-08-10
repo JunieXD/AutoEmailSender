@@ -1,9 +1,17 @@
 import { createContext } from "react";
 
-export type WorkspaceDraftGuard = () => Promise<boolean>;
+export type WorkspaceDraftGuardRequest = {
+  nextPath?: string;
+};
+
+export type WorkspaceDraftGuard = (
+  request?: WorkspaceDraftGuardRequest,
+) => Promise<boolean>;
 
 export type WorkspaceDraftGuardContextValue = {
-  requestWorkspaceDraftGuard: () => Promise<boolean>;
+  requestWorkspaceDraftGuard: (
+    request?: WorkspaceDraftGuardRequest,
+  ) => Promise<boolean>;
   registerWorkspaceDraftGuard: (guard: WorkspaceDraftGuard) => () => void;
 };
 

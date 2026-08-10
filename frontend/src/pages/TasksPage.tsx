@@ -46,6 +46,11 @@ import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
+import {
+  isAgentCrawlJobHandoff,
+  isAgentTaskCenterHandoff,
+} from "@/features/agent-ui-handoffs/types";
+import { useAgentUiHandoffSurface } from "@/features/agent-ui-handoffs/useAgentUiHandoffSurface";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
@@ -72,13 +77,13 @@ import {
   updateBatchTaskItemOutreachConfig,
 } from "@/lib/api/batchTasksApi";
 import {
+  getEmailTaskThread,
+} from "@/lib/api/emailTasksApi";
+import {
   getOutreachTemplate,
   listOutreachTemplates,
 } from "@/lib/api/outreachTemplates";
-import {
-  writeBatchResendPrefillContext,
-  writeSelectedProfessorIdsForBatchTask,
-} from "@/features/batch-tasks/client/batchTaskResendPrefill";
+import { writeCreateTaskNavigationHandoff } from "@/features/navigation-handoffs/client/navigationHandoff";
 import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
 import { EmailDeliveryPlan } from "@/features/email-deliveries/components/EmailDeliveryPlan";
 import {
@@ -2536,6 +2541,109 @@ export const TasksPage = () => {
     [notifyError],
   );
 
+  useAgentUiHandoffSurface("tasks.center", async (handoff) => {
+    if (!isAgentTaskCenterHandoff(handoff)) {
+      return {
+        status: "failed",
+        failureMessage: "任务中心收到的界面交接类型不匹配。",
+      };
+    }
+    if (selectedIdentityId !== handoff.payload.identity_id) {
+      return {
+        status: "failed",
+        failureMessage: "任务中心尚未切换到界面交接指定的发件身份。",
+      };
+    }
+    const data = await getEmailTaskThread(handoff.payload.task_id);
+    if (
+      data.current_task?.id !== handoff.payload.task_id ||
+      data.professor.id !== handoff.payload.professor_id ||
+      data.identity.id !== handoff.payload.identity_id
+    ) {
+      throw new Error("邮件任务详情与界面交接不匹配。");
+    }
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("section", "delivery");
+      next.set("task_id", String(handoff.payload.task_id));
+      next.delete("batch_task_id");
+      next.delete("identity_id");
+      next.delete("source");
+      next.delete("status");
+      next.delete("q");
+      return next;
+    }, { replace: true });
+    return {
+      status: "applied",
+      result: {
+        surface: handoff.surface,
+        task_id: handoff.payload.task_id,
+        professor_id: handoff.payload.professor_id,
+        identity_id: handoff.payload.identity_id,
+        section: "delivery",
+        resource_verified: true,
+      },
+    };
+  });
+
+  useAgentUiHandoffSurface("crawler.job", async (handoff) => {
+    if (!isAgentCrawlJobHandoff(handoff)) {
+      return {
+        status: "failed",
+        failureMessage: "任务中心收到的抓取任务界面交接类型不匹配。",
+      };
+    }
+    const jobId = handoff.payload.job_id;
+    latestCrawlJobSummaryRequestIdRef.current += 1;
+    latestCrawlJobDetailsRequestIdRef.current += 1;
+    setCrawlJobDetailsLoading(true);
+    try {
+      const data = await getCrawlJobDetails(jobId);
+      if (data.job.id !== jobId) {
+        throw new Error("抓取任务详情与界面交接不匹配。");
+      }
+      latestCrawlJobSummaryRequestIdRef.current += 1;
+      latestCrawlJobDetailsRequestIdRef.current += 1;
+      setTaskListViews((current) => ({
+        ...current,
+        crawl: data.job.deleted_at ? "trash" : "current",
+      }));
+      setActiveTab("crawl");
+      setSelectedBatchTask(null);
+      setSelectedMatchJob(null);
+      setSelectedInformationEnrichmentJob(null);
+      setResendDialogOpen(false);
+      setSelectedCrawlJob(data.job);
+      setCrawlJobPages(data.pages);
+      setCrawlJobCandidates(data.candidates);
+      setCrawlJobEvents(data.events);
+      lastCrawlJobDetailsLoadErrorRef.current = null;
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("section", "background");
+        next.delete("task_id");
+        next.delete("batch_task_id");
+        next.delete("view");
+        next.delete("identity_id");
+        next.delete("source");
+        next.delete("status");
+        next.delete("q");
+        return next;
+      }, { replace: true });
+      return {
+        status: "applied",
+        result: {
+          surface: handoff.surface,
+          job_id: jobId,
+          task_view: data.job.deleted_at ? "trash" : "current",
+          details_open: true,
+        },
+      };
+    } finally {
+      setCrawlJobDetailsLoading(false);
+    }
+  });
+
   useEffect(() => {
     if (taskCenterSection !== "background" || activeTab !== "batch") {
       return undefined;
@@ -4597,24 +4705,32 @@ export const TasksPage = () => {
     if (!confirmed) {
       return;
     }
-    setSelectedIdentityId(resendContext.task.identity_id);
-    writeSelectedProfessorIdsForBatchTask(selectedResendProfessorIds);
     const requiresRegeneration = resendContext.items.some(
       (item) =>
         item.professor_id !== null &&
         selectedResendProfessorIds.includes(item.professor_id) &&
         item.content_reuse_kind === "regenerate",
     );
-    writeBatchResendPrefillContext({
-      sourceTaskId: resendContext.task.id,
-      sourceTaskName: resendContext.task.name,
-      identityId: resendContext.task.identity_id,
-      professorIds: selectedResendProfessorIds,
-      requiresRegeneration,
-      defaults: resendContext.defaults,
-      warnings: resendContext.warnings,
-    });
-    navigate("/create-task");
+    try {
+      writeCreateTaskNavigationHandoff(selectedResendProfessorIds, {
+        sourceTaskId: resendContext.task.id,
+        sourceTaskName: resendContext.task.name,
+        identityId: resendContext.task.identity_id,
+        professorIds: selectedResendProfessorIds,
+        requiresRegeneration,
+        defaults: resendContext.defaults,
+        warnings: resendContext.warnings,
+      });
+      setSelectedIdentityId(resendContext.task.identity_id);
+      navigate("/create-task");
+    } catch (handoffError) {
+      notifyError(
+        "无法打开任务创建页",
+        handoffError instanceof Error
+          ? handoffError.message
+          : "批量重发选择暂时无法交给任务创建页。",
+      );
+    }
   };
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({

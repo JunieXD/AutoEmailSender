@@ -15,6 +15,7 @@ import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
 import { WorkspaceDraftGuardProvider } from '@/context/WorkspaceDraftGuardContext';
+import { AgentUiHandoffProvider } from '@/features/agent-ui-handoffs/AgentUiHandoffProvider';
 import { usePreventNumberInputWheelChange } from '@/lib/usePreventNumberInputWheelChange';
 
 const CreateTaskPage = lazy(() =>
@@ -60,16 +61,18 @@ const AppShell = () => (
         <DesktopBackendProvider>
           <WorkspaceDraftGuardProvider>
             <SelectionProvider>
-              <div className="flex min-h-screen flex-col bg-background">
-                <DesktopStartupStatusBanner />
-                <AgentSupportOnboarding />
-                <TopNavBar />
-                <div className="min-h-0 flex-1">
-                  <Suspense fallback={routeLoadingFallback}>
-                    <Outlet />
-                  </Suspense>
+              <AgentUiHandoffProvider>
+                <div className="flex min-h-screen flex-col bg-background">
+                  <DesktopStartupStatusBanner />
+                  <AgentSupportOnboarding />
+                  <TopNavBar />
+                  <div className="min-h-0 flex-1">
+                    <Suspense fallback={routeLoadingFallback}>
+                      <Outlet />
+                    </Suspense>
+                  </div>
                 </div>
-              </div>
+              </AgentUiHandoffProvider>
             </SelectionProvider>
           </WorkspaceDraftGuardProvider>
         </DesktopBackendProvider>

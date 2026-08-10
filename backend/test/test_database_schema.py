@@ -177,6 +177,83 @@ class MigrationScriptTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(rebuilt_fts, [("迁移导师",)])
 
+    def test_agent_ui_handoff_migration_upgrades_and_downgrades_cleanly(self) -> None:
+        database_path = Path(self.temp_dir.name) / "agent_ui_handoffs_migration.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260809_professor_scale_search"
+        migration_revision = "20260810_agent_ui_handoffs"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO professors(name, email, research_direction)
+                VALUES ('交接迁移导师', 'handoff-migration@example.edu', 'Agent UI')
+                """,
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                )
+            }
+            handoff_indexes = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA index_list('agent_ui_handoffs')",
+                )
+            }
+            item_indexes = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA index_list('agent_ui_handoff_items')",
+                )
+            }
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        self.assertEqual(version, migration_revision)
+        self.assertIn("agent_ui_handoffs", tables)
+        self.assertIn("agent_ui_handoff_items", tables)
+        self.assertIn("ix_agent_ui_handoffs_status_expires_at", handoff_indexes)
+        self.assertIn("ix_agent_ui_handoffs_consumer_claim", handoff_indexes)
+        self.assertIn("ix_agent_ui_handoff_items_resource", item_indexes)
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            remaining_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                )
+            }
+            professor = connection.execute(
+                "SELECT name FROM professors WHERE email = 'handoff-migration@example.edu'",
+            ).fetchone()
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        self.assertEqual(version, previous_revision)
+        self.assertNotIn("agent_ui_handoff_items", remaining_tables)
+        self.assertNotIn("agent_ui_handoffs", remaining_tables)
+        self.assertEqual(professor, ("交接迁移导师",))
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            rebuilt_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'",
+                )
+            }
+        self.assertIn("agent_ui_handoffs", rebuilt_tables)
+        self.assertIn("agent_ui_handoff_items", rebuilt_tables)
+
     def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(self) -> None:
         database_path = Path(self.temp_dir.name) / "match_task_decoupling.db"
         env = os.environ.copy()

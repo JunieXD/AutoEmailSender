@@ -57,6 +57,7 @@ export type ProfessorKeywordSearchScopeDTO =
   | 'tag';
 
 export interface ProfessorDashboardPageRequestDTO {
+  ui_handoff_id?: string | null;
   identity_id: number;
   page: number;
   page_size: number;
@@ -83,6 +84,7 @@ export interface ProfessorDashboardPageRequestDTO {
 }
 
 export interface ProfessorManagementPageRequestDTO {
+  ui_handoff_id?: string | null;
   archived: 'active' | 'archived' | 'all';
   page: number;
   page_size: number;

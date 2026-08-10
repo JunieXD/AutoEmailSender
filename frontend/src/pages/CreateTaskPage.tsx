@@ -14,9 +14,11 @@ import { safeRecordUserAction } from '@/lib/diagnosticUserActions';
 import { createBatchTask } from '@/lib/api/batchTasksApi';
 import { listOutreachTemplates } from '@/lib/api/outreachTemplates';
 import {
-  clearBatchResendPrefillContext,
-  readBatchResendPrefillContext,
-} from '@/features/batch-tasks/client/batchTaskResendPrefill';
+  clearCreateTaskNavigationHandoff,
+  clearCreateTaskResendContext,
+  readCreateTaskNavigationHandoff,
+  writeCreateTaskNavigationHandoff,
+} from '@/features/navigation-handoffs/client/navigationHandoff';
 import { listProfessors } from '@/entities/professor/api/professors';
 import { getPageItems, getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
@@ -46,18 +48,8 @@ import {
   type ProfessorDashboardItemDTO,
 } from '@/types';
 
-const SESSION_KEY = 'selected_professor_ids';
 const PRIMARY_MATERIAL_EXTENSIONS = ['.pdf', '.doc', '.docx', '.txt', '.md'];
 const TARGET_MENTORS_PAGE_SIZE_STORAGE_KEY = 'create-task:target-mentors:page-size';
-
-const readSelectedProfessorIds = () => {
-  try {
-    const raw = window.sessionStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as number[]) : [];
-  } catch {
-    return [];
-  }
-};
 
 const isPrimaryMaterialCandidate = (material: IdentityMaterialDTO) => {
   const filename = material.original_filename.toLowerCase();
@@ -100,8 +92,12 @@ export const CreateTaskPage = () => {
   const { notifyError, notifyFormErrors } = useNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { selectedIdentityId, selectedLlmProfileId, selectedIdentity } = useSelectionContext();
-  const [selectedProfessorIds] = useState<number[]>(readSelectedProfessorIds());
-  const [resendPrefillContext] = useState(() => readBatchResendPrefillContext());
+  const [navigationHandoff] = useState(() => readCreateTaskNavigationHandoff());
+  const selectedProfessorIds = useMemo(
+    () => navigationHandoff?.professorIds ?? [],
+    [navigationHandoff],
+  );
+  const resendPrefillContext = navigationHandoff?.resendContext ?? null;
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
   const {
     page: targetMentorsPage,
@@ -143,6 +139,7 @@ export const CreateTaskPage = () => {
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
   const templateInitializationKeyRef = useRef<string | null>(null);
+  const resendCleanupTimeoutRef = useRef<number | null>(null);
   const targetMentorsStartRef = useRef<HTMLElement | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
@@ -156,8 +153,15 @@ export const CreateTaskPage = () => {
       : null;
 
   useEffect(() => {
+    if (resendCleanupTimeoutRef.current !== null) {
+      window.clearTimeout(resendCleanupTimeoutRef.current);
+      resendCleanupTimeoutRef.current = null;
+    }
     return () => {
-      clearBatchResendPrefillContext();
+      resendCleanupTimeoutRef.current = window.setTimeout(() => {
+        resendCleanupTimeoutRef.current = null;
+        clearCreateTaskResendContext();
+      }, 0);
     };
   }, []);
 
@@ -306,9 +310,14 @@ export const CreateTaskPage = () => {
       );
       setSelectedMaterialIds(resendPrefillContext.defaults.selected_material_ids.filter((id) => materialIds.has(id)));
     } else if (resendPrefillContext) {
-      clearBatchResendPrefillContext();
+      writeCreateTaskNavigationHandoff(selectedProfessorIds);
     }
-  }, [isResendPrefillActive, resendPrefillContext, selectedIdentity]);
+  }, [
+    isResendPrefillActive,
+    resendPrefillContext,
+    selectedIdentity,
+    selectedProfessorIds,
+  ]);
 
   useEffect(() => {
     if (!selectedIdentity || loadingOutreachTemplates || !outreachTemplatesLoaded) {
@@ -691,8 +700,7 @@ export const CreateTaskPage = () => {
         eventName: 'tasks.batch_create_succeeded',
         data: diagnosticData,
       });
-      window.sessionStorage.removeItem(SESSION_KEY);
-      clearBatchResendPrefillContext();
+      clearCreateTaskNavigationHandoff();
       navigate('/tasks');
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : '创建任务失败';

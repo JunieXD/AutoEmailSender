@@ -10,6 +10,7 @@ from auto_email_sender_cli.commands.common import (
     run_read_command,
     run_write_command,
 )
+from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 
 
 class DraftGenerationMode(StrEnum):
@@ -27,6 +28,19 @@ drafts_app = typer.Typer(
     help="生成、保存和读取 draft_only 草稿，并准备发送计划。",
     no_args_is_help=True,
 )
+
+
+@drafts_app.command("present")
+def present_draft(
+    ctx: typer.Context,
+    task_id: Annotated[int, typer.Argument(min=1)],
+) -> None:
+    run_ui_handoff_command(
+        ctx,
+        command="drafts.present",
+        path=f"/api/agent/v1/drafts/{task_id}/present",
+        use_idempotency_key=True,
+    )
 
 
 @drafts_app.command("get")

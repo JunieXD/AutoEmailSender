@@ -9,6 +9,14 @@ import { useNotification } from '@/context/NotificationContext';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { useWorkspaceDraftGuard } from '@/context/useWorkspaceDraftGuard';
 import {
+  isAgentCommunicationThreadHandoff,
+  isAgentDraftWorkspaceHandoff,
+} from '@/features/agent-ui-handoffs/types';
+import {
+  useActiveAgentUiHandoff,
+  useAgentUiHandoffSurface,
+} from '@/features/agent-ui-handoffs/useAgentUiHandoffSurface';
+import {
   buildLargeAttachmentWarning,
   formatFileSize,
   getSelectedAttachmentTotalBytes,
@@ -438,7 +446,7 @@ const ScheduleSendDialog = ({
 export const WorkspacePage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const professorId = Number(id);
   const requestedTaskIdValue = Number(searchParams.get('task_id'));
   const requestedTaskId =
@@ -456,6 +464,12 @@ export const WorkspacePage = () => {
     matchScopeKey = '',
   } = useSelectionContext();
   const { registerWorkspaceDraftGuard } = useWorkspaceDraftGuard();
+  const activeAgentUiHandoff = useActiveAgentUiHandoff();
+  const pendingCommunicationPresentation =
+    activeAgentUiHandoff !== null &&
+    isAgentCommunicationThreadHandoff(activeAgentUiHandoff) &&
+    activeAgentUiHandoff.payload.professor_id === professorId &&
+    activeAgentUiHandoff.payload.identity_id === selectedIdentityId;
   const [thread, setThread] = useState<WorkspaceThreadDTO | null>(null);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
@@ -476,8 +490,15 @@ export const WorkspacePage = () => {
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftRewriting, setDraftRewriting] = useState(false);
   const [savingBeforeNavigate, setSavingBeforeNavigate] = useState(false);
+  const [communicationPresentationOnly, setCommunicationPresentationOnly] =
+    useState(pendingCommunicationPresentation);
+  const pendingCommunicationPresentationRef = useRef(
+    pendingCommunicationPresentation,
+  );
+  pendingCommunicationPresentationRef.current = pendingCommunicationPresentation;
   const mountedRef = useRef(true);
   const handledBlockerLocationKeyRef = useRef<string | null>(null);
+  const approvedNavigationPathRef = useRef<string | null>(null);
   const loadedThreadKeyRef = useRef<string | null>(null);
   const activeThreadRequestKeyRef = useRef<string | null>(null);
   const latestThreadRequestIdRef = useRef(0);
@@ -493,6 +514,9 @@ export const WorkspacePage = () => {
   const activeRewritePreviousDraftRef = useRef<ComposerDraftSnapshot | null>(null);
   const activeRewriteActionRequestIdRef = useRef<number | null>(null);
   const captureNextRewriteActionRequestRef = useRef(false);
+  const communicationPresentationScopeRef = useRef(
+    `${professorId}:${selectedIdentityId ?? ''}`,
+  );
   const workspaceRequestKey =
     Number.isFinite(professorId) && selectedIdentityId && selectedLlmProfileId
       ? `${professorId}:${selectedIdentityId}:${selectedLlmProfileId}:${communicationScopeKey || selectedIdentityId}:${matchScopeKey || selectedIdentityId}:${requestedTaskId ?? 'latest'}`
@@ -515,6 +539,17 @@ export const WorkspacePage = () => {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    const scope = `${professorId}:${selectedIdentityId ?? ''}`;
+    if (communicationPresentationScopeRef.current === scope) {
+      return;
+    }
+    communicationPresentationScopeRef.current = scope;
+    setCommunicationPresentationOnly(
+      pendingCommunicationPresentationRef.current,
+    );
+  }, [professorId, selectedIdentityId]);
 
   useEffect(() => {
     let ignore = false;
@@ -635,12 +670,16 @@ export const WorkspacePage = () => {
           selectedIdentityId,
           selectedLlmProfileId,
         );
-        workspaceData = await bootstrapWorkspaceThread(
-          data,
-          professorId,
-          selectedIdentityId,
-          selectedLlmProfileId,
-        );
+        workspaceData =
+          communicationPresentationOnly ||
+          pendingCommunicationPresentationRef.current
+          ? data
+          : await bootstrapWorkspaceThread(
+              data,
+              professorId,
+              selectedIdentityId,
+              selectedLlmProfileId,
+            );
       }
       if (
         latestThreadRequestIdRef.current !== requestId ||
@@ -730,11 +769,137 @@ export const WorkspacePage = () => {
         }
       }
     }
-  }, [notifyError, notifySuccess, professorId, requestedTaskId, resetActiveRewriteTracking, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
+  }, [communicationPresentationOnly, notifyError, notifySuccess, professorId, requestedTaskId, resetActiveRewriteTracking, selectedIdentityId, selectedLlmProfileId, syncComposer, workspaceRequestKey]);
+
+  const commitPresentedThread = useCallback(
+    (data: WorkspaceThreadDTO) => {
+      latestThreadRequestIdRef.current += 1;
+      activeThreadRequestKeyRef.current = workspaceRequestKey;
+      knownReceivedMessageIdsRef.current = new Set(
+        getReceivedMessages(data.messages).map((message) => message.id),
+      );
+      setThread(data);
+      setLoadFailed(false);
+      setLoading(false);
+      setThreadRefreshing(false);
+      setLastThreadCheckedAt(new Date());
+      setNewReceivedCount(0);
+      syncComposer(data);
+      loadedThreadKeyRef.current = workspaceRequestKey;
+    },
+    [syncComposer, workspaceRequestKey],
+  );
 
   useEffect(() => {
     void loadThread();
   }, [loadThread]);
+
+  useAgentUiHandoffSurface("communications.thread", async (handoff) => {
+    if (!isAgentCommunicationThreadHandoff(handoff)) {
+      return {
+        status: "failed",
+        failureMessage: "工作区收到的通信线程界面交接类型不匹配。",
+      };
+    }
+    if (
+      handoff.payload.professor_id !== professorId ||
+      handoff.payload.identity_id !== selectedIdentityId
+    ) {
+      return {
+        status: "failed",
+        failureMessage: "工作区尚未切换到界面交接指定的导师和身份。",
+      };
+    }
+    if (!selectedLlmProfileId) {
+      return {
+        status: "failed",
+        failureMessage: "打开通信线程前需要先配置并选择一个模型。",
+      };
+    }
+
+    pendingCommunicationPresentationRef.current = true;
+    setCommunicationPresentationOnly(true);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("task_id");
+      return next;
+    }, { replace: true });
+    latestThreadRequestIdRef.current += 1;
+    const data = await getWorkspaceThread(
+      professorId,
+      selectedIdentityId,
+      selectedLlmProfileId,
+    );
+    if (
+      data.professor.id !== professorId ||
+      data.identity.id !== selectedIdentityId
+    ) {
+      throw new Error("通信线程响应与界面交接不匹配。");
+    }
+    commitPresentedThread(data);
+    return {
+      status: "applied",
+      result: {
+        surface: handoff.surface,
+        thread_id: handoff.payload.thread_id,
+        professor_id: professorId,
+        identity_id: selectedIdentityId,
+        presentation_only: true,
+      },
+    };
+  });
+
+  useAgentUiHandoffSurface("draft.workspace", async (handoff) => {
+    if (!isAgentDraftWorkspaceHandoff(handoff)) {
+      return {
+        status: "failed",
+        failureMessage: "工作区收到的草稿界面交接类型不匹配。",
+      };
+    }
+    if (
+      handoff.payload.professor_id !== professorId ||
+      handoff.payload.identity_id !== selectedIdentityId
+    ) {
+      return {
+        status: "failed",
+        failureMessage: "工作区尚未切换到界面交接指定的导师和身份。",
+      };
+    }
+    if (!selectedLlmProfileId) {
+      return {
+        status: "failed",
+        failureMessage: "打开草稿工作区前需要先配置并选择一个模型。",
+      };
+    }
+
+    setCommunicationPresentationOnly(false);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("task_id", String(handoff.payload.task_id));
+      return next;
+    }, { replace: true });
+    latestThreadRequestIdRef.current += 1;
+    const data = await getEmailTaskThread(handoff.payload.task_id);
+    if (
+      data.professor.id !== professorId ||
+      data.identity.id !== selectedIdentityId ||
+      data.current_task.id !== handoff.payload.task_id
+    ) {
+      throw new Error("草稿工作区响应与界面交接不匹配。");
+    }
+    commitPresentedThread(data);
+    setComposerExpanded(true);
+    return {
+      status: "applied",
+      result: {
+        surface: handoff.surface,
+        task_id: handoff.payload.task_id,
+        professor_id: professorId,
+        identity_id: selectedIdentityId,
+        composer_expanded: true,
+      },
+    };
+  });
 
   useEffect(() => {
     if (!workspaceRequestKey) {
@@ -1318,12 +1483,21 @@ export const WorkspacePage = () => {
     return true;
   }, [choose, notifySuccess, saveCurrentDraft]);
 
-  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    Boolean(currentTaskId) &&
-    !isRewriting &&
-    currentLocation.pathname !== nextLocation.pathname &&
-    hasUnsavedComposerChanges(),
-  );
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    const shouldBlock =
+      Boolean(currentTaskId) &&
+      !isRewriting &&
+      currentLocation.pathname !== nextLocation.pathname &&
+      hasUnsavedComposerChanges();
+    if (!shouldBlock) {
+      return false;
+    }
+    if (approvedNavigationPathRef.current === nextLocation.pathname) {
+      approvedNavigationPathRef.current = null;
+      return false;
+    }
+    return true;
+  });
 
   useBeforeUnload(
     useCallback(
@@ -1381,7 +1555,7 @@ export const WorkspacePage = () => {
   }, [acting, blocker, confirmDirtyDraftExit, draftSaving, notifyError, savingBeforeNavigate]);
 
   useEffect(() => {
-    return registerWorkspaceDraftGuard(async () => {
+    return registerWorkspaceDraftGuard(async (request) => {
       if (!currentTaskId || !syncComposerDirtyState()) {
         return true;
       }
@@ -1394,7 +1568,11 @@ export const WorkspacePage = () => {
       }
 
       try {
-        return await confirmDirtyDraftExit();
+        const canLeave = await confirmDirtyDraftExit();
+        if (canLeave && request?.nextPath) {
+          approvedNavigationPathRef.current = request.nextPath;
+        }
+        return canLeave;
       } catch (saveError) {
         const message = saveError instanceof Error ? saveError.message : '保存草稿失败';
         notifyError('保存草稿失败', message);

@@ -1,6 +1,11 @@
 import type { DesktopBridge } from "../../../contracts/desktop-ipc.js";
 
 export type {
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffAcknowledgeRequest,
+  DesktopAgentUiHandoffState,
+  DesktopAgentUiHandoffStatus,
+  DesktopAgentUiHandoffSurface,
   DesktopAgentIntegrationId,
   DesktopAgentIntegrationState,
   DesktopAgentIntegrationStatus,

@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   DesktopAgentSupportEnableOptions,
   DesktopAgentSupportStatus,
+  DesktopAgentUiHandoff,
+  DesktopAgentUiHandoffAcknowledgeRequest,
+  DesktopAgentUiHandoffState,
   DesktopBackendConnection,
   DesktopBackendStatus,
   DesktopBridge,
@@ -12,6 +15,7 @@ import type {
   DesktopUpdateStatus,
 } from "../../../contracts/desktop-ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../contracts/channels.js";
+import { createBufferedDelivery } from "./agent-ui-handoff-buffer.js";
 
 export function installDesktopBridge(): void {
   const markDesktopRuntime = (): void => {
@@ -38,6 +42,14 @@ export function installDesktopBridge(): void {
     verySlowStartup: false,
   };
   const backendStatusCallbacks = new Set<(status: DesktopBackendStatus) => void>();
+  const agentUiHandoffDelivery = createBufferedDelivery<DesktopAgentUiHandoff>();
+
+  ipcRenderer.on(
+    DESKTOP_IPC_CHANNELS.agentUiHandoffDeliver,
+    (_event: IpcRendererEvent, handoff: DesktopAgentUiHandoff) => {
+      agentUiHandoffDelivery.publish(handoff);
+    },
+  );
 
   ipcRenderer.on(
     DESKTOP_IPC_CHANNELS.backendConnection,
@@ -119,6 +131,14 @@ export function installDesktopBridge(): void {
         ipcRenderer.removeListener(DESKTOP_IPC_CHANNELS.agentSupportStatus, listener);
       };
     },
+    onAgentUiHandoff: (callback: (handoff: DesktopAgentUiHandoff) => void) => {
+      return agentUiHandoffDelivery.subscribe(callback);
+    },
+    acknowledgeAgentUiHandoff: (request: DesktopAgentUiHandoffAcknowledgeRequest) =>
+      ipcRenderer.invoke(
+        DESKTOP_IPC_CHANNELS.agentUiHandoffAcknowledge,
+        request,
+      ) as Promise<DesktopAgentUiHandoffState>,
     onUpdateStatus: (callback: (status: DesktopUpdateStatus) => void) => {
       const listener = (_event: IpcRendererEvent, status: DesktopUpdateStatus) => callback(status);
       ipcRenderer.on(DESKTOP_IPC_CHANNELS.updateStatus, listener);
