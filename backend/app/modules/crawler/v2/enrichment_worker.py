@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 from app.core.time import as_utc_aware, utc_now
 
@@ -23,6 +24,7 @@ from app.models import (
 from ..pages.tools import (
     CandidateEnrichmentPayload,
     CrawlToolContext,
+    MAX_TEXT_CHARS,
     PageSnapshot,
     build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
@@ -62,6 +64,11 @@ from app.modules.professors.public import normalize_recent_papers
 
 
 _PROFILE_TEXT_CACHE = profile_text_cache
+_PROFILE_TEXT_DATABASE_CACHE_TTL = timedelta(hours=1)
+_HTML_TAG_REMNANT_PATTERN = re.compile(
+    r"</?(?:a|div|li|nav|ol|p|span|table|tbody|td|th|tr|ul)\b[^>]*>",
+    re.IGNORECASE,
+)
 _ACTIVE_JOB_STATUSES = {
     CrawlJobStatus.QUEUED.value,
     CrawlJobStatus.RUNNING.value,
@@ -566,10 +573,18 @@ async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str)
     if (
         page is None
         or not page.text_excerpt
+        or as_utc_aware(page.created_at) < utc_now() - _PROFILE_TEXT_DATABASE_CACHE_TTL
         or not profile_text_has_meaningful_content(page.text_excerpt)
+        or not _stored_profile_text_has_acceptable_quality(page.text_excerpt)
     ):
         return None
     return page.text_excerpt
+
+
+def _stored_profile_text_has_acceptable_quality(text: str) -> bool:
+    if len(text) < MAX_TEXT_CHARS:
+        return True
+    return len(_HTML_TAG_REMNANT_PATTERN.findall(text)) < 3
 
 
 async def _append_enrichment_failure_event(

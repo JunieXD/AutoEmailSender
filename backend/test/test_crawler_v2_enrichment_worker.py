@@ -246,6 +246,140 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "张三 zhang@example.edu")
         fetch_mock.assert_awaited_once()
 
+    async def test_fresh_saved_profile_is_reused(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        saved_text = "张三 教授 邮箱 zhang@example.edu"
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            session.add(
+                CrawlPage(
+                    job_id=task.job_id,
+                    url="https://example.edu/zhang.html",
+                    parent_url="https://example.edu/faculty",
+                    fetch_method="browser",
+                    status="succeeded",
+                    title="个人主页",
+                    text_excerpt=saved_text,
+                    error_message=None,
+                    created_at=crawler_v2_enrichment_worker.utc_now(),
+                )
+            )
+            await session.commit()
+            job_id = task.job_id
+
+        ctx = crawler_v2_enrichment_worker.CrawlToolContext(
+            job_id=job_id,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=self.session_factory,
+        )
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.fetch_profile_text",
+            new=AsyncMock(return_value="不应抓取"),
+        ) as fetch_mock:
+            text = await crawler_v2_enrichment_worker.get_or_fetch_profile_text(
+                ctx,
+                candidate_id,
+                "https://example.edu/zhang.html",
+            )
+
+        self.assertEqual(text, saved_text)
+        fetch_mock.assert_not_awaited()
+
+    async def test_expired_saved_profile_is_refetched(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            session.add(
+                CrawlPage(
+                    job_id=task.job_id,
+                    url="https://example.edu/zhang.html",
+                    parent_url="https://example.edu/faculty",
+                    fetch_method="browser",
+                    status="succeeded",
+                    title="个人主页",
+                    text_excerpt="张三 旧邮箱 old@example.edu",
+                    error_message=None,
+                    created_at=crawler_v2_enrichment_worker.utc_now() - timedelta(hours=2),
+                )
+            )
+            await session.commit()
+            job_id = task.job_id
+
+        ctx = crawler_v2_enrichment_worker.CrawlToolContext(
+            job_id=job_id,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=self.session_factory,
+        )
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.fetch_profile_text",
+            new=AsyncMock(return_value="张三 新邮箱 new@example.edu"),
+        ) as fetch_mock:
+            text = await crawler_v2_enrichment_worker.get_or_fetch_profile_text(
+                ctx,
+                candidate_id,
+                "https://example.edu/zhang.html",
+            )
+
+        self.assertEqual(text, "张三 新邮箱 new@example.edu")
+        fetch_mock.assert_awaited_once()
+
+    async def test_capped_saved_profile_with_html_remnants_is_refetched(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        markup = "<ul><li>隐藏导航 old@example.edu</li></ul>"
+        corrupted_text = (markup * (crawler_v2_enrichment_worker.MAX_TEXT_CHARS // len(markup) + 1))[
+            : crawler_v2_enrichment_worker.MAX_TEXT_CHARS
+        ]
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            session.add(
+                CrawlPage(
+                    job_id=task.job_id,
+                    url="https://example.edu/zhang.html",
+                    parent_url="https://example.edu/faculty",
+                    fetch_method="browser",
+                    status="succeeded",
+                    title="个人主页",
+                    text_excerpt=corrupted_text,
+                    error_message=None,
+                    created_at=crawler_v2_enrichment_worker.utc_now(),
+                )
+            )
+            await session.commit()
+            job_id = task.job_id
+
+        ctx = crawler_v2_enrichment_worker.CrawlToolContext(
+            job_id=job_id,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=self.session_factory,
+        )
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.fetch_profile_text",
+            new=AsyncMock(return_value="张三 zhang@example.edu"),
+        ) as fetch_mock:
+            text = await crawler_v2_enrichment_worker.get_or_fetch_profile_text(
+                ctx,
+                candidate_id,
+                "https://example.edu/zhang.html",
+            )
+
+        self.assertEqual(text, "张三 zhang@example.edu")
+        fetch_mock.assert_awaited_once()
+
     async def test_enrichment_skips_candidate_without_profile_url(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url=None)
         async with self.session_factory() as session:
