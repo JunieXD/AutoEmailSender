@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：Goal 已启动（B0～B4 历史证据保留；当前从 B4R 最新 master 再同步开始）
+- 状态：Goal 已启动（B0～B4R 已完成；当前执行 B5 双平台 harness rehearsal）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`（2026-08-12 重新创建并激活）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -119,6 +119,16 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   10 秒资源采样、5 秒故障动作和全部 chaos 动作覆盖；稳定版 24h/8h 标准不变。
 - 用户已在 2026-08-12 一次性批准完成本 Goal 所需的来源分支 push、Prerelease Certify dispatch、
   prerelease tag 创建/推送和通过全部门禁后的公开 GitHub Prerelease，不再设置重复人工暂停点。
+- B4R 已冻结并合入 `origin/master@3c1e064dceac0917a966cb510385856fc9fe7ea1`。合并提交为
+  `306d841`，聚焦适配提交为 `0ac0be6`；业务模型、API、迁移和页面行为以 master 为准，Beta
+  只保留双进程适配。Alembic 单一 head、70 项迁移/数据库测试、聚焦邮件/IMAP/进程安全测试、
+  Frontend lint 和 Desktop typecheck 均通过；合并后全仓仅暴露 5 个确定性测试适配问题，均已
+  聚焦修复并通过，CLI 237/237、Frontend、Desktop、Website 全部通过。
+- B5 rehearsal 已证明两平台第一轮受控中断和清理路径有效。macOS 第二轮已经通过覆盖升级、
+  split 身份、Worker 无监听端口、进程替换、数据库审计等前置门，随后因 browser probe 未创建
+  LLM profile 而失败；`cf5d164` 已只在 QA harness 中补建 loopback FakeLLM profile，并通过
+  packaged runtime 合同 30/30、Ruff 和 compile。Windows 旧本地包在恢复后未能形成完整 split
+  runtime，禁止继续盲目重试；必须使用当前 HEAD 构建的 rehearsal-only 包完成两轮演练。
 
 ### 1.4 本次一次性授权边界
 
@@ -296,8 +306,8 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
-| B4R | 冻结并同步最新 master | **执行中**：合入 `origin/master@3c1e064`，以 master 业务语义解决 8 个预测冲突，完成聚焦回归和一轮全仓 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **待执行**：B4R 通过后先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后执行正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B4R | 冻结并同步最新 master | **已完成**：`origin/master@3c1e064` 通过 `306d841` 语义合入；业务逻辑以 master 为准，聚焦回归和一轮全仓已通过 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：完成 `cf5d164` 的双平台两轮 harness rehearsal 后冻结新 run；随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
