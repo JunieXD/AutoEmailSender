@@ -3287,8 +3287,6 @@ def _repository_alembic_head(repository_root: Path) -> str:
 
 
 def _start_browser_probe() -> BrowserProbe:
-    request_count = 0
-    request_lock = threading.Lock()
     browser_request_started = threading.Event()
     release_response = threading.Event()
 
@@ -3296,13 +3294,6 @@ def _start_browser_probe() -> BrowserProbe:
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            nonlocal request_count
-            with request_lock:
-                request_count += 1
-                current_count = request_count
-            if current_count == 1:
-                self._write(403, "direct fetch blocked")
-                return
             browser_request_started.set()
             release_response.wait(timeout=180)
             self._write(

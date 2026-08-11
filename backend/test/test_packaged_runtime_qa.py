@@ -47,6 +47,7 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
 
     def test_browser_probe_seeds_loopback_workload_without_ui_token(self) -> None:
         source = inspect.getsource(runner._exercise_real_browser_descendant)
+        probe_source = inspect.getsource(runner._start_browser_probe)
 
         self.assertLess(
             source.index("_seed_browser_probe_llm_profile("),
@@ -55,6 +56,11 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         self.assertIn('"entry_type": "list"', source)
         self.assertIn('"llm_profile_id": profile_id', source)
         self.assertNotIn("/api/llm-profiles", source)
+        self.assertNotIn("direct fetch blocked", probe_source)
+        self.assertLess(
+            probe_source.index("browser_request_started.set()"),
+            probe_source.index("release_response.wait(timeout=180)"),
+        )
 
     def test_evidence_recorder_check_records_named_trace_event(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
