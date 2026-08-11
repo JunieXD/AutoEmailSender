@@ -53,6 +53,22 @@ const expandSelectedValues = (options: string[], selectedValues: string[]) => {
   return options.filter((option) => selectedSet.has(option));
 };
 
+const matchesCharactersInOrder = (text: string, query: string): boolean => {
+  const queryCharacters = Array.from(query);
+  let queryIndex = 0;
+
+  for (const character of text) {
+    if (character === queryCharacters[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex === queryCharacters.length) {
+        return true;
+      }
+    }
+  }
+
+  return queryCharacters.length === 0;
+};
+
 const POPOVER_GAP_PX = 8;
 const PREFERRED_POPOVER_HEIGHT_PX = 440;
 
@@ -92,13 +108,13 @@ export const MultiSelectFilter = ({
 
       return options.filter((option) => {
         const searchableText = `${optionLabels[option] ?? option} ${option}`.toLocaleLowerCase();
-        return normalizedSearchTokens.every((token) => searchableText.includes(token));
+        return normalizedSearchTokens.every((token) =>
+          matchesCharactersInOrder(searchableText, token),
+        );
       });
     },
     [optionLabels, options, searchQuery],
   );
-  const allOptionsSelected =
-    options.length > 0 && options.every((option) => draftSet.has(option));
   const allVisibleOptionsSelected =
     visibleOptions.length > 0 &&
     visibleOptions.every((option) => draftSet.has(option));
@@ -109,6 +125,10 @@ export const MultiSelectFilter = ({
   const valuesToApply = searchScopesUnrestrictedSelection
     ? visibleOptions.filter((option) => draftSet.has(option))
     : activeDraftValues;
+  const valuesToApplySet = new Set(valuesToApply);
+  const allOptionsSelected =
+    options.length > 0 &&
+    options.every((option) => valuesToApplySet.has(option));
 
   const updatePopoverLayout = useCallback(() => {
     const triggerRect = triggerRef.current?.getBoundingClientRect();
@@ -209,10 +229,19 @@ export const MultiSelectFilter = ({
     setOpen(true);
   };
 
+  const getSelectionChangeBase = (previous: string[] | null) => {
+    if (!searchScopesUnrestrictedSelection) {
+      return previous ?? [];
+    }
+
+    const previousSet = new Set(previous ?? []);
+    return visibleOptions.filter((option) => previousSet.has(option));
+  };
+
   const toggleOption = (option: string) => {
     setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       if (next.has(option)) {
         next.delete(option);
       } else {
@@ -225,7 +254,7 @@ export const MultiSelectFilter = ({
   const toggleVisibleOptions = () => {
     setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       visibleOptions.forEach((option) => {
         if (allVisibleOptionsSelected) {
           next.delete(option);
@@ -240,7 +269,7 @@ export const MultiSelectFilter = ({
   const invertVisibleOptions = () => {
     setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       visibleOptions.forEach((option) => {
         if (next.has(option)) {
           next.delete(option);
@@ -318,6 +347,7 @@ export const MultiSelectFilter = ({
                 onClick={() => {
                   setDraftSelectionChanged(true);
                   setDraftValues([...options]);
+                  onChange([]);
                 }}
                 disabled={allOptionsSelected}
                 className="rounded-lg px-2 py-1 text-xs font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 disabled:cursor-default disabled:opacity-40"

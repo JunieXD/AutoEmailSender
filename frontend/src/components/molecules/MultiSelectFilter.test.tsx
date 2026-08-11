@@ -148,29 +148,77 @@ describe("MultiSelectFilter", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("searches options and inverts only the current results", () => {
+  it("keeps only the remaining searched options after unchecking one", () => {
+    const onChange = renderFilter();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
+      target: { value: "大学" },
+    });
+
+    expect(screen.getByText("2 项 · 已选 2 项")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "第二大学" }));
+
+    expect(screen.getByRole("option", { name: "第二大学" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(screen.getByText("2 项 · 已选 1 项")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(onChange).toHaveBeenCalledWith(["示例大学"]);
+  });
+
+  it("scopes the first searched bulk change to the current results", () => {
+    const onChange = renderFilter();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
+      target: { value: "大学" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "取消全选" }));
+
+    expect(screen.getByText("至少保留一项")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "应用" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("option", { name: "第二大学" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(onChange).toHaveBeenCalledWith(["第二大学"]);
+  });
+
+  it("does not retain hidden options when first inverting searched results", () => {
+    const onChange = renderFilter();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
+      target: { value: "大学" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "反选" }));
+
+    expect(screen.getByText("2 项 · 已选 0 项")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "应用" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("option", { name: "示例大学" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(onChange).toHaveBeenCalledWith(["示例大学"]);
+  });
+
+  it("clears an implicit searched filter immediately without closing", () => {
     const onChange = renderFilter();
 
     fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
       target: { value: "第二" },
     });
 
-    expect(screen.getByRole("option", { name: "第二大学" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: "示例大学" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("1 项 · 已选 1 项")).toBeInTheDocument();
+    const clearButton = screen.getByRole("button", {
+      name: "清除学校筛选",
+    });
+    expect(clearButton).toBeEnabled();
+    fireEvent.click(clearButton);
 
-    fireEvent.click(screen.getByRole("button", { name: "反选" }));
-
-    expect(screen.getByRole("option", { name: "第二大学" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
-    expect(screen.getByText("1 项 · 已选 2 项")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "应用" }));
-
-    expect(onChange).toHaveBeenCalledWith(["示例大学", "第三学院"]);
+    expect(onChange).toHaveBeenCalledWith([]);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("listbox", { name: "学校" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "应用" })).toBeInTheDocument();
   });
 
   it("applies searched options when the filter was unrestricted", () => {
@@ -184,6 +232,43 @@ describe("MultiSelectFilter", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith(["示例大学", "第二大学"]);
+  });
+
+  it("matches non-contiguous characters in their original order", () => {
+    render(
+      <MultiSelectFilter
+        label="学校"
+        allLabel="全部学校"
+        selectedValues={[]}
+        options={[
+          "北京邮电大学",
+          "北京大学",
+          "计算机科学与技术学院",
+          "人工智能学院",
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "学校：全部学校" }));
+    const searchInput = screen.getByRole("textbox", {
+      name: "搜索学校选项",
+    });
+
+    fireEvent.change(searchInput, { target: { value: "北邮" } });
+    expect(
+      screen.getByRole("option", { name: "北京邮电大学" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "北京大学" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "计算机学院" } });
+    expect(
+      screen.getByRole("option", { name: "计算机科学与技术学院" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "人工智能学院" }),
+    ).not.toBeInTheDocument();
   });
 
   it("applies searched options with Enter outside IME composition", () => {
@@ -316,9 +401,8 @@ describe("MultiSelectFilter", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "搜索标签选项" }), {
       target: { value: "重点" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "反选" }));
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
-    expect(onChange).toHaveBeenCalledWith(["22"]);
+    expect(onChange).toHaveBeenCalledWith(["11"]);
   });
 });
