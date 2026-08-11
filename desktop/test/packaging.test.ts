@@ -327,8 +327,15 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("[int]$TimeoutSeconds = 600");
     expect(guestRunner).toContain("$process.WaitForExit($TimeoutSeconds * 1000)");
     expect(guestRunner).toContain("Timed-out process tree:");
+    expect(guestRunner).toContain("Get-QaVcRedistTimeoutDiagnostic");
+    expect(guestRunner).toContain("VC++ Burn timeout diagnostic:");
     expect(guestRunner).not.toContain("CommandLine = [string]$_.CommandLine");
     expect(guestRunner).toContain("taskkill.exe /PID $process.Id /T /F");
+    expect(guestRunner).toContain("$installerTimeoutSeconds = 600");
+    expect(guestRunner).toContain(
+      "$uninstallerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }",
+    );
+    expect(guestRunner).toContain("-TimeoutSeconds $uninstallerTimeoutSeconds");
     expect(guestRunner).toContain("Get-QaInstallerRegistrations");
     expect(guestRunner).toContain("Remove-QaInstallerRegistrations");
     expect(guestRunner).not.toContain(

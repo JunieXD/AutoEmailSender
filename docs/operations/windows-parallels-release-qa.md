@@ -70,7 +70,13 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh \
   --require-recovered-stale-state
 ```
 
-rehearsal 禁止 `--candidate-manifest` 和 `--candidate-run-id`，输出永远不是认证证据。新 Certify
+rehearsal 禁止 `--candidate-manifest` 和 `--candidate-run-id`，输出永远不是认证证据。Windows 11
+ARM64 首次运行 x64 VC++ Burn bootstrapper 时，启动提权 engine 可能需要约 6 分 34 秒；安装入口
+因此使用 600 秒硬上限，不能再用 120 秒误判，preflight 卸载仍保持 120 秒上限。若安装真正超时，
+runner 会同时输出不含命令行的进程树和最近一条 `dd_vcredist_*.log` Burn 事件，先按阶段分类后再
+决定是否重试。
+
+新 Certify
 完成后，再用 exact bytes 运行 admission；它跳过 VC++、前后端/CLI/Desktop 全套和本地 NSIS
 重建，直接进入上一稳定版安装、seed、覆盖升级、lifecycle、卸载和重复安装：
 

@@ -922,3 +922,15 @@ release/prerelease 合同通过、Ruff/Bash syntax/`git diff --check` 通过。�
 120 秒门限内仍未退出；runner 终止安装器及一个子进程并恢复 VM suspended，没有进入 seed。
 原超时证据只有 PID，无法区分 VC++、应用误启动或 NSIS 子进程。后续超时因此增加不含命令行的
 PID/父 PID/可执行名/路径摘要，再做一次最多 120 秒的聚焦重放后分类，不猜测根因。
+
+增加进程树证据后的重放确认子树为 `previous-stable.exe -> vc_redist.x64.exe ->
+vc_redist.x64.exe`，不是应用进程或 NSIS 卸载窗口。随后通过专用 Parallels 共享目录执行一次性只读
+采集脚本，取得 `%TEMP%` 的 Burn 日志：一次历史成功执行在 11:16:17 记录
+`Launching elevated engine process`，到 11:22:51 才记录 engine 已启动，11:22:52 以 `0x0`
+完成；已安装 14.51 runtime，高于旧包内置的 14.44，日志明确将旧包操作判定为兼容登记而非降级。
+因此 120 秒是确定性的误判，不是更快失败门禁。
+
+Windows preflight 现将安装操作固定为 600 秒硬上限，覆盖真实观测的 394 秒提权延迟；卸载仍保持
+120 秒。安装超时时除有界终止完整进程树外，还会从本次启动后生成的 `dd_vcredist_*.log` 输出
+最近 Burn 事件、日志大小和最后写入时间，不读取 CIM 命令行。该变化仍须从 rehearsal 第一轮重新
+执行；run `31464156897` 继续只可作为失效包输入，不得成为 admission 或正式证据。

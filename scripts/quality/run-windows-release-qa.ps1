@@ -328,6 +328,45 @@ function Remove-QaInstallerRegistrations {
   }
 }
 
+function Get-QaVcRedistTimeoutDiagnostic {
+  param([Parameter(Mandatory = $true)][datetime]$StartedAt)
+
+  $cutoff = $StartedAt.AddSeconds(-5)
+  $log = @(
+    Get-ChildItem -LiteralPath $env:TEMP -Filter "dd_vcredist_*.log" -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -ge $cutoff } |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+  )
+  if ($log.Count -eq 0) {
+    return $null
+  }
+
+  $eventLines = @(
+    Get-Content -LiteralPath $log[0].FullName -Tail 120 -ErrorAction SilentlyContinue |
+      Where-Object { $_ -match '\][iwe][0-9]{3}: ' }
+  )
+  $lastEvent = if ($eventLines.Count -eq 0) {
+    ""
+  } else {
+    [string]$eventLines[$eventLines.Count - 1]
+  }
+  if ($lastEvent.Length -gt 512) {
+    $lastEvent = $lastEvent.Substring(0, 512)
+  }
+
+  return [pscustomobject]@{
+    LogPath = $log[0].FullName
+    Length = [long]$log[0].Length
+    LastWriteTime = $log[0].LastWriteTime.ToString("o")
+    SecondsSinceLastWrite = [math]::Round(
+      ((Get-Date) - $log[0].LastWriteTime).TotalSeconds,
+      1
+    )
+    LastEvent = $lastEvent
+  }
+}
+
 function Invoke-QaExecutable {
   param(
     [Parameter(Mandatory = $true)][string]$FilePath,
@@ -349,6 +388,7 @@ function Invoke-QaExecutable {
   foreach ($name in $Environment.Keys) {
     $startInfo.EnvironmentVariables[[string]$name] = [string]$Environment[$name]
   }
+  $startedAt = Get-Date
   $process = [System.Diagnostics.Process]::Start($startInfo)
   if ($null -eq $process) {
     throw "$Operation did not start."
@@ -387,6 +427,15 @@ function Invoke-QaExecutable {
         "Timed-out process tree: " +
         ($treeSummary | ConvertTo-Json -Compress -Depth 3)
       )
+      if (@($treeSummary | Where-Object { $_.Name -match '^vc_redist(?:\.x64)?\.exe$' }).Count -gt 0) {
+        $vcDiagnostic = Get-QaVcRedistTimeoutDiagnostic -StartedAt $startedAt
+        if ($null -ne $vcDiagnostic) {
+          Write-Warning (
+            "VC++ Burn timeout diagnostic: " +
+            ($vcDiagnostic | ConvertTo-Json -Compress -Depth 3)
+          )
+        }
+      }
       & taskkill.exe /PID $process.Id /T /F | Out-Host
       $stopped = $process.WaitForExit(30000)
       $windowDetail = if ([string]::IsNullOrWhiteSpace($windowTitle)) {
@@ -976,7 +1025,12 @@ if ($RunsPackagedLifecycle) {
       throw "Guest-local candidate installer copy changed after shared-folder transfer."
     }
 
-    $installerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }
+    # On the Windows 11 ARM64 VM, the x64 VC++ Burn bootstrapper embedded in
+    # the previous public installer has taken 394 seconds to launch its
+    # elevated engine before completing successfully. Keep installs bounded
+    # above that observed value; uninstall remains a shorter preflight gate.
+    $installerTimeoutSeconds = 600
+    $uninstallerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }
     try {
     Invoke-QaExecutable `
       -FilePath $previousInstallerPathLocal `
@@ -1150,7 +1204,7 @@ if ($RunsPackagedLifecycle) {
       -FilePath $uninstallerPath `
       -Arguments "/S" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "uninstaller-must-not-launch-app" } `
-      -TimeoutSeconds $installerTimeoutSeconds `
+      -TimeoutSeconds $uninstallerTimeoutSeconds `
       -Operation "silent Windows uninstaller"
     Start-Sleep -Seconds 2
     if (Test-Path -LiteralPath $appExecutable) {
@@ -1180,7 +1234,7 @@ if ($RunsPackagedLifecycle) {
         -FilePath $repeatUninstallerPath `
         -Arguments "/S" `
         -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-uninstall-must-not-launch-app" } `
-        -TimeoutSeconds $installerTimeoutSeconds `
+        -TimeoutSeconds $uninstallerTimeoutSeconds `
         -Operation "repeat Windows uninstaller"
       Start-Sleep -Seconds 2
       if (Test-Path -LiteralPath $appExecutable) {
