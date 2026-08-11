@@ -1229,7 +1229,6 @@ if ($RunsPackagedLifecycle) {
     if ($reusePreviousSeed) {
       $qaRoot = [string]$harnessCheckpoint.QaRoot
       $installRoot = [string]$harnessCheckpoint.InstallRoot
-      $evidenceRoot = Join-Path $qaRoot "evidence-$($revision.Substring(0, 12))-$qaTimestamp"
       $packageRoot = [string]$harnessCheckpoint.PackageRoot
       $upgradeUserData = [string]$harnessCheckpoint.UpgradeUserData
       $upgradeManifest = [string]$harnessCheckpoint.UpgradeManifest
@@ -1237,10 +1236,18 @@ if ($RunsPackagedLifecycle) {
     } else {
       $qaRoot = Join-Path $qaBase "$revision-$qaTimestamp"
       $installRoot = Join-Path $qaRoot "安装 路径 Ω"
-      $evidenceRoot = Join-Path $qaRoot "evidence"
       $packageRoot = Join-Path $qaRoot "candidate packages"
       $upgradeUserData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
       $upgradeManifest = Join-Path $qaRoot "previous-upgrade\manifest.json"
+    }
+    $evidenceRoot = Join-Path $qaBase "e-$qaTimestamp"
+    $pathBudgetProbe = Join-Path $evidenceRoot (
+      "seeded-chaos\auto-email-sender-packaged-qa\" +
+      "yyyyMMddTHHmmssZ-0123456789\fault-controls\" +
+      "clock-offset-seconds.tmp-0123456789abcdef0123456789abcdef"
+    )
+    if ($pathBudgetProbe.Length -ge 260) {
+      throw "Packaged QA lifecycle evidence path exceeds the Windows path budget: $pathBudgetProbe"
     }
     New-Item -ItemType Directory -Force -Path $qaRoot, $evidenceRoot, $packageRoot | Out-Null
 

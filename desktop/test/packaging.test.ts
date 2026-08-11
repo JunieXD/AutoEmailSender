@@ -317,6 +317,8 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("Get-ValidatedHarnessSeedCheckpoint");
     expect(guestRunner).toContain("Reusing validated previous-stable harness seed checkpoint");
     expect(guestRunner).toContain("Previous-stable install and seed are already validated");
+    expect(guestRunner).toContain('$evidenceRoot = Join-Path $qaBase "e-$qaTimestamp"');
+    expect(guestRunner).toContain("Packaged QA lifecycle evidence path exceeds the Windows path budget");
     expect(guestRunner).toContain("previous_executable_sha256");
     expect(guestRunner).toContain("foreign_key_violations");
     expect(guestRunner).toContain("Add-QaHarnessInstallerRegistration");
