@@ -911,3 +911,9 @@ packaged driver 对前两层固定输出 `certification_eligible=false` 和独�
 QA 24/24、Desktop 聚焦 36/36、typecheck 通过、Desktop 全量 256 passed/3 skipped、四个 POSIX
 release/prerelease 合同通过、Ruff/Bash syntax/`git diff --check` 通过。真实双平台两轮 rehearsal
 仍待执行，因此本节尚不关闭 AC-BETA-QA-00，也不构成申请 replacement Certify 的依据。
+
+首次真实 Windows rehearsal 在 1.2 秒内、任何构建或安装前发现新 runner 试图在删除 stale 注册项
+后递归删除旧 install root；PowerShell 5.1 对旧 Playwright 深路径报 `DirectoryNotFoundException`。
+这正是本门禁要提前暴露的 harness 缺陷：恢复只需终止专用根进程并删除专用 HKCU 项，不应删除
+失败安装树或调查证据。实现已移除 install-root 递归删除并增加禁止恢复该行为的静态合同；该次
+不是计划中的故意中断轮，修复后从第一轮重新计数。

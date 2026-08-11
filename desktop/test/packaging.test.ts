@@ -329,6 +329,9 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("taskkill.exe /PID $process.Id /T /F");
     expect(guestRunner).toContain("Get-QaInstallerRegistrations");
     expect(guestRunner).toContain("Remove-QaInstallerRegistrations");
+    expect(guestRunner).not.toContain(
+      "Remove-Item -LiteralPath $registration.InstallRoot -Recurse -Force",
+    );
     expect(guestRunner).toContain(
       '"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"',
     );

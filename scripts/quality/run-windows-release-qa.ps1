@@ -325,9 +325,6 @@ function Remove-QaInstallerRegistrations {
       $registration.UninstallerPath
     )
     Remove-Item -LiteralPath $registration.RegistryPath -Recurse -Force
-    if (Test-Path -LiteralPath $registration.InstallRoot) {
-      Remove-Item -LiteralPath $registration.InstallRoot -Recurse -Force
-    }
   }
 }
 
