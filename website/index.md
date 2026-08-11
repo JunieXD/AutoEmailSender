@@ -25,7 +25,7 @@ import CrawlBenchmarkPromo from './.vitepress/theme/components/CrawlBenchmarkPro
 
 <section class="home-screenshot-section">
   <div class="home-screenshot-card">
-    <img src="/screenshots/home.png" alt="Auto Email Sender 首页截图" />
+    <img src="/screenshots/docs/home/app-home-overview.png" alt="Auto Email Sender 导师看板" />
   </div>
 </section>
 
@@ -37,7 +37,7 @@ import CrawlBenchmarkPromo from './.vitepress/theme/components/CrawlBenchmarkPro
     <p>系统帮你整理导师、生成草稿；你决定联系谁、写什么、何时发送。</p>
   </div>
 
-  <div class="home-feature-grid home-feature-grid-4">
+  <div class="home-feature-grid">
     <article>
       <span>01</span>
       <h3>智能抓取</h3>
@@ -57,6 +57,16 @@ import CrawlBenchmarkPromo from './.vitepress/theme/components/CrawlBenchmarkPro
       <span>04</span>
       <h3>回复追踪</h3>
       <p>自动检测回复并更新任务状态，联系进度一目了然。</p>
+    </article>
+    <article>
+      <span>05</span>
+      <h3>社区导师库</h3>
+      <p>直接浏览和导入已整理的公开导师资料，导入前可预览差异。</p>
+    </article>
+    <article>
+      <span>06</span>
+      <h3>可控的自动化</h3>
+      <p>任务中心集中审核草稿和发送计划，也可按需接入本地 Agent。</p>
     </article>
   </div>
 </section>

@@ -309,6 +309,20 @@ describe("ProfilePage onboarding", () => {
     );
   });
 
+  it("shows descriptions on all four setup cards", async () => {
+    renderPage();
+
+    expect(
+      await screen.findByText("管理发件邮箱与收发设置。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("准备匹配材料和发信模板。"))
+      .toBeInTheDocument();
+    expect(screen.getByText("连接并测试用于写信的 AI 模型。"))
+      .toBeInTheDocument();
+    expect(screen.getByText("先给自己发送一封测试邮件。"))
+      .toBeInTheDocument();
+  });
+
   it("keeps setup recommendations hidden until incomplete setup is confirmed", async () => {
     let resolveTestComposeStatus!: (value: { completed: boolean }) => void;
     mockedUseSelectionContext.mockReturnValue({

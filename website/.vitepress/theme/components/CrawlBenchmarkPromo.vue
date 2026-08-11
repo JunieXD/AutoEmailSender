@@ -30,37 +30,51 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
 
 <style scoped>
 .home-benchmark-promo {
+  --promo-accent: #b91c1c;
+  --promo-accent-hover: #991b1b;
+  --promo-button: #b91c1c;
+  --promo-button-hover: #991b1b;
+  --promo-ink: #29201e;
+  --promo-muted: #75615a;
+  --promo-border: rgba(127, 29, 29, 0.14);
+  --promo-metric-bg: rgba(255, 255, 255, 0.78);
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr);
   gap: 48px;
   overflow: hidden;
   margin: 72px auto 0;
   max-width: 1120px;
-  border-top: 3px solid #dc2626;
-  border-radius: 8px;
+  border: 1px solid var(--promo-border);
+  border-top: 3px solid var(--promo-accent);
+  border-radius: 18px;
   padding: 46px 50px;
-  color: #fff;
-  background: #18181b;
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  color: var(--promo-ink);
+  background:
+    radial-gradient(circle at 8% 8%, rgba(185, 28, 28, 0.09), transparent 34%),
+    radial-gradient(circle at 92% 88%, rgba(180, 83, 9, 0.06), transparent 32%),
+    #fffaf5;
+  box-shadow:
+    0 24px 56px rgba(127, 29, 29, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
 }
 
 .home-benchmark-copy > span {
-  color: #fecaca;
+  color: var(--promo-accent);
   font-size: 12px;
   font-weight: 750;
-  letter-spacing: 0;
+  letter-spacing: 0.04em;
 }
 
 .home-benchmark-copy h2 {
   margin: 12px 0 0;
-  color: #fff;
+  color: var(--promo-ink);
   font-size: 30px;
   line-height: 1.25;
 }
 
 .home-benchmark-copy p {
   margin: 14px 0 0;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--promo-muted);
   font-size: 14px;
   line-height: 1.75;
 }
@@ -70,13 +84,18 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
   align-items: center;
   gap: 9px;
   margin-top: 22px;
-  border-radius: 999px;
+  border-radius: 10px;
   padding: 11px 17px;
-  color: #7f1d1d;
+  color: #fff;
   font-size: 13px;
   font-weight: 750;
   text-decoration: none;
-  background: #fff;
+  background: var(--promo-button);
+  box-shadow: 0 10px 24px rgba(127, 29, 29, 0.18);
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .home-benchmark-copy a i {
@@ -88,6 +107,22 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
   transform: translateX(3px);
 }
 
+.home-benchmark-copy a:hover {
+  color: #fff;
+  background: var(--promo-button-hover);
+  box-shadow: 0 12px 28px rgba(127, 29, 29, 0.24);
+  transform: translateY(-1px);
+}
+
+.home-benchmark-copy a:active {
+  transform: translateY(0);
+}
+
+.home-benchmark-copy a:focus-visible {
+  outline: 3px solid rgba(185, 28, 28, 0.2);
+  outline-offset: 3px;
+}
+
 .home-benchmark-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -96,11 +131,14 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
 }
 
 .home-benchmark-metrics > div {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border: 1px solid var(--promo-border);
+  border-radius: 12px;
   padding: 18px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--promo-metric-bg);
   backdrop-filter: blur(10px);
+  box-shadow:
+    0 10px 24px rgba(127, 29, 29, 0.05),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
 }
 
 .home-benchmark-metrics strong,
@@ -109,13 +147,37 @@ const summary = buildBenchmarkSummary(buildLatestBenchmarkRecords(crawlBenchmark
 }
 
 .home-benchmark-metrics strong {
+  color: var(--promo-accent-hover);
   font-size: 28px;
+  font-variant-numeric: tabular-nums;
 }
 
 .home-benchmark-metrics span {
   margin-top: 4px;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--promo-muted);
   font-size: 10px;
+}
+
+:global(html.dark .home-benchmark-promo) {
+  --promo-accent: #f87171;
+  --promo-accent-hover: #ef4444;
+  --promo-button: #b91c1c;
+  --promo-button-hover: #dc2626;
+  --promo-ink: #fff8f5;
+  --promo-muted: #d7c4bd;
+  --promo-border: rgba(248, 113, 113, 0.2);
+  --promo-metric-bg: rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at 8% 8%, rgba(185, 28, 28, 0.2), transparent 36%),
+    radial-gradient(circle at 92% 88%, rgba(180, 83, 9, 0.1), transparent 32%),
+    #281e1c;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.24);
+}
+
+:global(html.dark .home-benchmark-metrics > div) {
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.08) inset;
 }
 
 @media (max-width: 900px) {

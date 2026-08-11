@@ -26,6 +26,111 @@
   border-radius: 8px;
 }
 
+.vp-doc details.mail-guide {
+  overflow: hidden;
+  margin: 16px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.vp-doc details.mail-guide:hover {
+  border-color: color-mix(in srgb, var(--vp-c-text-2) 45%, var(--vp-c-divider));
+}
+
+.vp-doc details.mail-guide summary {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 16px 14px 14px;
+  color: var(--vp-c-text-1);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.55;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.vp-doc details.mail-guide summary::-webkit-details-marker {
+  display: none;
+}
+
+.vp-doc details.mail-guide summary::before {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  color: var(--vp-c-brand-1);
+  font-family: ui-serif, Georgia, serif;
+  font-size: 12px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  content: "i";
+  place-items: center;
+}
+
+.vp-doc details.mail-guide summary::after {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--vp-c-text-2);
+  border-bottom: 1.5px solid var(--vp-c-text-2);
+  content: "";
+  justify-self: center;
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+
+.vp-doc details.mail-guide summary:hover {
+  color: var(--vp-c-brand-1);
+  background: var(--vp-c-bg-soft);
+}
+
+.vp-doc details.mail-guide summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--vp-c-brand-1) 28%, transparent);
+  outline-offset: -3px;
+}
+
+.vp-doc details.mail-guide[open] summary {
+  border-bottom: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
+}
+
+.vp-doc details.mail-guide[open] summary::after {
+  transform: rotate(45deg) translate(-2px, -2px);
+}
+
+.vp-doc details.mail-guide > :not(summary) {
+  margin-right: 18px;
+  margin-left: 18px;
+}
+
+.vp-doc details.mail-guide > summary + * {
+  margin-top: 18px;
+}
+
+.vp-doc details.mail-guide > :last-child {
+  margin-bottom: 18px;
+}
+
+.vp-doc details.mail-guide img {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+.dark .vp-doc details.mail-guide {
+  background: var(--vp-c-bg);
+}
+
 .home-screenshot-section {
   margin: 12px auto 0;
   max-width: 1120px;

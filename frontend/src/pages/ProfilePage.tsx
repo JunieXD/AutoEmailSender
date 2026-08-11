@@ -3229,7 +3229,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="identity"
             title="发件身份"
-            description=""
+            description="管理发件邮箱与收发设置。"
             open={openSetupSections.identity}
             renderContent={renderedSetupSections.identity}
             onToggle={() => toggleSetupSection("identity")}
@@ -3417,7 +3417,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="materials"
             title="材料与模板"
-            description=""
+            description="准备匹配材料和发信模板。"
             open={openSetupSections.materials}
             renderContent={renderedSetupSections.materials}
             onToggle={() => toggleSetupSection("materials")}
@@ -3462,7 +3462,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="model"
             title="模型配置"
-            description=""
+            description="连接并测试用于写信的 AI 模型。"
             open={openSetupSections.model}
             renderContent={renderedSetupSections.model}
             onToggle={() => toggleSetupSection("model")}
@@ -3749,7 +3749,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="test"
             title="测试写信"
-            description=""
+            description="先给自己发送一封测试邮件。"
             open={openSetupSections.test}
             renderContent={renderedSetupSections.test}
             onToggle={() => toggleSetupSection("test")}

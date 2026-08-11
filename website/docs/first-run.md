@@ -16,6 +16,74 @@
 
 SMTP 和 IMAP 密码请填授权码（应用专用密码），不要填邮箱登录密码。可在邮箱设置、账户安全或客户端授权页面中获取。
 
+### 邮箱授权码教程
+
+<details class="mail-guide">
+<summary>163 邮箱：开启 IMAP/SMTP 并获取授权码</summary>
+
+1. 登录 [163 邮箱网页版](https://email.163.com/)，点击页面上方的“设置”，进入“POP3/SMTP/IMAP”。
+
+   ![163 邮箱“设置”菜单中的 POP3/SMTP/IMAP 入口](/screenshots/first-run/163-settings-entry.png)
+
+2. 找到“IMAP/SMTP 服务”，点击“开启”，再点击“继续开启”。
+
+   ![163 邮箱 IMAP/SMTP 服务已开启](/screenshots/first-run/163-enable-imap-smtp.png)
+
+3. 按页面提示扫码或手动发送验证短信，然后返回网页点击“我已发送”。
+4. 验证成功后，页面会显示一组 16 位客户端授权码。请立即复制保存，授权码通常只显示一次。
+
+   ![163 邮箱新增授权码成功提示](/screenshots/first-run/163-authorization-code.png)
+
+5. 回到应用，按下表填写邮箱配置：
+
+| 配置项 | 163 邮箱填写内容 |
+| --- | --- |
+| 邮箱地址 | 完整的 163 邮箱地址 |
+| SMTP 服务器 | `smtp.163.com` |
+| SMTP 端口 | `465` |
+| 邮箱授权码 | 刚刚获取的 16 位授权码 |
+| IMAP 服务器 | `imap.163.com` |
+| IMAP 端口 | `993` |
+
+应用会将同一授权码用于 SMTP 和 IMAP。如果服务已经开启，但没有保存旧授权码，请在同一设置页面新增授权码。
+
+</details>
+
+<details class="mail-guide">
+<summary>QQ 邮箱：开启 IMAP/SMTP、获取授权码并保存已发送邮件</summary>
+
+1. 登录 [QQ 邮箱网页版](https://mail.qq.com/)，打开“设置”，进入“账号与安全”。
+
+   ![QQ 邮箱“设置”中的账号与安全入口](/screenshots/first-run/qq-settings-entry.png)
+
+2. 在“账号设置”中打开“安全设置”，找到“POP3/IMAP/SMTP/Exchange/CardDAV 服务”。确认服务显示“已开启”；如果尚未开启，请先按页面提示开启。
+3. 在同一区域找到“SMTP 发信后保存到服务器”，确认已经勾选。
+
+   ![QQ 邮箱安全设置中的 IMAP/SMTP 服务和已发送邮件保存选项](/screenshots/first-run/qq-enable-imap-smtp.png)
+
+   ::: warning 请不要漏掉这项设置
+   未勾选时，软件通过 SMTP 成功发出的邮件可能不会显示在 QQ 邮箱网页版的“已发送”中，也会影响已发送邮件的同步和核对。
+   :::
+
+4. 点击“生成授权码”，按页面提示完成安全验证。授权码通常只显示一次，请立即复制保存。
+
+   ![QQ 邮箱 SMTP/IMAP 授权码生成成功](/screenshots/first-run/qq-authorization-code.png)
+
+5. 回到应用，按下表填写邮箱配置：
+
+| 配置项 | QQ 邮箱填写内容 |
+| --- | --- |
+| 邮箱地址 | 完整的 QQ 邮箱地址 |
+| SMTP 服务器 | `smtp.qq.com` |
+| SMTP 端口 | `465` |
+| 邮箱授权码 | 刚刚生成的授权码 |
+| IMAP 服务器 | `imap.qq.com` |
+| IMAP 端口 | `993` |
+
+应用会将同一授权码用于 SMTP 和 IMAP。不要填写 QQ 密码，也不要把授权码发给他人。
+
+</details>
+
 保存后，点击 SMTP 和 IMAP 测试按钮。两项都通过后，再进入下一步。
 
 ## 2. 配置模型
