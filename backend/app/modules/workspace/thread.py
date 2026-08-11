@@ -19,6 +19,7 @@ from app.models import (
     EmailTaskSource,
     EmailTaskStatus,
     IdentityProfile,
+    IdentityMaterial,
     LLMProfile,
     OutreachTemplate,
     Professor,
@@ -48,6 +49,7 @@ from app.services.match_results import (
 )
 from app.modules.communications.public import strip_quoted_reply_html, strip_quoted_reply_text
 from app.services.operation_logs import record_operation_log
+from app.services.material_catalog import list_global_materials
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
 )
@@ -115,6 +117,7 @@ async def _build_workspace_thread_read(
     current_task: EmailTask | None,
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
 ) -> WorkspaceThreadRead:
+    materials = await list_global_materials(session)
     selected_template = await get_default_outreach_template_for_identity(
         session,
         identity,
@@ -190,7 +193,7 @@ async def _build_workspace_thread_read(
             primary_material=current_task.primary_material,
             llm_profile=llm_profile,
             professor=professor,
-            available_materials=list(identity.materials),
+            available_materials=[],
             custom_subject=current_task_outreach.subject_template,
             custom_body=resolved_body_template,
             custom_body_html=current_task_outreach.body_html_template,
@@ -218,7 +221,7 @@ async def _build_workspace_thread_read(
         ),
         material_options=[
             serialize_material(material, identity.current_primary_material_id)
-            for material in sorted(identity.materials, key=lambda item: item.created_at, reverse=True)
+            for material in materials
         ],
         current_task=WorkspaceTaskSummaryRead(
             id=current_task.id if current_task else None,
@@ -545,7 +548,6 @@ async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProf
     identity = await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == identity_id),
@@ -655,7 +657,7 @@ async def _get_recent_workspace_attachment_material_ids(
     if not isinstance(stored_ids, list):
         return []
 
-    available_material_ids = {material.id for material in identity.materials}
+    available_material_ids = set(await session.scalars(select(IdentityMaterial.id)))
     selected_ids: list[int] = []
     seen_ids: set[int] = set()
     for material_id in stored_ids:
@@ -719,7 +721,7 @@ def _backfill_task_primary_material_from_identity(
     if not _task_allows_primary_material_backfill(task):
         return False
     material = identity.current_primary_material
-    if material is None or material.identity_id != task.identity_id:
+    if material is None:
         return False
     if not material_can_be_primary(material):
         return False

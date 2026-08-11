@@ -64,7 +64,7 @@ class IdentityProfile(Base):
         nullable=True,
     )
     current_primary_material_id: Mapped[int | None] = mapped_column(
-        ForeignKey("identity_materials.id"),
+        ForeignKey("identity_materials.id", ondelete="SET NULL"),
         nullable=True,
     )
     communication_group_id: Mapped[int | None] = mapped_column(
@@ -101,10 +101,10 @@ class IdentityProfile(Base):
         onupdate=utc_now,
     )
 
-    materials: Mapped[list["IdentityMaterial"]] = relationship(
-        back_populates="identity",
-        cascade="all, delete-orphan",
+    source_materials: Mapped[list["IdentityMaterial"]] = relationship(
+        back_populates="source_identity",
         foreign_keys="IdentityMaterial.identity_id",
+        passive_deletes=True,
     )
     current_primary_material: Mapped["IdentityMaterial | None"] = relationship(
         foreign_keys=[current_primary_material_id],

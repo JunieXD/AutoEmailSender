@@ -37,6 +37,7 @@ import app.modules.llm.public as llm_runtime
 from .. import transport as mail_runtime
 from ..transport import MailAttachment
 from app.services.operation_logs import record_operation_log
+from app.services.material_catalog import get_global_materials_by_id, list_global_materials
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -63,12 +64,13 @@ async def build_test_compose_thread(
     llm_profile_id: int,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
+    materials = await list_global_materials(session)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
-    if _synchronize_selected_material_ids(compose_session, identity):
+    if _synchronize_selected_material_ids(compose_session, materials):
         await session.commit()
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
+    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
 
 
 async def get_test_compose_status(
@@ -104,6 +106,7 @@ async def generate_test_compose_draft(
     actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
+    materials = await list_global_materials(session)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     compose_session = await _get_or_create_test_compose_session(
         session,
@@ -192,7 +195,7 @@ async def generate_test_compose_draft(
             primary_material=primary_material,
             llm_profile=llm_profile,
             professor=pseudo_professor,
-            available_materials=list(identity.materials),
+            available_materials=[],
             custom_subject=template_subject,
             custom_body=template_body,
             custom_body_html=template_body_html,
@@ -222,7 +225,7 @@ async def generate_test_compose_draft(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
+    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
 
 
 async def send_test_compose_message(
@@ -236,6 +239,7 @@ async def send_test_compose_message(
     actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
+    materials = await list_global_materials(session)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     compose_session = await _get_or_create_test_compose_session(
         session,
@@ -349,7 +353,7 @@ async def send_test_compose_message(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
+    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
 
 
 async def prepare_test_compose_send_snapshot(
@@ -391,7 +395,7 @@ async def prepare_test_compose_send_snapshot(
     if not subject or not rendered.text:
         raise ValueError("测试邮件需要主题和正文")
 
-    materials_by_id = {material.id: material for material in identity.materials}
+    materials_by_id = await get_global_materials_by_id(session, selected_material_ids)
     attachments = [
         {
             "id": material_id,
@@ -464,6 +468,7 @@ async def save_test_compose_draft(
     actor: str | None = None,
 ) -> TestComposeThreadRead:
     identity = await _get_identity(session, identity_id)
+    materials = await list_global_materials(session)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     compose_session = await _get_or_create_test_compose_session(
         session,
@@ -511,14 +516,13 @@ async def save_test_compose_draft(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history)
+    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
 
 
 async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProfile:
     identity = await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == identity_id),
@@ -608,6 +612,7 @@ async def _validate_selected_material_ids(
     identity_id: int,
     material_ids: list[int],
 ) -> None:
+    del identity_id
     if any(material_id < 1 for material_id in material_ids):
         raise ValueError("随信材料 ID 必须是正整数")
     if len(material_ids) != len(set(material_ids)):
@@ -619,13 +624,12 @@ async def _validate_selected_material_ids(
         materials.extend(
             await session.scalars(
                 select(IdentityMaterial.id).where(
-                    IdentityMaterial.identity_id == identity_id,
                     IdentityMaterial.id.in_(material_id_chunk),
                 ),
             ),
         )
     if len(set(materials)) != len(set(material_ids)):
-        raise ValueError("存在不属于当前身份的随信材料")
+        raise ValueError("存在已删除或不存在的随信材料")
 
 
 def _resolve_selected_material_ids(
@@ -666,6 +670,7 @@ async def _resolve_selected_materials(
     identity_id: int,
     material_ids: list[int],
 ) -> list[MailAttachment]:
+    del identity_id
     if not material_ids:
         return []
 
@@ -673,7 +678,6 @@ async def _resolve_selected_materials(
     for material_id_chunk in chunked_values(set(material_ids)):
         result = await session.execute(
             select(IdentityMaterial).where(
-                IdentityMaterial.identity_id == identity_id,
                 IdentityMaterial.id.in_(material_id_chunk),
             ),
         )
@@ -738,6 +742,7 @@ def _serialize_test_compose_thread(
     llm_profile: LLMProfile,
     compose_session: TestComposeSession,
     history: list[TestComposeMessage],
+    materials: list[IdentityMaterial],
 ) -> TestComposeThreadRead:
     return TestComposeThreadRead(
         identity=TestComposeIdentityRead(
@@ -755,7 +760,7 @@ def _serialize_test_compose_thread(
         ),
         material_options=[
             serialize_material(material, identity.current_primary_material_id)
-            for material in sorted(identity.materials, key=lambda item: item.created_at, reverse=True)
+            for material in materials
         ],
         draft=TestComposeDraftRead(
             outreach_template_id=compose_session.outreach_template_id,
@@ -783,9 +788,9 @@ def _serialize_test_compose_thread(
 
 def _synchronize_selected_material_ids(
     compose_session: TestComposeSession,
-    identity: IdentityProfile,
+    materials: list[IdentityMaterial],
 ) -> bool:
-    current_material_ids = {material.id for material in identity.materials}
+    current_material_ids = {material.id for material in materials}
     existing_ids = compose_session.selected_material_ids or []
     filtered_ids = [
         material_id for material_id in existing_ids if material_id in current_material_ids

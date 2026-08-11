@@ -65,12 +65,14 @@ export type IdentityMaterialType = 'resume' | 'transcript' | 'publication' | 'po
 
 export interface IdentityMaterialDTO {
   id: number;
+  source_identity_id?: number | null;
   display_name: string;
   original_filename: string;
   mime_type: string | null;
   size_bytes: number;
   material_type: IdentityMaterialType;
   is_primary: boolean;
+  default_for_identity_ids?: number[];
   created_at: string;
 }
 
@@ -94,6 +96,7 @@ export interface IdentityDTO {
   outreach_template_body_text: string | null;
   outreach_template_body_html: string | null;
   default_outreach_template_id?: number | null;
+  effective_outreach_template_is_ready?: boolean;
   current_primary_material_id: number | null;
   current_primary_material: IdentityMaterialDTO | null;
   communication_group_id: number | null;

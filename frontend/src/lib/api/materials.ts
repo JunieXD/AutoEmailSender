@@ -22,10 +22,11 @@ export const uploadIdentityMaterial = (
   });
 };
 
-export const setPrimaryMaterial = (materialId: number) =>
-  apiFetch<IdentityMaterialDTO>(`/api/materials/${materialId}/set-primary`, {
-    method: 'POST',
-  });
+export const setPrimaryMaterial = (identityId: number, materialId: number) =>
+  apiFetch<IdentityMaterialDTO>(
+    `/api/identities/${identityId}/materials/${materialId}/set-primary`,
+    { method: 'POST' },
+  );
 
 export const deleteMaterial = (materialId: number) =>
   apiFetch<void>(`/api/materials/${materialId}`, {

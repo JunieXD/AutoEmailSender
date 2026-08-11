@@ -1993,6 +1993,8 @@ async def prepare_agent_template_archive(
 @router.get("/materials", response_model=AgentPage[AgentMaterialRead])
 async def list_agent_materials(
     identity_id: int | None = Query(default=None, ge=1),
+    source_identity_id: int | None = Query(default=None, ge=1),
+    target_identity_id: int | None = Query(default=None, ge=1),
     material_type: str | None = Query(default=None),
     material_id: int | None = Query(default=None, ge=1),
     fields: str | None = Query(default=None, max_length=4_000),
@@ -2000,11 +2002,33 @@ async def list_agent_materials(
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentPage[AgentMaterialRead] | Response:
-    statement = select(IdentityMaterial).options(selectinload(IdentityMaterial.identity))
+    if (
+        identity_id is not None
+        and source_identity_id is not None
+        and identity_id != source_identity_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="identity_id 与 source_identity_id 不能指定不同的上传来源身份",
+        )
+    if (
+        target_identity_id is not None
+        and await session.get(IdentityProfile, target_identity_id) is None
+    ):
+        raise HTTPException(status_code=404, detail="未找到身份配置")
+    resolved_source_identity_id = (
+        source_identity_id if source_identity_id is not None else identity_id
+    )
+    statement = select(IdentityMaterial).options(
+        selectinload(IdentityMaterial.source_identity),
+        selectinload(IdentityMaterial.default_for_identities),
+    )
     if material_id is not None:
         statement = statement.where(IdentityMaterial.id == material_id)
-    if identity_id is not None:
-        statement = statement.where(IdentityMaterial.identity_id == identity_id)
+    if resolved_source_identity_id is not None:
+        statement = statement.where(
+            IdentityMaterial.identity_id == resolved_source_identity_id,
+        )
     if material_type:
         statement = statement.where(IdentityMaterial.material_type == material_type.strip().lower())
     materials = list(
@@ -2015,8 +2039,21 @@ async def list_agent_materials(
         ).unique(),
     )
     page, next_cursor, has_more = _slice_page(materials, cursor=cursor, limit=limit)
+    default_context_identity_id = (
+        target_identity_id if target_identity_id is not None else identity_id
+    )
     response = AgentPage(
-        items=[_serialize_material(material, include_text=False) for material in page],
+        items=[
+            _serialize_material(
+                material,
+                include_text=False,
+                target_identity_id=default_context_identity_id,
+                default_for_identity_ids=[
+                    identity.id for identity in material.default_for_identities
+                ],
+            )
+            for material in page
+        ],
         next_cursor=next_cursor,
         has_more=has_more,
     )
@@ -2027,16 +2064,36 @@ async def list_agent_materials(
 async def read_agent_material(
     material_id: int,
     include_text: bool = Query(default=False),
+    target_identity_id: int | None = Query(default=None, ge=1),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentMaterialRead:
     material = await session.scalar(
         select(IdentityMaterial)
-        .options(selectinload(IdentityMaterial.identity))
+        .options(
+            selectinload(IdentityMaterial.source_identity),
+            selectinload(IdentityMaterial.default_for_identities),
+        )
         .where(IdentityMaterial.id == material_id),
     )
     if material is None:
         raise HTTPException(status_code=404, detail="未找到材料")
-    return _serialize_material(material, include_text=include_text)
+    if (
+        target_identity_id is not None
+        and await session.get(IdentityProfile, target_identity_id) is None
+    ):
+        raise HTTPException(status_code=404, detail="未找到身份配置")
+    return _serialize_material(
+        material,
+        include_text=include_text,
+        target_identity_id=(
+            target_identity_id
+            if target_identity_id is not None
+            else material.identity_id
+        ),
+        default_for_identity_ids=[
+            identity.id for identity in material.default_for_identities
+        ],
+    )
 
 
 @router.get("/materials/{material_id}/download")
@@ -2066,7 +2123,7 @@ async def download_agent_material(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_agent_material(
-    identity_id: int = Form(..., ge=1),
+    identity_id: int | None = Form(default=None, ge=1),
     file: UploadFile = File(...),
     material_type: str = Form(default="other"),
     display_name: str | None = Form(default=None),
@@ -2106,17 +2163,25 @@ async def upload_agent_material(
 @router.post("/materials/{material_id}/set-primary", response_model=AgentMaterialRead)
 async def set_agent_primary_material(
     material_id: int,
+    identity_id: int | None = Query(default=None, ge=1),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentMaterialRead:
+    request_data = {"material_id": material_id}
+    if identity_id is not None:
+        request_data["identity_id"] = identity_id
     try:
         return await execute_agent_mutation(
             session,
             command="materials.set-primary",
-            request_data={"material_id": material_id},
+            request_data=request_data,
             idempotency_key=idempotency_key,
             response_type=AgentMaterialRead,
-            mutation=lambda: _set_agent_primary_material(session, material_id),
+            mutation=lambda: _set_agent_primary_material(
+                session,
+                material_id,
+                identity_id,
+            ),
         )
     except MaterialMutationError as exc:
         raise _agent_material_error(exc) from exc
@@ -4710,7 +4775,7 @@ async def _create_agent_professor(
 
 async def _upload_agent_material(
     session: AsyncSession,
-    identity_id: int,
+    identity_id: int | None,
     file: UploadFile,
     material_type: str,
     display_name: str | None,
@@ -4728,23 +4793,39 @@ async def _upload_agent_material(
         material,
         include_text=False,
         primary_material_id=primary_material_id,
+        target_identity_id=identity_id,
+        default_for_identity_ids=(
+            [identity_id]
+            if identity_id is not None and primary_material_id == material.id
+            else []
+        ),
     )
 
 
 async def _set_agent_primary_material(
     session: AsyncSession,
     material_id: int,
+    identity_id: int | None,
 ) -> AgentMaterialRead:
     material, primary_material_id = await set_primary_material_record(
         session,
         material_id,
+        identity_id=identity_id,
         event_name="agent_cli.material.primary_set",
         actor="agent_cli",
     )
+    target_identity_id = identity_id if identity_id is not None else material.identity_id
+    default_identity_ids = {
+        identity.id for identity in material.default_for_identities
+    }
+    if target_identity_id is not None:
+        default_identity_ids.add(target_identity_id)
     return _serialize_material(
         material,
         include_text=False,
         primary_material_id=primary_material_id,
+        target_identity_id=target_identity_id,
+        default_for_identity_ids=sorted(default_identity_ids),
     )
 
 
@@ -6669,21 +6750,30 @@ def _serialize_material(
     *,
     include_text: bool,
     primary_material_id: int | None = None,
+    target_identity_id: int | None = None,
+    default_for_identity_ids: list[int] | None = None,
 ) -> AgentMaterialRead:
-    resolved_primary_material_id = (
-        primary_material_id
-        if primary_material_id is not None
-        else material.identity.current_primary_material_id
+    resolved_default_identity_ids = sorted(set(default_for_identity_ids or []))
+    if primary_material_id == material.id and target_identity_id is not None:
+        resolved_default_identity_ids = sorted(
+            set(resolved_default_identity_ids) | {target_identity_id},
+        )
+    is_primary = (
+        target_identity_id in resolved_default_identity_ids
+        if target_identity_id is not None
+        else primary_material_id == material.id or bool(resolved_default_identity_ids)
     )
     result = AgentMaterialRead(
         id=material.id,
+        source_identity_id=material.identity_id,
         identity_id=material.identity_id,
         display_name=material.display_name,
         original_filename=material.original_filename,
         mime_type=material.mime_type,
         size_bytes=material.size_bytes,
         material_type=material.material_type,
-        is_primary=resolved_primary_material_id == material.id,
+        is_primary=is_primary,
+        default_for_identity_ids=resolved_default_identity_ids,
         has_extracted_text=bool(material.extracted_text),
         extracted_text=material.extracted_text if include_text else None,
         created_at=material.created_at,

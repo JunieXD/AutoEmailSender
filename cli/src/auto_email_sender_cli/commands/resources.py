@@ -256,7 +256,26 @@ def prepare_template_archive(
 @materials_app.command("list")
 def list_materials(
     ctx: typer.Context,
-    identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
+    identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--identity-id",
+            min=1,
+            help="兼容参数：仅查看由该身份上传的材料。",
+        ),
+    ] = None,
+    source_identity_id: Annotated[
+        int | None,
+        typer.Option("--source-identity-id", min=1, help="仅查看由该身份历史上传的材料。"),
+    ] = None,
+    target_identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--target-identity-id",
+            min=1,
+            help="按该身份标记默认材料，不限制全局材料列表。",
+        ),
+    ] = None,
     material_type: Annotated[str | None, typer.Option("--material-type")] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
@@ -269,6 +288,8 @@ def list_materials(
         path="/api/agent/v1/materials",
         params={
             "identity_id": identity_id,
+            "source_identity_id": source_identity_id,
+            "target_identity_id": target_identity_id,
             "material_type": material_type,
             "cursor": cursor,
             "limit": limit,
@@ -281,7 +302,7 @@ def list_materials(
             columns=(
                 ("id", "ID"),
                 ("display_name", "材料"),
-                ("identity_id", "身份 ID"),
+                ("source_identity_id", "上传来源身份"),
                 ("material_type", "类型"),
                 ("is_primary", "默认参考"),
                 ("size_bytes", "字节"),
@@ -294,13 +315,24 @@ def list_materials(
 def get_material(
     ctx: typer.Context,
     material_id: Annotated[int, typer.Argument(min=1)],
+    target_identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--target-identity-id",
+            min=1,
+            help="按该身份判断材料是否为默认。",
+        ),
+    ] = None,
     include_text: Annotated[bool, typer.Option("--include-text", help="包含已提取的材料文本。") ] = False,
 ) -> None:
     run_read_command(
         ctx,
         command="materials.get",
         path=f"/api/agent/v1/materials/{material_id}",
-        params={"include_text": include_text},
+        params={
+            "target_identity_id": target_identity_id,
+            "include_text": include_text,
+        },
         guide_topic="materials",
         human_formatter=format_detail,
     )
@@ -313,7 +345,14 @@ def upload_material(
         Path,
         typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True),
     ],
-    identity_id: Annotated[int, typer.Option("--identity-id", min=1)],
+    identity_id: Annotated[
+        int | None,
+        typer.Option(
+            "--identity-id",
+            min=1,
+            help="可选上传来源；若该身份尚无默认材料，合格文件会自动设为默认。",
+        ),
+    ] = None,
     material_type: Annotated[str, typer.Option("--material-type")] = "other",
     display_name: Annotated[str | None, typer.Option("--display-name")] = None,
 ) -> None:
@@ -333,9 +372,13 @@ def upload_material(
                 "POST",
                 "/api/agent/v1/materials",
                 data={
-                    "identity_id": identity_id,
-                    "material_type": material_type,
-                    "display_name": display_name or "",
+                    key: value
+                    for key, value in {
+                        "identity_id": identity_id,
+                        "material_type": material_type,
+                        "display_name": display_name or "",
+                    }.items()
+                    if value is not None
                 },
                 files={"file": (file_path.name, uploaded_file, mime_type)},
                 idempotency_key=request_id,
@@ -374,11 +417,20 @@ def upload_material(
 def set_primary_material(
     ctx: typer.Context,
     material_id: Annotated[int, typer.Argument(min=1)],
+    identity_id: Annotated[
+        int,
+        typer.Option(
+            "--identity-id",
+            min=1,
+            help="要使用该默认材料的发件身份。",
+        ),
+    ],
 ) -> None:
     run_write_command(
         ctx,
         command="materials.set-primary",
         path=f"/api/agent/v1/materials/{material_id}/set-primary",
+        params={"identity_id": identity_id},
         guide_topic="materials",
         human_formatter=format_detail,
     )

@@ -7,6 +7,7 @@ import {
   testLLMProfilePreview,
   updateLLMProfile,
 } from "@/lib/api/llmProfiles";
+import { setPrimaryMaterial } from "@/lib/api/materials";
 import type { IdentityDTO, LLMProfileDTO } from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
@@ -15,6 +16,11 @@ const mockedGetTestComposeThread = vi.hoisted(() => vi.fn());
 const mockedGetTestComposeStatus = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifySuccess = vi.hoisted(() => vi.fn());
+const mockedRequestWorkspaceDraftGuard = vi.hoisted(() => vi.fn());
+const mockedRegisterWorkspaceDraftGuard = vi.hoisted(() =>
+  vi.fn(() => vi.fn()),
+);
+const mockedChoose = vi.hoisted(() => vi.fn());
 const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedUpdateOutreachTemplate = vi.hoisted(() => vi.fn());
 
@@ -23,7 +29,8 @@ vi.mock("@/context/SelectionContext", () => ({
 }));
 vi.mock("@/context/useWorkspaceDraftGuard", () => ({
   useWorkspaceDraftGuard: () => ({
-    requestWorkspaceDraftGuard: vi.fn(async () => true),
+    registerWorkspaceDraftGuard: mockedRegisterWorkspaceDraftGuard,
+    requestWorkspaceDraftGuard: mockedRequestWorkspaceDraftGuard,
   }),
 }));
 
@@ -42,6 +49,7 @@ vi.mock("@/context/NotificationContext", () => ({
 vi.mock("@/lib/useConfirmDialog", () => ({
   useConfirmDialog: () => ({
     confirm: vi.fn(),
+    choose: mockedChoose,
     dialog: null,
   }),
 }));
@@ -208,6 +216,9 @@ const expectToAppearBefore = (first: HTMLElement, second: HTMLElement) => {
 describe("ProfilePage onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedRequestWorkspaceDraftGuard.mockResolvedValue(true);
+    mockedRegisterWorkspaceDraftGuard.mockImplementation(() => vi.fn());
+    mockedChoose.mockResolvedValue("cancel");
     const template = {
       id: 1,
       name: "博士申请默认模板",
@@ -321,6 +332,184 @@ describe("ProfilePage onboarding", () => {
       .toBeInTheDocument();
     expect(screen.getByText("先给自己发送一封测试邮件。"))
       .toBeInTheDocument();
+  });
+
+  it("follows a top-bar identity change in the identity editor", async () => {
+    const secondIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 2,
+      profile_name: "备用身份",
+      name: "备用身份",
+      email_address: "backup@example.com",
+      is_default: false,
+    };
+    const contextBase = {
+      identities: [selectedIdentity, secondIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    };
+    mockedUseSelectionContext.mockReturnValue({
+      ...contextBase,
+      selectedIdentityId: selectedIdentity.id,
+      selectedIdentity,
+    });
+    const view = renderPage();
+    openSetupSection("发件身份");
+    expect(await screen.findByLabelText("身份名称")).toHaveValue("博士申请配置");
+
+    mockedUseSelectionContext.mockReturnValue({
+      ...contextBase,
+      selectedIdentityId: secondIdentity.id,
+      selectedIdentity: secondIdentity,
+    });
+    view.rerender(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("身份名称")).toHaveValue("备用身份");
+    });
+  });
+
+  it("follows an approved top-bar identity change from a new identity editor", async () => {
+    const secondIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 2,
+      profile_name: "备用身份",
+      name: "备用身份",
+      email_address: "backup@example.com",
+      is_default: false,
+    };
+    const contextBase = {
+      identities: [selectedIdentity, secondIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    };
+    mockedUseSelectionContext.mockReturnValue({
+      ...contextBase,
+      selectedIdentityId: selectedIdentity.id,
+      selectedIdentity,
+    });
+    const view = renderPage();
+    openSetupSection("发件身份");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "新建发件身份" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByLabelText("身份名称")).toHaveValue("");
+    });
+    fireEvent.change(screen.getByLabelText("身份名称"), {
+      target: { value: "未保存身份" },
+    });
+
+    mockedUseSelectionContext.mockReturnValue({
+      ...contextBase,
+      selectedIdentityId: secondIdentity.id,
+      selectedIdentity: secondIdentity,
+    });
+    view.rerender(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("身份名称")).toHaveValue("备用身份");
+    });
+  });
+
+  it("blocks identity switching when existing identity edits are kept", async () => {
+    const secondIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 2,
+      profile_name: "备用身份",
+      name: "备用身份",
+      email_address: "backup@example.com",
+      is_default: false,
+    };
+    const setSelectedIdentityId = vi.fn();
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity, secondIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId,
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+
+    renderPage();
+    openSetupSection("发件身份");
+    fireEvent.change(await screen.findByLabelText("身份名称"), {
+      target: { value: "尚未保存的名称" },
+    });
+    mockedRequestWorkspaceDraftGuard.mockImplementation(async (request) => {
+      const guard = mockedRegisterWorkspaceDraftGuard.mock.calls.at(-1)?.[0];
+      return guard ? guard(request) : true;
+    });
+    mockedChoose.mockResolvedValue("cancel");
+
+    fireEvent.click(screen.getByRole("button", { name: /备用身份/ }));
+
+    await waitFor(() => {
+      expect(mockedChoose).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "保存身份修改？" }),
+      );
+    });
+    expect(setSelectedIdentityId).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("身份名称")).toHaveValue("尚未保存的名称");
+  });
+
+  it("updates the global identity when switching in the identity editor", async () => {
+    const secondIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 2,
+      profile_name: "备用身份",
+      name: "备用身份",
+      email_address: "backup@example.com",
+      is_default: false,
+    };
+    const setSelectedIdentityId = vi.fn();
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity, secondIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId,
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections: vi.fn(),
+      loading: false,
+    });
+
+    renderPage();
+    openSetupSection("发件身份");
+    fireEvent.click(await screen.findByRole("button", { name: /备用身份/ }));
+
+    await waitFor(() => {
+      expect(mockedRequestWorkspaceDraftGuard).toHaveBeenCalledTimes(1);
+      expect(mockedRequestWorkspaceDraftGuard).toHaveBeenCalledWith({
+        nextIdentityEditorId: secondIdentity.id,
+        nextIdentityId: secondIdentity.id,
+      });
+      expect(setSelectedIdentityId).toHaveBeenCalledWith(secondIdentity.id);
+    });
   });
 
   it("keeps setup recommendations hidden until incomplete setup is confirmed", async () => {
@@ -605,7 +794,7 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("材料与模板");
     openSetupSection("发件身份");
 
-    expect(screen.getByText("材料库")).toBeInTheDocument();
+    expect(screen.getByText("全局材料库")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "打开材料库" }),
     ).toBeInTheDocument();
@@ -862,11 +1051,79 @@ describe("ProfilePage onboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开材料库" }));
 
     expect(
-      await screen.findByRole("heading", { name: "材料管理" }),
+      await screen.findByRole("heading", { name: "全局材料管理" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "关闭材料库" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a material uploaded by another identity and targets the edited identity for default", async () => {
+    const sharedMaterial = {
+      id: 7,
+      source_identity_id: 1,
+      display_name: "共享简历",
+      original_filename: "shared-resume.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 2048,
+      material_type: "resume" as const,
+      is_primary: false,
+      default_for_identity_ids: [1, 3],
+      created_at: "2026-08-11T00:00:00Z",
+    };
+    const sourceIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 1,
+      profile_name: "身份 A",
+      email_address: "identity-a@example.com",
+      materials: [{ ...sharedMaterial, is_primary: true }],
+      current_primary_material_id: sharedMaterial.id,
+      current_primary_material: { ...sharedMaterial, is_primary: true },
+    };
+    const targetIdentity: IdentityDTO = {
+      ...selectedIdentity,
+      id: 2,
+      profile_name: "身份 B",
+      email_address: "identity-b@example.com",
+      is_default: false,
+      materials: [sharedMaterial],
+      current_primary_material_id: null,
+      current_primary_material: null,
+    };
+    const refreshSelections = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(setPrimaryMaterial).mockResolvedValue({
+      ...sharedMaterial,
+      is_primary: true,
+      default_for_identity_ids: [1, 2, 3],
+    });
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [sourceIdentity, targetIdentity],
+      llmProfiles: [selectedLlmProfile],
+      selectedIdentityId: targetIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity: targetIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId: vi.fn(),
+      refreshSelections,
+      loading: false,
+    });
+
+    renderPage();
+    openSetupSection("材料与模板");
+    fireEvent.click(screen.getByRole("button", { name: "打开材料库" }));
+
+    expect(await screen.findByText("共享简历")).toBeInTheDocument();
+    expect(screen.getByText("2 个身份正在使用默认")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "设为默认材料" }));
+
+    await waitFor(() => {
+      expect(setPrimaryMaterial).toHaveBeenCalledWith(
+        targetIdentity.id,
+        sharedMaterial.id,
+      );
+    });
+    expect(refreshSelections).toHaveBeenCalled();
   });
 
   it("shows the test compose entry inside the final save section", () => {

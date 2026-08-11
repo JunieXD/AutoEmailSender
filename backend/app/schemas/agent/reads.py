@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Generic, Literal, TypeVar
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.schemas.base import ApiSchema
 from app.modules.crawler.public import CrawlCandidateRead, CrawlJobEventRead, CrawlPageRead
@@ -295,16 +295,42 @@ class AgentLLMProfileTestRead(ApiSchema):
 class AgentMaterialRead(ApiSchema):
     id: int
     revision: str | None = None
-    identity_id: int
+    source_identity_id: int | None = None
+    # Deprecated compatibility alias for source_identity_id.
+    identity_id: int | None = None
     display_name: str
     original_filename: str
     mime_type: str | None = None
     size_bytes: int
     material_type: str
     is_primary: bool
+    default_for_identity_ids: list[int] = Field(default_factory=list)
     has_extracted_text: bool
     extracted_text: str | None = None
     created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_receipt(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        source_identity_id = normalized.get("source_identity_id")
+        legacy_identity_id = normalized.get("identity_id")
+        if source_identity_id is None and type(legacy_identity_id) is int:
+            source_identity_id = legacy_identity_id
+            normalized["source_identity_id"] = source_identity_id
+        elif legacy_identity_id is None and type(source_identity_id) is int:
+            normalized["identity_id"] = source_identity_id
+
+        if (
+            "default_for_identity_ids" not in normalized
+            and normalized.get("is_primary") is True
+            and type(source_identity_id) is int
+        ):
+            normalized["default_for_identity_ids"] = [source_identity_id]
+        return normalized
 
 
 class AgentTemplateRead(ApiSchema):

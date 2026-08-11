@@ -63,7 +63,7 @@ from .state import (
 
 TASK_RELATION_OPTIONS = (
     selectinload(EmailTask.batch_task),
-    selectinload(EmailTask.identity).selectinload(IdentityProfile.materials),
+    selectinload(EmailTask.identity),
     selectinload(EmailTask.identity).selectinload(
         IdentityProfile.current_primary_material
     ),

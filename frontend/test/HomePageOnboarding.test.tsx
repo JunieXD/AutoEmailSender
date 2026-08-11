@@ -120,7 +120,7 @@ const createIdentity = (overrides: Partial<IdentityDTO> = {}): IdentityDTO => ({
   imap_password: null,
   default_language: "zh-CN",
   outreach_generation_mode: "template",
-  outreach_template_subject: null,
+  outreach_template_subject: "测试主题",
   outreach_template_body_text: "",
   outreach_template_body_html: "",
   current_primary_material_id: null,
@@ -318,6 +318,59 @@ describe("HomePage onboarding", () => {
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     expect(screen.queryByText(/模式：/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+  });
+
+  it("uses the global template fallback and material catalog for onboarding", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        effective_outreach_template_is_ready: true,
+        current_primary_material_id: null,
+        current_primary_material: null,
+        materials: [
+          {
+            id: 11,
+            display_name: "全局简历",
+            original_filename: "resume.pdf",
+            mime_type: "application/pdf",
+            size_bytes: 1024,
+            material_type: "resume",
+            is_primary: false,
+            created_at: "2026-04-22T00:00:00Z",
+          },
+        ],
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+  });
+
+  it("trusts an explicit incomplete effective template over stale legacy fields", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        effective_outreach_template_is_ready: false,
+        current_primary_material_id: 11,
+        outreach_template_body_text: "旧版残留正文",
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    const card = await screen.findByTestId("onboarding-checklist-card");
+    expect(within(card).getByRole("link", { name: "继续设置" })).toHaveAttribute(
+      "href",
+      "/profile",
+    );
   });
 
   it("keeps the dashboard visible when a search has no matches", async () => {

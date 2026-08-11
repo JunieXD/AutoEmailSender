@@ -235,7 +235,7 @@ async def _calculate_identity_professor_match(
             primary_material=match_material,
             llm_profile=llm_profile,
             professor=professor,
-            available_materials=list(match_identity.materials),
+            available_materials=[],
             intended_research_direction=runtime_settings.intended_research_direction,
             session=session,
             adaptation=adaptation,
@@ -441,8 +441,6 @@ async def _resolve_match_primary_material(
             material = await session.get(IdentityMaterial, material_id)
     if material is None:
         raise ValueError("请到个人页设置默认材料")
-    if material.identity_id != identity.id:
-        raise ValueError("匹配依据身份的默认材料归属不正确")
     if not material_can_be_primary(material):
         raise ValueError("个人页默认材料不支持匹配分析")
     return material

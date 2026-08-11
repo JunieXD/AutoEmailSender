@@ -3621,7 +3621,25 @@ class CliTests(unittest.TestCase):
                 )
                 set_primary = self.runner.invoke(
                     app,
-                    ["--format", "json", "materials", "set-primary", "8"],
+                    [
+                        "--format",
+                        "json",
+                        "materials",
+                        "set-primary",
+                        "8",
+                        "--identity-id",
+                        "3",
+                    ],
+                )
+                missing_target = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "materials",
+                        "set-primary",
+                        "8",
+                    ],
                 )
                 prepare_delete = self.runner.invoke(
                     app,
@@ -3643,6 +3661,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(upload.exit_code, 0, msg=upload.output)
         self.assertEqual(set_primary.exit_code, 0, msg=set_primary.output)
+        self.assertEqual(missing_target.exit_code, 2, msg=missing_target.output)
         self.assertEqual(prepare_delete.exit_code, 0, msg=prepare_delete.output)
         self.assertEqual(download.exit_code, 0, msg=download.output)
         self.assertEqual(downloaded_content, b"candidate resume")
@@ -3661,6 +3680,7 @@ class CliTests(unittest.TestCase):
             fake_client.calls[1][:2],
             ("POST", "/api/agent/v1/materials/8/set-primary"),
         )
+        self.assertEqual(fake_client.calls[1][2], {"identity_id": 3})
         self.assertEqual(
             fake_client.calls[2][:2],
             ("POST", "/api/agent/v1/materials/8/prepare-delete"),
@@ -3668,6 +3688,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             fake_client.download_calls,
             ["/api/agent/v1/materials/8/download"],
+        )
+
+    def test_material_upload_without_identity_uses_global_catalog(self) -> None:
+        fake_client = _FakeAgentClient(
+            {
+                "/api/agent/v1/materials": {
+                    "id": 9,
+                    "source_identity_id": None,
+                    "display_name": "共享附件",
+                    "is_primary": False,
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "shared.txt"
+            file_path.write_text("shared attachment", encoding="utf-8")
+            with patch(
+                "auto_email_sender_cli.commands.resources.AgentApiClient",
+                return_value=fake_client,
+            ):
+                upload = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "materials",
+                        "upload",
+                        file_path.as_posix(),
+                    ],
+                )
+
+        self.assertEqual(upload.exit_code, 0, msg=upload.output)
+        self.assertEqual(
+            fake_client.data_bodies[0],
+            {"material_type": "other", "display_name": ""},
         )
 
     def test_message_export_writes_jsonl_with_untrusted_record(self) -> None:

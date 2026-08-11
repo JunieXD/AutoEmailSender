@@ -137,7 +137,9 @@ describe("TopNavBar", () => {
     fireEvent.click(screen.getByRole("option", { name: "身份 B" }));
 
     await waitFor(() => {
-      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalledWith({
+        nextIdentityId: 2,
+      });
     });
     expect(selectionMock.setSelectedIdentityId).not.toHaveBeenCalled();
   });
@@ -160,7 +162,9 @@ describe("TopNavBar", () => {
     fireEvent.click(screen.getByRole("option", { name: "模型 B" }));
 
     await waitFor(() => {
-      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalledWith({
+        nextLlmProfileId: 2,
+      });
     });
     expect(selectionMock.setSelectedLlmProfileId).not.toHaveBeenCalled();
   });

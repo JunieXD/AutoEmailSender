@@ -409,7 +409,16 @@ export const AgentUiHandoffProvider = ({ children }: PropsWithChildren) => {
           !preflightApprovedRef.current.has(activeHandoff.handoffId)
         ) {
           const canContinue = await requestWorkspaceDraftGuard(
-            routeNeedsChange ? { nextPath: activeHandoff.route } : undefined,
+            routeNeedsChange || identityNeedsChange
+              ? {
+                  ...(routeNeedsChange
+                    ? { nextPath: activeHandoff.route }
+                    : {}),
+                  ...(identityNeedsChange
+                    ? { nextIdentityId: identityId }
+                    : {}),
+                }
+              : undefined,
           );
           if (recordsRef.current[0]?.handoff.handoffId !== activeHandoff.handoffId) {
             return;

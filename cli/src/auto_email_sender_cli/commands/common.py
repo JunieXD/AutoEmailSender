@@ -89,7 +89,10 @@ _SERVER_FILTER_PARAMETERS: dict[str, dict[str, str]] = {
     },
     "materials.list": {
         "id": "material_id",
-        "identity_id": "identity_id",
+        # Both response spellings describe upload provenance. Default-state
+        # context is exposed separately as --target-identity-id.
+        "identity_id": "source_identity_id",
+        "source_identity_id": "source_identity_id",
         "material_type": "material_type",
     },
     "identities.list": {

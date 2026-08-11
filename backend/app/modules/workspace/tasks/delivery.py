@@ -726,6 +726,7 @@ async def _resolve_selected_materials(
     identity_id: int,
     material_ids: list[int] | None,
 ) -> list[MailAttachment]:
+    del identity_id
     if not material_ids:
         return []
 
@@ -733,7 +734,6 @@ async def _resolve_selected_materials(
     for material_id_chunk in chunked_values(material_ids):
         result = await session.execute(
             select(IdentityMaterial).where(
-                IdentityMaterial.identity_id == identity_id,
                 IdentityMaterial.id.in_(material_id_chunk),
             ),
         )

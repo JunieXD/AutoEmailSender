@@ -91,7 +91,11 @@ export const TopNavBar = () => {
                     return;
                   }
                   void (async () => {
-                    if (await requestWorkspaceDraftGuard()) {
+                    if (
+                      await requestWorkspaceDraftGuard({
+                        nextIdentityId: value,
+                      })
+                    ) {
                       setSelectedIdentityId(value);
                     }
                   })();
@@ -114,7 +118,11 @@ export const TopNavBar = () => {
                     return;
                   }
                   void (async () => {
-                    if (await requestWorkspaceDraftGuard()) {
+                    if (
+                      await requestWorkspaceDraftGuard({
+                        nextLlmProfileId: value,
+                      })
+                    ) {
                       setSelectedLlmProfileId(value);
                     }
                   })();

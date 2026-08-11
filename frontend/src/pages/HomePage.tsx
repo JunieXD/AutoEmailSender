@@ -1331,9 +1331,6 @@ export const HomePage = () => {
     }
   };
 
-  const hasIdentityPrimaryMaterial = Boolean(
-    selectedIdentity?.current_primary_material_id,
-  );
   const effectiveMatchSourceIdentity = matchSourceIdentity ?? selectedIdentity;
   const hasMatchPrimaryMaterial = Boolean(
     effectiveMatchSourceIdentity?.current_primary_material_id,
@@ -1342,11 +1339,17 @@ export const HomePage = () => {
     effectiveMatchSourceIdentity?.profile_name ||
     effectiveMatchSourceIdentity?.name ||
     "当前身份";
-  const hasTemplate = Boolean(
-    selectedIdentity?.outreach_template_body_text?.trim() ||
-    selectedIdentity?.outreach_template_body_html?.trim(),
+  const hasTemplate =
+    selectedIdentity?.effective_outreach_template_is_ready ??
+    Boolean(
+      selectedIdentity?.outreach_template_body_text?.trim() ||
+        selectedIdentity?.outreach_template_body_html?.trim(),
+    );
+  const hasOnboardingMaterial = Boolean(
+    selectedIdentity?.materials?.length ||
+      selectedIdentity?.current_primary_material_id,
   );
-  const hasMaterialsAndTemplate = hasIdentityPrimaryMaterial && hasTemplate;
+  const hasMaterialsAndTemplate = hasOnboardingMaterial && hasTemplate;
   const onboardingState = getOnboardingState({
     hasIdentity: Boolean(selectedIdentity),
     hasLlmProfile: Boolean(selectedLlmProfile),
