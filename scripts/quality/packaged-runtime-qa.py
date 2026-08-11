@@ -3358,40 +3358,13 @@ def _exercise_real_browser_descendant(
 ) -> set[int]:
     if identity.worker is None:
         raise QaFailure("browser process probe requires split mode")
-    profile = _request_json(
-        "POST",
-        f"{identity.base_url.rstrip('/')}/api/llm-profiles",
-        token=identity.access_token,
-        payload={
-            "name": f"Packaged browser probe {uuid.uuid4().hex[:12]}",
-            "provider": "openai",
-            "api_base_url": probe.llm_server.base_url,
-            "api_key": "packaged-browser-probe-key",
-            "model_name": "packaged-browser-probe-model",
-            "is_default": True,
-        },
-        timeout_seconds=20,
+    created = _load_workload_support().crawler_tests._seed_workload(
+        recorder.paths.user_data / DATABASE_NAME,
+        kind="page",
+        llm_base_url=probe.llm_server.base_url,
+        profile_url=probe.url,
+        model_name="packaged-browser-probe-model",
     )
-    if not isinstance(profile, dict) or not isinstance(profile.get("id"), int):
-        raise QaFailure("browser probe LLM profile was not created")
-    payload = {
-        "university": "Packaged QA University",
-        "school": "Process Tree School",
-        "start_url": probe.url,
-        "start_urls": [probe.url],
-        "entry_type": "list",
-        "llm_profile_id": profile["id"],
-    }
-    created = _request_json(
-        "POST",
-        f"{identity.base_url.rstrip('/')}/api/agent/v1/crawler/jobs",
-        token=identity.access_token,
-        payload=payload,
-        headers={"Idempotency-Key": f"packaged-browser-{uuid.uuid4()}"},
-        timeout_seconds=20,
-    )
-    if not isinstance(created, dict) or not isinstance(created.get("id"), int):
-        raise QaFailure("browser probe crawler job was not created")
     if not probe.browser_request_started.wait(timeout=60):
         raise QaFailure("real packaged Chromium never requested the browser fallback page")
 
@@ -3406,7 +3379,7 @@ def _exercise_real_browser_descendant(
     )
     recorder.event(
         "packaged_browser_descendants_started",
-        job_id=created["id"],
+        job_id=created.job_id,
         browser_pids=sorted(browser_pids),
     )
     return browser_pids
