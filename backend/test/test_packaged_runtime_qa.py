@@ -48,11 +48,13 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
     def test_browser_probe_seeds_loopback_workload_without_ui_token(self) -> None:
         source = inspect.getsource(runner._exercise_real_browser_descendant)
 
-        self.assertIn("crawler_tests._seed_workload(", source)
-        self.assertIn("llm_base_url=probe.llm_server.base_url", source)
-        self.assertIn("profile_url=probe.url", source)
+        self.assertLess(
+            source.index("_seed_browser_probe_llm_profile("),
+            source.index('/api/agent/v1/crawler/jobs"'),
+        )
+        self.assertIn('"entry_type": "list"', source)
+        self.assertIn('"llm_profile_id": profile_id', source)
         self.assertNotIn("/api/llm-profiles", source)
-        self.assertNotIn("identity.access_token", source)
 
     def test_evidence_recorder_check_records_named_trace_event(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

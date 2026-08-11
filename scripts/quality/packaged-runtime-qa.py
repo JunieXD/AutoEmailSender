@@ -3340,7 +3340,9 @@ def _start_browser_probe() -> BrowserProbe:
         daemon=True,
     )
     thread.start()
-    llm_server = _load_workload_support().fake_llm_server().start()
+    llm_server = _load_workload_support().fake_llm_server(
+        response_factory=WorkloadHarness._llm_response,
+    ).start()
     return BrowserProbe(
         server=server,
         thread=thread,
@@ -3358,13 +3360,28 @@ def _exercise_real_browser_descendant(
 ) -> set[int]:
     if identity.worker is None:
         raise QaFailure("browser process probe requires split mode")
-    created = _load_workload_support().crawler_tests._seed_workload(
+    profile_id = _seed_browser_probe_llm_profile(
         recorder.paths.user_data / DATABASE_NAME,
-        kind="page",
         llm_base_url=probe.llm_server.base_url,
-        profile_url=probe.url,
-        model_name="packaged-browser-probe-model",
     )
+    payload = {
+        "university": "Packaged QA University",
+        "school": "Process Tree School",
+        "start_url": probe.url,
+        "start_urls": [probe.url],
+        "entry_type": "list",
+        "llm_profile_id": profile_id,
+    }
+    created = _request_json(
+        "POST",
+        f"{identity.base_url.rstrip('/')}/api/agent/v1/crawler/jobs",
+        token=identity.access_token,
+        payload=payload,
+        headers={"Idempotency-Key": f"packaged-browser-{uuid.uuid4()}"},
+        timeout_seconds=20,
+    )
+    if not isinstance(created, dict) or not isinstance(created.get("id"), int):
+        raise QaFailure("browser probe crawler job was not created")
     if not probe.browser_request_started.wait(timeout=60):
         raise QaFailure("real packaged Chromium never requested the browser fallback page")
 
@@ -3379,10 +3396,64 @@ def _exercise_real_browser_descendant(
     )
     recorder.event(
         "packaged_browser_descendants_started",
-        job_id=created.job_id,
+        job_id=created["id"],
         browser_pids=sorted(browser_pids),
     )
     return browser_pids
+
+
+def _seed_browser_probe_llm_profile(database_path: Path, *, llm_base_url: str) -> int:
+    connection = sqlite3.connect(database_path, timeout=10)
+    try:
+        suffix = uuid.uuid4().hex
+        now = datetime.now(UTC).replace(tzinfo=None)
+        future = now + timedelta(days=1)
+        model_name = "packaged-browser-probe-model"
+        profile_id = int(
+            connection.execute(
+                """
+                INSERT INTO llm_profiles (
+                    name, provider, api_base_url, api_key, model_name, is_default
+                ) VALUES (?, 'openai', ?, 'packaged-browser-probe-key', ?, 0)
+                """,
+                (f"Packaged browser probe {suffix}", llm_base_url, model_name),
+            ).lastrowid
+        )
+        connection.execute(
+            """
+            INSERT INTO llm_endpoint_adaptation_cache (
+                api_base_url, model_name, learned_endpoint_kind, probed_at
+            ) VALUES (?, ?, 'chat_completions', ?)
+            """,
+            (llm_base_url, model_name, now.isoformat(sep=" ")),
+        )
+        connection.execute(
+            """
+            INSERT INTO thinking_adaptation_cache (
+                api_base_url, model_name, endpoint_kind,
+                learned_extra_body, probed_at
+            ) VALUES (?, ?, 'chat_completions', 'null', ?)
+            """,
+            (llm_base_url, model_name, now.isoformat(sep=" ")),
+        )
+        connection.execute(
+            """
+            INSERT INTO llm_structured_output_adaptation_cache (
+                api_base_url, model_name, endpoint_kind, probe_version,
+                learned_mode, probed_at, expires_at
+            ) VALUES (?, ?, 'chat_completions', 3, 'prompt_only', ?, ?)
+            """,
+            (
+                llm_base_url,
+                model_name,
+                now.isoformat(sep=" "),
+                future.isoformat(sep=" "),
+            ),
+        )
+        connection.commit()
+        return profile_id
+    finally:
+        connection.close()
 
 
 def audit_database(database_path: Path) -> DatabaseAudit:
