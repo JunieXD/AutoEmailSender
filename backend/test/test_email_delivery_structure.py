@@ -36,9 +36,13 @@ class EmailDeliveryStructureTests(unittest.TestCase):
         self.assertEqual(
             awaited_calls,
             {
+                "attach_delivery_observations",
+                "ensure_delivery_email_log",
                 "record_operation_log",
+                "release_delivery_observation_candidates",
                 "session.commit",
                 "session.execute",
+                "session.get",
                 "session.rollback",
                 "wait_at_fault_point",
             },

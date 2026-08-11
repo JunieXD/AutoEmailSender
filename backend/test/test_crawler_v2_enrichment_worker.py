@@ -242,7 +242,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 ctx,
                 candidate_id,
                 "https://example.edu/zhang.html",
-                run_id=1,
+                run_id=None,
             )
 
         self.assertEqual(text, "张三 zhang@example.edu")
@@ -287,6 +287,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 ctx,
                 candidate_id,
                 "https://example.edu/zhang.html",
+                run_id=None,
             )
 
         self.assertEqual(text, saved_text)
@@ -330,6 +331,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 ctx,
                 candidate_id,
                 "https://example.edu/zhang.html",
+                run_id=None,
             )
 
         self.assertEqual(text, "张三 新邮箱 new@example.edu")
@@ -377,6 +379,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 ctx,
                 candidate_id,
                 "https://example.edu/zhang.html",
+                run_id=None,
             )
 
         self.assertEqual(text, "张三 zhang@example.edu")

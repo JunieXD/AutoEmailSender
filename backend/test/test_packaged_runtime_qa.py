@@ -1005,7 +1005,7 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         self,
     ) -> None:
         expected_head = runner._repository_alembic_head(REPOSITORY_ROOT)
-        self.assertEqual(expected_head, "20260810_merge_agent_ui_delivery")
+        self.assertEqual(expected_head, "20260812_merge_beta_master")
         previous_revision = "20260808_crawl_llm_snapshot"
         with tempfile.TemporaryDirectory() as temp_dir:
             user_data = (
