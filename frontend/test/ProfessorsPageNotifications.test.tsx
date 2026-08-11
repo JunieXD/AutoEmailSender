@@ -27,6 +27,7 @@ vi.mock("@/entities/professor/api/professors", () => ({
     return {
       items: allItems.slice(start, start + payload.page_size),
       total_count: allItems.length,
+      has_any_professors: allItems.length > 0,
       page: payload.page,
       page_size: payload.page_size,
       total_pages: Math.max(1, Math.ceil(allItems.length / payload.page_size)),

@@ -772,6 +772,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(management.status_code, 200, msg=management.text)
         self.assertEqual(management.json()["total_count"], 2)
+        self.assertTrue(management.json()["has_any_professors"])
         self.assertEqual(len(management.json()["items"]), 1)
         self.assertIsNotNone(management.json()["next_cursor"])
 
@@ -789,6 +790,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(dashboard.status_code, 200, msg=dashboard.text)
         self.assertEqual(dashboard.json()["total_count"], 2)
+        self.assertTrue(dashboard.json()["has_any_professors"])
         self.assertEqual(len(dashboard.json()["items"]), 1)
 
         dashboard_selection = self.client.post(

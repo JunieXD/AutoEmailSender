@@ -64,6 +64,17 @@ def _archive_condition(archived: Literal["active", "archived", "all"]):
     return literal(True)
 
 
+async def _has_any_professors(
+    session: AsyncSession,
+    *,
+    archived: Literal["active", "archived", "all"],
+) -> bool:
+    professor_id = await session.scalar(
+        select(Professor.id).where(_archive_condition(archived)).limit(1),
+    )
+    return professor_id is not None
+
+
 async def _ui_handoff_professor_condition(
     session: AsyncSession,
     handoff_id: str | None,
@@ -642,6 +653,10 @@ async def list_management_professor_page(
     return ProfessorManagementPageRead(
         items=[_serialize_management_professor(row.Professor) for row in page_rows],
         total_count=total_count,
+        has_any_professors=await _has_any_professors(
+            session,
+            archived=request.archived,
+        ),
         page=safe_page,
         page_size=request.page_size,
         total_pages=total_pages,
@@ -1188,6 +1203,10 @@ async def list_dashboard_professor_page(
     return ProfessorDashboardPageRead(
         items=items,
         total_count=total_count,
+        has_any_professors=await _has_any_professors(
+            session,
+            archived="active",
+        ),
         page=safe_page,
         page_size=request.page_size,
         total_pages=total_pages,

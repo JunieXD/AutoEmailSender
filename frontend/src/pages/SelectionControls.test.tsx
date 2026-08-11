@@ -546,6 +546,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(items, payload.page, payload.page_size),
         total_count: items.length,
+        has_any_professors: source.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
@@ -564,6 +565,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(items, payload.page, payload.page_size),
         total_count: items.length,
+        has_any_professors: source.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
@@ -619,6 +621,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(source, payload.page, payload.page_size),
         total_count: source.length,
+        has_any_professors: managementProfessors.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
@@ -738,6 +741,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(source, payload.page, payload.page_size),
         total_count: source.length,
+        has_any_professors: managementProfessors.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
@@ -799,6 +803,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(source, payload.page, payload.page_size),
         total_count: source.length,
+        has_any_professors: dashboardProfessors.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),
@@ -883,6 +888,7 @@ describe("selection controls", () => {
       return {
         items: pageItems(source, payload.page, payload.page_size),
         total_count: source.length,
+        has_any_professors: dashboardProfessors.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(source.length / payload.page_size)),

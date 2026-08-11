@@ -72,6 +72,7 @@ vi.mock("@/entities/professor/api/professors", () => ({
     return {
       items: sorted.slice(start, start + payload.page_size),
       total_count: sorted.length,
+      has_any_professors: allItems.length > 0,
       page: payload.page,
       page_size: payload.page_size,
       total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
@@ -317,6 +318,36 @@ describe("HomePage onboarding", () => {
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     expect(screen.queryByText(/模式：/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+  });
+
+  it("keeps the dashboard visible when a search has no matches", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        current_primary_material_id: 11,
+        outreach_template_body_text: "老师您好",
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByPlaceholderText("姓名、学校、学院、系所、职称、研究方向、标签"),
+      { target: { value: "不存在的导师" } },
+    );
+
+    expect(
+      await screen.findByText("没有符合当前搜索或筛选条件的导师"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("home-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(await screen.findByText("王教授")).toBeInTheDocument();
   });
 
   it("shows relationship status labels and filter controls on the dashboard", async () => {

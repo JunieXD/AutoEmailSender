@@ -34,6 +34,7 @@ export interface ProfessorFilterOptionsDTO {
 export interface ProfessorPageDTO<T> {
   items: T[];
   total_count: number;
+  has_any_professors: boolean;
   page: number;
   page_size: number;
   total_pages: number;
