@@ -4466,7 +4466,7 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"Shared global resume",
             material_type="resume",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             material_path = Path(
                 connection.execute(
                     "SELECT file_path FROM identity_materials WHERE id = ?",
@@ -4579,7 +4579,7 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=None,
             selected_material_ids=[],
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -4600,7 +4600,7 @@ class ApiEndpointTests(unittest.TestCase):
         }
         self.assertIsNone(identities[source_identity_id]["current_primary_material_id"])
         self.assertIsNone(identities[target_identity_id]["current_primary_material_id"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             rewrite_snapshot = connection.execute(
                 """
                 SELECT draft_rewrite_source_selected_material_ids

@@ -263,7 +263,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             source_identity_id = DatabaseSchemaTests._insert_identity_into(
                 connection,
                 email_address="material-source@example.com",
@@ -322,7 +322,7 @@ class MigrationScriptTests(unittest.TestCase):
             connection.commit()
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             identity_id_column = next(
                 row
                 for row in connection.execute("PRAGMA table_info('identity_materials')")
@@ -398,7 +398,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             columns = connection.execute(
                 "PRAGMA table_info('identity_materials')",
             ).fetchall()
@@ -436,7 +436,7 @@ class MigrationScriptTests(unittest.TestCase):
             )
             connection.commit()
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             before_column = next(
                 row
                 for row in connection.execute("PRAGMA table_info('identity_materials')")
@@ -451,7 +451,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(before_fk[6].upper(), "SET NULL")
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             after_column = next(
                 row
                 for row in connection.execute("PRAGMA table_info('identity_materials')")
@@ -475,7 +475,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             connection.execute("PRAGMA foreign_keys = OFF")
             connection.execute(
                 """
@@ -498,7 +498,7 @@ class MigrationScriptTests(unittest.TestCase):
             connection.commit()
 
         self._run_alembic(env, "upgrade", migration_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             source_identity_id = connection.execute(
                 "SELECT identity_id FROM identity_materials WHERE id = ?",
                 (material_id,),
@@ -517,7 +517,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             source_identity_id = DatabaseSchemaTests._insert_identity_into(
                 connection,
                 email_address="downgrade-source@example.com",
@@ -542,7 +542,7 @@ class MigrationScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cross-identity material references"):
             run_alembic_in_process(env, "downgrade", previous_revision)
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
             material_count = connection.execute(
                 "SELECT COUNT(*) FROM identity_materials WHERE id = ?",
@@ -559,7 +559,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             identity_id = DatabaseSchemaTests._insert_identity_into(
                 connection,
                 email_address="round-trip-material@example.com",
@@ -578,7 +578,7 @@ class MigrationScriptTests(unittest.TestCase):
 
         self._run_alembic(env, "upgrade", migration_revision)
         self._run_alembic(env, "downgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             identity_id_column = next(
                 row
                 for row in connection.execute("PRAGMA table_info('identity_materials')")
@@ -601,7 +601,7 @@ class MigrationScriptTests(unittest.TestCase):
         migration_revision = "20260811_global_material_library"
 
         self._run_alembic(env, "upgrade", previous_revision)
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             source_identity_id = DatabaseSchemaTests._insert_identity_into(
                 connection,
                 email_address="rewrite-source@example.com",
