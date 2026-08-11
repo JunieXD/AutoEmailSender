@@ -324,6 +324,9 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("Get-ValidatedHarnessSeedCheckpoint");
     expect(guestRunner).toContain("Save-HarnessSeedBackup");
     expect(guestRunner).toContain("Restore-HarnessSeedBackup");
+    expect(guestRunner).toContain("Test-HarnessEphemeralRuntimeStateAbsent");
+    expect(guestRunner).toContain("Remove-HarnessEphemeralRuntimeState");
+    expect(guestRunner).toContain('protocol_version = "2"');
     expect(guestRunner).toContain("previous-stable-harness-seed-backup");
     expect(guestRunner).toContain("robocopy.exe");
     expect(guestRunner).toContain("Restored and revalidated previous-stable harness seed backup");

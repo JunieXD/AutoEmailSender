@@ -328,6 +328,48 @@ function Remove-QaInstallerRegistrations {
   }
 }
 
+function Test-HarnessEphemeralRuntimeStateAbsent {
+  param(
+    [Parameter(Mandatory = $true)][string]$UserDataPath
+  )
+
+  try {
+    return -not (Test-Path `
+      -LiteralPath (Join-Path $UserDataPath "runtime") `
+      -ErrorAction Stop)
+  } catch {
+    return $false
+  }
+}
+
+function Remove-HarnessEphemeralRuntimeState {
+  param(
+    [Parameter(Mandatory = $true)][string]$UserDataPath
+  )
+
+  $userDataFullPath = [System.IO.Path]::GetFullPath($UserDataPath).TrimEnd("\")
+  $runtimePath = [System.IO.Path]::GetFullPath(
+    (Join-Path $userDataFullPath "runtime")
+  ).TrimEnd("\")
+  if (-not ([System.IO.Path]::GetDirectoryName($runtimePath)).Equals(
+    $userDataFullPath,
+    [System.StringComparison]::OrdinalIgnoreCase
+  )) {
+    throw "Harness runtime cleanup escaped its userData root: $runtimePath"
+  }
+  if (-not (Test-Path -LiteralPath $runtimePath -ErrorAction Stop)) {
+    return
+  }
+  $runtimeItem = Get-Item -LiteralPath $runtimePath -Force -ErrorAction Stop
+  if ($runtimeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+    throw "Harness runtime cleanup refuses a reparse point: $runtimePath"
+  }
+  Remove-Item -LiteralPath $runtimePath -Recurse -Force -ErrorAction Stop
+  if (Test-Path -LiteralPath $runtimePath -ErrorAction Stop) {
+    throw "Harness runtime cleanup did not remove: $runtimePath"
+  }
+}
+
 function Get-ValidatedHarnessSeedCheckpoint {
   param(
     [Parameter(Mandatory = $true)][string]$QaBasePath,
@@ -383,7 +425,8 @@ function Get-ValidatedHarnessSeedCheckpoint {
       ((Get-Item -LiteralPath $installRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
       ((Get-Item -LiteralPath $browserRuntime).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
       ((Get-Item -LiteralPath $userData).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
-      ((Get-Item -LiteralPath $database).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+      ((Get-Item -LiteralPath $database).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
+      -not (Test-HarnessEphemeralRuntimeStateAbsent -UserDataPath $userData)
     ) {
       continue
     }
@@ -486,7 +529,7 @@ function Save-HarnessSeedBackup {
     try {
       $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
       if (
-        $marker.protocol_version -eq "1" -and
+        $marker.protocol_version -eq "2" -and
         $marker.purpose -eq "previous-stable-harness-seed-backup" -and
         [string]$marker.qa_root -eq $qaRoot -and
         [string]$marker.previous_version -eq $ExpectedPreviousVersion -and
@@ -511,6 +554,8 @@ function Save-HarnessSeedBackup {
     Invoke-QaMirrorCopy `
       -Source ([string]$Checkpoint.UpgradeUserData) `
       -Destination (Join-Path $temporaryBackup "user-data")
+    Remove-HarnessEphemeralRuntimeState `
+      -UserDataPath (Join-Path $temporaryBackup "user-data")
     $manifestBackup = Join-Path $temporaryBackup "upgrade-manifest.json"
     [System.IO.File]::Copy(
       [string]$Checkpoint.UpgradeManifest,
@@ -518,7 +563,7 @@ function Save-HarnessSeedBackup {
       $true
     )
     $marker = [ordered]@{
-      protocol_version = "1"
+      protocol_version = "2"
       purpose = "previous-stable-harness-seed-backup"
       qa_root = $qaRoot
       previous_version = $ExpectedPreviousVersion
@@ -575,7 +620,7 @@ function Restore-HarnessSeedBackup {
     try {
       $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
       if (
-        $marker.protocol_version -ne "1" -or
+        $marker.protocol_version -ne "2" -or
         $marker.purpose -ne "previous-stable-harness-seed-backup" -or
         [string]$marker.qa_root -ne $qaRoot -or
         [string]$marker.previous_version -ne $ExpectedPreviousVersion -or
@@ -592,6 +637,7 @@ function Restore-HarnessSeedBackup {
       Invoke-QaMirrorCopy `
         -Source (Join-Path $backupRoot "user-data") `
         -Destination $userData
+      Remove-HarnessEphemeralRuntimeState -UserDataPath $userData
       [System.IO.File]::Copy(
         (Join-Path $backupRoot "upgrade-manifest.json"),
         (Join-Path $qaRoot "previous-upgrade\manifest.json"),
