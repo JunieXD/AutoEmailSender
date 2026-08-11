@@ -1,7 +1,7 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：待启动新 Goal（B0～B4 历史证据保留；当前从 B4R 最新 master 再同步开始）
-- 当前 Goal ID：待创建（旧 Goal `019fe582-2dea-7e42-bd2e-684bae191421` 已取消）
+- 状态：Goal 已启动（B0～B4 历史证据保留；当前从 B4R 最新 master 再同步开始）
+- 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`（2026-08-12 重新创建并激活）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
 - 前置验收证据：[`desktop_api_worker_goal_acceptance.md`](../development/desktop_api_worker_goal_acceptance.md)
@@ -43,7 +43,8 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
 
 ### 1.3 Goal 当前检查点（2026-08-12）
 
-- 旧 Goal 已取消，Goal 系统当前没有活动 Goal；本计划校验通过后创建一个新 Goal，不复用旧 ID。
+- 旧 Goal 曾被意外取消；本计划校验通过后已于 2026-08-12 重新创建活动 Goal。Goal 系统沿用
+  task ID `019fe582-2dea-7e42-bd2e-684bae191421`，不沿用旧 Goal 的取消状态。
 - 本计划更新前，本地分支为 `beta/desktop-api-worker`，HEAD 为
   `bfb679869a23313b71d25a985178239e9f1dd641`，工作区干净。远端来源分支仍停在
   `45c5d5f8eb6b707f4ed905b3d697be5b6e1b0608`，当前本地提交尚未 push。
