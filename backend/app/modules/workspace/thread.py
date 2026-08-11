@@ -76,6 +76,7 @@ async def build_workspace_thread(
     identity_id: int,
     llm_profile_id: int,
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
+    apply_recent_attachment_defaults: bool = False,
 ) -> WorkspaceThreadRead:
     professor = await _get_professor(session, professor_id)
     identity = await _get_identity(session, identity_id)
@@ -83,6 +84,15 @@ async def build_workspace_thread(
     current_task = await _get_latest_email_task(session, professor_id, identity_id)
     task_updated = _recover_legacy_sent_task_status(current_task)
     task_updated = _backfill_task_primary_material_from_identity(current_task, identity) or task_updated
+    if apply_recent_attachment_defaults:
+        task_updated = (
+            await _backfill_recent_workspace_attachment_defaults(
+                session,
+                current_task,
+                identity,
+            )
+            or task_updated
+        )
     if task_updated:
         await session.commit()
         await session.refresh(current_task)
@@ -362,6 +372,7 @@ async def ensure_workspace_task(
     identity_id: int,
     llm_profile_id: int,
     commit: bool = True,
+    apply_recent_attachment_defaults: bool = False,
 ) -> EmailTask:
     professor = await _get_professor(session, professor_id)
     identity = await _get_identity(session, identity_id)
@@ -383,6 +394,15 @@ async def ensure_workspace_task(
                 commit=commit,
             )
         task_updated = _backfill_task_primary_material_from_identity(current_task, identity)
+        if apply_recent_attachment_defaults:
+            task_updated = (
+                await _backfill_recent_workspace_attachment_defaults(
+                    session,
+                    current_task,
+                    identity,
+                )
+                or task_updated
+            )
         if not _task_has_match_result(current_task) and match_result is not None:
             apply_match_result_view_to_task(current_task, match_result)
             current_task.updated_at = utc_now()
@@ -400,6 +420,11 @@ async def ensure_workspace_task(
         identity,
     )
     snapshot = resolve_outreach_template_config(identity, template=selected_template)
+    recent_attachment_ids = (
+        await _get_recent_workspace_attachment_material_ids(session, identity)
+        if apply_recent_attachment_defaults
+        else []
+    )
     task = EmailTask(
         source="manual",
         batch_task_id=None,
@@ -428,7 +453,7 @@ async def ensure_workspace_task(
         fit_points=list(match_result.fit_points) if match_result else None,
         risk_points=list(match_result.risk_points) if match_result else None,
         match_keywords=list(match_result.match_keywords) if match_result else None,
-        selected_material_ids=None,
+        selected_material_ids=recent_attachment_ids or None,
         created_at=utc_now(),
         updated_at=utc_now(),
     )
@@ -556,6 +581,93 @@ async def _get_latest_email_task(
         )
         .order_by(EmailTask.created_at.desc(), EmailTask.id.desc()),
     )
+
+
+async def _backfill_recent_workspace_attachment_defaults(
+    session: AsyncSession,
+    task: EmailTask | None,
+    identity: IdentityProfile,
+) -> bool:
+    if not _task_can_inherit_recent_workspace_attachments(task):
+        return False
+
+    material_ids = await _get_recent_workspace_attachment_material_ids(
+        session,
+        identity,
+    )
+    if not material_ids:
+        return False
+
+    task.selected_material_ids = material_ids
+    task.updated_at = utc_now()
+    return True
+
+
+def _task_can_inherit_recent_workspace_attachments(task: EmailTask | None) -> bool:
+    if (
+        task is None
+        or task.source != EmailTaskSource.MANUAL.value
+        or task.batch_task_id is not None
+        or task.parent_task_id is not None
+        or task.status
+        not in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+        }
+        or task.selected_material_ids is not None
+        or task.approved_at is not None
+        or task.scheduled_at is not None
+        or task.last_send_attempt_at is not None
+        or task.sent_at is not None
+        or task.draft_generation_started_at is not None
+    ):
+        return False
+
+    return all(
+        _normalize_nullable_text(value) is None
+        for value in (
+            task.generated_subject,
+            task.generated_content_text,
+            task.generated_content_html,
+            task.approved_subject,
+            task.approved_body_text,
+            task.approved_body_html,
+        )
+    )
+
+
+async def _get_recent_workspace_attachment_material_ids(
+    session: AsyncSession,
+    identity: IdentityProfile,
+) -> list[int]:
+    stored_ids = await session.scalar(
+        select(EmailTask.selected_material_ids)
+        .where(
+            EmailTask.identity_id == identity.id,
+            EmailTask.source == EmailTaskSource.MANUAL.value,
+            EmailTask.batch_task_id.is_(None),
+            EmailTask.sent_at.is_not(None),
+            email_task_is_not_user_removed_expression(),
+        )
+        .order_by(EmailTask.sent_at.desc(), EmailTask.id.desc())
+        .limit(1),
+    )
+    if not isinstance(stored_ids, list):
+        return []
+
+    available_material_ids = {material.id for material in identity.materials}
+    selected_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for material_id in stored_ids:
+        if (
+            type(material_id) is not int
+            or material_id not in available_material_ids
+            or material_id in seen_ids
+        ):
+            continue
+        selected_ids.append(material_id)
+        seen_ids.add(material_id)
+    return selected_ids
 
 
 async def _get_email_task_for_workspace_thread(

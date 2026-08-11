@@ -29,6 +29,7 @@ async def get_workspace_thread(
         professor_id=professor_id,
         identity_id=identity_id,
         llm_profile_id=llm_profile_id,
+        apply_recent_attachment_defaults=True,
     )
 
 
@@ -44,12 +45,14 @@ async def ensure_personal_workspace_task(
         professor_id=professor_id,
         identity_id=identity_id,
         llm_profile_id=llm_profile_id,
+        apply_recent_attachment_defaults=True,
     )
     return await build_workspace_thread(
         session,
         professor_id=professor_id,
         identity_id=identity_id,
         llm_profile_id=llm_profile_id,
+        apply_recent_attachment_defaults=True,
     )
 
 @router.post("/{professor_id}/refresh-replies", response_model=WorkspaceThreadRead)
@@ -94,6 +97,7 @@ async def refresh_workspace_replies(
         identity_id=identity_id,
         llm_profile_id=llm_profile_id,
         sync_warnings=sync_warnings,
+        apply_recent_attachment_defaults=True,
     )
 
 

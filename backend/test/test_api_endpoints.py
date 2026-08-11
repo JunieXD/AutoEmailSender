@@ -2809,6 +2809,262 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(stored_material_id, material_id)
 
+    def test_workspace_new_task_inherits_latest_successful_manual_attachments(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        recent_material_id = self._upload_material(
+            identity_id,
+            filename="recent-workspace-attachment.pdf",
+            content=b"recent workspace attachment",
+            material_type="resume",
+        )
+        ignored_material_id = self._upload_material(
+            identity_id,
+            filename="ignored-non-workspace-attachment.pdf",
+            content=b"ignored attachment",
+            material_type="transcript",
+        )
+
+        sent_professor_id = self._create_professor(email="recent-sent@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[recent_material_id, 999999, recent_material_id],
+            approved_subject="Recent subject",
+            approved_body_text="Recent body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=10)
+
+        batch_professor_id = self._create_professor(email="newer-batch@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+        )
+        batch_item_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=batch_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[ignored_material_id],
+            batch_task_id=batch_task_id,
+            source="batch",
+            approved_subject="Batch subject",
+            approved_body_text="Batch body",
+        )
+        self._mark_email_task_sent(batch_item_id, minutes_ago=5)
+
+        failed_professor_id = self._create_professor(email="newer-failed@example.edu")
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=failed_professor_id,
+            status="send_failed",
+            primary_material_id=None,
+            selected_material_ids=[ignored_material_id],
+            approved_subject="Failed subject",
+            approved_body_text="Failed body",
+        )
+
+        target_professor_id = self._create_professor(email="inherits-recent@example.edu")
+        response = self.client.post(
+            f"/api/workspaces/{target_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            response.json()["current_task"]["selected_material_ids"],
+            [recent_material_id],
+        )
+
+    def test_workspace_attachment_defaults_do_not_skip_latest_attachmentless_send(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="older-workspace-attachment.pdf",
+            content=b"older workspace attachment",
+            material_type="resume",
+        )
+
+        older_professor_id = self._create_professor(email="older-with-attachment@example.edu")
+        older_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=older_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Older subject",
+            approved_body_text="Older body",
+        )
+        self._mark_email_task_sent(older_task_id, minutes_ago=10)
+
+        latest_professor_id = self._create_professor(email="latest-without-attachment@example.edu")
+        latest_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=latest_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[],
+            approved_subject="Latest subject",
+            approved_body_text="Latest body",
+        )
+        self._mark_email_task_sent(latest_task_id, minutes_ago=5)
+
+        target_professor_id = self._create_professor(email="no-stale-default@example.edu")
+        response = self.client.post(
+            f"/api/workspaces/{target_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertIsNone(response.json()["current_task"]["selected_material_ids"])
+
+    def test_workspace_get_backfills_only_pristine_unselected_root_task(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="workspace-get-default.pdf",
+            content=b"workspace get default",
+            material_type="resume",
+        )
+
+        pristine_professor_id = self._create_professor(email="pristine-before-send@example.edu")
+        pristine_before_send = self.client.post(
+            f"/api/workspaces/{pristine_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(pristine_before_send.status_code, 200, msg=pristine_before_send.text)
+        self.assertIsNone(
+            pristine_before_send.json()["current_task"]["selected_material_ids"],
+        )
+
+        sent_professor_id = self._create_professor(email="sent-after-pristine-created@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Sent subject",
+            approved_body_text="Sent body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=1)
+
+        explicit_empty_professor_id = self._create_professor(email="explicit-empty@example.edu")
+        explicit_empty_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=explicit_empty_professor_id,
+            status="discovered",
+            primary_material_id=None,
+            selected_material_ids=[],
+        )
+        existing_draft_professor_id = self._create_professor(email="existing-draft@example.edu")
+        existing_draft_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=existing_draft_professor_id,
+            status="review_required",
+            primary_material_id=None,
+            selected_material_ids=None,
+            generated_subject="Existing draft",
+            generated_content_text="Existing body",
+        )
+
+        pristine_response = self.client.get(
+            f"/api/workspaces/{pristine_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        explicit_empty_response = self.client.get(
+            f"/api/workspaces/{explicit_empty_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        existing_draft_response = self.client.get(
+            f"/api/workspaces/{existing_draft_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(pristine_response.status_code, 200, msg=pristine_response.text)
+        self.assertEqual(
+            pristine_response.json()["current_task"]["selected_material_ids"],
+            [material_id],
+        )
+        self.assertEqual(
+            self._get_task_material_references(explicit_empty_task_id)[1],
+            [],
+        )
+        self.assertIsNone(
+            self._get_task_material_references(existing_draft_task_id)[1],
+        )
+        self.assertEqual(
+            explicit_empty_response.json()["current_task"]["selected_material_ids"],
+            [],
+        )
+        self.assertIsNone(
+            existing_draft_response.json()["current_task"]["selected_material_ids"],
+        )
+
+    def test_workspace_attachment_defaults_remain_disabled_for_shared_service_callers(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="ui-only-default.pdf",
+            content=b"ui only default",
+            material_type="resume",
+        )
+        sent_professor_id = self._create_professor(email="ui-only-source@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Source subject",
+            approved_body_text="Source body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=1)
+        target_professor_id = self._create_professor(email="shared-service-target@example.edu")
+
+        async def load_without_ui_defaults() -> tuple[list[int] | None, list[int] | None]:
+            from app.core.database import get_session_factory
+            from app.modules.workspace.thread import (
+                build_workspace_thread,
+                ensure_workspace_task,
+            )
+
+            async with get_session_factory()() as session:
+                task = await ensure_workspace_task(
+                    session,
+                    professor_id=target_professor_id,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_id,
+                )
+                thread = await build_workspace_thread(
+                    session,
+                    professor_id=target_professor_id,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_id,
+                )
+                return (
+                    task.selected_material_ids,
+                    thread.current_task.selected_material_ids,
+                )
+
+        self.assertEqual(asyncio.run(load_without_ui_defaults()), (None, None))
+
     def test_workspace_ensure_task_creates_new_manual_task_after_schedule_expired_history(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -12528,6 +12784,24 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
+
+    def _mark_email_task_sent(self, task_id: int, *, minutes_ago: int) -> None:
+        modifier = f"-{minutes_ago} minutes"
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'sent',
+                    sent_at = datetime('now', ?),
+                    updated_at = datetime('now', ?)
+                WHERE id = ?
+                """,
+                (modifier, modifier, task_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
     def _insert_match_analysis_run(
         self,
