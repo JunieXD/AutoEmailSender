@@ -83,7 +83,10 @@ VC++ bootstrapper。复用前必须同时核对：QA 根是 `%TEMP%\auto-email-s
 子目录且不是 reparse point；旧 app、uninstaller、Playwright 和数据库存在；版本、公开旧包摘要、
 旧 EXE 摘要、manifest 路径、integrity 与 foreign key 结果一致。第一轮只补建专用 HKCU 测试注册
 和 stale 进程并中断；第二轮必须恢复并继续使用同一安装根，刷新当前候选字节后才覆盖升级。该
-捷径只服务非认证 harness；candidate admission 与正式 QA 仍必须从公开上一稳定版安装器开始。
+捷径只服务非认证 harness；第一轮还会保存经过同样校验的本地 seed 恢复副本。若第二轮已覆盖旧版
+后在 lifecycle 内失败，下一次第一轮先把 app 与 userData 镜像恢复到原 QA 根并再次执行全部摘要、
+数据库与路径校验，不再重跑旧 VC++ bootstrapper。candidate admission 与正式 QA 仍必须从公开
+上一稳定版安装器开始，不能使用 checkpoint 或恢复副本。
 
 当前安装器在执行 VC++ bootstrapper 前会比较内置 runtime 文件版本与 Windows 两个 registry view
 中的 x64 Runtime 版本。`Installed=1` 且系统版本不低于内置版本时直接跳过重复安装；版本缺失、

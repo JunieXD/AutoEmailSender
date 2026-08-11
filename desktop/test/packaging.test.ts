@@ -315,6 +315,11 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("Test-QaExecutableTimeoutRecovery");
     expect(guestRunner).toContain("RequireRecoveredStaleState");
     expect(guestRunner).toContain("Get-ValidatedHarnessSeedCheckpoint");
+    expect(guestRunner).toContain("Save-HarnessSeedBackup");
+    expect(guestRunner).toContain("Restore-HarnessSeedBackup");
+    expect(guestRunner).toContain("previous-stable-harness-seed-backup");
+    expect(guestRunner).toContain("robocopy.exe");
+    expect(guestRunner).toContain("Restored and revalidated previous-stable harness seed backup");
     expect(guestRunner).toContain("Reusing validated previous-stable harness seed checkpoint");
     expect(guestRunner).toContain("Previous-stable install and seed are already validated");
     expect(guestRunner).toContain('$evidenceRoot = Join-Path $qaBase "e-$qaTimestamp"');

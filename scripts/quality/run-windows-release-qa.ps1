@@ -442,6 +442,178 @@ function Get-ValidatedHarnessSeedCheckpoint {
   return $null
 }
 
+function Invoke-QaMirrorCopy {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+
+  if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+    throw "Harness seed mirror source is missing: $Source"
+  }
+  New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+  $null = & robocopy.exe `
+    $Source `
+    $Destination `
+    /MIR `
+    /COPY:DAT `
+    /DCOPY:DAT `
+    /R:0 `
+    /W:0 `
+    /XJ `
+    /NFL `
+    /NDL `
+    /NJH `
+    /NJS `
+    /NP
+  $robocopyExitCode = $LASTEXITCODE
+  if ($robocopyExitCode -gt 7) {
+    throw "Harness seed mirror failed with robocopy exit code $robocopyExitCode."
+  }
+}
+
+function Save-HarnessSeedBackup {
+  param(
+    [Parameter(Mandatory = $true)][object]$Checkpoint,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousVersion,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousPackageSha256
+  )
+
+  $qaRoot = [string]$Checkpoint.QaRoot
+  $backupRoot = Join-Path $qaRoot ".harness-previous-seed"
+  $markerPath = Join-Path $backupRoot "backup.json"
+  if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+    try {
+      $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+      if (
+        $marker.protocol_version -eq "1" -and
+        $marker.purpose -eq "previous-stable-harness-seed-backup" -and
+        [string]$marker.qa_root -eq $qaRoot -and
+        [string]$marker.previous_version -eq $ExpectedPreviousVersion -and
+        [string]$marker.previous_package_sha256 -eq $ExpectedPreviousPackageSha256
+      ) {
+        return
+      }
+    } catch {
+      throw "Existing harness seed backup marker is invalid: $markerPath"
+    }
+    throw "Existing harness seed backup does not match the required baseline: $markerPath"
+  }
+  if (Test-Path -LiteralPath $backupRoot) {
+    throw "Unmarked harness seed backup path already exists: $backupRoot"
+  }
+
+  $temporaryBackup = "$backupRoot.tmp-$([Guid]::NewGuid().ToString('N'))"
+  try {
+    Invoke-QaMirrorCopy `
+      -Source ([string]$Checkpoint.InstallRoot) `
+      -Destination (Join-Path $temporaryBackup "install")
+    Invoke-QaMirrorCopy `
+      -Source ([string]$Checkpoint.UpgradeUserData) `
+      -Destination (Join-Path $temporaryBackup "user-data")
+    $manifestBackup = Join-Path $temporaryBackup "upgrade-manifest.json"
+    [System.IO.File]::Copy(
+      [string]$Checkpoint.UpgradeManifest,
+      $manifestBackup,
+      $true
+    )
+    $marker = [ordered]@{
+      protocol_version = "1"
+      purpose = "previous-stable-harness-seed-backup"
+      qa_root = $qaRoot
+      previous_version = $ExpectedPreviousVersion
+      previous_package_sha256 = $ExpectedPreviousPackageSha256
+      created_at = [datetime]::UtcNow.ToString("o")
+    }
+    $markerJson = ($marker | ConvertTo-Json -Depth 4) + "`n"
+    [System.IO.File]::WriteAllText(
+      (Join-Path $temporaryBackup "backup.json"),
+      $markerJson,
+      [System.Text.UTF8Encoding]::new($false)
+    )
+    Move-Item -LiteralPath $temporaryBackup -Destination $backupRoot
+  } catch {
+    if (Test-Path -LiteralPath $temporaryBackup) {
+      Remove-Item -LiteralPath $temporaryBackup -Recurse -Force
+    }
+    throw
+  }
+  Write-Host "Saved validated previous-stable harness seed backup: $backupRoot"
+}
+
+function Restore-HarnessSeedBackup {
+  param(
+    [Parameter(Mandatory = $true)][string]$QaBasePath,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousVersion,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousPackageSha256
+  )
+
+  $qaBaseFullPath = [System.IO.Path]::GetFullPath($QaBasePath).TrimEnd("\")
+  $qaRoots = @(
+    Get-ChildItem -LiteralPath $qaBaseFullPath -Directory -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending
+  )
+  foreach ($qaRootItem in $qaRoots) {
+    $qaRoot = [System.IO.Path]::GetFullPath($qaRootItem.FullName).TrimEnd("\")
+    if (
+      -not ([System.IO.Path]::GetDirectoryName($qaRoot)).Equals(
+        $qaBaseFullPath,
+        [System.StringComparison]::OrdinalIgnoreCase
+      ) -or
+      ((Get-Item -LiteralPath $qaRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    ) {
+      continue
+    }
+    $backupRoot = Join-Path $qaRoot ".harness-previous-seed"
+    $markerPath = Join-Path $backupRoot "backup.json"
+    if (
+      -not (Test-Path -LiteralPath $markerPath -PathType Leaf) -or
+      ((Get-Item -LiteralPath $backupRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    ) {
+      continue
+    }
+    try {
+      $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+      if (
+        $marker.protocol_version -ne "1" -or
+        $marker.purpose -ne "previous-stable-harness-seed-backup" -or
+        [string]$marker.qa_root -ne $qaRoot -or
+        [string]$marker.previous_version -ne $ExpectedPreviousVersion -or
+        [string]$marker.previous_package_sha256 -ne $ExpectedPreviousPackageSha256
+      ) {
+        continue
+      }
+      $installRoot = Join-Path $qaRoot "安装 路径 Ω"
+      Stop-QaProcessesFromRoot -RootPath $installRoot
+      Invoke-QaMirrorCopy `
+        -Source (Join-Path $backupRoot "install") `
+        -Destination $installRoot
+      $userData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
+      Invoke-QaMirrorCopy `
+        -Source (Join-Path $backupRoot "user-data") `
+        -Destination $userData
+      [System.IO.File]::Copy(
+        (Join-Path $backupRoot "upgrade-manifest.json"),
+        (Join-Path $qaRoot "previous-upgrade\manifest.json"),
+        $true
+      )
+      $checkpoint = Get-ValidatedHarnessSeedCheckpoint `
+        -QaBasePath $qaBaseFullPath `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256 `
+        -RequiredQaRoot $qaRoot
+      if ($null -eq $checkpoint) {
+        throw "Restored harness seed backup failed baseline validation: $qaRoot"
+      }
+      Write-Host "Restored and revalidated previous-stable harness seed backup: $qaRoot"
+      return $checkpoint
+    } catch {
+      Write-Warning "Ignoring unusable harness seed backup at ${qaRoot}: $($_.Exception.Message)"
+    }
+  }
+  return $null
+}
+
 function Add-QaHarnessInstallerRegistration {
   param(
     [Parameter(Mandatory = $true)][string]$QaBasePath,
@@ -1225,6 +1397,16 @@ if ($RunsPackagedLifecycle) {
     } else {
       $null
     }
+    if (
+      $null -eq $harnessCheckpoint -and
+      $Mode -eq "harness-rehearsal" -and
+      $InjectInterruptionAfterPreviousInstall
+    ) {
+      $harnessCheckpoint = Restore-HarnessSeedBackup `
+        -QaBasePath $qaBase `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256
+    }
     $reusePreviousSeed = $null -ne $harnessCheckpoint
     if ($reusePreviousSeed) {
       $qaRoot = [string]$harnessCheckpoint.QaRoot
@@ -1312,6 +1494,18 @@ if ($RunsPackagedLifecycle) {
     }
 
     if ($InjectInterruptionAfterPreviousInstall) {
+      $checkpointToBackup = Get-ValidatedHarnessSeedCheckpoint `
+        -QaBasePath $qaBase `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256 `
+        -RequiredQaRoot $qaRoot
+      if ($null -eq $checkpointToBackup) {
+        throw "Previous-stable seed failed validation before interruption backup."
+      }
+      Save-HarnessSeedBackup `
+        -Checkpoint $checkpointToBackup `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256
       Add-QaHarnessInstallerRegistration `
         -QaBasePath $qaBase `
         -InstallRoot $installRoot `
