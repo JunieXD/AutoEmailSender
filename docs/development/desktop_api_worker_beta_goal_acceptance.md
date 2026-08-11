@@ -15,22 +15,24 @@
 - B0 开始时 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`；B5 已准备
   `2.6.0-beta.1`。首个远端 candidate run `31417575421` 已完成认证，但因 Windows QA
   传输层缺陷被拒绝；替代 run `31453411547` 也完成认证，但 Windows 正式 QA 又发现上一稳定版
-  seed 合同缺陷。两者均未形成 tag 或公开 Release，且都不得用于后续发布。
-- push 和 Certify dispatch 的两次一次性授权已分别用于 `bd19519d` 与 `908dfa9`。当前 QA 修复
-  SHA 的新 push/dispatch 需要重新批准；tag、GitHub Prerelease、master 合并和稳定版发布始终
-  未获授权。
+  seed 合同缺陷；第二个替代 run `31464156897` 通过远端认证，但 Windows 正式 QA 在候选安装前
+  发现上一失败 QA 遗留的卸载注册表会让 v2.5.4 安装器无限等待。三者均未形成 tag 或公开
+  Release，且都不得用于后续发布。
+- push 和 Certify dispatch 的三轮一次性授权已分别用于 `bd19519d`、`908dfa9` 与 `45c5d5f`。
+  当前 QA 恢复提交 `b6381e1` 之后的新最终 SHA 仍需重新批准 push/dispatch；tag、GitHub
+  Prerelease、master 合并和稳定版发布始终未获授权。
 
 ## Goal 恢复检查点
 
 - Goal 系统在 2026-08-11 仍返回同一 Goal ID，并保留上次批准门产生的 `blocked` 标记；用户已
   明确恢复继续执行。另一个 Codex 进程意外关闭没有取消 Goal，因此继续沿用同一 Goal ID，不并行创建第二个 Goal。当前分支为
   `beta/desktop-api-worker`，当前产品代码收口提交为 `2123af5`，当前 QA failure-recovery 代码为
-  `27bd475`。
+  `b6381e1`。
 - B0/B1 已通过证据保持有效；只有受后续代码影响的检查才按 impact 重新执行，最终仍由 B4/B5
   的完整回归和 exact-package 证据统一收口。
-- 当前允许继续本地 failure-recovery、测试和提交。`bd19519d`、`908dfa9` 的 push 与 Certify
-  dispatch 均已按各自一次性授权完成；这些授权不覆盖 `27bd475` 之后的新最终 SHA。仍未授权
-  反向合回 `master`、新的 push/workflow、tag、GitHub Release 或稳定版发布。
+- 当前允许继续本地 failure-recovery、测试和提交。`bd19519d`、`908dfa9`、`45c5d5f` 的 push
+  与 Certify dispatch 均已按各自一次性授权完成；这些授权不覆盖 `b6381e1` 之后的新最终 SHA。
+  仍未授权反向合回 `master`、新的 push/workflow、tag、GitHub Release 或稳定版发布。
 
 ## 阶段证据
 
@@ -41,7 +43,7 @@
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
 | B4：完整与重复回归 | 已完成 | 最新 `origin/master@2fcc431` 合入为 `e313811`；最终产品代码 `2123af5` 全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
-| B5：Mac/Windows 内部 Beta | 执行中 | replacement run `31453411547` 认证成功但上一稳定版 seed 在候选安装前失败；`61bdbeb`、`402d9db`、`27bd475` 已修复并通过真实 v2.5.4 聚焦重放与 Backend 1960/1960，仍待新 candidate 的双平台正式证据 |
+| B5：Mac/Windows 内部 Beta | 执行中 | run `31464156897` 认证成功但 Windows 正式 QA 在候选安装前发现 stale QA 卸载注册表与安装器无界等待；`b6381e1` 已通过 Windows 5.1 聚焦探针与 exact-SHA quick QA，仍待新 candidate 的双平台正式证据 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -816,3 +818,76 @@ validation_error_count: 14
 和 1h chaos。`31453411547` 已因 QA 代码变化失效；形成新最终文档 SHA 后必须重新取得 push 与
 Certify dispatch 授权。仍未授权 tag、公开 GitHub Prerelease、稳定 feed、master 合并或稳定版
 发布。
+
+### B5 续：第二个替代候选、stale Windows 安装状态与恢复
+
+#### 第二个替代 Prerelease Certify
+
+- 用户分别批准 push `45c5d5f8eb6b707f4ed905b3d697be5b6e1b0608` 和再次 dispatch
+  replacement Prerelease Certify（允许 no-op push）。`Release Desktop` run `31464156897` 的
+  Ubuntu preflight、Windows build、macOS build 与 candidate certify 全部成功，publish job
+  按 `publish=false` 跳过。
+- run 未创建 tag、draft 或 GitHub Release。manifest 绑定来源分支 `beta/desktop-api-worker`、
+  `2.6.0-beta.1`、精确 SHA、默认 split、诊断 schema 1 与 v2.5.4 stable isolation baseline。
+- 原始资产复核结果：Windows EXE
+  `57e1b73a91fe74f6b5f5c54b24695c9a0d711e0e77066476bfaa18de841e4064`，macOS DMG
+  `746ac4b2362b63531cfcd468ec034532d355a472592bb983d5f59259da7d9532`，manifest
+  `180261eec56d22cf1aedb4a5c5dede87a8d2763f25a233e0f3e75f53326adf0d`。
+
+#### Windows 正式 QA 首次失败
+
+run `31464156897` 的 exact EXE/manifest、公开 v2.5.4 EXE、2h normal、1h chaos 和 seed
+`20260810` 完成候选绑定、精确 checkout、VC++、release contracts、CLI 冻结 identity 与 intent
+accuracy `1.0`/p95 `572.49ms`、Backend 1960/1960（7 skip）、冻结后端三角色/文档 self-check 和
+本地 NSIS packaging contract。进入 installed lifecycle 后，上一稳定版安装器在候选覆盖之前
+持续等待约 32 分钟；只读 UI Automation 取得错误：
+
+```text
+Failed to uninstall old application files. Please try running the installer again.: 2
+```
+
+根因证据显示 HKCU uninstall key 仍指向上一失败 SHA `908dfa9` 的专用临时安装根。旧 uninstaller
+及目录存在、目录下无运行进程，但新一轮 v2.5.4 安装会先尝试卸载该残留并弹窗；runner 的
+`WaitForExit()` 又没有超时，因此无法自行失败退出。候选尚未安装，lifecycle、normal soak 和
+seeded chaos 均未开始；该 run 不构成 Windows 正式证据。
+
+首个现场、候选绑定、注册表路径与截图保存在：
+
+```text
+/Users/junie/Programs/AutoEmailSender-release-candidates/31464156897/windows-qa-first-failure/
+```
+
+原 runner 在证据保存后通过终止错误安装器以 `-1` 退出；guest 中 Auto Email Sender、backend、
+Python QA 进程均为 0，VM 手动恢复 suspended。候选三项资产复哈希未变化。
+
+#### runner 修复与真实 Windows 5.1 验证
+
+`b6381e1591d99314e0d9d10b4742c1c6e5f5cc60` 完成以下最小恢复：
+
+- 只枚举 DisplayName 为 Auto Email Sender 且 uninstaller 规范路径位于
+  `%TEMP%\auto-email-sender-packaged-qa\` 下的 HKCU 项；正式运行前清理旧项，`finally` 只清理
+  当前 install root 的项，不触及正常用户安装，也不删除失败文件/数据证据；
+- 缺少属性、非引号命令、路径规范化失败或 QA 根外的注册项全部跳过；
+- 安装/卸载进程改为 600 秒有界等待，超时记录最后窗口标题并用 `taskkill /T /F`，且确认进程树
+  已退出；
+- host runner 只在自己启动 VM 时于任何退出路径恢复 suspended，并保留原主流程失败码。
+
+本机和 Windows 聚焦结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| Desktop typecheck / 完整测试 | 通过；256 passed，3 skipped |
+| Desktop packaging / Frontend desktop packaging | 24/24；2/2 |
+| POSIX prepare/release/prerelease、release notes、impact | 全部通过；impact 10/10 |
+| Windows PowerShell 5.1 helper 探针 | parser 0 errors；真实 stale 项只读识别；synthetic 专用项精确删除；缺属性项保留；1s timeout 子树终止 |
+| Windows quick QA（精确 `b6381e1`） | PowerShell contracts 通过；Desktop 248/248，11 skip；runner 0 退出；VM 自动恢复 suspended |
+
+本机没有 `shellcheck` 可执行文件；同一 host runner 的 `bash -n` 通过，且真实 quick QA 已完整执行
+其启动、传输、退出 trap 与 suspended 恢复路径。
+
+`release-impact.mjs --base 45c5d5f --head b6381e1` 将范围分类为 `desktop` 与
+`release-orchestration`，要求 release contracts、Windows PowerShell contracts、Desktop suite
+和 Windows quick QA；这些均已完成，Windows formal 与 macOS candidate 可在新冻结 SHA 形成前
+跳过。但 manifest 绑定的是 `45c5d5f`，因此 `31464156897` 已失效，不得在清理 VM 后直接重用。
+形成最终文档提交后，必须再次取得新 SHA 的 push 与 Certify dispatch 授权；仍未授权 tag、公开
+GitHub Prerelease、稳定 feed、master 合并或稳定版发布。

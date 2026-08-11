@@ -99,7 +99,14 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
   与 Windows extended-length drive/UNC 长路径哈希。聚焦合同 21/21、最终 Backend 1960/1960
   和真实 v2.5.4
   seed 重放通过，VM 零残留并恢复 suspended；这些只关闭 failure-recovery，不替代 formal QA。
-- 当前再次停在替代候选批准门前：run `31453411547` 已因 QA 代码变化失效。新的最终文档提交
+- 用户随后批准 push `45c5d5f` 与再次 dispatch replacement Certify；run `31464156897` 双平台
+  build/certify 成功且未创建 tag/Release。Windows 正式 QA 的 Backend 1960/1960、冻结三角色和
+  本地 NSIS 通过，但 v2.5.4 安装器在候选安装前被上一失败 QA 的卸载注册表阻塞，并因 runner
+  无 timeout 持续等待；首个现场已保存，该 run 不构成正式证据。
+- `b6381e1` 只清理专用 QA 临时根的 stale uninstall 项，为安装/卸载增加有界进程树终止，并让
+  host runner 恢复自己启动的 VM。Windows 5.1 synthetic/真实 stale 探针、Desktop/发布合同和
+  精确 SHA quick QA 均通过，VM 自动恢复 suspended。
+- 当前再次停在替代候选批准门前：run `31464156897` 已因 QA 代码变化失效。新的最终文档提交
   形成后，push 新 SHA 和再次 dispatch Certify 都需要重新取得明确批准。尚未授权 tag、公开
   GitHub Prerelease、合回 `master` 或稳定版发布。
 
@@ -268,7 +275,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：replacement run `31453411547` 已认证但在候选安装前暴露 seed QA 缺陷；`27bd475` 已完成真实 v2.5.4 聚焦重放与 Backend 1960/1960，仍待新 run 的双平台 lifecycle、2h normal、1h chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：run `31464156897` 已认证但在候选安装前暴露 stale QA uninstall/无界等待；`b6381e1` 已通过 Windows 5.1 聚焦探针和 exact-SHA quick QA，仍待新 run 的双平台 lifecycle、2h normal、1h chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -281,10 +288,10 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
    `source_branch + release_sha + version + channel`，不得绑定当前分支名。
 3. **B4 已完成**：最新 `origin/master@2fcc431` 已合入；最终产品代码的连续两次全仓和不受后续
    Frontend-only 修复影响的连续 20 次 split 集成均已通过，首次失败与修复原样记入验收报告。
-4. **正在执行 B5**：`2.6.0-beta.1` failure-recovery 已完成；先对证据文档提交后的新最终 SHA
+4. **正在执行 B5**：`2.6.0-beta.1` 第二轮 failure-recovery 已完成；先对证据文档提交后的新最终 SHA
    运行 release impact、prerelease preflight 和 certify dry-run。获得新的 push 与远端候选
    workflow 独立授权后，两平台只使用同一新 run、同一 SHA 对应的原始候选资产完成覆盖升级、
-   lifecycle、2h normal 和 1h seeded chaos；不得复用 `31453411547`。
+   lifecycle、2h normal 和 1h seeded chaos；不得复用 `31464156897`。
 5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
    才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。
 6. **完成 B7**：收口可复现证据、已知限制和后续观察方式；仍不自动合回 `master` 或发布稳定版。
