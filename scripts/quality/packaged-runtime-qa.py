@@ -1816,6 +1816,7 @@ def _run_lifecycle(
                 repository_root=args.repository_root,
                 expected_previous_version=args.expected_previous_version,
                 expected_previous_package_sha256=previous_package_sha256,
+                require_repository_head=not args.harness_rehearsal,
             )
             recorder.check(
                 "previous_stable_in_place_upgrade",
@@ -3064,6 +3065,7 @@ def _verify_upgrade_manifest(
     repository_root: Path,
     expected_previous_version: str,
     expected_previous_package_sha256: str | None,
+    require_repository_head: bool = True,
 ) -> dict[str, object]:
     manifest = _read_json(manifest_path)
     if (
@@ -3186,8 +3188,10 @@ def _verify_upgrade_manifest(
         raise QaFailure("upgraded identity material record no longer matches its file")
 
     current_revision = str(current_revision_row["version_num"])
-    expected_current_revision = _repository_alembic_head(repository_root)
-    if current_revision != expected_current_revision:
+    expected_current_revision = (
+        _repository_alembic_head(repository_root) if require_repository_head else None
+    )
+    if expected_current_revision is not None and current_revision != expected_current_revision:
         raise QaFailure(
             "upgraded database revision does not match repository head: "
             f"database={current_revision}, repository={expected_current_revision}"
@@ -3258,6 +3262,7 @@ def _verify_upgrade_manifest(
         "previous_alembic_revision": previous_revision,
         "current_alembic_revision": current_revision,
         "expected_alembic_revision": expected_current_revision,
+        "repository_head_required": require_repository_head,
         "settings_marker_preserved": True,
         "professor_id": professor_id,
         "material_id": material_id,

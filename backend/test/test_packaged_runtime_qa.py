@@ -1150,6 +1150,34 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             )
             self.assertEqual(evidence["migration_backup"]["new_backup_count"], 1)
 
+            connection = sqlite3.connect(database_path)
+            connection.execute(
+                "UPDATE alembic_version SET version_num = ?",
+                ("invalidated_candidate_head",),
+            )
+            connection.commit()
+            connection.close()
+            with (
+                mock.patch.object(runner, "_request_json", side_effect=request_json),
+                mock.patch.object(runner, "audit_database", return_value=passing_audit),
+            ):
+                rehearsal_evidence = runner._verify_upgrade_manifest(
+                    manifest_path,
+                    identity,
+                    user_data,
+                    repository_root=REPOSITORY_ROOT,
+                    expected_previous_version="2.5.3",
+                    expected_previous_package_sha256="c" * 64,
+                    require_repository_head=False,
+                )
+
+            self.assertEqual(
+                rehearsal_evidence["current_alembic_revision"],
+                "invalidated_candidate_head",
+            )
+            self.assertIsNone(rehearsal_evidence["expected_alembic_revision"])
+            self.assertFalse(rehearsal_evidence["repository_head_required"])
+
             manifest["pre_upgrade_schema_backups"] = [
                 {
                     "relative_path": backup_path.relative_to(user_data).as_posix(),
@@ -1169,6 +1197,7 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                     repository_root=REPOSITORY_ROOT,
                     expected_previous_version="2.5.3",
                     expected_previous_package_sha256="c" * 64,
+                    require_repository_head=False,
                 )
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS power counters are Darwin-only")
