@@ -195,6 +195,7 @@ class LaunchHandle:
 class BrowserProbe:
     server: ThreadingHTTPServer
     thread: threading.Thread
+    llm_server: Any
     browser_request_started: threading.Event
     release_response: threading.Event
     port: int
@@ -208,6 +209,7 @@ class BrowserProbe:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        self.llm_server.stop()
 
 
 @dataclass(frozen=True, slots=True)
@@ -3338,9 +3340,11 @@ def _start_browser_probe() -> BrowserProbe:
         daemon=True,
     )
     thread.start()
+    llm_server = _load_workload_support().fake_llm_server().start()
     return BrowserProbe(
         server=server,
         thread=thread,
+        llm_server=llm_server,
         browser_request_started=browser_request_started,
         release_response=release_response,
         port=port,
@@ -3354,13 +3358,29 @@ def _exercise_real_browser_descendant(
 ) -> set[int]:
     if identity.worker is None:
         raise QaFailure("browser process probe requires split mode")
+    profile = _request_json(
+        "POST",
+        f"{identity.base_url.rstrip('/')}/api/llm-profiles",
+        token=identity.access_token,
+        payload={
+            "name": f"Packaged browser probe {uuid.uuid4().hex[:12]}",
+            "provider": "openai",
+            "api_base_url": probe.llm_server.base_url,
+            "api_key": "packaged-browser-probe-key",
+            "model_name": "packaged-browser-probe-model",
+            "is_default": True,
+        },
+        timeout_seconds=20,
+    )
+    if not isinstance(profile, dict) or not isinstance(profile.get("id"), int):
+        raise QaFailure("browser probe LLM profile was not created")
     payload = {
         "university": "Packaged QA University",
         "school": "Process Tree School",
         "start_url": probe.url,
         "start_urls": [probe.url],
         "entry_type": "list",
-        "llm_profile_id": None,
+        "llm_profile_id": profile["id"],
     }
     created = _request_json(
         "POST",

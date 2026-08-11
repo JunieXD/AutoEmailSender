@@ -45,6 +45,16 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             source.index('_exercise_api_read_write(first, marker="lifecycle-first")'),
         )
 
+    def test_browser_probe_creates_loopback_llm_profile_before_crawler_job(self) -> None:
+        source = inspect.getsource(runner._exercise_real_browser_descendant)
+
+        self.assertLess(
+            source.index('/api/llm-profiles"'),
+            source.index('/api/agent/v1/crawler/jobs"'),
+        )
+        self.assertIn('"llm_profile_id": profile["id"]', source)
+        self.assertNotIn('"llm_profile_id": None', source)
+
     def test_evidence_recorder_check_records_named_trace_event(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = runner._create_paths(Path(temp_dir))
