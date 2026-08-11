@@ -2,6 +2,7 @@
 !include getProcessInfo.nsh
 
 Var pid
+Var /GLOBAL IsPowerShellAvailable
 
 !macro RemovePackagedBrowserRuntime
   ${If} ${FileExists} "$INSTDIR\resources\ms-playwright\*.*"
@@ -22,7 +23,9 @@ Var pid
 !macroend
 
 !macro customCheckAppRunning
-  !insertmacro IS_POWERSHELL_AVAILABLE
+  # electron-builder's PowerShell branch performs unbounded WMI queries.
+  # Use its tasklist/taskkill fallback so process checks cannot leave hung WMI children.
+  StrCpy $IsPowerShellAvailable 1
   !insertmacro _CHECK_APP_RUNNING
   !insertmacro RemovePackagedBrowserRuntime
 !macroend

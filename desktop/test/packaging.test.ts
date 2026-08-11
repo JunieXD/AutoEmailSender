@@ -213,6 +213,9 @@ describe("windows installer packaging", () => {
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
     expect(installerScript).toContain("!macro customInstall");
     expect(installerScript).toContain("!macro customCheckAppRunning");
+    expect(installerScript).toContain("Var /GLOBAL IsPowerShellAvailable");
+    expect(installerScript).toContain("StrCpy $IsPowerShellAvailable 1");
+    expect(installerScript).not.toContain("!insertmacro IS_POWERSHELL_AVAILABLE");
     expect(installerScript).toContain("!insertmacro _CHECK_APP_RUNNING");
     expect(installerScript).toContain("!insertmacro RemovePackagedBrowserRuntime");
     expect(installerScript).toContain("windows-remove-packaged-browser-runtime.ps1");
