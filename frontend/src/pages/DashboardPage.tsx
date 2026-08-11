@@ -38,6 +38,7 @@ import { useSelectionContext } from '@/context/SelectionContext';
 import { DistributionPieChart } from '@/components/molecules/DistributionPieChart';
 import { TokenVisualizationPanel } from '@/components/molecules/TokenVisualizationPanel';
 import { getDashboardOverview } from '@/lib/api/dashboardApi';
+import { getAppScrollContainer, scrollElementIntoAppView } from '@/lib/appScrollContainer';
 import { resolveStatisticsSectionNavTop } from '@/lib/statisticsSectionNav';
 import type {
   DashboardEmailTrendBucketDTO,
@@ -1090,11 +1091,12 @@ export const DashboardPage = () => {
     }
 
     updateSectionNavTop();
-    window.addEventListener('scroll', updateSectionNavTop, { passive: true });
+    const scrollTarget = getAppScrollContainer() ?? window;
+    scrollTarget.addEventListener('scroll', updateSectionNavTop, { passive: true });
     window.addEventListener('resize', updateSectionNavTop);
 
     return () => {
-      window.removeEventListener('scroll', updateSectionNavTop);
+      scrollTarget.removeEventListener('scroll', updateSectionNavTop);
       window.removeEventListener('resize', updateSectionNavTop);
     };
   }, [overview, updateSectionNavTop]);
@@ -1148,6 +1150,7 @@ export const DashboardPage = () => {
         }
       },
       {
+        root: getAppScrollContainer(),
         rootMargin: '-18% 0px -52% 0px',
         threshold: [0.05, 0.1, 0.2, 0.4, 0.6, 0.8],
       },
@@ -1177,7 +1180,7 @@ export const DashboardPage = () => {
     }
 
     setActiveSectionId(sectionId);
-    sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollElementIntoAppView(sectionElement, { behavior: 'smooth' });
   }, []);
 
   const mentorMetrics = useMemo(() => {
@@ -1363,7 +1366,7 @@ export const DashboardPage = () => {
               id="statistics-mentor"
               data-testid="statistics-section-mentor"
               data-statistics-section="mentor"
-              className="scroll-mt-44"
+              className="scroll-mt-6"
             >
               <ModuleHeader
                 title="导师概览"
@@ -1439,7 +1442,7 @@ export const DashboardPage = () => {
               id="statistics-email"
               data-testid="statistics-section-email"
               data-statistics-section="email"
-              className="scroll-mt-44"
+              className="scroll-mt-6"
             >
               <ModuleHeader
                 title="联系进展"
@@ -1548,7 +1551,7 @@ export const DashboardPage = () => {
               id="statistics-token"
               data-testid="statistics-section-token"
               data-statistics-section="token"
-              className="scroll-mt-44"
+              className="scroll-mt-6"
             >
               <TokenVisualizationPanel />
             </section>

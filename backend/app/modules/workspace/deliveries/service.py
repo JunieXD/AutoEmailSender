@@ -134,12 +134,19 @@ def _view_condition(view: str):
 def _status_condition(status: str):
     if status == "waiting_scheduled":
         return and_(
-            EmailTask.status == EmailTaskStatus.SCHEDULED.value,
+            or_(
+                EmailTask.status == EmailTaskStatus.SCHEDULED.value,
+                and_(
+                    EmailTask.status == EmailTaskStatus.APPROVED.value,
+                    EmailTask.scheduled_at.is_not(None),
+                ),
+            ),
             or_(BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value),
         )
     if status == "send_asap":
         return and_(
             EmailTask.status == EmailTaskStatus.APPROVED.value,
+            EmailTask.scheduled_at.is_(None),
             or_(BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value),
         )
     if status == "batch_paused":
@@ -463,6 +470,8 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
     if task.batch_task is not None and task.batch_task.status == BatchTaskStatus.PAUSED.value:
         return "batch_paused", "批次已暂停", "恢复所属批次后继续执行"
     if task.status == EmailTaskStatus.APPROVED.value:
+        if task.scheduled_at is not None:
+            return "waiting_scheduled", "等待发送", "将在计划时间进入发送流程"
         return "send_asap", "尽快发送", "正在等待发件间隔或发送窗口"
     return "waiting_scheduled", "等待发送", "将在计划时间进入发送流程"
 

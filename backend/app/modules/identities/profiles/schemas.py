@@ -56,6 +56,7 @@ class IdentityProfileRead(IdentityProfileBase):
     current_primary_material_id: int | None
     current_primary_material: IdentityMaterialRead | None
     materials: list[IdentityMaterialRead]
+    effective_outreach_template_is_ready: bool
     daily_send_limit: int | None
     send_interval_min: int | None
     send_interval_max: int | None

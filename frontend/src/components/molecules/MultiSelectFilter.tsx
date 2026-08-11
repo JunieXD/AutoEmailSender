@@ -53,6 +53,22 @@ const expandSelectedValues = (options: string[], selectedValues: string[]) => {
   return options.filter((option) => selectedSet.has(option));
 };
 
+const matchesCharactersInOrder = (text: string, query: string): boolean => {
+  const queryCharacters = Array.from(query);
+  let queryIndex = 0;
+
+  for (const character of text) {
+    if (character === queryCharacters[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex === queryCharacters.length) {
+        return true;
+      }
+    }
+  }
+
+  return queryCharacters.length === 0;
+};
+
 const POPOVER_GAP_PX = 8;
 const PREFERRED_POPOVER_HEIGHT_PX = 440;
 
@@ -67,6 +83,7 @@ export const MultiSelectFilter = ({
 }: MultiSelectFilterProps) => {
   const [open, setOpen] = useState(false);
   const [draftValues, setDraftValues] = useState<string[] | null>(null);
+  const [draftSelectionChanged, setDraftSelectionChanged] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [openUpward, setOpenUpward] = useState(false);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(
@@ -91,16 +108,27 @@ export const MultiSelectFilter = ({
 
       return options.filter((option) => {
         const searchableText = `${optionLabels[option] ?? option} ${option}`.toLocaleLowerCase();
-        return normalizedSearchTokens.every((token) => searchableText.includes(token));
+        return normalizedSearchTokens.every((token) =>
+          matchesCharactersInOrder(searchableText, token),
+        );
       });
     },
     [optionLabels, options, searchQuery],
   );
-  const allOptionsSelected =
-    options.length > 0 && options.every((option) => draftSet.has(option));
   const allVisibleOptionsSelected =
     visibleOptions.length > 0 &&
     visibleOptions.every((option) => draftSet.has(option));
+  const searchScopesUnrestrictedSelection =
+    selectedValues.length === 0 &&
+    !draftSelectionChanged &&
+    searchQuery.trim().length > 0;
+  const valuesToApply = searchScopesUnrestrictedSelection
+    ? visibleOptions.filter((option) => draftSet.has(option))
+    : activeDraftValues;
+  const valuesToApplySet = new Set(valuesToApply);
+  const allOptionsSelected =
+    options.length > 0 &&
+    options.every((option) => valuesToApplySet.has(option));
 
   const updatePopoverLayout = useCallback(() => {
     const triggerRect = triggerRef.current?.getBoundingClientRect();
@@ -139,6 +167,7 @@ export const MultiSelectFilter = ({
   const closeMenu = useCallback((restoreFocus = false) => {
     setOpen(false);
     setDraftValues(null);
+    setDraftSelectionChanged(false);
     setSearchQuery("");
     if (restoreFocus) {
       triggerRef.current?.focus();
@@ -187,6 +216,7 @@ export const MultiSelectFilter = ({
 
     if (open && (optionsChanged || selectionChanged)) {
       setDraftValues(expandSelectedValues(options, selectedValues));
+      setDraftSelectionChanged(false);
       setSearchQuery("");
     }
   }, [open, options, selectedValues]);
@@ -194,13 +224,24 @@ export const MultiSelectFilter = ({
   const openMenu = () => {
     updatePopoverLayout();
     setDraftValues(expandSelectedValues(options, selectedValues));
+    setDraftSelectionChanged(false);
     setSearchQuery("");
     setOpen(true);
   };
 
+  const getSelectionChangeBase = (previous: string[] | null) => {
+    if (!searchScopesUnrestrictedSelection) {
+      return previous ?? [];
+    }
+
+    const previousSet = new Set(previous ?? []);
+    return visibleOptions.filter((option) => previousSet.has(option));
+  };
+
   const toggleOption = (option: string) => {
+    setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       if (next.has(option)) {
         next.delete(option);
       } else {
@@ -211,8 +252,9 @@ export const MultiSelectFilter = ({
   };
 
   const toggleVisibleOptions = () => {
+    setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       visibleOptions.forEach((option) => {
         if (allVisibleOptionsSelected) {
           next.delete(option);
@@ -225,8 +267,9 @@ export const MultiSelectFilter = ({
   };
 
   const invertVisibleOptions = () => {
+    setDraftSelectionChanged(true);
     setDraftValues((previous) => {
-      const next = new Set(previous ?? []);
+      const next = new Set(getSelectionChangeBase(previous));
       visibleOptions.forEach((option) => {
         if (next.has(option)) {
           next.delete(option);
@@ -239,11 +282,11 @@ export const MultiSelectFilter = ({
   };
 
   const applyDraft = () => {
-    if (activeDraftValues.length === 0) {
+    if (valuesToApply.length === 0) {
       return;
     }
 
-    onChange(allOptionsSelected ? [] : activeDraftValues);
+    onChange(valuesToApply.length === options.length ? [] : valuesToApply);
     closeMenu(true);
   };
 
@@ -296,12 +339,16 @@ export const MultiSelectFilter = ({
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-100 px-3 py-2">
               <span aria-live="polite" className="text-xs font-medium text-stone-500">
-                {visibleOptions.length} 项 · 已选 {activeDraftValues.length} 项
+                {visibleOptions.length} 项 · 已选 {valuesToApply.length} 项
               </span>
               <button
                 type="button"
                 aria-label={`清除${label}筛选`}
-                onClick={() => setDraftValues([...options])}
+                onClick={() => {
+                  setDraftSelectionChanged(true);
+                  setDraftValues([...options]);
+                  onChange([]);
+                }}
                 disabled={allOptionsSelected}
                 className="rounded-lg px-2 py-1 text-xs font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 disabled:cursor-default disabled:opacity-40"
               >
@@ -317,6 +364,17 @@ export const MultiSelectFilter = ({
                   value={searchQuery}
                   aria-label={`搜索${label}选项`}
                   onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key !== "Enter" ||
+                      event.nativeEvent.isComposing
+                    ) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    applyDraft();
+                  }}
                   placeholder={`搜索${label}`}
                   className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-stone-400"
                 />
@@ -404,7 +462,7 @@ export const MultiSelectFilter = ({
 
             <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-t border-stone-100 px-3 py-2">
               <span className="text-xs text-rose-600">
-                {activeDraftValues.length === 0 ? "至少保留一项" : ""}
+                {valuesToApply.length === 0 ? "至少保留一项" : ""}
               </span>
               <div className="flex shrink-0 items-center gap-2">
                 <button
@@ -418,7 +476,7 @@ export const MultiSelectFilter = ({
                 <button
                   type="button"
                   onClick={applyDraft}
-                  disabled={activeDraftValues.length === 0}
+                  disabled={valuesToApply.length === 0}
                   className="ui-btn-primary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Check className="h-3.5 w-3.5" />

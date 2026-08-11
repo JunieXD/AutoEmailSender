@@ -72,6 +72,7 @@ vi.mock("@/entities/professor/api/professors", () => ({
     return {
       items: sorted.slice(start, start + payload.page_size),
       total_count: sorted.length,
+      has_any_professors: allItems.length > 0,
       page: payload.page,
       page_size: payload.page_size,
       total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
@@ -119,7 +120,7 @@ const createIdentity = (overrides: Partial<IdentityDTO> = {}): IdentityDTO => ({
   imap_password: null,
   default_language: "zh-CN",
   outreach_generation_mode: "template",
-  outreach_template_subject: null,
+  outreach_template_subject: "测试主题",
   outreach_template_body_text: "",
   outreach_template_body_html: "",
   current_primary_material_id: null,
@@ -317,6 +318,89 @@ describe("HomePage onboarding", () => {
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     expect(screen.queryByText(/模式：/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+  });
+
+  it("uses the global template fallback and material catalog for onboarding", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        effective_outreach_template_is_ready: true,
+        current_primary_material_id: null,
+        current_primary_material: null,
+        materials: [
+          {
+            id: 11,
+            display_name: "全局简历",
+            original_filename: "resume.pdf",
+            mime_type: "application/pdf",
+            size_bytes: 1024,
+            material_type: "resume",
+            is_primary: false,
+            created_at: "2026-04-22T00:00:00Z",
+          },
+        ],
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+  });
+
+  it("trusts an explicit incomplete effective template over stale legacy fields", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        effective_outreach_template_is_ready: false,
+        current_primary_material_id: 11,
+        outreach_template_body_text: "旧版残留正文",
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    const card = await screen.findByTestId("onboarding-checklist-card");
+    expect(within(card).getByRole("link", { name: "继续设置" })).toHaveAttribute(
+      "href",
+      "/profile",
+    );
+  });
+
+  it("keeps the dashboard visible when a search has no matches", async () => {
+    mockedListProfessors.mockResolvedValue([professor]);
+    mockedUseSelectionContext.mockReturnValue({
+      selectedIdentityId: 1,
+      selectedLlmProfileId: 1,
+      selectedIdentity: createIdentity({
+        current_primary_material_id: 11,
+        outreach_template_body_text: "老师您好",
+      }),
+      selectedLlmProfile,
+    });
+
+    renderPage();
+
+    expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByPlaceholderText("姓名、学校、学院、系所、职称、研究方向、标签"),
+      { target: { value: "不存在的导师" } },
+    );
+
+    expect(
+      await screen.findByText("没有符合当前搜索或筛选条件的导师"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("home-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-card")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(await screen.findByText("王教授")).toBeInTheDocument();
   });
 
   it("shows relationship status labels and filter controls on the dashboard", async () => {

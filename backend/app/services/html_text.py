@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 
 BLOCK_TAGS = {
@@ -72,6 +72,9 @@ def _extract_blocks(node: Tag) -> list[str]:
             blocks.append(text)
 
     for child in node.children:
+        if isinstance(child, Comment):
+            continue
+
         if isinstance(child, NavigableString):
             inline_parts.append(str(child))
             continue
@@ -105,6 +108,9 @@ def _extract_inline_text(node: Tag) -> str:
     parts: list[str] = []
 
     for child in node.children:
+        if isinstance(child, Comment):
+            continue
+
         if isinstance(child, NavigableString):
             parts.append(str(child))
             continue

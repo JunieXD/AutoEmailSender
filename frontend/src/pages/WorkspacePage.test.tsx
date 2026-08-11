@@ -543,12 +543,18 @@ describe("WorkspacePage draft saving", () => {
     renderWorkspace();
 
     const editButton = await screen.findByRole("button", { name: "编辑草稿" });
+    const workspacePage = document.querySelector("[data-workspace-page]");
     const workspaceContainer = document.querySelector("[data-workspace-container]");
     const workspaceLayout = document.querySelector("[data-workspace-layout]");
     const workspaceSidebar = document.querySelector("[data-workspace-sidebar]");
 
+    expect(workspacePage).toHaveClass("min-h-full");
+    expect(workspacePage).not.toHaveClass("h-full", "overflow-hidden");
     expect(workspaceContainer).toHaveClass("max-w-7xl");
+    expect(workspaceContainer).toHaveClass("min-h-full");
+    expect(workspaceContainer).not.toHaveClass("h-full", "min-h-0");
     expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "overview");
+    expect(workspaceLayout).not.toHaveClass("min-h-0");
     expect(workspaceLayout).toHaveClass(
       "lg:grid-cols-[minmax(0,1fr)_17.5rem]",
       "xl:grid-cols-[minmax(0,1fr)_19rem]",

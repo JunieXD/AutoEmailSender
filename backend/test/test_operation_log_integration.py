@@ -326,9 +326,15 @@ class OperationLogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        self.assertEqual(len(self._list_logs("identity_material.uploaded", entity_id=str(material_id))), 1)
-        self.assertEqual(len(self._list_logs("identity_material.primary_set", entity_id=str(material_id))), 1)
-        self.assertEqual(len(self._list_logs("identity_material.deleted", entity_id=str(material_id))), 1)
+        for event_name in (
+            "identity_material.uploaded",
+            "identity_material.primary_set",
+            "identity_material.deleted",
+        ):
+            logs = self._list_logs(event_name, entity_id=str(material_id))
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0]["metadata"]["source_identity_id"], identity_id)
+            self.assertEqual(logs[0]["metadata"]["identity_id"], identity_id)
 
     def test_workspace_and_email_task_actions_record_operation_logs(self) -> None:
         identity_id = self._create_identity("workspace-log@example.com", outreach_generation_mode="template")

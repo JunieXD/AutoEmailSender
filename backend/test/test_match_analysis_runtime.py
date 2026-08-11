@@ -421,11 +421,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             mocked_generate.await_args.kwargs["primary_material"].id,
             source_material_id,
         )
-        self.assertTrue(
-            all(
-                material.identity_id == source_identity_id
-                for material in mocked_generate.await_args.kwargs["available_materials"]
-            ),
+        self.assertEqual(
+            mocked_generate.await_args.kwargs["available_materials"],
+            [],
         )
 
         state = self._run_async(

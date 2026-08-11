@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.core.query_chunks import chunked_values, unique_positive_ids
-from app.models import EmailDirection, EmailLog, IdentityProfile
+from app.models import EmailDirection, EmailLog, EmailLogRecordState, IdentityProfile
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,8 @@ async def load_communication_events(
                 EmailLog.rfc_message_id,
                 EmailLog.normalized_message_id,
                 EmailLog.message_fingerprint,
+                EmailLog.delivery_attempt_id,
+                EmailLog.record_state,
                 EmailLog.failure_summary,
                 EmailLog.created_at,
             ),
@@ -77,6 +79,7 @@ async def load_communication_events(
                     EmailLog.direction.in_(
                         [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
                     ),
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                 )
             )
             if professor_id_chunk is not None:
@@ -99,6 +102,8 @@ def collapse_communication_logs(
 ) -> list[CommunicationEvent]:
     grouped: dict[tuple[object, ...], list[EmailLog]] = {}
     for log in logs:
+        if log.record_state != EmailLogRecordState.CANONICAL.value:
+            continue
         grouped.setdefault(_event_key(log), []).append(log)
 
     events = [
@@ -113,6 +118,9 @@ def collapse_communication_logs(
 
 
 def _event_key(log: EmailLog) -> tuple[object, ...]:
+    if log.delivery_attempt_id:
+        return (log.professor_id, log.direction, "delivery", log.delivery_attempt_id)
+
     normalized_message_id = _normalize_message_id(log.normalized_message_id)
     if normalized_message_id:
         return (log.professor_id, log.direction, "message", normalized_message_id)

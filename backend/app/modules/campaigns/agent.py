@@ -42,6 +42,7 @@ from .drafts.fallback import (
 from .status import sync_batch_task_completion
 from app.modules.identities.public import material_can_be_primary
 from app.services.operation_logs import record_operation_log
+from app.services.material_catalog import list_global_materials
 from .templates.library import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -113,6 +114,7 @@ class FinalCampaignDraft:
     body_text: str
     body_html: str | None
     attachment_material_ids: list[int]
+    attachment_materials: list[IdentityMaterial]
 
 
 @dataclass(slots=True)
@@ -941,7 +943,6 @@ async def _resolve_campaign_create_context(
     identity = await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == payload.identity_id),
@@ -978,7 +979,9 @@ async def _resolve_campaign_create_context(
             message="部分导师不存在或已被移入回收站。",
         )
 
-    material_map = {material.id: material for material in identity.materials}
+    material_map = {
+        material.id: material for material in await list_global_materials(session)
+    }
     primary_material: IdentityMaterial | None = None
     if payload.reference_material_id is not None:
         primary_material = material_map.get(payload.reference_material_id)
@@ -986,7 +989,7 @@ async def _resolve_campaign_create_context(
             raise AgentApiError(
                 status_code=422,
                 code="CAMPAIGN_REFERENCE_MATERIAL_INVALID",
-                message="AI 写信参考材料不属于当前发件身份。",
+                message="未找到 AI 写信参考材料。",
             )
         if not material_can_be_primary(primary_material):
             raise AgentApiError(
@@ -1003,7 +1006,7 @@ async def _resolve_campaign_create_context(
         raise AgentApiError(
             status_code=422,
             code="CAMPAIGN_ATTACHMENT_MATERIAL_INVALID",
-            message="存在不属于当前发件身份的随信附件。",
+            message="存在已删除或不存在的随信附件。",
         )
 
     selected_template = None
@@ -1214,7 +1217,13 @@ async def _resolve_campaign_send_context(
             details={"item_ids": missing_ids},
         )
     selected_tasks = [selected_by_id[item_id] for item_id in sorted(payload.item_ids)]
-    final_drafts = [_final_campaign_draft_or_raise(campaign, task) for task in selected_tasks]
+    material_by_id = {
+        material.id: material for material in await list_global_materials(session)
+    }
+    final_drafts = [
+        _final_campaign_draft_or_raise(campaign, task, material_by_id)
+        for task in selected_tasks
+    ]
     resolved_scheduled_at_values = _resolve_campaign_send_schedule(
         campaign,
         len(selected_tasks),
@@ -1251,8 +1260,15 @@ async def _resolve_campaign_resume_context(
             code="CAMPAIGN_SCHEDULE_EXPIRED",
             message="该活动的定时发送窗口已全部过期，不能恢复运行。",
         )
+    material_by_id = {
+        material.id: material for material in await list_global_materials(session)
+    }
     delivery_drafts = [
-        _current_campaign_delivery_draft_or_raise(campaign, task)
+        _current_campaign_delivery_draft_or_raise(
+            campaign,
+            task,
+            material_by_id,
+        )
         for task in campaign.email_tasks
         if task.batch_send_canceled_at is None
         and task.status
@@ -1297,15 +1313,23 @@ async def _resolve_campaign_restore_send_context(
             message="活动项当前状态不能恢复发送。",
             details={"campaign_id": campaign.id, "item_id": item.id, "status": item.status},
         )
+    material_by_id = {
+        material.id: material for material in await list_global_materials(session)
+    }
     return CampaignRestoreSendContext(
         campaign=campaign,
-        final_draft=_current_campaign_delivery_draft_or_raise(campaign, item),
+        final_draft=_current_campaign_delivery_draft_or_raise(
+            campaign,
+            item,
+            material_by_id,
+        ),
     )
 
 
 def _final_campaign_draft_or_raise(
     campaign: BatchTask,
     task: EmailTask,
+    material_by_id: dict[int, IdentityMaterial],
 ) -> FinalCampaignDraft:
     if task.status != EmailTaskStatus.REVIEW_REQUIRED.value:
         raise AgentApiError(
@@ -1321,12 +1345,13 @@ def _final_campaign_draft_or_raise(
             message=f"活动项 {task.id} 已取消发送。",
             details={"item_id": task.id},
         )
-    return _current_campaign_delivery_draft_or_raise(campaign, task)
+    return _current_campaign_delivery_draft_or_raise(campaign, task, material_by_id)
 
 
 def _current_campaign_delivery_draft_or_raise(
     campaign: BatchTask,
     task: EmailTask,
+    material_by_id: dict[int, IdentityMaterial],
 ) -> FinalCampaignDraft:
     if task.professor is None or not _has_valid_recipient_email(task.professor.email):
         raise AgentApiError(
@@ -1374,7 +1399,6 @@ def _current_campaign_delivery_draft_or_raise(
         rendered = normalize_email_html(body_html)
     else:
         rendered = text_to_email_html(body_text)
-    material_by_id = {material.id: material for material in identity.materials}
     attachment_material_ids = list(dict.fromkeys(task.selected_material_ids or []))
     missing_attachment_ids = [
         material_id
@@ -1385,7 +1409,7 @@ def _current_campaign_delivery_draft_or_raise(
         raise AgentApiError(
             status_code=409,
             code="CAMPAIGN_ATTACHMENT_MATERIAL_STALE",
-            message=f"活动项 {task.id} 包含不存在或不属于发件身份的附件。",
+            message=f"活动项 {task.id} 包含已删除或不存在的附件。",
             details={"item_id": task.id, "attachment_material_ids": missing_attachment_ids},
         )
     return FinalCampaignDraft(
@@ -1394,6 +1418,7 @@ def _current_campaign_delivery_draft_or_raise(
         body_text=rendered.text,
         body_html=rendered.html,
         attachment_material_ids=attachment_material_ids,
+        attachment_materials=[material_by_id[material_id] for material_id in attachment_material_ids],
     )
 
 
@@ -1712,7 +1737,7 @@ def _campaign_send_item_state(final_draft: FinalCampaignDraft) -> dict[str, obje
         "reference_material": _material_state(task.primary_material),
         "attachments": [
             _material_state(material)
-            for material in _selected_attachment_materials(task)
+            for material in final_draft.attachment_materials
         ],
     }
 
@@ -1735,7 +1760,7 @@ def _campaign_send_item_summary(
         "template": _named_template(task.outreach_template),
         "reference_material": _named_material(task.primary_material),
         "attachments": [
-            _named_material(material) for material in _selected_attachment_materials(task)
+            _named_material(material) for material in final_draft.attachment_materials
         ],
         "scheduled_at": _serialize_optional_datetime(scheduled_at),
         "subject": final_draft.subject,
@@ -1744,22 +1769,11 @@ def _campaign_send_item_summary(
     }
 
 
-def _selected_attachment_materials(task: EmailTask) -> list[IdentityMaterial]:
-    if task.batch_task is None or task.batch_task.identity is None:
-        return []
-    material_by_id = {material.id: material for material in task.batch_task.identity.materials}
-    return [
-        material_by_id[material_id]
-        for material_id in task.selected_material_ids or []
-        if material_id in material_by_id
-    ]
-
-
 def _campaign_load_statement():
     return select(BatchTask).options(
         selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
         selectinload(BatchTask.email_tasks).selectinload(EmailTask.primary_material),
-        selectinload(BatchTask.identity).selectinload(IdentityProfile.materials),
+        selectinload(BatchTask.identity),
         selectinload(BatchTask.llm_profile),
         selectinload(BatchTask.primary_material),
     )
@@ -1889,7 +1903,7 @@ async def _load_campaign_for_send_or_raise(
     campaign = await session.scalar(
         select(BatchTask)
         .options(
-            selectinload(BatchTask.identity).selectinload(IdentityProfile.materials),
+            selectinload(BatchTask.identity),
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.primary_material),
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.outreach_template),
@@ -1995,7 +2009,6 @@ async def _sanitize_campaign_material_references_before_restore(
         existing_material_ids.update(
             await session.scalars(
                 select(IdentityMaterial.id).where(
-                    IdentityMaterial.identity_id == campaign.identity_id,
                     IdentityMaterial.id.in_(material_id_chunk),
                 ),
             ),
@@ -2310,6 +2323,8 @@ def _material_state(material: IdentityMaterial | None) -> dict[str, object] | No
         return None
     return {
         "id": material.id,
+        "source_identity_id": material.identity_id,
+        # Compatibility for snapshots created before the global catalog.
         "identity_id": material.identity_id,
         "display_name": material.display_name,
         "material_type": material.material_type,

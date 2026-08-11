@@ -793,6 +793,7 @@ export const ProfessorsPage = () => {
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const [totalProfessorCount, setTotalProfessorCount] = useState(0);
+  const [hasAnyProfessors, setHasAnyProfessors] = useState(false);
   const [totalProfessorPages, setTotalProfessorPages] = useState(1);
   const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
     universities: [],
@@ -805,7 +806,7 @@ export const ProfessorsPage = () => {
   const shouldShowProfessorIntakePanel =
     isRefreshingProfessors ||
     archiveFilter === "archived" ||
-    professors.length > 0;
+    hasAnyProfessors;
   const latestProfessorsRequestIdRef = useRef(0);
   const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
   const cursorQueryKeyRef = useRef("");
@@ -990,6 +991,7 @@ export const ProfessorsPage = () => {
         }
         setProfessors(data.items);
         setTotalProfessorCount(data.total_count);
+        setHasAnyProfessors(data.has_any_professors);
         setTotalProfessorPages(data.total_pages);
         setFilterOptions(data.filter_options);
         if (data.next_cursor) {
@@ -2811,7 +2813,7 @@ export const ProfessorsPage = () => {
         tabIndex={-1}
         aria-label="导师管理列表"
         aria-busy={isRefreshingProfessors}
-        className="relative mt-6 scroll-mt-24 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
+        className="relative mt-6 scroll-mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
       >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           {agentSelection ? (
@@ -2910,7 +2912,27 @@ export const ProfessorsPage = () => {
           <div className="flex justify-center text-center">操作</div>
         </div>
 
-        {totalProfessorCount === 0 ? (
+        {totalProfessorCount === 0 && hasAnyProfessors ? (
+          <div className="px-6 py-16 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-stone-100 text-stone-400">
+              <Search className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 text-xl font-semibold text-stone-900">
+              没有匹配的导师
+            </h2>
+            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-stone-500">
+              调整搜索或筛选条件后重试。
+            </p>
+            <button
+              type="button"
+              onClick={resetAllFilters}
+              className="ui-btn-secondary mt-5"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              清除筛选
+            </button>
+          </div>
+        ) : totalProfessorCount === 0 ? (
           <div className="px-6 py-16 text-center">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-stone-100 text-stone-400">
               <Users className="h-6 w-6" />

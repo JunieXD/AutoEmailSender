@@ -1,8 +1,11 @@
 import { useEffect } from "react";
+import { getAppScrollContainer } from "./appScrollContainer";
 
 let activeScrollLockCount = 0;
 let originalBodyOverflow = "";
 let originalDocumentOverflow = "";
+let lockedScrollContainer: HTMLElement | null = null;
+let originalScrollContainerOverflowY = "";
 
 const acquireDocumentScrollLock = () => {
   if (typeof document === "undefined") {
@@ -12,8 +15,13 @@ const acquireDocumentScrollLock = () => {
   if (activeScrollLockCount === 0) {
     originalBodyOverflow = document.body.style.overflow;
     originalDocumentOverflow = document.documentElement.style.overflow;
+    lockedScrollContainer = getAppScrollContainer();
+    originalScrollContainerOverflowY = lockedScrollContainer?.style.overflowY ?? "";
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
+    if (lockedScrollContainer) {
+      lockedScrollContainer.style.overflowY = "hidden";
+    }
   }
   activeScrollLockCount += 1;
 
@@ -27,6 +35,11 @@ const acquireDocumentScrollLock = () => {
     if (activeScrollLockCount === 0) {
       document.body.style.overflow = originalBodyOverflow;
       document.documentElement.style.overflow = originalDocumentOverflow;
+      if (lockedScrollContainer) {
+        lockedScrollContainer.style.overflowY = originalScrollContainerOverflowY;
+      }
+      lockedScrollContainer = null;
+      originalScrollContainerOverflowY = "";
     }
   };
 };

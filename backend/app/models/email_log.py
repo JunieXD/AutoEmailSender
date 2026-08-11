@@ -23,6 +23,12 @@ class EmailDirection(StrEnum):
     DRAFT = "draft"
 
 
+class EmailLogRecordState(StrEnum):
+    CANONICAL = "canonical"
+    MERGED = "merged"
+    PENDING = "pending"
+
+
 class EmailLog(Base):
     __tablename__ = "email_logs"
     __table_args__ = (
@@ -77,13 +83,6 @@ class EmailLog(Base):
             "id",
         ),
         Index(
-            "uq_email_logs_delivery_attempt_id",
-            "delivery_attempt_id",
-            unique=True,
-            sqlite_where=text("delivery_attempt_id IS NOT NULL"),
-            postgresql_where=text("delivery_attempt_id IS NOT NULL"),
-        ),
-        Index(
             "ix_email_logs_identity_direction_professor_created",
             "identity_id",
             "direction",
@@ -91,16 +90,45 @@ class EmailLog(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_email_logs_record_state_identity_direction_created",
+            "record_state",
+            "identity_id",
+            "direction",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "uq_email_logs_delivery_attempt_id",
+            "delivery_attempt_id",
+            unique=True,
+            sqlite_where=text("delivery_attempt_id IS NOT NULL"),
+            postgresql_where=text("delivery_attempt_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("email_delivery_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    merged_into_id: Mapped[int | None] = mapped_column(
+        ForeignKey("email_logs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    record_state: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'canonical'"),
+    )
+    reconciliation_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+    )
     email_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("email_tasks.id"),
         index=True,
-        nullable=True,
-    )
-    delivery_attempt_id: Mapped[str | None] = mapped_column(
-        ForeignKey("email_delivery_attempts.attempt_id", ondelete="SET NULL"),
         nullable=True,
     )
     identity_id: Mapped[int] = mapped_column(

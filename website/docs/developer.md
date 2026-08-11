@@ -109,6 +109,20 @@ npm run dist
 
 安装包生成到 `desktop/release/`。本地打包不会自动发布到 GitHub。
 
+## 命令行与 Agent 调试
+
+桌面开发模式会在构建后准备本地 CLI。需要验证 Agent 支持时，使用桌面端启动应用，再到个人中心启用“命令行与 Agent”；不要把真实邮箱授权码或模型密钥写入测试脚本。
+
+## 运行测试
+
+从仓库根目录运行完整测试：
+
+```bash
+rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py
+```
+
+只验证某一端时，可分别运行 `frontend`、`backend`、`desktop` 或 `website` 目录中的测试命令。提交前还应运行受影响工作区的类型检查、Lint 或构建。
+
 ### macOS 与 Sparkle
 
 macOS 只发布 Apple Silicon `arm64` DMG，并保持 ad-hoc 签名，不需要 Apple Developer Program。构建前需要准备 Sparkle 和用于更新归档验签的公开密钥：

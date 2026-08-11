@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.modules.identities.public import material_can_be_primary
 from app.services.rich_text import normalize_email_html
+from app.services.material_catalog import list_global_materials
 
 from .drafts.fallback import DRAFT_GENERATION_SOURCE_TEMPLATE
 from .schemas import (
@@ -192,7 +193,7 @@ async def build_batch_task_resend_context(
         .options(
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.outreach_template),
-            selectinload(BatchTask.identity).selectinload(IdentityProfile.materials),
+            selectinload(BatchTask.identity),
         )
         .where(BatchTask.id == task_id)
         .execution_options(populate_existing=True),
@@ -203,7 +204,7 @@ async def build_batch_task_resend_context(
         raise BatchTaskResendContextError(400, "原任务身份已不存在，无法直接重新发起。")
 
     primary_material_id, selected_material_ids, warnings = filter_available_material_defaults(
-        materials=list(task.identity.materials),
+        materials=await list_global_materials(session),
         primary_material_id=task.primary_material_id,
         selected_material_ids=task.selected_material_ids,
     )

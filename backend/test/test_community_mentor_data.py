@@ -404,6 +404,49 @@ class CommunityDatasetClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records.records[0].contacts[0].email, "zhang@example.edu")
         self.assertTrue((self.cache_directory / "cache-index.json").exists())
 
+    async def test_loads_selected_shards_with_bounded_concurrency(self) -> None:
+        service = self._service(_transport_for_payloads(_dataset_payloads()))
+        bundle = await service.get_catalog(force_refresh=True)
+        manifest_file = next(
+            item
+            for item in bundle.manifest.files
+            if item.path.startswith("objects/sha256/")
+        )
+        active_loads = 0
+        maximum_active_loads = 0
+
+        async def slow_load(
+            _bundle: object,
+            _manifest_file: object,
+            *,
+            prune_cache: bool = True,
+        ) -> tuple[bytes, str]:
+            nonlocal active_loads, maximum_active_loads
+            self.assertFalse(prune_cache)
+            active_loads += 1
+            maximum_active_loads = max(maximum_active_loads, active_loads)
+            try:
+                await asyncio.sleep(0.01)
+                return DEFAULT_SHARD_BYTES, "network"
+            finally:
+                active_loads -= 1
+
+        selected_paths = [manifest_file.path] * 8
+        with patch.object(
+            service,
+            "_load_or_download_manifest_file",
+            side_effect=slow_load,
+        ):
+            loaded = await service._load_manifest_files(
+                bundle=bundle,
+                manifest_files={manifest_file.path: manifest_file},
+                unit_paths=selected_paths,
+            )
+
+        self.assertEqual([path for path, _, _ in loaded], selected_paths)
+        self.assertGreater(maximum_active_loads, 1)
+        self.assertLessEqual(maximum_active_loads, 6)
+
     async def test_network_failure_falls_back_to_last_verified_cache(self) -> None:
         good_service = self._service(_transport_for_payloads(_dataset_payloads()))
         await good_service.get_catalog(force_refresh=True)

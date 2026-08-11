@@ -1,17 +1,24 @@
 from __future__ import annotations
 
-from app.models import IdentityProfile
+from collections.abc import Iterable
+
+from app.models import IdentityMaterial, IdentityProfile, OutreachTemplate
 
 from ..materials.public import serialize_material
 from .schemas import IdentityProfileRead
 
 
-def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
+def serialize_identity(
+    identity: IdentityProfile,
+    materials: Iterable[IdentityMaterial] | None = None,
+    global_default_outreach_template: OutreachTemplate | None = None,
+) -> IdentityProfileRead:
+    has_global_catalog = materials is not None
     current_primary_material_id = identity.current_primary_material_id
     profile_name = identity.profile_name or identity.name
     sender_name = identity.sender_name or profile_name
-    materials = sorted(
-        identity.materials,
+    material_records = sorted(
+        materials if materials is not None else identity.source_materials,
         key=lambda item: (item.id == current_primary_material_id, item.created_at),
         reverse=True,
     )
@@ -28,6 +35,22 @@ def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
         outreach_template_body_text = identity.outreach_template_body_text
         outreach_template_body_html = identity.outreach_template_body_html
         default_outreach_template_id = None
+    effective_template = (
+        default_template
+        if default_template is not None and default_template.archived_at is None
+        else global_default_outreach_template
+    )
+    effective_outreach_template_is_ready = bool(
+        effective_template is not None
+        and effective_template.archived_at is None
+        and (effective_template.subject or "").strip()
+        and (effective_template.body_text or "").strip()
+    )
+    if effective_template is None:
+        effective_outreach_template_is_ready = bool(
+            (outreach_template_subject or "").strip()
+            and (outreach_template_body_text or "").strip()
+        )
     return IdentityProfileRead(
         id=identity.id,
         name=profile_name,
@@ -62,9 +85,18 @@ def serialize_identity(identity: IdentityProfile) -> IdentityProfileRead:
             else None
         ),
         materials=[
-            serialize_material(material, current_primary_material_id)
-            for material in materials
+            serialize_material(
+                material,
+                current_primary_material_id,
+                default_for_identity_ids=(
+                    [default_identity.id for default_identity in material.default_for_identities]
+                    if has_global_catalog
+                    else None
+                ),
+            )
+            for material in material_records
         ],
+        effective_outreach_template_is_ready=effective_outreach_template_is_ready,
         created_at=identity.created_at,
         updated_at=identity.updated_at,
     )

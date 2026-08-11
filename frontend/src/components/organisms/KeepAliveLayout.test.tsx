@@ -47,9 +47,10 @@ describe("KeepAliveLayout", () => {
     expect(KEEP_ALIVE_PATHS.has("/")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/dashboard")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/professors")).toBe(true);
+    expect(KEEP_ALIVE_PATHS.has("/community")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/tasks")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/profile")).toBe(true);
-    expect(KEEP_ALIVE_PATHS.size).toBe(5);
+    expect(KEEP_ALIVE_PATHS.size).toBe(6);
 
     const homeMount = vi.fn();
     const homeUnmount = vi.fn();
@@ -161,11 +162,23 @@ describe("KeepAliveLayout", () => {
       fireEvent.click(screen.getByRole("link", { name: "create-task" }));
     });
     expect(screen.getByText("create-task 页面")).toBeInTheDocument();
+    expect(document.querySelector('[data-route-keep-alive="true"]')).toHaveClass(
+      "hidden",
+    );
+    expect(
+      document.querySelector('[data-route-keep-alive="true"]'),
+    ).toHaveAttribute("data-route-keep-alive-active", "false");
 
     // 切回 home：必须复用之前那份缓存（count 仍是 5），而不是从 0 开始
     act(() => {
       fireEvent.click(screen.getByRole("link", { name: "home" }));
     });
     expect(screen.getByTestId("home-count").textContent).toBe("5");
+    expect(document.querySelector('[data-route-keep-alive="true"]')).not.toHaveClass(
+      "hidden",
+    );
+    expect(
+      document.querySelector('[data-route-keep-alive="true"]'),
+    ).toHaveAttribute("data-route-keep-alive-active", "true");
   });
 });

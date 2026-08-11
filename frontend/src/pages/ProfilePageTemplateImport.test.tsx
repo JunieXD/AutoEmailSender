@@ -36,6 +36,7 @@ vi.mock("@/context/NotificationContext", () => ({
 
 vi.mock("@/context/useWorkspaceDraftGuard", () => ({
   useWorkspaceDraftGuard: () => ({
+    registerWorkspaceDraftGuard: () => vi.fn(),
     requestWorkspaceDraftGuard: mockedRequestWorkspaceDraftGuard,
   }),
 }));
@@ -43,6 +44,7 @@ vi.mock("@/context/useWorkspaceDraftGuard", () => ({
 vi.mock("@/lib/useConfirmDialog", () => ({
   useConfirmDialog: () => ({
     confirm: mockedConfirm,
+    choose: vi.fn(),
     dialog: null,
   }),
 }));
@@ -500,7 +502,6 @@ describe("ProfilePage default template import", () => {
     renderProfilePage();
     fireEvent.click(screen.getByRole("button", { name: /发件身份/, expanded: false }));
     fireEvent.click(screen.getByRole("button", { name: /备用身份/ }));
-    fireEvent.click(screen.getByRole("button", { name: "设为当前" }));
 
     await waitFor(() => {
       expect(mockedRequestWorkspaceDraftGuard).toHaveBeenCalled();

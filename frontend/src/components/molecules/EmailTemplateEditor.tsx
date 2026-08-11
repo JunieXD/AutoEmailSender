@@ -187,7 +187,6 @@ export const EmailTemplateEditor = ({
   onFileDrop,
 }: EmailTemplateEditorProps) => {
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
-  const lastLocalHtmlRef = useRef<string | null>(null);
   const latestHtmlRef = useRef(html);
   const userEditPendingRef = useRef(false);
   const onFileDropRef = useRef<typeof onFileDrop>(onFileDrop);
@@ -285,15 +284,12 @@ export const EmailTemplateEditor = ({
       }
       const nextHtml = serializeTemplatePlaceholderHtml(currentEditor.getHTML());
       if (areTemplatePlaceholderHtmlEquivalent(nextHtml, prepareTemplateEditorHtml(latestHtmlRef.current))) {
-        lastLocalHtmlRef.current = nextHtml;
         return;
       }
       const hasUiEvent = Boolean(transaction?.getMeta?.("uiEvent"));
       if (!userEditPendingRef.current && !currentEditor.isFocused && !hasUiEvent) {
-        lastLocalHtmlRef.current = nextHtml;
         return;
       }
-      lastLocalHtmlRef.current = nextHtml;
       onChange({
         html: nextHtml,
         text: deriveTextFromEmailHtml(nextHtml),
@@ -307,9 +303,6 @@ export const EmailTemplateEditor = ({
 
   useEffect(() => {
     const preparedHtml = prepareTemplateEditorHtml(html);
-    if (lastLocalHtmlRef.current === html) {
-      return;
-    }
     if (editor && !areTemplatePlaceholderHtmlEquivalent(preparedHtml, editor.getHTML())) {
       editor.commands.setContent(preparedHtml, false);
     }

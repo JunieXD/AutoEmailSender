@@ -407,7 +407,6 @@ async def _load_identity_for_matching(
     return await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == identity_id),

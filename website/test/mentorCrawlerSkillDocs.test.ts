@@ -27,7 +27,7 @@ describe("mentor crawler Skill guide", () => {
   });
 
   it("explains why the safe workbook omits user-owned fields", () => {
-    expect(guide).toContain("默认只有 10 列");
+    expect(guide).toContain("默认导出 10 列的原因");
     expect(guide).toContain("保留原标签");
     expect(guide).toContain("保留原备注");
     expect(guide).toContain("完整 12 列");

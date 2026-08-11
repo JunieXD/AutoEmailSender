@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from email.message import EmailMessage
 from unittest.mock import ANY, call, patch
 
-from app.models import IdentityProfile
+from app.models import IdentityProfile, Professor
 from app.modules.communications.transport import (
     MailDeliveryError,
     MailDeliveryFailureKind,
@@ -19,6 +19,7 @@ from app.modules.communications.transport import (
     _open_smtp_client,
     _resolve_smtp_local_hostname,
     _send_email_sync,
+    build_email_message,
     discover_sent_folder,
     fetch_inbox_messages_from_sender,
     fetch_incremental_inbox_messages,
@@ -688,6 +689,24 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].from_email, "teacher@example.com")
 
+    def test_outgoing_message_contains_delivery_correlation_header(self) -> None:
+        delivery_key = "83ca4ec1-0eb2-49fb-a88d-e87f1dca9c5d"
+
+        message = build_email_message(
+            identity=_build_identity(),
+            professor=Professor(name="Teacher", email="teacher@example.com"),
+            subject="hello",
+            body_text="body",
+            body_html=None,
+            attachments=[],
+            delivery_key=delivery_key,
+        )
+
+        self.assertEqual(
+            message["X-AutoEmailSender-Delivery-ID"],
+            delivery_key,
+        )
+
     def test_send_email_disables_post_send_sent_folder_sync_even_when_imap_is_configured(self) -> None:
         with (
             patch("app.modules.communications.transport._open_smtp_client", return_value=_FakeSmtpClient()),
@@ -935,6 +954,7 @@ class MailRuntimeTestCase(unittest.TestCase):
                     b"Bcc: Hidden <hidden@example.com>\r\n"
                     b"Subject: hello\r\n"
                     b"Message-ID: <sent-message@example.com>\r\n"
+                    b"X-AutoEmailSender-Delivery-ID: 83ca4ec1-0eb2-49fb-a88d-e87f1dca9c5d\r\n"
                     b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n\r\n"
                 ),
             },
@@ -952,6 +972,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(messages[0].bcc_emails, ["hidden@example.com"])
         self.assertEqual(messages[0].raw_to, "Teacher <Teacher@Example.com>, other@example.com")
         self.assertEqual(messages[0].headers["bcc"], "Hidden <hidden@example.com>")
+        self.assertEqual(
+            messages[0].headers["x-autoemailsender-delivery-id"],
+            "83ca4ec1-0eb2-49fb-a88d-e87f1dca9c5d",
+        )
 
     def test_incremental_fetch_records_mailbox_uidvalidity(self) -> None:
         client = _FakeImapClient(
@@ -966,6 +990,29 @@ class MailRuntimeTestCase(unittest.TestCase):
             )
 
         self.assertEqual(messages[0].uidvalidity, 777)
+
+    def test_missing_date_header_uses_imap_internaldate_for_sent_time(self) -> None:
+        client = _FakeImapClient(
+            search_data=b"5",
+            headers_by_uid={
+                5: (
+                    b"From: sender@example.com\r\n"
+                    b"To: teacher@example.com\r\n"
+                    b"Subject: hello\r\n"
+                    b"Message-ID: <missing-date@example.com>\r\n\r\n"
+                ),
+            },
+        )
+
+        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+            _, messages = asyncio.run(
+                fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
+            )
+
+        self.assertEqual(
+            messages[0].sent_at,
+            datetime(2026, 5, 8, 12, 30, tzinfo=UTC),
+        )
 
     def test_incremental_fetch_resets_search_cursor_when_uidvalidity_changes(self) -> None:
         client = _FakeImapClient(

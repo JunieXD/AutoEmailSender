@@ -62,6 +62,28 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(len(snapshot.html), crawler_tools.MAX_CRAWL_HTML_CHARS)
         self.assertIn("教师名单", snapshot.text)
 
+    def test_html_to_snapshot_ignores_commented_markup(self) -> None:
+        commented_navigation = "".join(
+            f"<li>隐藏导航 {index} fake{index}@example.edu</li>"
+            for index in range(500)
+        )
+        html = (
+            f"<html><body><!--{commented_navigation}-->"
+            "<main><h1>黄豪彩</h1><p>hchuang@zju.edu.cn</p></main>"
+            "</body></html>"
+        )
+
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://example.edu/teacher/huang",
+            html,
+            "browser",
+        )
+
+        self.assertIn("黄豪彩", snapshot.text)
+        self.assertIn("hchuang@zju.edu.cn", snapshot.text)
+        self.assertNotIn("隐藏导航", snapshot.text)
+        self.assertNotIn("fake0@example.edu", snapshot.text)
+
     def test_browser_pagination_wait_ignores_only_active_page_number_change(self) -> None:
         shared = "教师名单 " + ("张三 教授 李四 副教授 " * 80)
         self.assertFalse(

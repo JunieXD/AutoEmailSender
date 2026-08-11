@@ -16,7 +16,6 @@ from app.models.types import UTCDateTime
 if TYPE_CHECKING:
     from app.models.batch_task import BatchTask
     from app.models.email_log import EmailLog
-    from app.models.email_delivery_attempt import EmailDeliveryAttempt
     from app.models.identity_profile import IdentityProfile
     from app.models.identity_material import IdentityMaterial
     from app.models.llm_profile import LLMProfile
@@ -373,10 +372,6 @@ class EmailTask(Base):
         back_populates="email_tasks",
     )
     email_logs: Mapped[list["EmailLog"]] = relationship(
-        back_populates="email_task",
-        cascade="all, delete-orphan",
-    )
-    delivery_attempts: Mapped[list["EmailDeliveryAttempt"]] = relationship(
         back_populates="email_task",
         cascade="all, delete-orphan",
     )

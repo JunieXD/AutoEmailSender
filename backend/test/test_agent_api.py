@@ -1989,6 +1989,176 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(material_count, 2)
         self.assertEqual(current_primary_material_id, second_material_id)
 
+    def test_agent_material_catalog_is_global_with_explicit_default_context(self) -> None:
+        source_identity_id = self._create_identity(email="agent-material-source@example.com")
+        target_identity_id = self._create_identity(email="agent-material-target@example.com")
+        created = self.client.post(
+            "/api/agent/v1/materials",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-global-material-upload",
+            },
+            data={
+                "identity_id": str(source_identity_id),
+                "material_type": "resume",
+            },
+            files={
+                "file": (
+                    "shared-resume.txt",
+                    io.BytesIO(b"shared agent resume"),
+                    "text/plain",
+                ),
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        material_id = created.json()["id"]
+        self.assertEqual(created.json()["source_identity_id"], source_identity_id)
+        self.assertEqual(created.json()["identity_id"], source_identity_id)
+        self.assertEqual(created.json()["default_for_identity_ids"], [source_identity_id])
+
+        replacement = self.client.post(
+            "/api/agent/v1/materials",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-global-material-replacement-upload",
+            },
+            data={
+                "identity_id": str(source_identity_id),
+                "material_type": "resume",
+            },
+            files={
+                "file": (
+                    "replacement-resume.txt",
+                    io.BytesIO(b"replacement source resume"),
+                    "text/plain",
+                ),
+            },
+        )
+        self.assertEqual(replacement.status_code, 201, msg=replacement.text)
+        replacement_id = replacement.json()["id"]
+        set_source_default = self.client.post(
+            f"/api/agent/v1/materials/{replacement_id}/set-primary",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-global-material-source-default",
+            },
+            params={"identity_id": source_identity_id},
+        )
+        self.assertEqual(set_source_default.status_code, 200, msg=set_source_default.text)
+
+        target_catalog = self._agent_get(
+            "/api/agent/v1/materials",
+            params={"target_identity_id": target_identity_id},
+        )
+        self.assertEqual(target_catalog.status_code, 200, msg=target_catalog.text)
+        target_material = next(
+            item for item in target_catalog.json()["items"] if item["id"] == material_id
+        )
+        self.assertFalse(target_material["is_primary"])
+
+        legacy_source_catalog = self._agent_get(
+            "/api/agent/v1/materials",
+            params={
+                "identity_id": source_identity_id,
+                "material_id": material_id,
+            },
+        )
+        self.assertEqual(legacy_source_catalog.status_code, 200, msg=legacy_source_catalog.text)
+        self.assertEqual(
+            [item["id"] for item in legacy_source_catalog.json()["items"]],
+            [material_id],
+        )
+        self.assertFalse(legacy_source_catalog.json()["items"][0]["is_primary"])
+
+        source_filtered = self._agent_get(
+            "/api/agent/v1/materials",
+            params={"source_identity_id": source_identity_id},
+        )
+        self.assertEqual(source_filtered.status_code, 200, msg=source_filtered.text)
+        self.assertEqual(
+            [item["id"] for item in source_filtered.json()["items"]],
+            [material_id, replacement_id],
+        )
+
+        set_target_default = self.client.post(
+            f"/api/agent/v1/materials/{material_id}/set-primary",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-global-material-target-default",
+            },
+            params={"identity_id": target_identity_id},
+        )
+        self.assertEqual(set_target_default.status_code, 200, msg=set_target_default.text)
+        self.assertTrue(set_target_default.json()["is_primary"])
+        self.assertEqual(
+            set_target_default.json()["default_for_identity_ids"],
+            [target_identity_id],
+        )
+
+        source_less = self.client.post(
+            "/api/agent/v1/materials",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-global-material-source-less",
+            },
+            data={"material_type": "other"},
+            files={
+                "file": (
+                    "shared-note.txt",
+                    io.BytesIO(b"source-less global note"),
+                    "text/plain",
+                ),
+            },
+        )
+        self.assertEqual(source_less.status_code, 201, msg=source_less.text)
+        self.assertIsNone(source_less.json()["source_identity_id"])
+        self.assertIsNone(source_less.json()["identity_id"])
+        self.assertEqual(source_less.json()["default_for_identity_ids"], [])
+
+    def test_agent_material_set_primary_replays_a_pre_upgrade_receipt(self) -> None:
+        from app.services.agent_mutations import fingerprint
+
+        identity_id = self._create_identity(email="legacy-material-receipt@example.com")
+        material_id = self._upload_material(identity_id)
+        material = self._agent_get(f"/api/agent/v1/materials/{material_id}")
+        self.assertEqual(material.status_code, 200, msg=material.text)
+        legacy_response = material.json()
+        legacy_response.pop("source_identity_id")
+        legacy_response.pop("default_for_identity_ids")
+        request_id = "pre-upgrade-material-primary"
+        request_fingerprint = fingerprint(
+            {
+                "command": "materials.set-primary",
+                "request": {"material_id": material_id},
+            },
+        )
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO agent_mutation_receipts (
+                    id, command, idempotency_key, request_fingerprint, response
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-material-primary-receipt",
+                    "materials.set-primary",
+                    request_id,
+                    request_fingerprint,
+                    json.dumps(legacy_response),
+                ),
+            )
+
+        replayed = self.client.post(
+            f"/api/agent/v1/materials/{material_id}/set-primary",
+            headers={**self._agent_headers(), "Idempotency-Key": request_id},
+        )
+
+        self.assertEqual(replayed.status_code, 200, msg=replayed.text)
+        self.assertEqual(replayed.json()["source_identity_id"], identity_id)
+        self.assertEqual(replayed.json()["identity_id"], identity_id)
+        self.assertEqual(replayed.json()["default_for_identity_ids"], [identity_id])
+
     def test_agent_can_download_material_without_exposing_internal_path(self) -> None:
         identity_id = self._create_identity()
         material_id = self._upload_material(identity_id)

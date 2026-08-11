@@ -299,7 +299,7 @@ async def generate_task_draft(
                     primary_material=task.primary_material,
                     llm_profile=runtime_llm_profile,
                     professor=task.professor,
-                    available_materials=list(task.identity.materials),
+                    available_materials=[],
                     custom_subject=template_subject,
                     custom_body=template_body,
                     custom_body_html=template_body_html,
@@ -608,7 +608,6 @@ async def rewrite_task_draft(
         identity = task.identity
         primary_material = task.primary_material
         professor = task.professor
-        available_materials = list(task.identity.materials)
         task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
 
         now = utc_now()
@@ -646,7 +645,7 @@ async def rewrite_task_draft(
                     primary_material=primary_material,
                     llm_profile=runtime_llm_profile,
                     professor=professor,
-                    available_materials=available_materials,
+                    available_materials=[],
                     custom_subject=source_subject,
                     custom_body=source_body_text,
                     custom_body_html=source_body_html or None,
@@ -823,7 +822,7 @@ async def preview_task_draft(
             primary_material=task.primary_material,
             llm_profile=runtime_llm_profile,
             professor=task.professor,
-            available_materials=list(task.identity.materials),
+            available_materials=[],
             custom_subject=template_subject,
             custom_body=template_body,
             custom_body_html=template_body_html,
@@ -1450,14 +1449,14 @@ async def _validate_primary_material_id(
     identity_id: int,
     primary_material_id: int,
 ) -> IdentityMaterial:
+    del identity_id
     material = await session.scalar(
         select(IdentityMaterial).where(
-            IdentityMaterial.identity_id == identity_id,
             IdentityMaterial.id == primary_material_id,
         ),
     )
     if not material:
-        raise ValueError("AI 写信参考材料不属于当前身份")
+        raise ValueError("未找到 AI 写信参考材料")
     if not material_can_be_primary(material):
         raise ValueError("当前材料不支持作为 AI 写信参考材料")
     return material
@@ -1468,6 +1467,7 @@ async def _validate_selected_material_ids(
     identity_id: int,
     material_ids: list[int] | None,
 ) -> None:
+    del identity_id
     if material_ids is None:
         return
     if any(material_id < 1 for material_id in material_ids):
@@ -1481,13 +1481,12 @@ async def _validate_selected_material_ids(
         materials.extend(
             await session.scalars(
                 select(IdentityMaterial.id).where(
-                    IdentityMaterial.identity_id == identity_id,
                     IdentityMaterial.id.in_(material_id_chunk),
                 ),
             ),
         )
     if len(set(materials)) != len(set(material_ids)):
-        raise ValueError("存在不属于当前身份的随信材料")
+        raise ValueError("存在已删除或不存在的随信材料")
 
 
 async def _resolve_runtime_llm_profile(

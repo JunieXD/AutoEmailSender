@@ -111,7 +111,7 @@ def fetch_message_headers_by_uid(client: object, uid: int) -> bytes:
     status, payload = client.uid(
         "FETCH",
         str(uid),
-        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES X-AUTOEMAILSENDER-DELIVERY-ID)] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return b""
@@ -142,7 +142,7 @@ def fetch_message_headers_payloads_by_uid_batch(
     status, payload = client.uid(
         "FETCH",
         uid_set,
-        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES X-AUTOEMAILSENDER-DELIVERY-ID)] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return []
@@ -159,7 +159,7 @@ def fetch_message_headers_payloads_by_uid_range(
     status, payload = client.uid(
         "FETCH",
         f"{start_uid}:{end_uid}",
-        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES X-AUTOEMAILSENDER-DELIVERY-ID)] INTERNALDATE)",
     )
     if _imap_status_text(status).upper() != "OK":
         detail = _format_imap_response_detail(status, payload)

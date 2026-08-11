@@ -50,6 +50,9 @@ describe("TopNavBar", () => {
 
     const link = screen.getByRole("link", { name: "统计面板" });
     expect(link).toHaveAttribute("href", "/dashboard");
+    const header = document.querySelector('[data-app-header="true"]');
+    expect(header).toHaveClass("shrink-0");
+    expect(header).not.toHaveClass("sticky", "backdrop-blur-xl");
   });
 
   it("keeps the last task center URL when navigating away and back", async () => {
@@ -134,7 +137,9 @@ describe("TopNavBar", () => {
     fireEvent.click(screen.getByRole("option", { name: "身份 B" }));
 
     await waitFor(() => {
-      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalledWith({
+        nextIdentityId: 2,
+      });
     });
     expect(selectionMock.setSelectedIdentityId).not.toHaveBeenCalled();
   });
@@ -157,7 +162,9 @@ describe("TopNavBar", () => {
     fireEvent.click(screen.getByRole("option", { name: "模型 B" }));
 
     await waitFor(() => {
-      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalled();
+      expect(draftGuardMock.requestWorkspaceDraftGuard).toHaveBeenCalledWith({
+        nextLlmProfileId: 2,
+      });
     });
     expect(selectionMock.setSelectedLlmProfileId).not.toHaveBeenCalled();
   });

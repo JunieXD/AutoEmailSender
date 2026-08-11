@@ -290,7 +290,10 @@ export const TestComposePage = () => {
 
   return (
     <>
-      <main className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-7xl flex-col px-6 py-8">
+      <main
+        data-test-compose-page
+        className="mx-auto flex min-h-full max-w-7xl flex-col px-6 py-8"
+      >
       {loading || !thread ? (
         <div className="flex flex-1 items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
           <Loader2 className="h-4 w-4 animate-spin" />

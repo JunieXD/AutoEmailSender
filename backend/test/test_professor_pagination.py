@@ -63,6 +63,7 @@ class ProfessorPaginationTests(unittest.TestCase):
 
             self.assertEqual(page.items, [])
             self.assertEqual(page.total_count, 0)
+            self.assertFalse(page.has_any_professors)
             self.assertEqual(page.page, 1)
             self.assertEqual(page.total_pages, 1)
             self.assertIsNone(page.next_cursor)
@@ -329,6 +330,10 @@ class ProfessorPaginationTests(unittest.TestCase):
                         tag_ids=[str(hierarchy.filter_options.tags[0].id)],
                     ),
                 )
+                no_matches = await list_management_professor_page(
+                    session,
+                    ProfessorManagementPageRequest(keyword="不存在的导师"),
+                )
 
             self.assertEqual(
                 set(hierarchy.filter_options.schools),
@@ -339,6 +344,8 @@ class ProfessorPaginationTests(unittest.TestCase):
             self.assertEqual([item.name for item in missing.items], ["缺失字段"])
             self.assertEqual([item.name for item in composite_title.items], ["王短词"])
             self.assertEqual([item.name for item in tagged.items], ["王短词"])
+            self.assertEqual(no_matches.total_count, 0)
+            self.assertTrue(no_matches.has_any_professors)
 
         asyncio.run(run())
 
@@ -371,6 +378,13 @@ class ProfessorPaginationTests(unittest.TestCase):
                         statuses=["replied"],
                     ),
                 )
+                no_matches = await list_dashboard_professor_page(
+                    session,
+                    ProfessorDashboardPageRequest(
+                        identity_id=identity_id,
+                        keyword="不存在的导师",
+                    ),
+                )
                 score_range = await list_dashboard_professor_ids(
                     session,
                     ProfessorDashboardPageRequest(
@@ -393,6 +407,8 @@ class ProfessorPaginationTests(unittest.TestCase):
             self.assertEqual([item.name for item in scheduled.items], ["排程导师"])
             self.assertTrue(scheduled.items[0].has_active_schedule)
             self.assertEqual([item.name for item in replied.items], ["回复导师"])
+            self.assertEqual(no_matches.total_count, 0)
+            self.assertTrue(no_matches.has_any_professors)
             self.assertEqual(score_range.ids, [expected["replied"]])
             self.assertEqual(
                 set(missing_score.ids), {expected["scheduled"], expected["plain"]}

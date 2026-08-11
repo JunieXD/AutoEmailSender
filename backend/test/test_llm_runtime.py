@@ -1263,10 +1263,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("加粗", prompt)
         self.assertIn("链接", prompt)
         payload = json.loads(prompt)
-        self.assertEqual(
-            [item["id"] for item in payload["input"]["可选材料"]],
-            [2, 12],
-        )
+        self.assertNotIn("可选材料", payload["input"])
         self.assert_draft_prompt_omits_match_context(prompt)
 
     def test_build_draft_prompt_places_stable_batch_context_before_professor(self) -> None:
@@ -1539,10 +1536,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
         self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("professor"))
-        self.assertEqual(
-            [item["id"] for item in stable_input["available_materials"]],
-            [3, 12],
-        )
+        self.assertNotIn("available_materials", stable_input)
         self.assert_draft_prompt_omits_match_context(parts.prompt)
         self.assert_draft_prompt_omits_match_context(parts.stable_prefix)
         self.assertEqual(len(parts.prompt_hash), 64)

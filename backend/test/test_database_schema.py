@@ -255,6 +255,394 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIn("agent_ui_handoffs", rebuilt_tables)
         self.assertIn("agent_ui_handoff_items", rebuilt_tables)
 
+    def test_global_material_library_migration_preserves_materials_and_source_deletion(self) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_library.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            source_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="material-source@example.com",
+            )
+            target_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="material-target@example.com",
+            )
+            orphan_default_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="material-orphan-default@example.com",
+            )
+            material_id = DatabaseSchemaTests._insert_identity_material_into(
+                connection,
+                source_identity_id,
+                display_name="保留材料",
+                original_filename="missing-resume.pdf",
+                extracted_text="preserved extracted text",
+                material_type="resume",
+            )
+            connection.execute(
+                """
+                UPDATE identity_materials
+                SET file_path = ?, mime_type = ?, size_bytes = ?, sha256 = ?, created_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "/missing/legacy/uploads/resume.pdf",
+                    "application/pdf",
+                    12345,
+                    "a" * 64,
+                    "2024-02-03 04:05:06",
+                    material_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = ? WHERE id = ?",
+                (material_id, target_identity_id),
+            )
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = 999998 WHERE id = ?",
+                (orphan_default_identity_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO identity_materials (
+                    identity_id, display_name, original_filename, file_path,
+                    size_bytes, sha256, material_type
+                )
+                VALUES (999999, '孤儿来源材料', 'orphan.txt', '/missing/orphan.txt', 0, ?, 'other')
+                """,
+                ("b" * 64,),
+            )
+            orphan_material_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            identity_id_column = next(
+                row
+                for row in connection.execute("PRAGMA table_info('identity_materials')")
+                if row[1] == "identity_id"
+            )
+            material_fk = next(
+                row
+                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                if row[3] == "identity_id"
+            )
+            primary_fk = next(
+                row
+                for row in connection.execute("PRAGMA foreign_key_list('identity_profiles')")
+                if row[3] == "current_primary_material_id"
+            )
+            preserved = connection.execute(
+                """
+                SELECT identity_id, display_name, original_filename, file_path,
+                       mime_type, size_bytes, sha256, extracted_text, material_type,
+                       created_at
+                FROM identity_materials WHERE id = ?
+                """,
+                (material_id,),
+            ).fetchone()
+            orphan_source_id = connection.execute(
+                "SELECT identity_id FROM identity_materials WHERE id = ?",
+                (orphan_material_id,),
+            ).fetchone()[0]
+            repaired_default_id = connection.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (orphan_default_identity_id,),
+            ).fetchone()[0]
+            self.assertEqual(identity_id_column[3], 0)
+            self.assertEqual(material_fk[6].upper(), "SET NULL")
+            self.assertEqual(primary_fk[6].upper(), "SET NULL")
+            self.assertEqual(
+                preserved,
+                (
+                    source_identity_id,
+                    "保留材料",
+                    "missing-resume.pdf",
+                    "/missing/legacy/uploads/resume.pdf",
+                    "application/pdf",
+                    12345,
+                    "a" * 64,
+                    "preserved extracted text",
+                    "resume",
+                    "2024-02-03 04:05:06",
+                ),
+            )
+            self.assertIsNone(orphan_source_id)
+            self.assertIsNone(repaired_default_id)
+
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("DELETE FROM identity_profiles WHERE id = ?", (source_identity_id,))
+            connection.commit()
+            surviving_material = connection.execute(
+                "SELECT identity_id, file_path FROM identity_materials WHERE id = ?",
+                (material_id,),
+            ).fetchone()
+            target_default = connection.execute(
+                "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
+                (target_identity_id,),
+            ).fetchone()[0]
+        self.assertEqual(surviving_material, (None, "/missing/legacy/uploads/resume.pdf"))
+        self.assertEqual(target_default, material_id)
+
+    def test_global_material_library_repairs_partially_migrated_material_fk(self) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_partial_fk.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = connection.execute(
+                "PRAGMA table_info('identity_materials')",
+            ).fetchall()
+            column_definitions: list[str] = []
+            column_names: list[str] = []
+            for _, name, column_type, not_null, default_value, primary_key in columns:
+                definition = f'"{name}" {column_type}'
+                if primary_key:
+                    definition += " PRIMARY KEY"
+                if not_null:
+                    definition += " NOT NULL"
+                if default_value is not None:
+                    definition += f" DEFAULT {default_value}"
+                column_definitions.append(definition)
+                column_names.append(f'"{name}"')
+            column_definitions.append(
+                "CONSTRAINT fk_identity_materials_identity_id_identity_profiles "
+                "FOREIGN KEY(identity_id) REFERENCES identity_profiles(id) ON DELETE SET NULL",
+            )
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute(
+                f"CREATE TABLE identity_materials_partial ({', '.join(column_definitions)})",
+            )
+            joined_columns = ", ".join(column_names)
+            connection.execute(
+                f"INSERT INTO identity_materials_partial ({joined_columns}) "
+                f"SELECT {joined_columns} FROM identity_materials",
+            )
+            connection.execute("DROP TABLE identity_materials")
+            connection.execute(
+                "ALTER TABLE identity_materials_partial RENAME TO identity_materials",
+            )
+            connection.execute(
+                "CREATE INDEX ix_identity_materials_identity_id ON identity_materials(identity_id)",
+            )
+            connection.commit()
+
+        with sqlite3.connect(database_path) as connection:
+            before_column = next(
+                row
+                for row in connection.execute("PRAGMA table_info('identity_materials')")
+                if row[1] == "identity_id"
+            )
+            before_fk = next(
+                row
+                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                if row[3] == "identity_id"
+            )
+        self.assertEqual(before_column[3], 1)
+        self.assertEqual(before_fk[6].upper(), "SET NULL")
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            after_column = next(
+                row
+                for row in connection.execute("PRAGMA table_info('identity_materials')")
+                if row[1] == "identity_id"
+            )
+            after_fk = next(
+                row
+                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                if row[3] == "identity_id"
+            )
+        self.assertEqual(after_column[3], 0)
+        self.assertEqual(after_fk[6].upper(), "SET NULL")
+
+    def test_global_material_library_repairs_orphan_after_interrupted_schema_upgrade(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_interrupted_upgrade.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute(
+                """
+                INSERT INTO identity_materials (
+                    identity_id, display_name, original_filename, file_path,
+                    size_bytes, sha256, material_type
+                )
+                VALUES (999999, '中断迁移材料', 'interrupted.txt',
+                        '/missing/interrupted.txt', 0, ?, 'other')
+                """,
+                ("c" * 64,),
+            )
+            material_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            # Simulate a non-transactional SQLite migration that completed its
+            # table rebuild but stopped before Alembic advanced the revision.
+            connection.execute(
+                "UPDATE alembic_version SET version_num = ?",
+                (previous_revision,),
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            source_identity_id = connection.execute(
+                "SELECT identity_id FROM identity_materials WHERE id = ?",
+                (material_id,),
+            ).fetchone()[0]
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version",
+            ).fetchone()[0]
+        self.assertIsNone(source_identity_id)
+        self.assertEqual(version, migration_revision)
+
+    def test_global_material_library_downgrade_refuses_cross_identity_reuse(self) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_downgrade_blocked.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            source_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="downgrade-source@example.com",
+            )
+            target_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="downgrade-target@example.com",
+            )
+            material_id = DatabaseSchemaTests._insert_identity_material_into(
+                connection,
+                source_identity_id,
+                original_filename="shared.txt",
+                extracted_text="shared",
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = ? WHERE id = ?",
+                (material_id, target_identity_id),
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with self.assertRaisesRegex(RuntimeError, "cross-identity material references"):
+            run_alembic_in_process(env, "downgrade", previous_revision)
+
+        with sqlite3.connect(database_path) as connection:
+            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            material_count = connection.execute(
+                "SELECT COUNT(*) FROM identity_materials WHERE id = ?",
+                (material_id,),
+            ).fetchone()[0]
+        self.assertEqual(version, migration_revision)
+        self.assertEqual(material_count, 1)
+
+    def test_global_material_library_round_trip_when_legacy_ownership_is_intact(self) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_round_trip.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="round-trip-material@example.com",
+            )
+            material_id = DatabaseSchemaTests._insert_identity_material_into(
+                connection,
+                identity_id,
+                original_filename="round-trip.txt",
+                extracted_text="round trip",
+            )
+            connection.execute(
+                "UPDATE identity_profiles SET current_primary_material_id = ? WHERE id = ?",
+                (material_id, identity_id),
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            identity_id_column = next(
+                row
+                for row in connection.execute("PRAGMA table_info('identity_materials')")
+                if row[1] == "identity_id"
+            )
+            material = connection.execute(
+                "SELECT identity_id, original_filename, extracted_text FROM identity_materials WHERE id = ?",
+                (material_id,),
+            ).fetchone()
+        self.assertEqual(identity_id_column[3], 1)
+        self.assertEqual(material, (identity_id, "round-trip.txt", "round trip"))
+
+    def test_global_material_library_downgrade_refuses_cross_identity_rewrite_snapshot(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "global_material_rewrite_snapshot.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260810_agent_ui_handoffs"
+        migration_revision = "20260811_global_material_library"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            source_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="rewrite-source@example.com",
+            )
+            target_identity_id = DatabaseSchemaTests._insert_identity_into(
+                connection,
+                email_address="rewrite-target@example.com",
+            )
+            llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+                connection,
+                name="改写迁移模型",
+            )
+            professor_id = DatabaseSchemaTests._insert_professor_into(
+                connection,
+                "rewrite-migration@example.edu",
+            )
+            material_id = DatabaseSchemaTests._insert_identity_material_into(
+                connection,
+                source_identity_id,
+                original_filename="rewrite-shared.txt",
+            )
+            task_id = DatabaseSchemaTests._insert_workspace_root_task_into(
+                connection,
+                target_identity_id,
+                llm_profile_id,
+                professor_id,
+            )
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET draft_rewrite_source_selected_material_ids = ?
+                WHERE id = ?
+                """,
+                (json.dumps([str(material_id)]), task_id),
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with self.assertRaisesRegex(RuntimeError, "cross-identity material references"):
+            run_alembic_in_process(env, "downgrade", previous_revision)
+
     def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(self) -> None:
         database_path = Path(self.temp_dir.name) / "match_task_decoupling.db"
         env = os.environ.copy()
@@ -2859,7 +3247,7 @@ class MigrationScriptTests(unittest.TestCase):
             SELECT email_task_id, owner_role, runtime_id, owner_generation,
                    owner_pid, outcome, subject, content
             FROM email_delivery_attempts
-            WHERE attempt_id = ?
+            WHERE id = ?
             """,
             (f"legacy-{task_id}",),
         ).fetchone()
@@ -2908,6 +3296,153 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertIn("delivery_attempt_id", email_log_columns)
         self.assertIn("uq_email_logs_delivery_attempt_id", log_indexes)
+        self.assertEqual(foreign_key_check, [])
+
+    def test_master_reconciliation_upgrades_an_already_applied_split_beta_schema(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "applied-split-beta.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        self._run_alembic(env, "upgrade", "20260810_agent_ui_handoffs")
+
+        connection = sqlite3.connect(database_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        identity_id = DatabaseSchemaTests._insert_identity_into(
+            connection,
+            email_address="split-beta-upgrade@example.com",
+        )
+        llm_profile_id = DatabaseSchemaTests._insert_llm_profile_into(
+            connection,
+            name="Split beta upgrade model",
+        )
+        professor_id = DatabaseSchemaTests._insert_professor_into(
+            connection,
+            "split-beta-upgrade@example.edu",
+        )
+        connection.executescript(
+            """
+            CREATE TABLE email_delivery_attempts (
+                attempt_id VARCHAR(36) PRIMARY KEY,
+                email_task_id INTEGER NOT NULL REFERENCES email_tasks(id) ON DELETE CASCADE,
+                owner_role VARCHAR(16) NOT NULL,
+                runtime_id VARCHAR(128) NOT NULL,
+                owner_generation VARCHAR(128) NOT NULL,
+                owner_pid INTEGER NOT NULL,
+                outcome VARCHAR(48) NOT NULL DEFAULT 'claimed',
+                claimed_at DATETIME NOT NULL,
+                finalized_at DATETIME,
+                smtp_accepted_at DATETIME,
+                prepared_rfc_message_id VARCHAR(255),
+                subject TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_html TEXT,
+                attachment_count INTEGER NOT NULL DEFAULT 0,
+                provider_payload JSON,
+                error_summary TEXT
+            );
+            CREATE INDEX ix_email_delivery_attempts_task_claimed
+                ON email_delivery_attempts(email_task_id, claimed_at);
+            CREATE INDEX ix_email_delivery_attempts_outcome_finalized
+                ON email_delivery_attempts(outcome, finalized_at);
+            ALTER TABLE email_tasks ADD COLUMN delivery_attempt_id VARCHAR(36);
+            ALTER TABLE email_tasks ADD COLUMN delivery_outcome VARCHAR(48);
+            ALTER TABLE email_tasks ADD COLUMN delivery_outcome_at DATETIME;
+            ALTER TABLE email_logs ADD COLUMN delivery_attempt_id VARCHAR(36);
+            CREATE UNIQUE INDEX uq_email_logs_delivery_attempt_id
+                ON email_logs(delivery_attempt_id)
+                WHERE delivery_attempt_id IS NOT NULL;
+            """,
+        )
+        task_id = int(
+            connection.execute(
+                """
+                INSERT INTO email_tasks (
+                    source, identity_id, llm_profile_id, professor_id, status,
+                    approved_subject, approved_body_text, retry_count,
+                    delivery_attempt_id, delivery_outcome, delivery_outcome_at,
+                    created_at, updated_at
+                ) VALUES (
+                    'manual', ?, ?, ?, 'sent', 'Applied beta subject',
+                    'Applied beta body', 1, 'applied-beta-attempt',
+                    'smtp_accepted', '2026-08-10 09:00:01',
+                    '2026-08-10 08:59:00', '2026-08-10 09:00:01'
+                )
+                """,
+                (identity_id, llm_profile_id, professor_id),
+            ).lastrowid
+        )
+        connection.execute(
+            """
+            INSERT INTO email_delivery_attempts (
+                attempt_id, email_task_id, owner_role, runtime_id,
+                owner_generation, owner_pid, outcome, claimed_at, finalized_at,
+                smtp_accepted_at, prepared_rfc_message_id, subject, content
+            ) VALUES (
+                'applied-beta-attempt', ?, 'worker', 'runtime-1',
+                'generation-1', 1234, 'smtp_accepted',
+                '2026-08-10 09:00:00', '2026-08-10 09:00:01',
+                '2026-08-10 09:00:01', '<applied-beta@example.edu>',
+                'Applied beta subject', 'Applied beta body'
+            )
+            """,
+            (task_id,),
+        )
+        connection.execute("DELETE FROM alembic_version")
+        connection.execute(
+            "INSERT INTO alembic_version(version_num) VALUES (?)",
+            ("20260810_merge_agent_ui_delivery",),
+        )
+        connection.commit()
+        connection.close()
+
+        self._run_alembic(env, "upgrade", "head")
+
+        upgraded = sqlite3.connect(database_path)
+        upgraded.row_factory = sqlite3.Row
+        attempt = upgraded.execute(
+            """
+            SELECT id, email_task_id, identity_id, professor_id, attempt_number,
+                   status, started_at, completed_at, outcome, owner_generation
+            FROM email_delivery_attempts
+            WHERE id = 'applied-beta-attempt'
+            """,
+        ).fetchone()
+        columns = {
+            row[1]
+            for row in upgraded.execute(
+                "PRAGMA table_info('email_delivery_attempts')",
+            )
+        }
+        delivery_log_foreign_keys = [
+            row
+            for row in upgraded.execute("PRAGMA foreign_key_list('email_logs')")
+            if row[3] == "delivery_attempt_id"
+        ]
+        foreign_key_check = upgraded.execute("PRAGMA foreign_key_check").fetchall()
+        version = upgraded.execute(
+            "SELECT version_num FROM alembic_version",
+        ).fetchone()[0]
+        upgraded.close()
+
+        self.assertEqual(version, HEAD_REVISION)
+        self.assertIsNotNone(attempt)
+        assert attempt is not None
+        self.assertEqual(attempt["email_task_id"], task_id)
+        self.assertEqual(attempt["identity_id"], identity_id)
+        self.assertEqual(attempt["professor_id"], professor_id)
+        self.assertEqual(attempt["attempt_number"], 1)
+        self.assertEqual(attempt["status"], "accepted")
+        self.assertEqual(attempt["outcome"], "smtp_accepted")
+        self.assertEqual(attempt["owner_generation"], "generation-1")
+        self.assertIn("id", columns)
+        self.assertIn("started_at", columns)
+        self.assertNotIn("attempt_id", columns)
+        self.assertNotIn("claimed_at", columns)
+        self.assertEqual(
+            [(row[2], row[4]) for row in delivery_log_foreign_keys],
+            [("email_delivery_attempts", "id")],
+        )
         self.assertEqual(foreign_key_check, [])
 
     def _run_alembic(self, env: dict[str, str], *args: str) -> None:

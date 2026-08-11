@@ -669,6 +669,11 @@ class ContractTests(unittest.TestCase):
         )
         self.assertIn("extracted_text", materials["output"]["known_fields"])
         self.assertTrue(
+            {"source_identity_id", "default_for_identity_ids"}.issubset(
+                materials["output"]["known_fields"],
+            ),
+        )
+        self.assertTrue(
             {"available_actions", "blocked_actions", "blocked_reason"}.issubset(
                 jobs["output"]["known_fields"],
             ),
@@ -682,6 +687,30 @@ class ContractTests(unittest.TestCase):
         resend = describe_command(app, "campaigns.resend-context")
         assert resend is not None
         self.assertNotIn("available_actions", resend["output"]["known_fields"])
+
+    def test_material_contracts_distinguish_default_context_from_upload_source(self) -> None:
+        material_list = describe_command(app, "materials.list")
+        material_get = describe_command(app, "materials.get")
+        material_upload = describe_command(app, "materials.upload")
+        material_set_primary = describe_command(app, "materials.set-primary")
+        assert material_list is not None
+        assert material_get is not None
+        assert material_upload is not None
+        assert material_set_primary is not None
+
+        list_properties = material_list["input"]["schema"]["properties"]
+        self.assertIn("identity_id", list_properties)
+        self.assertIn("source_identity_id", list_properties)
+        self.assertIn("target_identity_id", list_properties)
+        self.assertIn(
+            "target_identity_id",
+            material_get["input"]["schema"]["properties"],
+        )
+        self.assertNotIn("identity_id", material_upload["input"]["schema"]["required"])
+        self.assertIn(
+            "identity_id",
+            material_set_primary["input"]["schema"]["required"],
+        )
 
     def test_offset_pagination_is_normalized_and_fetched_to_completion(self) -> None:
         first = normalize_collection_response(
@@ -1585,10 +1614,10 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             server_filter_params(
-                '{"id":9,"identity_id":3,"material_type":"cv"}',
+                '{"id":9,"identity_id":3,"source_identity_id":4,"material_type":"cv"}',
                 command="materials.list",
             ),
-            {"material_id": 9, "identity_id": 3, "material_type": "cv"},
+            {"material_id": 9, "source_identity_id": 4, "material_type": "cv"},
         )
         self.assertEqual(
             server_filter_params(

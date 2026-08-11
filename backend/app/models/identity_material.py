@@ -26,10 +26,12 @@ class IdentityMaterial(Base):
     __tablename__ = "identity_materials"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    identity_id: Mapped[int] = mapped_column(
-        ForeignKey("identity_profiles.id"),
+    # Kept as ``identity_id`` in the database for upgrade compatibility. It is
+    # provenance only; materials are visible to every identity.
+    identity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_profiles.id", ondelete="SET NULL"),
         index=True,
-        nullable=False,
+        nullable=True,
     )
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -49,7 +51,20 @@ class IdentityMaterial(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    identity: Mapped["IdentityProfile"] = relationship(
-        back_populates="materials",
+    source_identity: Mapped["IdentityProfile | None"] = relationship(
+        back_populates="source_materials",
         foreign_keys=[identity_id],
     )
+    default_for_identities: Mapped[list["IdentityProfile"]] = relationship(
+        foreign_keys="IdentityProfile.current_primary_material_id",
+        viewonly=True,
+    )
+
+    @property
+    def identity(self) -> "IdentityProfile | None":
+        """Deprecated alias for upload provenance used by older integrations."""
+        return self.source_identity
+
+    @identity.setter
+    def identity(self, value: "IdentityProfile | None") -> None:
+        self.source_identity = value

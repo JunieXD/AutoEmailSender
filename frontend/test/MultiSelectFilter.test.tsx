@@ -62,7 +62,7 @@ describe("MultiSelectFilter", () => {
     expect(listbox).toHaveClass("flex", "flex-col", "gap-1");
   });
 
-  it("summarizes multiple selected values and clears the filter", async () => {
+  it("summarizes multiple selected values and clears immediately without closing", async () => {
     const onChange = vi.fn();
 
     render(
@@ -79,8 +79,9 @@ describe("MultiSelectFilter", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "职称：教授 等 2 项" }));
     fireEvent.click(screen.getByRole("button", { name: "清除职称筛选" }));
-    fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith([]);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("listbox", { name: "职称" })).toBeInTheDocument();
   });
 });

@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,6 +31,7 @@ const notificationMocks = vi.hoisted(() => ({
 }));
 
 const openExternalHttpUrl = vi.hoisted(() => vi.fn());
+const scrollIntoView = vi.hoisted(() => vi.fn());
 
 vi.mock('@/entities/community-mentor/api/communityMentors', () => ({
   getCommunityMentorCatalog: (...args: unknown[]) => apiMocks.getCatalog(...args),
@@ -195,6 +197,15 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
+const renderPageInStrictMode = () =>
+  render(
+    <StrictMode>
+      <MemoryRouter>
+        <CommunityMentorsPage />
+      </MemoryRouter>
+    </StrictMode>,
+  );
+
 describe('CommunityMentorsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -202,6 +213,11 @@ describe('CommunityMentorsPage', () => {
     resetCommunityMentorPageSessionSnapshotForTests();
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
+    scrollIntoView.mockReset();
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -554,9 +570,11 @@ describe('CommunityMentorsPage', () => {
 
     renderPage();
 
-    const selectFiltered = await screen.findByRole('button', {
+    fireEvent.click(await screen.findByLabelText(/选择 示例大学 计算机学院/));
+    const selectFiltered = screen.getByRole('button', {
       name: '全选当前学院',
     });
+    expect(selectFiltered).toHaveAttribute('aria-pressed', 'mixed');
     fireEvent.click(selectFiltered);
     expect(selectFiltered).toHaveAttribute('aria-pressed', 'true');
     expect(within(selectFiltered).getByText(/已选 2\/2/)).toBeInTheDocument();
@@ -564,6 +582,109 @@ describe('CommunityMentorsPage', () => {
     fireEvent.click(selectFiltered);
     expect(selectFiltered).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByText(/已选 0 个学院/)).toBeInTheDocument();
+  });
+
+  it('reports selection limits once and lets a partial bulk selection be cancelled', async () => {
+    const units = Array.from({ length: 33 }, (_, index) => ({
+      id: `org_example_school_${index + 1}`,
+      name: `学院${String(index + 1).padStart(2, '0')}`,
+      type: 'school' as const,
+      record_count: 1,
+      path: `objects/sha256/${String(index + 1).padStart(64, '0')}.json`,
+    }));
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: units.length,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: units.length,
+        units,
+      })),
+    });
+
+    renderPageInStrictMode();
+
+    fireEvent.click(await screen.findByRole('button', { name: '全选当前学院' }));
+
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledTimes(1);
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledWith(
+      '已按当前显示顺序完成选择，单次选择上限 20 个学院，跳过 13 个学院。',
+    );
+    const cancelSelection = screen.getByRole('button', { name: '取消当前学院选择' });
+    expect(cancelSelection).toHaveAttribute('aria-pressed', 'mixed');
+    expect(within(cancelSelection).getByText(/已选 20\/33/)).toBeInTheDocument();
+
+    const pagination = screen.getByRole('navigation', { name: '学校与学院分页' });
+    fireEvent.click(within(pagination).getByRole('button', { name: '下一页' }));
+    fireEvent.click(within(pagination).getByRole('button', { name: '下一页' }));
+    fireEvent.click(screen.getByLabelText(/选择 示例大学 学院21/));
+
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledTimes(2);
+    expect(notificationMocks.notifyWarning).toHaveBeenLastCalledWith(
+      '学院选择过多',
+      '一次最多加载 20 个学院。',
+    );
+
+    fireEvent.click(cancelSelection);
+    expect(notificationMocks.notifyWarning).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: '全选当前学院' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByText(/已选 0 个学院/)).toBeInTheDocument();
+  });
+
+  it('shows nine colleges per page by default and uses the shared pagination controls', async () => {
+    const appHeader = document.createElement('nav');
+    appHeader.dataset.appHeader = 'true';
+    vi.spyOn(appHeader, 'getBoundingClientRect').mockReturnValue({
+      bottom: 128,
+    } as DOMRect);
+    document.body.append(appHeader);
+    const units = Array.from({ length: 10 }, (_, index) => ({
+      id: `org_example_school_${index + 1}`,
+      name: `学院${String(index + 1).padStart(2, '0')}`,
+      type: 'school' as const,
+      record_count: 1,
+      path: `objects/sha256/${String(index + 1).padStart(64, '0')}.json`,
+    }));
+    apiMocks.getCatalog.mockResolvedValue({
+      ...populatedCatalog,
+      record_count: units.length,
+      universities: populatedCatalog.universities.map((university) => ({
+        ...university,
+        record_count: units.length,
+        units,
+      })),
+    });
+
+    renderPage();
+
+    const pagination = await screen.findByRole('navigation', {
+      name: '学校与学院分页',
+    });
+    expect(pagination.parentElement).toHaveClass('lg:flex-row', 'lg:items-center');
+    expect(
+      within(pagination.parentElement as HTMLElement).getByRole('button', {
+        name: '查看导师',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('学校与学院每页数量')).toHaveTextContent('9');
+    expect(screen.getByLabelText(/选择 示例大学 学院01/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/选择 示例大学 学院09/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/选择 示例大学 学院10/)).not.toBeInTheDocument();
+    expect(within(pagination).getByText('显示 1-9 / 10 个学院')).toBeInTheDocument();
+
+    fireEvent.click(within(pagination).getByRole('button', { name: '下一页' }));
+
+    expect(screen.queryByLabelText(/选择 示例大学 学院01/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/选择 示例大学 学院10/)).toBeInTheDocument();
+    expect(within(pagination).getByText('显示 10-10 / 10 个学院')).toBeInTheDocument();
+    const selector = screen.getByTestId('community-mentor-unit-selector');
+    expect(selector).toHaveFocus();
+    expect(selector.style.scrollMarginTop).toBe('144px');
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' });
+    appHeader.remove();
   });
 
   it('opens a read-only detail dialog and links contributors to GitHub', async () => {

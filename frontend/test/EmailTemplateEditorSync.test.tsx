@@ -2,9 +2,11 @@ import React, { useState } from "react";
 import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const setContent = vi.fn();
-const setEditable = vi.fn();
 let currentEditorHtml = "";
+const setContent = vi.fn((html: string) => {
+  currentEditorHtml = html;
+});
+const setEditable = vi.fn();
 let latestEditorOptions: {
   onUpdate?: (payload: {
     editor: typeof editor;
@@ -83,5 +85,32 @@ describe("EmailTemplateEditor local sync", () => {
     });
 
     expect(setContent).not.toHaveBeenCalled();
+  });
+
+  it("synchronizes content when external values switch back to an earlier value", async () => {
+    const htmlA = "<p>模板 A 正文</p>";
+    const htmlB = "<p>模板 B 正文</p>";
+    currentEditorHtml = htmlA;
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <EmailTemplateEditor label="邮件正文" html={htmlA} onChange={onChange} />,
+    );
+    setContent.mockClear();
+
+    await act(async () => {
+      latestEditorOptions?.onUpdate?.({
+        editor,
+        transaction: { getMeta: () => undefined },
+      });
+    });
+
+    rerender(<EmailTemplateEditor label="邮件正文" html={htmlB} onChange={onChange} />);
+    expect(setContent).toHaveBeenCalledWith(htmlB, false);
+    expect(currentEditorHtml).toBe(htmlB);
+
+    setContent.mockClear();
+    rerender(<EmailTemplateEditor label="邮件正文" html={htmlA} onChange={onChange} />);
+    expect(setContent).toHaveBeenCalledWith(htmlA, false);
+    expect(currentEditorHtml).toBe(htmlA);
   });
 });

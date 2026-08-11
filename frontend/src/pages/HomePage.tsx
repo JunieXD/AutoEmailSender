@@ -370,6 +370,7 @@ export const HomePage = () => {
   );
   const [loading, setLoading] = useState(false);
   const [totalProfessorCount, setTotalProfessorCount] = useState(0);
+  const [hasAnyProfessors, setHasAnyProfessors] = useState(false);
   const [totalProfessorPages, setTotalProfessorPages] = useState(1);
   const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
     universities: [],
@@ -510,6 +511,7 @@ export const HomePage = () => {
       setHasLoadedProfessors(false);
       setProfessors([]);
       setTotalProfessorCount(0);
+      setHasAnyProfessors(false);
       setTotalProfessorPages(1);
       setSelectedIds(new Set());
       setSelectedAllQueryKey(null);
@@ -579,6 +581,7 @@ export const HomePage = () => {
       const previousLoadedKey = loadedProfessorsKeyRef.current;
       setProfessors(data.items);
       setTotalProfessorCount(data.total_count);
+      setHasAnyProfessors(data.has_any_professors);
       setTotalProfessorPages(data.total_pages);
       setFilterOptions(data.filter_options);
       if (data.next_cursor) {
@@ -1328,9 +1331,6 @@ export const HomePage = () => {
     }
   };
 
-  const hasIdentityPrimaryMaterial = Boolean(
-    selectedIdentity?.current_primary_material_id,
-  );
   const effectiveMatchSourceIdentity = matchSourceIdentity ?? selectedIdentity;
   const hasMatchPrimaryMaterial = Boolean(
     effectiveMatchSourceIdentity?.current_primary_material_id,
@@ -1339,16 +1339,22 @@ export const HomePage = () => {
     effectiveMatchSourceIdentity?.profile_name ||
     effectiveMatchSourceIdentity?.name ||
     "当前身份";
-  const hasTemplate = Boolean(
-    selectedIdentity?.outreach_template_body_text?.trim() ||
-    selectedIdentity?.outreach_template_body_html?.trim(),
+  const hasTemplate =
+    selectedIdentity?.effective_outreach_template_is_ready ??
+    Boolean(
+      selectedIdentity?.outreach_template_body_text?.trim() ||
+        selectedIdentity?.outreach_template_body_html?.trim(),
+    );
+  const hasOnboardingMaterial = Boolean(
+    selectedIdentity?.materials?.length ||
+      selectedIdentity?.current_primary_material_id,
   );
-  const hasMaterialsAndTemplate = hasIdentityPrimaryMaterial && hasTemplate;
+  const hasMaterialsAndTemplate = hasOnboardingMaterial && hasTemplate;
   const onboardingState = getOnboardingState({
     hasIdentity: Boolean(selectedIdentity),
     hasLlmProfile: Boolean(selectedLlmProfile),
     hasPrimaryMaterial: hasMaterialsAndTemplate,
-    hasProfessors: professors.length > 0,
+    hasProfessors: hasAnyProfessors,
     hasFirstTask: false,
   });
   const shouldSkipHomeOnboardingForCurrentStage =
@@ -1576,7 +1582,7 @@ export const HomePage = () => {
               { label: "创建发件身份", done: Boolean(selectedIdentity) },
               { label: "配置 AI 模型", done: Boolean(selectedLlmProfile) },
               { label: "准备材料和模板", done: hasMaterialsAndTemplate },
-              { label: "导入导师", done: professors.length > 0 },
+              { label: "导入导师", done: hasAnyProfessors },
             ]}
           />
         </main>
@@ -1924,7 +1930,7 @@ export const HomePage = () => {
           ref={professorListStartRef}
           tabIndex={-1}
           aria-label="导师看板列表"
-          className="mt-6 scroll-mt-24 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
+          className="mt-6 scroll-mt-6 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
         >
           <div className="flex flex-wrap items-center gap-3 border-b border-stone-100 px-6 py-4">
             {agentSelection ? (
@@ -1983,14 +1989,30 @@ export const HomePage = () => {
             </div>
           ) : totalProfessorCount === 0 ? (
             <div className="px-6 py-14 text-center text-sm text-stone-500">
-              <div>暂无导师</div>
-              <Link
-                to="/professors"
-                data-interactive="button"
-                className="ui-btn-primary mt-5"
-              >
-                去导师管理
-              </Link>
+              {hasAnyProfessors ? (
+                <>
+                  <div>没有符合当前搜索或筛选条件的导师</div>
+                  <button
+                    type="button"
+                    onClick={resetAllFilters}
+                    className="ui-btn-secondary mt-5"
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    清除筛选
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div>暂无导师</div>
+                  <Link
+                    to="/professors"
+                    data-interactive="button"
+                    className="ui-btn-primary mt-5"
+                  >
+                    去导师管理
+                  </Link>
+                </>
+              )}
             </div>
           ) : (
             <div className="divide-y divide-stone-100">

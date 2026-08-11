@@ -1741,11 +1741,9 @@ def build_match_prompt_parts(
     intended_research_direction: str | None = None,
     llm_profile: LLMProfile | None = None,
 ) -> MatchPromptParts:
-    sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
-    material_block = "\n".join(
-        f"- id={material.id}, name={_format_nullable(material.display_name)}, type={_format_nullable(material.material_type)}"
-        for material in sorted_materials
-    )
+    # Only the selected primary material is evidence for matching. Catalog
+    # metadata is intentionally excluded so library growth cannot inflate prompts.
+    del available_materials
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
@@ -1781,8 +1779,6 @@ def build_match_prompt_parts(
         - 加分必须基于可说明的相似点，并写入 match_reason 或 fit_points。
         - 该项不能替代默认材料证据；默认材料缺少支撑时仍需遵守上限规则。
 
-        可选材料：
-        {material_block or "- 无可用材料"}
         """
     ).strip()
 
@@ -1864,7 +1860,9 @@ def _build_base_generation_prompt(
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
-    sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
+    # Draft generation uses the selected primary material text. Attachment and
+    # catalog metadata are delivery concerns and must not affect the prompt.
+    del available_materials
 
     template_body_text = resolve_template_text(custom_body, custom_body_html)
     payload: dict[str, object] = {
@@ -1904,14 +1902,6 @@ def _build_base_generation_prompt(
             "学生材料文本": primary_material_text,
             "套磁信模板主题": _non_empty_text(custom_subject),
             "套磁信模板正文": template_body_text,
-            "可选材料": [
-                {
-                    "id": material.id,
-                    "name": _format_nullable(material.display_name),
-                    "type": _format_nullable(material.material_type),
-                }
-                for material in sorted_materials
-            ],
         },
     }
     payload["input"]["导师信息"] = _build_draft_rewrite_professor_context(professor)
@@ -1960,7 +1950,7 @@ def build_draft_rewrite_prompt_parts(
     primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
-    sorted_materials = sorted(available_materials, key=lambda material: material.id or 0)
+    del available_materials
 
     preferences = rewrite_preferences or DraftRewritePreferences()
     protected_tokens = protected_tokens or []
@@ -1988,14 +1978,6 @@ def build_draft_rewrite_prompt_parts(
             preferences.intended_research_direction,
         ),
         "student_material_text": primary_material_text,
-        "available_materials": [
-            {
-                "id": material.id,
-                "name": _format_nullable(material.display_name),
-                "type": _format_nullable(material.material_type),
-            }
-            for material in sorted_materials
-        ],
     }
 
     payload: dict[str, object] = {

@@ -180,6 +180,7 @@ describe("large list memoization", () => {
       return {
         items: items.slice(start, start + payload.page_size),
         total_count: items.length,
+        has_any_professors: items.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),
@@ -199,6 +200,7 @@ describe("large list memoization", () => {
       return {
         items: items.slice(start, start + payload.page_size),
         total_count: items.length,
+        has_any_professors: items.length > 0,
         page: payload.page,
         page_size: payload.page_size,
         total_pages: Math.max(1, Math.ceil(items.length / payload.page_size)),

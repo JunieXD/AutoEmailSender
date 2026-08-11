@@ -1049,7 +1049,7 @@ export const EmailDeliveryPlan = ({
         ref={listStartRef}
         tabIndex={-1}
         aria-label="发送计划列表"
-        className="mt-5 scroll-mt-24 focus:outline-none"
+        className="mt-5 scroll-mt-6 focus:outline-none"
       >
         {loading ? (
           <div className="flex items-center justify-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-16 text-sm text-stone-500 shadow-sm">

@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,6 +16,7 @@ import {
   ChevronsRight,
 } from "lucide-react";
 import { PageSizeSelector } from "@/components/molecules/PageSizeSelector";
+import { scrollElementIntoAppView } from "@/lib/appScrollContainer";
 import {
   clampPageSize,
   getPageForPageSizeChange,
@@ -142,7 +144,7 @@ export const Pagination = ({
     }
   }, [disabled]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pendingFocus = pendingFocusRef.current;
     if (
       !pendingFocus ||
@@ -163,7 +165,7 @@ export const Pagination = ({
     } catch {
       target.focus();
     }
-    target.scrollIntoView?.({ behavior: "auto", block: "start" });
+    scrollElementIntoAppView(target);
   }, [focusTargetRef, safePage, safePageSize]);
 
   useEffect(() => {

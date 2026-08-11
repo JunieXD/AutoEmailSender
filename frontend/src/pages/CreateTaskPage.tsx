@@ -1078,7 +1078,7 @@ export const CreateTaskPage = () => {
             ref={targetMentorsStartRef}
             tabIndex={-1}
             aria-label="目标导师列表"
-            className="scroll-mt-24 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm focus:outline-none"
+            className="scroll-mt-6 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm focus:outline-none"
           >
             <div className="flex items-start justify-between gap-4">
               <div>

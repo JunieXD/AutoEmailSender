@@ -18,6 +18,7 @@ from app.models import (
     BatchTaskStatus,
     EmailDirection,
     EmailLog,
+    EmailLogRecordState,
     EmailTask,
     EmailTaskStatus,
     IdentityProfessorMatchResult,
@@ -62,6 +63,17 @@ def _archive_condition(archived: Literal["active", "archived", "all"]):
     if archived == "archived":
         return Professor.archived_at.is_not(None)
     return literal(True)
+
+
+async def _has_any_professors(
+    session: AsyncSession,
+    *,
+    archived: Literal["active", "archived", "all"],
+) -> bool:
+    professor_id = await session.scalar(
+        select(Professor.id).where(_archive_condition(archived)).limit(1),
+    )
+    return professor_id is not None
 
 
 async def _ui_handoff_professor_condition(
@@ -642,6 +654,10 @@ async def list_management_professor_page(
     return ProfessorManagementPageRead(
         items=[_serialize_management_professor(row.Professor) for row in page_rows],
         total_count=total_count,
+        has_any_professors=await _has_any_professors(
+            session,
+            archived=request.archived,
+        ),
         page=safe_page,
         page_size=request.page_size,
         total_pages=total_pages,
@@ -664,6 +680,10 @@ def _dashboard_summary_expressions(
     rfc_message_id = func.trim(func.coalesce(EmailLog.rfc_message_id, ""))
     fingerprint = func.trim(func.coalesce(EmailLog.message_fingerprint, ""))
     event_key = case(
+        (
+            EmailLog.delivery_attempt_id.is_not(None),
+            literal("delivery:") + EmailLog.delivery_attempt_id,
+        ),
         (
             normalized_message_id != "",
             literal("message:") + func.lower(normalized_message_id),
@@ -696,6 +716,7 @@ def _dashboard_summary_expressions(
             EmailLog.direction.in_(
                 [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
             ),
+            EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
         )
         .group_by(EmailLog.professor_id, EmailLog.direction, event_key)
         .subquery("dashboard_events")
@@ -1188,6 +1209,10 @@ async def list_dashboard_professor_page(
     return ProfessorDashboardPageRead(
         items=items,
         total_count=total_count,
+        has_any_professors=await _has_any_professors(
+            session,
+            archived="active",
+        ),
         page=safe_page,
         page_size=request.page_size,
         total_pages=total_pages,

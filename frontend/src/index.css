@@ -12,7 +12,7 @@
   --foreground: #292524;
 }
 
-html {
+[data-app-scroll-container="true"] {
   scrollbar-gutter: stable;
 }
 

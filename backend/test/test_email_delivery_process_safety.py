@@ -659,7 +659,7 @@ class EmailDeliveryProcessSafetyTests(unittest.TestCase):
                 SELECT outcome, finalized_at
                 FROM email_delivery_attempts
                 WHERE email_task_id = ?
-                ORDER BY claimed_at, attempt_id
+                ORDER BY started_at, id
                 LIMIT 1
                 """,
                 (task_id,),

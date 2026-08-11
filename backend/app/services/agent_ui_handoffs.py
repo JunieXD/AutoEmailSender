@@ -17,6 +17,7 @@ from app.models import (
     AgentUiHandoffItem,
     CrawlJob,
     EmailLog,
+    EmailLogRecordState,
     EmailTask,
     IdentityProfile,
     Professor,
@@ -314,6 +315,7 @@ async def create_communication_thread_ui_handoff(
                 EmailLog.identity_id == identity_id,
                 EmailLog.professor_id == professor_id,
                 EmailLog.direction.in_(["sent", "received"]),
+                EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
             ),
         )
         if not exists:

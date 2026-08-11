@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,58 @@ from .support import build_material_download_name
 
 router = APIRouter(prefix="/api", tags=["materials"])
 
+
+@router.get("/materials", response_model=list[IdentityMaterialRead])
+async def list_materials(
+    identity_id: int | None = Query(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> list[IdentityMaterialRead]:
+    if identity_id is not None:
+        await _get_identity_or_404(session, identity_id)
+    materials = list(
+        (
+            await session.scalars(
+                select(IdentityMaterial)
+                .options(selectinload(IdentityMaterial.default_for_identities))
+                .order_by(IdentityMaterial.created_at.desc(), IdentityMaterial.id.desc()),
+            )
+        ).unique(),
+    )
+    return [
+        serialize_material(
+            material,
+            current_primary_material_id=(
+                material.id
+                if identity_id is not None
+                and any(identity.id == identity_id for identity in material.default_for_identities)
+                else None
+            ),
+            default_for_identity_ids=[identity.id for identity in material.default_for_identities],
+        )
+        for material in materials
+    ]
+
+
+@router.post(
+    "/materials",
+    response_model=IdentityMaterialRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_global_material(
+    file: UploadFile = File(...),
+    material_type: str = Form(default=IdentityMaterialType.OTHER.value),
+    display_name: str | None = Form(default=None),
+    identity_id: int | None = Form(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> IdentityMaterialRead:
+    return await _upload_material(
+        session,
+        identity_id=identity_id,
+        file=file,
+        material_type=material_type,
+        display_name=display_name,
+    )
+
 @router.post(
     "/identities/{identity_id}/materials",
     response_model=IdentityMaterialRead,
@@ -40,6 +92,23 @@ async def upload_identity_material(
     material_type: str = Form(default=IdentityMaterialType.OTHER.value),
     display_name: str | None = Form(default=None),
     session: AsyncSession = Depends(get_async_session),
+) -> IdentityMaterialRead:
+    return await _upload_material(
+        session,
+        identity_id=identity_id,
+        file=file,
+        material_type=material_type,
+        display_name=display_name,
+    )
+
+
+async def _upload_material(
+    session: AsyncSession,
+    *,
+    identity_id: int | None,
+    file: UploadFile,
+    material_type: str,
+    display_name: str | None,
 ) -> IdentityMaterialRead:
     try:
         material, primary_material_id = await upload_identity_material_record(
@@ -55,11 +124,48 @@ async def upload_identity_material(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     await session.refresh(material)
-    return serialize_material(material, primary_material_id)
+    return serialize_material(
+        material,
+        primary_material_id,
+        default_for_identity_ids=(
+            [identity_id]
+            if identity_id is not None and primary_material_id == material.id
+            else []
+        ),
+    )
 
 
 @router.post("/materials/{material_id}/set-primary", response_model=IdentityMaterialRead)
 async def set_primary_material(
+    material_id: int,
+    identity_id: int | None = Query(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> IdentityMaterialRead:
+    try:
+        material, primary_material_id = await set_primary_material_record(
+            session,
+            material_id,
+            identity_id=identity_id,
+            event_name="identity_material.primary_set",
+            actor="ui",
+        )
+    except MaterialMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    await session.commit()
+    target_identity_id = identity_id if identity_id is not None else material.identity_id
+    return serialize_material(
+        material,
+        primary_material_id,
+        default_for_identity_ids=_default_identity_ids(material, target_identity_id),
+    )
+
+
+@router.post(
+    "/identities/{identity_id}/materials/{material_id}/set-primary",
+    response_model=IdentityMaterialRead,
+)
+async def set_identity_primary_material(
+    identity_id: int,
     material_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> IdentityMaterialRead:
@@ -67,13 +173,18 @@ async def set_primary_material(
         material, primary_material_id = await set_primary_material_record(
             session,
             material_id,
+            identity_id=identity_id,
             event_name="identity_material.primary_set",
             actor="ui",
         )
     except MaterialMutationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
-    return serialize_material(material, primary_material_id)
+    return serialize_material(
+        material,
+        primary_material_id,
+        default_for_identity_ids=_default_identity_ids(material, identity_id),
+    )
 
 
 @router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -129,9 +240,25 @@ async def download_material(
 async def _get_material(session: AsyncSession, material_id: int) -> IdentityMaterial:
     material = await session.scalar(
         select(IdentityMaterial)
-        .options(selectinload(IdentityMaterial.identity))
         .where(IdentityMaterial.id == material_id),
     )
     if not material:
         raise HTTPException(status_code=404, detail="未找到材料")
     return material
+
+
+async def _get_identity_or_404(session: AsyncSession, identity_id: int) -> None:
+    from app.models import IdentityProfile
+
+    if await session.get(IdentityProfile, identity_id) is None:
+        raise HTTPException(status_code=404, detail="未找到身份配置")
+
+
+def _default_identity_ids(
+    material: IdentityMaterial,
+    target_identity_id: int | None,
+) -> list[int]:
+    identity_ids = {identity.id for identity in material.default_for_identities}
+    if target_identity_id is not None:
+        identity_ids.add(target_identity_id)
+    return sorted(identity_ids)

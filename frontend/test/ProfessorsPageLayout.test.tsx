@@ -69,6 +69,7 @@ vi.mock("@/entities/professor/api/professors", () => ({
     return {
       items: sorted.slice(start, start + payload.page_size),
       total_count: sorted.length,
+      has_any_professors: allItems.length > 0,
       page: payload.page,
       page_size: payload.page_size,
       total_pages: Math.max(1, Math.ceil(sorted.length / payload.page_size)),
@@ -1046,6 +1047,24 @@ describe("ProfessorsPage layout", () => {
       }
       expect(within(card).getByRole("button", { name: buttonName })).toBeInTheDocument();
     });
+  });
+
+  it("shows a filtered empty state instead of the first-import guide", async () => {
+    renderPage();
+
+    expect(await screen.findByText("李教授")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: /^关键词/ }), {
+      target: { value: "不存在的导师" },
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "没有匹配的导师" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("professor-empty-intake")).not.toBeInTheDocument();
+    expect(screen.getByTestId("professor-intake-panel")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(await screen.findByText("李教授")).toBeInTheDocument();
   });
 
   it("keeps the intake panel visible after switching to deleted professors", async () => {

@@ -45,6 +45,7 @@ import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
 import { textToEmailHtml } from "@/lib/richEmail";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import {
   createIdentity,
   deleteIdentity,
@@ -208,6 +209,14 @@ const createEmptyIdentityForm = (): IdentityFormState => ({
   same_domain_cooldown_minutes: "",
   is_default: false,
 });
+
+const areIdentityFormsEqual = (
+  left: IdentityFormState,
+  right: IdentityFormState,
+) =>
+  (Object.keys(left) as Array<keyof IdentityFormState>).every(
+    (key) => left[key] === right[key],
+  );
 
 const createEmptyOutreachTemplateForm = (): OutreachTemplateFormState => ({
   name: "",
@@ -912,9 +921,9 @@ const MaterialSummaryCard = ({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-3">
           <div>
-            <div className="text-sm font-medium text-stone-900">材料库</div>
+            <div className="text-sm font-medium text-stone-900">全局材料库</div>
             <div className="mt-1 text-xs text-stone-500">
-              共 {identity.materials.length} 份
+              所有发件身份共享，共 {identity.materials.length} 份
               {primaryMaterial
                 ? ` · 默认材料：${primaryMaterial.display_name}`
                 : " · 当前未设默认材料"}
@@ -1633,13 +1642,13 @@ const MaterialLibraryModal = ({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs uppercase tracking-[0.26em] text-stone-400">
-                Material Library
+                Global Material Library
               </div>
               <h3 className="mt-2 text-2xl font-semibold text-stone-900">
-                材料管理
+                全局材料管理
               </h3>
               <p className="mt-1 text-sm text-stone-500">
-                {identity.materials.length} 份材料
+                {materials.length} 份共享材料
                 {primaryMaterial
                   ? ` · 默认材料：${primaryMaterial.display_name}`
                   : " · 当前未设默认材料"}
@@ -1664,7 +1673,7 @@ const MaterialLibraryModal = ({
                   上传新材料
                 </div>
                 <div className="mt-1 text-xs text-stone-500">
-                  选择类型并上传文件
+                  上传一次，可供所有发件身份复用
                 </div>
               </div>
               <MaterialTypePicker
@@ -1759,6 +1768,11 @@ const MaterialLibraryModal = ({
                           <span>{material.original_filename}</span>
                           <span>{formatFileSize(material.size_bytes)}</span>
                           <span>{formatApiDateTime(material.created_at)}</span>
+                          {(material.default_for_identity_ids?.length ?? 0) > 0 ? (
+                            <span>
+                              {material.default_for_identity_ids?.length} 个身份正在使用默认
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
@@ -1827,7 +1841,10 @@ export const ProfilePage = () => {
     refreshSelections,
     loading,
   } = useSelectionContext();
-  const { requestWorkspaceDraftGuard } = useWorkspaceDraftGuard();
+  const {
+    registerWorkspaceDraftGuard,
+    requestWorkspaceDraftGuard,
+  } = useWorkspaceDraftGuard();
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
   const {
     isReady: desktopBackendReady,
@@ -1838,6 +1855,14 @@ export const ProfilePage = () => {
   const [identityForm, setIdentityForm] = useState<IdentityFormState>(
     createEmptyIdentityForm(),
   );
+  const identityFormRef = useRef(identityForm);
+  const identityFormBaselineRef = useRef(identityForm);
+  const identityEditorIdRef = useRef<EditorId>(identityEditorId);
+  const identityEditorSelectionIdRef = useRef<number | null>(selectedIdentityId);
+  const selectedIdentityIdRef = useRef<number | null>(selectedIdentityId);
+  const saveIdentityRef = useRef<
+    (options?: { silent?: boolean }) => Promise<IdentityDTO | null>
+  >(async () => null);
   const [smtpPasswordVisible, setSmtpPasswordVisible] = useState(false);
   const [outreachTemplates, setOutreachTemplates] = useState<
     OutreachTemplateDTO[]
@@ -1907,9 +1932,12 @@ export const ProfilePage = () => {
     model: null,
     test: null,
   });
-  const { confirm, dialog: confirmDialog } = useConfirmDialog();
+  const { confirm, choose, dialog: confirmDialog } = useConfirmDialog();
 
   templateEditorIdRef.current = templateEditorId;
+  identityFormRef.current = identityForm;
+  identityEditorIdRef.current = identityEditorId;
+  selectedIdentityIdRef.current = selectedIdentityId;
 
   const focusInput = (element: HTMLInputElement | null) => {
     if (!element) {
@@ -1986,19 +2014,45 @@ export const ProfilePage = () => {
 
   const applyIdentityEditorState = useCallback(
     (nextEditor: IdentityDTO | "new") => {
+      const nextForm =
+        nextEditor === "new"
+          ? createEmptyIdentityForm()
+          : toIdentityForm(nextEditor);
+      const nextEditorId = nextEditor === "new" ? "new" : nextEditor.id;
+      identityFormRef.current = nextForm;
+      identityFormBaselineRef.current = nextForm;
+      identityEditorIdRef.current = nextEditorId;
+      identityEditorSelectionIdRef.current =
+        nextEditor === "new"
+          ? selectedIdentityIdRef.current
+          : nextEditor.id;
       setSmtpPasswordVisible(false);
-      if (nextEditor === "new") {
-        setIdentityEditorId("new");
-        setIdentityForm(createEmptyIdentityForm());
-      } else {
-        setIdentityEditorId(nextEditor.id);
-        setIdentityForm(toIdentityForm(nextEditor));
-      }
+      setIdentityEditorId(nextEditorId);
+      setIdentityForm(nextForm);
       setTemplateModalOpen(false);
       setTestingIdentityConnection(null);
       setLastIdentityConnectionResult(null);
       setHighlightedMaterialId(null);
       setOptimisticMaterial(null);
+    },
+    [],
+  );
+
+  const updateIdentityFormState = useCallback(
+    (
+      updater: (previous: IdentityFormState) => IdentityFormState,
+      persisted: boolean,
+    ) => {
+      if (persisted) {
+        identityFormBaselineRef.current = updater(
+          identityFormBaselineRef.current,
+        );
+      }
+      setIdentityForm((previous) => {
+        const next = updater(previous);
+        identityFormRef.current = next;
+        return next;
+      });
     },
     [],
   );
@@ -2033,9 +2087,25 @@ export const ProfilePage = () => {
   };
 
   useEffect(() => {
-    if (loading || identityEditorId === "new") {
+    if (loading) {
       return;
     }
+    if (
+      identityEditorId === "new" &&
+      selectedIdentityId === identityEditorSelectionIdRef.current
+    ) {
+      return;
+    }
+
+    const selectedEditor =
+      identities.find((item) => item.id === selectedIdentityId) ?? null;
+    if (selectedEditor) {
+      if (identityEditorId !== selectedEditor.id) {
+        applyIdentityEditorState(selectedEditor);
+      }
+      return;
+    }
+
     if (
       isExistingEditorId(identityEditorId) &&
       identities.some((item) => item.id === identityEditorId)
@@ -2043,10 +2113,7 @@ export const ProfilePage = () => {
       return;
     }
 
-    const fallback =
-      identities.find((item) => item.id === selectedIdentityId) ??
-      identities[0] ??
-      null;
+    const fallback = identities[0] ?? null;
 
     if (fallback) {
       applyIdentityEditorState(fallback);
@@ -2088,12 +2155,13 @@ export const ProfilePage = () => {
     setLlmForm(createEmptyLLMForm());
   }, [llmEditorId, llmProfiles, loading, selectedLlmProfileId]);
 
+  const profileModalOpen = materialModalOpen || templateModalOpen;
+  useDocumentScrollLock(profileModalOpen);
+
   useEffect(() => {
-    if (!materialModalOpen && !templateModalOpen) {
+    if (!profileModalOpen) {
       return;
     }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (templateModalOpen) {
@@ -2105,10 +2173,9 @@ export const ProfilePage = () => {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [materialModalOpen, templateModalOpen]);
+  }, [materialModalOpen, profileModalOpen, templateModalOpen]);
 
   const editingIdentity = isExistingEditorId(identityEditorId)
     ? (identities.find((item) => item.id === identityEditorId) ?? null)
@@ -2356,7 +2423,17 @@ export const ProfilePage = () => {
     return () => window.cancelAnimationFrame(frame);
   }, [displayIdentity, highlightedMaterialId, materialModalOpen]);
 
-  const beginIdentityCreation = () => {
+  const beginIdentityCreation = async () => {
+    if (identityEditorId === "new") {
+      return;
+    }
+    if (
+      !(await requestWorkspaceDraftGuard({
+        nextIdentityEditorId: "new",
+      }))
+    ) {
+      return;
+    }
     applyIdentityEditorState("new");
     window.requestAnimationFrame(() =>
       focusInput(identityNameInputRef.current),
@@ -2373,12 +2450,27 @@ export const ProfilePage = () => {
     window.requestAnimationFrame(() => focusInput(llmNameInputRef.current));
   };
 
-  const openIdentityEditor = (identityId: number) => {
+  const openIdentityEditor = async (identityId: number) => {
     const identity = identities.find((item) => item.id === identityId);
     if (!identity) {
       return;
     }
-    applyIdentityEditorState(identity);
+    if (identity.id === identityEditorId) {
+      return;
+    }
+    if (
+      !(await requestWorkspaceDraftGuard({
+        nextIdentityEditorId: identity.id,
+        nextIdentityId: identity.id,
+      }))
+    ) {
+      return;
+    }
+    if (identity.id === selectedIdentityId) {
+      applyIdentityEditorState(identity);
+    } else {
+      setSelectedIdentityId(identity.id);
+    }
   };
 
   const openLLMEditor = (profileId: number) => {
@@ -2516,8 +2608,9 @@ export const ProfilePage = () => {
       setTemplateEditorId(saved.id);
       setOutreachTemplateForm(toOutreachTemplateForm(saved));
       if (identityForm.default_outreach_template_id === saved.id) {
-        setIdentityForm((previous) =>
-          applyOutreachTemplateToIdentityForm(previous, saved),
+        updateIdentityFormState(
+          (previous) => applyOutreachTemplateToIdentityForm(previous, saved),
+          Boolean(editingIdentity),
         );
       }
       await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
@@ -2549,8 +2642,9 @@ export const ProfilePage = () => {
         );
         await refreshSelections();
       }
-      setIdentityForm((previous) =>
-        applyOutreachTemplateToIdentityForm(previous, template),
+      updateIdentityFormState(
+        (previous) => applyOutreachTemplateToIdentityForm(previous, template),
+        Boolean(editingIdentity),
       );
       notifySuccess(
         "身份默认模板已更新",
@@ -2598,7 +2692,10 @@ export const ProfilePage = () => {
         await updateIdentityDefaultOutreachTemplate(editingIdentity.id, null);
         await refreshSelections();
       }
-      setIdentityForm(clearOutreachTemplateFromIdentityForm);
+      updateIdentityFormState(
+        clearOutreachTemplateFromIdentityForm,
+        Boolean(editingIdentity),
+      );
       notifySuccess(
         "身份默认模板已取消",
         editingIdentity
@@ -2654,7 +2751,10 @@ export const ProfilePage = () => {
         identityForm.default_outreach_template_id === template.id;
       await archiveOutreachTemplate(template.id);
       if (wasIdentityDefault) {
-        setIdentityForm(clearOutreachTemplateFromIdentityForm);
+        updateIdentityFormState(
+          clearOutreachTemplateFromIdentityForm,
+          Boolean(editingIdentity),
+        );
       }
       const [remainingTemplates] = await Promise.all([
         refreshOutreachTemplates(),
@@ -2869,6 +2969,7 @@ export const ProfilePage = () => {
       notifyFormErrors("请检查表单", ["请先填写所有带红色星号的身份必填项"]);
       return null;
     }
+    const isCreatingIdentity = identityEditorId === "new";
     setSubmittingIdentity(true);
     try {
       const payload = toIdentityPayload(identityForm);
@@ -2876,9 +2977,10 @@ export const ProfilePage = () => {
         ? await updateIdentity(identityEditorId, payload)
         : await createIdentity(payload);
       await refreshSelections();
-      setIdentityEditorId(saved.id);
-      setIdentityForm(toIdentityForm(saved));
-      setSmtpPasswordVisible(false);
+      if (isCreatingIdentity) {
+        setSelectedIdentityId(saved.id);
+      }
+      applyIdentityEditorState(saved);
       if (!silent) {
         notifySuccess(identityEditorId === "new" ? "身份已创建" : "身份已保存");
       }
@@ -2893,6 +2995,74 @@ export const ProfilePage = () => {
       setSubmittingIdentity(false);
     }
   };
+
+  saveIdentityRef.current = saveIdentity;
+
+  useEffect(() => {
+    return registerWorkspaceDraftGuard(async (request) => {
+      if (
+        request?.nextLlmProfileId !== undefined &&
+        request.nextIdentityId === undefined &&
+        request.nextIdentityEditorId === undefined &&
+        request.nextPath === undefined
+      ) {
+        return true;
+      }
+
+      const nextEditorId =
+        request?.nextIdentityEditorId ?? request?.nextIdentityId;
+      if (
+        nextEditorId !== undefined &&
+        nextEditorId === identityEditorIdRef.current &&
+        request?.nextPath === undefined
+      ) {
+        return true;
+      }
+      if (
+        areIdentityFormsEqual(
+          identityFormRef.current,
+          identityFormBaselineRef.current,
+        )
+      ) {
+        return true;
+      }
+      if (submittingIdentity || testingIdentityConnection !== null) {
+        notifyError(
+          "身份配置正在处理",
+          "请等待当前保存或连接测试完成后再切换。",
+        );
+        return false;
+      }
+
+      const action = await choose({
+        title: "保存身份修改？",
+        description: "切换后，未保存的身份配置修改将丢失。",
+        confirmLabel: "保存并切换",
+        secondaryLabel: "不保存切换",
+        cancelLabel: "继续编辑",
+      });
+      if (action === "cancel") {
+        return false;
+      }
+      if (action === "secondary") {
+        return true;
+      }
+
+      const saved = await saveIdentityRef.current({ silent: true });
+      if (!saved) {
+        return false;
+      }
+      notifySuccess("身份配置已保存");
+      return true;
+    });
+  }, [
+    choose,
+    notifyError,
+    notifySuccess,
+    registerWorkspaceDraftGuard,
+    submittingIdentity,
+    testingIdentityConnection,
+  ]);
 
   const saveLLM = async () => {
     if (
@@ -2980,13 +3150,16 @@ export const ProfilePage = () => {
   };
 
   const handleSetPrimaryMaterial = async (material: IdentityMaterialDTO) => {
+    if (!editingIdentity) {
+      return;
+    }
     setActingOnMaterial(true);
     try {
-      await setPrimaryMaterial(material.id);
+      await setPrimaryMaterial(editingIdentity.id, material.id);
       await refreshSelections();
       notifySuccess(
         "设为默认材料成功",
-        `已将“${material.display_name}”设为默认材料。`,
+        `已将“${material.display_name}”设为“${getIdentityProfileName(editingIdentity)}”的默认材料。`,
       );
       setHighlightedMaterialId(material.id);
     } catch (materialError) {
@@ -3000,7 +3173,7 @@ export const ProfilePage = () => {
   };
 
   const handleDeleteMaterial = async (material: IdentityMaterialDTO) => {
-    if (!(await confirmDeleteTwice(`材料“${material.display_name}”`))) {
+    if (!(await confirmDeleteTwice(`全局材料“${material.display_name}”（会从所有身份中移除）`))) {
       return;
     }
     setActingOnMaterial(true);
@@ -3056,7 +3229,11 @@ export const ProfilePage = () => {
               type="button"
               onClick={() => {
                 void (async () => {
-                  if (!(await requestWorkspaceDraftGuard())) {
+                  if (
+                    !(await requestWorkspaceDraftGuard({
+                      nextIdentityId: editingIdentity.id,
+                    }))
+                  ) {
                     return;
                   }
                   setSelectedIdentityId(editingIdentity.id);
@@ -3079,10 +3256,13 @@ export const ProfilePage = () => {
                 void setDefaultIdentity(editingIdentity.id)
                   .then(async () => {
                     await refreshSelections();
-                    setIdentityForm((previous) => ({
-                      ...previous,
-                      is_default: true,
-                    }));
+                    updateIdentityFormState(
+                      (previous) => ({
+                        ...previous,
+                        is_default: true,
+                      }),
+                      true,
+                    );
                     notifySuccess(`默认身份：${getIdentityProfileName(editingIdentity)}`);
                   })
                   .catch((defaultError) => {
@@ -3112,8 +3292,12 @@ export const ProfilePage = () => {
                 try {
                   await deleteIdentity(editingIdentity.id);
                   await refreshSelections();
+                  const emptyForm = createEmptyIdentityForm();
+                  identityEditorIdRef.current = null;
+                  identityFormRef.current = emptyForm;
+                  identityFormBaselineRef.current = emptyForm;
                   setIdentityEditorId(null);
-                  setIdentityForm(createEmptyIdentityForm());
+                  setIdentityForm(emptyForm);
                   setSmtpPasswordVisible(false);
                   notifySuccess(`已删除身份“${getIdentityProfileName(editingIdentity)}”`);
                 } catch (deleteError) {
@@ -3228,7 +3412,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="identity"
             title="发件身份"
-            description=""
+            description="管理发件邮箱与收发设置。"
             open={openSetupSections.identity}
             renderContent={renderedSetupSections.identity}
             onToggle={() => toggleSetupSection("identity")}
@@ -3258,8 +3442,8 @@ export const ProfilePage = () => {
                   activeId={identityEditorId}
                   createLabel="新建发件身份"
                   creatingLabel="新建发件身份"
-                  onCreate={beginIdentityCreation}
-                  onSelect={openIdentityEditor}
+                  onCreate={() => void beginIdentityCreation()}
+                  onSelect={(identityId) => void openIdentityEditor(identityId)}
                 />
             </div>
 
@@ -3416,7 +3600,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="materials"
             title="材料与模板"
-            description=""
+            description="准备匹配材料和发信模板。"
             open={openSetupSections.materials}
             renderContent={renderedSetupSections.materials}
             onToggle={() => toggleSetupSection("materials")}
@@ -3461,7 +3645,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="model"
             title="模型配置"
-            description=""
+            description="连接并测试用于写信的 AI 模型。"
             open={openSetupSections.model}
             renderContent={renderedSetupSections.model}
             onToggle={() => toggleSetupSection("model")}
@@ -3619,7 +3803,11 @@ export const ProfilePage = () => {
                       type="button"
                       onClick={() => {
                         void (async () => {
-                          if (!(await requestWorkspaceDraftGuard())) {
+                          if (
+                            !(await requestWorkspaceDraftGuard({
+                              nextLlmProfileId: editingLLM.id,
+                            }))
+                          ) {
                             return;
                           }
                           setSelectedLlmProfileId(editingLLM.id);
@@ -3748,7 +3936,7 @@ export const ProfilePage = () => {
           <ProfileSetupSection
             sectionId="test"
             title="测试写信"
-            description=""
+            description="先给自己发送一封测试邮件。"
             open={openSetupSections.test}
             renderContent={renderedSetupSections.test}
             onToggle={() => toggleSetupSection("test")}

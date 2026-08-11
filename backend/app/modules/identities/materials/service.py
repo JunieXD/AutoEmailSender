@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -66,12 +66,14 @@ class MaterialMutationError(ValueError):
 @dataclass(frozen=True, slots=True)
 class MaterialDeletionResult:
     material_id: int
-    identity_id: int
+    identity_id: int | None
     display_name: str
     file_path: str | None
     was_primary: bool
+    cleared_default_identity_ids: list[int]
     detached_primary_task_ids: list[int]
     removed_attachment_task_ids: list[int]
+    removed_rewrite_source_task_ids: list[int]
     reset_draft_task_ids: list[int]
     detached_test_compose_session_ids: list[int]
     detached_batch_task_ids: list[int]
@@ -84,11 +86,15 @@ class MaterialDeletionResult:
             "outcome": "deleted",
             "material_id": self.material_id,
             "material_name": self.display_name,
+            "source_identity_id": self.identity_id,
+            # Compatibility for older Agent clients.
             "identity_id": self.identity_id,
             "was_primary": self.was_primary,
             "effects": {
+                "cleared_default_identity_ids": self.cleared_default_identity_ids,
                 "detached_primary_task_ids": self.detached_primary_task_ids,
                 "removed_attachment_task_ids": self.removed_attachment_task_ids,
+                "removed_rewrite_source_task_ids": self.removed_rewrite_source_task_ids,
                 "reset_draft_task_ids": self.reset_draft_task_ids,
                 "detached_test_compose_session_ids": self.detached_test_compose_session_ids,
                 "detached_batch_task_ids": self.detached_batch_task_ids,
@@ -102,6 +108,7 @@ class MaterialDeletionResult:
 @dataclass(slots=True)
 class _MaterialDeletionState:
     material: IdentityMaterial
+    default_identities: list[IdentityProfile]
     candidate_tasks: list[EmailTask]
     batch_tasks: list[BatchTask]
     test_compose_sessions: list[TestComposeSession]
@@ -111,7 +118,7 @@ class _MaterialDeletionState:
 
 async def upload_identity_material_record(
     session: AsyncSession,
-    identity_id: int,
+    identity_id: int | None,
     file: UploadFile,
     material_type: str,
     display_name: str | None,
@@ -119,12 +126,16 @@ async def upload_identity_material_record(
     event_name: str,
     actor: str,
 ) -> tuple[IdentityMaterial, int | None]:
-    identity = await get_identity_for_materials_or_raise(session, identity_id)
+    identity = (
+        await get_identity_for_materials_or_raise(session, identity_id)
+        if identity_id is not None
+        else None
+    )
     material_type_value = normalize_material_type(material_type)
-    stored_upload = save_upload(file, "identities", str(identity_id), "materials")
+    stored_upload = save_upload(file, "materials")
     material = IdentityMaterial(
         identity_id=identity_id,
-        identity=identity,
+        source_identity=identity,
         display_name=(display_name or build_display_name(stored_upload.original_name)).strip()
         or build_display_name(stored_upload.original_name),
         original_filename=stored_upload.original_name,
@@ -138,19 +149,24 @@ async def upload_identity_material_record(
     session.add(material)
     await session.flush()
 
-    if identity.current_primary_material_id is None and material_can_be_primary(material):
+    if (
+        identity is not None
+        and identity.current_primary_material_id is None
+        and material_can_be_primary(material)
+    ):
         identity.current_primary_material_id = material.id
         identity.updated_at = utc_now()
-        await _apply_primary_material_to_blocked_batch_tasks(session, material)
+        await _apply_primary_material_to_blocked_batch_tasks(session, material, identity.id)
 
     await record_material_event(session, material, event_name, actor=actor)
-    return material, identity.current_primary_material_id
+    return material, identity.current_primary_material_id if identity is not None else None
 
 
 async def set_primary_material_record(
     session: AsyncSession,
     material_id: int,
     *,
+    identity_id: int | None = None,
     event_name: str,
     actor: str,
 ) -> tuple[IdentityMaterial, int]:
@@ -162,11 +178,24 @@ async def set_primary_material_record(
             "当前材料不支持作为默认材料",
         )
 
-    identity = material.identity
+    resolved_identity_id = identity_id if identity_id is not None else material.identity_id
+    if resolved_identity_id is None:
+        raise MaterialMutationError(
+            400,
+            "MATERIAL_TARGET_IDENTITY_REQUIRED",
+            "请明确选择要设置默认材料的发件身份",
+        )
+    identity = await get_identity_for_materials_or_raise(session, resolved_identity_id)
     identity.current_primary_material_id = material.id
     identity.updated_at = utc_now()
-    await _apply_primary_material_to_blocked_batch_tasks(session, material)
-    await record_material_event(session, material, event_name, actor=actor)
+    await _apply_primary_material_to_blocked_batch_tasks(session, material, identity.id)
+    await record_material_event(
+        session,
+        material,
+        event_name,
+        actor=actor,
+        metadata={"target_identity_id": identity.id},
+    )
     return material, material.id
 
 
@@ -177,7 +206,6 @@ async def get_identity_for_materials_or_raise(
     identity = await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == identity_id),
@@ -193,7 +221,10 @@ async def get_material_with_identity_or_raise(
 ) -> IdentityMaterial:
     material = await session.scalar(
         select(IdentityMaterial)
-        .options(selectinload(IdentityMaterial.identity))
+        .options(
+            selectinload(IdentityMaterial.source_identity),
+            selectinload(IdentityMaterial.default_for_identities),
+        )
         .where(IdentityMaterial.id == material_id),
     )
     if material is None:
@@ -218,6 +249,8 @@ async def record_material_event(
 ) -> None:
     event_metadata: dict[str, object] = {
         "actor": actor,
+        "source_identity_id": material.identity_id,
+        # Compatibility for operation-log consumers from identity-scoped releases.
         "identity_id": material.identity_id,
         "display_name": material.display_name,
         "original_filename": material.original_filename,
@@ -269,8 +302,8 @@ async def delete_identity_material_record(
         )
 
     material = state.material
-    identity = material.identity
-    is_current_primary = identity.current_primary_material_id == material.id
+    default_identities = state.default_identities
+    cleared_default_identity_ids = sorted(identity.id for identity in default_identities)
 
     completed_batch_task_ids = []
     for batch_task in state.batch_tasks:
@@ -283,8 +316,11 @@ async def delete_identity_material_record(
 
     detached_primary_task_ids: list[int] = []
     removed_attachment_task_ids: list[int] = []
+    removed_rewrite_source_task_ids: list[int] = []
     reset_draft_task_ids: list[int] = []
     for task in state.candidate_tasks:
+        if _detach_material_from_rewrite_source(task, material.id):
+            removed_rewrite_source_task_ids.append(task.id)
         if not _material_reference_can_be_detached(task):
             continue
         detached_primary, removed_attachment, reset_draft = _detach_material_from_email_task(
@@ -321,7 +357,7 @@ async def delete_identity_material_record(
         match_result.updated_at = utc_now()
         detached_match_result_count += 1
 
-    if is_current_primary:
+    for identity in default_identities:
         identity.current_primary_material_id = None
         identity.updated_at = utc_now()
 
@@ -331,9 +367,11 @@ async def delete_identity_material_record(
         identity_id=material.identity_id,
         display_name=material.display_name,
         file_path=material_file_path,
-        was_primary=is_current_primary,
+        was_primary=bool(cleared_default_identity_ids),
+        cleared_default_identity_ids=cleared_default_identity_ids,
         detached_primary_task_ids=detached_primary_task_ids,
         removed_attachment_task_ids=removed_attachment_task_ids,
+        removed_rewrite_source_task_ids=removed_rewrite_source_task_ids,
         reset_draft_task_ids=reset_draft_task_ids,
         detached_test_compose_session_ids=detached_test_compose_session_ids,
         detached_batch_task_ids=detached_batch_task_ids,
@@ -348,8 +386,10 @@ async def delete_identity_material_record(
         actor=actor,
         metadata={
             "was_primary": result.was_primary,
+            "cleared_default_identity_ids": result.cleared_default_identity_ids,
             "detached_primary_task_ids": result.detached_primary_task_ids,
             "removed_attachment_task_ids": result.removed_attachment_task_ids,
+            "removed_rewrite_source_task_ids": result.removed_rewrite_source_task_ids,
             "reset_draft_task_ids": result.reset_draft_task_ids,
             "detached_test_compose_session_ids": result.detached_test_compose_session_ids,
             "detached_batch_task_ids": result.detached_batch_task_ids,
@@ -366,12 +406,25 @@ async def _load_material_deletion_state(
     material_id: int,
 ) -> _MaterialDeletionState:
     material = await get_material_with_identity_or_raise(session, material_id)
+    default_identities = list(
+        await session.scalars(
+            select(IdentityProfile).where(
+                IdentityProfile.current_primary_material_id == material.id,
+            ),
+        ),
+    )
     candidate_tasks = list(
         (
             await session.execute(
                 select(EmailTask)
                 .options(selectinload(EmailTask.batch_task))
-                .where(EmailTask.identity_id == material.identity_id),
+                .where(
+                    or_(
+                        EmailTask.primary_material_id == material.id,
+                        EmailTask.selected_material_ids.is_not(None),
+                        EmailTask.draft_rewrite_source_selected_material_ids.is_not(None),
+                    ),
+                ),
             )
         )
         .scalars()
@@ -382,7 +435,12 @@ async def _load_material_deletion_state(
             await session.execute(
                 select(BatchTask)
                 .options(selectinload(BatchTask.email_tasks))
-                .where(BatchTask.identity_id == material.identity_id),
+                .where(
+                    or_(
+                        BatchTask.primary_material_id == material.id,
+                        BatchTask.selected_material_ids.is_not(None),
+                    ),
+                ),
             )
         )
         .scalars()
@@ -391,14 +449,13 @@ async def _load_material_deletion_state(
     test_compose_sessions = list(
         await session.scalars(
             select(TestComposeSession).where(
-                TestComposeSession.identity_id == material.identity_id,
+                TestComposeSession.selected_material_ids.is_not(None),
             ),
         ),
     )
     match_analysis_runs = list(
         await session.scalars(
             select(MatchAnalysisRun).where(
-                MatchAnalysisRun.identity_id == material.identity_id,
                 MatchAnalysisRun.primary_material_id == material.id,
             ),
         ),
@@ -406,13 +463,13 @@ async def _load_material_deletion_state(
     match_results = list(
         await session.scalars(
             select(IdentityProfessorMatchResult).where(
-                IdentityProfessorMatchResult.identity_id == material.identity_id,
                 IdentityProfessorMatchResult.primary_material_id == material.id,
             ),
         ),
     )
     return _MaterialDeletionState(
         material=material,
+        default_identities=default_identities,
         candidate_tasks=candidate_tasks,
         batch_tasks=batch_tasks,
         test_compose_sessions=test_compose_sessions,
@@ -484,7 +541,10 @@ def _build_material_deletion_snapshot(
     material_id = material.id
     completed_ids = set(completed_batch_task_ids)
     referenced_tasks = [
-        task for task in state.candidate_tasks if _task_references_material(task, material_id)
+        task
+        for task in state.candidate_tasks
+        if _task_references_material(task, material_id)
+        or _rewrite_source_references_material(task, material_id)
     ]
     referenced_batch_tasks = [
         batch_task
@@ -494,6 +554,11 @@ def _build_material_deletion_snapshot(
     ]
     detached_primary_task_ids: list[int] = []
     removed_attachment_task_ids: list[int] = []
+    removed_rewrite_source_task_ids = [
+        task.id
+        for task in referenced_tasks
+        if _rewrite_source_references_material(task, material_id)
+    ]
     reset_draft_task_ids: list[int] = []
     for task in referenced_tasks:
         if not _material_reference_can_be_detached_in_preview(task, completed_ids):
@@ -513,18 +578,21 @@ def _build_material_deletion_snapshot(
     detached_test_compose_session_ids = [
         compose_session.id
         for compose_session in state.test_compose_sessions
-        if material_id in (compose_session.selected_material_ids or [])
+        if _json_ids_include(compose_session.selected_material_ids, material_id)
     ]
     detached_batch_task_ids = [
         batch_task.id
         for batch_task in referenced_batch_tasks
         if _batch_task_is_inactive_in_preview(batch_task, completed_ids)
     ]
-    is_primary = material.identity.current_primary_material_id == material.id
+    default_identity_ids = sorted(identity.id for identity in state.default_identities)
+    is_primary = bool(default_identity_ids)
     effects = {
         "clears_default_reference_material": is_primary,
+        "cleared_default_identity_ids": default_identity_ids,
         "detached_primary_task_ids": detached_primary_task_ids,
         "removed_attachment_task_ids": removed_attachment_task_ids,
+        "removed_rewrite_source_task_ids": removed_rewrite_source_task_ids,
         "reset_draft_task_ids": reset_draft_task_ids,
         "detached_test_compose_session_ids": detached_test_compose_session_ids,
         "detached_batch_task_ids": detached_batch_task_ids,
@@ -535,7 +603,7 @@ def _build_material_deletion_snapshot(
     fingerprint_payload = {
         "material": {
             "id": material.id,
-            "identity_id": material.identity_id,
+            "source_identity_id": material.identity_id,
             "display_name": material.display_name,
             "original_filename": material.original_filename,
             "material_type": material.material_type,
@@ -557,7 +625,7 @@ def _build_material_deletion_snapshot(
                 "selected_material_ids": compose_session.selected_material_ids or [],
             }
             for compose_session in state.test_compose_sessions
-            if material_id in (compose_session.selected_material_ids or [])
+            if _json_ids_include(compose_session.selected_material_ids, material_id)
         ],
         "match_analysis_runs": [
             {
@@ -592,8 +660,11 @@ def _build_material_deletion_snapshot(
             "material": {
                 "id": material.id,
                 "name": material.display_name,
+                "source_identity_id": material.identity_id,
+                # Compatibility for older Agent clients.
                 "identity_id": material.identity_id,
                 "is_primary": is_primary,
+                "default_for_identity_ids": default_identity_ids,
             },
             "effects": effects,
         },
@@ -609,6 +680,9 @@ def _material_reference_task_fingerprint_data(task: EmailTask) -> dict[str, obje
         "status": task.status,
         "primary_material_id": task.primary_material_id,
         "selected_material_ids": task.selected_material_ids or [],
+        "draft_rewrite_source_selected_material_ids": (
+            task.draft_rewrite_source_selected_material_ids or []
+        ),
         "match_score": task.match_score,
         "match_reason": task.match_reason,
         "fit_points": task.fit_points or [],
@@ -666,7 +740,7 @@ def _describe_email_task_detachment(
     completed_batch_task_ids: set[int],
 ) -> tuple[bool, bool, bool]:
     detached_primary = task.primary_material_id == material_id
-    removed_attachment = material_id in (task.selected_material_ids or [])
+    removed_attachment = _json_ids_include(task.selected_material_ids, material_id)
     reset_draft = False
     if detached_primary and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES:
         reset_draft = True
@@ -698,6 +772,7 @@ def _batch_task_is_inactive_in_preview(
 async def _apply_primary_material_to_blocked_batch_tasks(
     session: AsyncSession,
     material: IdentityMaterial,
+    identity_id: int,
 ) -> int:
     tasks = list(
         (
@@ -705,7 +780,7 @@ async def _apply_primary_material_to_blocked_batch_tasks(
                 select(EmailTask)
                 .options(selectinload(EmailTask.batch_task))
                 .where(
-                    EmailTask.identity_id == material.identity_id,
+                    EmailTask.identity_id == identity_id,
                     EmailTask.source == "batch",
                     batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode),
                     EmailTask.primary_material_id.is_(None),
@@ -742,11 +817,24 @@ async def _apply_primary_material_to_blocked_batch_tasks(
 
 
 def _task_references_material(task: EmailTask, material_id: int) -> bool:
-    return task.primary_material_id == material_id or material_id in (task.selected_material_ids or [])
+    return task.primary_material_id == material_id or _json_ids_include(
+        task.selected_material_ids,
+        material_id,
+    )
+
+
+def _rewrite_source_references_material(task: EmailTask, material_id: int) -> bool:
+    return _json_ids_include(
+        task.draft_rewrite_source_selected_material_ids,
+        material_id,
+    )
 
 
 def _batch_task_references_material(task: BatchTask, material_id: int) -> bool:
-    return task.primary_material_id == material_id or material_id in (task.selected_material_ids or [])
+    return task.primary_material_id == material_id or _json_ids_include(
+        task.selected_material_ids,
+        material_id,
+    )
 
 
 def _material_reference_blocks_deletion(task: EmailTask) -> bool:
@@ -822,10 +910,12 @@ def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple
             task.status = material_reference_fallback_status(task)
             task.last_error = None
 
-    if material_id in (task.selected_material_ids or []):
+    if _json_ids_include(task.selected_material_ids, material_id):
         task.selected_material_ids = [
             selected_material_id
-            for selected_material_id in task.selected_material_ids or []
+            for selected_material_id in _normalize_stored_material_ids(
+                task.selected_material_ids,
+            )
             if selected_material_id != material_id
         ]
         removed_attachment = True
@@ -861,10 +951,12 @@ def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
         task.primary_material_id = None
         detached_primary = True
         updated = True
-    if material_id in (task.selected_material_ids or []):
+    if _json_ids_include(task.selected_material_ids, material_id):
         task.selected_material_ids = [
             selected_material_id
-            for selected_material_id in task.selected_material_ids or []
+            for selected_material_id in _normalize_stored_material_ids(
+                task.selected_material_ids,
+            )
             if selected_material_id != material_id
         ]
         updated = True
@@ -880,17 +972,58 @@ def _detach_material_from_batch_task(task: BatchTask, material_id: int) -> bool:
     return updated
 
 
+def _detach_material_from_rewrite_source(task: EmailTask, material_id: int) -> bool:
+    if not _rewrite_source_references_material(task, material_id):
+        return False
+
+    task.draft_rewrite_source_selected_material_ids = [
+        selected_material_id
+        for selected_material_id in _normalize_stored_material_ids(
+            task.draft_rewrite_source_selected_material_ids,
+        )
+        if selected_material_id != material_id
+    ]
+    task.updated_at = utc_now()
+    return True
+
+
 def _detach_material_from_test_compose_session(
     compose_session: TestComposeSession,
     material_id: int,
 ) -> bool:
-    if material_id not in (compose_session.selected_material_ids or []):
+    if not _json_ids_include(compose_session.selected_material_ids, material_id):
         return False
 
     compose_session.selected_material_ids = [
         selected_material_id
-        for selected_material_id in compose_session.selected_material_ids or []
+        for selected_material_id in _normalize_stored_material_ids(
+            compose_session.selected_material_ids,
+        )
         if selected_material_id != material_id
     ]
     compose_session.updated_at = utc_now()
     return True
+
+
+def _json_ids_include(raw_value: object, material_id: int) -> bool:
+    return material_id in _normalize_stored_material_ids(raw_value)
+
+
+def _normalize_stored_material_ids(raw_value: object) -> list[int]:
+    if not isinstance(raw_value, list):
+        return []
+
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for value in raw_value:
+        if isinstance(value, bool):
+            continue
+        try:
+            material_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if material_id < 1 or material_id in seen:
+            continue
+        normalized.append(material_id)
+        seen.add(material_id)
+    return normalized

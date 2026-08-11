@@ -17,8 +17,10 @@ from app.core.database import get_async_session
 from app.models import (
     EmailTask,
     IdentityCommunicationGroup,
+    IdentityMaterial,
     IdentityProfessorMatchResult,
     IdentityProfile,
+    OutreachTemplate,
     MatchAnalysisJob,
     MatchAnalysisJobItem,
     MatchAnalysisJobItemStatus,
@@ -33,7 +35,7 @@ from .schemas import (
     IdentityTemplateImportResult,
 )
 from app.modules.campaigns.public import IdentityDefaultOutreachTemplateUpdate
-from app.services.file_storage import delete_file
+from app.services.material_catalog import list_global_materials
 from ..communication_groups.public import (
     cleanup_communication_group_after_identity_delete,
 )
@@ -77,7 +79,12 @@ async def list_identities(
         ),
     )
     identities = list(result.scalars().unique())
-    return [serialize_identity(identity) for identity in identities]
+    materials = await list_global_materials(session)
+    global_default_template = await _get_global_default_outreach_template(session)
+    return [
+        serialize_identity(identity, materials, global_default_template)
+        for identity in identities
+    ]
 
 
 @router.post("", response_model=IdentityProfileRead, status_code=status.HTTP_201_CREATED)
@@ -118,7 +125,7 @@ async def create_identity(
         _raise_email_conflict_if_needed(exc)
         raise
     saved = await _get_identity(session, identity.id)
-    return serialize_identity(saved)
+    return await _serialize_identity_with_global_materials(session, saved)
 
 
 @router.put("/{identity_id}", response_model=IdentityProfileRead)
@@ -186,7 +193,7 @@ async def update_identity(
         _raise_email_conflict_if_needed(exc)
         raise
     saved = await _get_identity(session, identity_id)
-    return serialize_identity(saved)
+    return await _serialize_identity_with_global_materials(session, saved)
 
 
 @router.put("/{identity_id}/default-template", response_model=IdentityProfileRead)
@@ -209,7 +216,7 @@ async def update_identity_default_template(
     )
     await session.commit()
     saved = await _get_identity(session, identity_id)
-    return serialize_identity(saved)
+    return await _serialize_identity_with_global_materials(session, saved)
 
 
 @router.delete("/{identity_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -234,8 +241,16 @@ async def delete_identity(
             communication_group.updated_at = utc_now()
             cleared_match_source = True
 
-    for material in identity.materials:
-        delete_file(material.file_path)
+    source_material_ids = list(
+        await session.scalars(
+            select(IdentityMaterial.id).where(IdentityMaterial.identity_id == identity_id),
+        ),
+    )
+    await session.execute(
+        update(IdentityMaterial)
+        .where(IdentityMaterial.identity_id == identity_id)
+        .values(identity_id=None),
+    )
 
     await _record_identity_log(
         session,
@@ -244,6 +259,7 @@ async def delete_identity(
         metadata={
             "was_default": was_default,
             "cleared_group_match_source": cleared_match_source,
+            "preserved_source_material_ids": source_material_ids,
         },
     )
     await _delete_identity_match_artifacts(session, identity_id)
@@ -418,7 +434,7 @@ async def set_default_identity(
     await _record_identity_log(session, identity, "identity.default_set")
     await session.commit()
     saved = await _get_identity(session, identity_id)
-    return serialize_identity(saved)
+    return await _serialize_identity_with_global_materials(session, saved)
 
 
 @router.post("/{identity_id}/smtp-test", response_model=ConnectionTestResult)
@@ -517,8 +533,32 @@ async def _import_identity_template_from_upload(
 
 def _identity_query():
     return select(IdentityProfile).options(
-        selectinload(IdentityProfile.materials),
         selectinload(IdentityProfile.current_primary_material),
+    )
+
+
+async def _serialize_identity_with_global_materials(
+    session: AsyncSession,
+    identity: IdentityProfile,
+) -> IdentityProfileRead:
+    return serialize_identity(
+        identity,
+        await list_global_materials(session),
+        await _get_global_default_outreach_template(session),
+    )
+
+
+async def _get_global_default_outreach_template(
+    session: AsyncSession,
+) -> OutreachTemplate | None:
+    return await session.scalar(
+        select(OutreachTemplate)
+        .where(
+            OutreachTemplate.is_default.is_(True),
+            OutreachTemplate.archived_at.is_(None),
+        )
+        .order_by(OutreachTemplate.id.asc())
+        .limit(1),
     )
 
 

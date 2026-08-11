@@ -226,6 +226,7 @@ class ProfessorManagementPageRequest(ProfessorPageRequestBase):
 class ProfessorDashboardPageRead(ApiSchema):
     items: list[ProfessorDashboardItemRead] = Field(default_factory=list)
     total_count: int
+    has_any_professors: bool
     page: int
     page_size: int
     total_pages: int
@@ -236,6 +237,7 @@ class ProfessorDashboardPageRead(ApiSchema):
 class ProfessorManagementPageRead(ApiSchema):
     items: list[ProfessorManagementItemRead] = Field(default_factory=list)
     total_count: int
+    has_any_professors: bool
     page: int
     page_size: int
     total_pages: int

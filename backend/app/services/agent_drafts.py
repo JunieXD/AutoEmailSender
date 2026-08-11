@@ -330,14 +330,14 @@ async def _validate_reference_material_id(
     identity_id: int,
     material_id: int,
 ) -> IdentityMaterial:
+    del identity_id
     material = await session.scalar(
         select(IdentityMaterial).where(
             IdentityMaterial.id == material_id,
-            IdentityMaterial.identity_id == identity_id,
         ),
     )
     if material is None:
-        raise ValueError("AI 写信参考材料不属于当前身份")
+        raise ValueError("未找到 AI 写信参考材料")
     if not material_can_be_primary(material):
         raise ValueError("当前材料不支持作为 AI 写信参考材料")
     return material
@@ -348,6 +348,7 @@ async def _validate_attachment_material_ids(
     identity_id: int,
     material_ids: list[int] | None,
 ) -> None:
+    del identity_id
     if material_ids is None:
         return
     if any(material_id < 1 for material_id in material_ids):
@@ -362,13 +363,12 @@ async def _validate_attachment_material_ids(
         found.update(
             await session.scalars(
                 select(IdentityMaterial.id).where(
-                    IdentityMaterial.identity_id == identity_id,
                     IdentityMaterial.id.in_(material_id_chunk),
                 ),
             ),
         )
     if found != unique_ids:
-        raise ValueError("存在不属于当前身份的随信附件")
+        raise ValueError("存在已删除或不存在的随信附件")
 
 
 def _normalize_manual_body(body_text: str, body_html: str | None) -> tuple[str, str | None]:

@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from app.core.query_chunks import chunked_values, unique_positive_ids
-from app.models import EmailDirection, EmailLog, EmailTask, EmailTaskCancellationReason, EmailTaskStatus
+from app.models import (
+    EmailDirection,
+    EmailLog,
+    EmailLogRecordState,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskStatus,
+)
 from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from app.modules.communications.public import load_communication_events
 
@@ -75,6 +82,7 @@ async def build_contact_status_by_professor(
                     EmailLog.identity_id == resolved_identity_ids[0],
                     EmailLog.professor_id.in_(professor_id_chunk),
                     EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                 )
                 .group_by(EmailLog.professor_id),
             )

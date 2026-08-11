@@ -773,6 +773,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(management.status_code, 200, msg=management.text)
         self.assertEqual(management.json()["total_count"], 2)
+        self.assertTrue(management.json()["has_any_professors"])
         self.assertEqual(len(management.json()["items"]), 1)
         self.assertIsNotNone(management.json()["next_cursor"])
 
@@ -790,6 +791,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(dashboard.status_code, 200, msg=dashboard.text)
         self.assertEqual(dashboard.json()["total_count"], 2)
+        self.assertTrue(dashboard.json()["has_any_professors"])
         self.assertEqual(len(dashboard.json()["items"]), 1)
 
         dashboard_selection = self.client.post(
@@ -1218,6 +1220,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
         identity_id = identity_response.json()["id"]
         self.assertIsNone(identity_response.json()["default_outreach_template_id"])
+        self.assertFalse(
+            identity_response.json()["effective_outreach_template_is_ready"],
+        )
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="global-template@example.edu")
         template_response = self.client.post(
@@ -1233,6 +1238,15 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(template_response.status_code, 201, msg=template_response.text)
         template_id = template_response.json()["id"]
+        refreshed_identity = next(
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
+        )
+        self.assertIsNone(refreshed_identity["default_outreach_template_id"])
+        self.assertTrue(
+            refreshed_identity["effective_outreach_template_is_ready"],
+        )
 
         workspace_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
@@ -2808,6 +2822,262 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(stored_material_id, material_id)
 
+    def test_workspace_new_task_inherits_latest_successful_manual_attachments(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        recent_material_id = self._upload_material(
+            identity_id,
+            filename="recent-workspace-attachment.pdf",
+            content=b"recent workspace attachment",
+            material_type="resume",
+        )
+        ignored_material_id = self._upload_material(
+            identity_id,
+            filename="ignored-non-workspace-attachment.pdf",
+            content=b"ignored attachment",
+            material_type="transcript",
+        )
+
+        sent_professor_id = self._create_professor(email="recent-sent@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[recent_material_id, 999999, recent_material_id],
+            approved_subject="Recent subject",
+            approved_body_text="Recent body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=10)
+
+        batch_professor_id = self._create_professor(email="newer-batch@example.edu")
+        batch_task_id = self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+        )
+        batch_item_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=batch_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[ignored_material_id],
+            batch_task_id=batch_task_id,
+            source="batch",
+            approved_subject="Batch subject",
+            approved_body_text="Batch body",
+        )
+        self._mark_email_task_sent(batch_item_id, minutes_ago=5)
+
+        failed_professor_id = self._create_professor(email="newer-failed@example.edu")
+        self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=failed_professor_id,
+            status="send_failed",
+            primary_material_id=None,
+            selected_material_ids=[ignored_material_id],
+            approved_subject="Failed subject",
+            approved_body_text="Failed body",
+        )
+
+        target_professor_id = self._create_professor(email="inherits-recent@example.edu")
+        response = self.client.post(
+            f"/api/workspaces/{target_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(
+            response.json()["current_task"]["selected_material_ids"],
+            [recent_material_id],
+        )
+
+    def test_workspace_attachment_defaults_do_not_skip_latest_attachmentless_send(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="older-workspace-attachment.pdf",
+            content=b"older workspace attachment",
+            material_type="resume",
+        )
+
+        older_professor_id = self._create_professor(email="older-with-attachment@example.edu")
+        older_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=older_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Older subject",
+            approved_body_text="Older body",
+        )
+        self._mark_email_task_sent(older_task_id, minutes_ago=10)
+
+        latest_professor_id = self._create_professor(email="latest-without-attachment@example.edu")
+        latest_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=latest_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[],
+            approved_subject="Latest subject",
+            approved_body_text="Latest body",
+        )
+        self._mark_email_task_sent(latest_task_id, minutes_ago=5)
+
+        target_professor_id = self._create_professor(email="no-stale-default@example.edu")
+        response = self.client.post(
+            f"/api/workspaces/{target_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertIsNone(response.json()["current_task"]["selected_material_ids"])
+
+    def test_workspace_get_backfills_only_pristine_unselected_root_task(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="workspace-get-default.pdf",
+            content=b"workspace get default",
+            material_type="resume",
+        )
+
+        pristine_professor_id = self._create_professor(email="pristine-before-send@example.edu")
+        pristine_before_send = self.client.post(
+            f"/api/workspaces/{pristine_professor_id}/ensure-task",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        self.assertEqual(pristine_before_send.status_code, 200, msg=pristine_before_send.text)
+        self.assertIsNone(
+            pristine_before_send.json()["current_task"]["selected_material_ids"],
+        )
+
+        sent_professor_id = self._create_professor(email="sent-after-pristine-created@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Sent subject",
+            approved_body_text="Sent body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=1)
+
+        explicit_empty_professor_id = self._create_professor(email="explicit-empty@example.edu")
+        explicit_empty_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=explicit_empty_professor_id,
+            status="discovered",
+            primary_material_id=None,
+            selected_material_ids=[],
+        )
+        existing_draft_professor_id = self._create_professor(email="existing-draft@example.edu")
+        existing_draft_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=existing_draft_professor_id,
+            status="review_required",
+            primary_material_id=None,
+            selected_material_ids=None,
+            generated_subject="Existing draft",
+            generated_content_text="Existing body",
+        )
+
+        pristine_response = self.client.get(
+            f"/api/workspaces/{pristine_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        explicit_empty_response = self.client.get(
+            f"/api/workspaces/{explicit_empty_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+        existing_draft_response = self.client.get(
+            f"/api/workspaces/{existing_draft_professor_id}",
+            params={"identity_id": identity_id, "llm_profile_id": llm_id},
+        )
+
+        self.assertEqual(pristine_response.status_code, 200, msg=pristine_response.text)
+        self.assertEqual(
+            pristine_response.json()["current_task"]["selected_material_ids"],
+            [material_id],
+        )
+        self.assertEqual(
+            self._get_task_material_references(explicit_empty_task_id)[1],
+            [],
+        )
+        self.assertIsNone(
+            self._get_task_material_references(existing_draft_task_id)[1],
+        )
+        self.assertEqual(
+            explicit_empty_response.json()["current_task"]["selected_material_ids"],
+            [],
+        )
+        self.assertIsNone(
+            existing_draft_response.json()["current_task"]["selected_material_ids"],
+        )
+
+    def test_workspace_attachment_defaults_remain_disabled_for_shared_service_callers(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="ui-only-default.pdf",
+            content=b"ui only default",
+            material_type="resume",
+        )
+        sent_professor_id = self._create_professor(email="ui-only-source@example.edu")
+        sent_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=sent_professor_id,
+            status="sent",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+            approved_subject="Source subject",
+            approved_body_text="Source body",
+        )
+        self._mark_email_task_sent(sent_task_id, minutes_ago=1)
+        target_professor_id = self._create_professor(email="shared-service-target@example.edu")
+
+        async def load_without_ui_defaults() -> tuple[list[int] | None, list[int] | None]:
+            from app.core.database import get_session_factory
+            from app.modules.workspace.thread import (
+                build_workspace_thread,
+                ensure_workspace_task,
+            )
+
+            async with get_session_factory()() as session:
+                task = await ensure_workspace_task(
+                    session,
+                    professor_id=target_professor_id,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_id,
+                )
+                thread = await build_workspace_thread(
+                    session,
+                    professor_id=target_professor_id,
+                    identity_id=identity_id,
+                    llm_profile_id=llm_id,
+                )
+                return (
+                    task.selected_material_ids,
+                    thread.current_task.selected_material_ids,
+                )
+
+        self.assertEqual(asyncio.run(load_without_ui_defaults()), (None, None))
+
     def test_workspace_ensure_task_creates_new_manual_task_after_schedule_expired_history(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -4181,6 +4451,194 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(len(refreshed_identity["materials"]), 0)
 
+    def test_global_material_is_reusable_and_survives_source_identity_deletion(self) -> None:
+        source_identity_id = self._create_identity(
+            email_address="material-source@example.com",
+            with_imap=False,
+        )
+        target_identity_id = self._create_identity(
+            email_address="material-target@example.com",
+            with_imap=False,
+        )
+        material_id = self._upload_material(
+            source_identity_id,
+            filename="shared-resume.txt",
+            content=b"Shared global resume",
+            material_type="resume",
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            material_path = Path(
+                connection.execute(
+                    "SELECT file_path FROM identity_materials WHERE id = ?",
+                    (material_id,),
+                ).fetchone()[0],
+            )
+
+        target_default_response = self.client.post(
+            f"/api/identities/{target_identity_id}/materials/{material_id}/set-primary",
+        )
+        self.assertEqual(target_default_response.status_code, 200, msg=target_default_response.text)
+        self.assertEqual(
+            target_default_response.json()["default_for_identity_ids"],
+            [source_identity_id, target_identity_id],
+        )
+
+        target_catalog = self.client.get(
+            "/api/materials",
+            params={"identity_id": target_identity_id},
+        )
+        self.assertEqual(target_catalog.status_code, 200, msg=target_catalog.text)
+        shared = next(item for item in target_catalog.json() if item["id"] == material_id)
+        self.assertTrue(shared["is_primary"])
+        self.assertEqual(
+            shared["default_for_identity_ids"],
+            [source_identity_id, target_identity_id],
+        )
+
+        delete_source = self.client.delete(f"/api/identities/{source_identity_id}")
+        self.assertEqual(delete_source.status_code, 204, msg=delete_source.text)
+
+        surviving_catalog = self.client.get("/api/materials").json()
+        surviving = next(item for item in surviving_catalog if item["id"] == material_id)
+        self.assertIsNone(surviving["source_identity_id"])
+        self.assertEqual(surviving["default_for_identity_ids"], [target_identity_id])
+        target_identity = next(
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == target_identity_id
+        )
+        self.assertEqual(target_identity["current_primary_material_id"], material_id)
+        self.assertTrue(material_path.exists())
+
+    def test_global_material_can_be_uploaded_without_an_identity(self) -> None:
+        upload = self.client.post(
+            "/api/materials",
+            files={"file": ("global-note.png", b"global image", "image/png")},
+            data={"material_type": "other", "display_name": "全局说明"},
+        )
+        self.assertEqual(upload.status_code, 201, msg=upload.text)
+        material = upload.json()
+        self.assertIsNone(material["source_identity_id"])
+        self.assertFalse(material["is_primary"])
+
+        identity_id = self._create_identity(with_imap=False)
+        set_default = self.client.post(
+            f"/api/identities/{identity_id}/materials/{material['id']}/set-primary",
+        )
+        self.assertEqual(set_default.status_code, 400, msg=set_default.text)
+
+        reusable_upload = self.client.post(
+            "/api/materials",
+            files={"file": ("global-resume.txt", b"global resume", "text/plain")},
+            data={"material_type": "resume", "display_name": "全局简历"},
+        )
+        self.assertEqual(reusable_upload.status_code, 201, msg=reusable_upload.text)
+        reusable_id = reusable_upload.json()["id"]
+        set_default = self.client.post(
+            f"/api/identities/{identity_id}/materials/{reusable_id}/set-primary",
+        )
+        self.assertEqual(set_default.status_code, 200, msg=set_default.text)
+
+    def test_delete_global_material_cleans_cross_identity_references(self) -> None:
+        source_identity_id = self._create_identity(
+            email_address="global-delete-source@example.com",
+            with_imap=False,
+        )
+        target_identity_id = self._create_identity(
+            email_address="global-delete-target@example.com",
+            with_imap=False,
+        )
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="global-delete@example.edu")
+        material_id = self._upload_material(
+            source_identity_id,
+            filename="global-delete-resume.txt",
+            content=b"global delete resume",
+            material_type="resume",
+        )
+        set_default = self.client.post(
+            f"/api/identities/{target_identity_id}/materials/{material_id}/set-primary",
+        )
+        self.assertEqual(set_default.status_code, 200, msg=set_default.text)
+        task_id = self._insert_email_task_with_material(
+            identity_id=target_identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="discovered",
+            primary_material_id=material_id,
+            selected_material_ids=[material_id],
+        )
+        rewrite_snapshot_professor_id = self._create_professor(
+            email="global-delete-rewrite-snapshot@example.edu",
+        )
+        rewrite_snapshot_task_id = self._insert_email_task_with_material(
+            identity_id=target_identity_id,
+            llm_id=llm_id,
+            professor_id=rewrite_snapshot_professor_id,
+            status="approved",
+            primary_material_id=None,
+            selected_material_ids=[],
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET draft_rewrite_source_selected_material_ids = ?
+                WHERE id = ?
+                """,
+                (json.dumps([str(material_id), 999999]), rewrite_snapshot_task_id),
+            )
+            connection.commit()
+
+        deleted = self.client.delete(f"/api/materials/{material_id}")
+        self.assertEqual(deleted.status_code, 204, msg=deleted.text)
+        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        self.assertIsNone(primary_material_id)
+        self.assertEqual(selected_material_ids, [])
+        identities = {
+            identity["id"]: identity for identity in self.client.get("/api/identities").json()
+        }
+        self.assertIsNone(identities[source_identity_id]["current_primary_material_id"])
+        self.assertIsNone(identities[target_identity_id]["current_primary_material_id"])
+        with sqlite3.connect(self.db_path) as connection:
+            rewrite_snapshot = connection.execute(
+                """
+                SELECT draft_rewrite_source_selected_material_ids
+                FROM email_tasks WHERE id = ?
+                """,
+                (rewrite_snapshot_task_id,),
+            ).fetchone()[0]
+        self.assertEqual(json.loads(rewrite_snapshot), [999999])
+
+    def test_delete_global_material_is_blocked_by_another_identity_active_task(self) -> None:
+        source_identity_id = self._create_identity(
+            email_address="global-block-source@example.com",
+            with_imap=False,
+        )
+        target_identity_id = self._create_identity(
+            email_address="global-block-target@example.com",
+            with_imap=False,
+        )
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(email="global-block@example.edu")
+        material_id = self._upload_material(
+            source_identity_id,
+            filename="global-block-resume.txt",
+            content=b"global block resume",
+            material_type="resume",
+        )
+        self._insert_email_task_with_material(
+            identity_id=target_identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="approved",
+            primary_material_id=material_id,
+        )
+
+        blocked = self.client.delete(f"/api/materials/{material_id}")
+        self.assertEqual(blocked.status_code, 400, msg=blocked.text)
+        self.assertTrue(any(item["id"] == material_id for item in self.client.get("/api/materials").json()))
+
     def test_delete_material_detaches_discovered_and_matched_primary_material_references(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -5058,7 +5516,8 @@ class ApiEndpointTests(unittest.TestCase):
         canceled_task = canceled.json()["task"]
         self.assertEqual(canceled_task["status"], "running")
         self.assertEqual(canceled_task["completed_count"], 0)
-        self.assertEqual(canceled_task["approved_count"], 1)
+        self.assertEqual(canceled_task["approved_count"], 0)
+        self.assertEqual(canceled_task["scheduled_count"], 1)
         self.assertEqual(canceled_task["canceled_send_count"], 1)
 
         canceled_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
@@ -5088,7 +5547,8 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         restored_task = restored.json()["task"]
         self.assertEqual(restored_task["status"], "running")
-        self.assertEqual(restored_task["approved_count"], 2)
+        self.assertEqual(restored_task["approved_count"], 0)
+        self.assertEqual(restored_task["scheduled_count"], 2)
         self.assertEqual(restored_task["canceled_send_count"], 0)
         restored_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(restored_items.status_code, 200, msg=restored_items.text)
@@ -9408,7 +9868,8 @@ class ApiEndpointTests(unittest.TestCase):
             "已归档历史模板",
         )
         self.assertEqual(response.json()["review_required_count"], 0)
-        self.assertEqual(response.json()["approved_count"], 1)
+        self.assertEqual(response.json()["approved_count"], 0)
+        self.assertEqual(response.json()["scheduled_count"], 1)
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -9422,7 +9883,7 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(row[0], "approved")
+        self.assertEqual(row[0], "scheduled")
         self.assertIsNotNone(row[1])
         self.assertIsNotNone(row[2])
         self.assertEqual(row[3], template_id)
@@ -10051,7 +10512,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(self._get_batch_task_status(first_batch_task_id), "completed")
         self.assertEqual(self._get_batch_task_status(second_batch_task_id), "completed")
 
-    def test_template_scheduled_batch_task_creates_approved_items_without_review(self) -> None:
+    def test_template_scheduled_batch_task_creates_scheduled_items_without_review(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -10097,13 +10558,14 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
-        self.assertEqual(response.json()["approved_count"], 1)
+        self.assertEqual(response.json()["approved_count"], 0)
         self.assertEqual(response.json()["review_required_count"], 0)
-        self.assertEqual(response.json()["scheduled_count"], 0)
+        self.assertEqual(response.json()["scheduled_count"], 1)
         task_id = response.json()["id"]
         items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(items.status_code, 200, msg=items.text)
-        self.assertEqual(items.json()[0]["status"], "approved")
+        self.assertEqual(items.json()[0]["status"], "scheduled")
+        self.assertIsNotNone(items.json()[0]["scheduled_at"])
 
     def test_batch_task_item_workspace_actions_are_scoped_to_batch_item(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -11995,14 +12457,21 @@ class ApiEndpointTests(unittest.TestCase):
 
         return professor_id
 
-    def _create_identity(self, *, with_imap: bool) -> int:
+    def _create_identity(
+        self,
+        *,
+        with_imap: bool,
+        email_address: str = "sender@example.com",
+    ) -> int:
+        payload = self._build_identity_payload(
+            with_imap=with_imap,
+            outreach_template_subject="申请与{{name}}老师交流",
+            outreach_template_body_text="老师您好，我是{{sender_name}}，关注到您在{{research_direction}}方向的工作。",
+        )
+        payload["email_address"] = email_address
         response = self.client.post(
             "/api/identities",
-            json=self._build_identity_payload(
-                with_imap=with_imap,
-                outreach_template_subject="申请与{{name}}老师交流",
-                outreach_template_body_text="老师您好，我是{{sender_name}}，关注到您在{{research_direction}}方向的工作。",
-            ),
+            json=payload,
         )
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
@@ -12536,6 +13005,24 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         selected_material_ids = json.loads(row[1]) if row[1] is not None else None
         return row[0], selected_material_ids
+
+    def _mark_email_task_sent(self, task_id: int, *, minutes_ago: int) -> None:
+        modifier = f"-{minutes_ago} minutes"
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET status = 'sent',
+                    sent_at = datetime('now', ?),
+                    updated_at = datetime('now', ?)
+                WHERE id = ?
+                """,
+                (modifier, modifier, task_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
     def _insert_match_analysis_run(
         self,

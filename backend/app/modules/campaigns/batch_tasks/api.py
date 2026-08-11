@@ -67,6 +67,7 @@ from app.modules.campaigns.status import email_task_is_not_user_removed_expressi
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
+from app.services.material_catalog import list_global_materials
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -216,7 +217,6 @@ async def create_batch_task(
     identity = await session.scalar(
         select(IdentityProfile)
         .options(
-            selectinload(IdentityProfile.materials),
             selectinload(IdentityProfile.current_primary_material),
         )
         .where(IdentityProfile.id == payload.identity_id),
@@ -301,19 +301,21 @@ async def create_batch_task(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    material_map = {material.id: material for material in identity.materials}
+    material_map = {
+        material.id: material for material in await list_global_materials(session)
+    }
     primary_material_id = payload.primary_material_id or identity.current_primary_material_id
     if primary_material_id is not None:
         primary_material = material_map.get(primary_material_id)
         if primary_material is None:
-            raise HTTPException(status_code=400, detail="AI 写信参考材料不属于当前身份")
+            raise HTTPException(status_code=400, detail="未找到 AI 写信参考材料")
         if not material_can_be_primary(primary_material):
             raise HTTPException(status_code=400, detail="当前材料不支持作为 AI 写信参考材料")
 
     selected_material_ids = payload.selected_material_ids or None
     if selected_material_ids:
         if len(set(selected_material_ids)) != len(set(material_map) & set(selected_material_ids)):
-            raise HTTPException(status_code=400, detail="存在不属于当前身份的随信材料")
+            raise HTTPException(status_code=400, detail="存在已删除或不存在的随信材料")
 
     selected_template = None
     if payload.outreach_template_id is not None:
@@ -508,7 +510,11 @@ async def create_batch_task(
                 draft_generation_source = initial_draft.generation_source
                 draft_fallback_reason = initial_draft.fallback_reason
                 if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
-                    task_status = EmailTaskStatus.APPROVED.value
+                    task_status = (
+                        EmailTaskStatus.SCHEDULED.value
+                        if payload.schedule_type == "scheduled"
+                        else EmailTaskStatus.APPROVED.value
+                    )
                     approved_subject = generated_subject
                     approved_body_text = generated_body_text
                     approved_body_html = generated_body_html
@@ -682,7 +688,6 @@ async def list_batch_task_items(
                 (
                     await session.execute(
                         select(IdentityMaterial.id, IdentityMaterial.size_bytes).where(
-                            IdentityMaterial.identity_id == identity_id,
                             IdentityMaterial.id.in_(material_id_chunk),
                         ),
                     )
@@ -1494,7 +1499,6 @@ async def _sanitize_batch_task_material_references_before_restore(session: Async
         existing_material_ids.update(
             await session.scalars(
                 select(IdentityMaterial.id).where(
-                    IdentityMaterial.identity_id == task.identity_id,
                     IdentityMaterial.id.in_(material_id_chunk),
                 ),
             ),

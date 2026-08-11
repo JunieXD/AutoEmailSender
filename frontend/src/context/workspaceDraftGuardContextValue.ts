@@ -2,6 +2,9 @@ import { createContext } from "react";
 
 export type WorkspaceDraftGuardRequest = {
   nextPath?: string;
+  nextIdentityId?: number | null;
+  nextIdentityEditorId?: number | "new";
+  nextLlmProfileId?: number | null;
 };
 
 export type WorkspaceDraftGuard = (

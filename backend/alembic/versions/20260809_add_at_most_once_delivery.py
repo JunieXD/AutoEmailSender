@@ -38,24 +38,50 @@ def upgrade() -> None:
     if "email_delivery_attempts" not in _table_names():
         op.create_table(
             "email_delivery_attempts",
-            sa.Column("attempt_id", sa.String(length=36), nullable=False),
-            sa.Column("email_task_id", sa.Integer(), nullable=False),
-            sa.Column("owner_role", sa.String(length=16), nullable=False),
-            sa.Column("runtime_id", sa.String(length=128), nullable=False),
-            sa.Column("owner_generation", sa.String(length=128), nullable=False),
-            sa.Column("owner_pid", sa.Integer(), nullable=False),
+            sa.Column("id", sa.String(length=36), nullable=False),
+            sa.Column("email_task_id", sa.Integer(), nullable=True),
+            sa.Column("identity_id", sa.Integer(), nullable=False),
+            sa.Column("professor_id", sa.Integer(), nullable=False),
+            sa.Column("attempt_number", sa.Integer(), nullable=False),
+            sa.Column("recipient_email", sa.String(length=255), nullable=False),
+            sa.Column("subject_fingerprint", sa.String(length=71), nullable=False),
+            sa.Column("content_fingerprint", sa.String(length=71), nullable=False),
+            sa.Column("app_message_id", sa.String(length=255), nullable=True),
+            sa.Column("normalized_app_message_id", sa.String(length=255), nullable=True),
+            sa.Column(
+                "status",
+                sa.String(length=20),
+                server_default=sa.text("'prepared'"),
+                nullable=False,
+            ),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+                nullable=False,
+            ),
+            sa.Column("owner_role", sa.String(length=16), server_default="legacy", nullable=False),
+            sa.Column("runtime_id", sa.String(length=128), server_default="legacy", nullable=False),
+            sa.Column(
+                "owner_generation",
+                sa.String(length=128),
+                server_default="pre-split",
+                nullable=False,
+            ),
+            sa.Column("owner_pid", sa.Integer(), server_default=sa.text("0"), nullable=False),
             sa.Column(
                 "outcome",
                 sa.String(length=48),
                 server_default=sa.text("'claimed'"),
                 nullable=False,
             ),
-            sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("finalized_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("smtp_accepted_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("prepared_rfc_message_id", sa.String(length=255), nullable=True),
-            sa.Column("subject", sa.Text(), nullable=False),
-            sa.Column("content", sa.Text(), nullable=False),
+            sa.Column("subject", sa.Text(), server_default="", nullable=False),
+            sa.Column("content", sa.Text(), server_default="", nullable=False),
             sa.Column("content_html", sa.Text(), nullable=True),
             sa.Column(
                 "attachment_count",
@@ -68,15 +94,53 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(
                 ["email_task_id"],
                 ["email_tasks.id"],
+                name="fk_email_delivery_attempts_email_task_id_email_tasks",
+                ondelete="SET NULL",
+            ),
+            sa.ForeignKeyConstraint(
+                ["identity_id"],
+                ["identity_profiles.id"],
+                name="fk_email_delivery_attempts_identity_id_identity_profiles",
                 ondelete="CASCADE",
             ),
-            sa.PrimaryKeyConstraint("attempt_id"),
+            sa.ForeignKeyConstraint(
+                ["professor_id"],
+                ["professors.id"],
+                name="fk_email_delivery_attempts_professor_id_professors",
+                ondelete="CASCADE",
+            ),
+            sa.PrimaryKeyConstraint("id", name="pk_email_delivery_attempts"),
+            sa.UniqueConstraint(
+                "email_task_id",
+                "attempt_number",
+                name="uq_email_delivery_attempts_task_number",
+            ),
         )
         op.create_index(
-            "ix_email_delivery_attempts_task_claimed",
+            "ix_email_delivery_attempts_email_task_id",
             "email_delivery_attempts",
-            ["email_task_id", "claimed_at"],
+            ["email_task_id"],
             unique=False,
+        )
+        op.create_index(
+            "ix_email_delivery_attempts_identity_id",
+            "email_delivery_attempts",
+            ["identity_id"],
+        )
+        op.create_index(
+            "ix_email_delivery_attempts_professor_id",
+            "email_delivery_attempts",
+            ["professor_id"],
+        )
+        op.create_index(
+            "ix_email_delivery_attempts_identity_professor_started",
+            "email_delivery_attempts",
+            ["identity_id", "professor_id", "started_at", "id"],
+        )
+        op.create_index(
+            "ix_email_delivery_attempts_message_id",
+            "email_delivery_attempts",
+            ["identity_id", "normalized_app_message_id"],
         )
         op.create_index(
             "ix_email_delivery_attempts_outcome_finalized",
@@ -115,7 +179,7 @@ def upgrade() -> None:
                 "fk_email_logs_delivery_attempt_id",
                 "email_delivery_attempts",
                 ["delivery_attempt_id"],
-                ["attempt_id"],
+                ["id"],
                 ondelete="SET NULL",
             )
 
@@ -144,23 +208,49 @@ def upgrade() -> None:
         sa.text(
             """
             INSERT INTO email_delivery_attempts (
-                attempt_id, email_task_id, owner_role, runtime_id,
-                owner_generation, owner_pid, outcome, claimed_at, finalized_at,
+                id, email_task_id, identity_id, professor_id, attempt_number,
+                recipient_email, subject_fingerprint, content_fingerprint,
+                status, started_at, created_at,
+                owner_role, runtime_id, owner_generation, owner_pid,
+                outcome, finalized_at,
                 prepared_rfc_message_id, subject, content, content_html,
                 attachment_count, error_summary
             )
             SELECT
-                'legacy-' || CAST(id AS VARCHAR), id, 'legacy', 'legacy',
-                'pre-at-most-once', 0, 'assumed_sent_after_interruption',
-                COALESCE(last_send_attempt_at, updated_at, CURRENT_TIMESTAMP),
-                CURRENT_TIMESTAMP, last_rfc_message_id,
-                COALESCE(approved_subject, generated_subject, ''),
-                COALESCE(approved_body_text, generated_content_text, ''),
-                COALESCE(approved_body_html, generated_content_html),
+                'legacy-' || CAST(email_tasks.id AS VARCHAR), email_tasks.id,
+                email_tasks.identity_id, email_tasks.professor_id, 1,
+                COALESCE(professors.email, ''),
+                'legacy:subject:' || CAST(email_tasks.id AS VARCHAR),
+                'legacy:content:' || CAST(email_tasks.id AS VARCHAR),
+                'unknown',
+                COALESCE(
+                    email_tasks.last_send_attempt_at,
+                    email_tasks.updated_at,
+                    CURRENT_TIMESTAMP
+                ),
+                COALESCE(
+                    email_tasks.last_send_attempt_at,
+                    email_tasks.updated_at,
+                    CURRENT_TIMESTAMP
+                ),
+                'legacy', 'legacy', 'pre-at-most-once', 0,
+                'assumed_sent_after_interruption',
+                CURRENT_TIMESTAMP, email_tasks.last_rfc_message_id,
+                COALESCE(email_tasks.approved_subject, email_tasks.generated_subject, ''),
+                COALESCE(
+                    email_tasks.approved_body_text,
+                    email_tasks.generated_content_text,
+                    ''
+                ),
+                COALESCE(
+                    email_tasks.approved_body_html,
+                    email_tasks.generated_content_html
+                ),
                 0, 'Recovered conservatively during at-most-once migration'
             FROM email_tasks
-            WHERE status = 'sending'
-              AND delivery_attempt_id IS NULL
+            LEFT JOIN professors ON professors.id = email_tasks.professor_id
+            WHERE email_tasks.status = 'sending'
+              AND email_tasks.delivery_attempt_id IS NULL
             """
         )
     )

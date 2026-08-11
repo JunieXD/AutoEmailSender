@@ -418,6 +418,8 @@ _COLLECTION_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
     "materials.list": frozenset(
         {
             "id",
+            "source_identity_id",
+            # Deprecated response alias retained by the backend.
             "identity_id",
             "display_name",
             "original_filename",
@@ -425,6 +427,7 @@ _COLLECTION_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
             "size_bytes",
             "material_type",
             "is_primary",
+            "default_for_identity_ids",
             "has_extracted_text",
             "extracted_text",
             "created_at",
@@ -823,7 +826,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "materials.list",
-        "查询可作为 AI 参考或附件的材料元数据",
+        "查询全局共享、可作为 AI 参考或附件的材料元数据",
         "L0",
         "available",
         guide_topic="materials",
@@ -837,7 +840,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "materials.upload",
-        "从本地文件上传 AI 参考材料或邮件附件",
+        "从本地文件上传全局共享的 AI 参考材料或邮件附件",
         "L1",
         "available",
         mutates=True,
@@ -845,7 +848,7 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     ),
     Capability(
         "materials.set-primary",
-        "设置一份可提取文本的默认 AI 参考材料",
+        "为指定发件身份设置一份可提取文本的默认 AI 参考材料",
         "L1",
         "available",
         mutates=True,

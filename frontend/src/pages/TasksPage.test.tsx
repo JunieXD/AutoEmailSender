@@ -1171,6 +1171,22 @@ describe("TasksPage Agent UI handoffs", () => {
   });
 });
 
+describe("TasksPage section isolation", () => {
+  it("does not mount background task effects while the delivery section is active", async () => {
+    render(
+      <RouterMemoryRouter initialEntries={["/tasks?section=delivery"]}>
+        <TasksPage />
+      </RouterMemoryRouter>,
+    );
+
+    expect(await screen.findByText("发送计划定位结果")).toBeInTheDocument();
+    expect(apiMocks.listBatchTasks).not.toHaveBeenCalled();
+    expect(apiMocks.listCrawlJobs).not.toHaveBeenCalled();
+    expect(apiMocks.listMatchAnalysisJobs).not.toHaveBeenCalled();
+    expect(apiMocks.listProfessorInformationEnrichmentJobs).not.toHaveBeenCalled();
+  });
+});
+
 describe("TasksPage match analysis notifications", () => {
   it("tracks a retried match analysis job globally", async () => {
     const failedJob = buildMatchAnalysisJob({

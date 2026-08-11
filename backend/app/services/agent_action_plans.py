@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.core.agent_api_errors import AgentApiError
 from app.core.error_formatting import safe_exception_message
 from app.core.time import as_utc_aware, serialize_api_datetime, utc_now
-from app.models import AgentActionPlan, EmailTask, EmailTaskStatus, IdentityProfile
+from app.models import AgentActionPlan, EmailTask, EmailTaskStatus, IdentityMaterial
 from app.schemas.agent import (
     AgentActionPlanRead,
     AgentPlanExecuteRequest,
@@ -28,6 +28,7 @@ from app.modules.workspace.public import (
 )
 from app.services.agent_plan_effects import resolve_agent_plan_effects
 from app.services.operation_logs import record_operation_log
+from app.services.material_catalog import list_global_materials
 
 
 PLAN_TTL = timedelta(minutes=30)
@@ -86,6 +87,7 @@ async def create_email_action_plan(
             )
         snapshot = _build_task_snapshot(
             task,
+            await list_global_materials(session),
             delivery=payload.delivery,
             scheduled_at=scheduled_at,
         )
@@ -235,6 +237,7 @@ async def execute_email_action_plan(
         try:
             current_snapshot = _build_task_snapshot(
                 task,
+                await list_global_materials(session),
                 delivery=delivery,
                 scheduled_at=scheduled_at,
             )
@@ -382,6 +385,7 @@ async def _execute_claimed_plan(
 
 def _build_task_snapshot(
     task: EmailTask,
+    materials: list[IdentityMaterial],
     *,
     delivery: str,
     scheduled_at,
@@ -430,13 +434,13 @@ def _build_task_snapshot(
     if not subject or not body_text:
         raise ValueError("草稿缺少可发送的主题或正文")
 
-    material_by_id = {material.id: material for material in task.identity.materials}
+    material_by_id = {material.id: material for material in materials}
     attachment_ids = list(dict.fromkeys(task.selected_material_ids or []))
     missing_attachment_ids = [
         material_id for material_id in attachment_ids if material_id not in material_by_id
     ]
     if missing_attachment_ids:
-        raise ValueError("草稿包含不存在或不属于当前身份的附件")
+        raise ValueError("草稿包含已删除或不存在的附件")
     reference = task.primary_material
     raw_mode = (task.outreach_generation_mode or "llm").lower()
     generation_mode = (
@@ -587,7 +591,7 @@ async def _load_task(session: AsyncSession, task_id: int) -> EmailTask | None:
         select(EmailTask)
         .options(
             selectinload(EmailTask.professor),
-            selectinload(EmailTask.identity).selectinload(IdentityProfile.materials),
+            selectinload(EmailTask.identity),
             selectinload(EmailTask.primary_material),
             selectinload(EmailTask.outreach_template),
         )
