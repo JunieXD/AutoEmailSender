@@ -3928,15 +3928,16 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json_atomic(path: Path, payload: object, *, mode: int = 0o600) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    filesystem_path = _extended_length_path(path) if os.name == "nt" else path
+    filesystem_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = filesystem_path.with_name(f".tmp-{uuid.uuid4().hex[:16]}")
     try:
         with temporary.open("x", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2, sort_keys=True)
             file.write("\n")
         with contextlib.suppress(OSError):
             temporary.chmod(mode)
-        temporary.replace(path)
+        temporary.replace(filesystem_path)
     finally:
         temporary.unlink(missing_ok=True)
 

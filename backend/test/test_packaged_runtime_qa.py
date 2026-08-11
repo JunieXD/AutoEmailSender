@@ -151,6 +151,30 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         finally:
             shutil.rmtree(runner._extended_length_path(temp_root))
 
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows long paths")
+    def test_atomic_json_write_supports_a_real_extended_length_path(self) -> None:
+        temp_root = Path(tempfile.mkdtemp())
+        try:
+            target = (
+                temp_root
+                / ("a" * 80)
+                / ("b" * 80)
+                / ("c" * 80)
+                / "report.json"
+            )
+            self.assertGreater(len(str(target)), 260)
+
+            runner._write_json_atomic(target, {"status": "ok"})
+
+            extended_target = runner._extended_length_path(target)
+            self.assertEqual(
+                json.loads(extended_target.read_text(encoding="utf-8")),
+                {"status": "ok"},
+            )
+            self.assertEqual(list(extended_target.parent.glob(".tmp-*")), [])
+        finally:
+            shutil.rmtree(runner._extended_length_path(temp_root))
+
     def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
