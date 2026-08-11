@@ -1,7 +1,7 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：执行中（用户已恢复同一 Goal；B0～B4 已完成，当前阶段为 B5）
-- 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`
+- 状态：待启动新 Goal（B0～B4 历史证据保留；当前从 B4R 最新 master 再同步开始）
+- 当前 Goal ID：待创建（旧 Goal `019fe582-2dea-7e42-bd2e-684bae191421` 已取消）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
 - 前置验收证据：[`desktop_api_worker_goal_acceptance.md`](../development/desktop_api_worker_goal_acceptance.md)
@@ -12,18 +12,17 @@
 ### 1.1 可直接用于 Goal 模式的目标
 
 ```text
-严格按照 docs/architecture/desktop-api-worker-beta-goal-plan.md，在保留既有 API + Worker
-实现和 combined 回退语义的基础上，建立可供本次及未来测试版本复用的桌面 prerelease
-体系：先保护当前 detached/dirty 工作并将最新 master 合入专用开发分支；实现由 Electron
-持久化、在“其他设置”中可选择且重启后生效的 combined/split 模式以及页面外安全回退；
-实现默认仅保存在用户本地、空间有界、严格脱敏、后端失效时仍可导出的 Beta 诊断包和本地
-分析器；把通用测试版本的 Prepare、Certify、Publish Prerelease、Verify Isolation、Observe
-和 Supersede 流程写入 Release Skill、脚本、工作流、测试与运维文档；使用同一精确候选资产
-在本机 macOS 专用测试环境和 Windows Parallels VM 完成真实覆盖升级、模式切换、生命周期、
-故障注入与内部长稳。只有全部必选验收标准通过、稳定版更新入口未发生变化、诊断包未泄露
-敏感信息、没有未解决的阻断级或高风险缺陷，并在用户明确批准后将精确候选发布为非 Latest
-的 GitHub Prerelease 且完成隔离验证时，Goal 才算完成。未经单独批准，不得 push、创建 tag、
-dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定版本。
+严格按照 docs/architecture/desktop-api-worker-beta-goal-plan.md 完成首个桌面 API + Worker Beta。
+先把冻结的最新 origin/master 合入 beta/desktop-api-worker；所有产品功能、数据模型、迁移、API、
+前端交互和业务测试以 master 为准，Beta 分支只在其上保留双进程拓扑、进程安全、combined 回退、
+本地诊断和 prerelease 发布适配，不保留与 master 冲突的旧业务实现。完成冲突聚焦回归和一轮全仓，
+再完成双平台 harness rehearsal；冻结同一 SHA 后按已授予的一次性全流程授权 push 来源分支并
+dispatch Prerelease Certify。只使用该 run 的原始 EXE、DMG 和 manifest，依次完成双平台 exact
+admission、覆盖升级、lifecycle、每平台 300 秒 normal + 300 秒 seeded chaos 密集门禁和诊断重建。
+全部必选 AC 通过且没有阻断/高风险/数据正确性/隐私/稳定更新隔离缺陷后，按同一授权创建不可变
+tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed 不变且 v2.5.4 两平台客户端
+检查更新均看不到 Beta，收口证据后完成 Goal。不得把 Beta 合回 master、修改稳定 feed 或发布
+稳定版本。
 ```
 
 ### 1.2 B0 起点与当前基线
@@ -42,12 +41,17 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - run `31417575421` 的原始 DMG、NSIS 和 `prerelease-candidate.json` 已下载到仓库外并复核摘要；
   它们不得与修复后的 SHA 或任何替代 run 混用。
 
-### 1.3 Goal 当前检查点（2026-08-11）
+### 1.3 Goal 当前检查点（2026-08-12）
 
-- Goal 系统仍为 `019fe582-2dea-7e42-bd2e-684bae191421`，并保留上次批准门产生的 `blocked`
-  标记；用户已明确恢复继续执行。另一个 Codex 进程意外关闭没有取消或替换 Goal，因此继续沿用
-  同一 Goal ID，不创建相互冲突的新 Goal。
-- 当前本地分支为 `beta/desktop-api-worker`。2026-08-11 重新 fetch 后，最新
+- 旧 Goal 已取消，Goal 系统当前没有活动 Goal；本计划校验通过后创建一个新 Goal，不复用旧 ID。
+- 本计划更新前，本地分支为 `beta/desktop-api-worker`，HEAD 为
+  `bfb679869a23313b71d25a985178239e9f1dd641`，工作区干净。远端来源分支仍停在
+  `45c5d5f8eb6b707f4ed905b3d697be5b6e1b0608`，当前本地提交尚未 push。
+- 最新 `origin/master` 为 `3c1e064dceac0917a966cb510385856fc9fe7ea1`；当前分支相对它 behind
+  16、ahead 62。只读 merge-tree 预测 8 个冲突：模型导出、delivery attempt、通信 transport、
+  delivery task、三个后端测试和 `TasksPage.tsx`。B4 的旧 master 证据继续作为前置基线，但
+  AC-BRANCH-02 在 B4R 重新通过前视为打开。
+- 历史 B4 基线：2026-08-11 重新 fetch 后，当时的
   `origin/master` 仍为 `2fcc431d25ba36b1de6380bb316589a750cebc2f`；它已通过 merge commit
   `e313811528adc407211cfd8aa6f68e6a3c84749d` 合入。当前分支相对 master 为 behind 0，merge-base
   精确为该 master；ahead 会随本地 failure-recovery 与证据提交增长。该分支名只描述本次开发工作，
@@ -110,25 +114,36 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
   安装器恢复边界，而旧 runner 在首次真实安装前先执行整套源码/冻结构建。B5 因此先增加通用
   `harness-rehearsal → candidate-admission → formal certification` 三层门禁；完成双平台演练前不再
   申请替代 candidate。run `31464156897` 只允许作为 rehearsal 的失效包，不能重新成为候选证据。
-- 当前未取得新的 push/dispatch 授权。新的本地门禁实现、演练和文档证据全部收口后，才重新请求
-  push 新 SHA 与 replacement Certify；仍未授权 tag、公开 GitHub Prerelease、合回 `master` 或
-  稳定版发布。
+- `bfb6798` 已把测试版正式运行门禁调整为每平台 5 分钟 normal + 5 分钟 seeded chaos，并强制
+  10 秒资源采样、5 秒故障动作和全部 chaos 动作覆盖；稳定版 24h/8h 标准不变。
+- 用户已在 2026-08-12 一次性批准完成本 Goal 所需的来源分支 push、Prerelease Certify dispatch、
+  prerelease tag 创建/推送和通过全部门禁后的公开 GitHub Prerelease，不再设置重复人工暂停点。
 
-### 1.4 授权边界
+### 1.4 本次一次性授权边界
 
-本 Goal 允许在本地完成代码、文档、测试、分支创建和提交，也允许为避免长期漂移而把最新
-`origin/master` 语义化合入当前测试开发分支。这里的“同步 master”不等于把测试分支合回
-`master`。以下动作均设置独立人工批准门，不因“启动 Goal”自动获得授权：
+本 Goal 已获一次性授权执行以下远端动作，不需要再次暂停询问：
 
-1. 首次 push 任意 Beta 来源分支；
-2. dispatch 会使用 GitHub Secrets 或生成候选资产的远端 workflow；
-3. 创建或推送 prerelease tag；
-4. 创建、公开、撤回或删除 GitHub Prerelease；
-5. 将测试分支合并到 `master`、修改稳定更新 feed 或发布稳定版本。
+1. push 本 Goal 最终冻结的 `beta/desktop-api-worker` 来源分支；
+2. dispatch 与该最终 SHA 精确绑定的 Prerelease Certify workflow；
+3. 在全部双平台 exact-package AC 通过后创建并推送不可变 prerelease tag；
+4. 将同一 candidate run 的原始资产公开为 GitHub Prerelease，且 `Latest=false`。
 
-在批准门之前，可以完成本地候选构建和开发 smoke，但不得把它表述成远端候选来源证据。
+授权不包括：把 Beta 分支合回 `master`、修改稳定更新 feed、发布稳定版、删除/覆盖公开资产，或
+绕过失败门禁。若出现这些新范围、需要破坏性恢复，或出现无法由代码/测试判定的产品决策，才停止
+请求新授权。
 
-### 1.5 明确不在本 Goal 内的事项
+### 1.5 master 业务优先的合并规则
+
+- 冻结本次 `origin/master@3c1e064` 后只合入一次；Beta 发布前不再追逐普通 master 提交，只有
+  安全、数据损坏或发布阻断修复才重新评估。
+- 冲突文件中的业务模型、字段、迁移、API 合同、状态机、UI 行为和测试预期以 master 为准；先
+  还原 master 的完整业务结果，再移植 split 进程边界、租约/fencing、诊断和打包所需的最小适配。
+- 不用 Beta 旧实现覆盖 master 的邮件投递对账、全局材料库、任务页面拆分或其他新业务；不删除
+  master migration/DDL。出现双 Alembic head 时只增加无 DDL 的 merge revision。
+- 合并后先运行 8 个冲突文件对应测试，再运行迁移、邮件投递、IMAP、Worker 进程安全和 TasksPage
+  聚焦回归；聚焦通过后只运行一轮完整全仓。失败先定位和重放聚焦场景，不从头重复所有成功阶段。
+
+### 1.6 明确不在本 Goal 内的事项
 
 - 不建设远程遥测、自动上传或后台上报；诊断数据只在本地轮转保存，由用户主动导出并发送。
 - 不收集邮件地址、导师姓名、邮件主题/正文、附件内容、LLM prompt/response、凭据或完整本地路径。
@@ -280,27 +295,26 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后执行正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
-| B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
+| B4R | 冻结并同步最新 master | **执行中**：合入 `origin/master@3c1e064`，以 master 业务语义解决 8 个预测冲突，完成聚焦回归和一轮全仓 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **待执行**：B4R 通过后先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后执行正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
 ### 7.1 本次恢复后的固定执行顺序
 
-1. **B2 已完成**：先完成设置页诊断 UI，再完成 analyzer、恶意包防护、canary 解包扫描和相关回归；
-   未通过隐私零命中前，不进入发布流程改造。
-2. **B3 已完成**：把 Release Skill、POSIX/PowerShell 入口、workflow、候选 manifest、恢复规则和
-   合同测试一起改为“稳定版 + 通用 prerelease”双状态机。通用入口只认显式
-   `source_branch + release_sha + version + channel`，不得绑定当前分支名。
-3. **B4 已完成**：最新 `origin/master@2fcc431` 已合入；最终产品代码的连续两次全仓和不受后续
-   Frontend-only 修复影响的连续 20 次 split 集成均已通过，首次失败与修复原样记入验收报告。
-4. **正在执行 B5**：先在 Windows 和 macOS 用失效包各执行“故意中断 → 立即重跑”的
-   harness rehearsal，证明 stale 注册表/进程或 DMG 挂载与超时均能自动恢复。形成新 SHA 并在
-   获得 push/dispatch 独立授权后，只使用同一新 run 的原始资产，依次执行 Windows admission、
-   macOS admission、Windows 正式认证、macOS 正式认证。admission 必须绑定 manifest/run/SHA，
-   但 `certification_eligible=false`，不得复用 `31464156897` 关闭任何正式 AC。
-5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
-   才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。
-6. **完成 B7**：收口可复现证据、已知限制和后续观察方式；仍不自动合回 `master` 或发布稳定版。
+1. **B4R**：冻结 `origin/master@3c1e064` 并语义合入；业务逻辑以 master 为准，只移植双进程适配。
+   完成冲突聚焦、迁移/邮件/split 高风险回归和一轮完整全仓，提交并记录 impact。
+2. **B5 rehearsal**：在 Windows 和 macOS 各执行“故意中断 → 立即重跑”，证明 stale
+   注册表/进程或 DMG 挂载与超时自动恢复；失败只修复和重放受影响阶段。
+3. **冻结与 Certify**：完成公告同步、preflight、certify dry-run 和 clean SHA；按现有授权 push
+   `beta/desktop-api-worker` 并 dispatch Prerelease Certify，确认 workflow head SHA 精确一致。
+4. **Exact candidate QA**：下载并复核同一 run 的 EXE、DMG、manifest；依次运行 Windows
+   admission、macOS admission、Windows lifecycle + 300s/300s、macOS lifecycle + 300s/300s，
+   分析最终诊断包并要求全部不变量通过。
+5. **Publish 与隔离**：按现有授权 publish 同一 candidate run；验证 tag/SHA/资产、非 Latest、
+   稳定 feed 摘要不变，并在 v2.5.4 Windows/macOS 客户端真实检查更新确认看不到 Beta。
+6. **B7**：更新验收报告，记录冲突决策、命令、测试数、run ID、摘要、seed、失败与剩余风险；
+   清理隔离测试进程并完成 Goal，不合回 `master`、不发布稳定版。
 
 ## 8. 必选验收标准
 
@@ -360,8 +374,8 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 3. combined/split 设置、安全重启、页面外回退、诊断导出和 analyzer 均有跨平台测试。
 4. Mac 与 Windows VM 使用同一版本、同一 SHA 对应的精确候选资产完成内部 Beta 门禁。
 5. 没有未解决的阻断级、高风险、数据正确性、隐私或稳定更新隔离缺陷。
-6. 用户明确批准远端候选与公开操作后，GitHub Prerelease 已发布、非 Latest、稳定客户端不可见；
-   若批准尚未提供，Goal 应停在批准门并标记 blocked，不能伪造完成。
+6. 已使用用户 2026-08-12 的一次性授权完成精确候选 push/certify/publish；GitHub Prerelease 已
+   发布、非 Latest，稳定客户端不可见。
 7. 验收报告记录首次失败、修复、命令、测试数、OS/架构、SHA、run ID、资产摘要、seed、时长、
    资源趋势、诊断 schema、隐私扫描和剩余风险。
 
@@ -377,4 +391,4 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 - 诊断 bundle 泄露禁止项、无界增长或影响业务正确性；
 - Beta workflow 能修改稳定 Latest/feed，或无法证明稳定客户端隔离；
 - 候选 SHA、run ID、资产摘要或平台证据不一致；
-- 需要 push、远端 workflow、tag、Release、撤回或 master 合并但尚未获得相应批准。
+- 需要把 Beta 合回 master、发布稳定版、删除/覆盖公开资产或执行其他未获授权的新范围。
