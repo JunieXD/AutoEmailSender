@@ -1807,8 +1807,6 @@ def _run_lifecycle(
         _assert_worker_has_no_listener(first)
         recorder.check("worker_has_no_listening_socket", passed=True)
         recorder.sample(_collect_resource_sample(first, paths.user_data, lifecycle_started))
-        write_evidence = _exercise_api_read_write(first, marker="lifecycle-first")
-        recorder.check("authenticated_api_read_write", passed=True, evidence=write_evidence)
 
         if args.upgrade_manifest is not None:
             upgrade_evidence = _verify_upgrade_manifest(
@@ -1824,6 +1822,9 @@ def _run_lifecycle(
                 passed=True,
                 evidence=upgrade_evidence,
             )
+
+        write_evidence = _exercise_api_read_write(first, marker="lifecycle-first")
+        recorder.check("authenticated_api_read_write", passed=True, evidence=write_evidence)
 
         if args.system_sleep_wake:
             _exercise_system_sleep_wake(

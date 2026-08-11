@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import shutil
 import sqlite3
@@ -36,6 +37,14 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_lifecycle_verifies_upgrade_before_mutating_current_settings(self) -> None:
+        source = inspect.getsource(runner._run_lifecycle)
+
+        self.assertLess(
+            source.index("_verify_upgrade_manifest("),
+            source.index('_exercise_api_read_write(first, marker="lifecycle-first")'),
+        )
+
     def test_evidence_recorder_check_records_named_trace_event(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = runner._create_paths(Path(temp_dir))
