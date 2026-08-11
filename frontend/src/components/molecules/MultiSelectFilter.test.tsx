@@ -159,7 +159,7 @@ describe("MultiSelectFilter", () => {
     expect(
       screen.queryByRole("option", { name: "示例大学" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("1 项 · 已选 3 项")).toBeInTheDocument();
+    expect(screen.getByText("1 项 · 已选 1 项")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "反选" }));
 
@@ -171,6 +171,61 @@ describe("MultiSelectFilter", () => {
     fireEvent.click(screen.getByRole("button", { name: "应用" }));
 
     expect(onChange).toHaveBeenCalledWith(["示例大学", "第三学院"]);
+  });
+
+  it("applies searched options when the filter was unrestricted", () => {
+    const onChange = renderFilter();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
+      target: { value: "大学" },
+    });
+
+    expect(screen.getByText("2 项 · 已选 2 项")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(onChange).toHaveBeenCalledWith(["示例大学", "第二大学"]);
+  });
+
+  it("applies searched options with Enter outside IME composition", () => {
+    const onChange = renderFilter();
+    const searchInput = screen.getByRole("textbox", {
+      name: "搜索学校选项",
+    });
+
+    fireEvent.change(searchInput, { target: { value: "大学" } });
+    fireEvent.keyDown(searchInput, {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(searchInput, { key: "Enter", code: "Enter" });
+
+    expect(onChange).toHaveBeenCalledWith(["示例大学", "第二大学"]);
+  });
+
+  it("preserves an existing partial selection when only searching", () => {
+    const onChange = vi.fn();
+    render(
+      <MultiSelectFilter
+        label="学校"
+        allLabel="全部学校"
+        selectedValues={["示例大学"]}
+        options={options}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "学校：示例大学" }),
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索学校选项" }), {
+      target: { value: "第二" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    expect(onChange).toHaveBeenCalledWith(["示例大学"]);
   });
 
   it("supports clearing the draft before selecting a small subset", () => {
