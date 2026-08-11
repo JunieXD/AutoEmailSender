@@ -14,11 +14,36 @@ type ScrollElementIntoAppViewOptions = {
   offset?: number;
 };
 
+const VERTICAL_SCROLL_OVERFLOW_VALUES = new Set(["auto", "overlay", "scroll"]);
+
+const getScrollContainerForElement = (
+  element: HTMLElement,
+  appContainer: HTMLElement,
+) => {
+  if (!appContainer.contains(element)) {
+    return null;
+  }
+
+  let ancestor = element.parentElement;
+  while (ancestor && ancestor !== appContainer) {
+    const overflowY = window.getComputedStyle(ancestor).overflowY;
+    if (VERTICAL_SCROLL_OVERFLOW_VALUES.has(overflowY)) {
+      return ancestor;
+    }
+    ancestor = ancestor.parentElement;
+  }
+
+  return appContainer;
+};
+
 export const scrollElementIntoAppView = (
   element: HTMLElement,
   { behavior = "auto", offset = 24 }: ScrollElementIntoAppViewOptions = {},
 ) => {
-  const container = getAppScrollContainer();
+  const appContainer = getAppScrollContainer();
+  const container = appContainer
+    ? getScrollContainerForElement(element, appContainer)
+    : null;
   if (!container) {
     element.scrollIntoView?.({ behavior, block: "start" });
     return;

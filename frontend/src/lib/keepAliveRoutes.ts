@@ -8,7 +8,14 @@
  * - `keepAliveScrollMemory`：window 滚动位置的模块级缓存——保活只保留 React state，
  *   文档滚动条不属于组件状态，需要单独兜底。
  */
-const PATHS = ["/", "/dashboard", "/professors", "/tasks", "/profile"] as const;
+const PATHS = [
+  "/",
+  "/dashboard",
+  "/professors",
+  "/community",
+  "/tasks",
+  "/profile",
+] as const;
 
 export const KEEP_ALIVE_PATHS: ReadonlySet<string> = new Set(PATHS);
 

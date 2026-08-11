@@ -47,9 +47,10 @@ describe("KeepAliveLayout", () => {
     expect(KEEP_ALIVE_PATHS.has("/")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/dashboard")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/professors")).toBe(true);
+    expect(KEEP_ALIVE_PATHS.has("/community")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/tasks")).toBe(true);
     expect(KEEP_ALIVE_PATHS.has("/profile")).toBe(true);
-    expect(KEEP_ALIVE_PATHS.size).toBe(5);
+    expect(KEEP_ALIVE_PATHS.size).toBe(6);
 
     const homeMount = vi.fn();
     const homeUnmount = vi.fn();
