@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -115,8 +116,9 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "requires Windows long paths")
     def test_packaged_artifact_hash_reads_a_real_extended_length_tree(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir) / "artifact"
+        temp_root = Path(tempfile.mkdtemp())
+        try:
+            root = temp_root / "artifact"
             deep = root
             for index in range(4):
                 deep /= f"segment-{index}-" + ("x" * 60)
@@ -133,6 +135,8 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
 
             extended_file.write_text('{"version": 2}', encoding="utf-8")
             self.assertNotEqual(first["sha256"], runner._sha256_tree(root)["sha256"])
+        finally:
+            shutil.rmtree(runner._extended_length_path(temp_root))
 
     def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
