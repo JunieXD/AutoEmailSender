@@ -3221,11 +3221,7 @@ def _verify_upgrade_manifest(
                 "schema-changing packaged upgrade created no new migration backup"
             )
         backup_path = new_backups[-1]
-        backup_connection = sqlite3.connect(
-            f"file:{backup_path.as_posix()}?mode=ro",
-            uri=True,
-            timeout=10,
-        )
+        backup_connection = _open_sqlite_read_only(backup_path, timeout=10)
         try:
             integrity = str(backup_connection.execute("PRAGMA integrity_check").fetchone()[0])
             backup_revision_row = backup_connection.execute(
@@ -4149,6 +4145,17 @@ def _extended_length_path(path: Path) -> Path:
     if raw.startswith("\\\\"):
         return Path(f"\\\\?\\UNC\\{raw[2:]}")
     return Path(f"\\\\?\\{raw}")
+
+
+def _open_sqlite_read_only(path: Path, *, timeout: float) -> sqlite3.Connection:
+    filesystem_path = _extended_length_path(path) if sys.platform == "win32" else path
+    connection = sqlite3.connect(filesystem_path, timeout=timeout)
+    try:
+        connection.execute("PRAGMA query_only = ON")
+    except BaseException:
+        connection.close()
+        raise
+    return connection
 
 
 def _directory_size(path: Path) -> int:

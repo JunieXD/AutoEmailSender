@@ -203,6 +203,51 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         finally:
             shutil.rmtree(runner._extended_length_path(temp_root))
 
+    def test_sqlite_read_only_connection_rejects_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "backup.db"
+            connection = sqlite3.connect(database_path)
+            connection.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+            connection.commit()
+            connection.close()
+
+            read_only = runner._open_sqlite_read_only(database_path, timeout=2)
+            try:
+                self.assertEqual(
+                    read_only.execute("PRAGMA query_only").fetchone()[0],
+                    1,
+                )
+                with self.assertRaises(sqlite3.OperationalError):
+                    read_only.execute("INSERT INTO marker VALUES ('blocked')")
+            finally:
+                read_only.close()
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows long paths")
+    def test_sqlite_read_only_connection_supports_a_real_long_path(self) -> None:
+        temp_root = Path(tempfile.mkdtemp())
+        try:
+            database_path = temp_root
+            while len(str(database_path / "backup.db")) <= 280:
+                database_path /= "用户 数据 Ω long-path-segment"
+            database_path /= "backup.db"
+            extended_database = runner._extended_length_path(database_path)
+            extended_database.parent.mkdir(parents=True)
+            connection = sqlite3.connect(extended_database)
+            connection.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+            connection.commit()
+            connection.close()
+
+            read_only = runner._open_sqlite_read_only(database_path, timeout=2)
+            try:
+                self.assertEqual(
+                    read_only.execute("PRAGMA integrity_check").fetchone()[0],
+                    "ok",
+                )
+            finally:
+                read_only.close()
+        finally:
+            shutil.rmtree(runner._extended_length_path(temp_root))
+
     def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
