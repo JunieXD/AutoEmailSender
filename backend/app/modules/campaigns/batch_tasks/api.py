@@ -508,7 +508,11 @@ async def create_batch_task(
                 draft_generation_source = initial_draft.generation_source
                 draft_fallback_reason = initial_draft.fallback_reason
                 if initial_draft.generation_source == DRAFT_GENERATION_SOURCE_TEMPLATE:
-                    task_status = EmailTaskStatus.APPROVED.value
+                    task_status = (
+                        EmailTaskStatus.SCHEDULED.value
+                        if payload.schedule_type == "scheduled"
+                        else EmailTaskStatus.APPROVED.value
+                    )
                     approved_subject = generated_subject
                     approved_body_text = generated_body_text
                     approved_body_html = generated_body_html

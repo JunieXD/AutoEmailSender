@@ -299,6 +299,90 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(located_history_result.total_count, 1)
         self.assertEqual(located_history_result.items[0].status, "sent")
 
+    async def test_approved_delivery_with_schedule_is_reported_as_waiting(self) -> None:
+        now = datetime.now(UTC)
+        async with self.session_factory() as session:
+            identity = self._identity("兼容状态身份", "compat@example.com")
+            llm_profile = self._profile()
+            batch_task = BatchTask(
+                identity=identity,
+                llm_profile=llm_profile,
+                name="兼容状态批次",
+                status=BatchTaskStatus.RUNNING.value,
+            )
+            scheduled_professor = Professor(
+                name="已有计划导师",
+                email="scheduled-compat@example.edu",
+            )
+            asap_professor = Professor(
+                name="尽快发送导师",
+                email="asap@example.edu",
+            )
+            session.add_all(
+                [
+                    batch_task,
+                    scheduled_professor,
+                    asap_professor,
+                ],
+            )
+            await session.flush()
+            session.add_all(
+                [
+                    EmailTask(
+                        professor_id=scheduled_professor.id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.APPROVED.value,
+                        approved_subject="已有明确计划时间",
+                        scheduled_at=now + timedelta(days=1),
+                    ),
+                    EmailTask(
+                        professor_id=asap_professor.id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.APPROVED.value,
+                        approved_subject="没有明确计划时间",
+                        scheduled_at=None,
+                    ),
+                ],
+            )
+            await session.commit()
+
+            waiting_result = await list_email_deliveries(
+                session,
+                view="upcoming",
+                page=1,
+                page_size=20,
+                identity_id=None,
+                source="all",
+                status="waiting_scheduled",
+                query=None,
+                task_id=None,
+            )
+            asap_result = await list_email_deliveries(
+                session,
+                view="upcoming",
+                page=1,
+                page_size=20,
+                identity_id=None,
+                source="all",
+                status="send_asap",
+                query=None,
+                task_id=None,
+            )
+
+        self.assertEqual(waiting_result.total_count, 1)
+        self.assertEqual(waiting_result.items[0].status, "waiting_scheduled")
+        self.assertEqual(waiting_result.items[0].status_label, "等待发送")
+        self.assertIsNotNone(waiting_result.items[0].scheduled_at)
+        self.assertEqual(asap_result.total_count, 1)
+        self.assertEqual(asap_result.items[0].status, "send_asap")
+        self.assertIsNone(asap_result.items[0].scheduled_at)
+
     async def test_delivery_hot_queries_use_dedicated_indexes(self) -> None:
         async with self.engine.connect() as connection:
             upcoming_plan = (

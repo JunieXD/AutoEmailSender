@@ -5046,7 +5046,8 @@ class ApiEndpointTests(unittest.TestCase):
         canceled_task = canceled.json()["task"]
         self.assertEqual(canceled_task["status"], "running")
         self.assertEqual(canceled_task["completed_count"], 0)
-        self.assertEqual(canceled_task["approved_count"], 1)
+        self.assertEqual(canceled_task["approved_count"], 0)
+        self.assertEqual(canceled_task["scheduled_count"], 1)
         self.assertEqual(canceled_task["canceled_send_count"], 1)
 
         canceled_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
@@ -5076,7 +5077,8 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         restored_task = restored.json()["task"]
         self.assertEqual(restored_task["status"], "running")
-        self.assertEqual(restored_task["approved_count"], 2)
+        self.assertEqual(restored_task["approved_count"], 0)
+        self.assertEqual(restored_task["scheduled_count"], 2)
         self.assertEqual(restored_task["canceled_send_count"], 0)
         restored_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(restored_items.status_code, 200, msg=restored_items.text)
@@ -9396,7 +9398,8 @@ class ApiEndpointTests(unittest.TestCase):
             "已归档历史模板",
         )
         self.assertEqual(response.json()["review_required_count"], 0)
-        self.assertEqual(response.json()["approved_count"], 1)
+        self.assertEqual(response.json()["approved_count"], 0)
+        self.assertEqual(response.json()["scheduled_count"], 1)
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -9410,7 +9413,7 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(row[0], "approved")
+        self.assertEqual(row[0], "scheduled")
         self.assertIsNotNone(row[1])
         self.assertIsNotNone(row[2])
         self.assertEqual(row[3], template_id)
@@ -10039,7 +10042,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(self._get_batch_task_status(first_batch_task_id), "completed")
         self.assertEqual(self._get_batch_task_status(second_batch_task_id), "completed")
 
-    def test_template_scheduled_batch_task_creates_approved_items_without_review(self) -> None:
+    def test_template_scheduled_batch_task_creates_scheduled_items_without_review(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -10085,13 +10088,14 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
-        self.assertEqual(response.json()["approved_count"], 1)
+        self.assertEqual(response.json()["approved_count"], 0)
         self.assertEqual(response.json()["review_required_count"], 0)
-        self.assertEqual(response.json()["scheduled_count"], 0)
+        self.assertEqual(response.json()["scheduled_count"], 1)
         task_id = response.json()["id"]
         items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(items.status_code, 200, msg=items.text)
-        self.assertEqual(items.json()[0]["status"], "approved")
+        self.assertEqual(items.json()[0]["status"], "scheduled")
+        self.assertIsNotNone(items.json()[0]["scheduled_at"])
 
     def test_batch_task_item_workspace_actions_are_scoped_to_batch_item(self) -> None:
         identity_id = self._create_identity(with_imap=False)
