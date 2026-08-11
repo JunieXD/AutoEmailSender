@@ -76,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     logs_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = logs_dir / "desktop.stdout.log"
     stderr_path = logs_dir / "desktop.stderr.log"
+    artifact_identity = _capture_previous_artifact_identity(args)
     marker = f"packaged-upgrade:{uuid.uuid4()}"
     process: subprocess.Popen[bytes] | None = None
     identity: dict[str, Any] | None = None
@@ -176,10 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         "previous_app_version": identity["app_version"],
         "previous_runtime_id": identity["runtime_id"],
         "previous_artifact_root": str(args.artifact_root),
-        "previous_artifact_sha256": _sha256_tree(args.artifact_root),
-        "previous_executable_sha256": _sha256_file(args.app_executable),
         "previous_package_path": str(args.package_file),
-        "previous_package_sha256": _sha256_file(args.package_file),
+        **artifact_identity,
         "database_sha256": _sha256_file(database_path),
         "alembic_revision": str(revision_row[0]),
         "pre_upgrade_schema_backups": _schema_backup_inventory(args.user_data),
@@ -198,6 +197,16 @@ def main(argv: list[str] | None = None) -> int:
     _write_json_atomic(args.manifest, manifest)
     print(f"PREVIOUS_PACKAGED_UPGRADE_MANIFEST={args.manifest}", flush=True)
     return 0
+
+
+def _capture_previous_artifact_identity(
+    args: argparse.Namespace,
+) -> dict[str, str]:
+    return {
+        "previous_artifact_sha256": _sha256_tree(args.artifact_root),
+        "previous_executable_sha256": _sha256_file(args.app_executable),
+        "previous_package_sha256": _sha256_file(args.package_file),
+    }
 
 
 def _build_settings_update_payload(

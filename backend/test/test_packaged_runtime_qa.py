@@ -7,6 +7,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -33,6 +34,57 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            artifact_root = root / "previous-app"
+            artifact_root.mkdir()
+            app_executable = artifact_root / "Auto Email Sender.exe"
+            app_executable.write_bytes(b"previous app")
+            package_file = root / "previous-installer.exe"
+            package_file.write_bytes(b"previous installer")
+            user_data = root / seed_runner.QA_PATH_MARKER / "seed-user-data"
+            manifest = root / "evidence" / "manifest.json"
+            args = SimpleNamespace(
+                app_executable=app_executable,
+                artifact_root=artifact_root,
+                package_file=package_file,
+                user_data=user_data,
+                manifest=manifest,
+                timeout_seconds=1,
+            )
+            events: list[str] = []
+
+            def capture_identity(_args: object) -> dict[str, str]:
+                events.append("artifact-identity")
+                return {
+                    "previous_artifact_sha256": "a" * 64,
+                    "previous_executable_sha256": "b" * 64,
+                    "previous_package_sha256": "c" * 64,
+                }
+
+            def launch_previous_app(*_args: object, **_kwargs: object) -> object:
+                events.append("app-launch")
+                raise RuntimeError("stop after launch ordering check")
+
+            with (
+                mock.patch.object(seed_runner, "parse_args", return_value=args),
+                mock.patch.object(
+                    seed_runner,
+                    "_capture_previous_artifact_identity",
+                    side_effect=capture_identity,
+                ),
+                mock.patch.object(
+                    seed_runner.subprocess,
+                    "Popen",
+                    side_effect=launch_previous_app,
+                ),
+                self.assertRaisesRegex(RuntimeError, "launch ordering check"),
+            ):
+                seed_runner.main([])
+
+            self.assertEqual(events, ["artifact-identity", "app-launch"])
+
     def test_previous_settings_update_round_trips_v2_5_4_required_fields(self) -> None:
         required_fields = {
             "match_analysis_job_worker_count",
