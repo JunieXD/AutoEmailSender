@@ -192,6 +192,10 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/build/prepare-windows-vc-runtime.ps1
 
+      - name: Test Windows VC++ runtime detection
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/quality/windows-vc-runtime-status.test.ps1
+
       - name: Build frontend
         working-directory: frontend
         run: |

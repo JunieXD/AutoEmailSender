@@ -77,6 +77,18 @@ runner 会同时输出不含命令行的进程树和最近一条 `dd_vcredist_*.
 决定是否重试。所有 `/S` 安装/卸载调用还会轮询可见窗口；一旦静默流程弹窗，runner 会在数秒内
 记录窗口标题和进程树、终止整棵树并失败，不依赖人工点击，也不等待总超时。
 
+rehearsal 可以复用专用 QA 根内已经验证的 v2.5.4 seed，避免为了重现 runner 恢复而反复启动旧版
+VC++ bootstrapper。复用前必须同时核对：QA 根是 `%TEMP%\auto-email-sender-packaged-qa` 的直接
+子目录且不是 reparse point；旧 app、uninstaller、Playwright 和数据库存在；版本、公开旧包摘要、
+旧 EXE 摘要、manifest 路径、integrity 与 foreign key 结果一致。第一轮只补建专用 HKCU 测试注册
+和 stale 进程并中断；第二轮必须恢复并继续使用同一安装根，刷新当前候选字节后才覆盖升级。该
+捷径只服务非认证 harness；candidate admission 与正式 QA 仍必须从公开上一稳定版安装器开始。
+
+当前安装器在执行 VC++ bootstrapper 前会比较内置 runtime 文件版本与 Windows 两个 registry view
+中的 x64 Runtime 版本。`Installed=1` 且系统版本不低于内置版本时直接跳过重复安装；版本缺失、
+过旧或检测失败时仍执行已签名的内置 redistributable。这样不会把兼容 runtime 降级，也避免已
+满足环境仅为 Burn dependency registration 再次触发 UAC；缺少 runtime 的真实首装路径保持不变。
+
 新 Certify
 完成后，再用 exact bytes 运行 admission；它跳过 VC++、前后端/CLI/Desktop 全套和本地 NSIS
 重建，直接进入上一稳定版安装、seed、覆盖升级、lifecycle、卸载和重复安装：

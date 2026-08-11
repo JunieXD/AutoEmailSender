@@ -33,18 +33,27 @@ Var pid
     Abort
   ${EndIf}
 
-  DetailPrint "正在安装 Microsoft Visual C++ x64 运行库…"
-  nsExec::ExecToLog '"$INSTDIR\resources\runtime\vc_redist.x64.exe" /install /quiet /norestart'
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\windows-vc-runtime-status.ps1 "${BUILD_RESOURCES_DIR}\windows-vc-runtime-status.ps1"
+  DetailPrint "正在检查 Microsoft Visual C++ x64 运行库…"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-vc-runtime-status.ps1" -RuntimePath "$INSTDIR\resources\runtime\vc_redist.x64.exe"'
   Pop $R0
   ${If} $R0 == "0"
-    DetailPrint "Microsoft Visual C++ 运行库安装完成。"
-  ${ElseIf} $R0 == "1638"
     DetailPrint "系统中已有兼容的 Microsoft Visual C++ 运行库。"
-  ${ElseIf} $R0 == "3010"
-    DetailPrint "Microsoft Visual C++ 运行库安装完成；系统稍后可能需要重启。"
   ${Else}
-    MessageBox MB_ICONSTOP "Microsoft Visual C++ 运行库安装失败（退出码 $R0）。Auto Email Sender 尚未完成安装。"
-    Abort
+    DetailPrint "正在安装 Microsoft Visual C++ x64 运行库…"
+    nsExec::ExecToLog '"$INSTDIR\resources\runtime\vc_redist.x64.exe" /install /quiet /norestart'
+    Pop $R0
+    ${If} $R0 == "0"
+      DetailPrint "Microsoft Visual C++ 运行库安装完成。"
+    ${ElseIf} $R0 == "1638"
+      DetailPrint "系统中已有兼容的 Microsoft Visual C++ 运行库。"
+    ${ElseIf} $R0 == "3010"
+      DetailPrint "Microsoft Visual C++ 运行库安装完成；系统稍后可能需要重启。"
+    ${Else}
+      MessageBox MB_ICONSTOP "Microsoft Visual C++ 运行库安装失败（退出码 $R0）。Auto Email Sender 尚未完成安装。"
+      Abort
+    ${EndIf}
   ${EndIf}
 !macroend
 

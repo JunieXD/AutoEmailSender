@@ -328,6 +328,168 @@ function Remove-QaInstallerRegistrations {
   }
 }
 
+function Get-ValidatedHarnessSeedCheckpoint {
+  param(
+    [Parameter(Mandatory = $true)][string]$QaBasePath,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousVersion,
+    [Parameter(Mandatory = $true)][string]$ExpectedPreviousPackageSha256,
+    [string]$RequiredQaRoot = ""
+  )
+
+  $qaBaseFullPath = [System.IO.Path]::GetFullPath($QaBasePath).TrimEnd("\")
+  if (
+    -not (Test-Path -LiteralPath $qaBaseFullPath -PathType Container) -or
+    ((Get-Item -LiteralPath $qaBaseFullPath).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+  ) {
+    throw "Dedicated QA base is missing or is a reparse point: $qaBaseFullPath"
+  }
+  $qaRoots = if ([string]::IsNullOrWhiteSpace($RequiredQaRoot)) {
+    @(
+      Get-ChildItem -LiteralPath $qaBaseFullPath -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    )
+  } else {
+    @([System.IO.DirectoryInfo]::new([System.IO.Path]::GetFullPath($RequiredQaRoot)))
+  }
+  foreach ($qaRootItem in $qaRoots) {
+    $qaRoot = [System.IO.Path]::GetFullPath($qaRootItem.FullName).TrimEnd("\")
+    if (
+      -not (Test-Path -LiteralPath $qaRoot -PathType Container) -or
+      -not ([System.IO.Path]::GetDirectoryName($qaRoot)).Equals(
+        $qaBaseFullPath,
+        [System.StringComparison]::OrdinalIgnoreCase
+      ) -or
+      ((Get-Item -LiteralPath $qaRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    ) {
+      continue
+    }
+
+    $installRoot = Join-Path $qaRoot "安装 路径 Ω"
+    $appExecutable = Join-Path $installRoot "Auto Email Sender.exe"
+    $uninstaller = Join-Path $installRoot "Uninstall Auto Email Sender.exe"
+    $browserRuntime = Join-Path $installRoot "resources\ms-playwright"
+    $userData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
+    $database = Join-Path $userData "auto_email_sender.db"
+    $upgradeManifest = Join-Path $qaRoot "previous-upgrade\manifest.json"
+    $packageRoot = Join-Path $qaRoot "candidate packages"
+    $previousPackage = Join-Path $packageRoot "previous-stable.exe"
+    if (
+      -not (Test-Path -LiteralPath $appExecutable -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $uninstaller -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $browserRuntime -PathType Container) -or
+      -not (Test-Path -LiteralPath $database -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $upgradeManifest -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $previousPackage -PathType Leaf) -or
+      ((Get-Item -LiteralPath $installRoot).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
+      ((Get-Item -LiteralPath $browserRuntime).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
+      ((Get-Item -LiteralPath $userData).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
+      ((Get-Item -LiteralPath $database).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+    ) {
+      continue
+    }
+
+    try {
+      $manifestText = [System.IO.File]::ReadAllText(
+        $upgradeManifest,
+        [System.Text.UTF8Encoding]::new($false)
+      )
+      $manifest = $manifestText | ConvertFrom-Json
+      $manifestUserData = [System.IO.Path]::GetFullPath([string]$manifest.user_data_path)
+      $manifestArtifactRoot = [System.IO.Path]::GetFullPath([string]$manifest.previous_artifact_root)
+      $appVersionValue = [System.Version](Get-Item -LiteralPath $appExecutable).VersionInfo.ProductVersion
+      $appVersion = "$($appVersionValue.Major).$($appVersionValue.Minor).$($appVersionValue.Build)"
+      if (
+        $manifest.protocol_version -ne "1" -or
+        $manifest.purpose -ne "previous-stable-packaged-upgrade" -or
+        [string]$manifest.previous_app_version -ne $ExpectedPreviousVersion -or
+        $appVersion -ne $ExpectedPreviousVersion -or
+        [string]$manifest.previous_package_sha256 -ne $ExpectedPreviousPackageSha256 -or
+        [string]$manifest.integrity_check -ne "ok" -or
+        [int]$manifest.foreign_key_violations -ne 0 -or
+        -not $manifestUserData.Equals(
+          [System.IO.Path]::GetFullPath($userData),
+          [System.StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not $manifestArtifactRoot.Equals(
+          [System.IO.Path]::GetFullPath($installRoot),
+          [System.StringComparison]::OrdinalIgnoreCase
+        )
+      ) {
+        continue
+      }
+      $databaseSha256 = (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ([string]$manifest.database_sha256 -ne $databaseSha256) {
+        continue
+      }
+      $appSha256 = (Get-FileHash -LiteralPath $appExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ([string]$manifest.previous_executable_sha256 -ne $appSha256) {
+        continue
+      }
+    } catch {
+      continue
+    }
+
+    return [pscustomobject]@{
+      QaRoot = $qaRoot
+      InstallRoot = $installRoot
+      EvidenceRoot = Join-Path $qaRoot "evidence"
+      PackageRoot = $packageRoot
+      UpgradeUserData = $userData
+      UpgradeManifest = $upgradeManifest
+      PreviousAppExecutable = $appExecutable
+    }
+  }
+  return $null
+}
+
+function Add-QaHarnessInstallerRegistration {
+  param(
+    [Parameter(Mandatory = $true)][string]$QaBasePath,
+    [Parameter(Mandatory = $true)][string]$InstallRoot,
+    [Parameter(Mandatory = $true)][string]$Version
+  )
+
+  $existing = @(
+    Get-QaInstallerRegistrations -QaBasePath $QaBasePath |
+      Where-Object {
+        $_.InstallRoot.Equals(
+          [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd("\"),
+          [System.StringComparison]::OrdinalIgnoreCase
+        )
+      }
+  )
+  if ($existing.Count -gt 0) {
+    return
+  }
+  $uninstaller = Join-Path $InstallRoot "Uninstall Auto Email Sender.exe"
+  if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
+    throw "Reusable harness seed has no uninstaller: $uninstaller"
+  }
+  $registrationPath = Join-Path `
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" `
+    ("AutoEmailSenderHarnessRehearsal-" + [guid]::NewGuid().ToString("N"))
+  New-Item -Path $registrationPath -Force | Out-Null
+  Set-ItemProperty -LiteralPath $registrationPath -Name "DisplayName" -Value "Auto Email Sender $Version"
+  Set-ItemProperty `
+    -LiteralPath $registrationPath `
+    -Name "UninstallString" `
+    -Value ('"' + $uninstaller + '" /currentuser')
+}
+
+function Copy-QaPackage {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+
+  $sourcePath = [System.IO.Path]::GetFullPath($Source)
+  $destinationPath = [System.IO.Path]::GetFullPath($Destination)
+  if ($sourcePath.Equals($destinationPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return
+  }
+  Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+}
+
 function Get-QaVcRedistTimeoutDiagnostic {
   param([Parameter(Mandatory = $true)][datetime]$StartedAt)
 
@@ -759,6 +921,13 @@ if (-not (Test-VerifiedStage -Name "release-orchestration-contracts" -Fingerprin
 if ($IsFormal) {
   Invoke-QaStep "Windows packaging prerequisites" {
     & (Join-Path $CheckoutPath "scripts\build\prepare-windows-vc-runtime.ps1")
+    Assert-NativeSuccess "Windows VC++ runtime preparation"
+    & pwsh `
+      -NoLogo `
+      -NoProfile `
+      -ExecutionPolicy Bypass `
+      -File (Join-Path $CheckoutPath "scripts\quality\windows-vc-runtime-status.test.ps1")
+    Assert-NativeSuccess "Windows VC++ runtime detection tests"
   }
 }
 
@@ -1018,6 +1187,14 @@ if ($RunsPackagedLifecycle) {
     )) {
       throw "The interrupted rehearsal did not leave both registration and process state to recover."
     }
+    if ($RequireRecoveredStaleState -and $staleRegistrations.Count -ne 1) {
+      throw "The interrupted rehearsal must leave exactly one scoped installer registration to recover."
+    }
+    $recoveredQaRoot = if ($RequireRecoveredStaleState) {
+      Split-Path -Parent ([string]$staleRegistrations[0].InstallRoot)
+    } else {
+      ""
+    }
     Remove-QaInstallerRegistrations -QaBasePath $qaBase
     $remainingRegistrations = @(Get-QaInstallerRegistrations -QaBasePath $qaBase)
     if ($remainingRegistrations.Count -ne 0) {
@@ -1034,19 +1211,46 @@ if ($RunsPackagedLifecycle) {
       & uv run --project (Join-Path $CheckoutPath "backend") --no-sync python -c "import psutil; print(psutil.__version__)"
       Assert-NativeSuccess "packaged QA driver dependency probe"
     }
-    $qaRoot = Join-Path $qaBase "$revision-$qaTimestamp"
-    $installRoot = Join-Path $qaRoot "安装 路径 Ω"
-    $evidenceRoot = Join-Path $qaRoot "evidence"
-    $packageRoot = Join-Path $qaRoot "candidate packages"
+    $harnessCheckpoint = if ($RequireRecoveredStaleState) {
+      Get-ValidatedHarnessSeedCheckpoint `
+        -QaBasePath $qaBase `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256 `
+        -RequiredQaRoot $recoveredQaRoot
+    } elseif ($Mode -eq "harness-rehearsal" -and $InjectInterruptionAfterPreviousInstall) {
+      Get-ValidatedHarnessSeedCheckpoint `
+        -QaBasePath $qaBase `
+        -ExpectedPreviousVersion $ExpectedPreviousVersion `
+        -ExpectedPreviousPackageSha256 $ExpectedPreviousPackageSha256
+    } else {
+      $null
+    }
+    $reusePreviousSeed = $null -ne $harnessCheckpoint
+    if ($reusePreviousSeed) {
+      $qaRoot = [string]$harnessCheckpoint.QaRoot
+      $installRoot = [string]$harnessCheckpoint.InstallRoot
+      $evidenceRoot = Join-Path $qaRoot "evidence-$($revision.Substring(0, 12))-$qaTimestamp"
+      $packageRoot = [string]$harnessCheckpoint.PackageRoot
+      $upgradeUserData = [string]$harnessCheckpoint.UpgradeUserData
+      $upgradeManifest = [string]$harnessCheckpoint.UpgradeManifest
+      Write-Host "Reusing validated previous-stable harness seed checkpoint: $qaRoot"
+    } else {
+      $qaRoot = Join-Path $qaBase "$revision-$qaTimestamp"
+      $installRoot = Join-Path $qaRoot "安装 路径 Ω"
+      $evidenceRoot = Join-Path $qaRoot "evidence"
+      $packageRoot = Join-Path $qaRoot "candidate packages"
+      $upgradeUserData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
+      $upgradeManifest = Join-Path $qaRoot "previous-upgrade\manifest.json"
+    }
     New-Item -ItemType Directory -Force -Path $qaRoot, $evidenceRoot, $packageRoot | Out-Null
 
     $previousInstallerPathLocal = Join-Path $packageRoot "previous-stable.exe"
     $candidateInstallerPathLocal = Join-Path $packageRoot "current-candidate.exe"
     $candidateManifestPathLocal = Join-Path $packageRoot "candidate-manifest.json"
-    Copy-Item -LiteralPath $PreviousInstallerPath -Destination $previousInstallerPathLocal
-    Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal
+    Copy-QaPackage -Source $PreviousInstallerPath -Destination $previousInstallerPathLocal
+    Copy-QaPackage -Source $CandidateInstallerPath -Destination $candidateInstallerPathLocal
     if ($RequiresExactCandidate) {
-      Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal
+      Copy-QaPackage -Source $CandidateManifestPath -Destination $candidateManifestPathLocal
     }
     $previousInstallerSha256 = (
       Get-FileHash -LiteralPath $previousInstallerPathLocal -Algorithm SHA256
@@ -1068,39 +1272,46 @@ if ($RunsPackagedLifecycle) {
     $installerTimeoutSeconds = 600
     $uninstallerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }
     try {
-    Invoke-QaExecutable `
-      -FilePath $previousInstallerPathLocal `
-      -Arguments "/S /D=$installRoot" `
-      -Environment @{} `
-      -TimeoutSeconds $installerTimeoutSeconds `
-      -RejectVisibleWindow `
-      -Operation "silent previous-stable Windows installer"
-    Start-Sleep -Seconds 2
-    Stop-QaProcessesFromRoot -RootPath $installRoot
-
     $previousAppExecutable = Join-Path $installRoot "Auto Email Sender.exe"
-    if (-not (Test-Path -LiteralPath $previousAppExecutable -PathType Leaf)) {
-      throw "Previous stable installed app is missing: $previousAppExecutable"
+    if ($reusePreviousSeed) {
+      Stop-QaProcessesFromRoot -RootPath $installRoot
+      Write-Host "Previous-stable install and seed are already validated; skipping redundant bootstrapper execution."
+    } else {
+      Invoke-QaExecutable `
+        -FilePath $previousInstallerPathLocal `
+        -Arguments "/S /D=$installRoot" `
+        -Environment @{} `
+        -TimeoutSeconds $installerTimeoutSeconds `
+        -RejectVisibleWindow `
+        -Operation "silent previous-stable Windows installer"
+      Start-Sleep -Seconds 2
+      Stop-QaProcessesFromRoot -RootPath $installRoot
+
+      if (-not (Test-Path -LiteralPath $previousAppExecutable -PathType Leaf)) {
+        throw "Previous stable installed app is missing: $previousAppExecutable"
+      }
+      New-Item -ItemType Directory -Force -Path $upgradeUserData | Out-Null
+      & uv run `
+        --project (Join-Path $CheckoutPath "backend") `
+        --no-sync `
+        python `
+        (Join-Path $CheckoutPath "scripts\quality\seed-previous-packaged-upgrade.py") `
+        --app-executable $previousAppExecutable `
+        --artifact-root $installRoot `
+        --package-file $previousInstallerPathLocal `
+        --user-data $upgradeUserData `
+        --manifest $upgradeManifest
+      Assert-NativeSuccess "previous-stable packaged upgrade seeding"
     }
-    $upgradeUserData = Join-Path $qaRoot "auto-email-sender-packaged-qa\previous-stable-user-data\用户 数据 Ω"
-    $upgradeManifest = Join-Path $qaRoot "previous-upgrade\manifest.json"
-    New-Item -ItemType Directory -Force -Path $upgradeUserData | Out-Null
-    & uv run `
-      --project (Join-Path $CheckoutPath "backend") `
-      --no-sync `
-      python `
-      (Join-Path $CheckoutPath "scripts\quality\seed-previous-packaged-upgrade.py") `
-      --app-executable $previousAppExecutable `
-      --artifact-root $installRoot `
-      --package-file $previousInstallerPathLocal `
-      --user-data $upgradeUserData `
-      --manifest $upgradeManifest
-    Assert-NativeSuccess "previous-stable packaged upgrade seeding"
 
     if ($InjectInterruptionAfterPreviousInstall) {
+      Add-QaHarnessInstallerRegistration `
+        -QaBasePath $qaBase `
+        -InstallRoot $installRoot `
+        -Version $ExpectedPreviousVersion
       Write-Warning "Injecting the requested hard interruption after previous-stable install and seed."
       $staleProcessProbe = Join-Path $installRoot "qa-stale-process-probe.exe"
-      Copy-Item -LiteralPath $env:COMSPEC -Destination $staleProcessProbe
+      Copy-Item -LiteralPath $env:COMSPEC -Destination $staleProcessProbe -Force
       $staleProcess = Start-Process `
         -FilePath $staleProcessProbe `
         -ArgumentList "/c ping.exe -t 127.0.0.1" `

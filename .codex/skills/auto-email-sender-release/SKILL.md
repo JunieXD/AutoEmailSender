@@ -137,6 +137,11 @@ but must bind both package digests and must not accept a candidate manifest/run 
 the first run deliberately interrupts after the previous-stable seed, and the immediate second run
 must prove stale installer/process or DMG-mount cleanup plus bounded timeout recovery. Reports must
 say `certification_eligible=false` and `evidence_purpose=non-certifying-harness-rehearsal`.
+Windows rehearsal may reuse a previously validated previous-stable seed checkpoint to avoid a
+redundant VC++ bootstrapper run. Validate the fixed QA root, previous version/package/executable
+digests, database integrity, browser runtime, and non-reparse paths before reuse; refresh the local
+candidate bytes, create only a scoped QA registration, and make the second round continue from that
+same interrupted root. Candidate admission and formal QA must never use this shortcut.
 
 After Certify produces new exact assets, run `--candidate-admission` before source/build suites or
 long soaks. Admission binds the manifest, run ID, release SHA, version, current package digest, and

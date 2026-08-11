@@ -952,3 +952,19 @@ Playwright 最深路径达到 280 字符，唯一 3 个独占读取失败均为 
 Windows 合同测试新增 260+ 字符、中文、空格、`Ω`、`&` 和相邻文件保留场景。runner 同时新增
 静默窗口轮询，未来此类 NSIS 弹窗会在数秒内自动失败并终止进程树，不再依赖人工点击或等待
 600 秒。该产品/包装变化必须生成新的本地包重跑两轮 rehearsal，并最终生成新 exact candidate。
+
+`ad91c78` 的真实 Windows PowerShell 5.1 超长路径聚焦测试通过，随后生成的本地 beta/split NSIS
+绑定 `ad91c78d78b29b298128421692133b8d5d85cc53`，大小 `240438135`，SHA-256 为
+`3a57213e908317a0f42ae2b0a8ea320adf66f5cfb792cfa7b5debfd67565c580`。重新开始第一轮时，旧版
+v2.5.4 内置 VC++ bootstrapper 在 600 秒仍停留于 `Launching elevated engine process`；runner
+自动记录 `previous-stable.exe -> vc_redist.x64.exe -> vc_redist.x64.exe`、终止子树并恢复 VM
+suspended。测试者恢复 VM 后看到残留 VC Redist 对话框并点击确定；复核 VC 进程为 0、无待重启
+键，Burn 日志没有越过该事件，因此该轮未进入 seed，也不计为 rehearsal 证据。
+
+只读取证确认 VM 的 x64 Runtime 为 `14.51.36247.0`，内置版本为 `14.44.35211.0`，Burn plan 对
+x64 minimum/additional 均为 `execute: None`，却仍为依赖登记进入 Apply/UAC。后续安装器因此新增
+两种 registry view 的兼容版本检测：相同或更高版本直接跳过，过旧/缺失/检测失败才执行内置
+redistributable；PowerShell 5.1 已对 equal/newer/older/invalid/missing 与真实 registry 全部分支
+聚焦验证。rehearsal 同时只在非认证模式复用经过版本、旧包/EXE 摘要、数据库、固定路径、
+Playwright 与 reparse point 检查的上一稳定版 seed；恢复轮续用同一中断安装根，不再重复执行旧
+installer。candidate admission 和正式 QA 不采用检查点，仍从公开 v2.5.4 安装包开始。

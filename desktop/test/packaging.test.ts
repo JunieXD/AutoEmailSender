@@ -161,6 +161,17 @@ describe("windows installer packaging", () => {
       scripts: Record<string, string>;
     };
     const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
+    const runtimeStatusScriptPath = path.resolve(
+      "build",
+      "windows-vc-runtime-status.ps1",
+    );
+    const runtimeStatusTestPath = path.resolve(
+      "..",
+      "scripts",
+      "quality",
+      "windows-vc-runtime-status.test.ps1",
+    );
+    const runtimeStatusScript = readFileSync(runtimeStatusScriptPath, "utf8");
     const prepareScript = readFileSync(
       path.resolve("..", "scripts", "build", "prepare-windows-vc-runtime.ps1"),
       "utf8",
@@ -177,6 +188,11 @@ describe("windows installer packaging", () => {
     expect(packageJson.scripts.publish).toContain("npm run prepare:windows-runtime");
     expect(config).toContain("from: build/runtime/vc_redist.x64.exe");
     expect(config).toContain("to: runtime/vc_redist.x64.exe");
+    expect(existsSync(runtimeStatusScriptPath)).toBe(true);
+    expect(existsSync(runtimeStatusTestPath)).toBe(true);
+    expect(runtimeStatusScript).toContain("RegistryView]::Registry64");
+    expect(runtimeStatusScript).toContain("RegistryView]::Registry32");
+    expect(runtimeStatusScript).toContain("$_ -ge $requiredVersion");
     expect(prepareScript).toContain("Join-Path $PSHOME");
     expect(prepareScript).toContain("Import-Module -Name $SecurityModulePath");
     expect(prepareScript).toContain("Get-AuthenticodeSignature");
@@ -189,6 +205,10 @@ describe("windows installer packaging", () => {
     expect(workflow).toMatch(/build-windows:[\s\S]*?runs-on: windows-latest\n    needs: preflight/);
     expect(workflow).toMatch(/build-macos:[\s\S]*?runs-on: macos-latest\n    needs: preflight/);
     expect(workflow).toContain("working-directory: desktop\n        run: npm run dist:prepared");
+    expect(workflow.indexOf("Prepare Windows packaging prerequisites")).toBeLessThan(
+      workflow.indexOf("Test Windows VC++ runtime detection"),
+    );
+    expect(workflow).toContain("scripts/quality/windows-vc-runtime-status.test.ps1");
     expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
     expect(installerScript).toContain("!macro customInstall");
@@ -196,6 +216,10 @@ describe("windows installer packaging", () => {
     expect(installerScript).toContain("!insertmacro _CHECK_APP_RUNNING");
     expect(installerScript).toContain("!insertmacro RemovePackagedBrowserRuntime");
     expect(installerScript).toContain("windows-remove-packaged-browser-runtime.ps1");
+    expect(installerScript).toContain("windows-vc-runtime-status.ps1");
+    expect(installerScript.indexOf("windows-vc-runtime-status.ps1")).toBeLessThan(
+      installerScript.indexOf('vc_redist.x64.exe\" /install /quiet /norestart'),
+    );
     expect(installerScript).toContain("vc_redist.x64.exe\" /install /quiet /norestart");
     expect(installerScript).toContain('$R0 == "3010"');
     expect(installerScript).toContain("Abort");
@@ -290,6 +314,13 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("if (-not $IsPackagedPreflight)");
     expect(guestRunner).toContain("Test-QaExecutableTimeoutRecovery");
     expect(guestRunner).toContain("RequireRecoveredStaleState");
+    expect(guestRunner).toContain("Get-ValidatedHarnessSeedCheckpoint");
+    expect(guestRunner).toContain("Reusing validated previous-stable harness seed checkpoint");
+    expect(guestRunner).toContain("Previous-stable install and seed are already validated");
+    expect(guestRunner).toContain("previous_executable_sha256");
+    expect(guestRunner).toContain("foreign_key_violations");
+    expect(guestRunner).toContain("Add-QaHarnessInstallerRegistration");
+    expect(guestRunner).toContain("must leave exactly one scoped installer registration");
     expect(guestRunner).toContain("qa-stale-process-probe.exe");
     expect(guestRunner).toContain('Test-VerifiedStage -Name "backend-suite"');
     expect(guestRunner).toContain(
@@ -321,11 +352,13 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("seed-previous-packaged-upgrade.py");
     expect(guestRunner).toContain("--package-file $previousInstallerPathLocal");
     expect(guestRunner).toContain(
-      "Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal",
+      "Copy-QaPackage -Source $CandidateInstallerPath -Destination $candidateInstallerPathLocal",
     );
     expect(guestRunner).toContain(
-      "Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal",
+      "Copy-QaPackage -Source $CandidateManifestPath -Destination $candidateManifestPathLocal",
     );
+    expect(guestRunner).toContain("function Copy-QaPackage");
+    expect(guestRunner).toContain("$sourcePath.Equals($destinationPath");
     expect(guestRunner).toContain("$startInfo.Arguments = $Arguments");
     expect(guestRunner).toContain("$startInfo.EnvironmentVariables[");
     expect(guestRunner).toContain("[int]$TimeoutSeconds = 600");
