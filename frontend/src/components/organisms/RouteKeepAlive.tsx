@@ -76,7 +76,11 @@ export const RouteKeepAlive = ({
   }
 
   return (
-    <div data-route-keep-alive="true" className="h-full min-h-0">
+    <div
+      data-route-keep-alive="true"
+      data-route-keep-alive-active={activeName !== null ? "true" : "false"}
+      className={activeName === null ? "hidden" : "h-full min-h-0"}
+    >
       {state.cacheNodes.map((node) => (
         <Activity
           key={node.name}
