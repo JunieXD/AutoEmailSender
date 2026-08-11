@@ -34,6 +34,31 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_previous_artifact_hash_uses_windows_extended_length_paths(self) -> None:
+        with mock.patch.object(seed_runner.sys, "platform", "win32"):
+            drive_path = seed_runner._extended_length_path(
+                Path(r"C:\release evidence\previous app")
+            )
+            unc_path = seed_runner._extended_length_path(
+                Path(r"\\server\release evidence\previous app")
+            )
+            already_extended = seed_runner._extended_length_path(
+                Path(r"\\?\C:\release evidence\previous app")
+            )
+
+        self.assertEqual(
+            str(drive_path),
+            r"\\?\C:\release evidence\previous app",
+        )
+        self.assertEqual(
+            str(unc_path),
+            r"\\?\UNC\server\release evidence\previous app",
+        )
+        self.assertEqual(
+            str(already_extended),
+            r"\\?\C:\release evidence\previous app",
+        )
+
     def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

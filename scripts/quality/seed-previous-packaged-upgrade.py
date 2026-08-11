@@ -471,7 +471,7 @@ def _schema_backup_inventory(user_data: Path) -> list[dict[str, object]]:
 
 
 def _sha256_tree(path: Path) -> str:
-    root = path.resolve()
+    root = _extended_length_path(path.resolve())
     candidates = [root] if root.is_file() else sorted(root.rglob("*"))
     digest = hashlib.sha256()
     for candidate in candidates:
@@ -493,6 +493,17 @@ def _sha256_tree(path: Path) -> str:
         digest.update(content)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _extended_length_path(path: Path) -> Path:
+    if sys.platform != "win32":
+        return path
+    raw = str(path)
+    if raw.startswith("\\\\?\\"):
+        return path
+    if raw.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{raw[2:]}")
+    return Path(f"\\\\?\\{raw}")
 
 
 def _write_json_atomic(path: Path, payload: object) -> None:
