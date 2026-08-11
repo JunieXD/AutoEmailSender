@@ -461,7 +461,7 @@ copy_app_from_dmg() {
     echo "DMG 不存在: $source_absolute" >&2
     return 1
   fi
-  MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.XXXXXX.plist")"
+  MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.plist.XXXXXX")"
   run_with_timeout 120 hdiutil attach -readonly -nobrowse -plist "$source_absolute" >"$MountPlist"
   MountedDevice="$(python3 - "$MountPlist" <<'PY'
 import plistlib
@@ -558,7 +558,7 @@ if [[ "$Scenario" == "lifecycle" && -n "$PreviousDmgPath" ]]; then
   mv "$InstalledBundle" "$PreservedPreviousBundle"
 fi
 if [[ -n "$DmgPath" ]]; then
-  MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.XXXXXX.plist")"
+  MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.plist.XXXXXX")"
   run_with_timeout 120 hdiutil attach -readonly -nobrowse -plist "$DmgPath" >"$MountPlist"
   MountedDevice="$(python3 - "$MountPlist" <<'PY'
 import plistlib

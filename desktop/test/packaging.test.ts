@@ -475,6 +475,8 @@ describe("windows installer packaging", () => {
     expect(runner).toContain("SPARKLE_PUBLIC_ED_KEY");
     expect(runner).not.toContain('echo "$SPARKLE_PUBLIC_ED_KEY"');
     expect(runner).toContain("hdiutil attach -readonly -nobrowse -plist");
+    expect(runner).toContain("auto-email-sender-mount.plist.XXXXXX");
+    expect(runner).not.toContain("auto-email-sender-mount.XXXXXX.plist");
     expect(runner).toContain('ditto "${MountedApps[0]}" "$InstalledBundle"');
     expect(runner).toContain("codesign --verify --deep --strict");
     expect(runner).toContain("packaged-runtime-qa.py");
