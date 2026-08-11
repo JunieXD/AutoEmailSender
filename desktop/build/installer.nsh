@@ -1,4 +1,31 @@
 !include LogicLib.nsh
+!include getProcessInfo.nsh
+
+Var pid
+
+!macro RemovePackagedBrowserRuntime
+  ${If} ${FileExists} "$INSTDIR\resources\ms-playwright\*.*"
+    InitPluginsDir
+    File /oname=$PLUGINSDIR\windows-remove-packaged-browser-runtime.ps1 "${BUILD_RESOURCES_DIR}\windows-remove-packaged-browser-runtime.ps1"
+    DetailPrint "正在安全清理内置浏览器运行文件…"
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-remove-packaged-browser-runtime.ps1" -InstallRoot "$INSTDIR"'
+    Pop $R0
+    ${If} $R0 != "0"
+      DetailPrint "内置浏览器运行文件清理失败（退出码 $R0）。"
+      ${IfNot} ${Silent}
+        MessageBox MB_ICONSTOP "无法安全清理旧版内置浏览器文件，操作已停止。请关闭正在使用 Auto Email Sender 文件的程序后重试。"
+      ${EndIf}
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro customCheckAppRunning
+  !insertmacro IS_POWERSHELL_AVAILABLE
+  !insertmacro _CHECK_APP_RUNNING
+  !insertmacro RemovePackagedBrowserRuntime
+!macroend
 
 !macro customInstall
   ${IfNot} ${FileExists} "$INSTDIR\resources\runtime\vc_redist.x64.exe"
@@ -36,6 +63,7 @@ Var /GLOBAL UninstallShouldDeleteAppData
 
 !macro customUnInstall
   SetShellVarContext current
+  !insertmacro RemovePackagedBrowserRuntime
   ${If} ${FileExists} "$INSTDIR\resources\agent-support\windows-uninstall.ps1"
     DetailPrint "正在安全移除命令行与 Agent 支持…"
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\agent-support\windows-uninstall.ps1"'

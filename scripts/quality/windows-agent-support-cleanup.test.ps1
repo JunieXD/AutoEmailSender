@@ -39,10 +39,30 @@ function Write-Manifest(
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $cleanupScript = Join-Path $repoRoot "agent-support\windows-uninstall.ps1"
+$runtimeCleanupScript = Join-Path $repoRoot "desktop\build\windows-remove-packaged-browser-runtime.ps1"
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("auto-email-sender-uninstall-test-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
+    $longInstallRoot = Join-Path $testRoot ("安装 & 路径 Ω " + ("x" * 70))
+    $browserRuntime = Join-Path $longInstallRoot "resources\ms-playwright"
+    $deepSegment = "segment-0123456789abcdef0123456789abcdef"
+    $deepDirectory = Join-Path (Join-Path (Join-Path $browserRuntime $deepSegment) $deepSegment) $deepSegment
+    $deepFile = Join-Path $deepDirectory "long-path-proof.txt"
+    $extendedDeepDirectory = "\\?\" + [System.IO.Path]::GetFullPath($deepDirectory)
+    $extendedDeepFile = "\\?\" + [System.IO.Path]::GetFullPath($deepFile)
+    $extendedBrowserRuntime = "\\?\" + [System.IO.Path]::GetFullPath($browserRuntime)
+    Assert-True ($deepFile.Length -gt 260) "Long-path cleanup fixture did not exceed 260 characters."
+    [System.IO.Directory]::CreateDirectory($extendedDeepDirectory) | Out-Null
+    [System.IO.File]::WriteAllText($extendedDeepFile, "long path proof")
+    $neighbor = Join-Path $longInstallRoot "resources\keep-after-runtime-cleanup.txt"
+    Write-Utf8NoBom $neighbor "must remain"
+
+    & $runtimeCleanupScript -InstallRoot $longInstallRoot
+
+    Assert-True (-not [System.IO.Directory]::Exists($extendedBrowserRuntime)) "Packaged browser runtime was not removed through its extended path."
+    Assert-True (Test-Path -LiteralPath $neighbor) "Runtime cleanup removed a neighboring packaged file."
+
     $managedRoot = Join-Path $testRoot "managed"
     $profile = Join-Path $managedRoot "profile"
     $managedCli = Join-Path $managedRoot "bin\auto-email-sender.cmd"

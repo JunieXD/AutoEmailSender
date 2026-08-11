@@ -192,6 +192,10 @@ describe("windows installer packaging", () => {
     expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");
     expect(installerScript).toContain("!macro customInstall");
+    expect(installerScript).toContain("!macro customCheckAppRunning");
+    expect(installerScript).toContain("!insertmacro _CHECK_APP_RUNNING");
+    expect(installerScript).toContain("!insertmacro RemovePackagedBrowserRuntime");
+    expect(installerScript).toContain("windows-remove-packaged-browser-runtime.ps1");
     expect(installerScript).toContain("vc_redist.x64.exe\" /install /quiet /norestart");
     expect(installerScript).toContain('$R0 == "3010"');
     expect(installerScript).toContain("Abort");
@@ -325,8 +329,13 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("$startInfo.Arguments = $Arguments");
     expect(guestRunner).toContain("$startInfo.EnvironmentVariables[");
     expect(guestRunner).toContain("[int]$TimeoutSeconds = 600");
-    expect(guestRunner).toContain("$process.WaitForExit($TimeoutSeconds * 1000)");
+    expect(guestRunner).toContain("$deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)");
+    expect(guestRunner).toContain("while (-not $process.WaitForExit(500))");
     expect(guestRunner).toContain("Timed-out process tree:");
+    expect(guestRunner).toContain("Unexpected-window process tree:");
+    expect(guestRunner).toContain("[switch]$RejectVisibleWindow");
+    expect(guestRunner).toContain("displayed an unexpected window during silent execution");
+    expect(guestRunner.match(/-RejectVisibleWindow/g)?.length).toBeGreaterThanOrEqual(5);
     expect(guestRunner).toContain("Get-QaVcRedistTimeoutDiagnostic");
     expect(guestRunner).toContain("VC++ Burn timeout diagnostic:");
     expect(guestRunner).not.toContain("CommandLine = [string]$_.CommandLine");
@@ -551,6 +560,10 @@ describe("windows installer packaging", () => {
   it("cleans up only manifest-owned Agent support during Windows uninstall", () => {
     const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
     const cleanupScriptPath = path.resolve("..", "agent-support", "windows-uninstall.ps1");
+    const runtimeCleanupScriptPath = path.resolve(
+      "build",
+      "windows-remove-packaged-browser-runtime.ps1",
+    );
     const cleanupTestPath = path.resolve(
       "..",
       "scripts",
@@ -558,11 +571,14 @@ describe("windows installer packaging", () => {
       "windows-agent-support-cleanup.test.ps1",
     );
     const cleanupScript = readFileSync(cleanupScriptPath, "utf8");
+    const runtimeCleanupScript = readFileSync(runtimeCleanupScriptPath, "utf8");
     const workflow = readFileSync(path.resolve("..", ".github", "workflows", "release.yml"), "utf8");
 
     expect(existsSync(cleanupScriptPath)).toBe(true);
+    expect(existsSync(runtimeCleanupScriptPath)).toBe(true);
     expect(existsSync(cleanupTestPath)).toBe(true);
     expect(installerScript).toContain("resources\\agent-support\\windows-uninstall.ps1");
+    expect(installerScript).toContain("RemovePackagedBrowserRuntime");
     expect(installerScript).toContain("nsExec::ExecToLog");
     expect(cleanupScript).toContain("$expectedCliTargets");
     expect(cleanupScript).toContain("auto-email-sender.cmd");
@@ -571,6 +587,9 @@ describe("windows installer packaging", () => {
     expect(cleanupScript).toContain("claude_code");
     expect(cleanupScript).toContain("copilot_cli");
     expect(cleanupScript).toContain("Remove-ManagedUserPathEntry");
+    expect(runtimeCleanupScript).toContain('"\\\\?\\"');
+    expect(runtimeCleanupScript).toContain("[System.IO.Directory]::Delete");
+    expect(runtimeCleanupScript).not.toContain("cmd.exe");
     expect(workflow).toContain("scripts/quality/windows-agent-support-cleanup.test.ps1");
   });
 });

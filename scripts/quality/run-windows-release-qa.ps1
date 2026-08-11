@@ -374,6 +374,7 @@ function Invoke-QaExecutable {
     [hashtable]$Environment = @{},
     [ValidateRange(1, 1800)]
     [int]$TimeoutSeconds = 600,
+    [switch]$RejectVisibleWindow,
     [Parameter(Mandatory = $true)][string]$Operation
   )
 
@@ -394,9 +395,33 @@ function Invoke-QaExecutable {
     throw "$Operation did not start."
   }
   try {
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $timedOut = $false
+    $unexpectedWindowTitle = ""
+    while (-not $process.WaitForExit(500)) {
+      if ($RejectVisibleWindow) {
+        $process.Refresh()
+        $observedWindowTitle = $process.MainWindowTitle
+        if (-not [string]::IsNullOrWhiteSpace($observedWindowTitle)) {
+          $unexpectedWindowTitle = $observedWindowTitle
+          if ($unexpectedWindowTitle.Length -gt 256) {
+            $unexpectedWindowTitle = $unexpectedWindowTitle.Substring(0, 256)
+          }
+          break
+        }
+      }
+      if ([datetime]::UtcNow -ge $deadline) {
+        $timedOut = $true
+        break
+      }
+    }
+    if ($timedOut -or $unexpectedWindowTitle) {
       $process.Refresh()
-      $windowTitle = $process.MainWindowTitle
+      $windowTitle = if ($unexpectedWindowTitle) {
+        $unexpectedWindowTitle
+      } else {
+        $process.MainWindowTitle
+      }
       $allProcesses = @(Get-CimInstance Win32_Process)
       $treePids = New-Object System.Collections.Generic.HashSet[int]
       $null = $treePids.Add([int]$process.Id)
@@ -423,11 +448,13 @@ function Invoke-QaExecutable {
             }
           }
       )
-      Write-Warning (
-        "Timed-out process tree: " +
-        ($treeSummary | ConvertTo-Json -Compress -Depth 3)
-      )
-      if (@($treeSummary | Where-Object { $_.Name -match '^vc_redist(?:\.x64)?\.exe$' }).Count -gt 0) {
+      $treeLabel = if ($unexpectedWindowTitle) {
+        "Unexpected-window process tree: "
+      } else {
+        "Timed-out process tree: "
+      }
+      Write-Warning ($treeLabel + ($treeSummary | ConvertTo-Json -Compress -Depth 3))
+      if ($timedOut -and @($treeSummary | Where-Object { $_.Name -match '^vc_redist(?:\.x64)?\.exe$' }).Count -gt 0) {
         $vcDiagnostic = Get-QaVcRedistTimeoutDiagnostic -StartedAt $startedAt
         if ($null -ne $vcDiagnostic) {
           Write-Warning (
@@ -444,10 +471,19 @@ function Invoke-QaExecutable {
         " Last window title: $windowTitle"
       }
       if (-not $stopped) {
+        if ($unexpectedWindowTitle) {
+          throw (
+            "$Operation displayed an unexpected window during silent execution and " +
+            "its process tree could not be stopped.$windowDetail"
+          )
+        }
         throw (
           "$Operation timed out after $TimeoutSeconds seconds and its process tree " +
           "could not be stopped.$windowDetail"
         )
+      }
+      if ($unexpectedWindowTitle) {
+        throw "$Operation displayed an unexpected window during silent execution.$windowDetail"
       }
       throw "$Operation timed out after $TimeoutSeconds seconds.$windowDetail"
     }
@@ -1037,6 +1073,7 @@ if ($RunsPackagedLifecycle) {
       -Arguments "/S /D=$installRoot" `
       -Environment @{} `
       -TimeoutSeconds $installerTimeoutSeconds `
+      -RejectVisibleWindow `
       -Operation "silent previous-stable Windows installer"
     Start-Sleep -Seconds 2
     Stop-QaProcessesFromRoot -RootPath $installRoot
@@ -1086,6 +1123,7 @@ if ($RunsPackagedLifecycle) {
       -Arguments "/S /D=$installRoot" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "installer-auto-launch-must-fail-closed" } `
       -TimeoutSeconds $installerTimeoutSeconds `
+      -RejectVisibleWindow `
       -Operation "silent Windows installer"
     Start-Sleep -Seconds 2
     Stop-QaProcessesFromRoot -RootPath $installRoot
@@ -1205,6 +1243,7 @@ if ($RunsPackagedLifecycle) {
       -Arguments "/S" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "uninstaller-must-not-launch-app" } `
       -TimeoutSeconds $uninstallerTimeoutSeconds `
+      -RejectVisibleWindow `
       -Operation "silent Windows uninstaller"
     Start-Sleep -Seconds 2
     if (Test-Path -LiteralPath $appExecutable) {
@@ -1223,6 +1262,7 @@ if ($RunsPackagedLifecycle) {
         -Arguments "/S /D=$installRoot" `
         -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-install-must-fail-closed" } `
         -TimeoutSeconds $installerTimeoutSeconds `
+        -RejectVisibleWindow `
         -Operation "repeat candidate Windows installer"
       Start-Sleep -Seconds 2
       Stop-QaProcessesFromRoot -RootPath $installRoot
@@ -1235,6 +1275,7 @@ if ($RunsPackagedLifecycle) {
         -Arguments "/S" `
         -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-uninstall-must-not-launch-app" } `
         -TimeoutSeconds $uninstallerTimeoutSeconds `
+        -RejectVisibleWindow `
         -Operation "repeat Windows uninstaller"
       Start-Sleep -Seconds 2
       if (Test-Path -LiteralPath $appExecutable) {

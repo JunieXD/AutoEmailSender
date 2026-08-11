@@ -74,7 +74,8 @@ rehearsal 禁止 `--candidate-manifest` 和 `--candidate-run-id`，输出永远�
 ARM64 首次运行 x64 VC++ Burn bootstrapper 时，启动提权 engine 可能需要约 6 分 34 秒；安装入口
 因此使用 600 秒硬上限，不能再用 120 秒误判，preflight 卸载仍保持 120 秒上限。若安装真正超时，
 runner 会同时输出不含命令行的进程树和最近一条 `dd_vcredist_*.log` Burn 事件，先按阶段分类后再
-决定是否重试。
+决定是否重试。所有 `/S` 安装/卸载调用还会轮询可见窗口；一旦静默流程弹窗，runner 会在数秒内
+记录窗口标题和进程树、终止整棵树并失败，不依赖人工点击，也不等待总超时。
 
 新 Certify
 完成后，再用 exact bytes 运行 admission；它跳过 VC++、前后端/CLI/Desktop 全套和本地 NSIS

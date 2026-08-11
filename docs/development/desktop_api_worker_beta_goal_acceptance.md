@@ -934,3 +934,21 @@ Windows preflight 现将安装操作固定为 600 秒硬上限，覆盖真实观
 120 秒。安装超时时除有界终止完整进程树外，还会从本次启动后生成的 `dd_vcredist_*.log` 输出
 最近 Burn 事件、日志大小和最后写入时间，不读取 CIM 命令行。该变化仍须从 rehearsal 第一轮重新
 执行；run `31464156897` 继续只可作为失效包输入，不得成为 admission 或正式证据。
+
+`d6c6513` 的 Windows rehearsal 第一轮完成 v2.5.4 安装与真实 seed 后按计划硬中断；第二轮立即
+发现并清理 1 个专用 HKCU 注册项和 3 个安装根进程，旧证据树保持不变，1 秒 timeout 探针再次
+通过。随后 v2.5.4 重装/seed 成功，但失效候选覆盖时弹出
+`Failed to uninstall old application files...: 2`；测试者点击确定后进程才退出，因此第二轮明确
+失败且不计证据。
+
+失败现场没有安装根进程或卸载注册项，5228 个约 740 MB 文件几乎完整保留；安装根长 130 字符，
+Playwright 最深路径达到 280 字符，唯一 3 个独占读取失败均为 261/275/280 字符路径的
+`DirectoryNotFoundException`，不是共享锁。隔离现场中 `cmd rd` + `\\?\` 在 0.210 秒删除该树；
+进一步用 PowerShell 5.1 的 `[System.IO.Directory]::Delete()` 对 299 字符独立探针验证为 0.019 秒，
+因此产品修复采用后者，避免安装目录进入 shell 重新解析。
+
+新安装器会在默认应用进程检查完成、真正覆盖旧版之前运行内嵌 extended-path 清理；新卸载器也
+清理同一安装根内固定的 `resources\ms-playwright`，拒绝祖先 reparse point，不触及 userData。
+Windows 合同测试新增 260+ 字符、中文、空格、`Ω`、`&` 和相邻文件保留场景。runner 同时新增
+静默窗口轮询，未来此类 NSIS 弹窗会在数秒内自动失败并终止进程树，不再依赖人工点击或等待
+600 秒。该产品/包装变化必须生成新的本地包重跑两轮 rehearsal，并最终生成新 exact candidate。
