@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 IMAP_CLIENT_ID_NAME = "AutoEmailSender"
 IMAP_CLIENT_ID_VERSION = "3.0.0"
 IMAP_CLIENT_ID_VENDOR = "AutoEmailSender"
+DELIVERY_CORRELATION_HEADER = "X-AutoEmailSender-Delivery-ID"
 DEFAULT_IMAP_FOLDER = "INBOX"
 _UIDVALIDITY_UNSET = object()
 SENT_FOLDER_CANDIDATES = (
@@ -286,6 +287,7 @@ async def send_email(
     body_text: str,
     body_html: str | None,
     attachments: list[MailAttachment],
+    delivery_key: str | None = None,
 ) -> SendMailResult:
     if not professor.email:
         raise MailRuntimeError("导师没有可用邮箱，无法发送")
@@ -297,6 +299,7 @@ async def send_email(
         body_text=body_text,
         body_html=body_html,
         attachments=attachments,
+        delivery_key=delivery_key,
     )
     sent_folder_sync = await asyncio.to_thread(_send_email_sync, identity, message)
     return SendMailResult(
@@ -305,6 +308,7 @@ async def send_email(
             "smtp_host": identity.smtp_host,
             "smtp_port": identity.smtp_port,
             "to": professor.email,
+            "delivery_key": delivery_key,
             "sent_folder_sync": sent_folder_sync.to_payload(),
         },
     )
@@ -319,6 +323,7 @@ async def send_email_to_recipient(
     body_text: str,
     body_html: str | None,
     attachments: list[MailAttachment],
+    delivery_key: str | None = None,
 ) -> SendMailResult:
     recipient = Professor(
         name=recipient_name or recipient_email,
@@ -331,6 +336,7 @@ async def send_email_to_recipient(
         body_text=body_text,
         body_html=body_html,
         attachments=attachments,
+        delivery_key=delivery_key,
     )
     sent_folder_sync = await asyncio.to_thread(_send_email_sync, identity, message)
     return SendMailResult(
@@ -339,6 +345,7 @@ async def send_email_to_recipient(
             "smtp_host": identity.smtp_host,
             "smtp_port": identity.smtp_port,
             "to": recipient_email,
+            "delivery_key": delivery_key,
             "sent_folder_sync": sent_folder_sync.to_payload(),
         },
     )
@@ -591,6 +598,7 @@ def build_email_message(
     body_text: str,
     body_html: str | None,
     attachments: list[MailAttachment],
+    delivery_key: str | None = None,
 ) -> EmailMessage:
     from app.modules.campaigns.public import get_identity_sender_name
 
@@ -600,6 +608,8 @@ def build_email_message(
     message["Subject"] = subject
     message["Message-ID"] = make_msgid(domain=identity.email_address.split("@")[-1])
     message["Date"] = email_datetime_now()
+    if delivery_key:
+        message[DELIVERY_CORRELATION_HEADER] = delivery_key
     message.set_content(body_text)
     message.add_alternative(body_html or text_to_html(body_text), subtype="html")
 
@@ -1556,7 +1566,7 @@ def _fetch_message_header_payload_by_uid(
     status, payload = client.uid(
         "FETCH",
         str(uid),
-        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES)] INTERNALDATE)",
+        "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES X-AUTOEMAILSENDER-DELIVERY-ID)] INTERNALDATE)",
     )
     if status != "OK" or not payload:
         return []
@@ -1619,7 +1629,8 @@ def _parse_fetched_headers(
     message_id = parsed.get("Message-ID")
     in_reply_to = parsed.get("In-Reply-To")
     references = parsed.get("References")
-    sent_at = utc_now()
+    delivery_key = parsed.get(DELIVERY_CORRELATION_HEADER)
+    sent_at = as_utc_aware(received_at) if received_at is not None else utc_now()
     if parsed.get("Date"):
         try:
             parsed_at = parsedate_to_datetime(parsed.get("Date"))
@@ -1635,6 +1646,7 @@ def _parse_fetched_headers(
         "message_id": message_id or "",
         "in_reply_to": in_reply_to or "",
         "references": references or "",
+        "x-autoemailsender-delivery-id": delivery_key or "",
     }
     return ImapFetchedMessage(
         uid=uid,

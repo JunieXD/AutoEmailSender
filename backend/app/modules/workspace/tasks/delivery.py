@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import uuid
 from datetime import UTC, datetime, timedelta, tzinfo
 
 from app.core.time import as_utc_aware, local_now as get_local_now, utc_now
@@ -12,8 +13,9 @@ from sqlalchemy.orm import selectinload
 from app.models import (
     BatchTask,
     BatchTaskStatus,
+    EmailDeliveryAttempt,
+    EmailDeliveryAttemptStatus,
     EmailDirection,
-    EmailLog,
     EmailTaskCancellationReason,
     EmailTask,
     EmailTaskStatus,
@@ -31,9 +33,16 @@ from app.modules.campaigns.public import (
     sync_batch_task_completion,
 )
 from app.modules.communications.public import (
+    EmailLogIngestRecord,
     MailAttachment,
+    attach_delivery_observations,
+    build_reconciliation_fingerprint,
+    ensure_delivery_email_log,
     load_email_task as _load_email_task,
+    normalize_email_address,
+    normalize_message_id,
     record_email_task_log as _record_email_task_log,
+    release_delivery_observation_candidates,
     transport as mail_runtime,
 )
 from app.modules.identities.public import build_material_download_name
@@ -541,6 +550,32 @@ async def recover_stale_sending_tasks(
             ),
         )
         for task in tasks:
+            prepared_attempt_ids = list(
+                await session.scalars(
+                    select(EmailDeliveryAttempt.id).where(
+                        EmailDeliveryAttempt.email_task_id == task.id,
+                        EmailDeliveryAttempt.status
+                        == EmailDeliveryAttemptStatus.PREPARED.value,
+                    ),
+                ),
+            )
+            await session.execute(
+                update(EmailDeliveryAttempt)
+                .where(
+                    EmailDeliveryAttempt.email_task_id == task.id,
+                    EmailDeliveryAttempt.status
+                    == EmailDeliveryAttemptStatus.PREPARED.value,
+                )
+                .values(
+                    status=EmailDeliveryAttemptStatus.UNKNOWN.value,
+                    completed_at=resolved_now,
+                ),
+            )
+            for attempt_id in prepared_attempt_ids:
+                await release_delivery_observation_candidates(
+                    session,
+                    delivery_attempt_id=attempt_id,
+                )
             _restore_or_cancel_interrupted_send(task)
             task.updated_at = resolved_now
         await session.commit()
@@ -599,6 +634,7 @@ async def dispatch_email_task(
             await session.rollback()
             return False
         await session.commit()
+        session.expire_all()
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
@@ -646,6 +682,30 @@ async def dispatch_email_task(
             task.identity_id,
             task.selected_material_ids,
         )
+        latest_attempt_number = await session.scalar(
+            select(func.max(EmailDeliveryAttempt.attempt_number)).where(
+                EmailDeliveryAttempt.email_task_id == task.id,
+            ),
+        )
+
+        delivery_attempt = EmailDeliveryAttempt(
+            id=str(uuid.uuid4()),
+            email_task_id=task.id,
+            identity_id=task.identity_id,
+            professor_id=task.professor_id,
+            attempt_number=max(
+                1,
+                int(task.retry_count or 0),
+                int(latest_attempt_number or 0) + 1,
+            ),
+            recipient_email=normalize_email_address(task.professor.email),
+            subject_fingerprint=build_reconciliation_fingerprint(subject),
+            content_fingerprint=build_reconciliation_fingerprint(body_text),
+            status=EmailDeliveryAttemptStatus.PREPARED.value,
+            started_at=task.last_send_attempt_at or utc_now(),
+        )
+        session.add(delivery_attempt)
+        await session.commit()
 
         try:
             result = await mail_runtime.send_email(
@@ -655,28 +715,51 @@ async def dispatch_email_task(
                 body_text=body_text,
                 body_html=body_html,
                 attachments=attachments,
+                delivery_key=delivery_attempt.id,
             )
             rfc_message_id = result.message_id
             provider_payload = result.provider_payload
 
+            completed_at = utc_now()
+            delivery_attempt.status = EmailDeliveryAttemptStatus.ACCEPTED.value
+            delivery_attempt.app_message_id = rfc_message_id
+            delivery_attempt.normalized_app_message_id = normalize_message_id(rfc_message_id)
+            delivery_attempt.completed_at = completed_at
+
             task.status = EmailTaskStatus.SENT.value
-            task.sent_at = utc_now()
+            task.sent_at = completed_at
             task.last_rfc_message_id = rfc_message_id
             task.last_error = None
             task.updated_at = utc_now()
-            session.add(
-                EmailLog(
-                    email_task_id=task.id,
-                    identity_id=task.identity_id,
-                    llm_profile_id=task.llm_profile_id,
-                    professor_id=task.professor_id,
-                    direction=EmailDirection.SENT.value,
+            email_log, _ = await ensure_delivery_email_log(
+                session,
+                delivery_attempt_id=delivery_attempt.id,
+                record=_build_delivery_log_record(
+                    task,
                     subject=subject,
-                    content=body_text,
-                    content_html=body_html,
-                    rfc_message_id=rfc_message_id,
+                    body_text=body_text,
+                    body_html=body_html,
+                    message_id=rfc_message_id,
                     provider_payload=provider_payload,
+                    created_at=completed_at,
                 ),
+            )
+            email_log.email_task_id = task.id
+            email_log.llm_profile_id = task.llm_profile_id
+            email_log.subject = subject
+            email_log.content = body_text
+            email_log.content_html = body_html
+            email_log.rfc_message_id = rfc_message_id
+            email_log.normalized_message_id = normalize_message_id(rfc_message_id)
+            email_log.from_email = normalize_email_address(task.identity.email_address)
+            email_log.to_emails = [normalize_email_address(task.professor.email)]
+            email_log.ingest_source = "system"
+            email_log.provider_payload = provider_payload
+            email_log.failure_summary = None
+            await attach_delivery_observations(
+                session,
+                delivery_attempt_id=delivery_attempt.id,
+                email_log=email_log,
             )
             await _record_email_task_log(
                 session,
@@ -689,36 +772,100 @@ async def dispatch_email_task(
                 },
             )
         except mail_runtime.MailRuntimeError as exc:
-            task.status = EmailTaskStatus.SEND_FAILED.value
-            task.last_error = str(exc)
-            task.updated_at = utc_now()
-            session.add(
-                EmailLog(
-                    email_task_id=task.id,
-                    identity_id=task.identity_id,
-                    llm_profile_id=task.llm_profile_id,
-                    professor_id=task.professor_id,
-                    direction=EmailDirection.SENT.value,
-                    subject=subject,
-                    content=body_text,
-                    content_html=body_html,
-                    failure_summary=str(exc),
-                ),
-            )
-            await _record_email_task_log(
+            completed_at = utc_now()
+            email_log, created = await ensure_delivery_email_log(
                 session,
-                task,
-                "email_task.send_failed",
-                level="warning",
-                message=str(exc),
-                metadata={
-                    "retry_count": task.retry_count,
-                    "attachment_count": len(attachments),
-                },
+                delivery_attempt_id=delivery_attempt.id,
+                record=_build_delivery_log_record(
+                    task,
+                    subject=subject,
+                    body_text=body_text,
+                    body_html=body_html,
+                    message_id=None,
+                    provider_payload=None,
+                    created_at=completed_at,
+                ),
+                failure_summary=str(exc),
             )
+            if not created and not email_log.failure_summary:
+                delivery_attempt.status = EmailDeliveryAttemptStatus.ACCEPTED.value
+                delivery_attempt.completed_at = email_log.created_at
+                task.status = EmailTaskStatus.SENT.value
+                task.sent_at = email_log.created_at
+                task.last_rfc_message_id = email_log.rfc_message_id
+                task.last_error = None
+                task.updated_at = completed_at
+                await _record_email_task_log(
+                    session,
+                    task,
+                    "email_task.sent",
+                    metadata={
+                        "rfc_message_id": email_log.rfc_message_id,
+                        "retry_count": task.retry_count,
+                        "attachment_count": len(attachments),
+                        "recovered_from_sent_observation": True,
+                    },
+                )
+            else:
+                delivery_attempt.status = EmailDeliveryAttemptStatus.FAILED.value
+                delivery_attempt.completed_at = completed_at
+                email_log.failure_summary = str(exc)
+                await release_delivery_observation_candidates(
+                    session,
+                    delivery_attempt_id=delivery_attempt.id,
+                )
+                task.status = EmailTaskStatus.SEND_FAILED.value
+                task.last_error = str(exc)
+                task.updated_at = completed_at
+                await _record_email_task_log(
+                    session,
+                    task,
+                    "email_task.send_failed",
+                    level="warning",
+                    message=str(exc),
+                    metadata={
+                        "retry_count": task.retry_count,
+                        "attachment_count": len(attachments),
+                    },
+                )
 
         await session.commit()
         return True
+
+
+def _build_delivery_log_record(
+    task: EmailTask,
+    *,
+    subject: str,
+    body_text: str,
+    body_html: str | None,
+    message_id: str | None,
+    provider_payload: dict[str, object] | None,
+    created_at: datetime,
+) -> EmailLogIngestRecord:
+    return EmailLogIngestRecord(
+        email_task_id=task.id,
+        identity_id=task.identity_id,
+        llm_profile_id=task.llm_profile_id,
+        professor_id=task.professor_id,
+        direction=EmailDirection.SENT.value,
+        subject=subject,
+        content=body_text,
+        content_html=body_html,
+        message_id=message_id,
+        from_email=task.identity.email_address,
+        to_emails=[task.professor.email] if task.professor.email else None,
+        cc_emails=None,
+        bcc_emails=None,
+        created_at=created_at,
+        ingest_source="system",
+        folder_role=None,
+        folder=None,
+        uidvalidity=None,
+        imap_uid=None,
+        provider_payload=provider_payload,
+        reply_headers=None,
+    )
 
 
 async def _resolve_selected_materials(

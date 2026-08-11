@@ -46,8 +46,16 @@ from .imap.state import (
 )
 from .ingestion import (
     EmailLogIngestRecord,
+    SentObservationIngestResult,
+    attach_delivery_observations,
     build_message_fingerprint,
+    build_reconciliation_fingerprint,
+    ensure_delivery_email_log,
+    ingest_sent_email_observation,
+    normalize_delivery_key,
     normalize_message_id,
+    normalize_reconciliation_text,
+    release_delivery_observation_candidates,
     upsert_email_log,
 )
 from .smtp_errors import explain_smtp_error

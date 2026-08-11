@@ -19,6 +19,9 @@ from app.core.time import as_utc_aware, utc_now
 from app.models import (
     EmailDirection,
     EmailLog,
+    EmailLogRecordState,
+    EmailObservation,
+    EmailObservationResolution,
     EmailTask,
     EmailTaskStatus,
     IdentityProfile,
@@ -31,7 +34,11 @@ from app.services.operation_logs import record_operation_log
 
 from .. import transport as mail_runtime
 from ..addresses import normalize_email_address, normalize_email_list
-from ..ingestion import EmailLogIngestRecord, upsert_email_log
+from ..ingestion import (
+    EmailLogIngestRecord,
+    ingest_sent_email_observation,
+    upsert_email_log,
+)
 from ..transport import ReceivedEmail
 from .errors import (
     is_account_level_throttle_error as _is_account_level_throttle_error,
@@ -1646,6 +1653,34 @@ async def _history_mailbox_header_already_ingested(
     expected_professor_ids = set(professor_ids)
     normalized_message_id = (message.message_id or "").strip().lower()
     async with session_factory() as session:
+        if state.folder_role == "sent":
+            observation_professor_ids: set[int] = set()
+            if normalized_message_id:
+                observation_professor_ids.update(
+                    await session.scalars(
+                        select(EmailObservation.professor_id).where(
+                            EmailObservation.identity_id == identity_id,
+                            EmailObservation.professor_id.in_(expected_professor_ids),
+                            EmailObservation.direction == direction,
+                            EmailObservation.normalized_message_id == normalized_message_id,
+                        ),
+                    ),
+                )
+            if message.uidvalidity is not None:
+                observation_professor_ids.update(
+                    await session.scalars(
+                        select(EmailObservation.professor_id).where(
+                            EmailObservation.identity_id == identity_id,
+                            EmailObservation.professor_id.in_(expected_professor_ids),
+                            EmailObservation.folder_role == state.folder_role,
+                            EmailObservation.folder == state.folder,
+                            EmailObservation.uidvalidity == message.uidvalidity,
+                            EmailObservation.imap_uid == message.uid,
+                        ),
+                    ),
+                )
+            if observation_professor_ids >= expected_professor_ids:
+                return True
         if normalized_message_id:
             rows = (
                 await session.execute(
@@ -1653,6 +1688,7 @@ async def _history_mailbox_header_already_ingested(
                         EmailLog.identity_id == identity_id,
                         EmailLog.professor_id.in_(expected_professor_ids),
                         EmailLog.direction == direction,
+                        EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                         or_(
                             EmailLog.normalized_message_id == normalized_message_id,
                             func.lower(EmailLog.rfc_message_id)
@@ -1670,6 +1706,7 @@ async def _history_mailbox_header_already_ingested(
                 select(EmailLog.professor_id).where(
                     EmailLog.identity_id == identity_id,
                     EmailLog.professor_id.in_(expected_professor_ids),
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                     EmailLog.folder_role == state.folder_role,
                     EmailLog.folder == state.folder,
                     EmailLog.uidvalidity == message.uidvalidity,
@@ -1802,12 +1839,35 @@ async def _history_header_already_ingested(
             else EmailDirection.SENT.value
         )
         normalized_message_id = (message.message_id or "").strip().lower()
+        if state.folder_role == "sent":
+            observation_id = await session.scalar(
+                select(EmailObservation.id).where(
+                    EmailObservation.identity_id == identity_id,
+                    EmailObservation.professor_id == professor.id,
+                    or_(
+                        and_(
+                            normalized_message_id != "",
+                            EmailObservation.normalized_message_id == normalized_message_id,
+                        ),
+                        and_(
+                            message.uidvalidity is not None,
+                            EmailObservation.folder_role == state.folder_role,
+                            EmailObservation.folder == state.folder,
+                            EmailObservation.uidvalidity == message.uidvalidity,
+                            EmailObservation.imap_uid == message.uid,
+                        ),
+                    ),
+                ),
+            )
+            if observation_id is not None:
+                return True
         if normalized_message_id:
             existing_by_message = await session.scalar(
                 select(EmailLog.id).where(
                     EmailLog.identity_id == identity_id,
                     EmailLog.professor_id == professor.id,
                     EmailLog.direction == direction,
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                     or_(
                         EmailLog.normalized_message_id == normalized_message_id,
                         func.lower(EmailLog.rfc_message_id) == normalized_message_id,
@@ -1822,6 +1882,7 @@ async def _history_header_already_ingested(
             select(EmailLog.id).where(
                 EmailLog.identity_id == identity_id,
                 EmailLog.professor_id == professor.id,
+                EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                 EmailLog.folder_role == state.folder_role,
                 EmailLog.folder == state.folder,
                 EmailLog.uidvalidity == message.uidvalidity,
@@ -2326,6 +2387,7 @@ async def _find_existing_received_log_for_reply(
             EmailLog.identity_id == task.identity_id,
             EmailLog.professor_id == task.professor_id,
             EmailLog.direction == EmailDirection.RECEIVED.value,
+            EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
             or_(
                 EmailLog.normalized_message_id == normalized_message_id,
                 func.lower(EmailLog.rfc_message_id) == normalized_message_id,
@@ -2431,28 +2493,12 @@ async def _process_sent_imap_fetched_messages(
                     matched_professors_by_id.setdefault(professor.id, professor)
             matched_professors = list(matched_professors_by_id.values())
             for professor in matched_professors:
-                task = await _find_sent_message_task_match(
-                    session,
-                    identity_id=identity_id,
-                    professor_id=professor.id,
-                    message_id=message.message_id,
-                )
-                if task is not None:
-                    if task.status != EmailTaskStatus.REPLY_DETECTED.value:
-                        task.status = EmailTaskStatus.SENT.value
-                    task.sent_at = message.sent_at
-                    if message.message_id:
-                        task.last_rfc_message_id = message.message_id
-                    task.updated_at = utc_now()
-
-                await upsert_email_log(
+                result = await ingest_sent_email_observation(
                     session,
                     EmailLogIngestRecord(
-                        email_task_id=task.id if task is not None else None,
+                        email_task_id=None,
                         identity_id=identity_id,
-                        llm_profile_id=task.llm_profile_id
-                        if task is not None
-                        else None,
+                        llm_profile_id=None,
                         professor_id=professor.id,
                         direction=EmailDirection.SENT.value,
                         subject=message.subject,
@@ -2471,55 +2517,28 @@ async def _process_sent_imap_fetched_messages(
                         imap_uid=message.uid,
                         provider_payload=None,
                         reply_headers=message.headers,
+                        delivery_key=message.headers.get(
+                            "x-autoemailsender-delivery-id",
+                        ),
                     ),
                 )
+                task = (
+                    await session.get(EmailTask, result.email_task_id)
+                    if result.email_task_id is not None
+                    and result.email_log is not None
+                    else None
+                )
+                if task is not None:
+                    if task.status != EmailTaskStatus.REPLY_DETECTED.value:
+                        task.status = EmailTaskStatus.SENT.value
+                    if task.sent_at is None:
+                        task.sent_at = message.sent_at
+                    if message.message_id and not task.last_rfc_message_id:
+                        task.last_rfc_message_id = message.message_id
+                    task.updated_at = utc_now()
                 detected += 1
         await commit_imap_identity_sync_session(session)
     return detected
-
-
-async def _find_sent_message_task_match(
-    session: AsyncSession,
-    *,
-    identity_id: int,
-    professor_id: int,
-    message_id: str | None,
-) -> EmailTask | None:
-    normalized_message_id = (message_id or "").strip().lower()
-    if not normalized_message_id:
-        return None
-
-    task = await session.scalar(
-        select(EmailTask)
-        .where(
-            EmailTask.identity_id == identity_id,
-            EmailTask.professor_id == professor_id,
-            func.lower(EmailTask.last_rfc_message_id) == normalized_message_id,
-        )
-        .order_by(EmailTask.updated_at.desc(), EmailTask.id.desc()),
-    )
-    if task is not None:
-        return task
-
-    sent_log = await session.scalar(
-        select(EmailLog)
-        .where(
-            EmailLog.identity_id == identity_id,
-            EmailLog.professor_id == professor_id,
-            EmailLog.direction == EmailDirection.SENT.value,
-            EmailLog.email_task_id.is_not(None),
-            or_(
-                func.lower(EmailLog.rfc_message_id) == normalized_message_id,
-                EmailLog.normalized_message_id == normalized_message_id,
-            ),
-        )
-        .order_by(EmailLog.created_at.desc(), EmailLog.id.desc()),
-    )
-    if sent_log is None:
-        return None
-    return await session.get(EmailTask, sent_log.email_task_id)
-
-
 def _backfill_existing_reply(
     existing: EmailLog,
     message: ReceivedEmail,
@@ -2586,6 +2605,7 @@ async def _find_reply_target(
                 .where(
                     EmailLog.identity_id == identity_id,
                     EmailLog.direction == EmailDirection.SENT.value,
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                     Professor.archived_at.is_(None),
                     func.lower(Professor.email) == normalized_from_email,
                     or_(
@@ -2605,6 +2625,15 @@ async def _find_reply_target(
         )
         if matched_log and matched_log.email_task_id:
             return await _load_email_task(session, matched_log.email_task_id)
+
+        observation_target = await _find_reply_target_from_observations(
+            session,
+            identity_id=identity_id,
+            normalized_from_email=normalized_from_email,
+            reference_ids=reference_ids,
+        )
+        if observation_target is not None:
+            return observation_target
 
     if not normalized_from_email:
         return None
@@ -2642,6 +2671,57 @@ async def _find_reply_target(
             ):
                 return task
     return candidate_tasks[0]
+
+
+async def _find_reply_target_from_observations(
+    session: AsyncSession,
+    *,
+    identity_id: int,
+    normalized_from_email: str,
+    reference_ids: set[str],
+) -> EmailTask | None:
+    if not normalized_from_email or not reference_ids:
+        return None
+    matched_rows: list[tuple[EmailObservation, EmailLog]] = []
+    for reference_id_chunk in chunked_values(reference_ids):
+        matched_rows.extend(
+            (
+                await session.execute(
+                    select(EmailObservation, EmailLog)
+                    .join(Professor, EmailObservation.professor_id == Professor.id)
+                    .join(
+                        EmailLog,
+                        EmailLog.id == EmailObservation.email_log_id,
+                    )
+                    .where(
+                        EmailObservation.identity_id == identity_id,
+                        EmailObservation.direction == EmailDirection.SENT.value,
+                        EmailObservation.normalized_message_id.in_(reference_id_chunk),
+                        EmailObservation.resolution
+                        == EmailObservationResolution.MATCHED.value,
+                        EmailLog.identity_id == identity_id,
+                        EmailLog.professor_id == EmailObservation.professor_id,
+                        EmailLog.direction == EmailDirection.SENT.value,
+                        EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
+                        EmailLog.email_task_id.is_not(None),
+                        Professor.archived_at.is_(None),
+                        func.lower(Professor.email) == normalized_from_email,
+                    ),
+                )
+            ).all(),
+        )
+    target_log_ids = {email_log.id for _, email_log in matched_rows}
+    if len(target_log_ids) != 1:
+        return None
+    target_log_id = target_log_ids.pop()
+    target_log = next(
+        email_log
+        for _, email_log in matched_rows
+        if email_log.id == target_log_id
+    )
+    if target_log.email_task_id is None:
+        return None
+    return await _load_email_task(session, target_log.email_task_id)
 
 
 async def _load_email_task(session: AsyncSession, task_id: int) -> EmailTask | None:

@@ -27,7 +27,12 @@ from app.models.crawl_job import (
     CrawlWorkerKind,
     CrawlWorkerTokenUsage,
 )
-from app.models.email_log import EmailDirection, EmailLog
+from app.models.email_delivery_attempt import (
+    EmailDeliveryAttempt,
+    EmailDeliveryAttemptStatus,
+)
+from app.models.email_log import EmailDirection, EmailLog, EmailLogRecordState
+from app.models.email_observation import EmailObservation, EmailObservationResolution
 from app.models.email_task import (
     EmailTask,
     EmailTaskCancellationReason,
@@ -98,7 +103,12 @@ __all__ = [
     "CrawlPageChunkStatus",
     "CrawlPageStatus",
     "EmailDirection",
+    "EmailDeliveryAttempt",
+    "EmailDeliveryAttemptStatus",
     "EmailLog",
+    "EmailLogRecordState",
+    "EmailObservation",
+    "EmailObservationResolution",
     "EmailTask",
     "EmailTaskCancellationReason",
     "EmailTaskSource",

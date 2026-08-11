@@ -15,6 +15,7 @@ from app.models import (
     CrawlJobStatus,
     EmailDirection,
     EmailLog,
+    EmailLogRecordState,
     IdentityProfile,
     LLMProfile,
     MatchAnalysisJob,
@@ -461,7 +462,10 @@ async def _list_draft_records(
                 LLMProfile.model_name,
             ),
         )
-        .where(EmailLog.direction == EmailDirection.DRAFT.value)
+        .where(
+            EmailLog.direction == EmailDirection.DRAFT.value,
+            EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
+        )
         .order_by(EmailLog.created_at.desc())
     )
     if limit is not None:

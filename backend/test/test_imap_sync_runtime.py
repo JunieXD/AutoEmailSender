@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import unittest
+import uuid
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -11,8 +12,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
     Base,
+    EmailDeliveryAttempt,
+    EmailDeliveryAttemptStatus,
     EmailDirection,
     EmailLog,
+    EmailObservation,
+    EmailObservationResolution,
     EmailTask,
     EmailTaskStatus,
     IdentityProfile,
@@ -49,6 +54,7 @@ from app.modules.communications.imap.sync import process_imap_fetched_messages
 from app.modules.communications.imap.sync import sync_identity_history_once
 from app.modules.communications.imap.sync import sync_identity_imap_once
 from app.modules.communications.imap.sync import sync_identity_incremental_once
+from app.modules.communications.ingestion import build_reconciliation_fingerprint
 
 
 class ImapSyncRuntimeTestCase(unittest.TestCase):
@@ -1875,6 +1881,100 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             ),
         )
 
+    def test_app_delivery_header_disambiguates_professors_sharing_email(self) -> None:
+        delivery_key = str(uuid.uuid4())
+        sent_at = datetime(2026, 5, 2, tzinfo=UTC)
+
+        async def scenario() -> tuple[int, int, list[tuple[int, str, int | None]]]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                professor_a = Professor(name="A", email="shared@example.edu")
+                professor_b = Professor(name="B", email="Shared@Example.edu")
+                session.add_all([identity, professor_a, professor_b])
+                await session.flush()
+                session.add_all(
+                    [
+                        EmailDeliveryAttempt(
+                            id=delivery_key,
+                            email_task_id=None,
+                            identity_id=identity.id,
+                            professor_id=professor_a.id,
+                            attempt_number=1,
+                            recipient_email="shared@example.edu",
+                            subject_fingerprint=build_reconciliation_fingerprint(
+                                "Shared address",
+                            ),
+                            content_fingerprint=build_reconciliation_fingerprint(
+                                "sent body",
+                            ),
+                            status=EmailDeliveryAttemptStatus.ACCEPTED.value,
+                            started_at=sent_at,
+                        ),
+                        EmailLog(
+                            delivery_attempt_id=delivery_key,
+                            identity_id=identity.id,
+                            professor_id=professor_a.id,
+                            direction=EmailDirection.SENT.value,
+                            subject="Shared address",
+                            content="sent body",
+                            ingest_source="system",
+                            created_at=sent_at,
+                        ),
+                    ],
+                )
+                await session.commit()
+                identity_id = identity.id
+
+            message = self._build_fetched_message(
+                uid=62,
+                uidvalidity=777,
+                message_id="<provider-shared@example.com>",
+                from_email="student@example.com",
+                to_emails=["shared@example.edu"],
+                subject="Shared address",
+                content="sent body",
+                delivery_key=delivery_key,
+            )
+            detected = await process_imap_fetched_messages(
+                self.session_factory,
+                identity_id,
+                [message],
+                folder_role="sent",
+                folder="Sent",
+            )
+
+            async with self.session_factory() as session:
+                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                observations = list(
+                    await session.scalars(
+                        select(EmailObservation).order_by(EmailObservation.professor_id),
+                    ),
+                )
+                return (
+                    detected,
+                    int(log_count or 0),
+                    [
+                        (
+                            observation.professor_id or 0,
+                            observation.resolution,
+                            observation.email_log_id,
+                        )
+                        for observation in observations
+                    ],
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (
+                2,
+                1,
+                [
+                    (1, EmailObservationResolution.MATCHED.value, 1),
+                    (2, EmailObservationResolution.PENDING.value, None),
+                ],
+            ),
+        )
+
     def test_sent_incremental_sync_ignores_non_system_professors(self) -> None:
         async def scenario() -> int:
             identity_id = await self._create_identity_with_imap()
@@ -2284,6 +2384,113 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         self.assertEqual(
             self._run_async(scenario()),
             (1, EmailTaskStatus.SENT.value, False, EmailTaskStatus.REPLY_DETECTED.value, True),
+        )
+
+    def test_reply_reference_does_not_confirm_pending_provider_message_id_candidate(self) -> None:
+        provider_message_id = "<tencent-rewritten@example.edu>"
+
+        async def scenario() -> tuple[int, str, bool, str, str, int | None]:
+            async with self.session_factory() as session:
+                identity = self._build_identity()
+                llm = self._build_llm()
+                professor = Professor(name="Reply Teacher", email="reply@example.edu")
+                session.add_all([identity, llm, professor])
+                await session.flush()
+                task = EmailTask(
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor.id,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                    approved_subject="Candidate hello",
+                    last_rfc_message_id="<app-original@example.edu>",
+                )
+                session.add(task)
+                await session.flush()
+                sent_log = EmailLog(
+                    email_task_id=task.id,
+                    identity_id=identity.id,
+                    llm_profile_id=llm.id,
+                    professor_id=professor.id,
+                    direction=EmailDirection.SENT.value,
+                    subject="Candidate hello",
+                    content="sent",
+                    rfc_message_id="<app-original@example.edu>",
+                    normalized_message_id="<app-original@example.edu>",
+                    ingest_source="system",
+                    created_at=datetime(2026, 5, 1, tzinfo=UTC),
+                )
+                session.add(sent_log)
+                await session.flush()
+                observation = EmailObservation(
+                    email_log_id=None,
+                    candidate_email_log_id=sent_log.id,
+                    identity_id=identity.id,
+                    professor_id=professor.id,
+                    direction=EmailDirection.SENT.value,
+                    source="imap",
+                    resolution=EmailObservationResolution.PENDING.value,
+                    match_method="strict_unique_candidate",
+                    message_id=provider_message_id,
+                    normalized_message_id=provider_message_id,
+                    folder_role="sent",
+                    folder="Sent",
+                    uidvalidity=777,
+                    imap_uid=70,
+                    from_email="student@example.com",
+                    to_emails=["reply@example.edu"],
+                    subject="Candidate hello",
+                    content="sent",
+                    message_sent_at=datetime(2026, 5, 1, tzinfo=UTC),
+                    observed_at=datetime(2026, 5, 1, 0, 5, tzinfo=UTC),
+                )
+                session.add(observation)
+                await session.commit()
+                identity_id = identity.id
+                task_id = task.id
+                observation_id = observation.id
+
+            reply = self._build_fetched_message(
+                uid=71,
+                uidvalidity=777,
+                message_id="<reply-to-provider-id@example.edu>",
+                from_email="Reply Teacher <reply@example.edu>",
+                to_emails=["student@example.com"],
+                subject="Re: Candidate hello",
+                content="Thanks",
+            )
+            reply.in_reply_to = provider_message_id
+            reply.references = provider_message_id
+            detected = await process_imap_fetched_messages(
+                self.session_factory,
+                identity_id,
+                [reply],
+            )
+
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                observation = await session.get(EmailObservation, observation_id)
+                assert task is not None
+                assert observation is not None
+                return (
+                    detected,
+                    task.status,
+                    task.is_replied,
+                    observation.resolution,
+                    observation.match_method or "",
+                    observation.email_log_id,
+                )
+
+        self.assertEqual(
+            self._run_async(scenario()),
+            (
+                1,
+                EmailTaskStatus.REPLY_DETECTED.value,
+                True,
+                EmailObservationResolution.PENDING.value,
+                "strict_unique_candidate",
+                None,
+            ),
         )
 
     def test_inbox_message_from_existing_professor_without_task_is_logged_unbound(self) -> None:
@@ -5156,6 +5363,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
         to_emails: list[str] | None = None,
         cc_emails: list[str] | None = None,
         bcc_emails: list[str] | None = None,
+        delivery_key: str | None = None,
     ) -> ImapFetchedMessage:
         return ImapFetchedMessage(
             uid=uid,
@@ -5167,7 +5375,10 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             references="<sent@example.com>",
             sent_at=datetime(2026, 5, 2, tzinfo=UTC),
             received_at=datetime(2026, 5, 2, 1, tzinfo=UTC),
-            headers={"Message-ID": message_id},
+            headers={
+                "Message-ID": message_id,
+                "x-autoemailsender-delivery-id": delivery_key or "",
+            },
             body_text=content,
             body_html="<p>reply</p>",
             to_emails=to_emails or [],

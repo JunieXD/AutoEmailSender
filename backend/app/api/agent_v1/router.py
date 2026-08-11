@@ -34,6 +34,7 @@ from app.models import (
     CrawlPage,
     CrawlJobTriggerMode,
     EmailLog,
+    EmailLogRecordState,
     EmailTask,
     IdentityMaterial,
     IdentityProfile,
@@ -1171,6 +1172,7 @@ async def read_agent_communication_thread(
                 EmailLog.identity_id == identity_id,
                 EmailLog.professor_id == professor_id,
                 EmailLog.direction.in_(["sent", "received"]),
+                EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
             )
             .order_by(EmailLog.created_at.asc(), EmailLog.id.asc())
             .offset(message_cursor)
@@ -1216,7 +1218,9 @@ async def list_agent_messages(
         identity_id = thread_identity_id
         professor_id = thread_professor_id
 
-    statement = select(EmailLog)
+    statement = select(EmailLog).where(
+        EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
+    )
     if identity_id is not None:
         statement = statement.where(EmailLog.identity_id == identity_id)
     if professor_id is not None:
@@ -1249,7 +1253,7 @@ async def read_agent_message(
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentMessageRead:
     message = await session.get(EmailLog, message_id)
-    if message is None:
+    if message is None or message.record_state != EmailLogRecordState.CANONICAL.value:
         raise HTTPException(status_code=404, detail="未找到邮件记录")
     return _serialize_message(message, include_body=include_body)
 
@@ -6292,7 +6296,10 @@ async def _query_threads(
         )
         .join(IdentityProfile, IdentityProfile.id == EmailLog.identity_id)
         .join(Professor, Professor.id == EmailLog.professor_id)
-        .where(EmailLog.direction.in_(["sent", "received"]))
+        .where(
+            EmailLog.direction.in_(["sent", "received"]),
+            EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
+        )
         .group_by(
             EmailLog.identity_id,
             IdentityProfile.name,

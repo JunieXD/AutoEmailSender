@@ -9,12 +9,16 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import (
     BatchTask,
     BatchTaskStatus,
+    EmailDeliveryAttempt,
+    EmailDeliveryAttemptStatus,
+    EmailLog,
+    EmailObservation,
     EmailTask,
     EmailTaskCancellationReason,
     EmailTaskSource,
@@ -23,7 +27,12 @@ from app.models import (
     LLMProfile,
     Professor,
 )
-from app.modules.communications.transport import SendMailResult
+from app.modules.communications.transport import MailRuntimeError, SendMailResult
+from app.modules.communications.ingestion import (
+    EmailLogIngestRecord,
+    build_reconciliation_fingerprint,
+    ingest_sent_email_observation,
+)
 from test.schema_database import create_schema_sqlite_database
 from app.modules.workspace.tasks.delivery import (
     dispatch_due_tasks_once,
@@ -152,6 +161,16 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(processed, 1)
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
+        delivery_key = mocked_send.await_args.kwargs["delivery_key"]
+        self.assertEqual(
+            self._run_async(self._get_delivery_reconciliation_state(task_id)),
+            (
+                delivery_key,
+                EmailDeliveryAttemptStatus.ACCEPTED.value,
+                delivery_key,
+                0,
+            ),
+        )
 
     def test_dispatch_due_tasks_reserves_identity_send_window(self) -> None:
         first_task_id, second_task_id = self._run_async(
@@ -603,10 +622,208 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
 
+    def test_failed_send_retry_creates_two_distinct_attempts(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            AsyncMock(
+                side_effect=[
+                    MailRuntimeError("SMTP rejected"),
+                    self._build_send_result(),
+                ],
+            ),
+        ) as mocked_send:
+            self._run_async(
+                dispatch_email_task(
+                    self.session_factory,
+                    task_id,
+                    respect_identity_send_window=False,
+                ),
+            )
+            self.assertEqual(
+                self._run_async(self._get_task_status(task_id)),
+                EmailTaskStatus.SEND_FAILED.value,
+            )
+            self._run_async(self._set_task_status(task_id, EmailTaskStatus.APPROVED.value))
+            self._run_async(
+                dispatch_email_task(
+                    self.session_factory,
+                    task_id,
+                    respect_identity_send_window=False,
+                ),
+            )
+
+        attempt_ids = [
+            call.kwargs["delivery_key"]
+            for call in mocked_send.await_args_list
+        ]
+        self.assertNotEqual(attempt_ids[0], attempt_ids[1])
+        self.assertEqual(
+            self._run_async(self._get_attempt_statuses(task_id)),
+            [
+                (attempt_ids[0], EmailDeliveryAttemptStatus.FAILED.value),
+                (attempt_ids[1], EmailDeliveryAttemptStatus.ACCEPTED.value),
+            ],
+        )
+        self.assertEqual(self._run_async(self._get_email_log_count(task_id)), 2)
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.SENT.value,
+        )
+
+    def test_retry_uses_next_free_attempt_number_after_legacy_backfill(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        async def seed_legacy_attempt() -> None:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                assert task is not None
+                professor = await session.get(Professor, task.professor_id)
+                assert professor is not None
+                task.retry_count = 2
+                session.add(
+                    EmailDeliveryAttempt(
+                        id="34bbd1d5-ae60-4a09-95af-6f90bf33ddad",
+                        email_task_id=task.id,
+                        identity_id=task.identity_id,
+                        professor_id=task.professor_id,
+                        attempt_number=3,
+                        recipient_email=professor.email or "",
+                        subject_fingerprint=build_reconciliation_fingerprint(
+                            task.approved_subject,
+                        ),
+                        content_fingerprint=build_reconciliation_fingerprint(
+                            task.approved_body_text,
+                        ),
+                        status=EmailDeliveryAttemptStatus.UNKNOWN.value,
+                        started_at=datetime(2026, 5, 4, 8, 0, tzinfo=UTC),
+                    ),
+                )
+                await session.commit()
+
+        self._run_async(seed_legacy_attempt())
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ):
+            self._run_async(
+                dispatch_email_task(
+                    self.session_factory,
+                    task_id,
+                    respect_identity_send_window=False,
+                ),
+            )
+
+        self.assertEqual(self._run_async(self._get_attempt_numbers(task_id)), [3, 4])
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.SENT.value,
+        )
+
+    def test_sent_observation_wins_when_transport_reports_an_error_after_delivery(self) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+
+        async def sent_copy_then_transport_error(**kwargs):
+            identity = kwargs["identity"]
+            professor = kwargs["professor"]
+            delivery_key = kwargs["delivery_key"]
+            sent_at = datetime.now(UTC)
+            async with self.session_factory() as session:
+                await ingest_sent_email_observation(
+                    session,
+                    EmailLogIngestRecord(
+                        email_task_id=None,
+                        identity_id=identity.id,
+                        llm_profile_id=None,
+                        professor_id=professor.id,
+                        direction="sent",
+                        subject=kwargs["subject"],
+                        content=kwargs["body_text"],
+                        content_html=kwargs["body_html"],
+                        message_id="<provider-confirmed@example.edu>",
+                        from_email=identity.email_address,
+                        to_emails=[professor.email],
+                        cc_emails=None,
+                        bcc_emails=None,
+                        created_at=sent_at,
+                        ingest_source="imap",
+                        folder_role="sent",
+                        folder="Sent",
+                        uidvalidity=777,
+                        imap_uid=901,
+                        provider_payload=None,
+                        reply_headers={
+                            "x-autoemailsender-delivery-id": delivery_key,
+                        },
+                        delivery_key=delivery_key,
+                    ),
+                )
+                await session.commit()
+            raise MailRuntimeError("connection dropped after send")
+
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            AsyncMock(side_effect=sent_copy_then_transport_error),
+        ):
+            self._run_async(
+                dispatch_email_task(
+                    self.session_factory,
+                    task_id,
+                    respect_identity_send_window=False,
+                ),
+            )
+
+        async def load_state() -> tuple[str, str, int, str, str | None]:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_id)
+                attempt = await session.scalar(
+                    select(EmailDeliveryAttempt).where(
+                        EmailDeliveryAttempt.email_task_id == task_id,
+                    ),
+                )
+                assert task is not None
+                assert attempt is not None
+                logs = list(
+                    await session.scalars(
+                        select(EmailLog).where(EmailLog.email_task_id == task_id),
+                    ),
+                )
+                observation = await session.scalar(
+                    select(EmailObservation).where(
+                        EmailObservation.delivery_attempt_id == attempt.id,
+                    ),
+                )
+                assert observation is not None
+                return (
+                    task.status,
+                    attempt.status,
+                    len(logs),
+                    observation.resolution,
+                    logs[0].failure_summary,
+                )
+
+        self.assertEqual(
+            self._run_async(load_state()),
+            (
+                EmailTaskStatus.SENT.value,
+                EmailDeliveryAttemptStatus.ACCEPTED.value,
+                1,
+                "matched",
+                None,
+            ),
+        )
+
     def test_dispatch_due_tasks_recovers_stale_sending_task(self) -> None:
         task_id = self._run_async(self._create_manual_approved_task())
         now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
         self._run_async(self._set_task_sending(task_id, now - timedelta(minutes=45)))
+        stale_attempt_id = self._run_async(
+            self._add_prepared_attempt(
+                task_id,
+                started_at=now - timedelta(minutes=45),
+            ),
+        )
 
         with patch(
             "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
@@ -623,6 +840,16 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         self.assertEqual(processed, 1)
         self.assertEqual(self._run_async(self._get_task_status(task_id)), EmailTaskStatus.SENT.value)
         mocked_send.assert_awaited_once()
+        self.assertEqual(
+            self._run_async(self._get_attempt_statuses(task_id)),
+            [
+                (stale_attempt_id, EmailDeliveryAttemptStatus.UNKNOWN.value),
+                (
+                    mocked_send.await_args.kwargs["delivery_key"],
+                    EmailDeliveryAttemptStatus.ACCEPTED.value,
+                ),
+            ],
+        )
 
     def test_dispatch_due_tasks_keeps_recent_sending_task_claimed(self) -> None:
         task_id = self._run_async(self._create_manual_approved_task())
@@ -1580,6 +1807,68 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task.updated_at = last_send_attempt_at
             await session.commit()
 
+    async def _add_prepared_attempt(
+        self,
+        task_id: int,
+        *,
+        started_at: datetime,
+    ) -> str:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            professor = await session.get(Professor, task.professor_id)
+            assert professor is not None
+            task.retry_count = max(1, task.retry_count)
+            attempt = EmailDeliveryAttempt(
+                id="2f3390ed-684f-4ac7-8a02-1dfb667b7d72",
+                email_task_id=task.id,
+                identity_id=task.identity_id,
+                professor_id=task.professor_id,
+                attempt_number=task.retry_count,
+                recipient_email=professor.email or "",
+                subject_fingerprint=build_reconciliation_fingerprint(
+                    task.approved_subject,
+                ),
+                content_fingerprint=build_reconciliation_fingerprint(
+                    task.approved_body_text,
+                ),
+                status=EmailDeliveryAttemptStatus.PREPARED.value,
+                started_at=started_at,
+            )
+            session.add(attempt)
+            await session.commit()
+            return attempt.id
+
+    async def _get_attempt_statuses(self, task_id: int) -> list[tuple[str, str]]:
+        async with self.session_factory() as session:
+            attempts = list(
+                await session.scalars(
+                    select(EmailDeliveryAttempt)
+                    .where(EmailDeliveryAttempt.email_task_id == task_id)
+                    .order_by(EmailDeliveryAttempt.attempt_number),
+                ),
+            )
+            return [(attempt.id, attempt.status) for attempt in attempts]
+
+    async def _get_attempt_numbers(self, task_id: int) -> list[int]:
+        async with self.session_factory() as session:
+            return list(
+                await session.scalars(
+                    select(EmailDeliveryAttempt.attempt_number)
+                    .where(EmailDeliveryAttempt.email_task_id == task_id)
+                    .order_by(EmailDeliveryAttempt.attempt_number),
+                ),
+            )
+
+    async def _get_email_log_count(self, task_id: int) -> int:
+        async with self.session_factory() as session:
+            logs = list(
+                await session.scalars(
+                    select(EmailLog).where(EmailLog.email_task_id == task_id),
+                ),
+            )
+            return len(logs)
+
     async def _set_task_scheduled_at(self, task_id: int, scheduled_at: datetime) -> None:
         async with self.session_factory() as session:
             task = await session.get(EmailTask, task_id)
@@ -1635,6 +1924,35 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             return task.status
+
+    async def _get_delivery_reconciliation_state(
+        self,
+        task_id: int,
+    ) -> tuple[str, str, str | None, int]:
+        async with self.session_factory() as session:
+            attempt = await session.scalar(
+                select(EmailDeliveryAttempt).where(
+                    EmailDeliveryAttempt.email_task_id == task_id,
+                ),
+            )
+            email_log = await session.scalar(
+                select(EmailLog).where(EmailLog.email_task_id == task_id),
+            )
+            assert attempt is not None
+            assert email_log is not None
+            observations = list(
+                await session.scalars(
+                    select(EmailObservation).where(
+                        EmailObservation.delivery_attempt_id == attempt.id,
+                    ),
+                ),
+            )
+            return (
+                attempt.id,
+                attempt.status,
+                email_log.delivery_attempt_id,
+                len(observations),
+            )
 
     async def _get_task_scheduled_at(self, task_id: int) -> datetime | None:
         async with self.session_factory() as session:

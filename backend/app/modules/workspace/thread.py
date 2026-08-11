@@ -14,6 +14,7 @@ from app.models import (
     BatchTaskStatus,
     EmailDirection,
     EmailLog,
+    EmailLogRecordState,
     EmailTask,
     EmailTaskCancellationReason,
     EmailTaskSource,
@@ -164,6 +165,7 @@ async def _build_workspace_thread_read(
                     EmailLog.identity_id == identity.id,
                     EmailLog.direction == EmailDirection.DRAFT.value,
                     EmailLog.email_task_id == current_task.id,
+                    EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                 )
                 .order_by(EmailLog.created_at.asc(), EmailLog.id.asc()),
             ),

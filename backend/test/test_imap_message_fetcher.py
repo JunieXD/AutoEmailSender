@@ -47,6 +47,7 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
 
         serialized = " ".join(str(item) for item in client.commands)
         self.assertIn("HEADER.FIELDS", serialized)
+        self.assertIn("X-AUTOEMAILSENDER-DELIVERY-ID", serialized)
         self.assertNotIn("RFC822", serialized)
 
     def test_fetch_text_part_sections_ignores_attachment_parts(self) -> None:

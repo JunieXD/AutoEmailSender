@@ -18,6 +18,7 @@ from app.models import (
     BatchTaskStatus,
     EmailDirection,
     EmailLog,
+    EmailLogRecordState,
     EmailTask,
     EmailTaskStatus,
     IdentityProfessorMatchResult,
@@ -680,6 +681,10 @@ def _dashboard_summary_expressions(
     fingerprint = func.trim(func.coalesce(EmailLog.message_fingerprint, ""))
     event_key = case(
         (
+            EmailLog.delivery_attempt_id.is_not(None),
+            literal("delivery:") + EmailLog.delivery_attempt_id,
+        ),
+        (
             normalized_message_id != "",
             literal("message:") + func.lower(normalized_message_id),
         ),
@@ -711,6 +716,7 @@ def _dashboard_summary_expressions(
             EmailLog.direction.in_(
                 [EmailDirection.SENT.value, EmailDirection.RECEIVED.value],
             ),
+            EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
         )
         .group_by(EmailLog.professor_id, EmailLog.direction, event_key)
         .subquery("dashboard_events")
