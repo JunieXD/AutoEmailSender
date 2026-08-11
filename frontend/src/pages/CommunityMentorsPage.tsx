@@ -1150,6 +1150,29 @@ export const CommunityMentorsPage = () => {
     allVisibleSelected: allFilteredUnitsSelected,
     partiallyVisibleSelected: partiallyFilteredUnitsSelected,
   } = getVisibleRecordSelectionState(selectedUnitPaths, filteredCatalogUnitPaths);
+  const nextFilteredUnitSelection = useMemo(
+    () => addFilteredCommunityUnitSelection(
+      selectedUnitPaths,
+      catalogUnitEntries.map((entry) => ({
+        id: entry.unit.path,
+        recordCount: entry.unit.record_count,
+      })),
+      filteredCatalogUnits.map((entry) => ({
+        id: entry.unit.path,
+        recordCount: entry.unit.record_count,
+      })),
+    ),
+    [catalogUnitEntries, filteredCatalogUnits, selectedUnitPaths],
+  );
+  const nextFilteredUnitOmittedCount =
+    nextFilteredUnitSelection.omittedByUnitLimit +
+    nextFilteredUnitSelection.omittedByRecordLimit;
+  const filteredUnitSelectionAtLimit =
+    partiallyFilteredUnitsSelected &&
+    nextFilteredUnitOmittedCount > 0 &&
+    haveSamePaths(nextFilteredUnitSelection.unitIds, selectedUnitPaths);
+  const bulkUnitButtonClearsSelection =
+    allFilteredUnitsSelected || filteredUnitSelectionAtLimit;
 
   const loadRecordsForPaths = async (unitPaths: string[]) => {
     if (!catalog || unitPaths.length === 0) {
@@ -1205,65 +1228,49 @@ export const CommunityMentorsPage = () => {
   };
 
   const toggleUnit = (path: string) => {
-    setSelectedUnitPaths((current) => {
-      if (current.includes(path)) {
-        return current.filter((item) => item !== path);
-      }
-      if (current.length >= MAX_SELECTED_UNITS) {
-        notifyWarning('学院选择过多', `一次最多加载 ${MAX_SELECTED_UNITS} 个学院。`);
-        return current;
-      }
-      const unit = catalogUnitsByPath.get(path);
-      const currentRecordCount = current.reduce(
-        (total, item) => total + (catalogUnitsByPath.get(item)?.record_count ?? 0),
-        0,
+    if (selectedUnitPaths.includes(path)) {
+      setSelectedUnitPaths(selectedUnitPaths.filter((item) => item !== path));
+      return;
+    }
+    if (selectedUnitPaths.length >= MAX_SELECTED_UNITS) {
+      notifyWarning('学院选择过多', `一次最多加载 ${MAX_SELECTED_UNITS} 个学院。`);
+      return;
+    }
+    const unit = catalogUnitsByPath.get(path);
+    const currentRecordCount = selectedUnitPaths.reduce(
+      (total, item) => total + (catalogUnitsByPath.get(item)?.record_count ?? 0),
+      0,
+    );
+    const nextRecordCount = currentRecordCount + (unit?.record_count ?? 0);
+    if (nextRecordCount > MAX_LOADED_RECORDS) {
+      notifyWarning(
+        '所选导师太多',
+        `加入该学院后共有 ${nextRecordCount} 位导师，一次最多加载 ${MAX_LOADED_RECORDS} 位，请分批处理。`,
       );
-      const nextRecordCount = currentRecordCount + (unit?.record_count ?? 0);
-      if (nextRecordCount > MAX_LOADED_RECORDS) {
-        notifyWarning(
-          '所选导师太多',
-          `加入该学院后共有 ${nextRecordCount} 位导师，一次最多加载 ${MAX_LOADED_RECORDS} 位，请分批处理。`,
-        );
-        return current;
-      }
-      return [...current, path];
-    });
+      return;
+    }
+    setSelectedUnitPaths([...selectedUnitPaths, path]);
   };
 
   const toggleFilteredUnits = () => {
-    setSelectedUnitPaths((current) => {
-      if (allFilteredUnitsSelected) {
-        const filteredPathSet = new Set(filteredCatalogUnitPaths);
-        return current.filter((path) => !filteredPathSet.has(path));
-      }
-      const result = addFilteredCommunityUnitSelection(
-        current,
-        catalogUnitEntries.map((entry) => ({
-          id: entry.unit.path,
-          recordCount: entry.unit.record_count,
-        })),
-        filteredCatalogUnits.map((entry) => ({
-          id: entry.unit.path,
-          recordCount: entry.unit.record_count,
-        })),
+    if (bulkUnitButtonClearsSelection) {
+      const filteredPathSet = new Set(filteredCatalogUnitPaths);
+      setSelectedUnitPaths(selectedUnitPaths.filter((path) => !filteredPathSet.has(path)));
+      return;
+    }
+    const result = nextFilteredUnitSelection;
+    const omittedCount = nextFilteredUnitOmittedCount;
+    if (omittedCount > 0) {
+      const limitDescription = result.omittedByUnitLimit > 0
+        ? result.omittedByRecordLimit > 0
+          ? `单次选择上限 ${MAX_SELECTED_UNITS} 个学院、加载上限 ${MAX_LOADED_RECORDS} 位导师`
+          : `单次选择上限 ${MAX_SELECTED_UNITS} 个学院`
+        : `单次加载上限 ${MAX_LOADED_RECORDS} 位导师`;
+      notifyWarning(
+        `已按当前显示顺序完成选择，${limitDescription}，跳过 ${omittedCount} 个学院。`,
       );
-      const omittedCount = result.omittedByUnitLimit + result.omittedByRecordLimit;
-      if (omittedCount > 0) {
-        const reasons = [
-          result.omittedByUnitLimit > 0
-            ? `${result.omittedByUnitLimit} 个超过 ${MAX_SELECTED_UNITS} 个学院上限`
-            : null,
-          result.omittedByRecordLimit > 0
-            ? `${result.omittedByRecordLimit} 个会超过 ${MAX_LOADED_RECORDS} 位导师上限`
-            : null,
-        ].filter(Boolean).join('，');
-        notifyWarning(
-          '已选择能加入的学院',
-          `按当前显示顺序完成选择，跳过 ${omittedCount} 个学院：${reasons}。`,
-        );
-      }
-      return result.unitIds;
-    });
+    }
+    setSelectedUnitPaths(result.unitIds);
   };
 
   const recordUniversityOptions = useMemo(
@@ -1533,40 +1540,38 @@ export const CommunityMentorsPage = () => {
   }, [previewFieldOptions]);
 
   const toggleRecord = useCallback((recordId: string) => {
-    setSelectedRecordIds((current) => {
-      if (current.includes(recordId)) {
-        return current.filter((item) => item !== recordId);
-      }
-      if (current.length >= MAX_SELECTED_RECORDS) {
-        notifyWarning(
-          '已达到导入上限',
-          `一次最多选择 ${MAX_SELECTED_RECORDS} 位导师，请先导入当前选择。`,
-        );
-        return current;
-      }
-      return [...current, recordId];
-    });
-  }, [notifyWarning]);
+    if (selectedRecordIds.includes(recordId)) {
+      setSelectedRecordIds(selectedRecordIds.filter((item) => item !== recordId));
+      return;
+    }
+    if (selectedRecordIds.length >= MAX_SELECTED_RECORDS) {
+      notifyWarning(
+        '已达到导入上限',
+        `一次最多选择 ${MAX_SELECTED_RECORDS} 位导师，请先导入当前选择。`,
+      );
+      return;
+    }
+    setSelectedRecordIds([...selectedRecordIds, recordId]);
+  }, [notifyWarning, selectedRecordIds]);
 
   const toggleVisibleRecords = () => {
     beginBulkRecordSelection();
-    setSelectedRecordIds((current) => {
-      if (allVisibleSelected) {
-        const visibleIdSet = new Set(selectableVisibleIds);
-        return current.filter((id) => !visibleIdSet.has(id));
-      }
-      const { recordIds, omittedCount } = addVisibleRecordSelection(
-        current,
-        selectableVisibleIds,
+    if (allVisibleSelected) {
+      const visibleIdSet = new Set(selectableVisibleIds);
+      setSelectedRecordIds(selectedRecordIds.filter((id) => !visibleIdSet.has(id)));
+      return;
+    }
+    const { recordIds, omittedCount } = addVisibleRecordSelection(
+      selectedRecordIds,
+      selectableVisibleIds,
+    );
+    if (omittedCount > 0) {
+      notifyWarning(
+        `已选择前 ${MAX_SELECTED_RECORDS} 位导师`,
+        `还有 ${omittedCount} 位未选中；一次最多导入 ${MAX_SELECTED_RECORDS} 位，请分批处理。`,
       );
-      if (omittedCount > 0) {
-        notifyWarning(
-          `已选择前 ${MAX_SELECTED_RECORDS} 位导师`,
-          `还有 ${omittedCount} 位未选中；一次最多导入 ${MAX_SELECTED_RECORDS} 位，请分批处理。`,
-        );
-      }
-      return recordIds;
-    });
+    }
+    setSelectedRecordIds(recordIds);
   };
 
   const clearVisibleRecords = () => {
@@ -1895,8 +1900,14 @@ export const CommunityMentorsPage = () => {
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-stone-50 px-4 py-3">
               <button
                 type="button"
-                aria-label={allFilteredUnitsSelected ? "取消全选学院" : "全选当前学院"}
-                aria-pressed={allFilteredUnitsSelected}
+                aria-label={bulkUnitButtonClearsSelection ? "取消当前学院选择" : "全选当前学院"}
+                aria-pressed={
+                  allFilteredUnitsSelected
+                    ? true
+                    : partiallyFilteredUnitsSelected
+                      ? 'mixed'
+                      : false
+                }
                 disabled={filteredCatalogUnitPaths.length === 0}
                 onClick={toggleFilteredUnits}
                 className="inline-flex items-center gap-2 text-sm text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1909,7 +1920,7 @@ export const CommunityMentorsPage = () => {
                   <Square className="h-5 w-5 shrink-0 text-stone-400" />
                 )}
                 <span>
-                  {allFilteredUnitsSelected ? '取消全选' : '全选当前结果'}
+                  {bulkUnitButtonClearsSelection ? '取消当前选择' : '全选当前结果'}
                   {selectedFilteredUnitCount > 0
                     ? `（已选 ${selectedFilteredUnitCount}/${filteredCatalogUnitPaths.length}）`
                     : ''}

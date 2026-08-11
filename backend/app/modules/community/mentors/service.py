@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -61,6 +62,7 @@ SHARD_MAX_BYTES = 20 * 1024 * 1024
 TOTAL_SELECTED_SHARDS_MAX_BYTES = 80 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 20.0
+SHARD_LOAD_CONCURRENCY = 6
 CACHE_INDEX_NAME = "cache-index.json"
 CACHE_REFRESH_STATE_NAME = "refresh-state.json"
 QUERY_IN_BATCH_SIZE = 400
@@ -294,6 +296,12 @@ class CommunityMentorDataService:
                 code="COMMUNITY_DATA_TOO_LARGE",
             )
 
+        loaded_manifest_files = await self._load_manifest_files(
+            bundle=bundle,
+            manifest_files=manifest_files,
+            unit_paths=unit_paths,
+        )
+
         records: list[CommunityMentorRecord] = []
         seen_record_ids: set[str] = set()
         revocations_by_id = {
@@ -301,9 +309,7 @@ class CommunityMentorDataService:
             for item in bundle.revocations.records
         }
         downloaded_from_network = False
-        for path in unit_paths:
-            manifest_file = manifest_files[path]
-            payload, source = await self._load_or_download_manifest_file(bundle, manifest_file)
+        for path, payload, source in loaded_manifest_files:
             downloaded_from_network = downloaded_from_network or source == "network"
             shard = self._parse_json_model(payload, CommunityShardDocument, path)
             expected = catalog_units[path]
@@ -641,6 +647,8 @@ class CommunityMentorDataService:
         self,
         bundle: CommunityCatalogBundle,
         manifest_file: CommunityManifestFile,
+        *,
+        prune_cache: bool = True,
     ) -> tuple[bytes, str]:
         self._validate_declared_size(manifest_file, SHARD_MAX_BYTES)
         cache_path = self._cache_manifest_path(manifest_file.path)
@@ -662,7 +670,8 @@ class CommunityMentorDataService:
                 payload = await self._download_bytes(base_url, relative_path, SHARD_MAX_BYTES)
                 self._verify_manifest_payload(payload, manifest_file)
                 self._write_atomic(cache_path, payload)
-                self._prune_cache(current_version=bundle.catalog.dataset_version)
+                if prune_cache:
+                    self._prune_cache(current_version=bundle.catalog.dataset_version)
                 return payload, "network"
             except CommunityDataError as exc:
                 failures.append(str(exc))
@@ -671,6 +680,29 @@ class CommunityMentorDataService:
             f"学院分片无法下载且没有有效缓存：{manifest_file.path}（{detail}）",
             code="COMMUNITY_DATA_UNAVAILABLE",
         )
+
+    async def _load_manifest_files(
+        self,
+        *,
+        bundle: CommunityCatalogBundle,
+        manifest_files: dict[str, CommunityManifestFile],
+        unit_paths: list[str],
+    ) -> list[tuple[str, bytes, str]]:
+        semaphore = asyncio.Semaphore(SHARD_LOAD_CONCURRENCY)
+
+        async def load(path: str) -> tuple[str, bytes, str]:
+            async with semaphore:
+                payload, source = await self._load_or_download_manifest_file(
+                    bundle,
+                    manifest_files[path],
+                    prune_cache=False,
+                )
+            return path, payload, source
+
+        loaded = list(await asyncio.gather(*(load(path) for path in unit_paths)))
+        if any(source == "network" for _, _, source in loaded):
+            self._prune_cache(current_version=bundle.catalog.dataset_version)
+        return loaded
 
     async def _download_bytes(self, base_url: str, relative_path: str, max_bytes: int) -> bytes:
         url = self._build_download_url(base_url, relative_path)
