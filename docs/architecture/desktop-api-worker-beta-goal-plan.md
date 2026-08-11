@@ -90,8 +90,8 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
   保留，run `31417575421` 不再是可发布候选。
 - `bd5e52e1bff20e73a2d322ef1fbfccb0899a3b3d` 用每次运行唯一的临时共享目录保留 manifest 原始
   文件名，并增加禁止传输改名的回归合同。macOS/Windows 本机合同和真实 Windows quick QA
-  均通过；quick 仍不替代同一替代 workflow 原始 DMG/EXE 的覆盖升级、lifecycle、2h normal
-  和 1h seeded chaos。
+  均通过；quick 仍不替代同一替代 workflow 原始 DMG/EXE 的覆盖升级、lifecycle 和每平台
+  5 分钟 normal + 5 分钟 seeded chaos 密集门禁。
 - 用户又分别批准 push `908dfa9` 与 replacement Certify；run `31453411547` 双平台构建和
   candidate certify 成功，未创建 tag/Release。Windows 正式 QA 在候选安装前发现 v2.5.4
   settings seed 少传 14 个必填字段；后续真实重放又发现安装树哈希未使用 Windows 扩展长度路径。
@@ -267,8 +267,9 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 - 每次注入的已知故障都必须在导出 bundle 中可重建，且 canary 扫描仍为零泄漏；
 - 稳定 v2.5.4 应用内检查更新看不到 Beta，Beta 只能手动覆盖安装。
 
-公开首个 Beta 前，两平台各自使用精确候选完成 packaged lifecycle、至少连续 2 小时 normal
-soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代未来稳定版 24h/8h 正式认证。
+公开首个 Beta 前，两平台各自使用精确候选完成 packaged lifecycle、连续 5 分钟 normal soak 和
+连续 5 分钟 seeded chaos。资源每 10 秒采样、故障动作至多间隔 5 秒，全部声明的 chaos 动作、
+六类工作和不变量必须通过。该短时密集门禁不替代未来稳定版 24h/8h 正式认证。
 
 ## 7. 分阶段执行
 
@@ -279,7 +280,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后才执行正式 lifecycle、2h normal、1h chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后执行正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -344,7 +345,8 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
   在昂贵正式门禁前通过覆盖升级、split/combined、迁移完整性、诊断导出、sleep/wake、卸载与重装；
   两份报告明确不可用于认证。
 - **AC-BETA-QA-01**：同一候选资产在 macOS 和 Windows 完成 v2.5.4 覆盖升级与完整 lifecycle。
-- **AC-BETA-QA-02**：两平台各自单次连续 ≥2h normal soak、≥1h seeded chaos，双时钟达标。
+- **AC-BETA-QA-02**：两平台各自单次连续 ≥300s normal soak、≥300s seeded chaos，双时钟达标；
+  采样间隔 ≤10s、故障动作间隔 ≤5s，全部声明的 chaos 动作均至少完成一次。
 - **AC-BETA-QA-03**：故障轨迹、进程恢复、资源趋势、数据库与任务不变量能由用户同格式 bundle 重建。
 - **AC-BETA-QA-04**：零数据损坏、零重复 SMTP DATA、零孤儿进程、零未解释退出。
 
@@ -353,7 +355,8 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 只有同时满足以下条件才能完成本 Goal：
 
 1. B0～B7 完成，全部必选 AC 有可复现证据且通过。
-2. 合入最新 `master` 之后的候选代码完整全仓测试连续通过 2 次，split 集成套件连续通过 20 次。
+2. 合入冻结的最新 `master` 后运行一次完整全仓测试，并对冲突文件、迁移、邮件投递和 split
+   进程安全执行聚焦重复回归；此前连续两次全仓和 20 次 split 证据继续作为前置基线。
 3. combined/split 设置、安全重启、页面外回退、诊断导出和 analyzer 均有跨平台测试。
 4. Mac 与 Windows VM 使用同一版本、同一 SHA 对应的精确候选资产完成内部 Beta 门禁。
 5. 没有未解决的阻断级、高风险、数据正确性、隐私或稳定更新隔离缺陷。

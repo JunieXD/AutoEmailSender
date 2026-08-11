@@ -250,6 +250,8 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--require-recovered-stale-state");
     expect(hostRunner).toContain("--normal-soak");
     expect(hostRunner).toContain("--seeded-chaos");
+    expect(hostRunner).toContain("normal_soak_minimum=300");
+    expect(hostRunner).toContain("seeded_chaos_minimum=300");
     expect(hostRunner).toContain("-RunNormalSoak");
     expect(hostRunner).toContain("-RunSeededChaos");
     expect(hostRunner).toContain("expected_previous_version");
@@ -302,6 +304,8 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("[switch]$RunSeededChaos");
     expect(guestRunner).toContain("[int]$NormalSoakDurationSeconds = 86400");
     expect(guestRunner).toContain("[int]$SeededChaosDurationSeconds = 28800");
+    expect(guestRunner).toContain('$NormalSoakDurationSeconds -lt 300');
+    expect(guestRunner).toContain('$SeededChaosDurationSeconds -lt 300');
     expect(guestRunner).toContain("[string]$ExpectedRevision");
     expect(guestRunner).toContain("[string]$PreviousRevision");
     expect(guestRunner).toContain("Get-StageFingerprint");

@@ -112,8 +112,8 @@ if [[ "$qa_mode" == "candidate-admission" || "$qa_mode" == "harness-rehearsal" ]
 if ((formal_qa || packaged_preflight)); then packaged_qa=1; fi
 if ((formal_qa)) || [[ "$qa_mode" == "candidate-admission" ]]; then exact_candidate_qa=1; fi
 if [[ "$qa_mode" == "prerelease" ]]; then
-  normal_soak_minimum=7200
-  seeded_chaos_minimum=3600
+  normal_soak_minimum=300
+  seeded_chaos_minimum=300
 fi
 if [[ -z "$normal_soak_seconds" ]]; then normal_soak_seconds="$normal_soak_minimum"; fi
 if [[ -z "$seeded_chaos_seconds" ]]; then seeded_chaos_seconds="$seeded_chaos_minimum"; fi

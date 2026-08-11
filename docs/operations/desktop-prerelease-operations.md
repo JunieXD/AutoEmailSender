@@ -109,8 +109,9 @@ manifest 绑定 repository、版本、channel、来源分支、SHA、run ID、�
    在昂贵源码/构建回归及长稳前直接验证真实覆盖安装边界。覆盖上一稳定版 seed、中文/空格/Ω
    路径、split/combined、迁移与完整性、诊断导出、sleep/wake、卸载和重复安装。目标每平台约
    10～15 分钟。
-3. 正式认证：保持现有 `--prerelease-certification` lifecycle、连续 7200 秒 normal soak 和
-   连续 3600 秒 seeded chaos，不降低、不累计短测时长。
+3. 正式认证：执行 `--prerelease-certification` lifecycle，再连续运行 300 秒 normal soak 和
+   300 秒 seeded chaos。测试版以更高密度换取更短时长：资源采样间隔不超过 10 秒、故障动作
+   间隔不超过 5 秒，并要求全部声明的 chaos 动作和所有不变量通过。
 
 前两层报告必须同时满足 `certification_eligible=false`，并分别记录
 `evidence_purpose=non-certifying-harness-rehearsal` 或
@@ -120,8 +121,12 @@ Windows 正式认证 → macOS 正式认证；失效候选只允许进入 rehear
 ## Exact-package 内部认证
 
 两平台都必须使用候选 workflow 下载的原始字节。`--prerelease-certification` 是测试版正式证据，
-normal soak 下限为连续 7200 秒，seeded chaos 下限为连续 3600 秒；稳定版的
+normal soak 下限为连续 300 秒，seeded chaos 下限为连续 300 秒；稳定版的
 `--certification` 仍保持 86400/28800 秒，不能互相替代。
+
+这个 10 分钟门禁是测试版的明确风险选择：它能证明安装、升级、故障恢复和短时资源趋势，但不能
+证明小时级泄漏、积压或低频竞态不存在。测试版必须继续保持非 Latest、稳定更新通道隔离、本地
+诊断可导出和更高 prerelease 快速取代能力；发现阻断或数据正确性问题时停止使用并发布更高版本。
 
 macOS lifecycle 示例：
 
@@ -139,8 +144,8 @@ rtk bash scripts/quality/run-macos-packaged-qa.sh \
   --dedicated-test-account
 ```
 
-同一 DMG 再分别运行 `normal-soak --duration-seconds 7200` 和
-`seeded-chaos --duration-seconds 3600 --seed <recorded-seed>`。lifecycle 和 seeded chaos 会要求
+同一 DMG 再分别运行 `normal-soak --duration-seconds 300` 和
+`seeded-chaos --duration-seconds 300 --seed <recorded-seed>`。lifecycle 和 seeded chaos 会要求
 真实 sleep/wake；不要跳过浏览器进程树验证。
 
 Windows Parallels VM 一次运行 lifecycle 和两个长稳场景：
@@ -154,8 +159,8 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh \
   --candidate-run-id <candidate-run-id> \
   --previous-installer /absolute/path/AutoEmailSender-Setup-<stable>.exe \
   --previous-installer-sha256 <上一稳定版公开EXE摘要> \
-  --normal-soak --normal-soak-seconds 7200 \
-  --seeded-chaos --seeded-chaos-seconds 3600 \
+  --normal-soak --normal-soak-seconds 300 \
+  --seeded-chaos --seeded-chaos-seconds 300 \
   --seed <recorded-seed>
 ```
 

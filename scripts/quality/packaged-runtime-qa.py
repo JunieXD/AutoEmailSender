@@ -65,9 +65,11 @@ CERTIFICATION_MINIMUM_SECONDS = {
     "seeded-chaos": 8 * 60 * 60,
 }
 PRERELEASE_CERTIFICATION_MINIMUM_SECONDS = {
-    "normal-soak": 2 * 60 * 60,
-    "seeded-chaos": 60 * 60,
+    "normal-soak": 5 * 60,
+    "seeded-chaos": 5 * 60,
 }
+PRERELEASE_SAMPLE_INTERVAL_SECONDS = 10.0
+PRERELEASE_ACTION_INTERVAL_SECONDS = 5.0
 ROLE_STATUS_PROTOCOL_VERSION = "2"
 AGENT_PROTOCOL_VERSION = "3"
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -1224,8 +1226,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expected-candidate-run-id", type=int)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
     parser.add_argument("--duration-seconds", type=float)
-    parser.add_argument("--sample-interval-seconds", type=float, default=30.0)
-    parser.add_argument("--action-interval-seconds", type=float, default=60.0)
+    parser.add_argument("--sample-interval-seconds", type=float)
+    parser.add_argument("--action-interval-seconds", type=float)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--expected-revision", default="")
     parser.add_argument("--expected-app-version", default="")
@@ -1301,8 +1303,30 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         if args.expected_candidate_run_id is None or args.expected_candidate_run_id <= 0:
             parser.error("--expected-candidate-run-id must be a positive integer")
         args.candidate_manifest_file = candidate_manifest
+    if args.sample_interval_seconds is None:
+        args.sample_interval_seconds = (
+            PRERELEASE_SAMPLE_INTERVAL_SECONDS
+            if args.prerelease_certification
+            else 30.0
+        )
+    if args.action_interval_seconds is None:
+        args.action_interval_seconds = (
+            PRERELEASE_ACTION_INTERVAL_SECONDS
+            if args.prerelease_certification
+            else 60.0
+        )
     if args.sample_interval_seconds <= 0 or args.action_interval_seconds <= 0:
         parser.error("sample and action intervals must be positive")
+    if (
+        args.prerelease_certification
+        and args.sample_interval_seconds > PRERELEASE_SAMPLE_INTERVAL_SECONDS
+    ):
+        parser.error("prerelease certification samples must be at most 10 seconds apart")
+    if (
+        args.prerelease_certification
+        and args.action_interval_seconds > PRERELEASE_ACTION_INTERVAL_SECONDS
+    ):
+        parser.error("prerelease certification actions must be at most 5 seconds apart")
     default_minimums = (
         PRERELEASE_CERTIFICATION_MINIMUM_SECONDS
         if args.prerelease_certification
@@ -2486,14 +2510,19 @@ def _finalize_soak_evidence(
                         int(action_counts.get(action, 0)) >= 1
                         for action in chaos_summary.get("required_actions", [])
                     )
-                    if args.certification
+                    if args.certification or args.prerelease_certification
                     else sum(int(value) for value in action_counts.values()) >= 1
                 )
             ),
             evidence=chaos_summary,
         )
-    if args.certification:
-        minimum = CERTIFICATION_MINIMUM_SECONDS[args.scenario]
+    if args.certification or args.prerelease_certification:
+        minimums = (
+            PRERELEASE_CERTIFICATION_MINIMUM_SECONDS
+            if args.prerelease_certification
+            else CERTIFICATION_MINIMUM_SECONDS
+        )
+        minimum = minimums[args.scenario]
         soak_duration = recorder.report.get("soak_duration")
         monotonic_seconds = (
             float(soak_duration.get("monotonic_seconds", 0.0))

@@ -751,7 +751,7 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                     ]
                 )
 
-    def test_prerelease_certification_uses_two_hour_normal_soak_gate(self) -> None:
+    def test_prerelease_certification_uses_ten_minute_intensive_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             executable = root / "app"
@@ -783,10 +783,42 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                 "--expected-candidate-run-id",
                 "123456",
             ]
-            accepted = runner.parse_args([*base, "--duration-seconds", "7200"])
+            accepted = runner.parse_args([*base, "--duration-seconds", "300"])
             self.assertTrue(accepted.prerelease_certification)
+            self.assertEqual(accepted.sample_interval_seconds, 10.0)
+            self.assertEqual(accepted.action_interval_seconds, 5.0)
             with self.assertRaises(SystemExit):
-                runner.parse_args([*base, "--duration-seconds", "7199"])
+                runner.parse_args([*base, "--duration-seconds", "299"])
+            with self.assertRaises(SystemExit):
+                runner.parse_args(
+                    [
+                        *base,
+                        "--duration-seconds",
+                        "300",
+                        "--sample-interval-seconds",
+                        "11",
+                    ]
+                )
+            with self.assertRaises(SystemExit):
+                runner.parse_args(
+                    [
+                        *base,
+                        "--duration-seconds",
+                        "300",
+                        "--action-interval-seconds",
+                        "6",
+                    ]
+                )
+
+            chaos_base = [*base]
+            chaos_base[1] = "seeded-chaos"
+            chaos_base.extend(["--seed", "20260810", "--system-sleep-wake"])
+            accepted_chaos = runner.parse_args(
+                [*chaos_base, "--duration-seconds", "300"]
+            )
+            self.assertTrue(accepted_chaos.prerelease_certification)
+            with self.assertRaises(SystemExit):
+                runner.parse_args([*chaos_base, "--duration-seconds", "299"])
 
     def test_lifecycle_certification_requires_native_sleep_and_previous_package_data(
         self,

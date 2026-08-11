@@ -22,9 +22,9 @@ param(
   [switch]$RequireRecoveredStaleState,
   [switch]$RunNormalSoak,
   [switch]$RunSeededChaos,
-  [ValidateRange(7200, 604800)]
+  [ValidateRange(1, 604800)]
   [int]$NormalSoakDurationSeconds = 86400,
-  [ValidateRange(3600, 604800)]
+  [ValidateRange(1, 604800)]
   [int]$SeededChaosDurationSeconds = 28800,
   [int]$SeededChaosSeed = 20260810
 )
@@ -42,11 +42,11 @@ if ($Mode -eq "release" -and $NormalSoakDurationSeconds -lt 86400) {
 if ($Mode -eq "release" -and $SeededChaosDurationSeconds -lt 28800) {
   throw "Stable release seeded chaos requires at least 28800 seconds."
 }
-if ($Mode -eq "prerelease" -and $NormalSoakDurationSeconds -lt 7200) {
-  throw "Prerelease normal soak requires at least 7200 seconds."
+if ($Mode -eq "prerelease" -and $NormalSoakDurationSeconds -lt 300) {
+  throw "Prerelease normal soak requires at least 300 seconds."
 }
-if ($Mode -eq "prerelease" -and $SeededChaosDurationSeconds -lt 3600) {
-  throw "Prerelease seeded chaos requires at least 3600 seconds."
+if ($Mode -eq "prerelease" -and $SeededChaosDurationSeconds -lt 300) {
+  throw "Prerelease seeded chaos requires at least 300 seconds."
 }
 if ($IsPackagedPreflight -and ($RunNormalSoak -or $RunSeededChaos)) {
   throw "Packaged preflight cannot run normal soak or seeded chaos."

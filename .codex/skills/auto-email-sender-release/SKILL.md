@@ -129,7 +129,13 @@ Run dry-run first:
 
 The non-dry command pushes the explicit source branch and dispatches a remote workflow. Require separate user approval for both actions before removing `--dry-run`. Certification must not create a tag or Release. Record the successful `Release Desktop` run ID and require exactly one EXE, one arm64 DMG, and `prerelease-candidate.json`; reject stable feed metadata, blockmaps, deltas, mixed runs, or rebuilt substitutes.
 
-Use the exact workflow assets for formal packaged QA. Pass `--prerelease-certification`, not stable `--certification`: prerelease normal soak is at least 7200 seconds and seeded chaos at least 3600 seconds; the stable 86400/28800 gates remain unchanged. Bind every platform run to the candidate manifest, run ID, release SHA, installer digest, and previous public stable installer digest.
+Use the exact workflow assets for formal packaged QA. Pass `--prerelease-certification`, not stable
+`--certification`. For a prerelease, run a 10-minute intensive gate per platform: at least 300
+seconds normal soak followed by at least 300 seconds seeded chaos. Sample resources at most every 10
+seconds, select chaos actions at most every 5 seconds, and require every declared chaos action plus
+all workload, database, process, diagnostic, and resource checks to pass. Keep the stable
+86400/28800 gates unchanged. Bind every platform run to the candidate manifest, run ID, release SHA,
+installer digest, and previous public stable installer digest.
 
 Before another expensive candidate is requested after QA harness changes, run a non-certifying
 `--harness-rehearsal` on Windows and macOS. It may use an invalidated candidate or a local package,

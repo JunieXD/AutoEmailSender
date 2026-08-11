@@ -59,7 +59,7 @@
 | AC-PRIV | 已通过 | allowlist、固定自由文本标签、最终 ZIP canary 零命中、恶意 ZIP 拒绝和无远程上传源码合同均通过 |
 | AC-REL | 已通过 | Skill、POSIX/PowerShell、workflow、候选 manifest、immutable promote、supersede/withdraw 与稳定入口隔离合同均通过 |
 | AC-ISO | 未通过 | 自动合同已实现；仍须用真实公开 Prerelease 证明非 Latest、稳定 feed 摘要不变及两平台 v2.5.4 客户端不可见 |
-| AC-BETA-QA | 未通过 | 双平台 exact-package lifecycle、2h normal、1h chaos |
+| AC-BETA-QA | 未通过 | 双平台 exact-package lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 密集门禁 |
 
 ## 首次失败与修复记录
 
@@ -552,7 +552,7 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
 NSIS 和安装后 lifecycle；macOS 本地冻结构建也不是远端候选 DMG。证据文档提交后先运行
 `release-impact.mjs`、prerelease preflight 和 certify dry-run；只有用户分别批准 push 与远端
 Certify workflow 后，才能取得同一 run 的原始 DMG/EXE/manifest，并继续两平台覆盖升级、
-lifecycle、2h normal、1h seeded chaos 与诊断重建。当前仍没有 push、tag、workflow dispatch、
+lifecycle、短时密集 normal/chaos 与诊断重建。当前仍没有 push、tag、workflow dispatch、
 GitHub Release、稳定 feed 修改或合回 `master`。
 
 ### B5 续：最新 master 再同步与最终候选代码收口
@@ -814,8 +814,8 @@ validation_error_count: 14
 `/Users/junie/Programs/AutoEmailSender-release-candidates/31453411547/windows-seed-replay-27bd475/`，
 不提交 Git。
 
-该聚焦重放只关闭本次 failure-recovery，不替代新 SHA/run 的候选覆盖安装、lifecycle、2h normal
-和 1h chaos。`31453411547` 已因 QA 代码变化失效；形成新最终文档 SHA 后必须重新取得 push 与
+该聚焦重放只关闭本次 failure-recovery，不替代新 SHA/run 的候选覆盖安装、lifecycle 和当前规定的
+短时密集 normal/chaos。`31453411547` 已因 QA 代码变化失效；形成新最终文档 SHA 后必须重新取得 push 与
 Certify dispatch 授权。仍未授权 tag、公开 GitHub Prerelease、稳定 feed、master 合并或稳定版
 发布。
 
@@ -836,7 +836,7 @@ Certify dispatch 授权。仍未授权 tag、公开 GitHub Prerelease、稳定 f
 
 #### Windows 正式 QA 首次失败
 
-run `31464156897` 的 exact EXE/manifest、公开 v2.5.4 EXE、2h normal、1h chaos 和 seed
+run `31464156897` 的 exact EXE/manifest、公开 v2.5.4 EXE、当时配置的 2h normal/1h chaos 和 seed
 `20260810` 完成候选绑定、精确 checkout、VC++、release contracts、CLI 冻结 identity 与 intent
 accuracy `1.0`/p95 `572.49ms`、Backend 1960/1960（7 skip）、冻结后端三角色/文档 self-check 和
 本地 NSIS packaging contract。进入 installed lifecycle 后，上一稳定版安装器在候选覆盖之前
@@ -904,7 +904,8 @@ runner 却把这些边界放在 release contracts、VC++、Frontend、CLI、Back
 - `candidate-admission` 绑定 exact manifest/run/SHA/version/新旧摘要，跳过昂贵源码与本地重建，
   直接执行覆盖升级、split/combined lifecycle、迁移完整性、原生 sleep/wake、真实 Beta 诊断 ZIP、
   卸载和重复安装；
-- 正式 `--prerelease-certification` 的 lifecycle、连续 2h normal 和连续 1h chaos 保持不变。
+- 正式 `--prerelease-certification` 的 lifecycle 保持不变；2026-08-12 起按用户明确的首个 Beta
+  风险选择，改为每平台连续 5 分钟 normal 和 5 分钟 chaos 密集门禁。
 
 packaged driver 对前两层固定输出 `certification_eligible=false` 和独立 `evidence_purpose`；rehearsal
 主动拒绝失效 manifest，admission 才允许 exact candidate 绑定。提交前本地结果为 Backend packaged
@@ -968,3 +969,17 @@ redistributable；PowerShell 5.1 已对 equal/newer/older/invalid/missing 与真
 聚焦验证。rehearsal 同时只在非认证模式复用经过版本、旧包/EXE 摘要、数据库、固定路径、
 Playwright 与 reparse point 检查的上一稳定版 seed；恢复轮续用同一中断安装根，不再重复执行旧
 installer。candidate admission 和正式 QA 不采用检查点，仍从公开 v2.5.4 安装包开始。
+
+### B5 验收标准变更：首个 Beta 改用 10 分钟密集门禁
+
+2026-08-12 用户明确把目标调整为“尽快公开首个 Beta，在稳定隔离和可恢复前提下接受低频问题由
+后续更高 Beta 修复”。因此测试版正式运行门禁从每平台 2h normal + 1h chaos 改为：
+
+- 每个平台使用同一 exact candidate 连续运行 300 秒 normal 和 300 秒 seeded chaos；
+- 资源采样间隔不超过 10 秒，故障动作间隔不超过 5 秒；
+- 全部声明的 chaos 动作、六类工作、数据库完整性、资源阈值、诊断导出和进程清理必须通过；
+- lifecycle、上一稳定版覆盖升级、双平台 admission、资产/run/SHA 绑定和稳定更新隔离不得省略；
+- 稳定版认证继续保持 24h normal + 8h chaos，本次变更不降低稳定版发布标准。
+
+该门禁不能证明小时级资源泄漏、积压或低频竞态不存在。这一剩余风险必须写入 Beta 证据和公告；
+出现阻断、数据正确性或重复发送风险时停止使用该 Beta，保留原资产并发布更高 prerelease。
