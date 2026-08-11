@@ -14,20 +14,23 @@
 - B0 开始时本地 `master` 多 5 个提交；该风险已通过前置快照和语义化合并解除。
 - B0 开始时 Desktop 版本和最新稳定版均为 `2.5.4`，默认模式为 `combined`；B5 已准备
   `2.6.0-beta.1`。首个远端 candidate run `31417575421` 已完成认证，但因 Windows QA
-  传输层缺陷被拒绝用于发布；尚未形成公开 Release。
-- 首次 push 和 Certify dispatch 授权已用于冻结 SHA `bd19519d`。替代 SHA 的 push/dispatch
-  需要重新批准；tag、GitHub Prerelease、master 合并和稳定版发布始终未获授权。
+  传输层缺陷被拒绝；替代 run `31453411547` 也完成认证，但 Windows 正式 QA 又发现上一稳定版
+  seed 合同缺陷。两者均未形成 tag 或公开 Release，且都不得用于后续发布。
+- push 和 Certify dispatch 的两次一次性授权已分别用于 `bd19519d` 与 `908dfa9`。当前 QA 修复
+  SHA 的新 push/dispatch 需要重新批准；tag、GitHub Prerelease、master 合并和稳定版发布始终
+  未获授权。
 
 ## Goal 恢复检查点
 
 - Goal 系统在 2026-08-11 仍返回同一 Goal ID，并保留上次批准门产生的 `blocked` 标记；用户已
   明确恢复继续执行。另一个 Codex 进程意外关闭没有取消 Goal，因此继续沿用同一 Goal ID，不并行创建第二个 Goal。当前分支为
-  `beta/desktop-api-worker`，当前产品代码收口提交为 `2123af5`。
+  `beta/desktop-api-worker`，当前产品代码收口提交为 `2123af5`，当前 QA failure-recovery 代码为
+  `27bd475`。
 - B0/B1 已通过证据保持有效；只有受后续代码影响的检查才按 impact 重新执行，最终仍由 B4/B5
   的完整回归和 exact-package 证据统一收口。
-- 当前允许继续本地 failure-recovery、测试和提交。`bd19519d` 的 push 与 Certify dispatch
-  已按一次性授权完成；该授权不覆盖修复后的替代 SHA。仍未授权反向合回 `master`、新的 push/
-  workflow、tag、GitHub Release 或稳定版发布。
+- 当前允许继续本地 failure-recovery、测试和提交。`bd19519d`、`908dfa9` 的 push 与 Certify
+  dispatch 均已按各自一次性授权完成；这些授权不覆盖 `27bd475` 之后的新最终 SHA。仍未授权
+  反向合回 `master`、新的 push/workflow、tag、GitHub Release 或稳定版发布。
 
 ## 阶段证据
 
@@ -38,7 +41,7 @@
 | B2：本地诊断与 analyzer | 已完成 | Desktop 239/239；Frontend 完整 962/962、最终聚焦 18/18；Backend 115/115；analyzer 恶意包 10/10；最终 ZIP 跨语言 canary 7/7；audit 0 |
 | B3：通用 prerelease 发布体系 | 已完成 | `17d5b41` 起实现；`fd7ecb5` 收口；通用双状态机、双平台入口、exact candidate、隔离/恢复合同和 Windows quick QA 通过 |
 | B4：完整与重复回归 | 已完成 | 最新 `origin/master@2fcc431` 合入为 `e313811`；最终产品代码 `2123af5` 全仓连续 2 次 0 failures；split 集成连续 20/20 轮通过 |
-| B5：Mac/Windows 内部 Beta | 执行中 | run `31417575421` 认证成功但在 Windows 安装前因 transfer 改名缺陷被拒绝；`bd5e52e` 已修复并通过真实 Windows quick QA，替代 exact candidate 仍待新批准 |
+| B5：Mac/Windows 内部 Beta | 执行中 | replacement run `31453411547` 认证成功但上一稳定版 seed 在候选安装前失败；`61bdbeb`、`402d9db`、`27bd475` 已修复并通过真实 v2.5.4 聚焦重放与 Backend 1960/1960，仍待新 candidate 的双平台正式证据 |
 | B6：远端与公开批准门 | 待批准 | — |
 | B7：证据收口 | 待执行 | — |
 
@@ -746,3 +749,70 @@ quick 明确跳过 VC++、NSIS 和 installed packaged lifecycle，仍不替代 A
 文档提交并在重新批准后 push、dispatch 新 Certify run，之后从同一个替代 run 重新取得三份原始
 资产。当前没有新的 push/dispatch 授权，也没有 tag、Release、稳定 feed、master 合并或稳定版
 发布授权。
+
+### B5 续：替代候选、上一稳定版 seed 失败与恢复
+
+#### 替代 Prerelease Certify
+
+- 用户分别批准 push `908dfa953ceb3e4a4c364261683f89f9f8fad68f` 和 dispatch replacement
+  Prerelease Certify 后，`Release Desktop` run `31453411547` 的 Ubuntu preflight、Windows
+  build、macOS build 与 candidate certify 全部成功；publish job 按 `publish=false` 跳过。
+- run 未创建 tag、draft 或 GitHub Release。manifest 绑定同一 SHA、来源分支
+  `beta/desktop-api-worker`、`2.6.0-beta.1`、默认 split、诊断 schema 1 和未变化的 v2.5.4
+  stable Latest/feed 基线。
+- 下载到仓库外并复核的原始资产为：Windows EXE
+  `254342465e700265c9e4fdf211f9e98cefbc24c499b38160350256f7c293690e`，macOS DMG
+  `5d484267dbf0c0a390aff5b546851312cd608b804cf6956be1c9e936b6e8dd8c`，manifest
+  `15369a31d070ea0a6673dd501eaf4bea8884b1a767be57ca3de08582591bb36b`。
+
+#### Windows 正式 QA 首次失败
+
+run `31453411547` 的 exact EXE、manifest、公开 v2.5.4 EXE、seed `20260810` 与 2h/1h
+Prerelease 门禁完成 host/guest 两层资产绑定、精确 checkout、VC++、冻结 CLI build identity、
+CLI intent p95 `727.88ms`/accuracy `1.0` 和本地 NSIS packaging contract 后，在上一稳定版数据
+seed 阶段失败：
+
+```text
+PATCH /api/agent/v1/settings returned HTTP 422
+code: INVALID_AGENT_REQUEST
+validation_error_count: 14
+```
+
+失败发生在候选覆盖安装、packaged lifecycle、normal soak 和 seeded chaos 之前；现场保存在
+`/Users/junie/Programs/AutoEmailSender-release-candidates/31453411547/windows-exact-package-first-failure.txt`。
+该 run 不构成 Windows 正式证据，也不得与后续 SHA/run 混用。
+
+#### 分类、三层修复与真实重放
+
+- `v2.5.4` 的 `/api/agent/v1/settings` 虽使用 PATCH，`RuntimeSettingsUpdate` 除测试 marker 外仍有
+  14 个必填字段；seed 只发送 marker，恰好产生 14 个 missing-field 错误。这是 QA 客户端合同
+  缺陷，不是候选数据库迁移或产品升级失败。`61bdbeb` 从前置 GET 快照回送全部可写字段，只排除
+  `revision`/`updated_at`，并增加固定 v2.5.4 合同测试。
+- 首次真实聚焦重放已越过 422、写入设置/导师/材料，但安装树证据哈希在深层 Playwright 文件上
+  返回 `WinError 3`。`402d9db` 把 package/EXE/tree identity 快照移到旧应用启动之前；进一步
+  取证确认目标路径超过传统 Windows 260 字符限制，而非文件消失。`27bd475` 对 drive、UNC 和已
+  扩展路径统一使用 Windows extended-length path，并增加三类回归合同。
+- 一次独立的全新安装诊断因旧 NSIS 内置 WMI 占用检查运行 19 分钟未退出而终止；它未进入 seed，
+  不计作产品或候选结果。终止挂起的 PowerShell 对象经 VM 正常 restart 清除，复核相关进程为 0，
+  VM 恢复原 `suspended` 状态，失败目录保留在专用 VM。
+
+最终聚焦与回归结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| packaged runtime/seed 聚焦合同 | 21/21，23.430s |
+| Ruff / `git diff --check` | 通过 |
+| 最终完整 Backend | 1960/1960，1 skip，631.702s |
+| 真实 v2.5.4 seed 重放 | 通过；设置 marker、导师、材料、integrity/foreign key、零残留进程 |
+
+真实重放精确绑定 `27bd47547e5b284f96dcee36daa6b6af348ba627`、seed 脚本摘要
+`b8fd2837400d79fbe5ef1c2ebd5594ef8d1a439bcef349a8bb891b5f70ffe4d0`、公开 v2.5.4 EXE 摘要
+`245aadcdf63ccae80913ede6a4cda9571884f83da9f23b957c724a6fb3b15d21`，生成 manifest 摘要
+`e375e72dbe9da687a3d846e6f14aa7ab3d918d37af7a5c749567fee861e636b0`。manifest 与日志保存在
+`/Users/junie/Programs/AutoEmailSender-release-candidates/31453411547/windows-seed-replay-27bd475/`，
+不提交 Git。
+
+该聚焦重放只关闭本次 failure-recovery，不替代新 SHA/run 的候选覆盖安装、lifecycle、2h normal
+和 1h chaos。`31453411547` 已因 QA 代码变化失效；形成新最终文档 SHA 后必须重新取得 push 与
+Certify dispatch 授权。仍未授权 tag、公开 GitHub Prerelease、稳定 feed、master 合并或稳定版
+发布。
