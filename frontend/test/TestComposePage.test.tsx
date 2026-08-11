@@ -172,16 +172,29 @@ describe("TestComposePage", () => {
     mockedListOutreachTemplates.mockResolvedValue([
       {
         id: 7,
-        name: "测试模板",
+        name: "测试模板 A",
         recommended_generation_mode: "llm",
-        subject: "模板主题",
-        body_text: "模板正文",
-        body_html: "<p>模板正文</p>",
+        subject: "模板主题 A",
+        body_text: "模板正文 A",
+        body_html: "<p>模板正文 A</p>",
         is_ready: true,
         is_default: false,
         archived_at: null,
         created_at: "2026-04-23T08:00:00Z",
         updated_at: "2026-04-23T08:00:00Z",
+      },
+      {
+        id: 9,
+        name: "测试模板 B",
+        recommended_generation_mode: "template",
+        subject: "模板主题 B",
+        body_text: "模板正文 B",
+        body_html: "<p>模板正文 B</p>",
+        is_ready: true,
+        is_default: false,
+        archived_at: null,
+        created_at: "2026-04-23T09:00:00Z",
+        updated_at: "2026-04-23T09:00:00Z",
       },
     ]);
     render(
@@ -196,12 +209,30 @@ describe("TestComposePage", () => {
     expect(templateTrigger).not.toBeNull();
     await waitFor(() => expect(templateTrigger).toBeEnabled());
     fireEvent.click(templateTrigger!);
-    fireEvent.click(screen.getByRole("option", { name: "测试模板" }));
+    fireEvent.click(screen.getByRole("option", { name: "测试模板 A" }));
     expect(screen.getByRole("textbox", { name: "邮件主题" })).toHaveTextContent(
-      "模板主题",
+      "模板主题 A",
     );
     expect(screen.getByRole("textbox", { name: "邮件正文" })).toHaveTextContent(
-      "模板正文",
+      "模板正文 A",
+    );
+
+    fireEvent.click(screen.getByText("测试模板 A").closest("button")!);
+    fireEvent.click(screen.getByRole("option", { name: "测试模板 B" }));
+    expect(screen.getByRole("textbox", { name: "邮件主题" })).toHaveTextContent(
+      "模板主题 B",
+    );
+    expect(screen.getByRole("textbox", { name: "邮件正文" })).toHaveTextContent(
+      "模板正文 B",
+    );
+
+    fireEvent.click(screen.getByText("测试模板 B").closest("button")!);
+    fireEvent.click(screen.getByRole("option", { name: "测试模板 A" }));
+    expect(screen.getByRole("textbox", { name: "邮件主题" })).toHaveTextContent(
+      "模板主题 A",
+    );
+    expect(screen.getByRole("textbox", { name: "邮件正文" })).toHaveTextContent(
+      "模板正文 A",
     );
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
 
