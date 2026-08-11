@@ -33,6 +33,57 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_previous_settings_update_round_trips_v2_5_4_required_fields(self) -> None:
+        required_fields = {
+            "match_analysis_job_worker_count",
+            "match_analysis_job_item_concurrency",
+            "match_analysis_job_interval_seconds",
+            "crawler_worker_count",
+            "crawler_profile_enrichment_concurrency",
+            "crawler_host_concurrency",
+            "draft_max_tokens",
+            "batch_draft_generation_concurrency",
+            "draft_rewrite_intensity",
+            "draft_rewrite_tone",
+            "draft_rewrite_formality",
+            "draft_rewrite_length",
+            "draft_rewrite_specificity",
+            "draft_template_preservation",
+        }
+        settings = {
+            "revision": "previous-revision",
+            "match_analysis_job_worker_count": 1,
+            "match_analysis_job_item_concurrency": 2,
+            "match_analysis_job_interval_seconds": 3,
+            "crawler_worker_count": 4,
+            "crawler_profile_enrichment_concurrency": 5,
+            "crawler_host_concurrency": 6,
+            "draft_max_tokens": 4096,
+            "batch_draft_generation_concurrency": 7,
+            "draft_rewrite_intensity": "moderate",
+            "draft_rewrite_tone": "professional",
+            "draft_rewrite_formality": "balanced",
+            "draft_rewrite_length": "default",
+            "draft_rewrite_specificity": "balanced",
+            "draft_template_preservation": "structure_first",
+            "draft_custom_instruction": "previous value",
+            "intended_research_direction": "reliable systems",
+            "updated_at": "2026-08-11T00:00:00Z",
+        }
+
+        payload = seed_runner._build_settings_update_payload(
+            settings,
+            "packaged-upgrade:test",
+        )
+
+        self.assertEqual(len(required_fields), 14)
+        self.assertTrue(required_fields.issubset(payload))
+        self.assertEqual(payload["draft_custom_instruction"], "packaged-upgrade:test")
+        self.assertEqual(payload["intended_research_direction"], "reliable systems")
+        self.assertNotIn("revision", payload)
+        self.assertNotIn("updated_at", payload)
+        self.assertEqual(set(payload), set(settings) - {"revision", "updated_at"})
+
     def test_imap_terminal_state_waits_for_identity_claim_release(self) -> None:
         harness = runner.WorkloadHarness.__new__(runner.WorkloadHarness)
         state = {

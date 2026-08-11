@@ -25,6 +25,7 @@ import psutil
 QA_PATH_MARKER = "auto-email-sender-packaged-qa"
 DATABASE_NAME = "auto_email_sender.db"
 RUNTIME_DESCRIPTOR = Path("agent") / "runtime.json"
+SETTINGS_READ_ONLY_FIELDS = frozenset({"revision", "updated_at"})
 T = TypeVar("T")
 
 
@@ -112,11 +113,12 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(settings, dict):
             raise UpgradeSeedFailure("previous settings endpoint returned no object")
         revision = settings.get("revision")
+        settings_update = _build_settings_update_payload(settings, marker)
         updated = _request_json(
             "PATCH",
             f"{base_url}/api/agent/v1/settings",
             token=token,
-            payload={"draft_custom_instruction": marker},
+            payload=settings_update,
             headers={
                 "Idempotency-Key": f"previous-upgrade-{uuid.uuid4()}",
                 **({"If-Revision": revision} if isinstance(revision, str) else {}),
@@ -196,6 +198,19 @@ def main(argv: list[str] | None = None) -> int:
     _write_json_atomic(args.manifest, manifest)
     print(f"PREVIOUS_PACKAGED_UPGRADE_MANIFEST={args.manifest}", flush=True)
     return 0
+
+
+def _build_settings_update_payload(
+    settings: dict[str, Any],
+    marker: str,
+) -> dict[str, Any]:
+    payload = {
+        key: value
+        for key, value in settings.items()
+        if key not in SETTINGS_READ_ONLY_FIELDS
+    }
+    payload["draft_custom_instruction"] = marker
+    return payload
 
 
 def _prepare_empty_user_data(user_data: Path) -> None:
