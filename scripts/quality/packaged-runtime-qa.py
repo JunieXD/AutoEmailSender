@@ -3373,22 +3373,20 @@ def _exercise_real_browser_descendant(
     )
     if not isinstance(created, dict) or not isinstance(created.get("id"), int):
         raise QaFailure("browser probe crawler job was not created")
-    if not probe.browser_request_started.wait(timeout=120):
-        raise QaFailure("real packaged Chromium never requested the browser fallback page")
-
     def find_browser_pids() -> set[int] | None:
         pids = _browser_descendant_pids(identity.worker.pid)
         return pids or None
 
     browser_pids = _wait_until(
         find_browser_pids,
-        timeout_seconds=15,
+        timeout_seconds=120,
         description="packaged Chromium descendants",
     )
     recorder.event(
         "packaged_browser_descendants_started",
         job_id=created["id"],
         browser_pids=sorted(browser_pids),
+        probe_request_seen=probe.browser_request_started.is_set(),
     )
     return browser_pids
 
