@@ -107,6 +107,12 @@ describe("TestComposePage", () => {
     expect(screen.getByText("{{name}} 测试时显示为「测试收件人」")).toBeInTheDocument();
     expect(screen.getByText("发件人姓名：王同学")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "测试写信操作" })).toBeInTheDocument();
+    expect(document.querySelector("[data-test-compose-page]")).toHaveClass(
+      "min-h-full",
+    );
+    expect(document.querySelector("[data-test-compose-page]")).not.toHaveClass(
+      "min-h-[calc(100vh-5rem)]",
+    );
   });
 
   it("saves rich text draft html and derived text", async () => {
