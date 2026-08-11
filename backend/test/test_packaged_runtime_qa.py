@@ -55,6 +55,7 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         )
         self.assertIn('"entry_type": "list"', source)
         self.assertIn('"llm_profile_id": profile_id', source)
+        self.assertIn("browser_request_started.wait(timeout=120)", source)
         self.assertNotIn("/api/llm-profiles", source)
         self.assertNotIn("direct fetch blocked", probe_source)
         self.assertLess(
