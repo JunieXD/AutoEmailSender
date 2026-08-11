@@ -91,6 +91,49 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             r"\\?\C:\release evidence\previous app",
         )
 
+    def test_packaged_artifact_hash_uses_windows_extended_length_paths(self) -> None:
+        with mock.patch.object(runner.sys, "platform", "win32"):
+            drive_path = runner._extended_length_path(
+                Path(r"C:\release evidence\current app")
+            )
+            unc_path = runner._extended_length_path(
+                Path(r"\\server\release evidence\current app")
+            )
+            already_extended = runner._extended_length_path(
+                Path(r"\\?\C:\release evidence\current app")
+            )
+
+        self.assertEqual(str(drive_path), r"\\?\C:\release evidence\current app")
+        self.assertEqual(
+            str(unc_path),
+            r"\\?\UNC\server\release evidence\current app",
+        )
+        self.assertEqual(
+            str(already_extended),
+            r"\\?\C:\release evidence\current app",
+        )
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows long paths")
+    def test_packaged_artifact_hash_reads_a_real_extended_length_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "artifact"
+            deep = root
+            for index in range(4):
+                deep /= f"segment-{index}-" + ("x" * 60)
+            file_path = deep / "manifest.json"
+            extended_file = runner._extended_length_path(file_path)
+            extended_file.parent.mkdir(parents=True)
+            extended_file.write_text('{"version": 1}', encoding="utf-8")
+            self.assertGreater(len(str(file_path)), 260)
+
+            first = runner._sha256_tree(root)
+            second = runner._sha256_tree(root)
+            self.assertEqual(first, second)
+            self.assertEqual(first["file_count"], 1)
+
+            extended_file.write_text('{"version": 2}', encoding="utf-8")
+            self.assertNotEqual(first["sha256"], runner._sha256_tree(root)["sha256"])
+
     def test_previous_artifact_identity_is_captured_before_app_launch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

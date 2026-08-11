@@ -3988,7 +3988,8 @@ def _redact_payload(value: object) -> object:
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as file:
+    filesystem_path = _extended_length_path(path) if os.name == "nt" else path
+    with filesystem_path.open("rb") as file:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -3997,7 +3998,8 @@ def _sha256_file(path: Path) -> str:
 def _sha256_tree(path: Path) -> dict[str, object]:
     """Hash a packaged artifact using relative names, types, modes, and bytes."""
 
-    root = path.resolve()
+    resolved = path.resolve()
+    root = _extended_length_path(resolved) if os.name == "nt" else resolved
     candidates = [root] if root.is_file() else sorted(root.rglob("*"))
     digest = hashlib.sha256()
     file_count = 0
@@ -4032,6 +4034,17 @@ def _sha256_tree(path: Path) -> dict[str, object]:
         "file_count": file_count,
         "bytes": total_bytes,
     }
+
+
+def _extended_length_path(path: Path) -> Path:
+    if sys.platform != "win32":
+        return path
+    raw = str(path)
+    if raw.startswith("\\\\?\\"):
+        return path
+    if raw.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{raw[2:]}")
+    return Path(f"\\\\?\\{raw}")
 
 
 def _directory_size(path: Path) -> int:
