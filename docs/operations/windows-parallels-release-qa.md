@@ -72,10 +72,11 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh \
 
 rehearsal 禁止 `--candidate-manifest` 和 `--candidate-run-id`，输出永远不是认证证据。Windows 11
 ARM64 首次运行 x64 VC++ Burn bootstrapper 时，启动提权 engine 可能需要约 6 分 34 秒；安装入口
-因此使用 600 秒硬上限，不能再用 120 秒误判，preflight 卸载仍保持 120 秒上限。若安装真正超时，
-runner 会同时输出不含命令行的进程树和最近一条 `dd_vcredist_*.log` Burn 事件，先按阶段分类后再
-决定是否重试。所有 `/S` 安装/卸载调用还会轮询可见窗口；一旦静默流程弹窗，runner 会在数秒内
-记录窗口标题和进程树、终止整棵树并失败，不依赖人工点击，也不等待总超时。
+因此上一稳定版安装使用 600 秒硬上限，不能再用 120 秒误判。已完成 Runtime 预检的当前候选使用
+独立的 300 秒上限，preflight 卸载仍保持 120 秒上限。若安装真正超时，runner 会同时输出不含
+命令行的进程树和最近一条 `dd_vcredist_*.log` Burn 事件，先按阶段分类后再决定是否重试。所有
+`/S` 安装/卸载调用还会轮询可见窗口；一旦静默流程弹窗，runner 会在数秒内记录窗口标题和进程树、
+终止整棵树并失败，不依赖人工点击，也不等待总超时。
 
 rehearsal 可以复用专用 QA 根内已经验证的 v2.5.4 seed，避免为了重现 runner 恢复而反复启动旧版
 VC++ bootstrapper。复用前必须同时核对：QA 根是 `%TEMP%\auto-email-sender-packaged-qa` 的直接
@@ -88,6 +89,9 @@ VC++ bootstrapper。复用前必须同时核对：QA 根是 `%TEMP%\auto-email-s
 中的 x64 Runtime 版本。`Installed=1` 且系统版本不低于内置版本时直接跳过重复安装；版本缺失、
 过旧或检测失败时仍执行已签名的内置 redistributable。这样不会把兼容 runtime 降级，也避免已
 满足环境仅为 Burn dependency registration 再次触发 UAC；缺少 runtime 的真实首装路径保持不变。
+覆盖安装清理旧 Playwright runtime 时按扩展路径逐项遍历，拒绝子 reparse point，并先删文件再按
+逆序删除目录；不要恢复为一次性的递归 `Directory.Delete`，该调用已在真实 274 MB runtime 上出现
+超过 10 分钟且零文件进展的停滞。
 
 新 Certify
 完成后，再用 exact bytes 运行 admission；它跳过 VC++、前后端/CLI/Desktop 全套和本地 NSIS

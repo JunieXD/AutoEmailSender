@@ -1272,11 +1272,11 @@ if ($RunsPackagedLifecycle) {
       throw "Guest-local candidate installer copy changed after shared-folder transfer."
     }
 
-    # On the Windows 11 ARM64 VM, the x64 VC++ Burn bootstrapper embedded in
-    # the previous public installer has taken 394 seconds to launch its
-    # elevated engine before completing successfully. Keep installs bounded
-    # above that observed value; uninstall remains a shorter preflight gate.
-    $installerTimeoutSeconds = 600
+    # The previous public installer can spend 394 seconds launching its VC++
+    # elevated engine. Current candidates preflight the installed runtime and
+    # must not inherit that long wait after the bootstrapper is skipped.
+    $previousInstallerTimeoutSeconds = 600
+    $candidateInstallerTimeoutSeconds = 300
     $uninstallerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }
     try {
     $previousAppExecutable = Join-Path $installRoot "Auto Email Sender.exe"
@@ -1288,7 +1288,7 @@ if ($RunsPackagedLifecycle) {
         -FilePath $previousInstallerPathLocal `
         -Arguments "/S /D=$installRoot" `
         -Environment @{} `
-        -TimeoutSeconds $installerTimeoutSeconds `
+        -TimeoutSeconds $previousInstallerTimeoutSeconds `
         -RejectVisibleWindow `
         -Operation "silent previous-stable Windows installer"
       Start-Sleep -Seconds 2
@@ -1340,7 +1340,7 @@ if ($RunsPackagedLifecycle) {
       -FilePath $candidateInstallerPathLocal `
       -Arguments "/S /D=$installRoot" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "installer-auto-launch-must-fail-closed" } `
-      -TimeoutSeconds $installerTimeoutSeconds `
+      -TimeoutSeconds $candidateInstallerTimeoutSeconds `
       -RejectVisibleWindow `
       -Operation "silent Windows installer"
     Start-Sleep -Seconds 2
@@ -1479,7 +1479,7 @@ if ($RunsPackagedLifecycle) {
         -FilePath $candidateInstallerPathLocal `
         -Arguments "/S /D=$installRoot" `
         -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-install-must-fail-closed" } `
-        -TimeoutSeconds $installerTimeoutSeconds `
+        -TimeoutSeconds $candidateInstallerTimeoutSeconds `
         -RejectVisibleWindow `
         -Operation "repeat candidate Windows installer"
       Start-Sleep -Seconds 2

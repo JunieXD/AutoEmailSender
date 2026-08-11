@@ -375,7 +375,8 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("VC++ Burn timeout diagnostic:");
     expect(guestRunner).not.toContain("CommandLine = [string]$_.CommandLine");
     expect(guestRunner).toContain("taskkill.exe /PID $process.Id /T /F");
-    expect(guestRunner).toContain("$installerTimeoutSeconds = 600");
+    expect(guestRunner).toContain("$previousInstallerTimeoutSeconds = 600");
+    expect(guestRunner).toContain("$candidateInstallerTimeoutSeconds = 300");
     expect(guestRunner).toContain(
       "$uninstallerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }",
     );
@@ -623,7 +624,12 @@ describe("windows installer packaging", () => {
     expect(cleanupScript).toContain("copilot_cli");
     expect(cleanupScript).toContain("Remove-ManagedUserPathEntry");
     expect(runtimeCleanupScript).toContain('"\\\\?\\"');
-    expect(runtimeCleanupScript).toContain("[System.IO.Directory]::Delete");
+    expect(runtimeCleanupScript).toContain("[System.IO.Directory]::EnumerateFileSystemEntries");
+    expect(runtimeCleanupScript).toContain("[System.IO.File]::Delete");
+    expect(runtimeCleanupScript).toContain("inside the packaged browser runtime");
+    expect(runtimeCleanupScript).not.toContain(
+      "[System.IO.Directory]::Delete($extendedBrowserRuntime, -not $runtimeIsReparsePoint)",
+    );
     expect(runtimeCleanupScript).not.toContain("cmd.exe");
     expect(workflow).toContain("scripts/quality/windows-agent-support-cleanup.test.ps1");
   });

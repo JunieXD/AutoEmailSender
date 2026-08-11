@@ -55,6 +55,11 @@ try {
     Assert-True ($deepFile.Length -gt 260) "Long-path cleanup fixture did not exceed 260 characters."
     [System.IO.Directory]::CreateDirectory($extendedDeepDirectory) | Out-Null
     [System.IO.File]::WriteAllText($extendedDeepFile, "long path proof")
+    [System.IO.File]::SetAttributes($extendedDeepFile, [System.IO.FileAttributes]::ReadOnly)
+    foreach ($index in 1..64) {
+        $fixtureFile = $extendedBrowserRuntime.TrimEnd("\") + ("\runtime-fixture-{0:D2}.bin" -f $index)
+        [System.IO.File]::WriteAllText($fixtureFile, "runtime fixture $index")
+    }
     $neighbor = Join-Path $longInstallRoot "resources\keep-after-runtime-cleanup.txt"
     Write-Utf8NoBom $neighbor "must remain"
 
