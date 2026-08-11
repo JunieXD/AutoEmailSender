@@ -17,6 +17,7 @@ export type CommunityMentorPageSessionSnapshot = {
   catalogUniversityFilters: string[];
   catalogUnitFilters: string[];
   catalogUnitPage: number;
+  catalogUnitPageSize: number;
   selectedUnitPaths: string[];
   loadedUnitPaths: string[] | null;
   recordsPayload: CommunityRecordsDTO | null;

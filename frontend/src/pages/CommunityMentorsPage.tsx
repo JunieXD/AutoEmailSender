@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { KeywordSearchScopeSelect } from '@/components/molecules/KeywordSearchScopeSelect';
 import { MultiSelectFilter } from '@/components/molecules/MultiSelectFilter';
+import { Pagination } from '@/components/molecules/Pagination';
 import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
 import { TopBarSelectMenu } from '@/components/atoms/TopBarSelectMenu';
 import { useNotification } from '@/context/NotificationContext';
@@ -80,7 +81,9 @@ const MAX_SELECTED_UNITS = MAX_SELECTED_COMMUNITY_UNITS;
 const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
 const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
 const RECORDS_PER_PAGE = 100;
-const CATALOG_UNITS_PER_PAGE = 48;
+const DEFAULT_CATALOG_UNITS_PER_PAGE = 9;
+const CATALOG_UNIT_PAGE_SIZE_OPTIONS = [9, 18, 36] as const;
+const CATALOG_UNIT_SELECTOR_SCROLL_GAP_PX = 16;
 const PREVIEW_RECORDS_PER_PAGE = 25;
 
 const COMMUNITY_MENTOR_SEARCH_SCOPE_OPTIONS: ReadonlyArray<{
@@ -762,6 +765,9 @@ export const CommunityMentorsPage = () => {
   const [catalogUnitPage, setCatalogUnitPage] = useState(
     () => initialPageSnapshot?.catalogUnitPage ?? 1,
   );
+  const [catalogUnitPageSize, setCatalogUnitPageSize] = useState(
+    () => initialPageSnapshot?.catalogUnitPageSize ?? DEFAULT_CATALOG_UNITS_PER_PAGE,
+  );
   const [selectedUnitPaths, setSelectedUnitPaths] = useState<string[]>(
     () => initialPageSnapshot?.selectedUnitPaths ?? [],
   );
@@ -836,9 +842,28 @@ export const CommunityMentorsPage = () => {
     () => initialPageSnapshot?.identityConfirmations ?? {},
   );
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const catalogUnitSelectorRef = useRef<HTMLElement | null>(null);
   const recordListRef = useRef<HTMLDivElement | null>(null);
   const bulkSelectionTimerRef = useRef<number | null>(null);
   useDocumentScrollLock(previewPayload !== null);
+
+  const scrollToCatalogUnitSelector = useCallback(() => {
+    const selector = catalogUnitSelectorRef.current;
+    if (!selector) {
+      return;
+    }
+
+    const headerBottom = document
+      .querySelector<HTMLElement>('[data-app-header="true"]')
+      ?.getBoundingClientRect().bottom ?? 0;
+    selector.style.scrollMarginTop = `${Math.max(0, headerBottom) + CATALOG_UNIT_SELECTOR_SCROLL_GAP_PX}px`;
+    try {
+      selector.focus({ preventScroll: true });
+    } catch {
+      selector.focus();
+    }
+    selector.scrollIntoView?.({ behavior: 'auto', block: 'start' });
+  }, []);
 
   const beginBulkRecordSelection = useCallback(() => {
     const recordList = recordListRef.current;
@@ -879,6 +904,7 @@ export const CommunityMentorsPage = () => {
       catalogUniversityFilters,
       catalogUnitFilters,
       catalogUnitPage,
+      catalogUnitPageSize,
       selectedUnitPaths,
       loadedUnitPaths,
       recordsPayload,
@@ -907,6 +933,7 @@ export const CommunityMentorsPage = () => {
     catalog?.dataset_version,
     catalogUnitFilters,
     catalogUnitPage,
+    catalogUnitPageSize,
     catalogUniversityFilters,
     categoryFilters,
     fieldChoices,
@@ -1076,12 +1103,12 @@ export const CommunityMentorsPage = () => {
   );
   const totalCatalogUnitPages = Math.max(
     1,
-    Math.ceil(filteredCatalogUnits.length / CATALOG_UNITS_PER_PAGE),
+    Math.ceil(filteredCatalogUnits.length / catalogUnitPageSize),
   );
   const currentCatalogUnitPage = Math.min(catalogUnitPage, totalCatalogUnitPages);
   const paginatedCatalogUnits = filteredCatalogUnits.slice(
-    (currentCatalogUnitPage - 1) * CATALOG_UNITS_PER_PAGE,
-    currentCatalogUnitPage * CATALOG_UNITS_PER_PAGE,
+    (currentCatalogUnitPage - 1) * catalogUnitPageSize,
+    currentCatalogUnitPage * catalogUnitPageSize,
   );
 
   const updateCatalogUniversityFilters = (nextValues: string[]) => {
@@ -1826,8 +1853,10 @@ export const CommunityMentorsPage = () => {
           className="mt-8 space-y-6"
         >
           <section
+            ref={catalogUnitSelectorRef}
+            tabIndex={-1}
             data-testid="community-mentor-unit-selector"
-            className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm md:p-6"
+            className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm focus:outline-none md:p-6"
           >
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1897,7 +1926,10 @@ export const CommunityMentorsPage = () => {
                 </button>
               ) : null}
             </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div
+              aria-label="学校与学院列表"
+              className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
+            >
               {paginatedCatalogUnits.length === 0 ? (
                 <div className="col-span-full rounded-2xl border border-dashed border-stone-200 p-8 text-center text-sm text-stone-500">
                   没有匹配的学院。
@@ -1940,33 +1972,24 @@ export const CommunityMentorsPage = () => {
                 );
               })}
             </div>
-            {filteredCatalogUnits.length > CATALOG_UNITS_PER_PAGE ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
-                <span className="text-xs text-stone-500">
-                  第 {currentCatalogUnitPage}/{totalCatalogUnitPages} 页 · 共 {filteredCatalogUnits.length} 个学院
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={currentCatalogUnitPage <= 1}
-                    onClick={() => setCatalogUnitPage((current) => Math.max(1, current - 1))}
-                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" /> 上一页
-                  </button>
-                  <button
-                    type="button"
-                    disabled={currentCatalogUnitPage >= totalCatalogUnitPages}
-                    onClick={() => setCatalogUnitPage((current) => Math.min(totalCatalogUnitPages, current + 1))}
-                    className="ui-btn-secondary min-h-8 px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    下一页 <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <div className="mt-5 flex justify-end">
-              <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary w-full justify-center disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
+            <div className="mt-4 flex flex-col gap-4 border-t border-stone-100 pt-4 lg:flex-row lg:items-center">
+              <Pagination
+                page={currentCatalogUnitPage}
+                pageSize={catalogUnitPageSize}
+                totalCount={filteredCatalogUnits.length}
+                onChange={(change) => {
+                  setCatalogUnitPage(change.page);
+                  setCatalogUnitPageSize(change.pageSize);
+                  scrollToCatalogUnitSelector();
+                }}
+                ariaLabel="学校与学院分页"
+                pageSizeAriaLabel="学校与学院每页数量"
+                pageSizeOptions={CATALOG_UNIT_PAGE_SIZE_OPTIONS}
+                unitLabel="个"
+                itemLabel="个学院"
+                className="min-w-0 flex-1"
+              />
+              <button type="button" disabled={recordsLoading || selectedUnitPaths.length === 0} onClick={() => void loadRecordsForPaths(selectedUnitPaths)} className="ui-btn-primary w-full shrink-0 justify-center disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
                 {recordsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
                 查看导师
               </button>
