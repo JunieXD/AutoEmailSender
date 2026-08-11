@@ -79,6 +79,17 @@ workflow 会：
 
 ## API + Worker 冻结包认证
 
+在消耗正式认证时间前先运行两层非认证快速门禁。runner 变化后，可用失效 DMG 做两轮
+`--harness-rehearsal`：第一轮加 `--inject-interruption-after-previous-install`，预期在候选 DMG
+仍挂载时退出；第二轮加 `--require-clean-rehearsal-state`，必须确认上轮挂载已被 trap 清理，然后
+完成 lifecycle、卸载模拟和重复安装。rehearsal 绑定新旧 DMG 摘要，但禁止 candidate manifest/run ID。
+
+新 Certify DMG 下载后，先执行 `--candidate-admission`，并提供与正式 lifecycle 相同的
+`--expected-revision`、candidate manifest/run ID、两份 DMG 摘要及 `--dedicated-test-account`。
+admission 会直接验证精确 DMG 的覆盖升级、split/combined、迁移/数据库、浏览器后代、原生
+sleep/wake、卸载和重复安装；挂载、复制、签名及整段短门禁均有超时。两种报告都必须为
+`certification_eligible=false`，不能替代下面三类正式场景。
+
 桌面 API + Worker 双进程改造在公开提升前还要求同一 clean committed SHA、同一个当前 DMG
 完成三类 packaged QA。正式场景一律从 DMG 只读挂载并复制 app bundle，不能用源码开发模式
 或裸的旧 build 目录替代。报告会同时记录 DMG SHA-256、app tree SHA-256、仓库版本和 SHA，

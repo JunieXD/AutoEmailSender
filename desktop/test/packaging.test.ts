@@ -213,6 +213,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--force-full");
     expect(hostRunner).toContain("--quick");
     expect(hostRunner).toContain("--prerelease-certification");
+    expect(hostRunner).toContain("--candidate-admission");
+    expect(hostRunner).toContain("--harness-rehearsal");
+    expect(hostRunner).toContain("--inject-interruption-after-previous-install");
+    expect(hostRunner).toContain("--require-recovered-stale-state");
     expect(hostRunner).toContain("--normal-soak");
     expect(hostRunner).toContain("--seeded-chaos");
     expect(hostRunner).toContain("-RunNormalSoak");
@@ -259,7 +263,9 @@ describe("windows installer packaging", () => {
     expect(hostRunner).not.toContain('$HOME/Desktop');
     expect(hostRunner).not.toContain("Z:/Desktop");
     expect(guestRunner).toContain("[switch]$ForceFull");
-    expect(guestRunner).toContain('[ValidateSet("release", "prerelease", "quick")]');
+    expect(guestRunner).toContain(
+      '[ValidateSet("release", "prerelease", "quick", "candidate-admission", "harness-rehearsal")]',
+    );
     expect(guestRunner).toContain('[string]$Mode = "release"');
     expect(guestRunner).toContain("[switch]$RunNormalSoak");
     expect(guestRunner).toContain("[switch]$RunSeededChaos");
@@ -276,6 +282,11 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("Import-LegacyVerifiedStage");
     expect(guestRunner).toContain("toolchainFingerprint");
     expect(guestRunner).toContain("Stop-StaleQaCheckoutProcesses");
+    expect(guestRunner).toContain("$IsPackagedPreflight");
+    expect(guestRunner).toContain("if (-not $IsPackagedPreflight)");
+    expect(guestRunner).toContain("Test-QaExecutableTimeoutRecovery");
+    expect(guestRunner).toContain("RequireRecoveredStaleState");
+    expect(guestRunner).toContain("qa-stale-process-probe.exe");
     expect(guestRunner).toContain('Test-VerifiedStage -Name "backend-suite"');
     expect(guestRunner).toContain(
       'Test-VerifiedStage -Name "backend-release-contracts"',
@@ -357,9 +368,14 @@ describe("windows installer packaging", () => {
     );
     expect(guestRunner).toContain('"--certification"');
     expect(guestRunner).toContain('"--prerelease-certification"');
+    expect(guestRunner).toContain('"--candidate-admission"');
+    expect(guestRunner).toContain('"--harness-rehearsal"');
+    expect(guestRunner).toContain("non-certifying-candidate-admission");
+    expect(guestRunner).toContain("non-certifying-harness-rehearsal");
     expect(guestRunner).toContain('"AUTO_EMAIL_SENDER_PACKAGED_QA"');
     expect(guestRunner).toContain('Join-Path $installRoot "Uninstall Auto Email Sender.exe"');
     expect(guestRunner).toContain("Uninstall did not preserve isolated user data");
+    expect(guestRunner).toContain("repeat candidate Windows installer");
     expect(guestRunner).toMatch(/Windows packaged QA artifacts:[\s\S]*?finally \{[\s\S]*?Stop-QaProcessesFromRoot/);
     expect(guestRunner).toContain("it is not valid release preflight evidence");
     expect(guestRunner).not.toContain('Test-VerifiedStage -Name "installer"');
@@ -382,6 +398,10 @@ describe("windows installer packaging", () => {
     expect(existsSync(runnerPath)).toBe(true);
     expect(runner).toContain("--certification");
     expect(runner).toContain("--prerelease-certification");
+    expect(runner).toContain("--candidate-admission");
+    expect(runner).toContain("--harness-rehearsal");
+    expect(runner).toContain("--inject-interruption-after-previous-install");
+    expect(runner).toContain("--require-clean-rehearsal-state");
     expect(runner).toContain("--development-smoke");
     expect(runner).toContain("SPARKLE_PUBLIC_ED_KEY");
     expect(runner).not.toContain('echo "$SPARKLE_PUBLIC_ED_KEY"');
@@ -389,6 +409,8 @@ describe("windows installer packaging", () => {
     expect(runner).toContain('ditto "${MountedApps[0]}" "$InstalledBundle"');
     expect(runner).toContain("codesign --verify --deep --strict");
     expect(runner).toContain("packaged-runtime-qa.py");
+    expect(runner).toContain("run_with_timeout 120 hdiutil attach");
+    expect(runner).toContain("run_with_timeout 1200 uv run");
     expect(runner).toContain("--previous-dmg");
     expect(runner).toContain("--expected-dmg-sha256");
     expect(runner).toContain("--expected-previous-dmg-sha256");
@@ -422,6 +444,9 @@ describe("windows installer packaging", () => {
     expect(runner).toContain('--artifact-root "$AppBundle"');
     expect(runner).toContain('mv "$InstalledBundle" "$UninstalledBundle"');
     expect(runner).toContain("卸载模拟后隔离用户数据库未保留");
+    expect(runner).toContain("non-certifying-candidate-admission");
+    expect(runner).toContain("non-certifying-harness-rehearsal");
+    expect(runner).toContain("重复安装没有恢复 app bundle");
   });
 
   it("gates packaged QA isolation before importing desktop bootstrap", () => {
@@ -453,6 +478,8 @@ describe("windows installer packaging", () => {
     expect(qaGate).toContain("PACKAGED_QA_SENTINEL_NAME");
     expect(qaGate).toContain("must not traverse symbolic links");
     expect(applicationSource).toContain("getActivePackagedQaIsolatedHomePath");
+    expect(applicationSource).toContain("getPackagedQaDiagnosticsExportPath");
+    expect(applicationSource).toContain("exportPackagedQaDiagnosticsOnce");
     expect(updateSource).toContain("getActivePackagedQaUserDataPath");
     expect(applicationSource).toContain('powerMonitor.on("resume"');
     expect(applicationSource).toContain("backend?.notifySystemResume?.()");

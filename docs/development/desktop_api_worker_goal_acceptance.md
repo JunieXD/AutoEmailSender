@@ -932,6 +932,11 @@ G7，也不创建 tag、push 或发布版本。
 - macOS runner 从旧/新 DMG 分别只读挂载并 `ditto` 到同一安装路径；所有正式场景都必须来自
   DMG。lifecycle 正式升级要求专用测试账户；原生 sleep 前要求现有 sudo ticket，缺失即失败，
   不保存密码或扩大权限。
+- 为避免在整套构建后才发现确定性安装缺陷，runner 增加两个明确非认证层级：
+  `harness-rehearsal` 可使用失效包做故意中断/立即重跑，并验证 Windows stale 注册表、进程与
+  timeout 或 macOS DMG mount trap；`candidate-admission` 绑定新候选 manifest/run/SHA/摘要，
+  在源码全套和长稳前直接跑真实覆盖升级、lifecycle、原生 sleep/wake、Beta 诊断 ZIP、卸载与
+  重装。两者报告均固定 `certification_eligible=false`，不关闭本节任何正式 AC。
 
 ### 当前开发验证
 

@@ -3,12 +3,14 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--force-full] [--quick|--prerelease-certification]" >&2
+  echo "Usage: $0 [--force-full] [--quick|--prerelease-certification|--candidate-admission|--harness-rehearsal]" >&2
   echo "          [--candidate-installer PATH] [--candidate-installer-sha256 HEX]" >&2
   echo "          [--candidate-manifest PATH] [--candidate-run-id N]" >&2
   echo "          [--previous-installer PATH] [--previous-installer-sha256 HEX]" >&2
   echo "          [--normal-soak] [--seeded-chaos]" >&2
   echo "          [--normal-soak-seconds N] [--seeded-chaos-seconds N] [--seed N]" >&2
+  echo "          [--inject-interruption-after-previous-install]" >&2
+  echo "          [--require-recovered-stale-state]" >&2
 }
 
 force_full=0
@@ -24,6 +26,8 @@ candidate_installer=""
 candidate_installer_sha256=""
 candidate_manifest=""
 candidate_run_id=""
+inject_interruption_after_previous_install=0
+require_recovered_stale_state=0
 while (($#)); do
   case "$1" in
     --force-full)
@@ -34,6 +38,18 @@ while (($#)); do
       ;;
     --prerelease-certification)
       qa_mode="prerelease"
+      ;;
+    --candidate-admission)
+      qa_mode="candidate-admission"
+      ;;
+    --harness-rehearsal)
+      qa_mode="harness-rehearsal"
+      ;;
+    --inject-interruption-after-previous-install)
+      inject_interruption_after_previous_install=1
+      ;;
+    --require-recovered-stale-state)
+      require_recovered_stale_state=1
       ;;
     --normal-soak)
       run_normal_soak=1
@@ -86,9 +102,15 @@ while (($#)); do
 done
 
 formal_qa=0
+packaged_preflight=0
+packaged_qa=0
+exact_candidate_qa=0
 normal_soak_minimum=86400
 seeded_chaos_minimum=28800
-if [[ "$qa_mode" != "quick" ]]; then formal_qa=1; fi
+if [[ "$qa_mode" == "release" || "$qa_mode" == "prerelease" ]]; then formal_qa=1; fi
+if [[ "$qa_mode" == "candidate-admission" || "$qa_mode" == "harness-rehearsal" ]]; then packaged_preflight=1; fi
+if ((formal_qa || packaged_preflight)); then packaged_qa=1; fi
+if ((formal_qa)) || [[ "$qa_mode" == "candidate-admission" ]]; then exact_candidate_qa=1; fi
 if [[ "$qa_mode" == "prerelease" ]]; then
   normal_soak_minimum=7200
   seeded_chaos_minimum=3600
@@ -100,32 +122,52 @@ if [[ "$qa_mode" == "quick" ]] && ((run_normal_soak || run_seeded_chaos)); then
   echo "--quick 不能与长稳认证参数一起使用。" >&2
   exit 2
 fi
+if ((packaged_preflight && (run_normal_soak || run_seeded_chaos))); then
+  echo "快速 packaged preflight 不能与长稳认证参数一起使用。" >&2
+  exit 2
+fi
+if ((packaged_preflight && force_full)); then
+  echo "packaged preflight 跳过源码/构建阶段，不接受 --force-full。" >&2
+  exit 2
+fi
+if ((inject_interruption_after_previous_install)) && [[ "$qa_mode" != "harness-rehearsal" ]]; then
+  echo "--inject-interruption-after-previous-install 只允许用于 --harness-rehearsal。" >&2
+  exit 2
+fi
+if ((require_recovered_stale_state)) && [[ "$qa_mode" != "harness-rehearsal" ]]; then
+  echo "--require-recovered-stale-state 只允许用于 --harness-rehearsal。" >&2
+  exit 2
+fi
 if [[ "$qa_mode" == "quick" ]] && [[ -n "$previous_installer" || -n "$previous_installer_sha256" || -n "$candidate_installer" || -n "$candidate_installer_sha256" || -n "$candidate_manifest" || -n "$candidate_run_id" ]]; then
   echo "--quick 不接受正式候选或上一稳定版安装包参数。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ -z "$previous_installer" ]]; then
-  echo "正式 Windows QA 必须用 --previous-installer 指定上一稳定版真实 NSIS 安装包。" >&2
+if ((packaged_qa)) && [[ -z "$previous_installer" ]]; then
+  echo "Windows packaged QA 必须用 --previous-installer 指定上一稳定版真实 NSIS 安装包。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ ! "$previous_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((packaged_qa)) && [[ ! "$previous_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "正式 Windows QA 必须用 --previous-installer-sha256 绑定公开稳定版摘要。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ -z "$candidate_installer" ]]; then
+if ((packaged_qa)) && [[ -z "$candidate_installer" ]]; then
   echo "正式 Windows QA 必须用 --candidate-installer 指定候选 workflow 的确切 NSIS 安装包。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ ! "$candidate_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((packaged_qa)) && [[ ! "$candidate_installer_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "正式 Windows QA 必须用 --candidate-installer-sha256 绑定候选清单摘要。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ -z "$candidate_manifest" ]]; then
-  echo "正式 Windows QA 必须用 --candidate-manifest 指定同一 workflow 的候选 manifest。" >&2
+if ((exact_candidate_qa)) && [[ -z "$candidate_manifest" ]]; then
+  echo "精确候选 Windows QA 必须用 --candidate-manifest 指定同一 workflow 的候选 manifest。" >&2
   exit 2
 fi
-if ((formal_qa)) && [[ ! "$candidate_run_id" =~ ^[1-9][0-9]*$ ]]; then
+if ((exact_candidate_qa)) && [[ ! "$candidate_run_id" =~ ^[1-9][0-9]*$ ]]; then
   echo "正式 Windows QA 必须用 --candidate-run-id 绑定正整数 workflow run ID。" >&2
+  exit 2
+fi
+if [[ "$qa_mode" == "harness-rehearsal" ]] && [[ -n "$candidate_manifest" || -n "$candidate_run_id" ]]; then
+  echo "harness rehearsal 不得绑定已经失效的 candidate manifest/run ID。" >&2
   exit 2
 fi
 if [[ -n "$previous_installer" && ! -f "$previous_installer" ]]; then
@@ -172,7 +214,7 @@ guest_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR:-Z:}"
 guest_transfer_dir="${guest_transfer_dir//\\//}"
 guest_transfer_dir="${guest_transfer_dir%/}"
 expected_previous_version=""
-if ((formal_qa)); then
+if ((packaged_qa)); then
   if ! previous_tag="$(node "$repo_root/scripts/release/prerelease-contract.mjs" latest-stable --repo-root "$repo_root" --ref HEAD)"; then
     echo "无法从当前 SHA 推导上一稳定版 tag。" >&2
     exit 1
@@ -217,7 +259,7 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   exit 1
 fi
 
-if ((formal_qa)); then
+if ((exact_candidate_qa)); then
   node "$repo_root/scripts/release/release-candidate.mjs" asset \
     --manifest "$candidate_manifest" \
     --platform windows \
@@ -339,7 +381,7 @@ fi
 if [[ -n "$candidate_installer" ]]; then
   cp "$candidate_installer" "$candidate_installer_transfer_path"
 fi
-if [[ -n "$candidate_manifest" ]]; then
+if ((exact_candidate_qa)); then
   cp "$candidate_manifest" "$candidate_manifest_transfer_path"
 fi
 
@@ -370,12 +412,22 @@ if [[ -n "$candidate_installer" ]]; then
   guest_args+=(
     -CandidateInstallerPath "$guest_candidate_installer_path"
     -ExpectedCandidatePackageSha256 "$candidate_installer_sha256"
+  )
+fi
+if ((exact_candidate_qa)); then
+  guest_args+=(
     -CandidateManifestPath "$guest_candidate_manifest_path"
     -ExpectedCandidateRunId "$candidate_run_id"
   )
 fi
 if ((force_full)); then
   guest_args+=(-ForceFull)
+fi
+if ((inject_interruption_after_previous_install)); then
+  guest_args+=(-InjectInterruptionAfterPreviousInstall)
+fi
+if ((require_recovered_stale_state)); then
+  guest_args+=(-RequireRecoveredStaleState)
 fi
 if ((run_normal_soak)); then
   guest_args+=(-RunNormalSoak -NormalSoakDurationSeconds "$normal_soak_seconds")

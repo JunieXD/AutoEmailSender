@@ -131,6 +131,23 @@ The non-dry command pushes the explicit source branch and dispatches a remote wo
 
 Use the exact workflow assets for formal packaged QA. Pass `--prerelease-certification`, not stable `--certification`: prerelease normal soak is at least 7200 seconds and seeded chaos at least 3600 seconds; the stable 86400/28800 gates remain unchanged. Bind every platform run to the candidate manifest, run ID, release SHA, installer digest, and previous public stable installer digest.
 
+Before another expensive candidate is requested after QA harness changes, run a non-certifying
+`--harness-rehearsal` on Windows and macOS. It may use an invalidated candidate or a local package,
+but must bind both package digests and must not accept a candidate manifest/run ID. Run it twice:
+the first run deliberately interrupts after the previous-stable seed, and the immediate second run
+must prove stale installer/process or DMG-mount cleanup plus bounded timeout recovery. Reports must
+say `certification_eligible=false` and `evidence_purpose=non-certifying-harness-rehearsal`.
+
+After Certify produces new exact assets, run `--candidate-admission` before source/build suites or
+long soaks. Admission binds the manifest, run ID, release SHA, version, current package digest, and
+previous public stable package digest, then exercises previous-stable seed, non-ASCII/long paths,
+candidate overlay, split/combined lifecycle, migration/integrity, local diagnostic export,
+sleep/wake, uninstall, and repeat install. It is still non-certifying and must report
+`certification_eligible=false` with `evidence_purpose=non-certifying-candidate-admission`.
+Run Windows and macOS serially: Windows admission, macOS admission, Windows formal QA, then macOS
+formal QA. Neither rehearsal nor admission can satisfy lifecycle, normal-soak, seeded-chaos, or
+publication gates, and an invalidated package must never be mixed into exact-candidate evidence.
+
 ### Publish Prerelease
 
 Require completed dual-platform exact-package QA, reviewed notes, no unresolved blocking/high-risk defects, and explicit approval for tag creation and public GitHub Prerelease. Run publish dry-run first, then remove `--dry-run` only after approval:

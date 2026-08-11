@@ -12,6 +12,11 @@ export const PACKAGED_QA_ENABLE_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA";
 export const PACKAGED_QA_ENABLE_VALUE = "enabled-for-release-certification";
 export const PACKAGED_QA_NONCE_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA_NONCE";
 export const PACKAGED_QA_USER_DATA_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA_USER_DATA";
+export const PACKAGED_QA_DIAGNOSTICS_EXPORT_ENV =
+  "AUTO_EMAIL_SENDER_PACKAGED_QA_DIAGNOSTICS_EXPORT";
+export const PACKAGED_QA_DIAGNOSTICS_EXPORT_VALUE = "required";
+export const PACKAGED_QA_DIAGNOSTICS_EXPORT_NAME =
+  "packaged-qa-beta-diagnostics.zip";
 export const PACKAGED_QA_PATH_MARKER = "auto-email-sender-packaged-qa";
 export const PACKAGED_QA_SENTINEL_NAME = ".auto-email-sender-packaged-qa.json";
 export const PACKAGED_QA_SENTINEL_PROTOCOL_VERSION = "1";
@@ -169,6 +174,25 @@ export function configurePackagedQaUserData(
 
 export function getActivePackagedQaUserDataPath(): string | null {
   return activePackagedQaUserDataPath;
+}
+
+export function getPackagedQaDiagnosticsExportPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const requested = env[PACKAGED_QA_DIAGNOSTICS_EXPORT_ENV]?.trim() ?? "";
+  if (!requested) {
+    return null;
+  }
+  if (
+    requested !== PACKAGED_QA_DIAGNOSTICS_EXPORT_VALUE
+    || activePackagedQaUserDataPath === null
+  ) {
+    throw new Error("Packaged QA diagnostics export is not authorized.");
+  }
+  return path.join(
+    activePackagedQaUserDataPath,
+    PACKAGED_QA_DIAGNOSTICS_EXPORT_NAME,
+  );
 }
 
 export function getActivePackagedQaIsolatedHomePath(): string | null {

@@ -30,6 +30,7 @@ import time
 import traceback
 import urllib.parse
 import uuid
+import zipfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -47,6 +48,9 @@ QA_ENABLE_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA"
 QA_ENABLE_VALUE = "enabled-for-release-certification"
 QA_NONCE_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA_NONCE"
 QA_USER_DATA_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA_USER_DATA"
+QA_DIAGNOSTICS_EXPORT_ENV = "AUTO_EMAIL_SENDER_PACKAGED_QA_DIAGNOSTICS_EXPORT"
+QA_DIAGNOSTICS_EXPORT_VALUE = "required"
+QA_DIAGNOSTICS_EXPORT_NAME = "packaged-qa-beta-diagnostics.zip"
 QA_PATH_MARKER = "auto-email-sender-packaged-qa"
 QA_SENTINEL_NAME = ".auto-email-sender-packaged-qa.json"
 QA_SENTINEL_PROTOCOL_VERSION = "1"
@@ -1229,6 +1233,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repository-root", type=Path)
     parser.add_argument("--certification", action="store_true")
     parser.add_argument("--prerelease-certification", action="store_true")
+    parser.add_argument("--candidate-admission", action="store_true")
+    parser.add_argument("--harness-rehearsal", action="store_true")
     parser.add_argument("--development-smoke", action="store_true")
     parser.add_argument("--skip-browser-probe", action="store_true")
     parser.add_argument("--system-sleep-wake", action="store_true")
@@ -1243,14 +1249,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     selected_tiers = sum(
-        (args.certification, args.prerelease_certification, args.development_smoke)
+        (
+            args.certification,
+            args.prerelease_certification,
+            args.candidate_admission,
+            args.harness_rehearsal,
+            args.development_smoke,
+        )
     )
     if selected_tiers != 1:
         parser.error(
             "select exactly one of --certification, "
-            "--prerelease-certification, or --development-smoke"
+            "--prerelease-certification, --candidate-admission, "
+            "--harness-rehearsal, or --development-smoke"
         )
     formal_certification = args.certification or args.prerelease_certification
+    packaged_preflight = args.candidate_admission or args.harness_rehearsal
     executable = args.app_executable.expanduser().resolve()
     if not executable.is_file():
         parser.error(f"packaged app executable is missing: {executable}")
@@ -1306,6 +1320,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("duration must not be negative")
     if args.scenario == "seeded-chaos" and args.seed is None:
         parser.error("seeded-chaos requires --seed")
+    if packaged_preflight and args.scenario != "lifecycle":
+        parser.error("candidate admission and harness rehearsal only support lifecycle")
     args.expected_app_version = args.expected_app_version.strip()
     args.expected_package_sha256 = args.expected_package_sha256.strip().lower()
     args.expected_previous_package_sha256 = (
@@ -1400,6 +1416,43 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
                 "lifecycle certification requires a previous-stable "
                 "--existing-user-data and --upgrade-manifest"
             )
+    if packaged_preflight:
+        if args.skip_browser_probe:
+            parser.error("packaged preflight cannot skip the real browser process probe")
+        if args.package_file is None:
+            parser.error("packaged preflight requires --package-file")
+        if not re.fullmatch(r"[0-9a-f]{64}", args.expected_package_sha256):
+            parser.error(
+                "packaged preflight requires a 64-character "
+                "--expected-package-sha256"
+            )
+        if args.upgrade_manifest is None:
+            parser.error(
+                "packaged preflight requires previous-stable upgrade data"
+            )
+    if args.harness_rehearsal and args.candidate_manifest_file is not None:
+        parser.error(
+            "harness rehearsal must not bind an invalidated candidate manifest; "
+            "use --candidate-admission for exact candidate evidence"
+        )
+    if args.candidate_admission:
+        revision = args.expected_revision.lower()
+        if not REVISION_PATTERN.fullmatch(revision):
+            parser.error(
+                "candidate admission requires a 40-character --expected-revision"
+            )
+        args.expected_revision = revision
+        if args.repository_root is None:
+            parser.error("candidate admission requires --repository-root")
+        if not args.expected_app_version:
+            parser.error("candidate admission requires --expected-app-version")
+        if args.candidate_manifest_file is None:
+            parser.error(
+                "candidate admission requires --candidate-manifest-file and "
+                "--expected-candidate-run-id"
+            )
+        if not args.system_sleep_wake:
+            parser.error("candidate admission requires --system-sleep-wake")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1410,6 +1463,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.certification
         else "prerelease"
         if args.prerelease_certification
+        else "candidate-admission"
+        if args.candidate_admission
+        else "harness-rehearsal"
+        if args.harness_rehearsal
         else "development"
     )
     paths = _create_paths(
@@ -1434,6 +1491,15 @@ def main(argv: list[str] | None = None) -> int:
         "certification_requested": formal_certification,
         "certification_tier": certification_tier,
         "certification_eligible": False,
+        "evidence_purpose": (
+            "formal-certification"
+            if formal_certification
+            else "non-certifying-candidate-admission"
+            if args.candidate_admission
+            else "non-certifying-harness-rehearsal"
+            if args.harness_rehearsal
+            else "development-smoke"
+        ),
         "started_at": _utc_now(),
         "finished_at": None,
         "duration_seconds_requested": args.duration_seconds,
@@ -1536,13 +1602,17 @@ def main(argv: list[str] | None = None) -> int:
                     "actual_sha256": previous_package_sha256,
                 },
             )
-        if formal_certification:
+        if formal_certification or args.candidate_admission:
             _assert_clean_revision(
                 args.repository_root.resolve(),
                 args.expected_revision,
             )
             recorder.check(
-                "clean_committed_revision",
+                (
+                    "clean_committed_revision"
+                    if formal_certification
+                    else "exact_candidate_clean_committed_revision"
+                ),
                 passed=True,
                 evidence={"revision": args.expected_revision},
             )
@@ -1611,6 +1681,64 @@ def main(argv: list[str] | None = None) -> int:
     return return_code
 
 
+def _verify_packaged_diagnostics_export(
+    export_path: Path,
+    *,
+    forbidden_values: tuple[str, ...],
+) -> dict[str, object]:
+    required_entries = {
+        "manifest.json",
+        "summary.json",
+        "checksums.sha256",
+        "README.txt",
+    }
+
+    def probe() -> dict[str, object] | None:
+        if not export_path.is_file():
+            return None
+        try:
+            with zipfile.ZipFile(export_path) as archive:
+                corrupt_entry = archive.testzip()
+                if corrupt_entry is not None:
+                    raise QaFailure(
+                        f"packaged diagnostics ZIP has a corrupt entry: {corrupt_entry}"
+                    )
+                entries = archive.infolist()
+                names = {entry.filename for entry in entries}
+                missing = required_entries - names
+                if missing:
+                    raise QaFailure(
+                        "packaged diagnostics ZIP is missing entries: "
+                        f"{sorted(missing)}"
+                    )
+                total_uncompressed_bytes = sum(entry.file_size for entry in entries)
+                if total_uncompressed_bytes > 80 * 1024 * 1024:
+                    raise QaFailure("packaged diagnostics ZIP exceeds its bounded size")
+                contents = b"".join(archive.read(entry) for entry in entries)
+                manifest = json.loads(
+                    archive.read("manifest.json").decode("utf-8")
+                )
+        except (OSError, zipfile.BadZipFile):
+            return None
+        for value in forbidden_values:
+            if value and value.encode("utf-8") in contents:
+                raise QaFailure("packaged diagnostics ZIP leaked a QA runtime credential")
+        return {
+            "path": str(export_path),
+            "sha256": _sha256_file(export_path),
+            "archive_bytes": export_path.stat().st_size,
+            "uncompressed_bytes": total_uncompressed_bytes,
+            "entry_count": len(entries),
+            "report_id": manifest.get("report_id"),
+        }
+
+    return _wait_until(
+        probe,
+        timeout_seconds=90,
+        description="packaged Beta diagnostics ZIP export",
+    )
+
+
 def _run_lifecycle(
     args: argparse.Namespace,
     paths: QaPaths,
@@ -1619,6 +1747,9 @@ def _run_lifecycle(
     previous_package_sha256: str | None,
 ) -> None:
     environment = _qa_backend_environment(paths)
+    diagnostics_probe_required = args.candidate_admission
+    if diagnostics_probe_required:
+        environment[QA_DIAGNOSTICS_EXPORT_ENV] = QA_DIAGNOSTICS_EXPORT_VALUE
     application = PackagedApplication(
         executable=args.app_executable,
         paths=paths,
@@ -1637,6 +1768,17 @@ def _run_lifecycle(
             passed=True,
             evidence=first.evidence_payload(),
         )
+        if diagnostics_probe_required:
+            diagnostics_evidence = _verify_packaged_diagnostics_export(
+                paths.user_data / QA_DIAGNOSTICS_EXPORT_NAME,
+                forbidden_values=(first.access_token, application._require_handle().nonce),
+            )
+            recorder.check(
+                "packaged_beta_diagnostics_export",
+                passed=True,
+                evidence=diagnostics_evidence,
+            )
+            application.extra_environment.pop(QA_DIAGNOSTICS_EXPORT_ENV, None)
         _assert_worker_has_no_listener(first)
         recorder.check("worker_has_no_listening_socket", passed=True)
         recorder.sample(_collect_resource_sample(first, paths.user_data, lifecycle_started))

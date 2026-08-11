@@ -17,20 +17,53 @@ CandidateRunId=""
 Build=0
 Certification=0
 PrereleaseCertification=0
+CandidateAdmission=0
+HarnessRehearsal=0
 DevelopmentSmoke=0
 SkipBrowserProbe=0
 KeepInstalledApp=0
 DedicatedTestAccount=0
 SystemSleepWake=0
 NativeSleepRequested=0
+InjectInterruptionAfterPreviousInstall=0
+RequireCleanRehearsalState=0
 QA_PATH_MARKER="auto-email-sender-packaged-qa"
 DATABASE_NAME="auto_email_sender.db"
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  /usr/bin/perl -e '
+    use strict;
+    use warnings;
+    my $timeout = shift @ARGV;
+    my $child = fork();
+    die "fork failed: $!\n" unless defined $child;
+    if ($child == 0) {
+      setpgrp(0, 0) or die "setpgrp failed: $!\n";
+      exec @ARGV or die "exec failed: $!\n";
+    }
+    $SIG{ALRM} = sub {
+      warn "command timed out after ${timeout} seconds: @ARGV\n";
+      kill "TERM", -$child;
+      select undef, undef, undef, 2;
+      kill "KILL", -$child;
+      waitpid($child, 0);
+      exit 124;
+    };
+    alarm $timeout;
+    waitpid($child, 0);
+    alarm 0;
+    my $status = $?;
+    exit(($status & 127) ? 128 + ($status & 127) : $status >> 8);
+  ' "$timeout_seconds" "$@"
+}
 
 usage() {
   cat <<'EOF'
 用法: scripts/quality/run-macos-packaged-qa.sh \
   --scenario lifecycle|normal-soak|seeded-chaos \
-  (--certification | --prerelease-certification | --development-smoke) \
+  (--certification | --prerelease-certification | --candidate-admission | --harness-rehearsal | --development-smoke) \
   [--expected-revision <40位SHA>] \
   [--build] [--dmg <path> | --app-bundle <path>] \
   [--expected-dmg-sha256 <候选DMG的64位SHA-256>] \
@@ -40,9 +73,12 @@ usage() {
   [--dedicated-test-account] \
   [--artifacts-dir <path>] [--duration-seconds <seconds>] [--seed <integer>] \
   [--skip-browser-probe] [--keep-installed-app] [--system-sleep-wake]
+  [--inject-interruption-after-previous-install]
+  [--require-clean-rehearsal-state]
 
 正式认证要求 clean committed SHA；全部正式场景都要求从 DMG 挂载并复制真实 app bundle。
 --development-smoke 只用于实现验证，生成的报告不会被标记为正式认证证据。
+--candidate-admission 和 --harness-rehearsal 也只生成非认证证据，不能替代正式认证。
 EOF
 }
 
@@ -108,6 +144,14 @@ while (($#)); do
       PrereleaseCertification=1
       shift
       ;;
+    --candidate-admission)
+      CandidateAdmission=1
+      shift
+      ;;
+    --harness-rehearsal)
+      HarnessRehearsal=1
+      shift
+      ;;
     --development-smoke)
       DevelopmentSmoke=1
       shift
@@ -128,6 +172,14 @@ while (($#)); do
       SystemSleepWake=1
       shift
       ;;
+    --inject-interruption-after-previous-install)
+      InjectInterruptionAfterPreviousInstall=1
+      shift
+      ;;
+    --require-clean-rehearsal-state)
+      RequireCleanRehearsalState=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -144,11 +196,29 @@ if [[ "$Scenario" != "lifecycle" && "$Scenario" != "normal-soak" && "$Scenario" 
   echo "--scenario 必须是 lifecycle、normal-soak 或 seeded-chaos。" >&2
   exit 2
 fi
-if ((Certification + PrereleaseCertification + DevelopmentSmoke != 1)); then
-  echo "必须且只能指定 --certification、--prerelease-certification 或 --development-smoke 之一。" >&2
+if ((Certification + PrereleaseCertification + CandidateAdmission + HarnessRehearsal + DevelopmentSmoke != 1)); then
+  echo "必须且只能指定一个 QA 证据层级。" >&2
   exit 2
 fi
 FormalCertification=$((Certification || PrereleaseCertification))
+PackagedPreflight=$((CandidateAdmission || HarnessRehearsal))
+RequiresExactCandidate=$((FormalCertification || CandidateAdmission))
+if ((PackagedPreflight)) && [[ "$Scenario" != "lifecycle" ]]; then
+  echo "candidate admission 和 harness rehearsal 只支持 lifecycle。" >&2
+  exit 2
+fi
+if ((PackagedPreflight)) && [[ -z "$DmgPath" || -n "$AppBundle" || $Build -ne 0 ]]; then
+  echo "packaged preflight 必须使用真实 --dmg，不能使用 --app-bundle 或 --build。" >&2
+  exit 2
+fi
+if ((InjectInterruptionAfterPreviousInstall)) && ((HarnessRehearsal == 0)); then
+  echo "故意中断只允许用于 --harness-rehearsal。" >&2
+  exit 2
+fi
+if ((RequireCleanRehearsalState)) && ((HarnessRehearsal == 0)); then
+  echo "挂载清理断言只允许用于 --harness-rehearsal。" >&2
+  exit 2
+fi
 if [[ "$Scenario" == "seeded-chaos" && -z "$Seed" ]]; then
   echo "seeded-chaos 必须指定 --seed。" >&2
   exit 2
@@ -173,7 +243,7 @@ if [[ -n "$ExpectedPreviousDmgSha256" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9
   echo "--expected-previous-dmg-sha256 必须是 64 位 SHA-256。" >&2
   exit 2
 fi
-if ((FormalCertification)) && [[ ! "$ExpectedRevision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+if ((RequiresExactCandidate)) && [[ ! "$ExpectedRevision" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "正式认证必须指定 40 位 --expected-revision。" >&2
   exit 2
 fi
@@ -197,24 +267,36 @@ if [[ -n "$CandidateRunId" && ! "$CandidateRunId" =~ ^[1-9][0-9]*$ ]]; then
   echo "--candidate-run-id 必须是正整数。" >&2
   exit 2
 fi
-if ((FormalCertification)) && [[ -z "$CandidateManifestPath" ]]; then
-  echo "macOS 正式认证必须用 --candidate-manifest 和 --candidate-run-id 绑定候选 workflow。" >&2
+if ((RequiresExactCandidate)) && [[ -z "$CandidateManifestPath" ]]; then
+  echo "macOS 精确候选 QA 必须用 --candidate-manifest 和 --candidate-run-id 绑定候选 workflow。" >&2
   exit 2
 fi
-if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && -z "$PreviousDmgPath" ]]; then
+if ((FormalCertification || PackagedPreflight)) && [[ "$Scenario" == "lifecycle" && -z "$PreviousDmgPath" ]]; then
   echo "macOS lifecycle 正式认证必须用 --previous-dmg 指定上一稳定版真实 DMG。" >&2
   exit 2
 fi
-if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if ((FormalCertification || PackagedPreflight)) && [[ "$Scenario" == "lifecycle" && ! "$ExpectedPreviousDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "macOS lifecycle 正式认证必须用 --expected-previous-dmg-sha256 绑定上一稳定版公开 DMG 摘要。" >&2
   exit 2
 fi
-if ((FormalCertification)) && [[ "$Scenario" == "lifecycle" && $DedicatedTestAccount -eq 0 ]]; then
+if ((FormalCertification || CandidateAdmission)) && [[ "$Scenario" == "lifecycle" && $DedicatedTestAccount -eq 0 ]]; then
   echo "上一稳定版可能使用旧 updater/cache 路径；正式升级认证必须在专用 macOS 测试账户运行并显式指定 --dedicated-test-account。" >&2
   exit 2
 fi
 if ((FormalCertification && SkipBrowserProbe)); then
   echo "正式认证不能跳过真实 Playwright/Chromium 进程树验证。" >&2
+  exit 2
+fi
+if ((PackagedPreflight && SkipBrowserProbe)); then
+  echo "packaged preflight 不能跳过真实 Playwright/Chromium 进程树验证。" >&2
+  exit 2
+fi
+if ((HarnessRehearsal)) && [[ -n "$CandidateManifestPath" || -n "$CandidateRunId" ]]; then
+  echo "harness rehearsal 不得绑定已经失效的 candidate manifest/run ID。" >&2
+  exit 2
+fi
+if ((PackagedPreflight)) && [[ ! "$ExpectedDmgSha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "packaged preflight 必须用 --expected-dmg-sha256 绑定当前 DMG。" >&2
   exit 2
 fi
 
@@ -234,7 +316,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "此 runner 只能在 macOS 上运行。" >&2
   exit 1
 fi
-if ((FormalCertification)) && [[ "$(uname -m)" != "arm64" ]]; then
+if ((FormalCertification || CandidateAdmission)) && [[ "$(uname -m)" != "arm64" ]]; then
   echo "正式 macOS 认证要求 Apple Silicon arm64；当前为 $(uname -m)。" >&2
   exit 1
 fi
@@ -255,7 +337,7 @@ if ((Certification)) && [[ ! "$CurrentAppVersion" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 fi
 
 CurrentRevision="$(git -C "$RepoRoot" rev-parse HEAD)"
-if ((FormalCertification)); then
+if ((RequiresExactCandidate)); then
   CurrentRevisionLower="$(printf '%s' "$CurrentRevision" | tr '[:upper:]' '[:lower:]')"
   ExpectedRevisionLower="$(printf '%s' "$ExpectedRevision" | tr '[:upper:]' '[:lower:]')"
   if [[ "$CurrentRevisionLower" != "$ExpectedRevisionLower" ]]; then
@@ -332,8 +414,16 @@ if [[ -n "$DmgPath" ]]; then
     echo "当前 DMG SHA-256 与 --expected-dmg-sha256 不一致。" >&2
     exit 1
   fi
+  if ((RequireCleanRehearsalState)); then
+    MountedImages="$(run_with_timeout 30 hdiutil info)"
+    if [[ "$MountedImages" == *"$DmgPath"* ]]; then
+      echo "上一轮故意中断后候选 DMG 仍处于挂载状态。" >&2
+      exit 1
+    fi
+    echo "Previous interrupted rehearsal left no mounted candidate DMG."
+  fi
 fi
-if [[ -n "$CandidateManifestPath" ]]; then
+if ((RequiresExactCandidate)); then
   CandidateManifestPath="$(cd "$(dirname "$CandidateManifestPath")" && pwd)/$(basename "$CandidateManifestPath")"
   if [[ ! -f "$CandidateManifestPath" ]]; then
     echo "候选认证清单不存在: $CandidateManifestPath" >&2
@@ -353,7 +443,7 @@ MountedPath=""
 MountPlist=""
 cleanup_mount() {
   if [[ -n "$MountedDevice" ]]; then
-    hdiutil detach "$MountedDevice" -quiet || true
+    run_with_timeout 60 hdiutil detach "$MountedDevice" -quiet || true
   fi
   if [[ -n "$MountPlist" ]]; then
     rm -f "$MountPlist"
@@ -372,7 +462,7 @@ copy_app_from_dmg() {
     return 1
   fi
   MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.XXXXXX.plist")"
-  hdiutil attach -readonly -nobrowse -plist "$source_absolute" >"$MountPlist"
+  run_with_timeout 120 hdiutil attach -readonly -nobrowse -plist "$source_absolute" >"$MountPlist"
   MountedDevice="$(python3 - "$MountPlist" <<'PY'
 import plistlib
 import sys
@@ -412,8 +502,8 @@ PY
   fi
   mounted_app="${MountedApps[0]}"
   mkdir -p "$(dirname "$target_bundle")"
-  ditto "$mounted_app" "$target_bundle"
-  hdiutil detach "$MountedDevice" -quiet
+  run_with_timeout 300 ditto "$mounted_app" "$target_bundle"
+  run_with_timeout 60 hdiutil detach "$MountedDevice" -quiet
   MountedDevice=""
   rm -f "$MountPlist"
   MountPlist=""
@@ -449,14 +539,14 @@ if [[ "$Scenario" == "lifecycle" && -n "$PreviousDmgPath" ]]; then
     echo "上一稳定版 app 主可执行文件不存在或不可执行: $PreviousExecutable" >&2
     exit 1
   fi
-  codesign --verify --deep --strict --verbose=2 "$InstalledBundle"
+  run_with_timeout 120 codesign --verify --deep --strict --verbose=2 "$InstalledBundle"
   UpgradeUserData="$ArtifactsDir/$QA_PATH_MARKER/previous-stable-user-data/用户 数据 Ω"
   UpgradeManifest="$ArtifactsDir/previous-upgrade/manifest.json"
   mkdir -p "$UpgradeUserData"
   chmod 700 "$ArtifactsDir/$QA_PATH_MARKER" \
     "$ArtifactsDir/$QA_PATH_MARKER/previous-stable-user-data" \
     "$UpgradeUserData"
-  uv run --project "$RepoRoot/backend" --no-sync python \
+  run_with_timeout 300 uv run --project "$RepoRoot/backend" --no-sync python \
     "$RepoRoot/scripts/quality/seed-previous-packaged-upgrade.py" \
     --app-executable "$PreviousExecutable" \
     --artifact-root "$InstalledBundle" \
@@ -469,7 +559,7 @@ if [[ "$Scenario" == "lifecycle" && -n "$PreviousDmgPath" ]]; then
 fi
 if [[ -n "$DmgPath" ]]; then
   MountPlist="$(mktemp "${TMPDIR:-/tmp}/auto-email-sender-mount.XXXXXX.plist")"
-  hdiutil attach -readonly -nobrowse -plist "$DmgPath" >"$MountPlist"
+  run_with_timeout 120 hdiutil attach -readonly -nobrowse -plist "$DmgPath" >"$MountPlist"
   MountedDevice="$(python3 - "$MountPlist" <<'PY'
 import plistlib
 import sys
@@ -507,9 +597,13 @@ PY
     echo "DMG 根目录必须恰好包含一个 app bundle。" >&2
     exit 1
   fi
+  if ((InjectInterruptionAfterPreviousInstall)); then
+    echo "Injecting the requested rehearsal interruption with the candidate DMG mounted." >&2
+    exit 86
+  fi
   mkdir -p "$InstalledRoot"
-  ditto "${MountedApps[0]}" "$InstalledBundle"
-  hdiutil detach "$MountedDevice" -quiet
+  run_with_timeout 300 ditto "${MountedApps[0]}" "$InstalledBundle"
+  run_with_timeout 60 hdiutil detach "$MountedDevice" -quiet
   MountedDevice=""
   AppBundle="$InstalledBundle"
 elif [[ -n "$AppBundle" ]]; then
@@ -528,7 +622,7 @@ if [[ ! -x "$AppExecutable" ]]; then
   echo "app bundle 主可执行文件不存在或不可执行: $AppExecutable" >&2
   exit 1
 fi
-codesign --verify --deep --strict --verbose=2 "$AppBundle"
+run_with_timeout 120 codesign --verify --deep --strict --verbose=2 "$AppBundle"
 
 DriverArguments=(
   --scenario "$Scenario"
@@ -544,7 +638,7 @@ if [[ -n "$DmgPath" ]]; then
     --expected-package-sha256 "$ExpectedDmgSha256"
   )
 fi
-if [[ -n "$CandidateManifestPath" ]]; then
+if ((RequiresExactCandidate)); then
   DriverArguments+=(
     --candidate-manifest-file "$CandidateManifestPath"
     --expected-candidate-run-id "$CandidateRunId"
@@ -565,6 +659,19 @@ elif ((PrereleaseCertification)); then
     --expected-revision "$ExpectedRevision"
   )
   if [[ "$Scenario" == "lifecycle" || "$Scenario" == "seeded-chaos" ]]; then
+    DriverArguments+=(--system-sleep-wake)
+      NativeSleepRequested=1
+    fi
+elif ((CandidateAdmission)); then
+  DriverArguments+=(
+    --candidate-admission
+    --expected-revision "$ExpectedRevision"
+    --system-sleep-wake
+  )
+  NativeSleepRequested=1
+elif ((HarnessRehearsal)); then
+  DriverArguments+=(--harness-rehearsal)
+  if ((SystemSleepWake)); then
     DriverArguments+=(--system-sleep-wake)
     NativeSleepRequested=1
   fi
@@ -599,9 +706,15 @@ if ((NativeSleepRequested)) && ! /usr/bin/sudo -n /usr/bin/true; then
   exit 1
 fi
 
-uv run --project "$RepoRoot/backend" --no-sync python \
-  "$RepoRoot/scripts/quality/packaged-runtime-qa.py" \
-  "${DriverArguments[@]}"
+if ((PackagedPreflight)); then
+  run_with_timeout 1200 uv run --project "$RepoRoot/backend" --no-sync python \
+    "$RepoRoot/scripts/quality/packaged-runtime-qa.py" \
+    "${DriverArguments[@]}"
+else
+  uv run --project "$RepoRoot/backend" --no-sync python \
+    "$RepoRoot/scripts/quality/packaged-runtime-qa.py" \
+    "${DriverArguments[@]}"
+fi
 
 Reports=()
 while IFS= read -r candidate; do
@@ -612,13 +725,28 @@ if ((${#Reports[@]} != 1)); then
   exit 1
 fi
 ReportPath="${Reports[0]}"
-UserDataPath="$(python3 - "$ReportPath" <<'PY'
+ExpectedCertificationEligible="false"
+ExpectedEvidencePurpose="development-smoke"
+if ((FormalCertification)); then
+  ExpectedCertificationEligible="true"
+  ExpectedEvidencePurpose="formal-certification"
+elif ((CandidateAdmission)); then
+  ExpectedEvidencePurpose="non-certifying-candidate-admission"
+elif ((HarnessRehearsal)); then
+  ExpectedEvidencePurpose="non-certifying-harness-rehearsal"
+fi
+UserDataPath="$(python3 - "$ReportPath" "$ExpectedCertificationEligible" "$ExpectedEvidencePurpose" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as file:
     payload = json.load(file)
 if payload.get("status") != "passed":
     raise SystemExit("packaged QA report did not pass")
+expected_eligible = sys.argv[2] == "true"
+if payload.get("certification_eligible") is not expected_eligible:
+    raise SystemExit("packaged QA report has the wrong certification eligibility")
+if payload.get("evidence_purpose") != sys.argv[3]:
+    raise SystemExit("packaged QA report has the wrong evidence purpose")
 print(payload["user_data_path"])
 PY
 )"
@@ -635,6 +763,22 @@ fi
 if [[ ! -f "$UserDataPath/$DATABASE_NAME" ]]; then
   echo "卸载模拟后隔离用户数据库未保留: $UserDataPath/$DATABASE_NAME" >&2
   exit 1
+fi
+if ((PackagedPreflight)) && [[ "$AppBundle" == "$InstalledBundle" && $KeepInstalledApp -eq 0 ]]; then
+  copy_app_from_dmg "$DmgPath" "$InstalledBundle"
+  RepeatExecutable="$InstalledBundle/Contents/MacOS/Auto Email Sender"
+  if [[ ! -x "$RepeatExecutable" ]]; then
+    echo "重复安装没有恢复 app bundle。" >&2
+    exit 1
+  fi
+  run_with_timeout 120 codesign --verify --deep --strict --verbose=2 "$InstalledBundle"
+  RepeatUninstalledBundle="$ArtifactsDir/重复卸载 bundle/Auto Email Sender.app"
+  mkdir -p "$(dirname "$RepeatUninstalledBundle")"
+  mv "$InstalledBundle" "$RepeatUninstalledBundle"
+  if [[ -e "$InstalledBundle" ]]; then
+    echo "重复卸载模拟后 app bundle 仍存在。" >&2
+    exit 1
+  fi
 fi
 
 echo "macOS packaged QA passed."

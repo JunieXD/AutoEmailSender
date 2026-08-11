@@ -106,9 +106,13 @@ dispatch 远端发布工作流、公开 Release、合并 master 或发布稳定�
 - `b6381e1` 只清理专用 QA 临时根的 stale uninstall 项，为安装/卸载增加有界进程树终止，并让
   host runner 恢复自己启动的 VM。Windows 5.1 synthetic/真实 stale 探针、Desktop/发布合同和
   精确 SHA quick QA 均通过，VM 自动恢复 suspended。
-- 当前再次停在替代候选批准门前：run `31464156897` 已因 QA 代码变化失效。新的最终文档提交
-  形成后，push 新 SHA 和再次 dispatch Certify 都需要重新取得明确批准。尚未授权 tag、公开
-  GitHub Prerelease、合回 `master` 或稳定版发布。
+- 连续失败复盘确认，确定性缺陷集中在候选传输、旧版 seed、Windows 长路径、VC++ 下载和
+  安装器恢复边界，而旧 runner 在首次真实安装前先执行整套源码/冻结构建。B5 因此先增加通用
+  `harness-rehearsal → candidate-admission → formal certification` 三层门禁；完成双平台演练前不再
+  申请替代 candidate。run `31464156897` 只允许作为 rehearsal 的失效包，不能重新成为候选证据。
+- 当前未取得新的 push/dispatch 授权。新的本地门禁实现、演练和文档证据全部收口后，才重新请求
+  push 新 SHA 与 replacement Certify；仍未授权 tag、公开 GitHub Prerelease、合回 `master` 或
+  稳定版发布。
 
 ### 1.4 授权边界
 
@@ -275,7 +279,7 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 | B2 | 本地记录器、诊断 ZIP、脱敏与 analyzer | **已完成**：AC-OBS/PRIV 全部通过；后端宕机仍能导出 partial bundle |
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：run `31464156897` 已认证但在候选安装前暴露 stale QA uninstall/无界等待；`b6381e1` 已通过 Windows 5.1 聚焦探针和 exact-SHA quick QA，仍待新 run 的双平台 lifecycle、2h normal、1h chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：先用失效包完成双平台两轮 harness rehearsal，再对新 run 串行执行 Windows/macOS exact admission，最后才执行正式 lifecycle、2h normal、1h chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease 人工批准门 | 获得明确批准后才 push/dispatch/publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -288,10 +292,11 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
    `source_branch + release_sha + version + channel`，不得绑定当前分支名。
 3. **B4 已完成**：最新 `origin/master@2fcc431` 已合入；最终产品代码的连续两次全仓和不受后续
    Frontend-only 修复影响的连续 20 次 split 集成均已通过，首次失败与修复原样记入验收报告。
-4. **正在执行 B5**：`2.6.0-beta.1` 第二轮 failure-recovery 已完成；先对证据文档提交后的新最终 SHA
-   运行 release impact、prerelease preflight 和 certify dry-run。获得新的 push 与远端候选
-   workflow 独立授权后，两平台只使用同一新 run、同一 SHA 对应的原始候选资产完成覆盖升级、
-   lifecycle、2h normal 和 1h seeded chaos；不得复用 `31464156897`。
+4. **正在执行 B5**：先在 Windows 和 macOS 用失效包各执行“故意中断 → 立即重跑”的
+   harness rehearsal，证明 stale 注册表/进程或 DMG 挂载与超时均能自动恢复。形成新 SHA 并在
+   获得 push/dispatch 独立授权后，只使用同一新 run 的原始资产，依次执行 Windows admission、
+   macOS admission、Windows 正式认证、macOS 正式认证。admission 必须绑定 manifest/run/SHA，
+   但 `certification_eligible=false`，不得复用 `31464156897` 关闭任何正式 AC。
 5. **停在 B6 人工门**：在没有单独批准时不 push、不 dispatch、不创建 tag/Release。获得批准后
    才发布非 Latest 的 GitHub Prerelease，并验证稳定 Latest/feed 和稳定客户端完全隔离。
 6. **完成 B7**：收口可复现证据、已知限制和后续观察方式；仍不自动合回 `master` 或发布稳定版。
@@ -333,6 +338,11 @@ soak 和 1 小时 seeded chaos；这些时长是 Beta 内部门禁，不替代�
 
 ### AC-BETA-QA
 
+- **AC-BETA-QA-00**：两平台 harness rehearsal 均完成故意中断后的立即重跑；Windows 证明专用
+  stale 注册表与进程被精确清理、1 秒超时子树有界退出，macOS 证明中断时挂载的 DMG 已自动卸载。
+- **AC-BETA-QA-00A**：新 run 的 Windows/macOS admission 均绑定同一 manifest/run/SHA/摘要，
+  在昂贵正式门禁前通过覆盖升级、split/combined、迁移完整性、诊断导出、sleep/wake、卸载与重装；
+  两份报告明确不可用于认证。
 - **AC-BETA-QA-01**：同一候选资产在 macOS 和 Windows 完成 v2.5.4 覆盖升级与完整 lifecycle。
 - **AC-BETA-QA-02**：两平台各自单次连续 ≥2h normal soak、≥1h seeded chaos，双时钟达标。
 - **AC-BETA-QA-03**：故障轨迹、进程恢复、资源趋势、数据库与任务不变量能由用户同格式 bundle 重建。

@@ -16,8 +16,10 @@ param(
   [string]$CandidateManifestPath = "",
   [long]$ExpectedCandidateRunId = 0,
   [switch]$ForceFull,
-  [ValidateSet("release", "prerelease", "quick")]
+  [ValidateSet("release", "prerelease", "quick", "candidate-admission", "harness-rehearsal")]
   [string]$Mode = "release",
+  [switch]$InjectInterruptionAfterPreviousInstall,
+  [switch]$RequireRecoveredStaleState,
   [switch]$RunNormalSoak,
   [switch]$RunSeededChaos,
   [ValidateRange(7200, 604800)]
@@ -29,7 +31,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$IsFormal = $Mode -ne "quick"
+$IsFormal = $Mode -in @("release", "prerelease")
+$IsPackagedPreflight = $Mode -in @("candidate-admission", "harness-rehearsal")
+$RunsPackagedLifecycle = $IsFormal -or $IsPackagedPreflight
+$RequiresExactCandidate = $IsFormal -or $Mode -eq "candidate-admission"
 
 if ($Mode -eq "release" -and $NormalSoakDurationSeconds -lt 86400) {
   throw "Stable release normal soak requires at least 86400 seconds."
@@ -43,8 +48,17 @@ if ($Mode -eq "prerelease" -and $NormalSoakDurationSeconds -lt 7200) {
 if ($Mode -eq "prerelease" -and $SeededChaosDurationSeconds -lt 3600) {
   throw "Prerelease seeded chaos requires at least 3600 seconds."
 }
+if ($IsPackagedPreflight -and ($RunNormalSoak -or $RunSeededChaos)) {
+  throw "Packaged preflight cannot run normal soak or seeded chaos."
+}
+if ($InjectInterruptionAfterPreviousInstall -and $Mode -ne "harness-rehearsal") {
+  throw "Intentional interruption is only valid in harness-rehearsal mode."
+}
+if ($RequireRecoveredStaleState -and $Mode -ne "harness-rehearsal") {
+  throw "Stale-state recovery assertions are only valid in harness-rehearsal mode."
+}
 
-if ($IsFormal) {
+if ($RunsPackagedLifecycle) {
   if ([string]::IsNullOrWhiteSpace($PreviousInstallerPath)) {
     throw "Release QA requires -PreviousInstallerPath for a real previous-stable in-place upgrade."
   }
@@ -60,11 +74,20 @@ if ($IsFormal) {
   if ([string]::IsNullOrWhiteSpace($ExpectedCandidatePackageSha256)) {
     throw "Release QA requires -ExpectedCandidatePackageSha256 from the candidate manifest."
   }
-  if ([string]::IsNullOrWhiteSpace($CandidateManifestPath)) {
-    throw "Release QA requires -CandidateManifestPath from the same candidate workflow."
+  if ($RequiresExactCandidate -and [string]::IsNullOrWhiteSpace($CandidateManifestPath)) {
+    throw "Exact candidate QA requires -CandidateManifestPath from the same candidate workflow."
   }
-  if ($ExpectedCandidateRunId -le 0) {
-    throw "Release QA requires a positive -ExpectedCandidateRunId."
+  if ($RequiresExactCandidate -and $ExpectedCandidateRunId -le 0) {
+    throw "Exact candidate QA requires a positive -ExpectedCandidateRunId."
+  }
+  if ($Mode -eq "harness-rehearsal" -and (
+    -not [string]::IsNullOrWhiteSpace($CandidateManifestPath) -or
+    $ExpectedCandidateRunId -ne 0
+  )) {
+    throw "Harness rehearsal must not bind an invalidated candidate manifest or run ID."
+  }
+  if ($IsPackagedPreflight -and $ForceFull) {
+    throw "Packaged preflight skips source/build stages and does not accept -ForceFull."
   }
   $PreviousInstallerPath = [System.IO.Path]::GetFullPath($PreviousInstallerPath)
   if (-not (Test-Path -LiteralPath $PreviousInstallerPath -PathType Leaf)) {
@@ -88,9 +111,11 @@ if ($IsFormal) {
     throw "Candidate installer SHA-256 does not match the candidate manifest digest."
   }
   $ExpectedCandidatePackageSha256 = $ExpectedCandidatePackageSha256.ToLowerInvariant()
-  $CandidateManifestPath = [System.IO.Path]::GetFullPath($CandidateManifestPath)
-  if (-not (Test-Path -LiteralPath $CandidateManifestPath -PathType Leaf)) {
-    throw "Candidate manifest is missing: $CandidateManifestPath"
+  if ($RequiresExactCandidate) {
+    $CandidateManifestPath = [System.IO.Path]::GetFullPath($CandidateManifestPath)
+    if (-not (Test-Path -LiteralPath $CandidateManifestPath -PathType Leaf)) {
+      throw "Candidate manifest is missing: $CandidateManifestPath"
+    }
   }
 }
 
@@ -300,6 +325,9 @@ function Remove-QaInstallerRegistrations {
       $registration.UninstallerPath
     )
     Remove-Item -LiteralPath $registration.RegistryPath -Recurse -Force
+    if (Test-Path -LiteralPath $registration.InstallRoot) {
+      Remove-Item -LiteralPath $registration.InstallRoot -Recurse -Force
+    }
   }
 }
 
@@ -353,6 +381,30 @@ function Invoke-QaExecutable {
   } finally {
     $process.Dispose()
   }
+}
+
+function Test-QaExecutableTimeoutRecovery {
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  $timedOutAsExpected = $false
+  try {
+    Invoke-QaExecutable `
+      -FilePath "powershell.exe" `
+      -Arguments '-NoLogo -NoProfile -Command "Start-Sleep -Seconds 120"' `
+      -Environment @{} `
+      -TimeoutSeconds 1 `
+      -Operation "controlled packaged QA timeout probe"
+  } catch {
+    if ($_.Exception.Message -notmatch "timed out after 1 seconds") {
+      throw
+    }
+    $timedOutAsExpected = $true
+  } finally {
+    $timer.Stop()
+  }
+  if (-not $timedOutAsExpected -or $timer.Elapsed.TotalSeconds -gt 35) {
+    throw "Packaged QA timeout recovery was not bounded."
+  }
+  Write-Host ("Controlled timeout recovery passed in {0:n1}s." -f $timer.Elapsed.TotalSeconds)
 }
 
 function Get-StringSha256 {
@@ -539,7 +591,7 @@ Write-Host "Testing committed revision $revision"
 Write-Host "Windows QA mode: $Mode"
 Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
 
-if ($IsFormal) {
+if ($RequiresExactCandidate) {
   $candidateDesktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
   & node (Join-Path $CheckoutPath "scripts\release\release-candidate.mjs") `
     asset `
@@ -552,6 +604,7 @@ if ($IsFormal) {
   Assert-NativeSuccess "candidate manifest and Windows installer binding"
 }
 
+if (-not $IsPackagedPreflight) {
 $gitDirectory = (& git -C $CheckoutPath rev-parse --absolute-git-dir).Trim()
 $script:QaCacheDirectory = Join-Path $gitDirectory "auto-email-sender-windows-qa"
 $script:QaCachePath = Join-Path $script:QaCacheDirectory "verified-stages.json"
@@ -805,9 +858,11 @@ if (-not (Test-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFing
   }
   Save-VerifiedStage -Name "desktop-tests" -Fingerprint $desktopTestFingerprint
 }
+}
 
-if ($IsFormal) {
-  Invoke-QaStep "Windows installer build" {
+if ($RunsPackagedLifecycle) {
+  if ($IsFormal) {
+    Invoke-QaStep "Windows installer build" {
     Push-Location (Join-Path $CheckoutPath "desktop")
     try {
       & npm run dist:prepared
@@ -816,17 +871,57 @@ if ($IsFormal) {
       Pop-Location
     }
   }
+  }
 
   Invoke-QaStep "Installed packaged split lifecycle and optional soak certification" {
     $desktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
-    $builtInstallerPath = Join-Path $CheckoutPath "desktop\release\AutoEmailSender-Setup-$($desktopPackage.version).exe"
-    if (-not (Test-Path -LiteralPath $builtInstallerPath -PathType Leaf)) {
-      throw "Locally built Windows installer is missing: $builtInstallerPath"
+    if ($IsFormal) {
+      $builtInstallerPath = Join-Path $CheckoutPath "desktop\release\AutoEmailSender-Setup-$($desktopPackage.version).exe"
+      if (-not (Test-Path -LiteralPath $builtInstallerPath -PathType Leaf)) {
+        throw "Locally built Windows installer is missing: $builtInstallerPath"
+      }
     }
 
     $qaTimestamp = Get-Date -Format "yyyyMMddTHHmmss"
     $qaBase = Join-Path $env:TEMP "auto-email-sender-packaged-qa"
+    $staleRegistrations = @(Get-QaInstallerRegistrations -QaBasePath $qaBase)
+    $staleProcessIds = New-Object System.Collections.Generic.List[int]
+    foreach ($registration in $staleRegistrations) {
+      $stalePrefix = [System.IO.Path]::GetFullPath($registration.InstallRoot).TrimEnd("\") + "\"
+      foreach ($process in @(Get-CimInstance Win32_Process)) {
+        if (
+          $process.ExecutablePath -and
+          $process.ExecutablePath.StartsWith(
+            $stalePrefix,
+            [System.StringComparison]::OrdinalIgnoreCase
+          )
+        ) {
+          $staleProcessIds.Add([int]$process.ProcessId)
+        }
+      }
+    }
+    if ($RequireRecoveredStaleState -and (
+      $staleRegistrations.Count -eq 0 -or
+      $staleProcessIds.Count -eq 0
+    )) {
+      throw "The interrupted rehearsal did not leave both registration and process state to recover."
+    }
     Remove-QaInstallerRegistrations -QaBasePath $qaBase
+    $remainingRegistrations = @(Get-QaInstallerRegistrations -QaBasePath $qaBase)
+    if ($remainingRegistrations.Count -ne 0) {
+      throw "Dedicated QA installer registrations remain after startup cleanup."
+    }
+    foreach ($staleProcessId in $staleProcessIds) {
+      if (Get-Process -Id $staleProcessId -ErrorAction SilentlyContinue) {
+        throw "Stale packaged QA process $staleProcessId survived startup recovery."
+      }
+    }
+    Write-Host "Recovered $($staleRegistrations.Count) stale dedicated QA installer registration(s)."
+    if ($IsPackagedPreflight) {
+      Test-QaExecutableTimeoutRecovery
+      & uv run --project (Join-Path $CheckoutPath "backend") --no-sync python -c "import psutil; print(psutil.__version__)"
+      Assert-NativeSuccess "packaged QA driver dependency probe"
+    }
     $qaRoot = Join-Path $qaBase "$revision-$qaTimestamp"
     $installRoot = Join-Path $qaRoot "安装 路径 Ω"
     $evidenceRoot = Join-Path $qaRoot "evidence"
@@ -838,7 +933,9 @@ if ($IsFormal) {
     $candidateManifestPathLocal = Join-Path $packageRoot "candidate-manifest.json"
     Copy-Item -LiteralPath $PreviousInstallerPath -Destination $previousInstallerPathLocal
     Copy-Item -LiteralPath $CandidateInstallerPath -Destination $candidateInstallerPathLocal
-    Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal
+    if ($RequiresExactCandidate) {
+      Copy-Item -LiteralPath $CandidateManifestPath -Destination $candidateManifestPathLocal
+    }
     $previousInstallerSha256 = (
       Get-FileHash -LiteralPath $previousInstallerPathLocal -Algorithm SHA256
     ).Hash.ToLowerInvariant()
@@ -852,11 +949,13 @@ if ($IsFormal) {
       throw "Guest-local candidate installer copy changed after shared-folder transfer."
     }
 
+    $installerTimeoutSeconds = if ($IsPackagedPreflight) { 120 } else { 600 }
     try {
     Invoke-QaExecutable `
       -FilePath $previousInstallerPathLocal `
       -Arguments "/S /D=$installRoot" `
       -Environment @{} `
+      -TimeoutSeconds $installerTimeoutSeconds `
       -Operation "silent previous-stable Windows installer"
     Start-Sleep -Seconds 2
     Stop-QaProcessesFromRoot -RootPath $installRoot
@@ -880,6 +979,24 @@ if ($IsFormal) {
       --manifest $upgradeManifest
     Assert-NativeSuccess "previous-stable packaged upgrade seeding"
 
+    if ($InjectInterruptionAfterPreviousInstall) {
+      Write-Warning "Injecting the requested hard interruption after previous-stable install and seed."
+      $staleProcessProbe = Join-Path $installRoot "qa-stale-process-probe.exe"
+      Copy-Item -LiteralPath $env:COMSPEC -Destination $staleProcessProbe
+      $staleProcess = Start-Process `
+        -FilePath $staleProcessProbe `
+        -ArgumentList "/c ping.exe -t 127.0.0.1" `
+        -WindowStyle Hidden `
+        -PassThru
+      Start-Sleep -Seconds 1
+      if ($staleProcess.HasExited) {
+        throw "Unable to create stale process state for the interrupted rehearsal."
+      }
+      Stop-Process -Id $PID -Force
+      Start-Sleep -Seconds 5
+      throw "Intentional interruption did not terminate the rehearsal runner."
+    }
+
     # A silent NSIS install must not be allowed to auto-launch against real
     # userData.  If it attempts to launch, this incomplete QA gate makes the
     # packaged main process fail closed before desktop bootstrap.
@@ -887,6 +1004,7 @@ if ($IsFormal) {
       -FilePath $candidateInstallerPathLocal `
       -Arguments "/S /D=$installRoot" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "installer-auto-launch-must-fail-closed" } `
+      -TimeoutSeconds $installerTimeoutSeconds `
       -Operation "silent Windows installer"
     Start-Sleep -Seconds 2
     Stop-QaProcessesFromRoot -RootPath $installRoot
@@ -915,10 +1033,12 @@ if ($IsFormal) {
     }
 
     $reportPaths = New-Object System.Collections.Generic.List[string]
-    $certificationArgument = if ($Mode -eq "prerelease") {
-      "--prerelease-certification"
-    } else {
-      "--certification"
+    $driverTierArgument = switch ($Mode) {
+      "release" { "--certification" }
+      "prerelease" { "--prerelease-certification" }
+      "candidate-admission" { "--candidate-admission" }
+      "harness-rehearsal" { "--harness-rehearsal" }
+      default { throw "Unsupported packaged QA mode: $Mode" }
     }
     foreach ($scenario in $scenarioSettings) {
       $scenarioEvidence = Join-Path $evidenceRoot ([string]$scenario.Name)
@@ -933,21 +1053,28 @@ if ($IsFormal) {
         "--artifact-root", $installRoot,
         "--package-file", $candidateInstallerPathLocal,
         "--artifacts-dir", $scenarioEvidence,
-        $certificationArgument,
+        $driverTierArgument,
         "--expected-app-version", ([string]$desktopPackage.version),
         "--expected-package-sha256", $installerSha256,
-        "--candidate-manifest-file", $candidateManifestPathLocal,
-        "--expected-candidate-run-id", ([string]$ExpectedCandidateRunId),
         "--expected-revision", $revision,
         "--repository-root", $CheckoutPath
       )
+      if ($RequiresExactCandidate) {
+        $driverArguments += @(
+          "--candidate-manifest-file", $candidateManifestPathLocal,
+          "--expected-candidate-run-id", ([string]$ExpectedCandidateRunId)
+        )
+      }
       if ($null -ne $scenario.Duration) {
         $driverArguments += @("--duration-seconds", ([string]$scenario.Duration))
       }
       if ($null -ne $scenario.Seed) {
         $driverArguments += @("--seed", ([string]$scenario.Seed))
       }
-      if ($scenario.Name -in @("lifecycle", "seeded-chaos")) {
+      if (
+        $scenario.Name -in @("lifecycle", "seeded-chaos") -and
+        ($IsFormal -or $Mode -eq "candidate-admission")
+      ) {
         $driverArguments += "--system-sleep-wake"
       }
       if ($scenario.Name -eq "lifecycle") {
@@ -960,7 +1087,7 @@ if ($IsFormal) {
         )
       }
       & uv @driverArguments
-      Assert-NativeSuccess "packaged $($scenario.Name) certification"
+      Assert-NativeSuccess "packaged $($scenario.Name) $Mode"
 
       $reports = @(
         Get-ChildItem -LiteralPath $scenarioEvidence -Filter "report.json" -File -Recurse
@@ -969,8 +1096,20 @@ if ($IsFormal) {
         throw "Expected one packaged $($scenario.Name) report; found $($reports.Count)."
       }
       $report = Get-Content -Raw -LiteralPath $reports[0].FullName | ConvertFrom-Json
-      if ($report.status -ne "passed" -or $report.certification_eligible -ne $true) {
-        throw "Packaged $($scenario.Name) report is not valid certification evidence."
+      $expectedCertificationEligible = $IsFormal
+      $expectedEvidencePurpose = if ($IsFormal) {
+        "formal-certification"
+      } elseif ($Mode -eq "candidate-admission") {
+        "non-certifying-candidate-admission"
+      } else {
+        "non-certifying-harness-rehearsal"
+      }
+      if (
+        $report.status -ne "passed" -or
+        $report.certification_eligible -ne $expectedCertificationEligible -or
+        $report.evidence_purpose -ne $expectedEvidencePurpose
+      ) {
+        throw "Packaged $($scenario.Name) report has the wrong evidence tier for $Mode."
       }
       $reportPaths.Add($reports[0].FullName)
     }
@@ -984,6 +1123,7 @@ if ($IsFormal) {
       -FilePath $uninstallerPath `
       -Arguments "/S" `
       -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "uninstaller-must-not-launch-app" } `
+      -TimeoutSeconds $installerTimeoutSeconds `
       -Operation "silent Windows uninstaller"
     Start-Sleep -Seconds 2
     if (Test-Path -LiteralPath $appExecutable) {
@@ -996,13 +1136,42 @@ if ($IsFormal) {
         throw "Uninstall did not preserve isolated user data: $databasePath"
       }
     }
+    if ($IsPackagedPreflight) {
+      Invoke-QaExecutable `
+        -FilePath $candidateInstallerPathLocal `
+        -Arguments "/S /D=$installRoot" `
+        -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-install-must-fail-closed" } `
+        -TimeoutSeconds $installerTimeoutSeconds `
+        -Operation "repeat candidate Windows installer"
+      Start-Sleep -Seconds 2
+      Stop-QaProcessesFromRoot -RootPath $installRoot
+      if (-not (Test-Path -LiteralPath $appExecutable -PathType Leaf)) {
+        throw "Repeat candidate install did not restore the packaged app."
+      }
+      $repeatUninstallerPath = Join-Path $installRoot "Uninstall Auto Email Sender.exe"
+      Invoke-QaExecutable `
+        -FilePath $repeatUninstallerPath `
+        -Arguments "/S" `
+        -Environment @{ "AUTO_EMAIL_SENDER_PACKAGED_QA" = "repeat-uninstall-must-not-launch-app" } `
+        -TimeoutSeconds $installerTimeoutSeconds `
+        -Operation "repeat Windows uninstaller"
+      Start-Sleep -Seconds 2
+      if (Test-Path -LiteralPath $appExecutable) {
+        throw "Installed executable remains after repeat uninstall: $appExecutable"
+      }
+    }
     Write-Host "Windows packaged QA artifacts: $qaRoot"
     } finally {
       Stop-QaProcessesFromRoot -RootPath $installRoot
       Remove-QaInstallerRegistrations -QaBasePath $qaBase -InstallRoot $installRoot
     }
   }
-  Write-Host "`nWindows release QA passed for $revision"
+  if ($IsFormal) {
+    Write-Host "`nWindows release QA passed for $revision"
+  } else {
+    Write-Host "`nWindows $Mode passed for $revision"
+    Write-Host "This report is explicitly non-certifying and cannot replace formal QA."
+  }
 } else {
   Write-Host "`nWindows quick QA passed for $revision"
   Write-Host "Quick QA skips VC++ installer preparation, NSIS, and packaged lifecycle checks; it is not valid release preflight evidence."

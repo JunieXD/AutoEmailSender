@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import uuid
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -34,6 +35,37 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_packaged_diagnostics_export_is_bounded_and_rejects_runtime_token(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            export_path = Path(temp_dir) / "diagnostics.zip"
+
+            def write_export(extra: bytes = b"") -> None:
+                with zipfile.ZipFile(export_path, "w") as archive:
+                    archive.writestr(
+                        "manifest.json",
+                        json.dumps({"report_id": "qa-report"}),
+                    )
+                    archive.writestr("summary.json", "{}")
+                    archive.writestr("checksums.sha256", "abc  summary.json\n")
+                    archive.writestr("README.txt", b"local diagnostics" + extra)
+
+            write_export()
+            evidence = runner._verify_packaged_diagnostics_export(
+                export_path,
+                forbidden_values=("runtime-secret",),
+            )
+            self.assertEqual(evidence["report_id"], "qa-report")
+            self.assertEqual(evidence["entry_count"], 4)
+
+            write_export(b" runtime-secret")
+            with self.assertRaisesRegex(runner.QaFailure, "credential"):
+                runner._verify_packaged_diagnostics_export(
+                    export_path,
+                    forbidden_values=("runtime-secret",),
+                )
+
     def test_previous_artifact_hash_uses_windows_extended_length_paths(self) -> None:
         with mock.patch.object(seed_runner.sys, "platform", "win32"):
             drive_path = seed_runner._extended_length_path(
@@ -738,6 +770,120 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             self.assertTrue(accepted.system_sleep_wake)
             self.assertEqual(accepted.existing_user_data, existing.resolve())
             self.assertEqual(accepted.upgrade_manifest, manifest.resolve())
+
+    def test_rehearsal_is_non_certifying_and_rejects_candidate_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "app"
+            executable.write_bytes(b"fixture")
+            package_file = root / "current-package.dmg"
+            package_file.write_bytes(b"current package")
+            previous_package_file = root / "previous-package.dmg"
+            previous_package_file.write_bytes(b"previous package")
+            existing = root / runner.QA_PATH_MARKER / "previous" / "user-data"
+            existing.mkdir(parents=True, mode=0o700)
+            existing.chmod(0o700)
+            upgrade_manifest = root / "upgrade-manifest.json"
+            upgrade_manifest.write_text("{}", encoding="utf-8")
+            candidate_manifest = root / "invalidated-candidate.json"
+            candidate_manifest.write_text("{}", encoding="utf-8")
+            base = [
+                "--scenario",
+                "lifecycle",
+                "--app-executable",
+                str(executable),
+                "--artifacts-dir",
+                str(root / "evidence"),
+                "--harness-rehearsal",
+                "--package-file",
+                str(package_file),
+                "--expected-package-sha256",
+                runner._sha256_file(package_file),
+                "--existing-user-data",
+                str(existing),
+                "--upgrade-manifest",
+                str(upgrade_manifest),
+                "--expected-previous-version",
+                "2.5.4",
+                "--previous-package-file",
+                str(previous_package_file),
+                "--expected-previous-package-sha256",
+                runner._sha256_file(previous_package_file),
+                "--repository-root",
+                str(root),
+            ]
+            accepted = runner.parse_args(base)
+            self.assertTrue(accepted.harness_rehearsal)
+            self.assertFalse(accepted.certification)
+            self.assertFalse(accepted.prerelease_certification)
+
+            with self.assertRaises(SystemExit):
+                runner.parse_args(
+                    [
+                        *base,
+                        "--candidate-manifest-file",
+                        str(candidate_manifest),
+                        "--expected-candidate-run-id",
+                        "123456",
+                    ]
+                )
+
+    def test_candidate_admission_requires_exact_binding_and_native_sleep(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "app"
+            executable.write_bytes(b"fixture")
+            package_file = root / "current-package.dmg"
+            package_file.write_bytes(b"current package")
+            previous_package_file = root / "previous-package.dmg"
+            previous_package_file.write_bytes(b"previous package")
+            existing = root / runner.QA_PATH_MARKER / "previous" / "user-data"
+            existing.mkdir(parents=True, mode=0o700)
+            existing.chmod(0o700)
+            upgrade_manifest = root / "upgrade-manifest.json"
+            upgrade_manifest.write_text("{}", encoding="utf-8")
+            candidate_manifest = root / "candidate.json"
+            candidate_manifest.write_text("{}", encoding="utf-8")
+            base = [
+                "--scenario",
+                "lifecycle",
+                "--app-executable",
+                str(executable),
+                "--artifacts-dir",
+                str(root / "evidence"),
+                "--candidate-admission",
+                "--expected-revision",
+                "a" * 40,
+                "--repository-root",
+                str(root),
+                "--package-file",
+                str(package_file),
+                "--expected-app-version",
+                "2.6.0-beta.1",
+                "--expected-package-sha256",
+                runner._sha256_file(package_file),
+                "--candidate-manifest-file",
+                str(candidate_manifest),
+                "--expected-candidate-run-id",
+                "123456",
+                "--existing-user-data",
+                str(existing),
+                "--upgrade-manifest",
+                str(upgrade_manifest),
+                "--expected-previous-version",
+                "2.5.4",
+                "--previous-package-file",
+                str(previous_package_file),
+                "--expected-previous-package-sha256",
+                runner._sha256_file(previous_package_file),
+            ]
+            with self.assertRaises(SystemExit):
+                runner.parse_args(base)
+
+            accepted = runner.parse_args([*base, "--system-sleep-wake"])
+            self.assertTrue(accepted.candidate_admission)
+            self.assertFalse(accepted.certification)
+            self.assertFalse(accepted.prerelease_certification)
 
     def test_upgrade_verification_requires_repository_head_and_a_new_previous_revision_backup(
         self,

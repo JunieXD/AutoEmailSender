@@ -6,6 +6,10 @@ import {
   configurePackagedQaUserData,
   getActivePackagedQaIsolatedHomePath,
   getActivePackagedQaUserDataPath,
+  getPackagedQaDiagnosticsExportPath,
+  PACKAGED_QA_DIAGNOSTICS_EXPORT_ENV,
+  PACKAGED_QA_DIAGNOSTICS_EXPORT_NAME,
+  PACKAGED_QA_DIAGNOSTICS_EXPORT_VALUE,
   PACKAGED_QA_ENABLE_ENV,
   PACKAGED_QA_ENABLE_VALUE,
   PACKAGED_QA_NONCE_ENV,
@@ -170,6 +174,13 @@ describe("packaged QA userData isolation", () => {
     expect(getActivePackagedQaIsolatedHomePath()).toBe(
       path.join(userDataPath, "isolated-home"),
     );
+    expect(getPackagedQaDiagnosticsExportPath({})).toBeNull();
+    expect(() => getPackagedQaDiagnosticsExportPath({
+      [PACKAGED_QA_DIAGNOSTICS_EXPORT_ENV]: "true",
+    })).toThrow("not authorized");
+    expect(getPackagedQaDiagnosticsExportPath({
+      [PACKAGED_QA_DIAGNOSTICS_EXPORT_ENV]: PACKAGED_QA_DIAGNOSTICS_EXPORT_VALUE,
+    })).toBe(path.join(userDataPath, PACKAGED_QA_DIAGNOSTICS_EXPORT_NAME));
   });
 
   it.skipIf(process.platform === "win32")("rejects a symbolic-link isolated home", async () => {

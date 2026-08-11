@@ -891,3 +891,23 @@ Python QA 进程均为 0，VM 手动恢复 suspended。候选三项资产复哈�
 跳过。但 manifest 绑定的是 `45c5d5f`，因此 `31464156897` 已失效，不得在清理 VM 后直接重用。
 形成最终文档提交后，必须再次取得新 SHA 的 push 与 Certify dispatch 授权；仍未授权 tag、公开
 GitHub Prerelease、稳定 feed、master 合并或稳定版发布。
+
+### B5 续：正式 QA 前移快速失败门禁
+
+复盘三次 replacement 后确认，候选传输改名可在 1 分钟内发现，v2.5.4 settings 422 和 Windows
+长路径可在旧版 seed 后数分钟发现，stale uninstall 与无界 wait 也应在安装入口数秒内发现；旧
+runner 却把这些边界放在 release contracts、VC++、Frontend、CLI、Backend、冻结 build、Desktop
+和本地 NSIS 之后。为此，本地实现三层门禁：
+
+- `harness-rehearsal` 不绑定 manifest/run，可使用 run `31464156897` 的失效包；第一轮故意中断，
+  第二轮必须证明 Windows stale 注册表/进程和 1 秒 timeout 子树恢复，或 macOS mount trap 恢复；
+- `candidate-admission` 绑定 exact manifest/run/SHA/version/新旧摘要，跳过昂贵源码与本地重建，
+  直接执行覆盖升级、split/combined lifecycle、迁移完整性、原生 sleep/wake、真实 Beta 诊断 ZIP、
+  卸载和重复安装；
+- 正式 `--prerelease-certification` 的 lifecycle、连续 2h normal 和连续 1h chaos 保持不变。
+
+packaged driver 对前两层固定输出 `certification_eligible=false` 和独立 `evidence_purpose`；rehearsal
+主动拒绝失效 manifest，admission 才允许 exact candidate 绑定。提交前本地结果为 Backend packaged
+QA 24/24、Desktop 聚焦 36/36、typecheck 通过、Desktop 全量 256 passed/3 skipped、四个 POSIX
+release/prerelease 合同通过、Ruff/Bash syntax/`git diff --check` 通过。真实双平台两轮 rehearsal
+仍待执行，因此本节尚不关闭 AC-BETA-QA-00，也不构成申请 replacement Certify 的依据。

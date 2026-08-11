@@ -46,6 +46,48 @@ rtk bash scripts/quality/run-windows-vm-release-qa.sh --quick
 
 快速模式仍会传输已提交的 `HEAD`，并按输入指纹运行或复用发布入口契约、前端、CLI、后端和桌面测试及冻结构建，但会跳过 VC++ 安装器准备、NSIS 构建和打包后的启动/运行身份生命周期。因此它适合日常 Windows 回归，不构成发布前验收结果。最终候选提交后、提升公开前，必须对同一 SHA 运行一次不带 `--quick` 的正式模式。
 
+### Harness rehearsal 与 candidate admission
+
+runner 或安装恢复逻辑变化后，先用可丢弃的旧包连续执行两轮非认证 rehearsal。第一轮必须预期
+失败并留下专用 QA 注册表和进程；第二轮要求自动发现、终止并清理它们，同时运行 1 秒受控超时
+探针，证明 installer wait 不会再次无限等待：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh \
+  --harness-rehearsal \
+  --candidate-installer /绝对路径/失效或本地候选.exe \
+  --candidate-installer-sha256 <现场SHA-256> \
+  --previous-installer /绝对路径/上一稳定版.exe \
+  --previous-installer-sha256 <公开稳定版SHA-256> \
+  --inject-interruption-after-previous-install
+
+rtk bash scripts/quality/run-windows-vm-release-qa.sh \
+  --harness-rehearsal \
+  --candidate-installer /绝对路径/同一候选.exe \
+  --candidate-installer-sha256 <同一SHA-256> \
+  --previous-installer /绝对路径/同一上一稳定版.exe \
+  --previous-installer-sha256 <同一公开稳定版SHA-256> \
+  --require-recovered-stale-state
+```
+
+rehearsal 禁止 `--candidate-manifest` 和 `--candidate-run-id`，输出永远不是认证证据。新 Certify
+完成后，再用 exact bytes 运行 admission；它跳过 VC++、前后端/CLI/Desktop 全套和本地 NSIS
+重建，直接进入上一稳定版安装、seed、覆盖升级、lifecycle、卸载和重复安装：
+
+```bash
+rtk bash scripts/quality/run-windows-vm-release-qa.sh \
+  --candidate-admission \
+  --candidate-installer /绝对路径/AutoEmailSender-Setup-<当前版本>.exe \
+  --candidate-installer-sha256 <候选清单SHA-256> \
+  --candidate-manifest /绝对路径/prerelease-candidate.json \
+  --candidate-run-id <候选run ID> \
+  --previous-installer /绝对路径/上一稳定版.exe \
+  --previous-installer-sha256 <公开稳定版SHA-256>
+```
+
+admission 会绑定 clean SHA/manifest/run/version，并要求原生 sleep/wake，但报告仍固定为
+`certification_eligible=false`。只有 admission 通过后才运行本页后续正式模式。
+
 ## 一键验收
 
 先提交需要测试的代码。脚本只打包 `HEAD`，不会复制工作区中的未提交修改：

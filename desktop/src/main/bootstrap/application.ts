@@ -60,7 +60,10 @@ import {
   startWindowCreationOnce,
 } from "../shell/window-lifecycle.js";
 import { createTrayIcon, getWindowIconPath } from "../shell/window-icon.js";
-import { getActivePackagedQaIsolatedHomePath } from "../packaged-qa/user-data.js";
+import {
+  getActivePackagedQaIsolatedHomePath,
+  getPackagedQaDiagnosticsExportPath,
+} from "../packaged-qa/user-data.js";
 import {
   buildBackendModeRelaunchArgs,
   buildBackendModeStatus,
@@ -146,6 +149,7 @@ const betaDiagnosticsRecorder = new DesktopBetaDiagnosticsRecorder({
     ...(backend?.workerPid ? { workerPid: backend.workerPid } : {}),
   }),
 });
+const packagedQaDiagnosticsExportPath = getPackagedQaDiagnosticsExportPath();
 const releaseBuildIdentity = readDesktopReleaseBuildIdentity({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
@@ -159,7 +163,33 @@ const betaDiagnosticsService = createDesktopBetaDiagnosticsService({
   backendClient: desktopBackendClient,
   getBackendModeStatus: getDesktopBackendModeStatus,
   buildIdentity: releaseBuildIdentity.diagnostics,
+  ...(packagedQaDiagnosticsExportPath === null
+    ? {}
+    : {
+        dependencies: {
+          showSaveDialog: async () => ({
+            canceled: false,
+            filePath: packagedQaDiagnosticsExportPath,
+          }),
+        },
+      }),
 });
+let packagedQaDiagnosticsExportStarted = false;
+
+async function exportPackagedQaDiagnosticsOnce(): Promise<void> {
+  if (
+    packagedQaDiagnosticsExportPath === null
+    || packagedQaDiagnosticsExportStarted
+  ) {
+    return;
+  }
+  packagedQaDiagnosticsExportStarted = true;
+  const result = await betaDiagnosticsService.exportBundle("24h");
+  if (result.status !== "saved") {
+    throw new Error("Packaged QA diagnostics export was not saved.");
+  }
+  console.log(`PACKAGED_QA_DIAGNOSTICS_EXPORT=${packagedQaDiagnosticsExportPath}`);
+}
 const launchedAtStartup = isLaunchedAtStartup({
   argv: process.argv,
   platform: process.platform,
@@ -828,6 +858,9 @@ function publishBackendReady(controller: BackendController): void {
   controller.ready
     .then(() => {
       agentUiHandoffService.pollNow();
+      void exportPackagedQaDiagnosticsOnce().catch((error: unknown) => {
+        console.warn(`Unable to export packaged QA diagnostics: ${getErrorMessage(error)}`);
+      });
       void finalizeAgentRuntimeDescriptor(controller).catch(async (error: unknown) => {
         await removeAgentRuntime(controller);
         console.warn(`Unable to finalize Agent runtime descriptor: ${getErrorMessage(error)}`);

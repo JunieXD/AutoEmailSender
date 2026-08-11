@@ -97,6 +97,26 @@ manifest 绑定 repository、版本、channel、来源分支、SHA、run ID、�
 哈希、稳定 Latest/feed 基线以及两平台资产名、大小和 SHA-256。记录 candidate run ID；不要混用
 不同 run 的安装包、manifest 或公告。
 
+## 正式认证前的快速失败门禁
+
+测试版 QA 固定分三层，证据不可互换：
+
+1. `harness-rehearsal`：修改 runner、安装器恢复或证据脚本后，在再次申请 candidate 前执行。
+   可使用已失效候选包，但不得传 candidate manifest/run ID。第一轮在上一稳定版 seed 后故意中断，
+   第二轮必须立即证明 Windows stale 注册表/进程或 macOS DMG 挂载已自动清理，同时完成有界超时
+   自检。目标时长约 5～10 分钟。
+2. `candidate-admission`：Certify 产生新安装包后，使用同一 run 的 manifest、run ID、SHA 和摘要，
+   在昂贵源码/构建回归及长稳前直接验证真实覆盖安装边界。覆盖上一稳定版 seed、中文/空格/Ω
+   路径、split/combined、迁移与完整性、诊断导出、sleep/wake、卸载和重复安装。目标每平台约
+   10～15 分钟。
+3. 正式认证：保持现有 `--prerelease-certification` lifecycle、连续 7200 秒 normal soak 和
+   连续 3600 秒 seeded chaos，不降低、不累计短测时长。
+
+前两层报告必须同时满足 `certification_eligible=false`，并分别记录
+`evidence_purpose=non-certifying-harness-rehearsal` 或
+`non-certifying-candidate-admission`。推荐串行顺序是 Windows admission → macOS admission →
+Windows 正式认证 → macOS 正式认证；失效候选只允许进入 rehearsal，不能混入 admission 或正式证据。
+
 ## Exact-package 内部认证
 
 两平台都必须使用候选 workflow 下载的原始字节。`--prerelease-certification` 是测试版正式证据，
