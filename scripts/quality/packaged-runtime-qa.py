@@ -278,16 +278,16 @@ class EvidenceRecorder:
         self.report = report
         self._lock = threading.Lock()
 
-    def event(self, name: str, **details: object) -> None:
+    def event(self, event_name: str, **details: object) -> None:
         payload = {
             "at": _utc_now(),
             "monotonic_seconds": time.monotonic(),
-            "event": name,
+            "event": event_name,
             "details": _redact_payload(details),
         }
         with self._lock:
             _append_json_line(self.paths.trace_path, payload)
-        print(f"[{payload['at']}] {name}", flush=True)
+        print(f"[{payload['at']}] {event_name}", flush=True)
 
     def sample(self, payload: dict[str, object]) -> None:
         with self._lock:

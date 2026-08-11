@@ -36,6 +36,19 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_evidence_recorder_check_records_named_trace_event(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = runner._create_paths(Path(temp_dir))
+            report: dict[str, object] = {"checks": []}
+            recorder = runner.EvidenceRecorder(paths, report)
+
+            recorder.check("candidate_digest", passed=True)
+
+            trace = json.loads(paths.trace_path.read_text(encoding="utf-8"))
+            self.assertEqual(trace["event"], "check")
+            self.assertEqual(trace["details"]["name"], "candidate_digest")
+            self.assertTrue(trace["details"]["passed"])
+
     def test_packaged_diagnostics_export_is_bounded_and_rejects_runtime_token(
         self,
     ) -> None:
