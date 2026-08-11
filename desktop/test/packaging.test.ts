@@ -326,6 +326,8 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("$startInfo.EnvironmentVariables[");
     expect(guestRunner).toContain("[int]$TimeoutSeconds = 600");
     expect(guestRunner).toContain("$process.WaitForExit($TimeoutSeconds * 1000)");
+    expect(guestRunner).toContain("Timed-out process tree:");
+    expect(guestRunner).not.toContain("CommandLine = [string]$_.CommandLine");
     expect(guestRunner).toContain("taskkill.exe /PID $process.Id /T /F");
     expect(guestRunner).toContain("Get-QaInstallerRegistrations");
     expect(guestRunner).toContain("Remove-QaInstallerRegistrations");

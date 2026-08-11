@@ -357,6 +357,36 @@ function Invoke-QaExecutable {
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
       $process.Refresh()
       $windowTitle = $process.MainWindowTitle
+      $allProcesses = @(Get-CimInstance Win32_Process)
+      $treePids = New-Object System.Collections.Generic.HashSet[int]
+      $null = $treePids.Add([int]$process.Id)
+      do {
+        $added = $false
+        foreach ($candidate in $allProcesses) {
+          if (
+            $treePids.Contains([int]$candidate.ParentProcessId) -and
+            $treePids.Add([int]$candidate.ProcessId)
+          ) {
+            $added = $true
+          }
+        }
+      } while ($added)
+      $treeSummary = @(
+        $allProcesses |
+          Where-Object { $treePids.Contains([int]$_.ProcessId) } |
+          ForEach-Object {
+            [pscustomobject]@{
+              Pid = [int]$_.ProcessId
+              ParentPid = [int]$_.ParentProcessId
+              Name = [string]$_.Name
+              ExecutablePath = [string]$_.ExecutablePath
+            }
+          }
+      )
+      Write-Warning (
+        "Timed-out process tree: " +
+        ($treeSummary | ConvertTo-Json -Compress -Depth 3)
+      )
       & taskkill.exe /PID $process.Id /T /F | Out-Host
       $stopped = $process.WaitForExit(30000)
       $windowDetail = if ([string]::IsNullOrWhiteSpace($windowTitle)) {
