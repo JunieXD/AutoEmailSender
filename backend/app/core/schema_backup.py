@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,15 +22,15 @@ def create_schema_backup(
     source_schema_revision: str | None,
     target_schema_revision: str,
 ) -> SchemaBackupResult:
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    _filesystem_path(backup_dir).mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(UTC)
     timestamp = created_at.strftime("%Y%m%d-%H%M%S")
     backup_path = _unique_backup_path(backup_dir, app_version, timestamp)
     metadata_path = backup_path.with_suffix(".json")
 
-    source = sqlite3.connect(database_path)
+    source = sqlite3.connect(_filesystem_path(database_path))
     try:
-        destination = sqlite3.connect(backup_path)
+        destination = sqlite3.connect(_filesystem_path(backup_path))
         try:
             source.backup(destination)
         finally:
@@ -44,7 +45,7 @@ def create_schema_backup(
         "source_schema_revision": source_schema_revision,
         "target_schema_revision": target_schema_revision,
     }
-    metadata_path.write_text(
+    _filesystem_path(metadata_path).write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -56,10 +57,11 @@ def prune_schema_backups(
     *,
     keep: int = SCHEMA_BACKUP_KEEP_COUNT,
 ) -> None:
-    if not backup_dir.exists():
+    filesystem_backup_dir = _filesystem_path(backup_dir)
+    if not filesystem_backup_dir.exists():
         return
     backups = sorted(
-        backup_dir.glob("auto_email_sender.before-*.db"),
+        filesystem_backup_dir.glob("auto_email_sender.before-*.db"),
         key=_backup_sort_key,
         reverse=True,
     )
@@ -71,7 +73,10 @@ def _unique_backup_path(backup_dir: Path, app_version: str, timestamp: str) -> P
     base_name = f"auto_email_sender.before-{app_version}.{timestamp}"
     candidate = backup_dir / f"{base_name}.db"
     counter = 1
-    while candidate.exists() or candidate.with_suffix(".json").exists():
+    while (
+        _filesystem_path(candidate).exists()
+        or _filesystem_path(candidate.with_suffix(".json")).exists()
+    ):
         candidate = backup_dir / f"{base_name}-{counter}.db"
         counter += 1
     return candidate
@@ -87,3 +92,14 @@ def _backup_sort_key(db_path: Path) -> tuple[datetime, str]:
         except Exception:
             pass
     return (datetime.fromtimestamp(db_path.stat().st_mtime, tz=UTC), db_path.name)
+
+
+def _filesystem_path(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    raw = str(path.absolute())
+    if raw.startswith("\\\\?\\"):
+        return Path(raw)
+    if raw.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{raw[2:]}")
+    return Path(f"\\\\?\\{raw}")

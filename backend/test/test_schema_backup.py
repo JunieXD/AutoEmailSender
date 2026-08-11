@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.core import schema_backup
 from app.core.schema_backup import create_schema_backup, prune_schema_backups
 
 class SchemaBackupTests(unittest.TestCase):
@@ -76,6 +79,45 @@ class SchemaBackupTests(unittest.TestCase):
                 copied.close()
 
             self.assertEqual(rows, [(1, "committed")])
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows long paths")
+    def test_creates_database_copy_beyond_max_path(self) -> None:
+        temp_root = Path(tempfile.mkdtemp())
+        try:
+            root = temp_root
+            for index in range(4):
+                root /= f"segment-{index}-" + ("x" * 60)
+            db_path = root / "auto_email_sender.db"
+            backup_dir = root / "backups" / "schema"
+            schema_backup._filesystem_path(root).mkdir(parents=True)
+            connection = sqlite3.connect(schema_backup._filesystem_path(db_path))
+            try:
+                connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY)")
+                connection.execute("INSERT INTO sample (id) VALUES (1)")
+                connection.commit()
+            finally:
+                connection.close()
+
+            result = create_schema_backup(
+                database_path=db_path,
+                backup_dir=backup_dir,
+                app_version="2.6.0-beta.1",
+                source_schema_revision="20260808_crawl_llm_snapshot",
+                target_schema_revision="20260810_merge_agent_ui_delivery",
+            )
+
+            self.assertGreater(len(str(result.database_backup_path)), 260)
+            backup_path = schema_backup._filesystem_path(result.database_backup_path)
+            metadata_path = schema_backup._filesystem_path(result.metadata_path)
+            self.assertTrue(backup_path.is_file())
+            self.assertTrue(metadata_path.is_file())
+            copied = sqlite3.connect(backup_path)
+            try:
+                self.assertEqual(copied.execute("SELECT id FROM sample").fetchone()[0], 1)
+            finally:
+                copied.close()
+        finally:
+            shutil.rmtree(schema_backup._filesystem_path(temp_root))
 
     def test_prunes_schema_backups_to_recent_five_pairs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
