@@ -1,6 +1,6 @@
 import { createRef, useRef, useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pagination } from "./Pagination";
 import type { PaginationChange } from "@/lib/pagination";
 
@@ -12,6 +12,10 @@ beforeEach(() => {
     configurable: true,
     value: scrollIntoView,
   });
+});
+
+afterEach(() => {
+  document.querySelector('[data-app-scroll-container="true"]')?.remove();
 });
 
 describe("Pagination", () => {
@@ -152,6 +156,72 @@ describe("Pagination", () => {
       behavior: "auto",
       block: "start",
     });
+  });
+
+  it("scrolls the application content container after a page change without moving the header", () => {
+    const appScroller = document.createElement("div");
+    appScroller.dataset.appScrollContainer = "true";
+    Object.defineProperties(appScroller, {
+      scrollTop: { configurable: true, value: 500, writable: true },
+      scrollLeft: { configurable: true, value: 0, writable: true },
+    });
+    appScroller.getBoundingClientRect = () => ({
+      top: 128,
+      left: 0,
+      right: 1000,
+      bottom: 800,
+      width: 1000,
+      height: 672,
+      x: 0,
+      y: 128,
+      toJSON: () => ({}),
+    });
+    const containerScrollTo = vi.fn();
+    appScroller.scrollTo = containerScrollTo;
+    document.body.append(appScroller);
+
+    const Harness = () => {
+      const [pagination, setPagination] = useState({ page: 1, pageSize: 10 });
+      const targetRef = useRef<HTMLHeadingElement | null>(null);
+      return (
+        <>
+          <h2 ref={targetRef} tabIndex={-1}>
+            容器列表开头
+          </h2>
+          <Pagination
+            {...pagination}
+            totalCount={30}
+            ariaLabel="容器任务分页"
+            focusTargetRef={targetRef}
+            onChange={(change) => setPagination(change)}
+          />
+        </>
+      );
+    };
+    render(<Harness />, { container: appScroller });
+    const target = screen.getByRole("heading", { name: "容器列表开头" });
+    target.getBoundingClientRect = () => ({
+      top: 628,
+      left: 0,
+      right: 800,
+      bottom: 680,
+      width: 800,
+      height: 52,
+      x: 0,
+      y: 628,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(target).toHaveFocus();
+    expect(containerScrollTo).toHaveBeenCalledWith({
+      left: 0,
+      top: 976,
+      behavior: "auto",
+    });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    appScroller.remove();
   });
 
   it("does not move focus when a requested controlled change is not committed", () => {

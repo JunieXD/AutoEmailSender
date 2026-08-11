@@ -24,13 +24,6 @@ vi.mock("@/components/organisms/RouteScrollRestoration", () => ({
   RouteScrollRestoration: () => null,
 }));
 
-// react-activity-keepalive-kit 自带 useLayoutEffect+startTransition 流程，会让首帧渲染为空 div，
-// 这与本测试关心的"Suspense fallback 同步可见、lazy 模块延迟加载"无关。Mock 为透传组件即可。
-vi.mock("react-activity-keepalive-kit", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
-
 vi.mock("@/components/organisms/TopNavBar", () => ({
   TopNavBar: () => <nav>导航栏</nav>,
 }));
@@ -50,6 +43,13 @@ describe("App route loading", () => {
 
     expect(await screen.findByText("首页内容")).toBeInTheDocument();
     expect(homePageModuleLoaded).toHaveBeenCalledTimes(1);
+
+    const scrollContainer = document.querySelector<HTMLElement>(
+      '[data-app-scroll-container="true"]',
+    );
+    expect(scrollContainer).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(scrollContainer).toContainElement(screen.getByText("首页内容"));
+    expect(scrollContainer).not.toContainElement(screen.getByText("导航栏"));
   });
 
   it("supports desktop hash routes with navigation blockers", async () => {

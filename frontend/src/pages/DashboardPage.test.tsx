@@ -516,9 +516,9 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("button", { name: "导师" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "邮件" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Token" })).toBeInTheDocument();
-    expect(screen.getByTestId("statistics-section-mentor")).toHaveClass("scroll-mt-44");
-    expect(screen.getByTestId("statistics-section-email")).toHaveClass("scroll-mt-44");
-    expect(screen.getByTestId("statistics-section-token")).toHaveClass("scroll-mt-44");
+    expect(screen.getByTestId("statistics-section-mentor")).toHaveClass("scroll-mt-6");
+    expect(screen.getByTestId("statistics-section-email")).toHaveClass("scroll-mt-6");
+    expect(screen.getByTestId("statistics-section-token")).toHaveClass("scroll-mt-6");
   });
 
   it("labels shared communication metrics and reloads when the scope changes", async () => {

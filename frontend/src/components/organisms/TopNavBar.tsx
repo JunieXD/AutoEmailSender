@@ -54,7 +54,7 @@ export const TopNavBar = () => {
   return (
     <nav
       data-app-header="true"
-      className="sticky top-0 z-50 border-b border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,250,241,0.98),rgba(255,247,237,0.94))] shadow-[0_10px_30px_-24px_rgba(41,37,36,0.4)] backdrop-blur-xl"
+      className="relative z-50 shrink-0 border-b border-stone-200/80 bg-[linear-gradient(180deg,rgb(255,250,241),rgb(255,247,237))] shadow-[0_10px_30px_-24px_rgba(41,37,36,0.4)]"
     >
       <div className="mx-auto max-w-7xl px-6 py-3">
         <div className="flex flex-col gap-3">

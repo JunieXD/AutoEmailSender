@@ -62,11 +62,17 @@ const AppShell = () => (
           <WorkspaceDraftGuardProvider>
             <SelectionProvider>
               <AgentUiHandoffProvider>
-                <div className="flex min-h-screen flex-col bg-background">
+                <div
+                  data-app-shell="true"
+                  className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background"
+                >
                   <DesktopStartupStatusBanner />
                   <AgentSupportOnboarding />
                   <TopNavBar />
-                  <div className="min-h-0 flex-1">
+                  <div
+                    data-app-scroll-container="true"
+                    className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+                  >
                     <Suspense fallback={routeLoadingFallback}>
                       <Outlet />
                     </Suspense>

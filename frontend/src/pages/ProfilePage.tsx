@@ -45,6 +45,7 @@ import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
 import { textToEmailHtml } from "@/lib/richEmail";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import {
   createIdentity,
   deleteIdentity,
@@ -2088,12 +2089,13 @@ export const ProfilePage = () => {
     setLlmForm(createEmptyLLMForm());
   }, [llmEditorId, llmProfiles, loading, selectedLlmProfileId]);
 
+  const profileModalOpen = materialModalOpen || templateModalOpen;
+  useDocumentScrollLock(profileModalOpen);
+
   useEffect(() => {
-    if (!materialModalOpen && !templateModalOpen) {
+    if (!profileModalOpen) {
       return;
     }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (templateModalOpen) {
@@ -2105,10 +2107,9 @@ export const ProfilePage = () => {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [materialModalOpen, templateModalOpen]);
+  }, [materialModalOpen, profileModalOpen, templateModalOpen]);
 
   const editingIdentity = isExistingEditorId(identityEditorId)
     ? (identities.find((item) => item.id === identityEditorId) ?? null)

@@ -9,12 +9,17 @@ const ScrollLock = ({ locked }: { locked: boolean }) => {
 
 afterEach(() => {
   cleanup();
+  document.querySelector('[data-app-scroll-container="true"]')?.remove();
   document.body.style.overflow = "";
   document.documentElement.style.overflow = "";
 });
 
 describe("useDocumentScrollLock", () => {
   it("keeps the document locked until the final nested lock is released", () => {
+    const scrollContainer = document.createElement("div");
+    scrollContainer.dataset.appScrollContainer = "true";
+    scrollContainer.style.overflowY = "auto";
+    document.body.append(scrollContainer);
     document.body.style.overflow = "auto";
     document.documentElement.style.overflow = "scroll";
 
@@ -27,6 +32,7 @@ describe("useDocumentScrollLock", () => {
 
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(scrollContainer.style.overflowY).toBe("hidden");
 
     rerender(
       <>
@@ -37,10 +43,12 @@ describe("useDocumentScrollLock", () => {
 
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(scrollContainer.style.overflowY).toBe("hidden");
 
     unmount();
 
     expect(document.body.style.overflow).toBe("auto");
     expect(document.documentElement.style.overflow).toBe("scroll");
+    expect(scrollContainer.style.overflowY).toBe("auto");
   });
 });

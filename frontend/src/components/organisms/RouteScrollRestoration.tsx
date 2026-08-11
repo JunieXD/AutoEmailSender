@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import { getAppScrollContainer } from "@/lib/appScrollContainer";
 import {
+  getKeepAliveScrollKey,
   KEEP_ALIVE_PATHS,
   rememberKeepAliveScrollY,
   recallKeepAliveScrollY,
@@ -12,12 +14,45 @@ import {
  * 超过该窗口仍未达高度时停止重试，避免与用户的手动滚动打架。
  */
 const SCROLL_RESTORE_WATCH_MS = 1500;
+const SCROLL_INTENT_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  " ",
+]);
+
+const getScrollTop = () => getAppScrollContainer()?.scrollTop ?? window.scrollY;
+
+const getMaxScrollTop = () => {
+  const container = getAppScrollContainer();
+  if (container) {
+    return Math.max(0, container.scrollHeight - container.clientHeight);
+  }
+  const docHeight = Math.max(
+    document.documentElement.scrollHeight,
+    document.body.scrollHeight,
+  );
+  return Math.max(0, docHeight - window.innerHeight);
+};
+
+const scrollToPosition = (top: number) => {
+  const options: ScrollToOptions = { left: 0, top, behavior: "auto" };
+  const container = getAppScrollContainer();
+  if (container) {
+    container.scrollTo(options);
+    return;
+  }
+  window.scrollTo(options);
+};
 
 /**
- * 路由切换时处理 window 滚动位置。
+ * 路由切换时处理应用内容区的滚动位置（旧壳层下兼容 window）。
  *
- * - 保活路由：通过 scroll 监听器**持续**记录 scrollY 到模块级 map。切回时启动一个
- *   有时限的"恢复观察器"：每帧检查 body 高度是否够 scrollTo 目标值，够了就还原。
+ * - 保活路由：通过 scroll 监听器**持续**记录 scrollTop 到模块级 map。切回时启动一个
+ *   有时限的"恢复观察器"：每帧检查滚动区域高度是否够目标值，够了就还原。
  *   覆盖 HomePage 这类切回后先显 skeleton/loading 再渲染列表的场景。
  * - 非保活路由：pathname 变化即 scrollTo(0,0)。
  *
@@ -32,15 +67,18 @@ const SCROLL_RESTORE_WATCH_MS = 1500;
  *
  * HomePage 这类页面切回时：Activity visible → useEffect 重跑 → 显 skeleton/loading
  * → 拉数据 → 渲染列表，整个过程异步且耗时不定（取决于后端响应）。在列表渲染出来
- * 之前文档高度不够，scrollTo 会被钳到 maxScrollY。改成「监听文档高度，达标即恢复，
- * 超时即放弃」可以自适应不同页面的渲染速度，且不会与用户后续的手动滚动打架。
+ * 之前滚动区域高度不够，scrollTo 会被钳到最大值。改成「监听高度，达标即恢复，
+ * 超时即安全放弃」可以自适应不同页面的渲染速度。恢复期间检测到滚轮、触摸、指针
+ * 或滚动按键时会立即取消，用户操作始终优先。
  */
 export const RouteScrollRestoration = () => {
   const { pathname, search } = useLocation();
-  // 当前激活的 pathname：scroll 监听器据此决定写到 map 的哪条 key。
+  const scrollKey = getKeepAliveScrollKey(pathname, search);
+  // 当前激活的滚动 key：scroll 监听器据此决定写到 map 的哪条记录。
   // 用 ref 而非 state，避免每次更新触发额外渲染。
-  const currentPathnameRef = useRef<string | null>(null);
+  const currentScrollKeyRef = useRef<string | null>(null);
   const previousPathnameRef = useRef<string | null>(null);
+  const previousScrollKeyRef = useRef<string | null>(null);
   // 当前正在进行的恢复任务的 cancel 函数。
   const cancelRestoreRef = useRef<(() => void) | null>(null);
 
@@ -52,101 +90,130 @@ export const RouteScrollRestoration = () => {
   }, []);
 
   /**
-   * 启动恢复观察器：等待 document 高度增长到能容纳 targetY 之后再 scrollTo。
+   * 启动恢复观察器：等待滚动区域高度增长到能容纳 targetY 之后再 scrollTo。
    * 用 rAF 循环 + 超时窗口，达标或超时都会自动停止。
-   * 期间用户的任何手动滚动都会通过 scroll 监听器写进 map，并不会被本恢复操作覆盖
-   * —— 因为我们仅在尚未滚动到目标时才发 scrollTo，一旦达到/超过就停。
+   * 只有在目标位置确实可达时才恢复；超时不会猜测一个替代位置。任何明确的用户滚动
+   * 意图都会从外层监听器调用 cancelPendingRestore，避免延迟恢复抢走控制权。
    */
   const scheduleRestore = useCallback(
     (targetY: number) => {
       cancelPendingRestore();
-    const startTime = performance.now();
-    let rafId: number | null = null;
-    let cancelled = false;
+      const startTime = performance.now();
+      let rafId: number | null = null;
+      let cancelled = false;
 
-    const tick = () => {
-      if (cancelled) return;
-      const docHeight = Math.max(
-        document.documentElement.scrollHeight,
-        document.body.scrollHeight,
-      );
-      const maxScrollY = docHeight - window.innerHeight;
-      const elapsed = performance.now() - startTime;
-
-      if (maxScrollY >= targetY) {
-        // 文档高度够了，可以安全 scrollTo
-        window.scrollTo({ left: 0, top: targetY, behavior: "auto" });
-        cancelled = true;
-        return;
-      }
-
-      if (elapsed >= SCROLL_RESTORE_WATCH_MS) {
-        // 超时仍未达高度：尝试一次"尽力而为"的 scrollTo（会被钳制，但至少把
-        // 滚动条推到能滚到的最远位置），然后放弃。
-        if (maxScrollY > 0) {
-          window.scrollTo({ left: 0, top: maxScrollY, behavior: "auto" });
-        }
-        cancelled = true;
-        return;
-      }
-
-      rafId = requestAnimationFrame(tick);
-    };
-
-    // 先用两个 rAF 让 Activity Transition 完成提交、layout 稳定，再进入观察循环。
-    let warmupRaf1: number | null = null;
-    let warmupRaf2: number | null = null;
-    warmupRaf1 = requestAnimationFrame(() => {
-      if (cancelled) return;
-      warmupRaf2 = requestAnimationFrame(() => {
+      const tick = () => {
         if (cancelled) return;
-        tick();
-      });
-    });
+        const maxScrollY = getMaxScrollTop();
+        const elapsed = performance.now() - startTime;
 
-    cancelRestoreRef.current = () => {
-      cancelled = true;
-      if (warmupRaf1 !== null) cancelAnimationFrame(warmupRaf1);
-      if (warmupRaf2 !== null) cancelAnimationFrame(warmupRaf2);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [cancelPendingRestore]);
+        if (maxScrollY >= targetY) {
+          // 滚动区域高度够了，可以安全恢复。
+          scrollToPosition(targetY);
+          cancelled = true;
+          cancelRestoreRef.current = null;
+          return;
+        }
+
+        if (elapsed >= SCROLL_RESTORE_WATCH_MS) {
+          // 目标仍不可达时安全放弃。滚到 maxScrollY 会把用户意外送到页面底部，并且
+          // 在异步内容继续增长后留下一个没有业务含义的位置。
+          cancelled = true;
+          cancelRestoreRef.current = null;
+          return;
+        }
+
+        rafId = requestAnimationFrame(tick);
+      };
+
+      // 先用两个 rAF 让 Activity Transition 完成提交、layout 稳定，再进入观察循环。
+      let warmupRaf1: number | null = null;
+      let warmupRaf2: number | null = null;
+      warmupRaf1 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        warmupRaf2 = requestAnimationFrame(() => {
+          if (cancelled) return;
+          tick();
+        });
+      });
+
+      cancelRestoreRef.current = () => {
+        cancelled = true;
+        if (warmupRaf1 !== null) cancelAnimationFrame(warmupRaf1);
+        if (warmupRaf2 !== null) cancelAnimationFrame(warmupRaf2);
+        if (rafId !== null) cancelAnimationFrame(rafId);
+      };
+    },
+    [cancelPendingRestore],
+  );
 
   // 全局 scroll 监听：只在保活路由内写。监听器只挂一次（empty deps），整个会话存活。
   useEffect(() => {
     const handleScroll = () => {
-      const path = currentPathnameRef.current;
-      if (path && KEEP_ALIVE_PATHS.has(path)) {
-        rememberKeepAliveScrollY(path, window.scrollY);
+      const key = currentScrollKeyRef.current;
+      if (key) {
+        rememberKeepAliveScrollY(key, getScrollTop());
       }
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+    const scrollTarget = getAppScrollContainer() ?? window;
+    scrollTarget.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollTarget.removeEventListener("scroll", handleScroll);
   }, []);
+
+  useEffect(() => {
+    const cancelForUserIntent = () => cancelPendingRestore();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (SCROLL_INTENT_KEYS.has(event.key)) {
+        cancelForUserIntent();
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        cancelPendingRestore();
+      }
+    };
+
+    window.addEventListener("wheel", cancelForUserIntent, { passive: true });
+    window.addEventListener("touchstart", cancelForUserIntent, { passive: true });
+    window.addEventListener("pointerdown", cancelForUserIntent, { passive: true });
+    window.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("wheel", cancelForUserIntent);
+      window.removeEventListener("touchstart", cancelForUserIntent);
+      window.removeEventListener("pointerdown", cancelForUserIntent);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [cancelPendingRestore]);
 
   useLayoutEffect(() => {
     const previousPathname = previousPathnameRef.current;
-    // 同步切换 currentPathnameRef：随后任何 scroll 事件（包括钳制触发的）都会被
+    const previousScrollKey = previousScrollKeyRef.current;
+    // 同步切换 currentScrollKeyRef：随后任何 scroll 事件（包括钳制触发的）都会被
     // 归到新路径，不再写到旧路径，保护离开前记录下来的真实 scrollY 不被覆盖。
-    currentPathnameRef.current = pathname;
+    currentScrollKeyRef.current = KEEP_ALIVE_PATHS.has(pathname) ? scrollKey : null;
 
     cancelPendingRestore();
 
     if (KEEP_ALIVE_PATHS.has(pathname)) {
-      if (previousPathname !== pathname) {
-        const remembered = recallKeepAliveScrollY(pathname);
+      if (previousPathname !== null && previousScrollKey !== scrollKey) {
+        const remembered = recallKeepAliveScrollY(scrollKey);
         if (remembered !== undefined && remembered > 0) {
           scheduleRestore(remembered);
+        } else {
+          scrollToPosition(0);
         }
       }
-      // pathname 未变（仅 search 变化）→ 页内交互，不操作 scroll。
+      // 同一个滚动 key 内的搜索参数变化属于页内交互，不操作滚动。
     } else {
       // 非保活路由：切换即回到顶部。
-      window.scrollTo({ left: 0, top: 0, behavior: "auto" });
+      scrollToPosition(0);
     }
 
     previousPathnameRef.current = pathname;
-  }, [pathname, search, cancelPendingRestore, scheduleRestore]);
+    previousScrollKeyRef.current = KEEP_ALIVE_PATHS.has(pathname) ? scrollKey : null;
+  }, [pathname, scrollKey, cancelPendingRestore, scheduleRestore]);
 
   useEffect(() => cancelPendingRestore, [cancelPendingRestore]);
 

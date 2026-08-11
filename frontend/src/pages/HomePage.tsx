@@ -1927,7 +1927,7 @@ export const HomePage = () => {
           ref={professorListStartRef}
           tabIndex={-1}
           aria-label="导师看板列表"
-          className="mt-6 scroll-mt-24 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
+          className="mt-6 scroll-mt-6 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm focus:outline-none"
         >
           <div className="flex flex-wrap items-center gap-3 border-b border-stone-100 px-6 py-4">
             {agentSelection ? (

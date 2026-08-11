@@ -52,6 +52,7 @@ import {
   type CommunityMentorSearchScope,
 } from '@/lib/communityMentorPageState';
 import { buildCommunityReportUrl } from '@/lib/communityMentorLinks';
+import { getAppScrollContainer, scrollElementIntoAppView } from '@/lib/appScrollContainer';
 import { openExternalHttpUrl } from '@/lib/externalUrls';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
 import { useDocumentScrollLock } from '@/lib/useDocumentScrollLock';
@@ -853,16 +854,19 @@ export const CommunityMentorsPage = () => {
       return;
     }
 
-    const headerBottom = document
-      .querySelector<HTMLElement>('[data-app-header="true"]')
-      ?.getBoundingClientRect().bottom ?? 0;
+    const appScrollContainer = getAppScrollContainer();
+    const headerBottom = appScrollContainer
+      ? 0
+      : document
+        .querySelector<HTMLElement>('[data-app-header="true"]')
+        ?.getBoundingClientRect().bottom ?? 0;
     selector.style.scrollMarginTop = `${Math.max(0, headerBottom) + CATALOG_UNIT_SELECTOR_SCROLL_GAP_PX}px`;
     try {
       selector.focus({ preventScroll: true });
     } catch {
       selector.focus();
     }
-    selector.scrollIntoView?.({ behavior: 'auto', block: 'start' });
+    scrollElementIntoAppView(selector, { offset: CATALOG_UNIT_SELECTOR_SCROLL_GAP_PX });
   }, []);
 
   const beginBulkRecordSelection = useCallback(() => {

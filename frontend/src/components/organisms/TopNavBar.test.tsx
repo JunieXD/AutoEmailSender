@@ -50,6 +50,9 @@ describe("TopNavBar", () => {
 
     const link = screen.getByRole("link", { name: "统计面板" });
     expect(link).toHaveAttribute("href", "/dashboard");
+    const header = document.querySelector('[data-app-header="true"]');
+    expect(header).toHaveClass("shrink-0");
+    expect(header).not.toHaveClass("sticky", "backdrop-blur-xl");
   });
 
   it("keeps the last task center URL when navigating away and back", async () => {

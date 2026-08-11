@@ -14,12 +14,23 @@ export const KEEP_ALIVE_PATHS: ReadonlySet<string> = new Set(PATHS);
 
 const scrollMemory = new Map<string, number>();
 
-export const rememberKeepAliveScrollY = (pathname: string, scrollY: number) => {
-  scrollMemory.set(pathname, scrollY);
+export const getKeepAliveScrollKey = (pathname: string, search = "") => {
+  if (pathname !== "/tasks") {
+    return pathname;
+  }
+
+  const section = new URLSearchParams(search).get("section") === "background"
+    ? "background"
+    : "delivery";
+  return `${pathname}?section=${section}`;
 };
 
-export const recallKeepAliveScrollY = (pathname: string): number | undefined =>
-  scrollMemory.get(pathname);
+export const rememberKeepAliveScrollY = (key: string, scrollY: number) => {
+  scrollMemory.set(key, scrollY);
+};
+
+export const recallKeepAliveScrollY = (key: string): number | undefined =>
+  scrollMemory.get(key);
 
 /** 仅供测试使用：清空模块级 scroll 缓存，避免用例之间相互污染。 */
 export const __resetKeepAliveScrollMemory = () => {

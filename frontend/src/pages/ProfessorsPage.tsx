@@ -2813,7 +2813,7 @@ export const ProfessorsPage = () => {
         tabIndex={-1}
         aria-label="导师管理列表"
         aria-busy={isRefreshingProfessors}
-        className="relative mt-6 scroll-mt-24 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
+        className="relative mt-6 scroll-mt-6 overflow-hidden rounded-[32px] border border-stone-200 bg-white shadow-sm focus:outline-none"
       >
         <div className="flex flex-col gap-3 border-b border-stone-100 px-6 py-4">
           {agentSelection ? (

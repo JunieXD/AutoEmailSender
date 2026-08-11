@@ -780,7 +780,7 @@ function RecentRecordsTable({
           role="region"
           tabIndex={-1}
           aria-label="Token 明细列表"
-          className="mt-4 scroll-mt-24 focus:outline-none"
+          className="mt-4 scroll-mt-6 focus:outline-none"
         >
           {errorNotice}
           <div className="overflow-x-auto">
