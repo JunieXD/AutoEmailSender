@@ -222,11 +222,94 @@ function Stop-QaProcessesFromRoot {
   }
 }
 
+function Get-QaInstallerRegistrations {
+  param([Parameter(Mandatory = $true)][string]$QaBasePath)
+
+  $qaBasePrefix = [System.IO.Path]::GetFullPath($QaBasePath).TrimEnd("\") + "\"
+  $uninstallRoot = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+  if (-not (Test-Path -LiteralPath $uninstallRoot)) {
+    return @()
+  }
+
+  $registrations = New-Object System.Collections.Generic.List[object]
+  foreach ($key in @(Get-ChildItem -LiteralPath $uninstallRoot)) {
+    $entry = Get-ItemProperty -LiteralPath $key.PSPath
+    $displayNameProperty = $entry.PSObject.Properties["DisplayName"]
+    $uninstallStringProperty = $entry.PSObject.Properties["UninstallString"]
+    if (
+      $null -eq $displayNameProperty -or
+      $null -eq $uninstallStringProperty -or
+      -not ($displayNameProperty.Value -is [string]) -or
+      -not $displayNameProperty.Value.StartsWith(
+        "Auto Email Sender ",
+        [System.StringComparison]::Ordinal
+      )
+    ) {
+      continue
+    }
+    $uninstallString = [string]$uninstallStringProperty.Value
+    if ($uninstallString -notmatch '^\s*"([^"]+)"') {
+      continue
+    }
+    try {
+      $uninstallerPath = [System.IO.Path]::GetFullPath($Matches[1])
+    } catch {
+      continue
+    }
+    if (-not $uninstallerPath.StartsWith(
+      $qaBasePrefix,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+      continue
+    }
+    $registrations.Add([pscustomobject]@{
+      RegistryPath = $key.PSPath
+      DisplayName = [string]$displayNameProperty.Value
+      UninstallerPath = $uninstallerPath
+      InstallRoot = Split-Path -Parent $uninstallerPath
+    })
+  }
+  return $registrations.ToArray()
+}
+
+function Remove-QaInstallerRegistrations {
+  param(
+    [Parameter(Mandatory = $true)][string]$QaBasePath,
+    [string]$InstallRoot = ""
+  )
+
+  $expectedRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    ""
+  } else {
+    [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd("\")
+  }
+  foreach ($registration in @(Get-QaInstallerRegistrations -QaBasePath $QaBasePath)) {
+    if (
+      $expectedRoot -and
+      -not $registration.InstallRoot.Equals(
+        $expectedRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+    ) {
+      continue
+    }
+    Stop-QaProcessesFromRoot -RootPath $registration.InstallRoot
+    Write-Host (
+      "Removing stale dedicated QA installer registration: {0} -> {1}" -f
+      $registration.DisplayName,
+      $registration.UninstallerPath
+    )
+    Remove-Item -LiteralPath $registration.RegistryPath -Recurse -Force
+  }
+}
+
 function Invoke-QaExecutable {
   param(
     [Parameter(Mandatory = $true)][string]$FilePath,
     [string]$Arguments = "",
     [hashtable]$Environment = @{},
+    [ValidateRange(1, 1800)]
+    [int]$TimeoutSeconds = 600,
     [Parameter(Mandatory = $true)][string]$Operation
   )
 
@@ -245,9 +328,30 @@ function Invoke-QaExecutable {
   if ($null -eq $process) {
     throw "$Operation did not start."
   }
-  $process.WaitForExit()
-  if ($process.ExitCode -ne 0) {
-    throw "$Operation failed with exit code $($process.ExitCode)."
+  try {
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+      $process.Refresh()
+      $windowTitle = $process.MainWindowTitle
+      & taskkill.exe /PID $process.Id /T /F | Out-Host
+      $stopped = $process.WaitForExit(30000)
+      $windowDetail = if ([string]::IsNullOrWhiteSpace($windowTitle)) {
+        ""
+      } else {
+        " Last window title: $windowTitle"
+      }
+      if (-not $stopped) {
+        throw (
+          "$Operation timed out after $TimeoutSeconds seconds and its process tree " +
+          "could not be stopped.$windowDetail"
+        )
+      }
+      throw "$Operation timed out after $TimeoutSeconds seconds.$windowDetail"
+    }
+    if ($process.ExitCode -ne 0) {
+      throw "$Operation failed with exit code $($process.ExitCode)."
+    }
+  } finally {
+    $process.Dispose()
   }
 }
 
@@ -721,7 +825,9 @@ if ($IsFormal) {
     }
 
     $qaTimestamp = Get-Date -Format "yyyyMMddTHHmmss"
-    $qaRoot = Join-Path $env:TEMP "auto-email-sender-packaged-qa\$revision-$qaTimestamp"
+    $qaBase = Join-Path $env:TEMP "auto-email-sender-packaged-qa"
+    Remove-QaInstallerRegistrations -QaBasePath $qaBase
+    $qaRoot = Join-Path $qaBase "$revision-$qaTimestamp"
     $installRoot = Join-Path $qaRoot "安装 路径 Ω"
     $evidenceRoot = Join-Path $qaRoot "evidence"
     $packageRoot = Join-Path $qaRoot "candidate packages"
@@ -893,6 +999,7 @@ if ($IsFormal) {
     Write-Host "Windows packaged QA artifacts: $qaRoot"
     } finally {
       Stop-QaProcessesFromRoot -RootPath $installRoot
+      Remove-QaInstallerRegistrations -QaBasePath $qaBase -InstallRoot $installRoot
     }
   }
   Write-Host "`nWindows release QA passed for $revision"

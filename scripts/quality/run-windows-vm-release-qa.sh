@@ -263,8 +263,12 @@ guest_probe_path="$guest_transfer_directory_path/$probe_name"
 guest_previous_installer_path="$guest_transfer_directory_path/$previous_installer_name"
 guest_candidate_installer_path="$guest_transfer_directory_path/$candidate_installer_name"
 guest_candidate_manifest_path="$guest_transfer_directory_path/$candidate_manifest_name"
+suspend_vm_on_exit=false
 
 cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  set +e
   rm -f -- \
     "$bundle_path" \
     "$runner_path" \
@@ -273,11 +277,26 @@ cleanup() {
     "$candidate_installer_transfer_path" \
     "$candidate_manifest_transfer_path"
   rmdir "$transfer_directory_path" 2>/dev/null || true
+  if [[ "$suspend_vm_on_exit" == "true" ]]; then
+    local cleanup_vm_status
+    cleanup_vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
+    if [[ "$cleanup_vm_status" == *"running"* ]]; then
+      echo "Restoring Parallels VM to suspended state: $vm_name"
+      if ! prlctl suspend "$vm_name"; then
+        echo "Unable to restore Parallels VM to suspended state: $vm_name" >&2
+        if [[ "$exit_status" -eq 0 ]]; then
+          exit_status=1
+        fi
+      fi
+    fi
+  fi
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
 vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
 if [[ "$vm_status" != *"running"* ]]; then
+  suspend_vm_on_exit=true
   echo "Starting Parallels VM: $vm_name"
   prlctl start "$vm_name"
 fi

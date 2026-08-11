@@ -253,6 +253,9 @@ describe("windows installer packaging", () => {
       'candidate_installer_name="AutoEmailSender-Candidate-$transfer_id.exe"',
     );
     expect(hostRunner).toContain("Test-Path -LiteralPath '$guest_probe_path'");
+    expect(hostRunner).toContain("suspend_vm_on_exit=false");
+    expect(hostRunner).toContain('prlctl suspend "$vm_name"');
+    expect(hostRunner).toContain("Restoring Parallels VM to suspended state");
     expect(hostRunner).not.toContain('$HOME/Desktop');
     expect(hostRunner).not.toContain("Z:/Desktop");
     expect(guestRunner).toContain("[switch]$ForceFull");
@@ -310,6 +313,17 @@ describe("windows installer packaging", () => {
     );
     expect(guestRunner).toContain("$startInfo.Arguments = $Arguments");
     expect(guestRunner).toContain("$startInfo.EnvironmentVariables[");
+    expect(guestRunner).toContain("[int]$TimeoutSeconds = 600");
+    expect(guestRunner).toContain("$process.WaitForExit($TimeoutSeconds * 1000)");
+    expect(guestRunner).toContain("taskkill.exe /PID $process.Id /T /F");
+    expect(guestRunner).toContain("Get-QaInstallerRegistrations");
+    expect(guestRunner).toContain("Remove-QaInstallerRegistrations");
+    expect(guestRunner).toContain(
+      '"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"',
+    );
+    expect(guestRunner).toContain(
+      "Remove-QaInstallerRegistrations -QaBasePath $qaBase -InstallRoot $installRoot",
+    );
     expect(guestRunner).not.toContain("$startInfo.ArgumentList");
     expect(guestRunner).not.toContain("$startInfo.Environment[");
     expect(guestRunner).toContain('-Arguments "/S /D=$installRoot"');
