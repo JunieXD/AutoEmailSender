@@ -7,27 +7,10 @@ from unittest.mock import Mock
 from app.core.runtime_group import (
     RUNTIME_STATUS_REPLACE_RETRY_DELAYS_SECONDS,
     _replace_runtime_status_with_retry,
-    _windows_extended_length_path,
 )
 
 
 class RuntimeStatusReplaceTests(unittest.TestCase):
-    def test_windows_drive_path_uses_extended_length_prefix(self) -> None:
-        self.assertEqual(
-            _windows_extended_length_path(r"C:\qa\用户 数据 Ω\runtime\api.json"),
-            r"\\?\C:\qa\用户 数据 Ω\runtime\api.json",
-        )
-
-    def test_windows_unc_path_uses_extended_unc_prefix(self) -> None:
-        self.assertEqual(
-            _windows_extended_length_path(r"\\server\share\runtime\worker.json"),
-            r"\\?\UNC\server\share\runtime\worker.json",
-        )
-
-    def test_existing_extended_length_path_is_unchanged(self) -> None:
-        extended_path = r"\\?\C:\qa\runtime\api.json"
-        self.assertEqual(_windows_extended_length_path(extended_path), extended_path)
-
     def test_transient_reader_lock_is_retried_without_losing_atomic_replace(self) -> None:
         temporary_path = Mock(spec=Path)
         temporary_path.replace.side_effect = [

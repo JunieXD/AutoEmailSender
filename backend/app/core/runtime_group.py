@@ -76,7 +76,7 @@ def write_runtime_process_status(
         payload["health"] = health or "healthy"
         payload["draining"] = bool(draining)
         payload["subsystems"] = subsystems or {}
-    status_path = _filesystem_path(get_runtime_process_status_path(data_dir, role))
+    status_path = get_runtime_process_status_path(data_dir, role)
     status_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary_path = status_path.parent / f".{role}-{uuid.uuid4().hex}.tmp"
     try:
@@ -116,7 +116,7 @@ def read_runtime_process_status(
     data_dir: Path,
     role: RuntimeProcessRole,
 ) -> RuntimeProcessStatus | None:
-    status_path = _filesystem_path(get_runtime_process_status_path(data_dir, role))
+    status_path = get_runtime_process_status_path(data_dir, role)
     try:
         payload = json.loads(status_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
@@ -155,24 +155,10 @@ def cleanup_owned_runtime_process_status(
     ):
         return False
     try:
-        _filesystem_path(get_runtime_process_status_path(data_dir, role)).unlink(missing_ok=True)
+        get_runtime_process_status_path(data_dir, role).unlink(missing_ok=True)
     except OSError:
         return False
     return True
-
-
-def _filesystem_path(path: Path) -> Path:
-    if os.name != "nt":
-        return path
-    return Path(_windows_extended_length_path(str(path.absolute())))
-
-
-def _windows_extended_length_path(raw_path: str) -> str:
-    if raw_path.startswith("\\\\?\\"):
-        return raw_path
-    if raw_path.startswith("\\\\"):
-        return f"\\\\?\\UNC\\{raw_path[2:]}"
-    return f"\\\\?\\{raw_path}"
 
 
 def require_ready_api_leader(
