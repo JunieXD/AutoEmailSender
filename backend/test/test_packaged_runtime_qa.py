@@ -37,6 +37,70 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_windows_graceful_quit_posts_only_to_target_process_windows(self) -> None:
+        with (
+            mock.patch.object(
+                runner,
+                "_windows_top_level_windows",
+                return_value=[101, 202, 303],
+            ),
+            mock.patch.object(
+                runner,
+                "_windows_window_process_id",
+                side_effect=[77, 88, 77],
+            ),
+            mock.patch.object(
+                runner,
+                "_post_windows_message",
+                side_effect=[True, False],
+            ) as post_message,
+        ):
+            posted = runner._post_windows_graceful_quit(77)
+
+        self.assertTrue(posted)
+        self.assertEqual(
+            post_message.call_args_list,
+            [
+                mock.call(101, runner.QA_GRACEFUL_QUIT_MESSAGE),
+                mock.call(303, runner.QA_GRACEFUL_QUIT_MESSAGE),
+            ],
+        )
+
+    def test_windows_graceful_quit_retries_until_rapid_launch_has_a_window(self) -> None:
+        with (
+            mock.patch.object(runner.sys, "platform", "win32"),
+            mock.patch.object(runner, "_pid_is_running", return_value=True),
+            mock.patch.object(
+                runner,
+                "_post_windows_graceful_quit",
+                side_effect=[False, False, True],
+            ) as post_quit,
+            mock.patch.object(runner.time, "monotonic", side_effect=[10.0, 10.1, 10.2]),
+            mock.patch.object(runner.time, "sleep") as sleep,
+        ):
+            runner._request_desktop_stop(
+                77,
+                timeout_seconds=1.0,
+                retry_interval_seconds=0.05,
+            )
+
+        self.assertEqual(post_quit.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_windows_graceful_quit_accepts_process_exit_before_window_creation(self) -> None:
+        with (
+            mock.patch.object(runner.sys, "platform", "win32"),
+            mock.patch.object(runner, "_pid_is_running", side_effect=[True, False]),
+            mock.patch.object(
+                runner,
+                "_post_windows_graceful_quit",
+                return_value=False,
+            ),
+            mock.patch.object(runner.time, "monotonic", side_effect=[10.0, 10.1]),
+            mock.patch.object(runner.time, "sleep"),
+        ):
+            runner._request_desktop_stop(77, timeout_seconds=1.0)
+
     def test_lifecycle_verifies_upgrade_before_mutating_current_settings(self) -> None:
         source = inspect.getsource(runner._run_lifecycle)
 

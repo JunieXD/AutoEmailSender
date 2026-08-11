@@ -983,3 +983,22 @@ installer。candidate admission 和正式 QA 不采用检查点，仍从公开 v
 
 该门禁不能证明小时级资源泄漏、积压或低频竞态不存在。这一剩余风险必须写入 Beta 证据和公告；
 出现阻断、数据正确性或重复发送风险时停止使用该 Beta，保留原资产并发布更高 prerelease。
+
+### B5 续：Windows GUI 优雅退出门禁修复
+
+当前 HEAD 的 Windows 第二轮 rehearsal 已依次通过 stale 注册/进程恢复、1 秒 timeout、上一稳定版
+seed 恢复、split ready、Worker 无监听、覆盖升级与迁移备份、API 读写、single-instance、Worker
+重启、进程组重启、数据库审计、真实 browser 后代清理和强杀后恢复。最后失败点为
+`taskkill /PID /T` 返回“process can only be terminated forcefully”；该命令不向 Windows GUI 应用
+发送正常退出事件，不能作为 Electron `before-quit -> stopBackendAndExit` 的证据。
+
+修复增加固定 `WM_APP` 范围消息，并满足三重隔离：仅 `win32`、仅 packaged QA userData 全授权
+成功、仅目标 Electron PID 的顶层窗口。消息处理调用现有 `quitFromTray()`，继续走真实
+`app.quit()`、`before-quit`、API/Worker/Playwright 清理和 recorder flush。runner 使用 Win32
+`EnumWindows`、`GetWindowThreadProcessId` 和异步 `PostMessageW`，快速启动场景在 10 秒内每 50ms
+有界重试；窗口在枚举后消失时继续下一轮，不回退到 `/F`。
+
+提交前验证结果：Desktop typecheck 通过，Desktop 全量 258 passed/3 skipped，packaged runtime QA
+35 passed/3 platform skipped，Ruff、Python compile 和 `git diff --check` 通过。该变化触及 Windows
+packaged Electron 与 QA harness；先用当前 HEAD 重建 rehearsal EXE 并只重跑检查点支持的 Windows
+两轮。macOS 输入是否失效由 `release-impact.mjs` 决定，不因文档或 Win32 条件代码盲目重跑。

@@ -541,6 +541,10 @@ describe("windows installer packaging", () => {
       path.resolve("src", "main", "backend", "service.ts"),
       "utf8",
     );
+    const packagedRuntimeQaSource = readFileSync(
+      path.resolve("..", "scripts", "quality", "packaged-runtime-qa.py"),
+      "utf8",
+    );
 
     expect(mainSource.indexOf("configurePackagedQaUserData(app)")).toBeLessThan(
       mainSource.indexOf('import("./main/bootstrap/application.js")'),
@@ -554,6 +558,9 @@ describe("windows installer packaging", () => {
     expect(applicationSource).toContain("getActivePackagedQaIsolatedHomePath");
     expect(applicationSource).toContain("getPackagedQaDiagnosticsExportPath");
     expect(applicationSource).toContain("exportPackagedQaDiagnosticsOnce");
+    expect(applicationSource).toContain("registerPackagedQaGracefulQuit(mainWindow)");
+    expect(applicationSource).toContain("window.hookWindowMessage");
+    expect(packagedRuntimeQaSource).toContain("QA_GRACEFUL_QUIT_MESSAGE = 0x84A5");
     expect(updateSource).toContain("getActivePackagedQaUserDataPath");
     expect(applicationSource).toContain('powerMonitor.on("resume"');
     expect(applicationSource).toContain("backend?.notifySystemResume?.()");

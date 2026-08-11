@@ -54,6 +54,7 @@ QA_DIAGNOSTICS_EXPORT_NAME = "packaged-qa-beta-diagnostics.zip"
 QA_PATH_MARKER = "auto-email-sender-packaged-qa"
 QA_SENTINEL_NAME = ".auto-email-sender-packaged-qa.json"
 QA_SENTINEL_PROTOCOL_VERSION = "1"
+QA_GRACEFUL_QUIT_MESSAGE = 0x84A5
 QA_CRAWL_HOST = "packaged-qa.test.invalid"
 RUNTIME_DESCRIPTOR_RELATIVE_PATH = Path("agent") / "runtime.json"
 DATABASE_NAME = "auto_email_sender.db"
@@ -3938,20 +3939,88 @@ def _process_started_after(pid: int, launched_at_wall: float) -> bool:
         return False
 
 
-def _request_desktop_stop(pid: int) -> None:
+def _request_desktop_stop(
+    pid: int,
+    *,
+    timeout_seconds: float = 10.0,
+    retry_interval_seconds: float = 0.05,
+) -> None:
     if sys.platform == "win32":
-        completed = subprocess.run(
-            ["taskkill.exe", "/PID", str(pid), "/T"],
-            capture_output=True,
-            check=False,
-            timeout=15,
-        )
-        if completed.returncode != 0 and _pid_is_running(pid):
-            raise QaFailure(
-                f"taskkill could not request desktop exit: {completed.stderr.decode(errors='replace')}"
-            )
+        deadline = time.monotonic() + timeout_seconds
+        while _pid_is_running(pid):
+            if _post_windows_graceful_quit(pid):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise QaFailure(
+                    "packaged QA could not find a target desktop window for graceful exit"
+                )
+            time.sleep(min(retry_interval_seconds, remaining))
         return
     os.kill(pid, signal.SIGTERM)
+
+
+def _post_windows_graceful_quit(pid: int) -> bool:
+    posted = False
+    for window_handle in _windows_top_level_windows():
+        if _windows_window_process_id(window_handle) != pid:
+            continue
+        if _post_windows_message(window_handle, QA_GRACEFUL_QUIT_MESSAGE):
+            posted = True
+    return posted
+
+
+def _windows_top_level_windows() -> list[int]:
+    import ctypes
+    from ctypes import wintypes
+
+    handles: list[int] = []
+    callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+
+    @callback_type
+    def collect(window_handle: int, _parameter: int) -> bool:
+        handles.append(int(window_handle))
+        return True
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    if not user32.EnumWindows(collect, 0):
+        error_code = ctypes.get_last_error()
+        raise QaFailure(f"EnumWindows failed with Windows error {error_code}")
+    return handles
+
+
+def _windows_window_process_id(window_handle: int) -> int | None:
+    import ctypes
+    from ctypes import wintypes
+
+    process_id = wintypes.DWORD()
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    if user32.GetWindowThreadProcessId(window_handle, ctypes.byref(process_id)) == 0:
+        return None
+    return int(process_id.value)
+
+
+def _post_windows_message(window_handle: int, message: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.PostMessageW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+    user32.PostMessageW.restype = wintypes.BOOL
+    return bool(user32.PostMessageW(window_handle, message, 0, 0))
 
 
 def _kill_pids(pids: set[int]) -> None:

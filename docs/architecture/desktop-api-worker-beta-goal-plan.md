@@ -129,6 +129,14 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   LLM profile 而失败；`cf5d164` 已只在 QA harness 中补建 loopback FakeLLM profile，并通过
   packaged runtime 合同 30/30、Ruff 和 compile。Windows 旧本地包在恢复后未能形成完整 split
   runtime，禁止继续盲目重试；必须使用当前 HEAD 构建的 rehearsal-only 包完成两轮演练。
+- 当前 HEAD 的 Windows 第二轮 rehearsal 已通过 stale/timeout 恢复、覆盖升级、split/combined
+  lifecycle、迁移备份、浏览器后代、数据库审计和强杀恢复，最后只在“优雅退出”失败。现场证明
+  `taskkill /PID /T` 对 GUI 应用只能强杀，不能触发 Electron `before-quit`，因此这是 QA harness
+  缺陷而非产品退出缺陷。修复只在 Windows 且 packaged QA nonce/sentinel/userData 全授权后注册
+  `WM_APP` 消息；runner 枚举目标 PID 顶层窗口并为快速启动有界重试，普通用户启动不暴露入口。
+  本机聚焦和完整检查已通过：Desktop 258 passed/3 skipped，packaged runtime QA 35 passed/3
+  platform skipped，TypeScript typecheck、Ruff、Python compile 与 diff check 均通过。下一步只构建
+  当前 HEAD rehearsal EXE 并重跑 Windows 两轮检查点演练；macOS 是否重跑由 release impact 判定。
 
 ### 1.4 本次一次性授权边界
 
@@ -307,7 +315,7 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
 | B4R | 冻结并同步最新 master | **已完成**：`origin/master@3c1e064` 通过 `306d841` 语义合入；业务逻辑以 master 为准，聚焦回归和一轮全仓已通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：完成 `cf5d164` 的双平台两轮 harness rehearsal 后冻结新 run；随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：验证 Windows QA-only `WM_APP` 优雅退出修复并完成受影响的两轮 harness rehearsal 后冻结新 run；随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
@@ -316,7 +324,8 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 1. **B4R**：冻结 `origin/master@3c1e064` 并语义合入；业务逻辑以 master 为准，只移植双进程适配。
    完成冲突聚焦、迁移/邮件/split 高风险回归和一轮完整全仓，提交并记录 impact。
 2. **B5 rehearsal**：在 Windows 和 macOS 各执行“故意中断 → 立即重跑”，证明 stale
-   注册表/进程或 DMG 挂载与超时自动恢复；失败只修复和重放受影响阶段。
+   注册表/进程或 DMG 挂载与超时自动恢复；失败先按产品、包装或 harness 分类，只修复和重放
+   `release-impact.mjs` 判定受影响的阶段，不重复已通过且输入未变的源码、VC++ 或平台门禁。
 3. **冻结与 Certify**：完成公告同步、preflight、certify dry-run 和 clean SHA；按现有授权 push
    `beta/desktop-api-worker` 并 dispatch Prerelease Certify，确认 workflow head SHA 精确一致。
 4. **Exact candidate QA**：下载并复核同一 run 的 EXE、DMG、manifest；依次运行 Windows

@@ -62,8 +62,13 @@ import {
 import { createTrayIcon, getWindowIconPath } from "../shell/window-icon.js";
 import {
   getActivePackagedQaIsolatedHomePath,
+  getActivePackagedQaUserDataPath,
   getPackagedQaDiagnosticsExportPath,
 } from "../packaged-qa/user-data.js";
+import {
+  PACKAGED_QA_GRACEFUL_QUIT_MESSAGE,
+  shouldRegisterPackagedQaGracefulQuit,
+} from "../packaged-qa/graceful-quit.js";
 import {
   buildBackendModeRelaunchArgs,
   buildBackendModeStatus,
@@ -207,6 +212,20 @@ function showMainWindow(): void {
 function quitFromTray(): void {
   isQuitting = true;
   app.quit();
+}
+
+function registerPackagedQaGracefulQuit(window: BrowserWindow): void {
+  if (!shouldRegisterPackagedQaGracefulQuit({
+    platform: process.platform,
+    activeUserDataPath: getActivePackagedQaUserDataPath(),
+  })) {
+    return;
+  }
+  window.hookWindowMessage(PACKAGED_QA_GRACEFUL_QUIT_MESSAGE, () => {
+    if (!isQuitting) {
+      quitFromTray();
+    }
+  });
 }
 
 function stopBackendAndExit(exitCode: number): void {
@@ -626,6 +645,7 @@ async function createWindow(): Promise<void> {
       sandbox: true,
     },
   });
+  registerPackagedQaGracefulQuit(mainWindow);
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isProtectedBackendNavigation(url, backend?.baseUrl)) {
