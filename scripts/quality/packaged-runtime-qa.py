@@ -57,6 +57,7 @@ QA_SENTINEL_PROTOCOL_VERSION = "1"
 QA_CRAWL_HOST = "packaged-qa.test.invalid"
 RUNTIME_DESCRIPTOR_RELATIVE_PATH = Path("agent") / "runtime.json"
 DATABASE_NAME = "auto_email_sender.db"
+SETTINGS_READ_ONLY_FIELDS = frozenset({"revision", "updated_at"})
 REPORT_NAME = "report.json"
 TRACE_NAME = "trace.jsonl"
 RESOURCE_SAMPLES_NAME = "resource-samples.jsonl"
@@ -2826,11 +2827,12 @@ def _exercise_api_read_write(identity: RuntimeIdentity, *, marker: str) -> dict[
         raise QaFailure("settings read did not return an object")
     revision = current.get("revision")
     value = f"packaged-qa:{marker}:{uuid.uuid4().hex[:12]}"
+    payload = _build_settings_update_payload(current, value)
     updated = _request_json(
         "PATCH",
         settings_url,
         token=identity.access_token,
-        payload={"draft_custom_instruction": value},
+        payload=payload,
         headers={
             "Idempotency-Key": f"packaged-qa-{uuid.uuid4()}",
             **({"If-Revision": revision} if isinstance(revision, str) else {}),
@@ -2840,6 +2842,19 @@ def _exercise_api_read_write(identity: RuntimeIdentity, *, marker: str) -> dict[
     if not isinstance(updated, dict) or updated.get("draft_custom_instruction") != value:
         raise QaFailure("authenticated settings write did not commit")
     return {**read_evidence, "settings_revision": updated.get("revision"), "marker": marker}
+
+
+def _build_settings_update_payload(
+    settings: dict[str, object],
+    marker: str,
+) -> dict[str, object]:
+    payload = {
+        key: value
+        for key, value in settings.items()
+        if key not in SETTINGS_READ_ONLY_FIELDS
+    }
+    payload["draft_custom_instruction"] = marker
+    return payload
 
 
 def _verify_candidate_asset_manifest(

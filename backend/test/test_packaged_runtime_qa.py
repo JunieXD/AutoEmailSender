@@ -264,18 +264,29 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             "updated_at": "2026-08-11T00:00:00Z",
         }
 
-        payload = seed_runner._build_settings_update_payload(
-            settings,
-            "packaged-upgrade:test",
-        )
+        for builder in (
+            seed_runner._build_settings_update_payload,
+            runner._build_settings_update_payload,
+        ):
+            with self.subTest(builder=builder.__module__):
+                payload = builder(settings, "packaged-upgrade:test")
 
-        self.assertEqual(len(required_fields), 14)
-        self.assertTrue(required_fields.issubset(payload))
-        self.assertEqual(payload["draft_custom_instruction"], "packaged-upgrade:test")
-        self.assertEqual(payload["intended_research_direction"], "reliable systems")
-        self.assertNotIn("revision", payload)
-        self.assertNotIn("updated_at", payload)
-        self.assertEqual(set(payload), set(settings) - {"revision", "updated_at"})
+                self.assertEqual(len(required_fields), 14)
+                self.assertTrue(required_fields.issubset(payload))
+                self.assertEqual(
+                    payload["draft_custom_instruction"],
+                    "packaged-upgrade:test",
+                )
+                self.assertEqual(
+                    payload["intended_research_direction"],
+                    "reliable systems",
+                )
+                self.assertNotIn("revision", payload)
+                self.assertNotIn("updated_at", payload)
+                self.assertEqual(
+                    set(payload),
+                    set(settings) - {"revision", "updated_at"},
+                )
 
     def test_imap_terminal_state_waits_for_identity_claim_release(self) -> None:
         harness = runner.WorkloadHarness.__new__(runner.WorkloadHarness)
