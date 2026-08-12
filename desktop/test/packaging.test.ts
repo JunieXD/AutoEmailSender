@@ -255,11 +255,14 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("Resuming Windows QA from native hibernate");
     expect(hostRunner).toContain("hibernate-requested.json");
     expect(hostRunner).toContain("hibernate-acknowledged.json");
+    expect(hostRunner).toContain("hibernate-restarted.json");
     expect(hostRunner).toContain("acknowledged_request_id");
     expect(hostRunner).toContain("Acknowledged Windows native hibernate request $request_id");
     expect(hostRunner).toContain('pending_hibernate_request_id="$request_id"');
     expect(hostRunner).toContain('[[ -z "$pending_hibernate_request_id" ]]');
     expect(hostRunner).toContain("Confirmed Windows native hibernate resume $resumed_request_id");
+    expect(hostRunner).toContain("Acknowledged Windows native hibernate restart $restarted_hibernate_request_id");
+    expect(hostRunner).toContain('[[ "$restarted_hibernate_request_id" == "$pending_hibernate_request_id" ]]');
     expect(hostRunner).toContain('pending_hibernate_request_id=""');
     expect(hostRunner).toContain("Windows QA completed without confirming hibernate resume");
     expect(hostRunner).toContain("waiting up to 15s for a hibernate handshake");

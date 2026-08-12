@@ -2440,9 +2440,11 @@ def _exercise_windows_system_sleep_wake(
 def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
     requested = handshake_dir / "hibernate-requested.json"
     acknowledged = handshake_dir / "hibernate-acknowledged.json"
+    restarted = handshake_dir / "hibernate-restarted.json"
     resumed = handshake_dir / "hibernate-resumed.json"
     requested.unlink(missing_ok=True)
     acknowledged.unlink(missing_ok=True)
+    restarted.unlink(missing_ok=True)
     resumed.unlink(missing_ok=True)
     request_id = str(uuid.uuid4())
     requested.write_text(
@@ -2477,6 +2479,16 @@ def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
             "Windows hibernate fallback failed: "
             f"{completed.stderr.strip()[-500:]}"
         )
+    _wait_until(
+        lambda: (
+            restarted
+            if restarted.is_file()
+            and _read_json(restarted).get("request_id") == request_id
+            else None
+        ),
+        timeout_seconds=90,
+        description="host hibernate restart acknowledgement",
+    )
     resumed.write_text(
         json.dumps(
             {

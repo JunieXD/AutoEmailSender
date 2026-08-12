@@ -55,25 +55,32 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
         ):
             handshake_dir = Path(temp_dir)
             acknowledged = handshake_dir / "hibernate-acknowledged.json"
+            restarted = handshake_dir / "hibernate-restarted.json"
+            wait_count = 0
 
             def acknowledge(callback, **_kwargs):
-                self.assertFalse(run.called)
+                nonlocal wait_count
+                self.assertEqual(run.called, wait_count == 1)
                 request = json.loads(
                     (handshake_dir / "hibernate-requested.json").read_text(encoding="utf-8")
                 )
-                acknowledged.write_text(
+                target = acknowledged if wait_count == 0 else restarted
+                target.write_text(
                     json.dumps(
                         {"request_id": request["request_id"], "acknowledged": True}
                     ),
                     encoding="utf-8",
                 )
+                wait_count += 1
                 return callback()
 
             wait_until.side_effect = acknowledge
             runner._exercise_windows_hibernate(handshake_dir=handshake_dir)
 
             self.assertTrue(run.called)
+            self.assertEqual(wait_count, 2)
             self.assertTrue((handshake_dir / "hibernate-requested.json").is_file())
+            self.assertTrue((handshake_dir / "hibernate-restarted.json").is_file())
             self.assertTrue((handshake_dir / "hibernate-resumed.json").is_file())
 
     def test_windows_sleep_uses_hibernate_only_for_unsupported_s3(self) -> None:

@@ -207,6 +207,18 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   UTF-16 日志，终端背压令 `iconv`/`cat` 失败并覆盖了真实成功状态。host 现先解析 wrapper 原子
   status，再按成功 200 行、失败 2000 行有界回显，日志显示失败不再覆盖 QA 退出码；重放必须复用
   已成功阶段，不重复 28 分钟 Backend。
+- run `31576240231` 已为 `01f9180dbd0fb40c0d8155fa29112bd5281b46ea` 成功生成 exact candidate；
+  EXE SHA-256 `79ffdfc1987194053d4c5868c9cce67527125d9679c8c37ea36feedccb8484d5`，DMG SHA-256
+  `c862f47e1ca69e53127ac5453fd7f5315d0b958e36700f4500ab30bbaba4da2a`。Windows admission 再次
+  通过旧版 seed、覆盖和 split ready 后进入休眠，但 host 在 stopped 前已看到 guest 写出的 resumed
+  并清除了 pending，随后把真实 stopped 误判为无握手。这证明 Windows 的 `shutdown /h` 可在 VM
+  真正 stopped/start 前返回；同 ID resumed 本身不足以证明 host 已完成恢复，该 run 失效。
+- 协议新增同 ID `restarted` 阶段：guest 在 `shutdown /h` 返回后必须等待 host 亲眼观察 stopped、
+  执行 `prlctl start` 并写出 restarted，之后才允许写 resumed；host 也只有在自身记录 restarted 后
+  才接受 resumed。秒级顺序合同和真实探针均通过，后者为
+  `ACK -> exec=255 -> stopped/start -> restarted -> resumed`，Python PID 始终为 `10824`，request ID
+  始终为 `54b1a9a6-a3d5-4974-844b-6170bfe3cbc7`。再次申请 candidate 前必须先用失效包完成
+  non-certifying rehearsal，禁止直接消耗新构建。
 
 ### 1.4 本次一次性授权边界
 

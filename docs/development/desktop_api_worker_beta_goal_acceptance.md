@@ -1109,3 +1109,19 @@ API/Worker/combined/document 四项自检通过，Desktop 250 tests、11 skip、
 status 前以 1 退出。这不推翻内部测试证据，但暴露了输出层可覆盖真实状态的缺陷。修复先读取原子
 status，再对成功日志只回显末 200 行、失败日志末 2000 行；回显失败不再改变 QA 真实退出码。
 重放使用 stage cache，禁止重复已通过的 Backend/冻结构建/Desktop。
+
+修复输出层后，Windows quick 对 `01f9180dbd0fb40c0d8155fa29112bd5281b46ea` 以外层退出码 0 完成；
+Backend 2032 和冻结构建从成功 cache 复用，Desktop 250/250（11 skip）重跑通过。replacement run
+`31576240231` 的 contract、preflight、双平台 build 和 certify 全部成功，下载复核 EXE
+`79ffdfc1987194053d4c5868c9cce67527125d9679c8c37ea36feedccb8484d5`、DMG
+`c862f47e1ca69e53127ac5453fd7f5315d0b958e36700f4500ab30bbaba4da2a` 与 manifest 完全一致。
+
+该 run 的 Windows admission 通过 stale/timeout、v2.5.4 seed、候选覆盖和 split ready 后仍在休眠
+监督处失败。guest 已拿到 ACK 并能休眠，但 `shutdown /h` 在 VM 真正 stopped 前返回，guest 过早写
+resumed；host 当时仅校验同 ID，因而清除 pending，稍后看到 stopped 时误判无握手。最终协议增加
+同 ID restarted：guest 必须在 `shutdown /h` 返回后等待 host 观察 stopped、执行 start 并原子写
+restarted，之后才写 resumed；host 只有记录 restarted 后才接受 resumed。聚焦 Python 顺序合同、
+Desktop packaging 24/24、typecheck 均通过。真实探针严格得到
+`ACK -> exec=255 -> stopped/start -> restarted -> resumed`，休眠前后 Python PID `10824`、request ID
+`54b1a9a6-a3d5-4974-844b-6170bfe3cbc7` 均一致。按 Skill 先用失效候选重做非认证 rehearsal，再决定
+是否申请新 run。

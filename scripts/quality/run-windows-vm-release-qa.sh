@@ -464,6 +464,7 @@ mkdir -p "$hibernate_handshake_path"
 rm -f -- "$status_path" "$output_path" \
   "$hibernate_handshake_path/hibernate-requested.json" \
   "$hibernate_handshake_path/hibernate-acknowledged.json" \
+  "$hibernate_handshake_path/hibernate-restarted.json" \
   "$hibernate_handshake_path/hibernate-resumed.json"
 
 set +e
@@ -480,6 +481,7 @@ exec_pid=$!
 deadline=$((SECONDS + 21600))
 hibernate_recoveries=0
 pending_hibernate_request_id=""
+restarted_hibernate_request_id=""
 connection_exit_status=""
 connection_handshake_deadline=0
 stopped_without_handshake_deadline=0
@@ -508,6 +510,7 @@ while [[ ! -f "$status_path" ]]; do
     pending_hibernate_request_id="$request_id"
   fi
   if [[ -n "$pending_hibernate_request_id" ]] && \
+    [[ "$restarted_hibernate_request_id" == "$pending_hibernate_request_id" ]] && \
     [[ -f "$hibernate_handshake_path/hibernate-resumed.json" ]]; then
     resumed_request_id="$(node -e 'const fs=require("fs");try{const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof p.request_id==="string")process.stdout.write(p.request_id)}catch{}' \
       "$hibernate_handshake_path/hibernate-resumed.json")"
@@ -561,6 +564,13 @@ while [[ ! -f "$status_path" ]]; do
       fi
       sleep 1
     done
+    restart_path="$hibernate_handshake_path/hibernate-restarted.json"
+    restart_temporary_path="$restart_path.tmp"
+    node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({request_id:process.argv[2],restarted:true})+"\n")' \
+      "$restart_temporary_path" "$pending_hibernate_request_id"
+    mv -f -- "$restart_temporary_path" "$restart_path"
+    restarted_hibernate_request_id="$pending_hibernate_request_id"
+    echo "Acknowledged Windows native hibernate restart $restarted_hibernate_request_id."
     stopped_without_handshake_deadline=0
   fi
   sleep 1
