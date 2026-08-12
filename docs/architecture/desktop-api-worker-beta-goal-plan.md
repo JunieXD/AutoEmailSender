@@ -227,6 +227,14 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   packaged-runtime 完整合同、Desktop 全套、typecheck、Bash syntax 和 diff check 均通过。
   AC-BETA-QA-00 的 Windows 部分重新打开，须用失效 run `31576240231` 的 EXE 完成故意中断与恢复
   两轮并在最终报告看到 sleep/wake 检查；macOS 证据不受 Windows-only harness 变化影响。
+- 首次接入 native sleep 的 rehearsal 第二轮在约 20 秒内暴露另一条此前未覆盖的真实路径：本次
+  Windows `SetSuspendState` 直接成功，VM 进入 stopped 且恢复后系统日志有 Kernel-Power 42 和
+  Power-Troubleshooter 1，同一 Electron/API/Worker/Python 进程组仍存活；但原 handshake 只在
+  S3 返回 error 50 后的 hibernate fallback 创建，host 因而在 15 秒内正确拒绝“无握手停止”。
+  driver 现于任何 Windows 原生睡眠调用前统一执行 requested/ACK，S3 成功和 error 50 fallback
+  共用同一 request ID，恢复后都必须等待 host stopped/start/restarted 才写 resumed；其他 S3
+  错误仍硬失败。新增 S3 顺序合同及完整 packaged-runtime 40 passed/3 skipped、packaging 24/24、
+  Ruff、compile、Bash syntax 和 diff check 均通过；须从新提交重新计数 Windows 两轮 rehearsal。
 
 ### 1.4 本次一次性授权边界
 

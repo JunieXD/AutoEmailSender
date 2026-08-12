@@ -101,6 +101,11 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                 create=True,
             ),
             mock.patch.object(ctypes, "get_last_error", return_value=50, create=True),
+            mock.patch.object(
+                runner,
+                "_begin_windows_power_handshake",
+                return_value="request-1",
+            ) as begin_handshake,
             mock.patch.object(runner, "_exercise_windows_hibernate") as hibernate,
             mock.patch.object(
                 runner,
@@ -113,8 +118,61 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                 hibernate_handshake_dir=Path(temp_dir),
             )
 
-        hibernate.assert_called_once_with(handshake_dir=Path(temp_dir))
+        begin_handshake.assert_called_once_with(handshake_dir=Path(temp_dir))
+        hibernate.assert_called_once_with(
+            handshake_dir=Path(temp_dir),
+            request_id="request-1",
+        )
         self.assertEqual(evidence["sleep_method"], "hibernate")
+
+    def test_windows_successful_s3_uses_the_host_restart_handshake(self) -> None:
+        kernel32 = mock.Mock()
+        kernel32.CreateWaitableTimerW = mock.MagicMock(return_value=123)
+        kernel32.SetWaitableTimer = mock.MagicMock(return_value=True)
+        kernel32.WaitForSingleObject = mock.MagicMock(return_value=0)
+        kernel32.CloseHandle = mock.MagicMock(return_value=True)
+        powrprof = mock.Mock()
+        calls: list[str] = []
+        powrprof.SetSuspendState = mock.MagicMock(
+            side_effect=lambda *_args: calls.append("suspend") or True
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.object(
+                ctypes,
+                "WinDLL",
+                side_effect=[kernel32, powrprof],
+                create=True,
+            ),
+            mock.patch.object(
+                runner,
+                "_begin_windows_power_handshake",
+                side_effect=lambda **_kwargs: calls.append("begin") or "request-1",
+            ) as begin_handshake,
+            mock.patch.object(
+                runner,
+                "_finish_windows_power_handshake",
+                side_effect=lambda **_kwargs: calls.append("finish"),
+            ) as finish_handshake,
+            mock.patch.object(
+                runner,
+                "_read_windows_power_events",
+                return_value={"sleep_events": 1, "wake_events": 1},
+            ),
+            mock.patch.object(runner.time, "time", side_effect=[100.0, 110.0]),
+        ):
+            evidence = runner._exercise_windows_system_sleep_wake(
+                hibernate_handshake_dir=Path(temp_dir),
+            )
+
+        self.assertEqual(calls, ["begin", "suspend", "finish"])
+        begin_handshake.assert_called_once_with(handshake_dir=Path(temp_dir))
+        finish_handshake.assert_called_once_with(
+            handshake_dir=Path(temp_dir),
+            request_id="request-1",
+        )
+        self.assertEqual(evidence["sleep_method"], "s3")
 
     def test_windows_sleep_rejects_other_suspend_errors(self) -> None:
         kernel32 = mock.Mock()
@@ -133,6 +191,11 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
                 create=True,
             ),
             mock.patch.object(ctypes, "get_last_error", return_value=5, create=True),
+            mock.patch.object(
+                runner,
+                "_begin_windows_power_handshake",
+                return_value="request-1",
+            ),
             self.assertRaisesRegex(runner.QaFailure, "error 5"),
         ):
             runner._exercise_windows_system_sleep_wake(

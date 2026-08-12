@@ -1139,3 +1139,20 @@ rehearsal lifecycle 同样执行 native sleep/wake。rehearsal 仍不得携带 c
 packaged-runtime 完整合同、Desktop 全套、TypeScript typecheck、Bash syntax 和 `git diff --check`。
 下一步只用失效 run `31576240231` 的原始 EXE 重做 Windows“故意中断 -> 立即恢复”两轮，要求最终
 报告明确包含原生 sleep/wake；该 Windows-only harness 变化不使既有 macOS rehearsal 失效。
+
+接线后的第一轮在 12 秒内按设计中断：更新到 `5eeb69a`，受控 timeout 1.3 秒，通过固定路径、
+公开 v2.5.4 EXE 摘要和 seed 备份复核，未启动 VC++ 或弹 UAC。第二轮立即恢复 3 个专用进程和
+1 个 HKCU 注册项，timeout 1.4 秒，复用同一 seed 并完成候选覆盖和 split ready；进入 native
+sleep 后 guest 记录 `native_system_sleep_requested`，Parallels 连接 255、VM stopped，但 host
+15 秒内没有 handshake，按硬条件失败，没有误记通过。
+
+恢复 VM 后同一 Electron/API/Worker/Python 进程组仍存在，Windows System 日志同时出现
+Kernel-Power 42 与 Power-Troubleshooter 1，证明本次 `SetSuspendState` 直接成功，而不是 error 50
+的 hibernate fallback。旧实现只在 fallback 前创建 requested/ACK，所以 host 无法区分这次合法
+S3 stopped 与普通异常停止。该现场在约 20 秒内暴露，失败轮不拼接为证据。
+
+修复把四阶段协议提升为所有 Windows 原生睡眠的统一外层：任何 `SetSuspendState` 前先写 requested
+并等待同 ID ACK；S3 成功和 error 50 后的 `shutdown /h` 共用该 ID；恢复后都必须等待 host 观察
+stopped、启动 VM 并写 restarted，guest 才写 resumed。其他错误仍立即失败。新增 S3 精确顺序测试，
+本机验证为 packaged-runtime 40 passed/3 skipped、Desktop packaging 24/24、Ruff、Python compile、
+Bash syntax 和 `git diff --check` 全部通过。新提交后必须从第一轮重新计数 Windows rehearsal。

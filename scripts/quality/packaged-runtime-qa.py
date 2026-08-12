@@ -2384,12 +2384,17 @@ def _exercise_windows_system_sleep_wake(
         raise QaFailure(f"CreateWaitableTimerW failed with error {ctypes.get_last_error()}")
     started_at = datetime.now(UTC)
     started = time.time()
+    power_request_id: str | None = None
     try:
         due_time = ctypes.c_longlong(-wake_after_seconds * 10_000_000)
         if not set_timer(timer, ctypes.byref(due_time), 0, None, None, True):
             raise QaFailure(
                 "Windows cannot arm a resume-capable wake timer: "
                 f"error {ctypes.get_last_error()}"
+            )
+        if hibernate_handshake_dir is not None:
+            power_request_id = _begin_windows_power_handshake(
+                handshake_dir=hibernate_handshake_dir
             )
         sleep_method = "s3"
         if not set_suspend_state(False, False, False):
@@ -2400,7 +2405,10 @@ def _exercise_windows_system_sleep_wake(
                     f"error {suspend_error}"
                 )
             sleep_method = "hibernate"
-            _exercise_windows_hibernate(handshake_dir=hibernate_handshake_dir)
+            _exercise_windows_hibernate(
+                handshake_dir=hibernate_handshake_dir,
+                request_id=power_request_id,
+            )
         else:
             wait_result = int(
                 wait_for_single_object(timer, (wake_after_seconds + 180) * 1000)
@@ -2408,6 +2416,11 @@ def _exercise_windows_system_sleep_wake(
             if wait_result != 0:
                 raise QaFailure(
                     f"Windows resume timer did not signal after wake (wait result {wait_result})"
+                )
+            if hibernate_handshake_dir is not None and power_request_id is not None:
+                _finish_windows_power_handshake(
+                    handshake_dir=hibernate_handshake_dir,
+                    request_id=power_request_id,
                 )
     finally:
         close_handle(timer)
@@ -2437,7 +2450,7 @@ def _exercise_windows_system_sleep_wake(
     }
 
 
-def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
+def _begin_windows_power_handshake(*, handshake_dir: Path) -> str:
     requested = handshake_dir / "hibernate-requested.json"
     acknowledged = handshake_dir / "hibernate-acknowledged.json"
     restarted = handshake_dir / "hibernate-restarted.json"
@@ -2467,18 +2480,12 @@ def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
         timeout_seconds=30,
         description="host hibernate handshake acknowledgement",
     )
-    completed = subprocess.run(
-        ["shutdown.exe", "/h"],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        raise QaFailure(
-            "Windows hibernate fallback failed: "
-            f"{completed.stderr.strip()[-500:]}"
-        )
+    return request_id
+
+
+def _finish_windows_power_handshake(*, handshake_dir: Path, request_id: str) -> None:
+    restarted = handshake_dir / "hibernate-restarted.json"
+    resumed = handshake_dir / "hibernate-resumed.json"
     _wait_until(
         lambda: (
             restarted
@@ -2498,6 +2505,31 @@ def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
             }
         ),
         encoding="utf-8",
+    )
+
+
+def _exercise_windows_hibernate(
+    *,
+    handshake_dir: Path,
+    request_id: str | None = None,
+) -> None:
+    if request_id is None:
+        request_id = _begin_windows_power_handshake(handshake_dir=handshake_dir)
+    completed = subprocess.run(
+        ["shutdown.exe", "/h"],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise QaFailure(
+            "Windows hibernate fallback failed: "
+            f"{completed.stderr.strip()[-500:]}"
+        )
+    _finish_windows_power_handshake(
+        handshake_dir=handshake_dir,
+        request_id=request_id,
     )
 
 
