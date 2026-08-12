@@ -146,6 +146,9 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   也通过；随后 PowerShell 5.1 用默认 ANSI 编码读取无 BOM UTF-8 `report.json`，中文路径被破坏并
   使 `ConvertFrom-Json` 失败。runner 现用严格 UTF-8 helper 读取所有 JSON 文件；这只影响证据
   后处理，须重放第二轮直到卸载、重复安装和报告分层检查也成功。
+- UTF-8 后处理重放成功进入卸载，但固定 2 秒后主 EXE 尚在；只读现场不到 1 秒后安装根已完全
+  消失且无进程，证明 NSIS 临时卸载子进程晚于父进程返回，而非卸载失败。runner 改为每 200ms
+  轮询主 EXE 消失并设 30 秒硬上限，首次和重复卸载共用该门禁。
 
 ### 1.4 本次一次性授权边界
 

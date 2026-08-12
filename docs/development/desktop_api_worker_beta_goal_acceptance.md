@@ -1018,3 +1018,8 @@ PowerShell 5.1 的 `Get-Content` 默认 ANSI 解码无 BOM UTF-8，导致报告�
 `ConvertFrom-Json` 拒绝。runner 新增严格 UTF-8 JSON helper，并统一用于 runtime、checkpoint、
 cache、package metadata 和两处 report 读取。该缺陷发生在已通过 lifecycle 之后，但卸载、重复
 安装和最终 runner success 尚未形成证据，因此必须重放第二轮至完整成功。
+
+严格 UTF-8 后处理已在下一次真实重放通过；runner 随后在静默卸载父进程返回并固定等待 2 秒后
+仍看到主 EXE。失败后立即只读检查时安装根已不存在、文件数为 0、根内进程为 0，证明 NSIS
+临时卸载子进程只是晚于父进程异步收尾，不是产品卸载或长路径删除失败。runner 现对主 EXE 消失
+每 200ms 轮询，30 秒硬上限，首次与重复卸载使用相同判断；超时仍会保留完整失败证据。

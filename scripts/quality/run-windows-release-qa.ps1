@@ -158,6 +158,22 @@ function Read-Utf8JsonFile {
   return $text | ConvertFrom-Json
 }
 
+function Wait-QaPathAbsent {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [ValidateRange(1, 120)][int]$TimeoutSeconds = 30
+  )
+
+  $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while (Test-Path -LiteralPath $Path) {
+    if ([datetime]::UtcNow -ge $deadline) {
+      return $false
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  return $true
+}
+
 function Get-AgentStatus {
   param([Parameter(Mandatory = $true)][string]$CliExecutable)
 
@@ -1713,8 +1729,7 @@ if ($RunsPackagedLifecycle) {
       -TimeoutSeconds $uninstallerTimeoutSeconds `
       -RejectVisibleWindow `
       -Operation "silent Windows uninstaller"
-    Start-Sleep -Seconds 2
-    if (Test-Path -LiteralPath $appExecutable) {
+    if (-not (Wait-QaPathAbsent -Path $appExecutable -TimeoutSeconds 30)) {
       throw "Installed executable remains after uninstall: $appExecutable"
     }
     foreach ($reportPath in $reportPaths) {
@@ -1745,8 +1760,7 @@ if ($RunsPackagedLifecycle) {
         -TimeoutSeconds $uninstallerTimeoutSeconds `
         -RejectVisibleWindow `
         -Operation "repeat Windows uninstaller"
-      Start-Sleep -Seconds 2
-      if (Test-Path -LiteralPath $appExecutable) {
+      if (-not (Wait-QaPathAbsent -Path $appExecutable -TimeoutSeconds 30)) {
         throw "Installed executable remains after repeat uninstall: $appExecutable"
       }
     }

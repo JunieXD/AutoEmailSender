@@ -327,10 +327,12 @@ describe("windows installer packaging", () => {
     expect(guestRunner).toContain("Test-HarnessEphemeralRuntimeStateAbsent");
     expect(guestRunner).toContain("Remove-HarnessEphemeralRuntimeState");
     expect(guestRunner).toContain("function Read-Utf8JsonFile");
+    expect(guestRunner).toContain("function Wait-QaPathAbsent");
     expect(guestRunner).toContain("[System.Text.UTF8Encoding]::new($false, $true)");
     expect(guestRunner).toContain(
       "$report = Read-Utf8JsonFile -Path $reports[0].FullName",
     );
+    expect(guestRunner.match(/Wait-QaPathAbsent -Path \$appExecutable/g)?.length).toBe(2);
     expect(guestRunner).toContain('protocol_version = "2"');
     expect(guestRunner).toContain("previous-stable-harness-seed-backup");
     expect(guestRunner).toContain("robocopy.exe");
