@@ -256,6 +256,8 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("hibernate-requested.json");
     expect(hostRunner).toContain("run-windows-release-qa-status");
     expect(wrapper).toContain("Move-Item -LiteralPath $temporaryStatusPath");
+    expect(wrapper).toContain('$ErrorActionPreference = "Continue"');
+    expect(wrapper).toContain("$exitCode = $LASTEXITCODE");
     expect(hostRunner).toContain("--normal-soak");
     expect(hostRunner).toContain("--seeded-chaos");
     expect(hostRunner).toContain("normal_soak_minimum=300");

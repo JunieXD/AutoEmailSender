@@ -19,8 +19,17 @@ try {
   if ($arguments.Count -eq 0) {
     throw "Windows QA wrapper received no runner arguments."
   }
-  & powershell.exe @arguments 2>&1 | Tee-Object -FilePath $OutputPath
-  $exitCode = $LASTEXITCODE
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Native stderr from the nested Windows runner is diagnostic output.  It
+    # must be preserved without turning a successful native process into a
+    # terminating wrapper error under the wrapper's fail-fast policy.
+    $ErrorActionPreference = "Continue"
+    & powershell.exe @arguments 2>&1 | Tee-Object -FilePath $OutputPath
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
 } catch {
   $failure = $_.Exception.Message
   $exitCode = 1
