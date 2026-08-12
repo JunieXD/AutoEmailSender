@@ -620,8 +620,13 @@ describe("windows installer packaging", () => {
     expect(packagedRuntimeQaSource).toContain("QA_GRACEFUL_QUIT_MESSAGE = 0x84A5");
     expect(updateSource).toContain("getActivePackagedQaUserDataPath");
     expect(applicationSource).toContain('powerMonitor.on("resume"');
+    expect(applicationSource).toContain("backend?.notifySystemSuspend?.()");
     expect(applicationSource).toContain("backend?.notifySystemResume?.()");
+    expect(backendServiceSource).toContain("notifySystemSuspend(): void");
+    expect(backendServiceSource).toContain("this.#systemSuspended = true");
+    expect(backendServiceSource).toContain("|| this.#systemSuspended");
     expect(backendServiceSource).toContain("notifySystemResume(): void");
+    expect(backendServiceSource).toContain("this.#systemSuspended = false");
     expect(backendServiceSource).toContain(
       "this.#lastWorkerHeartbeatAdvancedAt = performance.now()",
     );

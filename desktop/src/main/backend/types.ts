@@ -44,6 +44,7 @@ export type BackendController = {
   getRuntimeInfo: () => Promise<BackendRuntimeInfo>;
   ready: Promise<void>;
   onStatus: (handler: (status: DesktopBackendStatus) => void) => () => void;
+  notifySystemSuspend?: () => void;
   notifySystemResume?: () => void;
   stop: () => Promise<void>;
 };

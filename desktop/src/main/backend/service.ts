@@ -221,6 +221,7 @@ export async function startBackend(options: StartBackendOptions): Promise<Backen
         statusHandlers.delete(handler);
       };
     },
+    notifySystemSuspend: () => undefined,
     notifySystemResume: () => undefined,
     stop: () => stopBackend(child, lifecycle, terminateBackendProcessTree, port),
   };
@@ -280,6 +281,7 @@ class RuntimeGroupSupervisor {
   #workerMonitorBusy = false;
   #lastWorkerHeartbeatValue: string | null = null;
   #lastWorkerHeartbeatAdvancedAt = 0;
+  #systemSuspended = false;
   #workerReportedDegraded = false;
   #workerRecoveryPromise: Promise<void> | null = null;
   #workerRecoveryAbort: AbortController | null = null;
@@ -332,12 +334,21 @@ class RuntimeGroupSupervisor {
           supervisor.#statusHandlers.delete(handler);
         };
       },
+      notifySystemSuspend: () => supervisor.notifySystemSuspend(),
       notifySystemResume: () => supervisor.notifySystemResume(),
       stop: () => supervisor.stop(),
     };
   }
 
+  notifySystemSuspend(): void {
+    if (this.#stopped) {
+      return;
+    }
+    this.#systemSuspended = true;
+  }
+
   notifySystemResume(): void {
+    this.#systemSuspended = false;
     if (this.#stopped || this.#worker === null) {
       return;
     }
@@ -752,6 +763,7 @@ class RuntimeGroupSupervisor {
   async #checkWorkerStatus(worker: RuntimeRoleProcess, epoch: number): Promise<void> {
     if (
       this.#stopped
+      || this.#systemSuspended
       || epoch !== this.#epoch
       || this.#worker !== worker
       || worker.child.exitCode !== null
@@ -759,6 +771,15 @@ class RuntimeGroupSupervisor {
       return;
     }
     const status = await readWorkerRuntimeStatus(this.#options.userDataPath);
+    if (
+      this.#stopped
+      || this.#systemSuspended
+      || epoch !== this.#epoch
+      || this.#worker !== worker
+      || worker.child.exitCode !== null
+    ) {
+      return;
+    }
     const matchesWorker = status !== null
       && status.runtime_id === this.#runtimeId
       && status.generation === worker.generation

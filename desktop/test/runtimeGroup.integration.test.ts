@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { startBackend } from "../src/main/backend/service.js";
 import type { BackendStatus } from "../src/main/backend/types.js";
-import { getWorkerStatusPath } from "../src/main/backend/worker-status.js";
+import {
+  WORKER_HEARTBEAT_TIMEOUT_MS,
+  getWorkerStatusPath,
+} from "../src/main/backend/worker-status.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -152,6 +155,26 @@ describe("real API + Worker runtime group", () => {
         );
         expect(controller.workerPid).toBe(replacementWorkerPid);
 
+        const statusCountBeforeSystemSuspend = statuses.length;
+        process.kill(replacementWorkerPid, "SIGSTOP");
+        controller.notifySystemSuspend?.();
+        try {
+          await delay(WORKER_HEARTBEAT_TIMEOUT_MS + 2_000);
+          expect(controller.runtimeId).toBe(initialRuntimeId);
+          expect(controller.backendPid).toBe(initialApiPid);
+          expect(controller.workerPid).toBe(replacementWorkerPid);
+          expect(
+            statuses.slice(statusCountBeforeSystemSuspend).some(
+              (status) => status.state === "degraded" && status.reason === "background_hung",
+            ),
+          ).toBe(false);
+        } finally {
+          process.kill(replacementWorkerPid, "SIGCONT");
+          controller.notifySystemResume?.();
+        }
+        await delay(2_500);
+        expect(controller.workerPid).toBe(replacementWorkerPid);
+
         const statusCountBeforeHang = statuses.length;
         process.kill(replacementWorkerPid, "SIGSTOP");
         const heartbeatStoppedAt = performance.now();
@@ -218,7 +241,7 @@ describe("real API + Worker runtime group", () => {
     );
     expect(shutdownStartedAt).toBeDefined();
     expect(performance.now() - shutdownStartedAt!).toBeLessThan(10_000);
-  }, 60_000);
+  }, 85_000);
 });
 
 async function requestJson(

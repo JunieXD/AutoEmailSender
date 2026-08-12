@@ -1075,6 +1075,7 @@ export function bootstrapDesktopApplication(): void {
       });
       powerMonitor.on("suspend", () => {
         void betaDiagnosticsRecorder.recordTimeline("system_suspend");
+        backend?.notifySystemSuspend?.();
       });
       powerMonitor.on("resume", () => {
         void betaDiagnosticsRecorder.recordTimeline("system_resume");

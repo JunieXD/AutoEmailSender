@@ -243,6 +243,13 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   继续完成，首次卸载和数据保留也已发生。wrapper 现先写 guest 本地 `%TEMP%`，runner 结束后再
   一次性复制共享输出；host 同时记住 completed request ID，禁止旧 requested 文件反复重置 pending。
   该传输层修复仍须用新提交重新执行双轮，不拼接已有报告。
+- `f8a6d8e` 使用旧候选重放时，四阶段握手和本地日志传输均已成功，但 driver 在唤醒后发现
+  Worker/API 身份被替换，报告以 `native system sleep/wake unexpectedly replaced the runtime group
+  or Worker` 失败。系统事件 42/1 正常，失败发生在 Electron Worker 监控先于 `powerMonitor.resume`
+  回调运行、把超过 15 秒未更新 heartbeat 的正常睡眠误判为 hang。产品修复在 suspend 时暂停
+  Worker 监控，resume 时清除保护并重置 heartbeat 基线；普通运行中的 15 秒 hang 门限和恢复策略
+  不变。真实 API+Worker 集成测试覆盖了“暂停超过门限不替换、恢复后仍能检测真实 hang”，需以含此
+  修复的新 rehearsal 包重新执行双轮。
 
 ### 1.4 本次一次性授权边界
 

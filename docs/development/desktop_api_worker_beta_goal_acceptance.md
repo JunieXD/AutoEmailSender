@@ -1172,3 +1172,16 @@ Bash syntax 和 `git diff --check` 全部通过。新提交后必须从第一轮
 host 另记录 completed request ID，避免保留的 requested 文件反复把同一 ID 重设为 pending 和重复
 打印 resume。Desktop packaging 24/24、Bash syntax 和 diff check 通过；新提交后仍从第一轮重新
 计数，以 Windows PowerShell 5.1 真实执行作为 wrapper 权威验证。
+
+`f8a6d8e` 的 Windows 第二轮在 wrapper 修复后不再受共享日志断开影响，但 driver 在唤醒后约 30 秒
+明确失败：`native system sleep/wake unexpectedly replaced the runtime group or Worker`。失败报告只
+有 6 项睡眠前检查，系统事件 42/1 正常；这不是 harness 输出问题，而是 Electron Worker monitor
+在 `powerMonitor.resume` 之前将睡眠期间超过 15 秒未推进的 heartbeat 判为 `background_hung`，
+替换了 Worker/API 身份。该轮不计入证据，现场已保留。
+
+产品修复新增 `notifySystemSuspend`/`notifySystemResume`：Electron suspend 事件先暂停 split
+Worker 监控，resume 事件清除保护并重置 heartbeat 基线；Worker 真正退出或普通运行 hang 仍按原
+15 秒策略处理。真实 `runtimeGroup.integration` 通过：暂停超过门限时 runtime/API/Worker PID
+保持不变，恢复后正常；随后 SIGSTOP 的真实 Worker 仍被检测并替换。Desktop 全套、typecheck、
+packaged-runtime 40 passed/3 skipped、packaging 24/24、Ruff/compile/Bash syntax/diff check 均通过。
+必须用包含该产品修复的新 rehearsal-only NSIS 从第一轮重新计数。
