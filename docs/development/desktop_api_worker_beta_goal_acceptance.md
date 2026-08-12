@@ -995,10 +995,19 @@ seed 恢复、split ready、Worker 无监听、覆盖升级与迁移备份、API
 修复增加固定 `WM_APP` 范围消息，并满足三重隔离：仅 `win32`、仅 packaged QA userData 全授权
 成功、仅目标 Electron PID 的顶层窗口。消息处理调用现有 `quitFromTray()`，继续走真实
 `app.quit()`、`before-quit`、API/Worker/Playwright 清理和 recorder flush。runner 使用 Win32
-`EnumWindows`、`GetWindowThreadProcessId` 和异步 `PostMessageW`，快速启动场景在 10 秒内每 50ms
+`EnumWindows`、`GetWindowThreadProcessId` 和异步 `PostMessageW`，快速启动场景在 20 秒内每 50ms
 有界重试；窗口在枚举后消失时继续下一轮，不回退到 `/F`。
 
 提交前验证结果：Desktop typecheck 通过，Desktop 全量 258 passed/3 skipped，packaged runtime QA
 35 passed/3 platform skipped，Ruff、Python compile 和 `git diff --check` 通过。该变化触及 Windows
 packaged Electron 与 QA harness；先用当前 HEAD 重建 rehearsal EXE 并只重跑检查点支持的 Windows
 两轮。macOS 输入是否失效由 `release-impact.mjs` 决定，不因文档或 Win32 条件代码盲目重跑。
+
+`508119f` 的真实第二轮随后证明正常 split 和 combined 的 QA 消息均触发完整退出，分别约 0.64 秒
+和 2.21 秒；100ms rapid-exit 则超时。trace 显示 runner 在 BrowserWindow 创建前已向同 PID 的
+早期顶层窗口成功投递，因此停止重试，但该窗口没有 Electron hook。修复将“已投递”只作为诊断
+状态，不作为完成条件；每 50ms 继续枚举/投递，直至 PID 真实消失或 20 秒硬上限。此变化只有
+Python harness 和测试/文档，不改变 SHA-256 为
+`7f519fe9c76f401d2f9092b720a59a024ef4ec26efca76a0b698c4298bb251ae` 的 rehearsal EXE，故聚焦
+合同通过后从失败的第二轮 lifecycle 重放，不重复 NSIS 构建、完整 Backend/Desktop、VC++ 或已
+证明 stale 恢复的第一轮。

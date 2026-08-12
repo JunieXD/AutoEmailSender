@@ -3942,19 +3942,23 @@ def _process_started_after(pid: int, launched_at_wall: float) -> bool:
 def _request_desktop_stop(
     pid: int,
     *,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = 20.0,
     retry_interval_seconds: float = 0.05,
 ) -> None:
     if sys.platform == "win32":
         deadline = time.monotonic() + timeout_seconds
+        posted_to_target_window = False
         while _pid_is_running(pid):
-            if _post_windows_graceful_quit(pid):
-                return
+            posted_to_target_window = (
+                _post_windows_graceful_quit(pid) or posted_to_target_window
+            )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise QaFailure(
-                    "packaged QA could not find a target desktop window for graceful exit"
-                )
+                if posted_to_target_window:
+                    raise QaFailure(
+                        "desktop did not exit after packaged QA posted a graceful quit message"
+                    )
+                raise QaFailure("packaged QA could not find a target desktop window for graceful exit")
             time.sleep(min(retry_interval_seconds, remaining))
         return
     os.kill(pid, signal.SIGTERM)

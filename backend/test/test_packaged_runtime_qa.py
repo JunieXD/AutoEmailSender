@@ -69,13 +69,21 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
     def test_windows_graceful_quit_retries_until_rapid_launch_has_a_window(self) -> None:
         with (
             mock.patch.object(runner.sys, "platform", "win32"),
-            mock.patch.object(runner, "_pid_is_running", return_value=True),
+            mock.patch.object(
+                runner,
+                "_pid_is_running",
+                side_effect=[True, True, True, False],
+            ),
             mock.patch.object(
                 runner,
                 "_post_windows_graceful_quit",
                 side_effect=[False, False, True],
             ) as post_quit,
-            mock.patch.object(runner.time, "monotonic", side_effect=[10.0, 10.1, 10.2]),
+            mock.patch.object(
+                runner.time,
+                "monotonic",
+                side_effect=[10.0, 10.1, 10.2, 10.3],
+            ),
             mock.patch.object(runner.time, "sleep") as sleep,
         ):
             runner._request_desktop_stop(
@@ -85,7 +93,27 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             )
 
         self.assertEqual(post_quit.call_count, 3)
-        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(sleep.call_count, 3)
+
+    def test_windows_graceful_quit_does_not_treat_posting_as_process_exit(self) -> None:
+        with (
+            mock.patch.object(runner.sys, "platform", "win32"),
+            mock.patch.object(
+                runner,
+                "_pid_is_running",
+                side_effect=[True, True, False],
+            ),
+            mock.patch.object(
+                runner,
+                "_post_windows_graceful_quit",
+                return_value=True,
+            ) as post_quit,
+            mock.patch.object(runner.time, "monotonic", side_effect=[10.0, 10.1, 10.2]),
+            mock.patch.object(runner.time, "sleep"),
+        ):
+            runner._request_desktop_stop(77, timeout_seconds=1.0)
+
+        self.assertEqual(post_quit.call_count, 2)
 
     def test_windows_graceful_quit_accepts_process_exit_before_window_creation(self) -> None:
         with (

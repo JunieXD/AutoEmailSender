@@ -137,6 +137,11 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   本机聚焦和完整检查已通过：Desktop 258 passed/3 skipped，packaged runtime QA 35 passed/3
   platform skipped，TypeScript typecheck、Ruff、Python compile 与 diff check 均通过。下一步只构建
   当前 HEAD rehearsal EXE 并重跑 Windows 两轮检查点演练；macOS 是否重跑由 release impact 判定。
+- `508119f` 的新包已证明正常 split/combined 优雅退出分别约 0.64s/2.21s；100ms rapid-exit 随后
+  暴露 runner 把“消息投递成功”误当成“应用退出成功”。BrowserWindow 创建前同 PID 已存在其他
+  顶层窗口，首条消息可能被无 hook 的窗口接收。修复只改 runner：投递后继续以 50ms 间隔重试，
+  直到目标 PID 真正退出或 20 秒硬上限；安装包字节未变，只重放受影响的第二轮 lifecycle，不重建
+  NSIS、不重跑 Backend/Desktop/VC++/第一轮中断。
 
 ### 1.4 本次一次性授权边界
 
