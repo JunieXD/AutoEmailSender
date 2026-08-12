@@ -1185,3 +1185,76 @@ Worker 监控，resume 事件清除保护并重置 heartbeat 基线；Worker 真
 保持不变，恢复后正常；随后 SIGSTOP 的真实 Worker 仍被检测并替换。Desktop 全套、typecheck、
 packaged-runtime 40 passed/3 skipped、packaging 24/24、Ruff/compile/Bash syntax/diff check 均通过。
 必须用包含该产品修复的新 rehearsal-only NSIS 从第一轮重新计数。
+
+### B5 续：`4d441c7` 双平台最终 harness rehearsal
+
+#### 冻结前回归边界
+
+- `52173e2` 只修复真实系统睡眠期间的 Worker heartbeat 误判；Electron suspend 时暂停监控，resume
+  时重置基线，普通运行中的 hang 检测和进程替换保持不变。`4d441c7` 只收紧 packaged artifact
+  证据规则，允许 Playwright Chromium 在其精确安全目录创建 `debug.log`，其他安装文件仍不可变。
+- 本机最终聚焦为 packaged runtime 41 passed / 3 platform skipped、Desktop packaging 24/24、
+  Desktop 全套 250/250（11 skipped）、TypeScript typecheck、Ruff、Python compile 和
+  `git diff --check` 全部通过。Windows quick QA 为 Backend 2034/2034（7 skipped）、冻结
+  API/Worker/combined/document 自检和 Desktop 250/250（11 skipped）全部通过。
+- 一轮完整全仓从头运行通过：Backend 2034/2034（10m28s）、CLI 237/237（19s）、Frontend（19s）、
+  Desktop（59s）和 Website 全部通过，总计 12m07s、零失败。发布聚焦合同同时通过：POSIX
+  prepare/release scripts、Frontend release notes 2/2、Desktop packaging 24/24。
+
+#### Windows 第二轮权威报告
+
+- rehearsal EXE：`/Users/junie/AutoEmailSender-QA/assets/rehearsal-52173e2/`
+  `AutoEmailSender-Setup-2.6.0-beta.1.exe`，SHA-256
+  `b5f04f139dc8f3a0f00f0a8d56cef3509304f1d10b3d2c58656a58a1725b39a3`；公开 v2.5.4 EXE
+  SHA-256 `245aadcdf63ccae80913ede6a4cda9571884f83da9f23b957c724a6fb3b15d21`。
+- 第一轮在同一固定 QA 根按计划中断；第二轮完整 runner 约 435 秒并以外层退出码 0 结束。权威报告：
+  `C:\Users\junie\AppData\Local\Temp\auto-email-sender-packaged-qa\e-20260812T182847\lifecycle\`
+  `auto-email-sender-packaged-qa\20260812T103054Z-80d7dc4d8c\report.json`。
+- 报告为 `status=passed`、`certification_eligible=false`、
+  `evidence_purpose=non-certifying-harness-rehearsal`；20/20 checks、5/5 database audits，所有
+  `integrity_check`/`quick_check` 为 `ok`，外键与业务不变量违规均为空。
+- 原生 S3 sleep/wake 为 20.029 秒，sleep/wake 各 1；runtime ID、API PID `10300`、Worker PID
+  `11320` 保持不变且 heartbeat 推进。上一稳定版 seed、迁移备份、同库 API 读写、单实例、Worker
+  单独替换、API 整组替换、Playwright 后代、强杀恢复、combined 回退、rapid exit、首次卸载、
+  重复安装和重复卸载全部通过。
+- 安装树 SHA-256 before/after 均为
+  `cc9052b746e1cb529627a809a5432ec5451a9405cfbf76a97534210a1f66c5ae`。before 无排除项；after
+  恰好排除 `resources/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-win64/debug.log`。
+  聚焦合同另证明 DLL、`app.asar` 或非精确路径变化仍会使门禁失败。
+
+#### macOS 第二轮权威报告
+
+命令：
+
+```bash
+rtk bash scripts/quality/run-macos-packaged-qa.sh \
+  --scenario lifecycle \
+  --harness-rehearsal \
+  --dmg /Users/junie/AutoEmailSender-QA/assets/rehearsal-4d441c7/AutoEmailSender-2.6.0-beta.1-arm64.dmg \
+  --expected-dmg-sha256 964f892cadb02ff906dcd32de1e32fddbff193a9c38cce829455cab5b0509c5a \
+  --previous-dmg /Users/junie/AutoEmailSender-QA/assets/stable-v2.5.4/AutoEmailSender-2.5.4-arm64.dmg \
+  --expected-previous-dmg-sha256 c67fe772766751798163b16a985a9e3e97893c4ad906cde161c4e85bc6c9447b \
+  --require-clean-rehearsal-state \
+  --system-sleep-wake
+```
+
+- runner 首先打印 `Previous interrupted rehearsal left no mounted candidate DMG.`，证明第一轮故意
+  中断时挂载的候选 DMG 已由 trap 清理。完整 runner 约 84 秒并打印 `macOS packaged QA passed`。
+- 报告长期副本为 `/Users/junie/AutoEmailSender-QA/evidence/rehearsal-4d441c7-macos/`
+  `20260812T180030Z-df1901fe65/report.json`，SHA-256
+  `44a241b7f76a04804ce5cd3323b681fd6ec2fefc337c9881386019d47c912d34`；原始临时报告与副本摘要一致。
+- 报告为 `status=passed`、`certification_eligible=false`、
+  `evidence_purpose=non-certifying-harness-rehearsal`；当前/上一稳定版 DMG 摘要分别精确为
+  `964f892cadb02ff906dcd32de1e32fddbff193a9c38cce829455cab5b0509c5a` 和
+  `c67fe772766751798163b16a985a9e3e97893c4ad906cde161c4e85bc6c9447b`。
+- 20/20 checks、5/5 database audits 全部通过；数据库 integrity/quick 为 `ok`，外键和业务不变量
+  违规为空。原生 sleep/wake 记录 sleep/wake 各 1、wall 29.147 秒，runtime ID、API PID `98032`、
+  Worker PID `98059` 保持不变且 heartbeat 推进。覆盖升级、split 身份、Worker 无监听端口、同库
+  API 读写、单实例、两类进程替换、浏览器后代、强杀恢复、combined 回退、rapid exit、卸载模拟、
+  重复安装和 packaged artifact immutable 全部通过。
+- 结束后候选 DMG 未挂载、Auto Email Sender/API/Worker/driver 测试进程均无残留。其他应用已有的
+  VibeLive DMG 挂载未被测试读取、卸载或修改。
+
+双平台报告都不携带 candidate manifest/run ID，且明确不可用于认证，符合 Release Skill 的
+rehearsal 分层。AC-BETA-QA-00 至此重新关闭；AC-BETA-QA-00A 与 AC-BETA-QA-01～04 仍须使用下一次
+Certify run 的原始 EXE、DMG 和 manifest 串行完成，不以本节证据替代。

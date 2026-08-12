@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：Goal 已启动（B0～B4R 已完成；Windows harness rehearsal 因新增原生休眠协议重新打开）
+- 状态：Goal 已启动（B0～B4R 与双平台 harness rehearsal 已完成；待冻结最终 SHA 并 Certify）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`（2026-08-12 重新创建并激活）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -41,7 +41,7 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
 - run `31417575421` 的原始 DMG、NSIS 和 `prerelease-candidate.json` 已下载到仓库外并复核摘要；
   它们不得与修复后的 SHA 或任何替代 run 混用。
 
-### 1.3 Goal 当前检查点（2026-08-12）
+### 1.3 Goal 当前检查点（2026-08-13）
 
 - 旧 Goal 曾被意外取消；本计划校验通过后已于 2026-08-12 重新创建活动 Goal。Goal 系统沿用
   task ID `019fe582-2dea-7e42-bd2e-684bae191421`，不沿用旧 Goal 的取消状态。
@@ -250,6 +250,25 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   Worker 监控，resume 时清除保护并重置 heartbeat 基线；普通运行中的 15 秒 hang 门限和恢复策略
   不变。真实 API+Worker 集成测试覆盖了“暂停超过门限不替换、恢复后仍能检测真实 hang”，需以含此
   修复的新 rehearsal 包重新执行双轮。
+- `52173e2` 将上述电源事件保护收口到产品代码；当前本地 rehearsal EXE SHA-256 为
+  `b5f04f139dc8f3a0f00f0a8d56cef3509304f1d10b3d2c58656a58a1725b39a3`。Windows 第一轮按计划中断，
+  第二轮从同一专用 QA 根恢复后完整通过：runner 外层退出 0，20/20 checks、5/5 database audits、
+  原生 S3 sleep/wake、覆盖升级、split/combined、浏览器后代、强杀恢复、卸载和重复安装全部通过。
+- 第二轮首次在资产不可变门禁发现 Playwright Chromium 自身创建
+  `resources/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-win64/debug.log`。
+  `4d441c7` 只允许排除精确五段安全路径下的该运行时日志，并在报告中分别记录 before/after；DLL、
+  `app.asar` 或其他文件变化仍会失败。最终 Windows 报告的安装树摘要前后均为
+  `cc9052b746e1cb529627a809a5432ec5451a9405cfbf76a97534210a1f66c5ae`，after 排除项恰好只有该日志。
+- macOS 使用 `4d441c7` 本地 rehearsal DMG（SHA-256
+  `964f892cadb02ff906dcd32de1e32fddbff193a9c38cce829455cab5b0509c5a`）和公开 v2.5.4 DMG
+  （SHA-256 `c67fe772766751798163b16a985a9e3e97893c4ad906cde161c4e85bc6c9447b`）完成立即第二轮。
+  runner 先证明第一轮挂载已由 trap 清理，再完成 20/20 checks、5/5 database audits、真实
+  sleep/wake、覆盖升级、split/combined、进程替换、浏览器后代、强杀恢复、卸载模拟和重复安装；
+  `certification_eligible=false`、`evidence_purpose=non-certifying-harness-rehearsal` 均正确。
+- 截至 2026-08-13 再次 fetch，`origin/master` 仍为
+  `3c1e064dceac0917a966cb510385856fc9fe7ea1`，且是当前分支 merge-base；工作区在写入本节前干净。
+  AC-BETA-QA-00 重新关闭。下一步只提交 rehearsal/回归证据形成新的 clean SHA，执行 prerelease
+  certify dry-run 后按既有授权 push/dispatch；后续只接受该 run 的原始 EXE、DMG 和 manifest。
 
 ### 1.4 本次一次性授权边界
 
@@ -428,7 +447,7 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
 | B4R | 冻结并同步最新 master | **已完成**：`origin/master@3c1e064` 通过 `306d841` 语义合入；业务逻辑以 master 为准，聚焦回归和一轮全仓已通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：macOS rehearsal 已完成；Windows rehearsal 因新增四阶段原生休眠协议重新执行，随后才冻结新 run 并串行完成双平台 exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：双平台 harness rehearsal 已完成；下一步冻结新 run，并串行完成双平台 exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 
