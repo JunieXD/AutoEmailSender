@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：Goal 已启动（B0～B4R 与双平台 harness rehearsal 已完成；当前冻结 B5/B6 exact candidate）
+- 状态：Goal 已启动（B0～B4R 已完成；Windows harness rehearsal 因新增原生休眠协议重新打开）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`（2026-08-12 重新创建并激活）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -219,6 +219,14 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   `ACK -> exec=255 -> stopped/start -> restarted -> resumed`，Python PID 始终为 `10824`，request ID
   始终为 `54b1a9a6-a3d5-4974-844b-6170bfe3cbc7`。再次申请 candidate 前必须先用失效包完成
   non-certifying rehearsal，禁止直接消耗新构建。
+- 复核旧 rehearsal 报告发现 Windows `harness-rehearsal` 模式没有传
+  `--system-sleep-wake`/`--windows-hibernate-handshake-dir`；旧报告的 19 项 lifecycle 因而不能
+  证明后来新增的 `requested -> acknowledged -> stopped/start -> restarted -> resumed` 协议。
+  QA harness 现要求所有 packaged lifecycle（包括 rehearsal）都建立宿主握手目录，且 rehearsal
+  lifecycle 必须执行原生 sleep/wake；它仍拒绝 candidate manifest/run ID。聚焦 packaging 24/24、
+  packaged-runtime 完整合同、Desktop 全套、typecheck、Bash syntax 和 diff check 均通过。
+  AC-BETA-QA-00 的 Windows 部分重新打开，须用失效 run `31576240231` 的 EXE 完成故意中断与恢复
+  两轮并在最终报告看到 sleep/wake 检查；macOS 证据不受 Windows-only harness 变化影响。
 
 ### 1.4 本次一次性授权边界
 
@@ -397,7 +405,7 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
 | B4R | 冻结并同步最新 master | **已完成**：`origin/master@3c1e064` 通过 `306d841` 语义合入；业务逻辑以 master 为准，聚焦回归和一轮全仓已通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：双平台 harness rehearsal 已完成；当前冻结新 run，随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：macOS rehearsal 已完成；Windows rehearsal 因新增四阶段原生休眠协议重新执行，随后才冻结新 run 并串行完成双平台 exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 

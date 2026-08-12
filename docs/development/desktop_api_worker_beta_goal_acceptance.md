@@ -1125,3 +1125,17 @@ Desktop packaging 24/24、typecheck 均通过。真实探针严格得到
 `ACK -> exec=255 -> stopped/start -> restarted -> resumed`，休眠前后 Python PID `10824`、request ID
 `54b1a9a6-a3d5-4974-844b-6170bfe3cbc7` 均一致。按 Skill 先用失效候选重做非认证 rehearsal，再决定
 是否申请新 run。
+
+复核 runner 后确认，历史 Windows `harness-rehearsal` 只执行了 packaged lifecycle，但
+`run-windows-release-qa.ps1` 当时仅为 formal/candidate-admission 添加 `--system-sleep-wake` 和
+休眠握手目录。因此旧 19 项全绿报告不能证明之后才加入的四阶段协议在完整 runner 中工作，
+AC-BETA-QA-00 的 Windows 部分重新打开；这不是产品回归，也不推翻旧报告对安装、升级、进程和
+数据库生命周期的证据。
+
+当前 QA-only 修复把 `-HibernateHandshakePath` 扩展到所有 Windows packaged lifecycle，并让
+rehearsal lifecycle 同样执行 native sleep/wake。rehearsal 仍不得携带 candidate manifest/run ID，
+报告仍须为 `certification_eligible=false` 和
+`evidence_purpose=non-certifying-harness-rehearsal`。本机验证通过：Desktop packaging 24/24、
+packaged-runtime 完整合同、Desktop 全套、TypeScript typecheck、Bash syntax 和 `git diff --check`。
+下一步只用失效 run `31576240231` 的原始 EXE 重做 Windows“故意中断 -> 立即恢复”两轮，要求最终
+报告明确包含原生 sleep/wake；该 Windows-only harness 变化不使既有 macOS rehearsal 失效。

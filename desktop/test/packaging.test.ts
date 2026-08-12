@@ -252,6 +252,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--harness-rehearsal");
     expect(hostRunner).toContain("--inject-interruption-after-previous-install");
     expect(hostRunner).toContain("--require-recovered-stale-state");
+    expect(hostRunner).toContain('if ((packaged_qa)); then');
+    expect(hostRunner).toContain(
+      'guest_args+=(-HibernateHandshakePath "$guest_hibernate_handshake_path")',
+    );
     expect(hostRunner).toContain("Resuming Windows QA from native hibernate");
     expect(hostRunner).toContain("hibernate-requested.json");
     expect(hostRunner).toContain("hibernate-acknowledged.json");
@@ -452,6 +456,12 @@ describe("windows installer packaging", () => {
     );
     expect(guestRunner).toContain('"--system-sleep-wake"');
     expect(guestRunner).toContain('"--windows-hibernate-handshake-dir"');
+    expect(guestRunner).toContain(
+      '$scenario.Name -in @("lifecycle", "seeded-chaos") -and\n        $RunsPackagedLifecycle',
+    );
+    expect(guestRunner).toContain(
+      'if ($RunsPackagedLifecycle) {\n    if ([string]::IsNullOrWhiteSpace($HibernateHandshakePath))',
+    );
     expect(guestRunner).toContain('"--artifact-root", $installRoot');
     expect(guestRunner).toContain(
       '"--package-file", $candidateInstallerPathLocal',

@@ -437,8 +437,10 @@ if ((exact_candidate_qa)); then
   guest_args+=(
     -CandidateManifestPath "$guest_candidate_manifest_path"
     -ExpectedCandidateRunId "$candidate_run_id"
-    -HibernateHandshakePath "$guest_hibernate_handshake_path"
   )
+fi
+if ((packaged_qa)); then
+  guest_args+=(-HibernateHandshakePath "$guest_hibernate_handshake_path")
 fi
 if ((force_full)); then
   guest_args+=(-ForceFull)

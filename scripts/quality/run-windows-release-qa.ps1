@@ -118,9 +118,9 @@ if ($RunsPackagedLifecycle) {
       throw "Candidate manifest is missing: $CandidateManifestPath"
     }
   }
-  if ($RequiresExactCandidate) {
+  if ($RunsPackagedLifecycle) {
     if ([string]::IsNullOrWhiteSpace($HibernateHandshakePath)) {
-      throw "Exact candidate QA requires -HibernateHandshakePath for Windows power recovery."
+      throw "Packaged lifecycle QA requires -HibernateHandshakePath for Windows power recovery."
     }
     $HibernateHandshakePath = [System.IO.Path]::GetFullPath($HibernateHandshakePath)
     New-Item -ItemType Directory -Force -Path $HibernateHandshakePath | Out-Null
@@ -1684,7 +1684,7 @@ if ($RunsPackagedLifecycle) {
       }
       if (
         $scenario.Name -in @("lifecycle", "seeded-chaos") -and
-        ($IsFormal -or $Mode -eq "candidate-admission")
+        $RunsPackagedLifecycle
       ) {
         $driverArguments += @(
           "--system-sleep-wake",
