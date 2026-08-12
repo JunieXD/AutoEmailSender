@@ -2810,10 +2810,13 @@ export const BackgroundTasksPage = ({
   useEffect(() => {
     if (
       taskCenterSection !== "background" ||
-      activeTab !== "batch" ||
       !Number.isInteger(requestedBatchTaskId) ||
       requestedBatchTaskId <= 0
     ) {
+      return;
+    }
+    if (activeTab !== "batch") {
+      setActiveTab("batch");
       return;
     }
     const requestedTask = tasks.find((task) => task.id === requestedBatchTaskId);

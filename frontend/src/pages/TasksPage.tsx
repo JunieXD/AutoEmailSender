@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { Activity, useCallback, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
@@ -153,19 +153,20 @@ export const TasksPage = () => {
     );
   }, []);
 
-  if (section === "delivery") {
-    return (
-      <EmailDeliveryPlan
-        onSectionChange={updateSection}
-        onOpenBatchTask={openBatchTask}
-      />
-    );
-  }
-
   return (
-    <BackgroundTasksPage
-      pendingCrawlJobHandoff={pendingCrawlJobHandoff}
-      onCrawlHandoffApplied={handleCrawlHandoffApplied}
-    />
+    <>
+      <Activity mode={section === "delivery" ? "visible" : "hidden"}>
+        <EmailDeliveryPlan
+          onSectionChange={updateSection}
+          onOpenBatchTask={openBatchTask}
+        />
+      </Activity>
+      <Activity mode={section === "background" ? "visible" : "hidden"}>
+        <BackgroundTasksPage
+          pendingCrawlJobHandoff={pendingCrawlJobHandoff}
+          onCrawlHandoffApplied={handleCrawlHandoffApplied}
+        />
+      </Activity>
+    </>
   );
 };

@@ -1,7 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { Activity, type ReactNode } from "react";
-import { MemoryRouter as RouterMemoryRouter } from "react-router-dom";
+import {
+  Link,
+  MemoryRouter as RouterMemoryRouter,
+  Route,
+  Routes,
+} from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BatchTaskCardDTO,
@@ -38,6 +43,7 @@ import {
   TasksPage,
   TaskListViewSwitch,
 } from "./TasksPage";
+import { KeepAliveLayout } from "@/components/organisms/KeepAliveLayout";
 
 const apiMocks = vi.hoisted(() => ({
   listBatchTasks: vi.fn(),
@@ -258,7 +264,23 @@ vi.mock("@/lib/api/emailTasksApi", () => ({
 }));
 
 vi.mock("@/features/email-deliveries/components/EmailDeliveryPlan", () => ({
-  EmailDeliveryPlan: () => <div>发送计划定位结果</div>,
+  EmailDeliveryPlan: ({
+    onSectionChange,
+    onOpenBatchTask,
+  }: {
+    onSectionChange: (section: "delivery" | "background") => void;
+    onOpenBatchTask: (identityId: number, batchTaskId: number) => void;
+  }) => (
+    <div>
+      <span>发送计划定位结果</span>
+      <button type="button" onClick={() => onSectionChange("background")}>
+        后台任务
+      </button>
+      <button type="button" onClick={() => onOpenBatchTask(1, 1)}>
+        打开批量任务
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("@/components/molecules/SubjectTemplateInput", () => ({
@@ -1184,6 +1206,77 @@ describe("TasksPage section isolation", () => {
     expect(apiMocks.listCrawlJobs).not.toHaveBeenCalled();
     expect(apiMocks.listMatchAnalysisJobs).not.toHaveBeenCalled();
     expect(apiMocks.listProfessorInformationEnrichmentJobs).not.toHaveBeenCalled();
+  });
+
+  it.each(["批量邮件", "智能抓取", "匹配分析", "信息补全"])(
+    "preserves the %s background tab while switching task center sections",
+    async (tabLabel) => {
+      render(
+        <RouterMemoryRouter initialEntries={["/tasks?section=background"]}>
+          <TasksPage />
+        </RouterMemoryRouter>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: tabLabel }));
+      expect(screen.getByRole("button", { name: tabLabel })).toHaveClass(
+        "bg-primary",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "发送计划" }));
+      fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+
+      expect(screen.getByRole("button", { name: tabLabel })).toHaveClass(
+        "bg-primary",
+      );
+    },
+  );
+
+  it("preserves the selected background tab after leaving and returning to task center", async () => {
+    render(
+      <RouterMemoryRouter initialEntries={["/tasks?section=background"]}>
+        <Link to="/">首页测试入口</Link>
+        <Link to="/tasks?section=background">任务中心测试入口</Link>
+        <Routes>
+          <Route element={<KeepAliveLayout />}>
+            <Route index element={<div>首页测试页面</div>} />
+            <Route path="tasks" element={<TasksPage />} />
+          </Route>
+        </Routes>
+      </RouterMemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("link", { name: "首页测试入口" }));
+    expect(screen.getByText("首页测试页面")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "任务中心测试入口" }));
+
+    expect(screen.getByRole("button", { name: "智能抓取" })).toHaveClass(
+      "bg-primary",
+    );
+  });
+
+  it("switches to batch email before opening a batch task from delivery plan", async () => {
+    apiMocks.listBatchTasks.mockResolvedValue([buildBatchTask()]);
+
+    render(
+      <RouterMemoryRouter initialEntries={["/tasks?section=background"]}>
+        <TasksPage />
+      </RouterMemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送计划" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开批量任务" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "批量邮件" })).toHaveClass(
+        "bg-primary",
+      );
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "批量任务详情" }),
+    ).toBeInTheDocument();
   });
 });
 
