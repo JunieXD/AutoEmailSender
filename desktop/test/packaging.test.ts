@@ -268,6 +268,13 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("Acknowledged Windows native hibernate restart $restarted_hibernate_request_id");
     expect(hostRunner).toContain('[[ "$restarted_hibernate_request_id" == "$pending_hibernate_request_id" ]]');
     expect(hostRunner).toContain('pending_hibernate_request_id=""');
+    expect(hostRunner).toContain('completed_hibernate_request_id=""');
+    expect(hostRunner).toContain(
+      '[[ "$request_id" != "$completed_hibernate_request_id" ]]',
+    );
+    expect(hostRunner).toContain(
+      'completed_hibernate_request_id="$resumed_request_id"',
+    );
     expect(hostRunner).toContain("Windows QA completed without confirming hibernate resume");
     expect(hostRunner).toContain("waiting up to 15s for a hibernate handshake");
     expect(hostRunner).toContain("waiting up to 15s for the hibernate handshake");
@@ -278,6 +285,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("output_tail_lines=2000");
     expect(hostRunner).toContain('tail -n "$output_tail_lines"');
     expect(wrapper).toContain("Move-Item -LiteralPath $temporaryStatusPath");
+    expect(wrapper).toContain("$localOutputPath = Join-Path");
+    expect(wrapper).toContain("Tee-Object -FilePath $localOutputPath");
+    expect(wrapper).toContain("[System.IO.File]::WriteAllBytes(");
+    expect(wrapper).not.toContain("Tee-Object -FilePath $OutputPath");
     expect(wrapper).toContain('$ErrorActionPreference = "Continue"');
     expect(wrapper).toContain("$exitCode = $LASTEXITCODE");
     expect(hostRunner).toContain("--normal-soak");

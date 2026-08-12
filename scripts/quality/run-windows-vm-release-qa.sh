@@ -484,6 +484,7 @@ deadline=$((SECONDS + 21600))
 hibernate_recoveries=0
 pending_hibernate_request_id=""
 restarted_hibernate_request_id=""
+completed_hibernate_request_id=""
 connection_exit_status=""
 connection_handshake_deadline=0
 stopped_without_handshake_deadline=0
@@ -500,16 +501,18 @@ while [[ ! -f "$status_path" ]]; do
       echo "Windows QA published an invalid hibernate request." >&2
       exit 1
     fi
-    acknowledgement_path="$hibernate_handshake_path/hibernate-acknowledged.json"
-    acknowledged_request_id="$(node -e 'const fs=require("fs");try{const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof p.request_id==="string")process.stdout.write(p.request_id)}catch{}' "$acknowledgement_path")"
-    if [[ "$acknowledged_request_id" != "$request_id" ]]; then
-      acknowledgement_temporary_path="$acknowledgement_path.tmp"
-      node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({request_id:process.argv[2],acknowledged:true})+"\n")' \
-        "$acknowledgement_temporary_path" "$request_id"
-      mv -f -- "$acknowledgement_temporary_path" "$acknowledgement_path"
-      echo "Acknowledged Windows native hibernate request $request_id."
+    if [[ "$request_id" != "$completed_hibernate_request_id" ]]; then
+      acknowledgement_path="$hibernate_handshake_path/hibernate-acknowledged.json"
+      acknowledged_request_id="$(node -e 'const fs=require("fs");try{const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof p.request_id==="string")process.stdout.write(p.request_id)}catch{}' "$acknowledgement_path")"
+      if [[ "$acknowledged_request_id" != "$request_id" ]]; then
+        acknowledgement_temporary_path="$acknowledgement_path.tmp"
+        node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({request_id:process.argv[2],acknowledged:true})+"\n")' \
+          "$acknowledgement_temporary_path" "$request_id"
+        mv -f -- "$acknowledgement_temporary_path" "$acknowledgement_path"
+        echo "Acknowledged Windows native hibernate request $request_id."
+      fi
+      pending_hibernate_request_id="$request_id"
     fi
-    pending_hibernate_request_id="$request_id"
   fi
   if [[ -n "$pending_hibernate_request_id" ]] && \
     [[ "$restarted_hibernate_request_id" == "$pending_hibernate_request_id" ]] && \
@@ -518,6 +521,7 @@ while [[ ! -f "$status_path" ]]; do
       "$hibernate_handshake_path/hibernate-resumed.json")"
     if [[ "$resumed_request_id" == "$pending_hibernate_request_id" ]]; then
       echo "Confirmed Windows native hibernate resume $resumed_request_id."
+      completed_hibernate_request_id="$resumed_request_id"
       pending_hibernate_request_id=""
     fi
   fi

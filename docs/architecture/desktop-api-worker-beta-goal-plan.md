@@ -235,6 +235,14 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   共用同一 request ID，恢复后都必须等待 host stopped/start/restarted 才写 resumed；其他 S3
   错误仍硬失败。新增 S3 顺序合同及完整 packaged-runtime 40 passed/3 skipped、packaging 24/24、
   Ruff、compile、Bash syntax 和 diff check 均通过；须从新提交重新计数 Windows 两轮 rehearsal。
+- `d1b8722` 的重跑已证明统一 S3 协议本身成功：request ID
+  `fa29a09a-9fc6-44e0-adb8-087bb10d781e` 严格完成 ACK、VM stopped/start、restarted、resumed；
+  driver 报告 20 项全部通过，原生 S3 20.019 秒、Kernel-Power 42/Power-Troubleshooter 1、原
+  runtime/API/Worker PID、heartbeat 和数据库审计均通过，资产摘要前后不变。外层仍退出 1 的根因
+  是 wrapper 将实时 UTF-16 日志 `Tee` 到 Parallels 共享目录，睡眠期间映射断开令 Tee 失败；driver
+  继续完成，首次卸载和数据保留也已发生。wrapper 现先写 guest 本地 `%TEMP%`，runner 结束后再
+  一次性复制共享输出；host 同时记住 completed request ID，禁止旧 requested 文件反复重置 pending。
+  该传输层修复仍须用新提交重新执行双轮，不拼接已有报告。
 
 ### 1.4 本次一次性授权边界
 

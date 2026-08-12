@@ -1156,3 +1156,19 @@ S3 stopped 与普通异常停止。该现场在约 20 秒内暴露，失败轮�
 stopped、启动 VM 并写 restarted，guest 才写 resumed。其他错误仍立即失败。新增 S3 精确顺序测试，
 本机验证为 packaged-runtime 40 passed/3 skipped、Desktop packaging 24/24、Ruff、Python compile、
 Bash syntax 和 `git diff --check` 全部通过。新提交后必须从第一轮重新计数 Windows rehearsal。
+
+`d1b8722` 重新计数的第一轮在 1.2 秒 timeout、seed 复核后按设计中断。第二轮恢复 3 个进程和
+1 个注册项、1.2 秒 timeout 后完成覆盖安装；S3 request ID
+`fa29a09a-9fc6-44e0-adb8-087bb10d781e` 依次得到 host ACK、VM stopped/start、restarted 和 resumed。
+最终 `report.json` 为 `status=passed`、`certification_eligible=false`、
+`evidence_purpose=non-certifying-harness-rehearsal`，20 项检查零失败；`native_system_sleep_wake`
+记录 `sleep_method=s3`、20.019 秒、sleep/wake 各 1、原 runtime/API/Worker PID 不变、heartbeat
+推进。数据库、浏览器树、split/combined、强杀恢复、rapid exit、资产不可变均通过；隔离数据库在
+卸载后仍存在，安装根和专用注册项已清除。
+
+外层 wrapper 仍返回 1 的原因是实时 `Tee-Object` 将日志写入 Parallels 共享路径，VM stopped 时
+共享映射短暂断开；它不终止内层 driver，所以报告仍完整通过，但 wrapper 正确不把该轮记为最终
+证据。修复改为实时写 guest-local `%TEMP%`，runner 完成后再把字节复制到共享输出并发布 status；
+host 另记录 completed request ID，避免保留的 requested 文件反复把同一 ID 重设为 pending 和重复
+打印 resume。Desktop packaging 24/24、Bash syntax 和 diff check 通过；新提交后仍从第一轮重新
+计数，以 Windows PowerShell 5.1 真实执行作为 wrapper 权威验证。
