@@ -1059,3 +1059,15 @@ LLM 结果，但测试固定等待 20ms 后删除临时 SQLite；Windows 的异�
 `release-impact.mjs --base fd5df8c --head f73a8a6` 只要求 Backend suite，并明确跳过 Windows formal
 和 macOS candidate。本机 Backend 2031/2031 在 10m47s 通过。该聚焦证据取代再次运行整个 Windows
 quick 套件；形成最终证据提交后冻结新 SHA，再申请同 SHA replacement Certify。
+
+run `31564882972` 已为 `5b9418f` 生成并认证 exact EXE/DMG/manifest；Windows admission 通过候选
+绑定、上一稳定版安装/seed、候选覆盖、split ready 后进入原生休眠。VM 确实进入 `stopped`，恢复
+后同一 Electron/API/Worker/Python driver 进程仍存活，但 host 先观察到 `prlctl exec=255`、尚未
+看到共享握手，因而提前失败并由 cleanup 删除握手目录。这是 host 监督顺序竞态，不是产品失败，
+该 run 仍按 exact evidence 规则失效。
+
+`d77835d` 让 `exec` 断开与 VM `stopped` 两种先后顺序都获得最多 15 秒的共享握手收敛窗口；只有
+握手存在且 VM 真实 stopped 才启动，启动后必须在 60 秒内离开 stopped，原来的次数上限和无握手
+失败条件不变。真实轻量探针直接覆盖失败顺序：`exec=255`、观察 `stopped+handshake`、自动启动，
+guest 同一 PowerShell PID `10684` 写出 resumed。本机 release contracts、Desktop typecheck/全量、
+packaging 24/24、Bash syntax 与 Windows PowerShell release contracts 通过；产品安装包逻辑未变。

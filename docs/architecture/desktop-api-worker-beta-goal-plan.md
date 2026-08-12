@@ -178,6 +178,11 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   不修改业务逻辑；本机连续 5 次与 Windows 聚焦单测通过。impact 只要求 Backend suite并明确
   跳过双平台 formal/candidate，本机 Backend 2031/2031 已通过。下一步形成证据提交并以新的
   clean SHA 执行 Certify；不再重跑无关安装、Desktop 或 macOS 阶段。
+- run `31564882972` 的 Windows admission 证明 exact binding、旧版 seed、覆盖升级和 split ready 后，
+  在原生休眠处暴露 host 先收到 `prlctl exec=255`、共享握手稍后可见的监督竞态；恢复后同一组产品
+  和 driver 进程仍存活，故不是产品失败。`d77835d` 为断连/VM stopped 两种顺序增加 15 秒握手
+  收敛窗口，并保留“握手 + 真实 stopped + 次数上限”硬条件。真实探针已以同一 PID `10684`
+  完成 hibernate/resume；新冻结 SHA 必须重新 Certify，旧 run 不得作为最终证据。
 
 ### 1.4 本次一次性授权边界
 
