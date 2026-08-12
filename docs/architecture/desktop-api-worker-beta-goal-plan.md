@@ -173,6 +173,11 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   runtime id、API/Worker PID 不变、Worker heartbeat 推进和 API 读写通过；普通失败、VM pause 或
   没有握手的停止不能进入此后备路径。Parallels `exec` 会在休眠时断开，因此 guest wrapper 以
   原子 UTF-8 状态文件向 host 回传最终退出码，不能把连接断开当作成功。
+- 精确 `fd5df8c` 的 Windows quick QA 在 Backend 末段发现不服从取消的 LLM 测试以固定 20ms 等待
+  Windows SQLite 收尾，触发 `WinError 32`。`f73a8a6` 只等待迟到任务真实完成并排空事件循环，
+  不修改业务逻辑；本机连续 5 次与 Windows 聚焦单测通过。impact 只要求 Backend suite并明确
+  跳过双平台 formal/candidate，本机 Backend 2031/2031 已通过。下一步形成证据提交并以新的
+  clean SHA 执行 Certify；不再重跑无关安装、Desktop 或 macOS 阶段。
 
 ### 1.4 本次一次性授权边界
 

@@ -1040,3 +1040,22 @@ cache、package metadata 和两处 report 读取。该缺陷发生在已通过 l
 evidence/auto-email-sender-packaged-qa/20260811T201422Z-343f2f17ae/report.json` 同样为 19/19、零违规，
 DMG SHA-256 `93c6aa4e6f1fb15022ec05f505a57355b81de68d9d381774ea50739c86b6dac5`。后续 impact 明确无需重跑
 macOS，因此 AC-BETA-QA-00 关闭；admission 与正式 exact-package 证据仍等待新 Certify run。
+
+### B5 续：Windows 休眠适配与最终候选前聚焦回归
+
+run `31551840527` 的首次 Windows admission 在 S3 返回 `ERROR_NOT_SUPPORTED(50)` 后停止。QA runner
+现仅在该错误下使用 Windows 原生休眠：guest 先写原子握手，host 必须观察 VM 进入 `stopped` 后
+重新启动；最终仍要求 Kernel-Power 42、Power-Troubleshooter 1、原 runtime/API/Worker PID、
+heartbeat 推进和 API 读写全部成立。Parallels `exec` 因休眠断开时，由 guest wrapper 的 UTF-8
+原子状态文件传递真实退出码。真实探针已证明同一 PowerShell PID 可跨休眠保留；packaged runtime
+合同 38 passed/3 skipped、Desktop packaging 24/24、Desktop 全量 258 passed/3 skipped、typecheck、
+Backend 2031 passed/5 skipped和 prerelease contracts 22/22 均通过。
+
+随后精确 `fd5df8c` 的 Windows quick QA 在 Backend 2031 项的最后阶段发现一处 Windows 专属测试
+清理竞态：`test_timeout_releases_slot_when_llm_ignores_cancellation` 已按产品设计释放调度槽并隔离迟到
+LLM 结果，但测试固定等待 20ms 后删除临时 SQLite；Windows 的异步会话收尾尚未完成，因而报
+`WinError 32`。`f73a8a6` 只把测试同步改为等待迟到任务真实完成并让事件循环排空，不修改 master
+业务逻辑或生产超时语义。本机该测试连续 5 次通过，Windows 聚焦测试 0.505s 通过；
+`release-impact.mjs --base fd5df8c --head f73a8a6` 只要求 Backend suite，并明确跳过 Windows formal
+和 macOS candidate。本机 Backend 2031/2031 在 10m47s 通过。该聚焦证据取代再次运行整个 Windows
+quick 套件；形成最终证据提交后冻结新 SHA，再申请同 SHA replacement Certify。
