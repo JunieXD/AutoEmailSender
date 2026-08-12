@@ -478,13 +478,29 @@ def apply_candidate_enrichment_values(
     }
     for field_name in ("email", "title", "department", "research_direction"):
         value = updates.get(field_name)
+        if field_name == "email":
+            value = normalize_candidate_email(value)
+        elif isinstance(value, str):
+            value = value.strip() or None
+        if value in (None, ""):
+            continue
         stored_source = _stored_field_source(candidate, field_name)
-        if (
-            value
-            and not getattr(candidate, field_name)
-            and stored_source.get("source_kind") != "manual"
-        ):
-            setattr(candidate, field_name, value.strip() if isinstance(value, str) else value)
+        old_value = getattr(candidate, field_name)
+        old_source_kind = stored_source.get("source_kind")
+        should_replace = old_source_kind != "manual" and (
+            old_value in (None, "")
+            or (
+                old_source_kind in {"list_chunk", "page_chunk"}
+                and _should_replace_field(
+                    old_value=old_value,
+                    new_value=value,
+                    old_source=stored_source,
+                    new_source=enrichment_source,
+                )
+            )
+        )
+        if should_replace:
+            setattr(candidate, field_name, value)
             field_sources[field_name] = enrichment_source
             changed = True
     recent_papers = normalize_recent_papers(updates.get("recent_papers"))

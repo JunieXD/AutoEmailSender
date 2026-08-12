@@ -59,6 +59,7 @@ from app.modules.professors.public import (
 from app.modules.crawler.candidate_identity import (
     apply_candidate_enrichment_values,
     consolidate_candidate_identity,
+    rebuild_candidate_identity_keys,
 )
 from app.modules.professors.public import normalize_recent_papers
 
@@ -230,7 +231,10 @@ async def run_crawler_v2_enrichment_worker_once(
                 return 0
             candidate = current_candidate
             candidate_enriched_fields = _apply_enrichment(candidate, payload)
-            await consolidate_candidate_identity(session, candidate)
+            if "email" in candidate_enriched_fields:
+                candidate = await rebuild_candidate_identity_keys(session, candidate)
+            else:
+                candidate = await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
             skip_reason = None
             if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:

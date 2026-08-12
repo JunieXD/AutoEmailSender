@@ -147,6 +147,124 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row.id for row in canonicalized], [first_id])
         self.assertEqual(missing, [])
 
+    async def test_profile_enrichment_replaces_list_email_and_refreshes_identity_key(self) -> None:
+        candidate_id = await self._create_candidate(
+            name="列表页邮箱候选",
+            email="list@example.edu",
+            profile_url="https://example.edu/people/list-email",
+            source_url="https://example.edu/faculty",
+        )
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            candidate.source_kind = "list_chunk"
+            candidate.field_sources = {
+                "email": {
+                    "source_kind": "list_chunk",
+                    "source_url": "https://example.edu/faculty",
+                    "confidence": 0.9,
+                    "boundary_risk": False,
+                }
+            }
+            await rebuild_candidate_identity_keys(session, candidate)
+            changed = apply_candidate_enrichment_values(
+                candidate,
+                {"email": "PROFILE@EXAMPLE.EDU"},
+            )
+            canonical = await rebuild_candidate_identity_keys(session, candidate)
+            await session.commit()
+
+        self.assertTrue(changed)
+        self.assertEqual(canonical.email, "profile@example.edu")
+        self.assertEqual(
+            canonical.field_sources["email"]["source_kind"],
+            "profile_page",
+        )
+        async with self.session_factory() as session:
+            keys = list(
+                await session.scalars(
+                    select(CrawlCandidateIdentityKey).where(
+                        CrawlCandidateIdentityKey.job_id == self.job_id,
+                        CrawlCandidateIdentityKey.key_type == "email",
+                    )
+                )
+            )
+        self.assertEqual(
+            {key.normalized_value for key in keys},
+            {"profile@example.edu"},
+        )
+
+    async def test_profile_enrichment_does_not_replace_manual_or_unknown_email(self) -> None:
+        manual_id = await self._create_candidate(
+            name="手动邮箱候选",
+            email="manual@example.edu",
+            profile_url="https://example.edu/people/manual-email",
+        )
+        unknown_id = await self._create_candidate(
+            name="历史邮箱候选",
+            email="legacy@example.edu",
+            profile_url="https://example.edu/people/legacy-email",
+        )
+        async with self.session_factory() as session:
+            manual = await session.get(CrawlCandidate, manual_id)
+            unknown = await session.get(CrawlCandidate, unknown_id)
+            assert manual is not None and unknown is not None
+            mark_candidate_fields_manual(manual, ["email"])
+            manual_changed = apply_candidate_enrichment_values(
+                manual,
+                {"email": "profile-manual@example.edu"},
+            )
+            unknown_changed = apply_candidate_enrichment_values(
+                unknown,
+                {"email": "profile-legacy@example.edu"},
+            )
+            await session.commit()
+
+        self.assertFalse(manual_changed)
+        self.assertFalse(unknown_changed)
+        self.assertEqual(manual.email, "manual@example.edu")
+        self.assertEqual(unknown.email, "legacy@example.edu")
+
+    async def test_profile_enrichment_does_not_restore_manually_cleared_email(self) -> None:
+        candidate_id = await self._create_candidate(
+            name="手动清空邮箱候选",
+            profile_url="https://example.edu/people/cleared-email",
+        )
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            mark_candidate_fields_manual(candidate, ["email"])
+            changed = apply_candidate_enrichment_values(
+                candidate,
+                {"email": "profile@example.edu"},
+            )
+            await session.commit()
+
+        self.assertFalse(changed)
+        self.assertIsNone(candidate.email)
+
+    async def test_profile_enrichment_ignores_invalid_email(self) -> None:
+        candidate_id = await self._create_candidate(
+            name="无效邮箱候选",
+            email="list@example.edu",
+            profile_url="https://example.edu/people/invalid-email",
+        )
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            candidate.source_kind = "list_chunk"
+            candidate.field_sources = {
+                "email": {"source_kind": "list_chunk"},
+            }
+            changed = apply_candidate_enrichment_values(
+                candidate,
+                {"email": "not-an-email"},
+            )
+            await session.commit()
+
+        self.assertFalse(changed)
+        self.assertEqual(candidate.email, "list@example.edu")
+
     async def test_alias_enrichment_updates_canonical_and_manual_values_win(self) -> None:
         first_id = await self._create_candidate(
             name="张三",
