@@ -36,7 +36,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar, Literal, TypeVar
 
 import psutil
@@ -1557,6 +1557,7 @@ def main(argv: list[str] | None = None) -> int:
         "artifact_tree_sha256": artifact_tree["sha256"],
         "artifact_file_count": artifact_tree["file_count"],
         "artifact_bytes": artifact_tree["bytes"],
+        "artifact_excluded_runtime_paths": artifact_tree["excluded_runtime_paths"],
         "package_file": str(args.package_file) if args.package_file else None,
         "package_sha256": package_sha256,
         "previous_package_file": (
@@ -1687,6 +1688,12 @@ def main(argv: list[str] | None = None) -> int:
             evidence={
                 "artifact_tree_sha256_before": artifact_tree["sha256"],
                 "artifact_tree_sha256_after": artifact_tree_after["sha256"],
+                "artifact_excluded_runtime_paths_before": artifact_tree[
+                    "excluded_runtime_paths"
+                ],
+                "artifact_excluded_runtime_paths_after": artifact_tree_after[
+                    "excluded_runtime_paths"
+                ],
                 "package_sha256_before": package_sha256,
                 "package_sha256_after": package_sha256_after,
                 "previous_package_sha256_before": previous_package_sha256,
@@ -4286,8 +4293,20 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_allowed_runtime_artifact_path(relative: str) -> bool:
+    """Identify the one browser runtime log that Chromium may create in-place."""
+
+    parts = PurePosixPath(relative).parts
+    return (
+        len(parts) == 5
+        and parts[0:2] == ("resources", "ms-playwright")
+        and all(re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in parts[2:4])
+        and parts[-1] == "debug.log"
+    )
+
+
 def _sha256_tree(path: Path) -> dict[str, object]:
-    """Hash a packaged artifact using relative names, types, modes, and bytes."""
+    """Hash immutable packaged files, excluding only controlled Chromium debug logs."""
 
     resolved = path.resolve()
     root = _extended_length_path(resolved) if os.name == "nt" else resolved
@@ -4295,8 +4314,12 @@ def _sha256_tree(path: Path) -> dict[str, object]:
     digest = hashlib.sha256()
     file_count = 0
     total_bytes = 0
+    excluded_paths: list[str] = []
     for candidate in candidates:
         relative = candidate.name if root.is_file() else candidate.relative_to(root).as_posix()
+        if not root.is_file() and _is_allowed_runtime_artifact_path(relative):
+            excluded_paths.append(relative)
+            continue
         stat = candidate.lstat()
         if candidate.is_symlink():
             kind = "symlink"
@@ -4324,6 +4347,7 @@ def _sha256_tree(path: Path) -> dict[str, object]:
         "sha256": digest.hexdigest(),
         "file_count": file_count,
         "bytes": total_bytes,
+        "excluded_runtime_paths": excluded_paths,
     }
 
 

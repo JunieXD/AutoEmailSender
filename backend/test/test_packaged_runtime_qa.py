@@ -799,6 +799,49 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
             third = runner._sha256_tree(root)
             self.assertNotEqual(first["sha256"], third["sha256"])
 
+    def test_artifact_tree_excludes_only_packaged_playwright_debug_logs(self) -> None:
+        self.assertTrue(
+            runner._is_allowed_runtime_artifact_path(
+                "resources/ms-playwright/chromium_headless_shell-1208/"
+                "chrome-headless-shell-win64/debug.log"
+            )
+        )
+        self.assertFalse(
+            runner._is_allowed_runtime_artifact_path(
+                "resources/ms-playwright/chromium_headless_shell-1208/"
+                "chrome-headless-shell-win64/important.dll"
+            )
+        )
+        self.assertFalse(
+            runner._is_allowed_runtime_artifact_path("resources/app.asar/debug.log")
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "artifact"
+            stable = root / "resources" / "app.asar"
+            debug_log = (
+                root
+                / "resources"
+                / "ms-playwright"
+                / "browser-1208"
+                / "chrome-headless-shell-win64"
+                / "debug.log"
+            )
+            stable.parent.mkdir(parents=True)
+            debug_log.parent.mkdir(parents=True)
+            stable.write_bytes(b"immutable")
+            debug_log.write_bytes(b"first")
+            first = runner._sha256_tree(root)
+            debug_log.write_bytes(b"second")
+            second = runner._sha256_tree(root)
+            self.assertEqual(first["sha256"], second["sha256"])
+            self.assertEqual(second["excluded_runtime_paths"], [
+                "resources/ms-playwright/browser-1208/chrome-headless-shell-win64/debug.log",
+            ])
+            stable.write_bytes(b"changed")
+            third = runner._sha256_tree(root)
+            self.assertNotEqual(first["sha256"], third["sha256"])
+
     def test_candidate_manifest_binds_run_revision_version_and_package_bytes(
         self,
     ) -> None:
