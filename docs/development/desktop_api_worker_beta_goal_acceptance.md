@@ -1071,3 +1071,16 @@ run `31564882972` 已为 `5b9418f` 生成并认证 exact EXE/DMG/manifest；Wind
 失败条件不变。真实轻量探针直接覆盖失败顺序：`exec=255`、观察 `stopped+handshake`、自动启动，
 guest 同一 PowerShell PID `10684` 写出 resumed。本机 release contracts、Desktop typecheck/全量、
 packaging 24/24、Bash syntax 与 Windows PowerShell release contracts 通过；产品安装包逻辑未变。
+
+run `31567826340` 的下一次 admission 再次证明旧版 seed、候选覆盖和 split ready，随后仍在休眠处
+复现：Python `write_text` 返回后共享目录尚未对 host 可见，guest 已执行 `shutdown /h`；因此仅在
+host 端等待传播不能构成可靠协议。修复改为带唯一 `request_id` 的两阶段握手：guest 写 requested
+后最长等待 30 秒，host 解析并原子回写同 ID 的 acknowledged，guest 只接受匹配 ACK 后才允许休眠；
+每轮先清理旧 requested/ACK/resumed，host 对不匹配 ACK 必须重写，防止 lifecycle 与 chaos 两次
+休眠交叉复用。
+
+真实 Windows 探针刻意使用与 packaged driver 相同的 Python 快速 `write_text`：host ACK
+`7f9b146a-bddd-451c-81b2-36add3b0fcf5` 后 guest 才休眠，`prlctl exec=255`，VM stopped/自动启动，
+同一 Python PID `5460` 恢复且 resumed request ID 完全一致。完整 packaged runtime contracts
+39 passed/3 skipped、Desktop 258 passed/3 skipped、typecheck、全部 POSIX release contracts、
+Bash syntax 和 diff check 通过。该真实探针在申请新 candidate 前直接覆盖原失败路径。

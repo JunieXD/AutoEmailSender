@@ -463,6 +463,7 @@ printf '%s\n' "${guest_args[@]}" >"$arguments_path"
 mkdir -p "$hibernate_handshake_path"
 rm -f -- "$status_path" "$output_path" \
   "$hibernate_handshake_path/hibernate-requested.json" \
+  "$hibernate_handshake_path/hibernate-acknowledged.json" \
   "$hibernate_handshake_path/hibernate-resumed.json"
 
 set +e
@@ -488,6 +489,22 @@ while [[ ! -f "$status_path" ]]; do
     exit 1
   fi
   vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
+  if [[ -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
+    if ! request_id="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(!Number.isInteger(p.pid)||typeof p.request_id!=="string"||!p.request_id||typeof p.requested_at!=="string")process.exit(2);process.stdout.write(p.request_id)' \
+      "$hibernate_handshake_path/hibernate-requested.json")"; then
+      echo "Windows QA published an invalid hibernate request." >&2
+      exit 1
+    fi
+    acknowledgement_path="$hibernate_handshake_path/hibernate-acknowledged.json"
+    acknowledged_request_id="$(node -e 'const fs=require("fs");try{const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof p.request_id==="string")process.stdout.write(p.request_id)}catch{}' "$acknowledgement_path")"
+    if [[ "$acknowledged_request_id" != "$request_id" ]]; then
+      acknowledgement_temporary_path="$acknowledgement_path.tmp"
+      node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({request_id:process.argv[2],acknowledged:true})+"\n")' \
+        "$acknowledgement_temporary_path" "$request_id"
+      mv -f -- "$acknowledgement_temporary_path" "$acknowledgement_path"
+      echo "Acknowledged Windows native hibernate request $request_id."
+    fi
+  fi
   if [[ -z "$connection_exit_status" ]] && ! kill -0 "$exec_pid" 2>/dev/null; then
     wait "$exec_pid"
     connection_status=$?

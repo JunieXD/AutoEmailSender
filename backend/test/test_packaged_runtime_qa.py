@@ -6,6 +6,7 @@ import inspect
 import json
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -38,6 +39,43 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_windows_hibernate_waits_for_host_acknowledgement(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.object(
+                runner,
+                "_wait_until",
+                side_effect=lambda callback, **_kwargs: callback(),
+            ) as wait_until,
+            mock.patch.object(
+                runner.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as run,
+        ):
+            handshake_dir = Path(temp_dir)
+            acknowledged = handshake_dir / "hibernate-acknowledged.json"
+
+            def acknowledge(callback, **_kwargs):
+                self.assertFalse(run.called)
+                request = json.loads(
+                    (handshake_dir / "hibernate-requested.json").read_text(encoding="utf-8")
+                )
+                acknowledged.write_text(
+                    json.dumps(
+                        {"request_id": request["request_id"], "acknowledged": True}
+                    ),
+                    encoding="utf-8",
+                )
+                return callback()
+
+            wait_until.side_effect = acknowledge
+            runner._exercise_windows_hibernate(handshake_dir=handshake_dir)
+
+            self.assertTrue(run.called)
+            self.assertTrue((handshake_dir / "hibernate-requested.json").is_file())
+            self.assertTrue((handshake_dir / "hibernate-resumed.json").is_file())
+
     def test_windows_sleep_uses_hibernate_only_for_unsupported_s3(self) -> None:
         kernel32 = mock.Mock()
         kernel32.CreateWaitableTimerW = mock.MagicMock(return_value=123)

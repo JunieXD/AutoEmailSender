@@ -2439,10 +2439,31 @@ def _exercise_windows_system_sleep_wake(
 
 def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
     requested = handshake_dir / "hibernate-requested.json"
+    acknowledged = handshake_dir / "hibernate-acknowledged.json"
     resumed = handshake_dir / "hibernate-resumed.json"
+    requested.unlink(missing_ok=True)
+    acknowledged.unlink(missing_ok=True)
+    resumed.unlink(missing_ok=True)
+    request_id = str(uuid.uuid4())
     requested.write_text(
-        json.dumps({"pid": os.getpid(), "requested_at": datetime.now(UTC).isoformat()}),
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "request_id": request_id,
+                "requested_at": datetime.now(UTC).isoformat(),
+            }
+        ),
         encoding="utf-8",
+    )
+    _wait_until(
+        lambda: (
+            acknowledged
+            if acknowledged.is_file()
+            and _read_json(acknowledged).get("request_id") == request_id
+            else None
+        ),
+        timeout_seconds=30,
+        description="host hibernate handshake acknowledgement",
     )
     completed = subprocess.run(
         ["shutdown.exe", "/h"],
@@ -2457,7 +2478,13 @@ def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
             f"{completed.stderr.strip()[-500:]}"
         )
     resumed.write_text(
-        json.dumps({"pid": os.getpid(), "resumed_at": datetime.now(UTC).isoformat()}),
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "request_id": request_id,
+                "resumed_at": datetime.now(UTC).isoformat(),
+            }
+        ),
         encoding="utf-8",
     )
 

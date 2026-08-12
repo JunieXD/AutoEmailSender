@@ -254,6 +254,9 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--require-recovered-stale-state");
     expect(hostRunner).toContain("Resuming Windows QA from native hibernate");
     expect(hostRunner).toContain("hibernate-requested.json");
+    expect(hostRunner).toContain("hibernate-acknowledged.json");
+    expect(hostRunner).toContain("acknowledged_request_id");
+    expect(hostRunner).toContain("Acknowledged Windows native hibernate request $request_id");
     expect(hostRunner).toContain("waiting up to 15s for a hibernate handshake");
     expect(hostRunner).toContain("waiting up to 15s for the hibernate handshake");
     expect(hostRunner).toContain("connection_handshake_deadline");

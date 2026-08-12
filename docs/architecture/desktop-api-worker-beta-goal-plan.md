@@ -183,6 +183,11 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   和 driver 进程仍存活，故不是产品失败。`d77835d` 为断连/VM stopped 两种顺序增加 15 秒握手
   收敛窗口，并保留“握手 + 真实 stopped + 次数上限”硬条件。真实探针已以同一 PID `10684`
   完成 hibernate/resume；新冻结 SHA 必须重新 Certify，旧 run 不得作为最终证据。
+- run `31567826340` 证明单纯 host 宽限仍不足：Python 写共享 requested 后可在 host 可见前完成
+  `shutdown /h`。最终协议使用唯一 `request_id` 的 requested → host acknowledged → hibernate；
+  guest 只接受匹配 ACK，每轮清旧文件，host 重写不匹配 ACK。真实 Python 快速写探针已以同一
+  PID `5460` 和同一 request ID 完成 stopped/resume；完整 packaged/desktop/release 聚焦合同通过。
+  必须以包含该协议的新 SHA Certify，旧 run 继续只作失败证据。
 
 ### 1.4 本次一次性授权边界
 
