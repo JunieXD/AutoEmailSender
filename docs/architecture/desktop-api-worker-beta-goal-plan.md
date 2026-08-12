@@ -188,6 +188,20 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   guest 只接受匹配 ACK，每轮清旧文件，host 重写不匹配 ACK。真实 Python 快速写探针已以同一
   PID `5460` 和同一 request ID 完成 stopped/resume；完整 packaged/desktop/release 聚焦合同通过。
   必须以包含该协议的新 SHA Certify，旧 run 继续只作失败证据。
+- 冻结 SHA `1be5a41a0a45f678202f43fe01dff9a569349ef4` 的 run `31570525027` 已通过全部远端
+  contract、preflight、Windows/macOS build 和 certify；EXE SHA-256 为
+  `a560b7b752d373afa309eee17edd8a03ca83ae999e5a2502701d5d07beb9fdcf`，DMG SHA-256 为
+  `5eb74a1eea441a861d09197876a97610d0692e049bb803011e50d8a65a5e60ec`。Windows admission 已通过
+  stale/timeout 恢复、公开 v2.5.4 安装与 seed、候选覆盖、split/API/Worker ready，进入原生休眠后
+  guest 确实先收到匹配 ACK 并使 VM stopped；但 stopped 瞬间 request 文件在 host 共享视图短暂
+  不可见，host 未保留已 ACK 的 request ID，因而把合法休眠误判为无握手停止。该 run 继续只作
+  失败证据，不得进入后续 admission/formal/publish。
+- host 监督器现将已验证并 ACK 的唯一 request ID 保存在内存中；共享文件短暂不可见时只允许该
+  pending ID 驱动一次真实 stopped/resume，恢复后必须看到同 ID 的 resumed 才清除。没有已 ACK
+  pending ID 的普通 VM 停止仍按原 15 秒上限失败，次数上限保持不变。真实自动探针得到
+  `prlctl exec=255`，同一 Python PID `5712` 和 request ID
+  `d936d204-7430-4e1c-a50f-b8886b8d75b3` 跨 stopped/start 完全一致；新冻结 SHA 只需按 impact
+  运行受影响合同并重新 Certify，不重复无关全仓或旧失败候选。
 
 ### 1.4 本次一次性授权边界
 

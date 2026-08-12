@@ -1084,3 +1084,20 @@ host 端等待传播不能构成可靠协议。修复改为带唯一 `request_id
 同一 Python PID `5460` 恢复且 resumed request ID 完全一致。完整 packaged runtime contracts
 39 passed/3 skipped、Desktop 258 passed/3 skipped、typecheck、全部 POSIX release contracts、
 Bash syntax 和 diff check 通过。该真实探针在申请新 candidate 前直接覆盖原失败路径。
+
+run `31570525027` 随后为 `1be5a41a0a45f678202f43fe01dff9a569349ef4` 生成 exact candidate；远端
+contract、preflight、Windows/macOS build 和 certify 全部成功。下载后重新计算得到 EXE
+`a560b7b752d373afa309eee17edd8a03ca83ae999e5a2502701d5d07beb9fdcf`、DMG
+`5eb74a1eea441a861d09197876a97610d0692e049bb803011e50d8a65a5e60ec`，大小、版本、分支、run ID、
+release SHA、默认 split 和稳定隔离基线均与 manifest 一致。
+
+Windows admission 已通过 stale 专用注册恢复、1.3 秒受控 timeout、v2.5.4 安装与 seed、候选覆盖、
+split 桌面启动及 API/Worker ready。原生休眠时 guest 已看到匹配 ACK 并使 VM stopped，产品和 driver
+进程在恢复后仍存活；host 却在 stopped 时看不到共享 request 文件，15 秒后误判为无握手停止。
+这是 host 监督器丢失自己已 ACK 状态的确定性缺陷，不是产品故障；run `31570525027` 因而失效。
+
+修复让 host 在内存中保留已验证且 ACK 的唯一 request ID，共享文件在 stopped 瞬间不可见时仍只
+允许该 ID 驱动恢复；看到同 ID resumed 后才清除 pending 状态。没有 pending ACK 的普通停止仍失败，
+恢复次数上限不变。独立自动实机探针完整复现 `prlctl exec=255 -> VM stopped -> start`，休眠前后
+Python PID 均为 `5712`，request ID 均为 `d936d204-7430-4e1c-a50f-b8886b8d75b3`。Desktop packaging
+聚焦 24/24 与 Bash syntax 已通过；其余 impact 合同通过并形成新冻结 SHA 后重新 Certify。

@@ -479,6 +479,7 @@ exec_pid=$!
 
 deadline=$((SECONDS + 21600))
 hibernate_recoveries=0
+pending_hibernate_request_id=""
 connection_exit_status=""
 connection_handshake_deadline=0
 stopped_without_handshake_deadline=0
@@ -504,6 +505,16 @@ while [[ ! -f "$status_path" ]]; do
       mv -f -- "$acknowledgement_temporary_path" "$acknowledgement_path"
       echo "Acknowledged Windows native hibernate request $request_id."
     fi
+    pending_hibernate_request_id="$request_id"
+  fi
+  if [[ -n "$pending_hibernate_request_id" ]] && \
+    [[ -f "$hibernate_handshake_path/hibernate-resumed.json" ]]; then
+    resumed_request_id="$(node -e 'const fs=require("fs");try{const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof p.request_id==="string")process.stdout.write(p.request_id)}catch{}' \
+      "$hibernate_handshake_path/hibernate-resumed.json")"
+    if [[ "$resumed_request_id" == "$pending_hibernate_request_id" ]]; then
+      echo "Confirmed Windows native hibernate resume $resumed_request_id."
+      pending_hibernate_request_id=""
+    fi
   fi
   if [[ -z "$connection_exit_status" ]] && ! kill -0 "$exec_pid" 2>/dev/null; then
     wait "$exec_pid"
@@ -514,12 +525,14 @@ while [[ ! -f "$status_path" ]]; do
   fi
   if [[ -n "$connection_exit_status" ]] && \
     [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]] && \
+    [[ -z "$pending_hibernate_request_id" ]] && \
     ((SECONDS >= connection_handshake_deadline)); then
     echo "Parallels QA connection exited before a status or hibernate handshake ($connection_exit_status)." >&2
     exit "$connection_exit_status"
   fi
   if [[ "$vm_status" == *"stopped"* ]]; then
-    if [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
+    if [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]] && \
+      [[ -z "$pending_hibernate_request_id" ]]; then
       if ((stopped_without_handshake_deadline == 0)); then
         stopped_without_handshake_deadline=$((SECONDS + 15))
         echo "Windows VM stopped; waiting up to 15s for the hibernate handshake."
@@ -552,6 +565,11 @@ while [[ ! -f "$status_path" ]]; do
   fi
   sleep 1
 done
+
+if [[ -n "$pending_hibernate_request_id" ]]; then
+  echo "Windows QA completed without confirming hibernate resume $pending_hibernate_request_id." >&2
+  exit 1
+fi
 
 if [[ -z "$connection_exit_status" ]]; then
   wait "$exec_pid"
