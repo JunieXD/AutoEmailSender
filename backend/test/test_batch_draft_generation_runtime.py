@@ -763,6 +763,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             release_late_response = asyncio.Event()
             generation_started = asyncio.Event()
             cancellation_seen = asyncio.Event()
+            late_response_finished = asyncio.Event()
 
             async def ignores_first_cancellation(**_kwargs):
                 generation_started.set()
@@ -771,7 +772,10 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 except asyncio.CancelledError:
                     cancellation_seen.set()
                     await release_late_response.wait()
-                    return self._build_draft_generation_result()
+                    try:
+                        return self._build_draft_generation_result()
+                    finally:
+                        late_response_finished.set()
 
             with (
                 patch(
@@ -801,7 +805,13 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 )
                 await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
                 release_late_response.set()
-                await asyncio.sleep(0.02)
+                await asyncio.wait_for(late_response_finished.wait(), timeout=1)
+                while any(
+                    not task.done()
+                    for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task()
+                ):
+                    await asyncio.sleep(0)
                 return processed
 
         processed = self._run_async(scenario())
