@@ -1,6 +1,6 @@
 # 桌面 API + Worker 通用 Beta 验证 Goal 执行计划
 
-- 状态：Goal 已启动（B0～B4R 已完成；当前执行 B5 双平台 harness rehearsal）
+- 状态：Goal 已启动（B0～B4R 与双平台 harness rehearsal 已完成；当前冻结 B5/B6 exact candidate）
 - 当前 Goal ID：`019fe582-2dea-7e42-bd2e-684bae191421`（2026-08-12 重新创建并激活）
 - 建立日期：2026-08-10
 - 前置实现计划：[`desktop-api-worker-process-plan.md`](./desktop-api-worker-process-plan.md)
@@ -149,6 +149,16 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
 - UTF-8 后处理重放成功进入卸载，但固定 2 秒后主 EXE 尚在；只读现场不到 1 秒后安装根已完全
   消失且无进程，证明 NSIS 临时卸载子进程晚于父进程返回，而非卸载失败。runner 改为每 200ms
   轮询主 EXE 消失并设 30 秒硬上限，首次和重复卸载共用该门禁。
+- Windows 最终双轮 rehearsal 已在 `e23b6e7` 完整通过。第一轮复用并重新校验 v2.5.4 seed 后按
+  计划中断；第二轮恢复 3 个进程和 1 个专用注册项，1.2s timeout、覆盖升级、19 项 lifecycle、
+  5 次数据库审计、split/combined、浏览器后代、强杀恢复、rapid-exit、严格 UTF-8 报告、首次
+  卸载、重复安装和重复卸载全部通过，资源违规为空。报告绑定 rehearsal EXE SHA-256
+  `7f519fe9c76f401d2f9092b720a59a024ef4ec26efca76a0b698c4298bb251ae` 和公开 v2.5.4 EXE 摘要。
+- macOS 修复后 rehearsal 报告同样为 19 项全部通过、零资源违规，DMG SHA-256 为
+  `93c6aa4e6f1fb15022ec05f505a57355b81de68d9d381774ea50739c86b6dac5`。报告和 DMG 均晚于 browser
+  probe 修复；`release-impact.mjs --base cf5d164 --head e23b6e7` 明确允许跳过 macOS candidate，
+  后续变化仅为 Win32 Electron、Windows Python 分支和 PowerShell runner。因此 AC-BETA-QA-00
+  关闭，下一步冻结 clean SHA 并 Certify，不再重跑 rehearsal。
 
 ### 1.4 本次一次性授权边界
 
@@ -327,7 +337,7 @@ fake SMTP/IMAP/LLM/HTTP；真实邮箱只允许另行批准的受控测试账户
 | B3 | 通用 prerelease Skill、脚本、workflow 与合同测试 | **已完成**：AC-BRANCH-03/AC-REL 全部通过；未触及稳定 feed |
 | B4 | 合并后的全仓与重复专项回归 | **已完成**：`origin/master@2fcc431` 已通过 `e313811` 合入；最终产品代码 `2123af5` 全仓连续 2 次、split 集成连续 20 次通过 |
 | B4R | 冻结并同步最新 master | **已完成**：`origin/master@3c1e064` 通过 `306d841` 语义合入；业务逻辑以 master 为准，聚焦回归和一轮全仓已通过 |
-| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：验证 Windows QA-only `WM_APP` 优雅退出修复并完成受影响的两轮 harness rehearsal 后冻结新 run；随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
+| B5 | 本地候选、Mac/Windows exact-package Dogfood | **执行中**：双平台 harness rehearsal 已完成；当前冻结新 run，随后串行执行 Windows/macOS exact admission、正式 lifecycle、每平台 5 分钟 normal + 5 分钟 chaos 和诊断重建 |
 | B6 | 远端候选与公开 Prerelease | **已预授权**：B4R/B5 门禁通过后直接 push、dispatch、publish；AC-ISO 全部通过 |
 | B7 | 证据收口与观察交接 | 报告包含所有命令、SHA、资产摘要、seed、资源和已知限制 |
 

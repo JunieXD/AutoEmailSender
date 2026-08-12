@@ -1023,3 +1023,20 @@ cache、package metadata 和两处 report 读取。该缺陷发生在已通过 l
 仍看到主 EXE。失败后立即只读检查时安装根已不存在、文件数为 0、根内进程为 0，证明 NSIS
 临时卸载子进程只是晚于父进程异步收尾，不是产品卸载或长路径删除失败。runner 现对主 EXE 消失
 每 200ms 轮询，30 秒硬上限，首次与重复卸载使用相同判断；超时仍会保留完整失败证据。
+
+`e23b6e75333a32205b8a804fe845dea2ccd59d1c` 的最终 Windows 双轮 rehearsal 完整通过。第二轮报告：
+
+- `status=passed`、`certification_eligible=false`、
+  `evidence_purpose=non-certifying-harness-rehearsal`；
+- current package SHA-256
+  `7f519fe9c76f401d2f9092b720a59a024ef4ec26efca76a0b698c4298bb251ae`，previous stable SHA-256
+  `245aadcdf63ccae80913ede6a4cda9571884f83da9f23b957c724a6fb3b15d21`；
+- 19/19 checks、5/5 database audits、0 resource violations，lifecycle observed 59.438s；
+- stale 3 个进程 + 1 个注册项恢复、timeout 1.2s、覆盖升级、split/combined、Worker/整组重启、
+  browser 后代清理、强杀恢复、rapid-exit、首次卸载、重复安装和重复卸载全部通过。
+
+宿主保存报告为 `/Users/junie/Parallels Shared/win-passed-rehearsal-e23b6e7/report.json`。macOS 修复后
+报告 `/private/var/folders/z9/x7nb1cpd7_55hm9d3vpddkmc0000gn/T/auto-email-sender-macos-qa.J0hbA8/
+evidence/auto-email-sender-packaged-qa/20260811T201422Z-343f2f17ae/report.json` 同样为 19/19、零违规，
+DMG SHA-256 `93c6aa4e6f1fb15022ec05f505a57355b81de68d9d381774ea50739c86b6dac5`。后续 impact 明确无需重跑
+macOS，因此 AC-BETA-QA-00 关闭；admission 与正式 exact-package 证据仍等待新 Certify run。
