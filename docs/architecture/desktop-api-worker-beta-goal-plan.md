@@ -202,6 +202,11 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   `prlctl exec=255`，同一 Python PID `5712` 和 request ID
   `d936d204-7430-4e1c-a50f-b8886b8d75b3` 跨 stopped/start 完全一致；新冻结 SHA 只需按 impact
   运行受影响合同并重新 Certify，不重复无关全仓或旧失败候选。
+- 同一冻结 SHA 的 Windows quick QA 内部已完成 Backend 2032/2032（7 skip）、冻结 API/Worker/
+  combined/document 自检和 Desktop 250/250（11 skip），并打印最终 passed；宿主随后一次性回显整份
+  UTF-16 日志，终端背压令 `iconv`/`cat` 失败并覆盖了真实成功状态。host 现先解析 wrapper 原子
+  status，再按成功 200 行、失败 2000 行有界回显，日志显示失败不再覆盖 QA 退出码；重放必须复用
+  已成功阶段，不重复 28 分钟 Backend。
 
 ### 1.4 本次一次性授权边界
 

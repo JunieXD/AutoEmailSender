@@ -578,10 +578,17 @@ else
   exec_status="$connection_exit_status"
 fi
 set -e
-if [[ -f "$output_path" ]]; then
-  iconv -f UTF-16LE -t UTF-8 "$output_path" 2>/dev/null || cat "$output_path"
-fi
 wrapper_exit_code="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(!Number.isInteger(p.exit_code))process.exit(2);process.stdout.write(String(p.exit_code))' "$status_path")"
+if [[ -f "$output_path" ]]; then
+  if [[ "$wrapper_exit_code" == "0" ]]; then
+    output_tail_lines=200
+  else
+    output_tail_lines=2000
+  fi
+  if ! iconv -f UTF-16LE -t UTF-8 "$output_path" 2>/dev/null | tail -n "$output_tail_lines"; then
+    tail -n "$output_tail_lines" "$output_path" || true
+  fi
+fi
 if [[ "$wrapper_exit_code" != "0" ]]; then
   echo "Windows QA wrapper reported exit code $wrapper_exit_code." >&2
   exit "$wrapper_exit_code"

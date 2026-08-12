@@ -1101,3 +1101,11 @@ split 桌面启动及 API/Worker ready。原生休眠时 guest 已看到匹配 A
 恢复次数上限不变。独立自动实机探针完整复现 `prlctl exec=255 -> VM stopped -> start`，休眠前后
 Python PID 均为 `5712`，request ID 均为 `d936d204-7430-4e1c-a50f-b8886b8d75b3`。Desktop packaging
 聚焦 24/24 与 Bash syntax 已通过；其余 impact 合同通过并形成新冻结 SHA 后重新 Certify。
+
+`9a6d1f0` 的 Windows quick 内部测试随后全部成功：Backend 2032 tests、7 skip、0 failure，冻结
+API/Worker/combined/document 四项自检通过，Desktop 250 tests、11 skip、0 failure，runner 明确打印
+`Windows quick QA passed`。外层 host 在成功后把整份约 28 分钟 UTF-16 日志一次性写入终端，终端
+背压使 `iconv` 和 fallback `cat` 返回 `Resource temporarily unavailable`，cleanup 因而在读取原子
+status 前以 1 退出。这不推翻内部测试证据，但暴露了输出层可覆盖真实状态的缺陷。修复先读取原子
+status，再对成功日志只回显末 200 行、失败日志末 2000 行；回显失败不再改变 QA 真实退出码。
+重放使用 stage cache，禁止重复已通过的 Backend/冻结构建/Desktop。

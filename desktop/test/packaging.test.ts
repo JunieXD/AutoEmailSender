@@ -267,6 +267,9 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("connection_handshake_deadline");
     expect(hostRunner).toContain("stopped_without_handshake_deadline");
     expect(hostRunner).toContain("run-windows-release-qa-status");
+    expect(hostRunner).toContain("output_tail_lines=200");
+    expect(hostRunner).toContain("output_tail_lines=2000");
+    expect(hostRunner).toContain('tail -n "$output_tail_lines"');
     expect(wrapper).toContain("Move-Item -LiteralPath $temporaryStatusPath");
     expect(wrapper).toContain('$ErrorActionPreference = "Continue"');
     expect(wrapper).toContain("$exitCode = $LASTEXITCODE");
