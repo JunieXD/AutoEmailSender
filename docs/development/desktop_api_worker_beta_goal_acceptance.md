@@ -1011,3 +1011,10 @@ Python harness 和测试/文档，不改变 SHA-256 为
 `7f519fe9c76f401d2f9092b720a59a024ef4ec26efca76a0b698c4298bb251ae` 的 rehearsal EXE，故聚焦
 合同通过后从失败的第二轮 lifecycle 重放，不重复 NSIS 构建、完整 Backend/Desktop、VC++ 或已
 证明 stale 恢复的第一轮。
+
+修复后的真实 rapid-exit 在约 1.10 秒完成，`report.json` 为 `status=passed`，19 项 check 全部
+通过、5 次数据库审计全部通过、资源违规为空。Windows host runner 随后在证据分层检查处失败：
+PowerShell 5.1 的 `Get-Content` 默认 ANSI 解码无 BOM UTF-8，导致报告内中文隔离路径变成无效文本，
+`ConvertFrom-Json` 拒绝。runner 新增严格 UTF-8 JSON helper，并统一用于 runtime、checkpoint、
+cache、package metadata 和两处 report 读取。该缺陷发生在已通过 lifecycle 之后，但卸载、重复
+安装和最终 runner success 尚未形成证据，因此必须重放第二轮至完整成功。

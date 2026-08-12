@@ -148,6 +148,16 @@ function Assert-NativeSuccess {
   }
 }
 
+function Read-Utf8JsonFile {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $text = [System.IO.File]::ReadAllText(
+    $Path,
+    [System.Text.UTF8Encoding]::new($false, $true)
+  )
+  return $text | ConvertFrom-Json
+}
+
 function Get-AgentStatus {
   param([Parameter(Mandatory = $true)][string]$CliExecutable)
 
@@ -168,7 +178,7 @@ function Get-AgentRuntimeDescriptor {
   if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
     throw "Agent runtime descriptor is missing: $runtimePath"
   }
-  return Get-Content -Raw -LiteralPath $runtimePath | ConvertFrom-Json
+  return Read-Utf8JsonFile -Path $runtimePath
 }
 
 function Wait-AgentReady {
@@ -527,7 +537,7 @@ function Save-HarnessSeedBackup {
   $markerPath = Join-Path $backupRoot "backup.json"
   if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
     try {
-      $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+      $marker = Read-Utf8JsonFile -Path $markerPath
       if (
         $marker.protocol_version -eq "2" -and
         $marker.purpose -eq "previous-stable-harness-seed-backup" -and
@@ -618,7 +628,7 @@ function Restore-HarnessSeedBackup {
       continue
     }
     try {
-      $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+      $marker = Read-Utf8JsonFile -Path $markerPath
       if (
         $marker.protocol_version -ne "2" -or
         $marker.purpose -ne "previous-stable-harness-seed-backup" -or
@@ -1084,7 +1094,7 @@ Write-Host "Windows QA mode: $Mode"
 Stop-StaleQaCheckoutProcesses -RootPath $CheckoutPath
 
 if ($RequiresExactCandidate) {
-  $candidateDesktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
+  $candidateDesktopPackage = Read-Utf8JsonFile -Path (Join-Path $CheckoutPath "desktop\package.json")
   & node (Join-Path $CheckoutPath "scripts\release\release-candidate.mjs") `
     asset `
     --manifest $CandidateManifestPath `
@@ -1102,7 +1112,7 @@ $script:QaCacheDirectory = Join-Path $gitDirectory "auto-email-sender-windows-qa
 $script:QaCachePath = Join-Path $script:QaCacheDirectory "verified-stages.json"
 $script:VerifiedStages = @{}
 if (-not $ForceFull -and (Test-Path -LiteralPath $script:QaCachePath -PathType Leaf)) {
-  $cachedStages = Get-Content -Raw -LiteralPath $script:QaCachePath | ConvertFrom-Json
+  $cachedStages = Read-Utf8JsonFile -Path $script:QaCachePath
   foreach ($property in $cachedStages.PSObject.Properties) {
     $script:VerifiedStages[$property.Name] = [string]$property.Value
   }
@@ -1373,7 +1383,7 @@ if ($RunsPackagedLifecycle) {
   }
 
   Invoke-QaStep "Installed packaged split lifecycle and optional soak certification" {
-    $desktopPackage = Get-Content -Raw -LiteralPath (Join-Path $CheckoutPath "desktop\package.json") | ConvertFrom-Json
+    $desktopPackage = Read-Utf8JsonFile -Path (Join-Path $CheckoutPath "desktop\package.json")
     if ($IsFormal) {
       $builtInstallerPath = Join-Path $CheckoutPath "desktop\release\AutoEmailSender-Setup-$($desktopPackage.version).exe"
       if (-not (Test-Path -LiteralPath $builtInstallerPath -PathType Leaf)) {
@@ -1672,7 +1682,7 @@ if ($RunsPackagedLifecycle) {
       if ($reports.Count -ne 1) {
         throw "Expected one packaged $($scenario.Name) report; found $($reports.Count)."
       }
-      $report = Get-Content -Raw -LiteralPath $reports[0].FullName | ConvertFrom-Json
+      $report = Read-Utf8JsonFile -Path $reports[0].FullName
       $expectedCertificationEligible = $IsFormal
       $expectedEvidencePurpose = if ($IsFormal) {
         "formal-certification"
@@ -1708,7 +1718,7 @@ if ($RunsPackagedLifecycle) {
       throw "Installed executable remains after uninstall: $appExecutable"
     }
     foreach ($reportPath in $reportPaths) {
-      $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json
+      $report = Read-Utf8JsonFile -Path $reportPath
       $databasePath = Join-Path ([string]$report.user_data_path) "auto_email_sender.db"
       if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf)) {
         throw "Uninstall did not preserve isolated user data: $databasePath"

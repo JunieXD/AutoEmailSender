@@ -142,6 +142,10 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   顶层窗口，首条消息可能被无 hook 的窗口接收。修复只改 runner：投递后继续以 50ms 间隔重试，
   直到目标 PID 真正退出或 20 秒硬上限；安装包字节未变，只重放受影响的第二轮 lifecycle，不重建
   NSIS、不重跑 Backend/Desktop/VC++/第一轮中断。
+- 新 harness 的真实 rapid-exit 已在约 1.10s 通过，最终数据库审计和全部 19 项 lifecycle check
+  也通过；随后 PowerShell 5.1 用默认 ANSI 编码读取无 BOM UTF-8 `report.json`，中文路径被破坏并
+  使 `ConvertFrom-Json` 失败。runner 现用严格 UTF-8 helper 读取所有 JSON 文件；这只影响证据
+  后处理，须重放第二轮直到卸载、重复安装和报告分层检查也成功。
 
 ### 1.4 本次一次性授权边界
 
