@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import inspect
 import json
@@ -37,6 +38,62 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_windows_sleep_uses_hibernate_only_for_unsupported_s3(self) -> None:
+        kernel32 = mock.Mock()
+        kernel32.CreateWaitableTimerW = mock.MagicMock(return_value=123)
+        kernel32.SetWaitableTimer = mock.MagicMock(return_value=True)
+        kernel32.WaitForSingleObject = mock.MagicMock(return_value=0)
+        kernel32.CloseHandle = mock.MagicMock(return_value=True)
+        powrprof = mock.Mock()
+        powrprof.SetSuspendState = mock.MagicMock(return_value=False)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.object(
+                ctypes,
+                "WinDLL",
+                side_effect=[kernel32, powrprof],
+                create=True,
+            ),
+            mock.patch.object(ctypes, "get_last_error", return_value=50, create=True),
+            mock.patch.object(runner, "_exercise_windows_hibernate") as hibernate,
+            mock.patch.object(
+                runner,
+                "_read_windows_power_events",
+                return_value={"sleep_events": 1, "wake_events": 1},
+            ),
+            mock.patch.object(runner.time, "time", side_effect=[100.0, 110.0]),
+        ):
+            evidence = runner._exercise_windows_system_sleep_wake(
+                hibernate_handshake_dir=Path(temp_dir),
+            )
+
+        hibernate.assert_called_once_with(handshake_dir=Path(temp_dir))
+        self.assertEqual(evidence["sleep_method"], "hibernate")
+
+    def test_windows_sleep_rejects_other_suspend_errors(self) -> None:
+        kernel32 = mock.Mock()
+        kernel32.CreateWaitableTimerW = mock.MagicMock(return_value=123)
+        kernel32.SetWaitableTimer = mock.MagicMock(return_value=True)
+        kernel32.CloseHandle = mock.MagicMock(return_value=True)
+        powrprof = mock.Mock()
+        powrprof.SetSuspendState = mock.MagicMock(return_value=False)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch.object(
+                ctypes,
+                "WinDLL",
+                side_effect=[kernel32, powrprof],
+                create=True,
+            ),
+            mock.patch.object(ctypes, "get_last_error", return_value=5, create=True),
+            self.assertRaisesRegex(runner.QaFailure, "error 5"),
+        ):
+            runner._exercise_windows_system_sleep_wake(
+                hibernate_handshake_dir=Path(temp_dir),
+            )
+
     def test_windows_graceful_quit_posts_only_to_target_process_windows(self) -> None:
         with (
             mock.patch.object(

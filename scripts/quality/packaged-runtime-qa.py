@@ -1244,6 +1244,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--development-smoke", action="store_true")
     parser.add_argument("--skip-browser-probe", action="store_true")
     parser.add_argument("--system-sleep-wake", action="store_true")
+    parser.add_argument("--windows-hibernate-handshake-dir", type=Path)
     parser.add_argument("--existing-user-data", type=Path)
     parser.add_argument("--upgrade-manifest", type=Path)
     parser.add_argument("--expected-previous-version", default="")
@@ -1481,6 +1482,12 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             )
         if not args.system_sleep_wake:
             parser.error("candidate admission requires --system-sleep-wake")
+    if args.windows_hibernate_handshake_dir is not None:
+        if sys.platform != "win32":
+            parser.error("--windows-hibernate-handshake-dir is only valid on Windows")
+        handshake_dir = args.windows_hibernate_handshake_dir.expanduser().resolve()
+        handshake_dir.mkdir(parents=True, exist_ok=True)
+        args.windows_hibernate_handshake_dir = handshake_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1832,6 +1839,7 @@ def _run_lifecycle(
 
         if args.system_sleep_wake:
             _exercise_system_sleep_wake(
+                args=args,
                 application=application,
                 paths=paths,
                 recorder=recorder,
@@ -2079,6 +2087,7 @@ def _run_soak_loop(
                     fault_callback = partial(
                         _execute_chaos_action,
                         action,
+                        args=args,
                         application=application,
                         paths=paths,
                         recorder=recorder,
@@ -2124,6 +2133,7 @@ def _run_soak_loop(
 def _execute_chaos_action(
     action: str,
     *,
+    args: argparse.Namespace,
     application: PackagedApplication,
     paths: QaPaths,
     recorder: EvidenceRecorder,
@@ -2185,6 +2195,7 @@ def _execute_chaos_action(
             _set_clock_offset(paths.clock_offset, 0)
     elif action == "system-sleep-wake":
         _exercise_system_sleep_wake(
+            args=args,
             application=application,
             paths=paths,
             recorder=recorder,
@@ -2197,6 +2208,7 @@ def _execute_chaos_action(
 
 def _exercise_system_sleep_wake(
     *,
+    args: argparse.Namespace,
     application: PackagedApplication,
     paths: QaPaths,
     recorder: EvidenceRecorder,
@@ -2219,7 +2231,9 @@ def _exercise_system_sleep_wake(
     if sys.platform == "darwin":
         native_evidence = _exercise_macos_system_sleep_wake()
     elif sys.platform == "win32":
-        native_evidence = _exercise_windows_system_sleep_wake()
+        native_evidence = _exercise_windows_system_sleep_wake(
+            hibernate_handshake_dir=args.windows_hibernate_handshake_dir,
+        )
     else:
         raise QaFailure(f"native system sleep/wake is unsupported on {sys.platform}")
 
@@ -2335,6 +2349,7 @@ def _read_macos_power_counts() -> dict[str, int]:
 def _exercise_windows_system_sleep_wake(
     *,
     wake_after_seconds: int = 20,
+    hibernate_handshake_dir: Path | None = None,
 ) -> dict[str, object]:
     import ctypes
     from ctypes import wintypes
@@ -2376,18 +2391,24 @@ def _exercise_windows_system_sleep_wake(
                 "Windows cannot arm a resume-capable wake timer: "
                 f"error {ctypes.get_last_error()}"
             )
+        sleep_method = "s3"
         if not set_suspend_state(False, False, False):
-            raise QaFailure(
-                "Windows SetSuspendState failed; sleep may be disabled by the VM or policy: "
-                f"error {ctypes.get_last_error()}"
+            suspend_error = ctypes.get_last_error()
+            if suspend_error != 50 or hibernate_handshake_dir is None:
+                raise QaFailure(
+                    "Windows SetSuspendState failed; sleep may be disabled by the VM or policy: "
+                    f"error {suspend_error}"
+                )
+            sleep_method = "hibernate"
+            _exercise_windows_hibernate(handshake_dir=hibernate_handshake_dir)
+        else:
+            wait_result = int(
+                wait_for_single_object(timer, (wake_after_seconds + 180) * 1000)
             )
-        wait_result = int(
-            wait_for_single_object(timer, (wake_after_seconds + 180) * 1000)
-        )
-        if wait_result != 0:
-            raise QaFailure(
-                f"Windows resume timer did not signal after wake (wait result {wait_result})"
-            )
+            if wait_result != 0:
+                raise QaFailure(
+                    f"Windows resume timer did not signal after wake (wait result {wait_result})"
+                )
     finally:
         close_handle(timer)
     elapsed = time.time() - started
@@ -2409,10 +2430,36 @@ def _exercise_windows_system_sleep_wake(
     )
     return {
         "platform": "win32",
+        "sleep_method": sleep_method,
         "wall_elapsed_seconds": elapsed,
         "wake_after_seconds": wake_after_seconds,
         **events,
     }
+
+
+def _exercise_windows_hibernate(*, handshake_dir: Path) -> None:
+    requested = handshake_dir / "hibernate-requested.json"
+    resumed = handshake_dir / "hibernate-resumed.json"
+    requested.write_text(
+        json.dumps({"pid": os.getpid(), "requested_at": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["shutdown.exe", "/h"],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        raise QaFailure(
+            "Windows hibernate fallback failed: "
+            f"{completed.stderr.strip()[-500:]}"
+        )
+    resumed.write_text(
+        json.dumps({"pid": os.getpid(), "resumed_at": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
 
 
 def _read_windows_power_events(started_at: datetime) -> dict[str, int]:

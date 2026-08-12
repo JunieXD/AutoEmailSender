@@ -237,6 +237,10 @@ describe("windows installer packaging", () => {
       path.resolve("..", "scripts", "quality", "run-windows-release-qa.ps1"),
       "utf8",
     );
+    const wrapper = readFileSync(
+      path.resolve("..", "scripts", "quality", "run-windows-release-qa-wrapper.ps1"),
+      "utf8",
+    );
     const packageJson = JSON.parse(
       readFileSync(path.resolve("package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
@@ -248,6 +252,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--harness-rehearsal");
     expect(hostRunner).toContain("--inject-interruption-after-previous-install");
     expect(hostRunner).toContain("--require-recovered-stale-state");
+    expect(hostRunner).toContain("Resuming Windows QA from native hibernate");
+    expect(hostRunner).toContain("hibernate-requested.json");
+    expect(hostRunner).toContain("run-windows-release-qa-status");
+    expect(wrapper).toContain("Move-Item -LiteralPath $temporaryStatusPath");
     expect(hostRunner).toContain("--normal-soak");
     expect(hostRunner).toContain("--seeded-chaos");
     expect(hostRunner).toContain("normal_soak_minimum=300");
@@ -423,6 +431,7 @@ describe("windows installer packaging", () => {
       '"--expected-previous-version", $ExpectedPreviousVersion',
     );
     expect(guestRunner).toContain('"--system-sleep-wake"');
+    expect(guestRunner).toContain('"--windows-hibernate-handshake-dir"');
     expect(guestRunner).toContain('"--artifact-root", $installRoot');
     expect(guestRunner).toContain(
       '"--package-file", $candidateInstallerPathLocal',

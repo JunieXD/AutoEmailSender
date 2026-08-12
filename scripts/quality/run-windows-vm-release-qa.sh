@@ -283,6 +283,10 @@ fi
 transfer_id="$$"
 bundle_name="AutoEmailSender-Windows-QA-$transfer_id.bundle"
 runner_name="run-windows-release-qa-$transfer_id.ps1"
+wrapper_name="run-windows-release-qa-wrapper-$transfer_id.ps1"
+arguments_name="run-windows-release-qa-arguments-$transfer_id.txt"
+status_name="run-windows-release-qa-status-$transfer_id.json"
+output_name="run-windows-release-qa-output-$transfer_id.log"
 probe_name=".auto-email-sender-windows-qa-$transfer_id.probe"
 previous_installer_name="${previous_installer##*/}"
 candidate_installer_name="${candidate_installer##*/}"
@@ -295,11 +299,21 @@ transfer_directory_name="${transfer_directory_path##*/}"
 guest_transfer_directory_path="$guest_transfer_dir/$transfer_directory_name"
 bundle_path="$transfer_directory_path/$bundle_name"
 runner_path="$transfer_directory_path/$runner_name"
+wrapper_path="$transfer_directory_path/$wrapper_name"
+arguments_path="$transfer_directory_path/$arguments_name"
+status_path="$transfer_directory_path/$status_name"
+output_path="$transfer_directory_path/$output_name"
 probe_path="$transfer_directory_path/$probe_name"
 previous_installer_transfer_path="$transfer_directory_path/$previous_installer_name"
 candidate_installer_transfer_path="$transfer_directory_path/$candidate_installer_name"
 candidate_manifest_transfer_path="$transfer_directory_path/$candidate_manifest_name"
 guest_runner_path="$guest_transfer_directory_path/$runner_name"
+guest_wrapper_path="$guest_transfer_directory_path/$wrapper_name"
+guest_arguments_path="$guest_transfer_directory_path/$arguments_name"
+guest_status_path="$guest_transfer_directory_path/$status_name"
+guest_output_path="$guest_transfer_directory_path/$output_name"
+hibernate_handshake_path="$transfer_directory_path/hibernate-handshake"
+guest_hibernate_handshake_path="$guest_transfer_directory_path/hibernate-handshake"
 guest_bundle_path="$guest_transfer_directory_path/$bundle_name"
 guest_probe_path="$guest_transfer_directory_path/$probe_name"
 guest_previous_installer_path="$guest_transfer_directory_path/$previous_installer_name"
@@ -314,6 +328,10 @@ cleanup() {
   rm -f -- \
     "$bundle_path" \
     "$runner_path" \
+    "$wrapper_path" \
+    "$arguments_path" \
+    "$status_path" \
+    "$output_path" \
     "$probe_path" \
     "$previous_installer_transfer_path" \
     "$candidate_installer_transfer_path" \
@@ -375,6 +393,7 @@ else
   git -C "$repo_root" bundle verify "$bundle_path"
 fi
 cp "$script_dir/run-windows-release-qa.ps1" "$runner_path"
+cp "$script_dir/run-windows-release-qa-wrapper.ps1" "$wrapper_path"
 if [[ -n "$previous_installer" ]]; then
   cp "$previous_installer" "$previous_installer_transfer_path"
 fi
@@ -418,6 +437,7 @@ if ((exact_candidate_qa)); then
   guest_args+=(
     -CandidateManifestPath "$guest_candidate_manifest_path"
     -ExpectedCandidateRunId "$candidate_run_id"
+    -HibernateHandshakePath "$guest_hibernate_handshake_path"
   )
 fi
 if ((force_full)); then
@@ -439,4 +459,65 @@ if ((run_seeded_chaos)); then
     -SeededChaosSeed "$seeded_chaos_seed"
   )
 fi
-prlctl exec "$vm_name" --current-user powershell.exe "${guest_args[@]}"
+printf '%s\n' "${guest_args[@]}" >"$arguments_path"
+mkdir -p "$hibernate_handshake_path"
+rm -f -- "$status_path" "$output_path" \
+  "$hibernate_handshake_path/hibernate-requested.json" \
+  "$hibernate_handshake_path/hibernate-resumed.json"
+
+set +e
+prlctl exec "$vm_name" --current-user powershell.exe \
+  -NoLogo \
+  -NoProfile \
+  -ExecutionPolicy Bypass \
+  -File "$guest_wrapper_path" \
+  -RunnerArgumentsPath "$guest_arguments_path" \
+  -StatusPath "$guest_status_path" \
+  -OutputPath "$guest_output_path" &
+exec_pid=$!
+
+deadline=$((SECONDS + 21600))
+hibernate_recoveries=0
+while [[ ! -f "$status_path" ]]; do
+  if ((SECONDS >= deadline)); then
+    echo "Windows QA wrapper did not publish a final status within 6 hours." >&2
+    kill "$exec_pid" 2>/dev/null || true
+    exit 1
+  fi
+  vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
+  if ! kill -0 "$exec_pid" 2>/dev/null && \
+    [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
+    wait "$exec_pid"
+    connection_status=$?
+    echo "Parallels QA connection exited before a status or hibernate handshake ($connection_status)." >&2
+    exit "$connection_status"
+  fi
+  if [[ "$vm_status" == *"stopped"* ]]; then
+    if [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
+      echo "Windows VM stopped without a hibernate request from the QA driver." >&2
+      kill "$exec_pid" 2>/dev/null || true
+      exit 1
+    fi
+    if ((hibernate_recoveries >= 2)); then
+      echo "Windows QA requested more hibernate recoveries than lifecycle and chaos permit." >&2
+      kill "$exec_pid" 2>/dev/null || true
+      exit 1
+    fi
+    hibernate_recoveries=$((hibernate_recoveries + 1))
+    echo "Resuming Windows QA from native hibernate ($hibernate_recoveries/2)."
+    prlctl start "$vm_name"
+  fi
+  sleep 1
+done
+
+wait "$exec_pid"
+exec_status=$?
+set -e
+if [[ -f "$output_path" ]]; then
+  iconv -f UTF-16LE -t UTF-8 "$output_path" 2>/dev/null || cat "$output_path"
+fi
+wrapper_exit_code="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(!Number.isInteger(p.exit_code))process.exit(2);process.stdout.write(String(p.exit_code))' "$status_path")"
+if [[ "$wrapper_exit_code" != "0" ]]; then
+  echo "Windows QA wrapper reported exit code $wrapper_exit_code." >&2
+  exit "$wrapper_exit_code"
+fi

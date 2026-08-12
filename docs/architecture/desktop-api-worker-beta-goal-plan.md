@@ -159,6 +159,20 @@ tag 并公开为非 Latest GitHub Prerelease，最后证明稳定 Latest/feed �
   probe 修复；`release-impact.mjs --base cf5d164 --head e23b6e7` 明确允许跳过 macOS candidate，
   后续变化仅为 Win32 Electron、Windows Python 分支和 PowerShell runner。因此 AC-BETA-QA-00
   关闭，下一步冻结 clean SHA 并 Certify，不再重跑 rehearsal。
+- 冻结 SHA `3902d11434751bf309153568dae23a8214883731` 的 prerelease run `31551840527` 已通过
+  contract、preflight、Windows/macOS build 和 certify，publish 按设计跳过；原始 EXE 摘要为
+  `d8e42aa4d9b29a3cc1cf3cad4b564e42946cae2f678e5d5544776cc8bae9502c`，DMG 摘要为
+  `969cd91e3766418ab2c23b2d6bbd553e11874a0043289f060070978814c79049`。首次 Windows admission
+  证明候选身份、v2.5.4 覆盖升级、迁移备份、split 身份、Worker 无监听端口、本地诊断导出和
+  同库读写均通过；随后因 Parallels ARM64 固件只支持 S0 Modern Standby、标准 S3
+  `SetSuspendState` 返回 `ERROR_NOT_SUPPORTED(50)` 而停止。该 run 保留为失败现场，不再作为
+  最终候选。
+- Windows QA 的 S0-only VM 电源适配只在原生 S3 明确返回 error 50 时使用系统真实休眠；host
+  必须观察到 guest 写入休眠握手、VM 进入 stopped 后才重新启动。实机探针已证明休眠前后的
+  PowerShell PID 同为 `1664`，并产生 Kernel-Power 42、Power-Troubleshooter 1。最终报告仍要求
+  runtime id、API/Worker PID 不变、Worker heartbeat 推进和 API 读写通过；普通失败、VM pause 或
+  没有握手的停止不能进入此后备路径。Parallels `exec` 会在休眠时断开，因此 guest wrapper 以
+  原子 UTF-8 状态文件向 host 回传最终退出码，不能把连接断开当作成功。
 
 ### 1.4 本次一次性授权边界
 
