@@ -254,6 +254,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("--require-recovered-stale-state");
     expect(hostRunner).toContain("Resuming Windows QA from native hibernate");
     expect(hostRunner).toContain("hibernate-requested.json");
+    expect(hostRunner).toContain("waiting up to 15s for a hibernate handshake");
+    expect(hostRunner).toContain("waiting up to 15s for the hibernate handshake");
+    expect(hostRunner).toContain("connection_handshake_deadline");
+    expect(hostRunner).toContain("stopped_without_handshake_deadline");
     expect(hostRunner).toContain("run-windows-release-qa-status");
     expect(wrapper).toContain("Move-Item -LiteralPath $temporaryStatusPath");
     expect(wrapper).toContain('$ErrorActionPreference = "Continue"');

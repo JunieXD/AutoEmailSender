@@ -478,6 +478,9 @@ exec_pid=$!
 
 deadline=$((SECONDS + 21600))
 hibernate_recoveries=0
+connection_exit_status=""
+connection_handshake_deadline=0
+stopped_without_handshake_deadline=0
 while [[ ! -f "$status_path" ]]; do
   if ((SECONDS >= deadline)); then
     echo "Windows QA wrapper did not publish a final status within 6 hours." >&2
@@ -485,18 +488,32 @@ while [[ ! -f "$status_path" ]]; do
     exit 1
   fi
   vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
-  if ! kill -0 "$exec_pid" 2>/dev/null && \
-    [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
+  if [[ -z "$connection_exit_status" ]] && ! kill -0 "$exec_pid" 2>/dev/null; then
     wait "$exec_pid"
     connection_status=$?
-    echo "Parallels QA connection exited before a status or hibernate handshake ($connection_status)." >&2
-    exit "$connection_status"
+    connection_exit_status="$connection_status"
+    connection_handshake_deadline=$((SECONDS + 15))
+    echo "Parallels QA connection exited with $connection_status; waiting up to 15s for a hibernate handshake."
+  fi
+  if [[ -n "$connection_exit_status" ]] && \
+    [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]] && \
+    ((SECONDS >= connection_handshake_deadline)); then
+    echo "Parallels QA connection exited before a status or hibernate handshake ($connection_exit_status)." >&2
+    exit "$connection_exit_status"
   fi
   if [[ "$vm_status" == *"stopped"* ]]; then
     if [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]]; then
-      echo "Windows VM stopped without a hibernate request from the QA driver." >&2
-      kill "$exec_pid" 2>/dev/null || true
-      exit 1
+      if ((stopped_without_handshake_deadline == 0)); then
+        stopped_without_handshake_deadline=$((SECONDS + 15))
+        echo "Windows VM stopped; waiting up to 15s for the hibernate handshake."
+      fi
+      if ((SECONDS >= stopped_without_handshake_deadline)); then
+        echo "Windows VM stopped without a hibernate request from the QA driver." >&2
+        kill "$exec_pid" 2>/dev/null || true
+        exit 1
+      fi
+      sleep 1
+      continue
     fi
     if ((hibernate_recoveries >= 2)); then
       echo "Windows QA requested more hibernate recoveries than lifecycle and chaos permit." >&2
@@ -506,12 +523,25 @@ while [[ ! -f "$status_path" ]]; do
     hibernate_recoveries=$((hibernate_recoveries + 1))
     echo "Resuming Windows QA from native hibernate ($hibernate_recoveries/2)."
     prlctl start "$vm_name"
+    resume_deadline=$((SECONDS + 60))
+    while [[ "$(prlctl status "$vm_name" 2>&1 || true)" == *"stopped"* ]]; do
+      if ((SECONDS >= resume_deadline)); then
+        echo "Windows VM did not leave stopped state after hibernate resume." >&2
+        exit 1
+      fi
+      sleep 1
+    done
+    stopped_without_handshake_deadline=0
   fi
   sleep 1
 done
 
-wait "$exec_pid"
-exec_status=$?
+if [[ -z "$connection_exit_status" ]]; then
+  wait "$exec_pid"
+  exec_status=$?
+else
+  exec_status="$connection_exit_status"
+fi
 set -e
 if [[ -f "$output_path" ]]; then
   iconv -f UTF-16LE -t UTF-8 "$output_path" 2>/dev/null || cat "$output_path"
