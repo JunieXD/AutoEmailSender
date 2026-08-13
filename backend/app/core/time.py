@@ -14,6 +14,20 @@ def utc_now() -> datetime:
     return current
 
 
+def utc_now_system() -> datetime:
+    """Return the unadjusted system UTC clock for lease/heartbeat deadlines.
+
+    QA can intentionally offset :func:`utc_now` to exercise user-visible time
+    semantics.  Process leases, however, are liveness guards and must not be
+    invalidated by a wall-clock simulation (or a user changing the clock while
+    a Worker is running).  Callers using this primitive must compare only
+    short-lived lease/heartbeat timestamps.
+    """
+
+    # time-check: ignore(core-time-primitive, reason="lease deadline clock")
+    return datetime.now(UTC)
+
+
 def as_utc_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         # time-check: ignore(core-time-primitive, reason="naive datetimes are interpreted as UTC here")

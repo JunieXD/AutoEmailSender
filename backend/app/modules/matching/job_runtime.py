@@ -15,7 +15,7 @@ from sqlalchemy.orm.attributes import NO_VALUE
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.sqlite_diagnostics import sqlite_lock_user_message
 from app.core.fault_injection import wait_at_fault_point
-from app.core.time import local_now, utc_now
+from app.core.time import local_now, utc_now, utc_now_system
 from app.core.config import get_settings
 from app.models import (
     IdentityProfile,
@@ -677,7 +677,7 @@ async def _claim_next_match_analysis_item(
 
             item_id, job_id = int(candidate.id), int(candidate.job_id)
             await wait_at_fault_point("matching.before_claim")
-            now = utc_now()
+            now = utc_now_system()
             claim_id = str(uuid.uuid4())
             transition = await session.execute(
                 update(MatchAnalysisJobItem)
@@ -759,7 +759,7 @@ async def _recover_match_analysis_items(
     *,
     require_expired: bool,
 ) -> int:
-    now = utc_now()
+    now = utc_now_system()
     recovered_job_ids: set[int] = set()
     recovered = 0
     async with session_factory() as session:
@@ -935,7 +935,7 @@ async def _renew_match_analysis_item_claim(
     session_factory: async_sessionmaker[AsyncSession],
     claim: _MatchAnalysisItemClaim,
 ) -> bool:
-    now = utc_now()
+    now = utc_now_system()
     async with session_factory() as session:
         result = await session.execute(
             update(MatchAnalysisJobItem)
@@ -964,7 +964,7 @@ async def _match_analysis_claim_is_current(
     session_factory: async_sessionmaker[AsyncSession],
     claim: _MatchAnalysisItemClaim,
 ) -> bool:
-    now = utc_now()
+    now = utc_now_system()
     async with session_factory() as session:
         current = await session.scalar(
             select(MatchAnalysisJobItem.id).where(
@@ -1234,7 +1234,7 @@ async def _commit_match_analysis_result_for_claim(
     run_id: int,
     usage: MatchUsageSummary,
 ) -> bool:
-    now = utc_now()
+    now = utc_now_system()
     active_job = select(MatchAnalysisJob.id).where(
         MatchAnalysisJob.id == claim.job_id,
         MatchAnalysisJob.status.in_(
@@ -1284,7 +1284,7 @@ async def _record_match_analysis_run_for_claim(
 ) -> bool:
     """Link a running analysis to its exact job claim before external I/O."""
 
-    now = utc_now()
+    now = utc_now_system()
     active_job = select(MatchAnalysisJob.id).where(
         MatchAnalysisJob.id == claim.job_id,
         MatchAnalysisJob.status.in_(
