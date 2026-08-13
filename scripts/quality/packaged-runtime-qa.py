@@ -2254,8 +2254,9 @@ def _resume_crawlers_safely_paused_by_group_restart(
     for job_id in paused_job_ids:
         response = _request_json(
             "POST",
-            f"{identity.base_url.rstrip('/')}/api/crawl-jobs/{job_id}/resume",
+            f"{identity.base_url.rstrip('/')}/api/agent/v1/crawler/jobs/{job_id}/resume",
             token=identity.access_token,
+            headers={"Idempotency-Key": f"packaged-qa-crawler-resume-{job_id}"},
             timeout_seconds=20,
         )
         if not isinstance(response, dict) or response.get("status") not in {

@@ -85,8 +85,9 @@ class PackagedRuntimeQaContractTests(unittest.TestCase):
 
         request_json.assert_called_once_with(
             "POST",
-            "http://127.0.0.1:48120/api/crawl-jobs/2/resume",
+            "http://127.0.0.1:48120/api/agent/v1/crawler/jobs/2/resume",
             token="qa-token",
+            headers={"Idempotency-Key": "packaged-qa-crawler-resume-2"},
             timeout_seconds=20,
         )
         recorder.check.assert_called_once_with(
