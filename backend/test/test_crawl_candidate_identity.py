@@ -23,6 +23,11 @@ from app.modules.crawler.candidate_identity import (
     rebuild_candidate_identity_keys,
     resolve_canonical_candidate,
 )
+from app.modules.crawler.pages.tools import (
+    CrawlToolContext,
+    ProfessorCandidatePayload,
+    save_candidate_payloads_shared,
+)
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -167,6 +172,64 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
                 }
             }
             await rebuild_candidate_identity_keys(session, candidate)
+            changed = apply_candidate_enrichment_values(
+                candidate,
+                {"email": "PROFILE@EXAMPLE.EDU"},
+            )
+            canonical = await rebuild_candidate_identity_keys(session, candidate)
+            await session.commit()
+
+        self.assertTrue(changed)
+        self.assertEqual(canonical.email, "profile@example.edu")
+        self.assertEqual(
+            canonical.field_sources["email"]["source_kind"],
+            "profile_page",
+        )
+        async with self.session_factory() as session:
+            keys = list(
+                await session.scalars(
+                    select(CrawlCandidateIdentityKey).where(
+                        CrawlCandidateIdentityKey.job_id == self.job_id,
+                        CrawlCandidateIdentityKey.key_type == "email",
+                    )
+                )
+            )
+        self.assertEqual(
+            {key.normalized_value for key in keys},
+            {"profile@example.edu"},
+        )
+
+    async def test_save_path_stamps_list_chunk_so_profile_email_wins(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=self.job_id,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=self.session_factory,
+        )
+        result = await save_candidate_payloads_shared(
+            ctx,
+            [
+                ProfessorCandidatePayload(
+                    name="列表页邮箱候选",
+                    email="list@example.edu",
+                    profile_url="https://example.edu/people/list-email",
+                    source_url="https://example.edu/faculty",
+                )
+            ],
+        )
+
+        self.assertEqual(result["saved_count"], 1)
+        async with self.session_factory() as session:
+            candidate = await session.scalar(
+                select(CrawlCandidate).where(CrawlCandidate.job_id == self.job_id)
+            )
+            assert candidate is not None
+            self.assertEqual(candidate.source_kind, "list_chunk")
+            self.assertEqual(
+                candidate.field_sources["email"]["source_kind"],
+                "list_chunk",
+            )
             changed = apply_candidate_enrichment_values(
                 candidate,
                 {"email": "PROFILE@EXAMPLE.EDU"},

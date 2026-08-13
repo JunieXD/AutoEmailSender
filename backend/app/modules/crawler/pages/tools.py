@@ -2299,13 +2299,16 @@ def _normalize_candidate_payloads_for_save(
     failed_items: list[CandidateBatchFailure] = []
     for index, candidate in enumerate(candidates):
         try:
-            payloads.append(
-                normalize_candidate_payload(
-                    candidate,
-                    university=ctx.university,
-                    school=ctx.school,
-                )
+            payload = normalize_candidate_payload(
+                candidate,
+                university=ctx.university,
+                school=ctx.school,
             )
+            if payload.get("source_kind") in (None, ""):
+                payload["source_kind"] = (
+                    "profile_page" if ctx.entry_type == "profile" else "list_chunk"
+                )
+            payloads.append(payload)
         except (TypeError, ValueError) as exc:
             failed_items.append(
                 {
