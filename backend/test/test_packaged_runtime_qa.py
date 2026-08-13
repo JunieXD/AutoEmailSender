@@ -39,6 +39,62 @@ seed_runner = _load_runner(SEED_RUNNER_PATH, "previous_packaged_upgrade_seed")
 
 
 class PackagedRuntimeQaContractTests(unittest.TestCase):
+    def test_packaged_backend_environment_bypasses_loopback_proxy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = runner._create_paths(Path(temp_dir))
+
+            environment = runner._qa_backend_environment(paths)
+
+        self.assertEqual(environment["NO_PROXY"], "127.0.0.1,localhost,::1")
+        self.assertEqual(environment["no_proxy"], "127.0.0.1,localhost,::1")
+
+    def test_api_kill_resumes_crawl_safely_paused_by_group_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "auto_email_sender.db"
+            connection = sqlite3.connect(database_path)
+            connection.execute(
+                "CREATE TABLE crawl_jobs (id INTEGER PRIMARY KEY, status TEXT, deleted_at TEXT)"
+            )
+            connection.executemany(
+                "INSERT INTO crawl_jobs (id, status, deleted_at) VALUES (?, ?, ?)",
+                [
+                    (1, "needs_review", None),
+                    (2, "paused", None),
+                    (3, "paused", "deleted"),
+                ],
+            )
+            connection.commit()
+            connection.close()
+            identity = SimpleNamespace(
+                base_url="http://127.0.0.1:48120",
+                access_token="qa-token",
+            )
+            recorder = mock.Mock()
+
+            with mock.patch.object(
+                runner,
+                "_request_json",
+                return_value={"status": "queued"},
+            ) as request_json:
+                runner._resume_crawlers_safely_paused_by_group_restart(
+                    identity,
+                    database_path=database_path,
+                    recorder=recorder,
+                    index=5,
+                )
+
+        request_json.assert_called_once_with(
+            "POST",
+            "http://127.0.0.1:48120/api/crawl-jobs/2/resume",
+            token="qa-token",
+            timeout_seconds=20,
+        )
+        recorder.check.assert_called_once_with(
+            "crawler_safe_pause_resume:api-kill:5",
+            passed=True,
+            evidence={"paused_job_ids": [2]},
+        )
+
     def test_windows_hibernate_waits_for_host_acknowledgement(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temp_dir,

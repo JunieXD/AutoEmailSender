@@ -2170,11 +2170,20 @@ def _execute_chaos_action(
         )
         psutil.Process(identity.backend.pid).kill()
         _wait_for_pids_gone({identity.backend.pid}, timeout_seconds=10)
-        application.wait_for_replacement(previous=identity, replace_group=True)
+        replacement = application.wait_for_replacement(
+            previous=identity,
+            replace_group=True,
+        )
         _require_retired_process_tree_gone(
             retired_pids,
             recorder=recorder,
             action=action,
+            index=index,
+        )
+        _resume_crawlers_safely_paused_by_group_restart(
+            replacement,
+            database_path=paths.user_data / DATABASE_NAME,
+            recorder=recorder,
             index=index,
         )
     elif action == "sqlite-lock":
@@ -2211,6 +2220,57 @@ def _execute_chaos_action(
     else:  # pragma: no cover - guarded by the fixed action table
         raise QaFailure(f"unknown chaos action: {action}")
     recorder.event("chaos_action_completed", index=index, action=action)
+
+
+def _resume_crawlers_safely_paused_by_group_restart(
+    identity: RuntimeIdentity,
+    *,
+    database_path: Path,
+    recorder: EvidenceRecorder,
+    index: int,
+) -> None:
+    """A faculty crawl intentionally pauses after an interrupted process group.
+
+    The product requires an explicit user resume instead of silently continuing
+    a crawl after a desktop/API crash.  The chaos harness acts as that user so
+    the seeded workload can still prove end-to-end convergence.
+    """
+
+    connection = _open_sqlite_read_only(database_path, timeout=2)
+    try:
+        paused_job_ids = [
+            int(row[0])
+            for row in connection.execute(
+                """
+                SELECT id FROM crawl_jobs
+                WHERE status = 'paused' AND deleted_at IS NULL
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+
+    for job_id in paused_job_ids:
+        response = _request_json(
+            "POST",
+            f"{identity.base_url.rstrip('/')}/api/crawl-jobs/{job_id}/resume",
+            token=identity.access_token,
+            timeout_seconds=20,
+        )
+        if not isinstance(response, dict) or response.get("status") not in {
+            "queued",
+            "running",
+        }:
+            raise QaFailure(
+                f"resuming safely paused crawl job {job_id} returned an invalid state"
+            )
+
+    recorder.check(
+        f"crawler_safe_pause_resume:api-kill:{index}",
+        passed=True,
+        evidence={"paused_job_ids": paused_job_ids},
+    )
 
 
 def _exercise_system_sleep_wake(
@@ -2781,6 +2841,12 @@ def _qa_backend_environment(paths: QaPaths) -> dict[str, str]:
         "MATCH_ANALYSIS_JOB_ITEM_CONCURRENCY": "1",
         "LLM_REQUEST_TIMEOUT_SECONDS": "10",
         "CRAWLER_DEBUG": "0",
+        # Windows' Internet Options proxy is inherited by urllib/httpx even
+        # when the QA parent has no proxy environment variables.  The
+        # packaged workload services are loopback-only and must never be sent
+        # through a host proxy.
+        "NO_PROXY": "127.0.0.1,localhost,::1",
+        "no_proxy": "127.0.0.1,localhost,::1",
     }
 
 
