@@ -203,6 +203,11 @@ Windows 侧会先结束可执行路径位于专用 QA checkout 内的残留应�
 
 脚本强制结束测试应用进程树，以复现意外退出和旧描述文件场景。下一次启动必须清理旧身份并发布新的 v3 描述文件。原生 sleep/wake 还要求 Windows 记录 Kernel-Power 42 和
 Power-Troubleshooter 1，唤醒后 runtime id、API PID、Worker PID 不变且 heartbeat 推进。
+Parallels 的 `exec` 连接可能在第一次原生休眠时永久断开，即使 guest 内的 QA wrapper 仍会继续
+运行。宿主确认该连接断开属于已发布的休眠 request 后，必须继续通过共享 handshake 和最终 status
+监督后续场景，不能在 driver 清理上一轮 request 文件时再次把它误判成普通断线；从未匹配到有效
+休眠 request 的连接断开仍应在 15 秒内失败。正式 prerelease lifecycle 与 seeded chaos 共允许两次
+受控恢复，整个 wrapper 仍受 6 小时总上限约束。
 测试后确认没有 `Auto Email Sender.exe`、`backend.exe`、Playwright Chromium 或测试 CLI
 残留进程；报告和临时安装目录保留用于调查，不得把其中的失败报告覆盖为成功。
 

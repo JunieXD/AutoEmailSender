@@ -279,6 +279,12 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain("waiting up to 15s for a hibernate handshake");
     expect(hostRunner).toContain("waiting up to 15s for the hibernate handshake");
     expect(hostRunner).toContain("connection_handshake_deadline");
+    expect(hostRunner).toContain("connection_exit_confirmed_hibernate=0");
+    expect(hostRunner).toContain("connection_exit_confirmed_hibernate=1");
+    expect(hostRunner).toContain(
+      "Parallels QA connection loss was confirmed as native hibernate; continuing shared handshake and status supervision.",
+    );
+    expect(hostRunner).toContain("((connection_exit_confirmed_hibernate == 0))");
     expect(hostRunner).toContain("stopped_without_handshake_deadline");
     expect(hostRunner).toContain("run-windows-release-qa-status");
     expect(hostRunner).toContain("output_tail_lines=200");

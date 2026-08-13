@@ -487,6 +487,7 @@ restarted_hibernate_request_id=""
 completed_hibernate_request_id=""
 connection_exit_status=""
 connection_handshake_deadline=0
+connection_exit_confirmed_hibernate=0
 stopped_without_handshake_deadline=0
 while [[ ! -f "$status_path" ]]; do
   if ((SECONDS >= deadline)); then
@@ -533,6 +534,13 @@ while [[ ! -f "$status_path" ]]; do
     echo "Parallels QA connection exited with $connection_status; waiting up to 15s for a hibernate handshake."
   fi
   if [[ -n "$connection_exit_status" ]] && \
+    [[ -n "$pending_hibernate_request_id" || -n "$completed_hibernate_request_id" ]] && \
+    ((connection_exit_confirmed_hibernate == 0)); then
+    connection_exit_confirmed_hibernate=1
+    echo "Parallels QA connection loss was confirmed as native hibernate; continuing shared handshake and status supervision."
+  fi
+  if [[ -n "$connection_exit_status" ]] && \
+    ((connection_exit_confirmed_hibernate == 0)) && \
     [[ ! -f "$hibernate_handshake_path/hibernate-requested.json" ]] && \
     [[ -z "$pending_hibernate_request_id" ]] && \
     ((SECONDS >= connection_handshake_deadline)); then
