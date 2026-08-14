@@ -5,12 +5,18 @@
     <strong>面向导师套磁场景的智能邮件助手</strong>
   </p>
   <p>
-    <a href="https://www.gnu.org/licenses/gpl-3.0">
-      <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" />
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest">
+      <img src="https://img.shields.io/github/v/release/JunieXD/AutoEmailSender?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;label=release&amp;labelColor=dbeafe&amp;color=2563eb" alt="Latest release" />
     </a>
-    <img src="https://img.shields.io/badge/frontend-React%2019%20%7C%20Vite%208-61DAFB" alt="Frontend: React 19 | Vite 8" />
-    <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="Backend: FastAPI" />
-    <img src="https://img.shields.io/badge/database-SQLite-003B57" alt="Database: SQLite" />
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases">
+      <img src="https://img.shields.io/github/downloads/JunieXD/AutoEmailSender/total?style=flat-square&amp;label=downloads&amp;labelColor=dcfce7&amp;color=16a34a" alt="Total downloads" />
+    </a>
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest">
+      <img src="https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS%20ARM64-d97706?style=flat-square&amp;labelColor=ffedd5" alt="Platforms: Windows x64 and macOS ARM64" />
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/github/license/JunieXD/AutoEmailSender?style=flat-square&amp;label=license&amp;labelColor=e2e8f0&amp;color=64748b" alt="License: GPL-3.0" />
+    </a>
   </p>
 </div>
 
@@ -21,6 +27,18 @@
 Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取、匹配分析、邮件草稿生成，到定时批量发送和回复追踪，整个流程在一个应用内完成。适合需要批量联系导师、又不想无脑群发的场景。
 
 系统替你完成信息整理和重复写信的工作，但最终发给谁、什么时候发、发什么内容，仍然由你来定。
+
+## 宣传片
+
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV1yQgw6rEXG">
+    <img src="website/public/screenshots/promo/bilibili-promo-play-tv-white-70.jpg" alt="Auto Email Sender 宣传片，点击前往哔哩哔哩观看" width="720" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV1yQgw6rEXG">在哔哩哔哩观看宣传片</a>
+</p>
 
 ## 界面预览
 
@@ -63,19 +81,6 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 | 发送计划     | 集中管理定时邮件，支持改期、取消、恢复和立即发送         |
 | 回复追踪     | IMAP 自动检测导师回复，标记联系状态，方便后续跟进        |
 | Agent 支持   | 可选用本地命令行和 Agent 查询、筛选并管理任务             |
-
-## 页面概览
-
-| 页面       | 用途                           |
-| ---------- | ------------------------------ |
-| 首页       | 筛选导师，创建联系任务         |
-| 导师管理   | 抓取、导入和维护导师信息及标签 |
-| 任务中心   | 查看批量任务和发送计划         |
-| 统计面板   | 查看导师、联系进度和 Token 用量 |
-| 社区导师库 | 浏览、预览并导入公开导师资料   |
-| 工作区     | 查看匹配结果，审核草稿并发送   |
-| 个人页     | 配置身份、模型、偏好和 Agent   |
-| 测试写信页 | 先给自己发一封测试邮件         |
 
 ## License
 
