@@ -5,18 +5,10 @@
     <strong>面向导师套磁场景的智能邮件助手</strong>
   </p>
   <p>
-    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest">
-      <img src="https://img.shields.io/github/v/release/JunieXD/AutoEmailSender?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;label=release&amp;labelColor=dbeafe&amp;color=2563eb" alt="Latest release" />
-    </a>
-    <a href="https://github.com/JunieXD/AutoEmailSender/releases">
-      <img src="https://img.shields.io/github/downloads/JunieXD/AutoEmailSender/total?style=flat-square&amp;label=downloads&amp;labelColor=dcfce7&amp;color=16a34a" alt="Total downloads" />
-    </a>
-    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest">
-      <img src="https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS%20ARM64-d97706?style=flat-square&amp;labelColor=ffedd5" alt="Platforms: Windows x64 and macOS ARM64" />
-    </a>
-    <a href="LICENSE">
-      <img src="https://img.shields.io/github/license/JunieXD/AutoEmailSender?style=flat-square&amp;label=license&amp;labelColor=e2e8f0&amp;color=64748b" alt="License: GPL-3.0" />
-    </a>
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest"><img src="https://img.shields.io/github/v/release/JunieXD/AutoEmailSender?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;label=release&amp;labelColor=dbeafe&amp;color=2563eb" alt="Latest release" /></a>
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases"><img src="https://img.shields.io/github/downloads/JunieXD/AutoEmailSender/total?style=flat-square&amp;label=downloads&amp;labelColor=dcfce7&amp;color=16a34a" alt="Total downloads" /></a>
+    <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest"><img src="https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS%20ARM64-d97706?style=flat-square&amp;labelColor=ffedd5" alt="Platforms: Windows x64 and macOS ARM64" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/JunieXD/AutoEmailSender?style=flat-square&amp;label=license&amp;labelColor=e2e8f0&amp;color=64748b" alt="License: GPL-3.0" /></a>
   </p>
 </div>
 
