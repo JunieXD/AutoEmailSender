@@ -453,7 +453,8 @@ jobs:
         shell: bash
         run: |
           candidate="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")"
-          test "$(jq -r .name <<<"$candidate")" = "Release Desktop"
+          test "$(jq -r .path <<<"$candidate")" = ".github/workflows/release.yml"
+          test "$(jq -r .display_title <<<"$candidate")" = "Certify prerelease ${PRERELEASE_TAG#v} from ${PRERELEASE_SOURCE_BRANCH}@${PRERELEASE_SHA}"
           test "$(jq -r .event <<<"$candidate")" = "workflow_dispatch"
           test "$(jq -r .status <<<"$candidate")" = "completed"
           test "$(jq -r .conclusion <<<"$candidate")" = "success"
