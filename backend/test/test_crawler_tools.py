@@ -84,6 +84,18 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertNotIn("隐藏导航", snapshot.text)
         self.assertNotIn("fake0@example.edu", snapshot.text)
 
+    def test_browser_snapshot_rejects_empty_document_shell(self) -> None:
+        snapshot = crawler_tools._snapshot_from_browser_html(
+            html="<html><head></head><body></body></html>",
+            final_url="http://packaged-qa.test.invalid:59999/profile/repro",
+            absolute_url="http://packaged-qa.test.invalid:59999/profile/repro",
+        )
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertTrue(snapshot.suspicious_empty)
+        self.assertIn("no readable page content", snapshot.error_message or "")
+        self.assertEqual(snapshot.html, "<html><head></head><body></body></html>")
+
     def test_browser_pagination_wait_ignores_only_active_page_number_change(self) -> None:
         shared = "教师名单 " + ("张三 教授 李四 副教授 " * 80)
         self.assertFalse(

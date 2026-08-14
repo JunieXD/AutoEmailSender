@@ -2256,6 +2256,8 @@ def _snapshot_from_browser_html(*, html: str, final_url: str, absolute_url: str)
 
     snapshot = html_to_snapshot(final_url or absolute_url, html, "browser")
     if not snapshot.text.strip():
+        snapshot.status = "failed"
+        snapshot.error_message = "Playwright browser fetch returned no readable page content"
         snapshot.suspicious_empty = True
     return snapshot
 

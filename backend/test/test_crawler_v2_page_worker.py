@@ -547,6 +547,49 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         assert candidate is not None
         self.assertEqual(candidate.email, "lingyunwang@sdu.edu.cn")
 
+    async def test_profile_entry_marks_empty_browser_fallback_retryable(self) -> None:
+        profile_url = "https://example.edu/teacher/offline.html"
+        _, task_id = await self._seed_page_task(
+            original_url=profile_url,
+            entry_type="profile",
+        )
+        direct = PageSnapshot(
+            url=profile_url,
+            fetch_method="http",
+            status="failed",
+            error_message="HTTP request failed: connection refused",
+        )
+        browser = PageSnapshot(
+            url=profile_url,
+            html="<html><head></head><body></body></html>",
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch returned no readable page content",
+            suspicious_empty=True,
+        )
+
+        with patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_direct",
+            new=AsyncMock(return_value=direct),
+        ), patch(
+            "app.modules.crawler.v2.page_worker.fetch_page_browser",
+            new=AsyncMock(return_value=browser),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.FAILED_RETRYABLE.value)
+        self.assertEqual(task.failure_count, 1)
+        self.assertEqual(task.fetch_mode, "browser")
+        self.assertEqual(task.browser_status, "failed")
+
     async def test_profile_entry_keeps_direct_snapshot_when_browser_fallback_fails(self) -> None:
         profile_url = "https://faculty.sdu.edu.cn/wanglingyun1/zh_CN/index.htm"
         _, task_id = await self._seed_page_task(original_url=profile_url, entry_type="profile")
