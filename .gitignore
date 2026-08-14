@@ -1,6 +1,7 @@
 .venv/
 backend/.venv/
 __pycache__/
+video/
 .DS_Store
 node_modules/
 .env
