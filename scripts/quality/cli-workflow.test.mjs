@@ -59,6 +59,17 @@ test("CLI benchmark changes trigger contracts and both frozen builds", () => {
   }
 });
 
+test("Agent manifest contract changes trigger contracts and both frozen builds", () => {
+  const manifestContractPath = '- "contracts/agent-support-manifest.schema.json"';
+  for (const workflow of [contractWorkflow, binaryWorkflow]) {
+    assert.equal(
+      workflow.split(manifestContractPath).length - 1,
+      2,
+      "manifest contract changes must trigger push and pull_request validation",
+    );
+  }
+});
+
 test("workflows use Node.js 24 compatible official action generations", () => {
   const staleActions = [
     /actions\/checkout@v[1-6]\b/,

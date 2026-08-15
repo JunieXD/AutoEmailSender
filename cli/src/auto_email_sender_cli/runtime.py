@@ -3,10 +3,12 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass
+from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -90,6 +92,62 @@ class RuntimeProbe:
     message: str | None = None
 
 
+def create_runtime_http_client(
+    *,
+    base_url: str | None,
+    timeout: float,
+) -> httpx.Client:
+    """Create the transport used only for the desktop runtime API.
+
+    File-based runtime descriptors are published by the desktop app and are
+    loopback-only by contract. Explicit non-loopback development overrides
+    retain HTTPX's existing environment-proxy behavior.
+    """
+
+    effective_base_url = base_url
+    if effective_base_url is None and _environment_runtime_configured():
+        effective_base_url = os.getenv("AUTO_EMAIL_SENDER_BASE_URL")
+    trust_env = bool(effective_base_url) and not _is_loopback_url(effective_base_url)
+    return httpx.Client(timeout=timeout, trust_env=trust_env)
+
+
+def _is_loopback_url(value: str) -> bool:
+    try:
+        hostname = urlsplit(value).hostname
+    except ValueError:
+        return False
+    if hostname is None:
+        return False
+    normalized = hostname.rstrip(".").lower()
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_desktop_runtime_base_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme.lower() == "http"
+        and port is not None
+        and port > 0
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+        and "?" not in value
+        and "#" not in value
+        and _is_loopback_url(value)
+    )
+
+
 def get_runtime_file_path() -> Path:
     override = os.getenv("AUTO_EMAIL_SENDER_RUNTIME_FILE")
     if override and override.strip():
@@ -154,7 +212,10 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
                 expected=PROTOCOL_VERSION,
                 actual=protocol_version,
             )
-        return RuntimeDescriptor.from_mapping(payload)
+        descriptor = RuntimeDescriptor.from_mapping(payload)
+        if not _is_desktop_runtime_base_url(descriptor.base_url):
+            raise ValueError("runtime descriptor base_url must be a local HTTP origin")
+        return descriptor
     except RuntimeProtocolMismatchError:
         raise
     except (json.JSONDecodeError, ValueError) as exc:
@@ -216,9 +277,16 @@ def probe_runtime_descriptor(
 ) -> RuntimeProbe:
     desktop_running = process_is_running(descriptor.desktop_pid)
     backend_running = process_is_running(descriptor.backend_pid)
+    owned_client: httpx.Client | None = None
     try:
-        request = http_client.get if http_client is not None else httpx.get
-        response = request(
+        client = http_client
+        if client is None:
+            owned_client = create_runtime_http_client(
+                base_url=descriptor.base_url,
+                timeout=timeout,
+            )
+            client = owned_client
+        response = client.get(
             f"{descriptor.base_url.rstrip('/')}/api/agent/v1/runtime",
             headers={"Authorization": f"Bearer {descriptor.access_token}"},
             timeout=timeout,
@@ -232,6 +300,9 @@ def probe_runtime_descriptor(
             backend_ready=False,
             message=str(exc),
         )
+    finally:
+        if owned_client is not None:
+            owned_client.close()
 
     if not response.is_success:
         return RuntimeProbe(

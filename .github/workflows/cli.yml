@@ -8,6 +8,7 @@ on:
       - "v*"
     paths:
       - "cli/**"
+      - "contracts/agent-support-manifest.schema.json"
       - "agent-support/skills/auto-email-sender/**"
       - "scripts/build-cli.ps1"
       - "scripts/build-cli.sh"
@@ -22,6 +23,7 @@ on:
   pull_request:
     paths:
       - "cli/**"
+      - "contracts/agent-support-manifest.schema.json"
       - "agent-support/skills/auto-email-sender/**"
       - "scripts/build-cli.ps1"
       - "scripts/build-cli.sh"

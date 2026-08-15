@@ -172,6 +172,173 @@ class CliBuildScriptTests(unittest.TestCase):
             (bundle / "_internal").mkdir()
             validate_bundle_layout(executable)
 
+    def test_frozen_binary_verifier_checks_every_supported_agent_manifest(self) -> None:
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        validate_contract = namespace["validate_agent_installation_contract"]
+        observed_manifests: list[dict[str, object]] = []
+
+        def fake_run_json(
+            _executable: Path,
+            command: str,
+            *,
+            environment_overrides: dict[str, str] | None = None,
+        ) -> dict[str, object]:
+            self.assertEqual(command, "doctor")
+            assert environment_overrides is not None
+            manifest = json.loads(
+                Path(environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"])
+                .read_text(encoding="utf-8"),
+            )
+            observed_manifests.append(manifest)
+            details: dict[str, object] = {
+                "state": "installed",
+                "expected_sha256": manifest["cli_sha256"],
+            }
+            if manifest["schema_version"] == 5:
+                details["hash_kind"] = "canonical_directory_v1"
+                expected_binding = "windows_launcher" if os.name == "nt" else "symlink"
+                details["checks"] = [
+                    {
+                        "id": "cli_target_binding",
+                        "ok": True,
+                        "binding_type": expected_binding,
+                    },
+                ]
+            target = Path(manifest["cli_target"])
+            self.assertNotEqual(target, _executable)
+            if manifest["schema_version"] == 4:
+                self.assertEqual(target.read_bytes(), _executable.read_bytes())
+            elif os.name == "nt":
+                self.assertEqual(target.suffix, ".cmd")
+                self.assertIn(str(_executable.resolve()), target.read_text(encoding="utf-8"))
+            else:
+                self.assertTrue(target.is_symlink())
+                self.assertEqual(target.resolve(), _executable.resolve())
+            return {
+                "ok": True,
+                "data": {
+                    "checks": [
+                        {
+                            "id": "cli_installation",
+                            "ok": True,
+                            "details": details,
+                        },
+                    ],
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            bundle = Path(temporary_directory) / "auto-email-sender"
+            (bundle / "_internal").mkdir(parents=True)
+            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable.write_bytes(b"binary")
+            (bundle / "_internal" / "runtime").write_bytes(b"runtime")
+            with patch.dict(validate_contract.__globals__, {"_run_json": fake_run_json}):
+                versions = validate_contract(executable)
+
+        self.assertEqual(versions, [4, 5])
+        self.assertEqual(
+            [manifest["schema_version"] for manifest in observed_manifests],
+            [4, 5],
+        )
+        self.assertNotEqual(
+            observed_manifests[0]["cli_sha256"],
+            observed_manifests[1]["cli_sha256"],
+        )
+
+    def test_frozen_binary_verifier_rejects_wrong_schema_v5_target_binding(self) -> None:
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        validate_check = namespace["_validate_agent_installation_check"]
+        expected_binding = "windows_launcher" if os.name == "nt" else "symlink"
+        doctor = {
+            "data": {
+                "checks": [
+                    {
+                        "id": "cli_installation",
+                        "ok": True,
+                        "details": {
+                            "state": "installed",
+                            "expected_sha256": "a" * 64,
+                            "hash_kind": "canonical_directory_v1",
+                            "checks": [
+                                {
+                                    "id": "cli_target_binding",
+                                    "ok": True,
+                                    "binding_type": "same_file",
+                                },
+                            ],
+                        },
+                    },
+                ],
+            },
+        }
+
+        with self.assertRaisesRegex(RuntimeError, expected_binding):
+            validate_check(
+                doctor,
+                schema_version=5,
+                expected_hash="a" * 64,
+                expected_binding=expected_binding,
+            )
+
+    def test_frozen_binary_verifier_rejects_stale_cli_manifest_contract(self) -> None:
+        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        validate_contract = namespace["validate_agent_installation_contract"]
+
+        def fake_run_json(
+            _executable: Path,
+            _command: str,
+            *,
+            environment_overrides: dict[str, str] | None = None,
+        ) -> dict[str, object]:
+            assert environment_overrides is not None
+            manifest = json.loads(
+                Path(environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"])
+                .read_text(encoding="utf-8"),
+            )
+            schema_version = manifest["schema_version"]
+            details: dict[str, object] = {
+                "state": "installed",
+                "expected_sha256": manifest["cli_sha256"],
+            }
+            if schema_version == 5:
+                return {
+                    "ok": True,
+                    "data": {
+                        "checks": [
+                            {
+                                "id": "cli_installation",
+                                "ok": False,
+                                "message": "安装清单版本过旧，无法验证 CLI 文件。",
+                                "details": {"state": "needs_update"},
+                            },
+                        ],
+                    },
+                }
+            return {
+                "ok": True,
+                "data": {
+                    "checks": [
+                        {
+                            "id": "cli_installation",
+                            "ok": True,
+                            "details": details,
+                        },
+                    ],
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            bundle = Path(temporary_directory) / "auto-email-sender"
+            (bundle / "_internal").mkdir(parents=True)
+            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable.write_bytes(b"binary")
+            with (
+                patch.dict(validate_contract.__globals__, {"_run_json": fake_run_json}),
+                self.assertRaisesRegex(RuntimeError, "schema 5"),
+            ):
+                validate_contract(executable)
+
     def test_frozen_binary_verifier_reports_failed_process_output(self) -> None:
         namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
         run_json = namespace["_run_json"]

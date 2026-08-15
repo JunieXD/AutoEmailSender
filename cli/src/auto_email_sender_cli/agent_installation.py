@@ -56,17 +56,13 @@ def inspect_agent_skill_installation() -> dict[str, object]:
     if not isinstance(manifest, dict) or manifest.get("enabled") is not True:
         return _not_configured(manifest_path, "尚未启用命令行与 Agent 支持。")
     schema_version = manifest.get("schema_version")
-    if schema_version not in SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS:
-        return {
-            "ok": False,
-            "state": "needs_update",
-            "manifest_path": manifest_path.as_posix(),
-            "message": "Agent 安装清单版本不受当前 CLI 支持，需要在个人中心重新安装。",
-            "items": [],
-            "cli": _cli_needs_update("安装清单版本过旧，无法验证 CLI 文件。"),
-        }
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version not in SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS
+    ):
+        return _unsupported_manifest_schema(manifest_path, schema_version)
 
-    assert isinstance(schema_version, int)
     cli_installation = _inspect_cli_installation(
         manifest,
         schema_version=schema_version,
@@ -153,6 +149,45 @@ def _not_configured(manifest_path: Path, message: str, *, ok: bool = True) -> di
             "expected_sha256": None,
             "checks": [],
         },
+    }
+
+
+def _unsupported_manifest_schema(
+    manifest_path: Path,
+    schema_version: object,
+) -> dict[str, object]:
+    minimum_supported = min(SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS)
+    if (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version > AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION
+    ):
+        message = (
+            f"当前 CLI 版本过旧，无法验证版本 {schema_version} 的 Agent 安装清单；"
+            "请更新 Auto Email Sender 后重新安装命令行支持。"
+        )
+        cli_message = "当前 CLI 版本过旧，无法验证较新的安装清单。"
+    elif (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version < minimum_supported
+    ):
+        message = "Agent 安装清单版本过旧，需要在个人中心重新安装命令行支持。"
+        cli_message = "安装清单版本过旧，无法验证 CLI 文件。"
+    else:
+        message = "Agent 安装清单版本无效，需要在个人中心重新安装命令行支持。"
+        cli_message = "安装清单版本无效，无法验证 CLI 文件。"
+    return {
+        "ok": False,
+        "state": "needs_update",
+        "manifest_path": manifest_path.as_posix(),
+        "manifest_schema_version": schema_version,
+        "supported_manifest_schema_versions": sorted(
+            SUPPORTED_AGENT_SUPPORT_MANIFEST_SCHEMA_VERSIONS,
+        ),
+        "message": message,
+        "items": [],
+        "cli": _cli_needs_update(cli_message),
     }
 
 

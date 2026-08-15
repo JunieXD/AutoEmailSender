@@ -11,6 +11,7 @@ from auto_email_sender_cli.errors import (
 )
 from auto_email_sender_cli.runtime import (
     RuntimeDescriptor,
+    create_runtime_http_client,
     ensure_runtime_descriptor,
     ensure_runtime_protocol_compatible,
 )
@@ -26,7 +27,14 @@ class AgentApiClient:
     ) -> None:
         self._refresh_runtime_on_failure = descriptor is None
         self.timeout = timeout
-        self._http_client = http_client or httpx.Client(timeout=timeout)
+        self._http_client = (
+            http_client
+            if http_client is not None
+            else create_runtime_http_client(
+                base_url=descriptor.base_url if descriptor is not None else None,
+                timeout=timeout,
+            )
+        )
         self._owns_http_client = http_client is None
         try:
             self.descriptor = ensure_runtime_protocol_compatible(

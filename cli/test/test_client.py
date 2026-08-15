@@ -17,6 +17,23 @@ from auto_email_sender_cli.runtime import RuntimeDescriptor
 
 
 class AgentApiClientTests(unittest.TestCase):
+    def test_owned_client_uses_runtime_proxy_policy_for_business_requests(self) -> None:
+        descriptor = _descriptor()
+        http_client, _ = _http_client(httpx.Response(200, json={"status": "ok"}))
+        with patch(
+            "auto_email_sender_cli.client.create_runtime_http_client",
+            return_value=http_client,
+        ) as create_client:
+            with AgentApiClient(descriptor, timeout=4.0) as client:
+                result = client.request("GET", "/api/ping")
+
+        self.assertEqual(result, {"status": "ok"})
+        create_client.assert_called_once_with(
+            base_url="http://127.0.0.1:48120",
+            timeout=4.0,
+        )
+        self.assertTrue(http_client.is_closed)
+
     def test_api_error_exit_codes_follow_error_contract_not_only_http_status(self) -> None:
         self.assertEqual(
             _exit_code_for_api_error(

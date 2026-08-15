@@ -1418,6 +1418,42 @@ class CliTests(unittest.TestCase):
             frozenset(contract["x-supported-versions"]),
         )
 
+    def test_skill_inspection_distinguishes_new_old_and_invalid_manifest_versions(self) -> None:
+        cases = (
+            (6, "当前 CLI 版本过旧"),
+            (3, "安装清单版本过旧"),
+            ("5", "安装清单版本无效"),
+            ([], "安装清单版本无效"),
+            ({}, "安装清单版本无效"),
+            (True, "安装清单版本无效"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "installation.json"
+            for schema_version, expected_message in cases:
+                with self.subTest(schema_version=schema_version):
+                    manifest_path.write_text(
+                        json.dumps(
+                            {
+                                "schema_version": schema_version,
+                                "enabled": True,
+                            },
+                        ),
+                        encoding="utf-8",
+                    )
+                    with patch.dict(
+                        os.environ,
+                        {"AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE": manifest_path.as_posix()},
+                    ):
+                        result = inspect_agent_skill_installation()
+
+                    self.assertFalse(result["ok"])
+                    self.assertEqual(result["manifest_schema_version"], schema_version)
+                    self.assertIn(expected_message, result["message"])
+                    self.assertEqual(
+                        result["supported_manifest_schema_versions"],
+                        [4, 5],
+                    )
+
     def test_schema_v5_installation_verifies_onedir_bundle_and_macos_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
