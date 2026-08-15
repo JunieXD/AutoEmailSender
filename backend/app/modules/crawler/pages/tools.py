@@ -67,6 +67,7 @@ MAX_BROWSER_INTERACTIVE_PAGES = 500
 MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
 BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
+MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
 INVALID_PROFILE_PAGE_MARKERS = (
     "{{name}}",
@@ -311,6 +312,7 @@ class ProfessorCandidatePayload(BaseModel):
 
 
 class CandidateEnrichmentPayload(BaseModel):
+    page_relation: Literal["matched", "mismatched", "uncertain"] = "uncertain"
     email: str | None = None
     title: str | None = None
     department: str | None = None
@@ -377,7 +379,33 @@ def _normalize_page_cache_url(url: str) -> str:
 
 
 def normalize_candidate_profile_url(value: object, *, base_url: str | None = None) -> str | None:
-    return normalize_navigable_url(value, base_url=base_url)
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if base_url and _looks_like_hostname_without_scheme(raw):
+        base_scheme = urlparse(base_url).scheme.lower()
+        raw = f"{base_scheme if base_scheme in {'http', 'https'} else 'https'}://{raw}"
+    return normalize_navigable_url(raw, base_url=base_url)
+
+
+def _looks_like_hostname_without_scheme(value: str) -> bool:
+    if value.startswith(("/", "./", "../", "//", "#", "?")) or "://" in value:
+        return False
+    authority = re.split(r"[/#?]", value, maxsplit=1)[0]
+    if "@" in authority:
+        return False
+    host = authority.rsplit(":", 1)[0] if authority.rsplit(":", 1)[-1].isdigit() else authority
+    labels = host.rstrip(".").split(".")
+    if len(labels) < 3:
+        return False
+    return all(
+        label
+        and len(label) <= 63
+        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+        for label in labels
+    )
 
 
 
@@ -895,7 +923,10 @@ def build_candidate_enrichment_prompt(
 要求：
 - 只补全缺失字段：email, title, department, research_direction, recent_papers
 - 只输出一个 JSON 对象，不要输出 Markdown、解释或前后缀文本
-- JSON 字段必须包含：email, title, department, research_direction, recent_papers
+- JSON 字段必须包含：page_relation, email, title, department, research_direction, recent_papers
+- page_relation 只能是 matched、mismatched 或 uncertain：页面明确是当前姓名对应的个人资料页时填写 matched；明确是学院首页、多人名单或另一个人的页面时填写 mismatched；证据不足时填写 uncertain
+- 页面主体明确属于机构公共页或多人页，并且没有当前人的个人资料证据时，应填写 mismatched
+- 只有明确不匹配时才填写 mismatched。姓名写法不同、页面内容较少或无法确定时必须填写 uncertain，不要误判为 mismatched
 - recent_papers 必须是 JSON 数组，例如 ["Paper A", "Paper B"]；最多返回 8 篇，优先保留最新或最具代表性的论文并保持页面原有顺序；没有证据时返回 []，不要输出拼接字符串
 - 不要改写已有基础字段
 - 如果正文出现该导师的邮箱，必须补全 email 字段；如邮箱被反爬混淆，请根据页面上下文还原为标准邮箱格式。常见混淆包括但不限于 at、(at)、[at]、[@]、邮箱符号 表示 @，dot、(dot)、[dot]、点 表示 .，以及全角符号。如果正文出现多个邮箱，只填写最可能属于该导师的一个；无法明确判断则保持为空
@@ -904,7 +935,7 @@ def build_candidate_enrichment_prompt(
 - 没有证据的字符串字段保持为空字符串，recent_papers 保持 []
 
 输出示例：
-{{"email": "zhang@example.edu", "title": "教授", "department": "软件工程系", "research_direction": "大语言模型、软件工程", "recent_papers": []}}
+{{"page_relation": "matched", "email": "zhang@example.edu", "title": "教授", "department": "软件工程系", "research_direction": "大语言模型、软件工程", "recent_papers": []}}
 
 已知基础信息：
 - 姓名：{candidate.name or "未知"}
@@ -1103,6 +1134,74 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
     return snapshot
 
 
+async def fetch_binary_resource(
+    ctx: CrawlToolContext,
+    url: str,
+    *,
+    max_bytes: int = MAX_BINARY_RESOURCE_BYTES,
+) -> tuple[str, str, bytes]:
+    """Fetch a small same-school resource through the crawler's pinned transport."""
+
+    absolute_url = urljoin(ctx.start_url, url)
+    current_url = absolute_url
+    for redirect_count in range(MAX_HTTP_REDIRECTS + 1):
+        if not _is_resolved_allowed_crawl_url(
+            ctx.start_url,
+            current_url,
+            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+        ):
+            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+        safe_url = _resolve_safe_public_crawl_url(
+            current_url,
+            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+        )
+        transport = _build_safe_crawl_transport(
+            hostname=safe_url.hostname,
+            resolved_ip=safe_url.resolved_ips[0],
+        )
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=20.0,
+            transport=transport,
+            trust_env=False,
+        ) as client:
+            async with client.stream(
+                "GET",
+                current_url,
+                headers={"User-Agent": "AutoEmailSenderCrawler/0.1"},
+            ) as response:
+                if response.is_redirect:
+                    if redirect_count >= MAX_HTTP_REDIRECTS:
+                        raise ValueError("资源重定向次数过多，已拒绝抓取")
+                    location = response.headers.get("Location") or response.headers.get("location")
+                    if not location:
+                        raise ValueError("资源重定向响应缺少 Location，已拒绝抓取")
+                    current_url = urljoin(str(response.url), location)
+                    continue
+                response.raise_for_status()
+                declared_size = response.headers.get("Content-Length")
+                if declared_size:
+                    try:
+                        if int(declared_size) > max_bytes:
+                            raise ValueError("资源体积超过抓取上限")
+                    except ValueError as exc:
+                        if str(exc) == "资源体积超过抓取上限":
+                            raise
+                chunks: list[bytes] = []
+                total_bytes = 0
+                async for chunk in response.aiter_bytes():
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise ValueError("资源体积超过抓取上限")
+                    chunks.append(chunk)
+                return (
+                    str(response.url),
+                    str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower(),
+                    b"".join(chunks),
+                )
+    raise ValueError("资源抓取失败")
+
+
 def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) -> PageSnapshot | None:
     if decision.action == "skip_terminal_failed":
         return _failed_snapshot(
@@ -1130,6 +1229,7 @@ async def crawl_page_with_browser_fallback(
     url: str,
     *,
     intent: CrawlPageIntent = "generic",
+    force_fetch: bool = False,
 ) -> PageSnapshot:
     await _ensure_crawl_job_can_continue_for_context(ctx)
     absolute_url = urljoin(ctx.start_url, url)
@@ -1139,16 +1239,17 @@ async def crawl_page_with_browser_fallback(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return denied_snapshot
 
-    cached = ctx.get_cached_page_snapshot(absolute_url)
-    if cached is not None:
-        await _ensure_crawl_job_can_continue_for_context(ctx)
-        return cached
+    if not force_fetch:
+        cached = ctx.get_cached_page_snapshot(absolute_url)
+        if cached is not None:
+            await _ensure_crawl_job_can_continue_for_context(ctx)
+            return cached
 
-    decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
-    decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
-    if decision_snapshot is not None:
-        await _ensure_crawl_job_can_continue_for_context(ctx)
-        return decision_snapshot
+        decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+        decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
+        if decision_snapshot is not None:
+            await _ensure_crawl_job_can_continue_for_context(ctx)
+            return decision_snapshot
 
     prefer_browser_for_domain = await should_prefer_browser_for_fetch_domain(
         ctx.session_factory,
@@ -1157,7 +1258,13 @@ async def crawl_page_with_browser_fallback(
     )
     http_blocked_for_host = ctx.is_http_blocked(absolute_url)
     if http_blocked_for_host or prefer_browser_for_domain:
-        snapshot = await browser_investigate(ctx, absolute_url, goal="", intent=intent)
+        snapshot = await browser_investigate(
+            ctx,
+            absolute_url,
+            goal="",
+            intent=intent,
+            force_fetch=force_fetch,
+        )
         await mark_page_fetch_result(
             ctx.session_factory,
             job_id=ctx.job_id,
@@ -1185,6 +1292,7 @@ async def crawl_page_with_browser_fallback(
             url,
             goal="",
             intent=intent,
+            force_fetch=force_fetch,
         )
         selected_snapshot = browser_snapshot
         fetch_mode = "browser"

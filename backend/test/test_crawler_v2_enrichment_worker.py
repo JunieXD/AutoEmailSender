@@ -24,8 +24,12 @@ from app.models import (
     CrawlWorkerTokenUsage,
     LLMProfile,
 )
-from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
-from app.modules.crawler.llm.structured_output import CandidateEnrichmentWirePayload
+from app.modules.crawler.pages.tools import CandidateEnrichmentPayload, PageSnapshot
+from app.modules.crawler.llm.structured_output import (
+    CandidateEmailSelectionWirePayload,
+    CandidateEnrichmentWirePayload,
+    ProfileLinkSelectionWirePayload,
+)
 from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
@@ -33,6 +37,7 @@ from app.modules.llm.runtime import (
 )
 from app.modules.crawler.v2 import enrichment_worker as crawler_v2_enrichment_worker
 from app.modules.crawler.v2.enrichment_worker import enrich_candidate_once, run_crawler_v2_enrichment_worker_once
+from app.modules.crawler.v2.profile_fallbacks import EmailEvidence
 
 
 class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -1040,6 +1045,327 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.input_tokens, 90)
         self.assertEqual(record.output_tokens, 10)
         self.assertEqual(record.cached_tokens, 70)
+
+    async def test_matched_profile_uses_contextual_text_email_selection(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        candidate, profile, ctx = await self._load_enrichment_context(candidate_id)
+        primary_completion = self._completion('{"page_relation":"matched","email":""}')
+        selection_completion = self._completion('{"email":"zhang@example.edu"}')
+
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.request_crawler_structured_completion",
+                new=AsyncMock(
+                    side_effect=[
+                        (
+                            primary_completion,
+                            CandidateEnrichmentWirePayload(
+                                page_relation="matched",
+                                email="",
+                                title="教授",
+                                department="计算机系",
+                                research_direction="AI",
+                                recent_papers=[],
+                            ),
+                            "json_schema_strict",
+                        ),
+                        (
+                            selection_completion,
+                            CandidateEmailSelectionWirePayload(
+                                email="zhang@example.edu",
+                            ),
+                            "json_schema_strict",
+                        ),
+                    ]
+                ),
+            ) as request_mock,
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+                new=AsyncMock(),
+            ) as crawl_mock,
+        ):
+            payload, usage, _raw = await crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage(
+                ctx,
+                profile,
+                candidate,
+                (
+                    "张三教授的邮箱是 zhang@example.edu。"
+                    "学院事务邮箱为 office@example.edu。"
+                ),
+            )
+
+        self.assertEqual(payload.email, "zhang@example.edu")
+        self.assertEqual(request_mock.await_count, 2)
+        crawl_mock.assert_not_awaited()
+        assert usage is not None
+        self.assertEqual(usage["input_tokens"], 2)
+        self.assertIn("学院公共邮箱", request_mock.await_args_list[1].kwargs["prompt"])
+        self.assertIn(
+            '{"email":"zhang@example.edu"}',
+            request_mock.await_args_list[1].kwargs["prompt"],
+        )
+
+    async def test_ocr_runs_only_after_matched_primary_and_text_fallback_miss(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        candidate, profile, ctx = await self._load_enrichment_context(candidate_id)
+        snapshot = PageSnapshot(
+            url="https://example.edu/zhang.html",
+            text="张三 教授",
+            html='<p>邮箱 <img src="email.gif"></p>',
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.request_crawler_structured_completion",
+                new=AsyncMock(
+                    side_effect=[
+                        (
+                            self._completion("primary"),
+                            CandidateEnrichmentWirePayload(
+                                page_relation="matched",
+                                email="",
+                                title="教授",
+                                department="",
+                                research_direction="",
+                                recent_papers=[],
+                            ),
+                            "json_schema_strict",
+                        ),
+                        (
+                            self._completion("ocr selection"),
+                            CandidateEmailSelectionWirePayload(
+                                email="zhang@example.edu",
+                            ),
+                            "json_schema_strict",
+                        ),
+                    ]
+                ),
+            ),
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+                new=AsyncMock(return_value=snapshot),
+            ) as crawl_mock,
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.extract_ocr_email_evidence",
+                new=AsyncMock(
+                    return_value=(
+                        EmailEvidence(
+                            email="zhang@example.edu",
+                            context="邮箱 zhang@example.edu",
+                            source_url="https://example.edu/email.gif",
+                            source_kind="ocr_image",
+                        ),
+                    )
+                ),
+            ) as ocr_mock,
+        ):
+            payload, _usage, _raw = await crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage(
+                ctx,
+                profile,
+                candidate,
+                "张三 教授",
+            )
+
+        self.assertEqual(payload.email, "zhang@example.edu")
+        crawl_mock.assert_awaited_once_with(
+            ctx,
+            "https://example.edu/zhang.html",
+            intent="profile",
+            force_fetch=True,
+        )
+        ocr_mock.assert_awaited_once_with(ctx, snapshot)
+
+    async def test_subpage_fallback_is_one_hop_and_uses_only_selected_link(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang/",
+        )
+        candidate, profile, ctx = await self._load_enrichment_context(candidate_id)
+        parent = PageSnapshot(
+            url="https://example.edu/zhang/",
+            text="张三 教授",
+            html='<main>张三 <a href="details">查看更多</a></main>',
+            fetch_method="http",
+            status="succeeded",
+        )
+        child = PageSnapshot(
+            url="https://example.edu/zhang/details",
+            text="张三 联系方式 zhang@example.edu",
+            html='<a href="deeper">更深页面</a>',
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.request_crawler_structured_completion",
+                new=AsyncMock(
+                    side_effect=[
+                        (
+                            self._completion("primary"),
+                            CandidateEnrichmentWirePayload(
+                                page_relation="matched",
+                                email="",
+                                title="教授",
+                                department="",
+                                research_direction="",
+                                recent_papers=[],
+                            ),
+                            "json_schema_strict",
+                        ),
+                        (
+                            self._completion("link selection"),
+                            ProfileLinkSelectionWirePayload(link_ids=[1]),
+                            "json_schema_strict",
+                        ),
+                        (
+                            self._completion("email selection"),
+                            CandidateEmailSelectionWirePayload(
+                                email="zhang@example.edu",
+                            ),
+                            "json_schema_strict",
+                        ),
+                    ]
+                ),
+            ) as request_mock,
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+                new=AsyncMock(side_effect=[parent, child]),
+            ) as crawl_mock,
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.extract_ocr_email_evidence",
+                new=AsyncMock(return_value=()),
+            ) as ocr_mock,
+        ):
+            payload, _usage, _raw = await crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage(
+                ctx,
+                profile,
+                candidate,
+                "张三 教授",
+            )
+
+        self.assertEqual(payload.email, "zhang@example.edu")
+        self.assertEqual(request_mock.await_count, 3)
+        self.assertEqual(crawl_mock.await_count, 2)
+        self.assertEqual(ocr_mock.await_count, 1)
+        self.assertEqual(crawl_mock.await_args_list[1].args[1], child.url)
+        self.assertIn(
+            '{"link_ids":[2]}',
+            request_mock.await_args_list[1].kwargs["prompt"],
+        )
+
+    async def test_clear_mismatch_removes_wrong_profile_and_rejects_contactless_candidate(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/college-home",
+        )
+        payload = CandidateEnrichmentPayload(
+            page_relation="mismatched",
+            email="office@example.edu",
+            title="教授",
+        )
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(return_value=(payload, None, "")),
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert candidate is not None and task is not None
+        self.assertIsNone(candidate.profile_url)
+        self.assertIsNone(candidate.email)
+        self.assertEqual(candidate.review_status, "rejected")
+        self.assertEqual(
+            candidate.evidence["profile_url_removed_reason"],
+            "confirmed_profile_page_mismatch",
+        )
+        self.assertEqual(task.enriched_fields, ["profile_url"])
+
+    async def test_empty_visible_body_never_falls_back_to_hidden_html(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        _candidate, _profile, ctx = await self._load_enrichment_context(candidate_id)
+        snapshot = PageSnapshot(
+            url="https://example.edu/zhang.html",
+            text="",
+            html="<!-- zhang@example.edu -->",
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+            new=AsyncMock(return_value=snapshot),
+        ):
+            with self.assertRaisesRegex(ValueError, "未提供可见正文"):
+                await crawler_v2_enrichment_worker.fetch_profile_text(
+                    ctx,
+                    snapshot.url,
+                )
+
+    def test_exact_name_downgrades_only_a_model_mismatch_to_uncertain(self) -> None:
+        self.assertEqual(
+            crawler_v2_enrichment_worker._guard_page_relation(
+                "mismatched",
+                candidate_name="张三",
+                page_text="张三 教授 个人简介",
+            ),
+            "uncertain",
+        )
+        self.assertEqual(
+            crawler_v2_enrichment_worker._guard_page_relation(
+                "mismatched",
+                candidate_name="张三",
+                page_text="示例大学学院首页",
+            ),
+            "mismatched",
+        )
+
+    async def _load_enrichment_context(
+        self,
+        candidate_id: int,
+    ) -> tuple[CrawlCandidate, LLMProfile, crawler_v2_enrichment_worker.CrawlToolContext]:
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            assert candidate is not None
+            job = await session.get(CrawlJob, candidate.job_id)
+            assert job is not None and job.llm_profile_id is not None
+            profile = await session.get(LLMProfile, job.llm_profile_id)
+            assert profile is not None
+        ctx = crawler_v2_enrichment_worker.CrawlToolContext(
+            job_id=job.id,
+            start_url=job.start_url,
+            university=job.university,
+            school=job.school,
+            session_factory=self.session_factory,
+            llm_adaptation=LLMRuntimeAdaptation("chat_completions", None),
+        )
+        return candidate, profile, ctx
+
+    @staticmethod
+    def _completion(content: str) -> ChatCompletionResult:
+        return ChatCompletionResult(
+            content=content,
+            usage=ChatCompletionUsage(
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+                cached_tokens=0,
+            ),
+        )
 
     async def _seed_task(self, *, profile_url: str | None) -> tuple[int, int]:
         async with self.session_factory() as session:

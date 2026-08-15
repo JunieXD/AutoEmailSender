@@ -22,6 +22,7 @@ AlembicDir="$BackendDir/alembic"
 DocumentExtractionNotice="$BackendDir/app/services/document_extraction/MARKITDOWN_NOTICE.txt"
 PlaywrightBrowsersDir="$BackendDir/ms-playwright"
 PlaywrightHooksDir="$RepoRoot/scripts/build/pyinstaller-hooks"
+NativeOcrHelper="$BackendDir/build/native-ocr/email-ocr"
 
 cd "$BackendDir"
 
@@ -32,6 +33,7 @@ fi
 uv sync --dev
 export PLAYWRIGHT_BROWSERS_PATH="$PlaywrightBrowsersDir"
 uv run python -m playwright install --only-shell chromium
+"$RepoRoot/scripts/build/build-native-ocr.sh"
 uv run pyinstaller \
   --noconfirm \
   --clean \
@@ -59,6 +61,7 @@ uv run pyinstaller \
   --add-data "$AlembicIni:." \
   --add-data "$AlembicDir:alembic" \
   --add-data "$DocumentExtractionNotice:licenses" \
+  --add-binary "$NativeOcrHelper:native/ocr" \
   desktop_entry.py
 
 PackagedBackendExe="$BackendDir/dist/backend/backend"

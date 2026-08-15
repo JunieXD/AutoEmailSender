@@ -12,6 +12,7 @@ $AlembicDir = Join-Path $BackendDir "alembic"
 $DocumentExtractionNotice = Join-Path $BackendDir "app\services\document_extraction\MARKITDOWN_NOTICE.txt"
 $PlaywrightBrowsersDir = Join-Path $BackendDir "ms-playwright"
 $PlaywrightHooksDir = Join-Path $RepoRoot "scripts\build\pyinstaller-hooks"
+$WindowsOcrScript = Join-Path $BackendDir "native\ocr\windows\windows-media-ocr.ps1"
 
 function Assert-NativeSuccess {
   param([Parameter(Mandatory = $true)][string]$Operation)
@@ -81,6 +82,7 @@ try {
     --add-data "$AlembicIni;." `
     --add-data "$AlembicDir;alembic" `
     --add-data "$DocumentExtractionNotice;licenses" `
+    --add-data "$WindowsOcrScript;native/ocr" `
     desktop_entry.py
   Assert-NativeSuccess "backend PyInstaller build"
 

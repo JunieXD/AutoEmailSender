@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+from urllib.parse import urljoin, urlsplit
+
+from bs4 import BeautifulSoup, Tag
+
+from app.modules.professors.public import (
+    is_valid_professor_email,
+    normalize_professor_email,
+)
+from ..pages.tools import PageSnapshot, normalize_navigable_url, normalize_obfuscated_email_tokens
+
+
+_EMAIL_CANDIDATE_PATTERN = re.compile(
+    r"[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9-]+(?:\s*\.\s*[A-Za-z0-9-]+)+"
+)
+_LINK_PRIORITY_TERMS = (
+    "contact",
+    "detail",
+    "email",
+    "information",
+    "more",
+    "personal",
+    "profile",
+    "个人",
+    "信息",
+    "更多",
+    "简介",
+    "联系",
+    "详情",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EmailEvidence:
+    email: str
+    context: str
+    source_url: str
+    source_kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileLinkEvidence:
+    link_id: int
+    url: str
+    label: str
+    context: str
+
+
+def extract_email_evidence(
+    text: str,
+    *,
+    source_url: str,
+    source_kind: str,
+    context_chars: int = 180,
+) -> tuple[EmailEvidence, ...]:
+    normalized_text = normalize_obfuscated_email_tokens(text or "")
+    evidence: list[EmailEvidence] = []
+    seen: set[str] = set()
+    for match in _EMAIL_CANDIDATE_PATTERN.finditer(normalized_text):
+        raw_email = re.sub(r"\s+", "", match.group(0))
+        email = normalize_professor_email(raw_email)
+        if not email or not is_valid_professor_email(email) or email in seen:
+            continue
+        seen.add(email)
+        start = max(0, match.start() - context_chars)
+        end = min(len(normalized_text), match.end() + context_chars)
+        context = " ".join(normalized_text[start:end].split())
+        evidence.append(
+            EmailEvidence(
+                email=email,
+                context=context,
+                source_url=source_url,
+                source_kind=source_kind,
+            )
+        )
+    return tuple(evidence)
+
+
+def extract_profile_link_evidence(
+    snapshot: PageSnapshot,
+    *,
+    max_links: int = 80,
+) -> tuple[ProfileLinkEvidence, ...]:
+    soup = BeautifulSoup(snapshot.html or "", "html.parser")
+    current_url = normalize_navigable_url(snapshot.url) or snapshot.url
+    ranked: list[tuple[int, int, str, str, str]] = []
+    seen: set[str] = set()
+    for document_index, anchor in enumerate(soup.find_all("a", href=True)):
+        raw_href = str(anchor.get("href") or "").strip()
+        if not raw_href:
+            continue
+        absolute_url = normalize_navigable_url(raw_href, base_url=snapshot.url)
+        if not absolute_url or absolute_url == current_url or absolute_url in seen:
+            continue
+        parsed = urlsplit(absolute_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+        label = _anchor_label(anchor)
+        context = _nearest_link_context(anchor, label)
+        if not label and not context:
+            continue
+        seen.add(absolute_url)
+        haystack = f"{label} {context} {parsed.path}".casefold()
+        priority = sum(1 for term in _LINK_PRIORITY_TERMS if term in haystack)
+        ranked.append((-priority, document_index, absolute_url, label, context))
+
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return tuple(
+        ProfileLinkEvidence(
+            link_id=index,
+            url=url,
+            label=label,
+            context=context,
+        )
+        for index, (_priority, _document_index, url, label, context) in enumerate(
+            ranked[:max_links],
+            start=1,
+        )
+    )
+
+
+def _anchor_label(anchor: Tag) -> str:
+    label = " ".join(anchor.get_text(" ", strip=True).split())
+    if label:
+        return label[:160]
+    image = anchor.find("img")
+    if image is None:
+        return ""
+    return " ".join(
+        str(image.get("alt") or image.get("title") or "").split()
+    )[:160]
+
+
+def _nearest_link_context(anchor: Tag, label: str) -> str:
+    node: Tag | None = anchor
+    fallback = label
+    for _ in range(5):
+        parent = node.parent if node is not None else None
+        if not isinstance(parent, Tag):
+            break
+        text = " ".join(parent.get_text(" ", strip=True).split())
+        if text:
+            fallback = text[:360]
+        if len(text) >= max(12, len(label) + 4) and len(text) <= 360:
+            return text
+        node = parent
+    return fallback
+
+
+def resolve_profile_image_urls(snapshot: PageSnapshot, *, max_urls: int = 20) -> tuple[tuple[str, str], ...]:
+    soup = BeautifulSoup(snapshot.html or "", "html.parser")
+    candidates: list[tuple[int, int, str, str]] = []
+    seen: set[str] = set()
+    for document_index, image in enumerate(soup.find_all("img")):
+        raw_src = str(image.get("src") or image.get("data-src") or image.get("data-original") or "").strip()
+        if not raw_src or raw_src.startswith("data:"):
+            continue
+        url = urljoin(snapshot.url, raw_src)
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or url in seen:
+            continue
+        seen.add(url)
+        context = _image_context(image)
+        haystack = f"{url} {context}".casefold()
+        priority = sum(1 for term in _LINK_PRIORITY_TERMS if term in haystack)
+        candidates.append((-priority, document_index, url, context))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return tuple((url, context) for _priority, _index, url, context in candidates[:max_urls])
+
+
+def _image_context(image: Tag) -> str:
+    attributes = " ".join(
+        str(image.get(name) or "") for name in ("alt", "title")
+    ).strip()
+    parent = image.parent
+    parent_text = (
+        " ".join(parent.get_text(" ", strip=True).split())[:240]
+        if isinstance(parent, Tag)
+        else ""
+    )
+    return " ".join(part for part in (attributes, parent_text) if part)[:320]

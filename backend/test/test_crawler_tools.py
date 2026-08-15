@@ -129,6 +129,24 @@ class CrawlerToolTests(unittest.TestCase):
             "https://cs.example.edu/teachers/zhang",
         )
 
+    def test_normalize_candidate_profile_url_repairs_hostname_missing_scheme(self) -> None:
+        self.assertEqual(
+            normalize_candidate_profile_url(
+                "eic.hust.edu.cn/professor/zhang",
+                base_url="https://ei.hust.edu.cn/xygk/szdw/",
+            ),
+            "https://eic.hust.edu.cn/professor/zhang",
+        )
+
+    def test_normalize_candidate_profile_url_keeps_normal_relative_document(self) -> None:
+        self.assertEqual(
+            normalize_candidate_profile_url(
+                "zhang.htm",
+                base_url="https://cs.example.edu/teachers/",
+            ),
+            "https://cs.example.edu/teachers/zhang.htm",
+        )
+
     def test_page_snapshot_cache_distinguishes_spa_hash_routes(self) -> None:
         ctx = self._test_ctx()
         staff = PageSnapshot(
@@ -2643,6 +2661,75 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(snapshot.fetch_method, "browser")
         browser_path.assert_awaited_once()
+
+    async def test_browser_fallback_force_fetch_bypasses_memory_and_processed_ledger(self) -> None:
+        async with _RealCrawlerSessionHarness() as harness:
+            job_id = await harness.create_job()
+            url = "https://cs.example.edu/faculty"
+            async with harness.session_factory() as session:
+                session.add(
+                    CrawlPageFetchState(
+                        job_id=job_id,
+                        normalized_url=url,
+                        original_url=url,
+                        status="processed",
+                        fetch_mode="direct",
+                        direct_status="succeeded",
+                    )
+                )
+                await session.commit()
+            ctx = CrawlToolContext(
+                job_id=job_id,
+                start_url=url,
+                university="示例大学",
+                school="计算机学院",
+                session_factory=harness.session_factory,
+            )
+            ctx.remember_page_snapshot(
+                PageSnapshot(
+                    url=url,
+                    text="旧内容",
+                    html="<html><body>旧内容</body></html>",
+                    fetch_method="http",
+                    status="succeeded",
+                )
+            )
+            fresh_snapshot = PageSnapshot(
+                url=url,
+                text="新内容",
+                html="<html><body>新内容</body></html>",
+                fetch_method="http",
+                status="succeeded",
+            )
+
+            with (
+                patch(
+                    "app.modules.crawler.pages.tools.get_page_fetch_decision",
+                    new=AsyncMock(side_effect=AssertionError("不应读取抓取账本")),
+                ) as decision_mock,
+                patch(
+                    "app.modules.crawler.pages.tools.should_prefer_browser_for_fetch_domain",
+                    new=AsyncMock(return_value=False),
+                ),
+                patch(
+                    "app.modules.crawler.pages.tools.crawl_page_with_http",
+                    new=AsyncMock(return_value=fresh_snapshot),
+                ) as http_path,
+                patch(
+                    "app.modules.crawler.pages.tools.is_allowed_crawl_url",
+                    return_value=True,
+                ),
+            ):
+                snapshot = await crawler_tools.crawl_page_with_browser_fallback(
+                    ctx,
+                    url,
+                    intent="profile",
+                    force_fetch=True,
+                )
+
+        self.assertEqual(snapshot.text, "新内容")
+        decision_mock.assert_not_awaited()
+        http_path.assert_awaited_once()
 
     async def test_browser_investigate_skips_previously_denied_url(self) -> None:
         ctx = CrawlToolContext(

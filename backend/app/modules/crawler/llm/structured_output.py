@@ -118,11 +118,31 @@ class ProfessorCandidateWirePayload(BaseModel):
 class CandidateEnrichmentWirePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    page_relation: Literal["matched", "mismatched", "uncertain"]
     email: str
     title: str
     department: str
     research_direction: str
     recent_papers: list[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_legacy_page_relation(cls, value: object) -> object:
+        if not isinstance(value, dict) or "page_relation" in value:
+            return value
+        return {**value, "page_relation": "uncertain"}
+
+
+class CandidateEmailSelectionWirePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+
+
+class ProfileLinkSelectionWirePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    link_ids: list[int]
 
 
 class V2ChunkWirePayload(BaseModel):

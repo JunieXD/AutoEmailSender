@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -13,6 +15,7 @@ from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
     CrawlCandidateEnrichmentTaskStatus,
+    CrawlCandidateReviewStatus,
     CrawlJob,
     CrawlJobKind,
     CrawlJobStatus,
@@ -28,6 +31,7 @@ from ..pages.tools import (
     PageSnapshot,
     build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
+    is_allowed_crawl_url,
     profile_text_has_meaningful_content,
     validate_safe_public_crawl_url,
 )
@@ -45,9 +49,11 @@ from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 from .models import CrawlerV2WorkKind
 from .url_utils import is_same_domain
 from ..jobs.runs import extract_token_usage_from_llm_response
-from app.modules.llm.public import ensure_llm_runtime_adaptation
+from app.modules.llm.public import LLMRuntimeError, ensure_llm_runtime_adaptation
 from ..llm.structured_output import (
+    CandidateEmailSelectionWirePayload,
     CandidateEnrichmentWirePayload,
+    ProfileLinkSelectionWirePayload,
     request_crawler_structured_completion,
 )
 from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
@@ -58,14 +64,28 @@ from app.modules.professors.public import (
 )
 from app.modules.crawler.candidate_identity import (
     apply_candidate_enrichment_values,
+    candidate_identity_values,
     consolidate_candidate_identity,
     rebuild_candidate_identity_keys,
 )
-from app.modules.professors.public import normalize_recent_papers
+from app.modules.professors.public import (
+    is_valid_professor_email,
+    normalize_professor_email,
+    normalize_recent_papers,
+)
+from .native_ocr import extract_ocr_email_evidence
+from .profile_fallbacks import (
+    EmailEvidence,
+    ProfileLinkEvidence,
+    extract_email_evidence,
+    extract_profile_link_evidence,
+)
 
 
 _PROFILE_TEXT_CACHE = profile_text_cache
 _PROFILE_TEXT_DATABASE_CACHE_TTL = timedelta(hours=1)
+_MAX_EMAIL_EVIDENCE_ITEMS = 16
+_MAX_PROFILE_LINK_EVIDENCE_ITEMS = 40
 _HTML_TAG_REMNANT_PATTERN = re.compile(
     r"</?(?:a|div|li|nav|ol|p|span|table|tbody|td|th|tr|ul)\b[^>]*>",
     re.IGNORECASE,
@@ -230,9 +250,40 @@ async def run_crawler_v2_enrichment_worker_once(
                     )
                 return 0
             candidate = current_candidate
-            candidate_enriched_fields = _apply_enrichment(candidate, payload)
-            if "email" in candidate_enriched_fields:
-                candidate = await rebuild_candidate_identity_keys(session, candidate)
+            removed_profile_identities: tuple[tuple[str, str], ...] = ()
+            corrected_profile_fields: list[str] = []
+            if payload.page_relation == "mismatched" and candidate.profile_url:
+                removed_profile_url = candidate.profile_url
+                removed_profile_identities = candidate_identity_values(
+                    name=candidate.name,
+                    profile_url=removed_profile_url,
+                )
+                candidate.profile_url = None
+                evidence = dict(candidate.evidence or {})
+                evidence["profile_url_removed_reason"] = "confirmed_profile_page_mismatch"
+                evidence["removed_profile_url"] = removed_profile_url
+                candidate.evidence = evidence
+                corrected_profile_fields.append("profile_url")
+                if (
+                    job.job_kind != CrawlJobKind.PROFESSOR_ENRICHMENT.value
+                    and _valid_email(candidate.email) is None
+                ):
+                    candidate.review_status = CrawlCandidateReviewStatus.REJECTED.value
+            effective_payload = (
+                CandidateEnrichmentPayload(page_relation="mismatched")
+                if payload.page_relation == "mismatched"
+                else payload
+            )
+            candidate_enriched_fields = corrected_profile_fields + _apply_enrichment(
+                candidate,
+                effective_payload,
+            )
+            if "email" in candidate_enriched_fields or corrected_profile_fields:
+                candidate = await rebuild_candidate_identity_keys(
+                    session,
+                    candidate,
+                    exclude_identities=removed_profile_identities,
+                )
             else:
                 candidate = await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
@@ -494,18 +545,305 @@ async def enrich_candidate_profile_with_llm_with_usage(
         result_model=CandidateEnrichmentWirePayload,
     )
     payload = CandidateEnrichmentPayload.model_validate(wire_payload.model_dump())
+    payload.page_relation = _guard_page_relation(
+        payload.page_relation,
+        candidate_name=candidate.name,
+        page_text=page_text,
+    )
+    usage = extract_token_usage_from_llm_response(completion)
+    raw_model_texts = [completion.content]
+
+    if payload.page_relation == "mismatched":
+        return (
+            CandidateEnrichmentPayload(page_relation="mismatched"),
+            usage,
+            _join_raw_model_texts(raw_model_texts),
+        )
+
+    if (
+        payload.page_relation != "matched"
+        or _valid_email(candidate.email) is not None
+        or _valid_email(payload.email) is not None
+    ):
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
+        ctx,
+        llm_profile,
+        candidate,
+        extract_email_evidence(
+            page_text,
+            source_url=(candidate.profile_url or "").strip(),
+            source_kind="profile_text",
+        ),
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if selected_email:
+        payload.email = selected_email
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    profile_url = (candidate.profile_url or "").strip()
+    snapshot = await crawl_page_with_browser_fallback(
+        ctx,
+        profile_url,
+        intent="profile",
+        force_fetch=True,
+    )
+    if snapshot.status != "succeeded":
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
+        ctx,
+        llm_profile,
+        candidate,
+        await extract_ocr_email_evidence(ctx, snapshot),
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if selected_email:
+        payload.email = selected_email
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    links = tuple(
+        link
+        for link in extract_profile_link_evidence(
+            snapshot,
+            max_links=_MAX_PROFILE_LINK_EVIDENCE_ITEMS,
+        )
+        if is_allowed_crawl_url(ctx.start_url, link.url)
+    )
+    selected_links, auxiliary_usage, auxiliary_raw = await _select_profile_links(
+        ctx,
+        llm_profile,
+        candidate,
+        links,
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if not selected_links:
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    child_snapshots: list[PageSnapshot] = []
+    for link in selected_links:
+        child_snapshot = await crawl_page_with_browser_fallback(
+            ctx,
+            link.url,
+            intent="profile",
+            force_fetch=True,
+        )
+        if child_snapshot.status == "succeeded":
+            child_snapshots.append(child_snapshot)
+
+    child_text_evidence = _deduplicate_email_evidence(
+        evidence
+        for child_snapshot in child_snapshots
+        for evidence in extract_email_evidence(
+            child_snapshot.text,
+            source_url=child_snapshot.url,
+            source_kind="child_text",
+        )
+    )
+    selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
+        ctx,
+        llm_profile,
+        candidate,
+        child_text_evidence,
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if selected_email:
+        payload.email = selected_email
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    child_ocr_evidence: list[EmailEvidence] = []
+    for child_snapshot in child_snapshots:
+        child_ocr_evidence.extend(await extract_ocr_email_evidence(ctx, child_snapshot))
+    selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
+        ctx,
+        llm_profile,
+        candidate,
+        _deduplicate_email_evidence(child_ocr_evidence),
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if selected_email:
+        payload.email = selected_email
     return (
         payload,
+        usage,
+        _join_raw_model_texts(raw_model_texts),
+    )
+
+
+async def _select_email_from_evidence(
+    ctx: CrawlToolContext,
+    llm_profile: LLMProfile,
+    candidate: CrawlCandidate,
+    evidence: Sequence[EmailEvidence],
+) -> tuple[str | None, dict[str, int | None] | None, str | None]:
+    bounded_evidence = tuple(evidence[:_MAX_EMAIL_EVIDENCE_ITEMS])
+    if not bounded_evidence:
+        return None, None, None
+    prompt = (
+        "你只需判断候选邮箱中哪个明确属于当前教师。只能原样选择一个候选邮箱；"
+        "学院公共邮箱、行政人员或其他人的邮箱不能选，无法确定就返回空字符串。\n"
+        f"当前教师：{candidate.name}；学校：{candidate.university or ''}；学院：{candidate.school or ''}\n"
+        "候选邮箱及其页面上下文：\n"
+        f"{json.dumps([_email_evidence_dict(item) for item in bounded_evidence], ensure_ascii=False)}\n"
+        '只输出 JSON，例如 {"email":"zhang@example.edu"}；不确定时输出 {"email":""}。'
+    )
+    try:
+        completion, selection, _structured_mode = await request_crawler_structured_completion(
+            ctx.session_factory,
+            llm_profile,
+            ctx.llm_adaptation,
+            prompt=prompt,
+            result_model=CandidateEmailSelectionWirePayload,
+        )
+    except (LLMRuntimeError, ValueError):
+        return None, None, None
+    available = {
+        normalized: evidence_item.email
+        for evidence_item in bounded_evidence
+        if (normalized := _valid_email(evidence_item.email)) is not None
+    }
+    selected = _valid_email(selection.email)
+    return (
+        available.get(selected) if selected is not None else None,
         extract_token_usage_from_llm_response(completion),
         completion.content,
     )
+
+
+async def _select_profile_links(
+    ctx: CrawlToolContext,
+    llm_profile: LLMProfile,
+    candidate: CrawlCandidate,
+    links: Sequence[ProfileLinkEvidence],
+) -> tuple[tuple[ProfileLinkEvidence, ...], dict[str, int | None] | None, str | None]:
+    if not links:
+        return (), None, None
+    prompt = (
+        "当前页已确认是这位教师的资料页，但没有找到邮箱。请从真实链接中选择最可能继续显示"
+        "同一位教师详细信息或联系方式的链接，最多选 2 个。不要选导航、学院首页、教师名单、"
+        "论文站点或无关外部页面；没有合适链接就返回空数组。只返回 link_ids。\n"
+        f"当前教师：{candidate.name}\n"
+        f"链接：{json.dumps([_profile_link_evidence_dict(link) for link in links], ensure_ascii=False)}\n"
+        '只输出 JSON，例如 {"link_ids":[2]}；没有合适链接时输出 {"link_ids":[]}。'
+    )
+    try:
+        completion, selection, _structured_mode = await request_crawler_structured_completion(
+            ctx.session_factory,
+            llm_profile,
+            ctx.llm_adaptation,
+            prompt=prompt,
+            result_model=ProfileLinkSelectionWirePayload,
+        )
+    except (LLMRuntimeError, ValueError):
+        return (), None, None
+    available = {link.link_id: link for link in links}
+    selected: list[ProfileLinkEvidence] = []
+    seen_ids: set[int] = set()
+    for link_id in selection.link_ids:
+        if isinstance(link_id, bool) or link_id in seen_ids or link_id not in available:
+            continue
+        seen_ids.add(link_id)
+        selected.append(available[link_id])
+        if len(selected) >= 2:
+            break
+    return (
+        tuple(selected),
+        extract_token_usage_from_llm_response(completion),
+        completion.content,
+    )
+
+
+def _guard_page_relation(
+    relation: str,
+    *,
+    candidate_name: str,
+    page_text: str,
+) -> str:
+    if relation != "mismatched" or not _page_mentions_candidate_name(candidate_name, page_text):
+        return relation
+    return "uncertain"
+
+
+def _page_mentions_candidate_name(candidate_name: str, page_text: str) -> bool:
+    name = " ".join((candidate_name or "").split()).casefold()
+    text = " ".join((page_text or "").split()).casefold()
+    if len(name) < 2 or not text:
+        return False
+    if any(ord(character) > 127 for character in name):
+        return name in text
+    return re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text) is not None
+
+
+def _valid_email(value: object) -> str | None:
+    normalized = normalize_professor_email(str(value) if value is not None else None)
+    return normalized if normalized and is_valid_professor_email(normalized) else None
+
+
+def _email_evidence_dict(value: EmailEvidence) -> dict[str, str]:
+    return {
+        "email": value.email,
+        "context": value.context,
+        "source_url": value.source_url,
+        "source_kind": value.source_kind,
+    }
+
+
+def _profile_link_evidence_dict(value: ProfileLinkEvidence) -> dict[str, str | int]:
+    return {
+        "link_id": value.link_id,
+        "url": value.url,
+        "label": value.label,
+        "context": value.context,
+    }
+
+
+def _deduplicate_email_evidence(values: Iterable[EmailEvidence]) -> tuple[EmailEvidence, ...]:
+    deduplicated: list[EmailEvidence] = []
+    seen: set[str] = set()
+    for value in values:
+        if value.email in seen:
+            continue
+        seen.add(value.email)
+        deduplicated.append(value)
+    return tuple(deduplicated)
+
+
+def _merge_token_usage(
+    current: dict[str, int | None] | None,
+    incoming: dict[str, int | None] | None,
+) -> dict[str, int | None] | None:
+    if current is None:
+        return dict(incoming) if incoming is not None else None
+    if incoming is None:
+        return current
+    merged = dict(current)
+    for key, value in incoming.items():
+        if isinstance(value, int):
+            merged[key] = int(merged.get(key) or 0) + value
+        elif key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _join_raw_model_texts(values: Sequence[str | None]) -> str | None:
+    parts = [value.strip() for value in values if value and value.strip()]
+    return "\n\n".join(parts) or None
 
 
 async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
     snapshot: PageSnapshot = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
-    return snapshot.text or snapshot.html
+    page_text = (snapshot.text or "").strip()
+    if not page_text:
+        raise ValueError("详情页未提供可见正文")
+    return page_text
 
 
 async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:

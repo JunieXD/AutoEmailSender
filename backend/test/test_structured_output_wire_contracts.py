@@ -8,11 +8,13 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from app.modules.crawler.llm.structured_output import (
+    CandidateEmailSelectionWirePayload,
     CandidateEnrichmentWirePayload,
     CandidateFieldConfidenceWire,
     ProfessorCandidateWirePayload,
     V2ChunkWirePayload,
     V2ProfileExtractionWirePayload,
+    ProfileLinkSelectionWirePayload,
     professor_candidate_wire_to_dict,
 )
 from app.modules.llm.runtime import (
@@ -93,6 +95,8 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             DraftRewriteResult,
             ProfessorCandidateWirePayload,
             CandidateEnrichmentWirePayload,
+            CandidateEmailSelectionWirePayload,
+            ProfileLinkSelectionWirePayload,
             V2ChunkWirePayload,
             V2ProfileExtractionWirePayload,
             V2EntryRoutingPayload,

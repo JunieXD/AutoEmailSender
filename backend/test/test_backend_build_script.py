@@ -153,6 +153,32 @@ class BackendBuildScriptTest(unittest.TestCase):
 
         self.assertIn("--debug noarchive", content)
 
+    def test_packages_system_native_ocr_helpers(self) -> None:
+        macos_script = (BUILD_SCRIPTS_ROOT / "build-backend.sh").read_text(
+            encoding="utf-8",
+        )
+        windows_script = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(
+            encoding="utf-8",
+        )
+
+        self.assertIn('scripts/build/build-native-ocr.sh"', macos_script)
+        self.assertIn('--add-binary "$NativeOcrHelper:native/ocr"', macos_script)
+        self.assertIn("native\\ocr\\windows\\windows-media-ocr.ps1", windows_script)
+        self.assertIn('--add-data "$WindowsOcrScript;native/ocr"', windows_script)
+        self.assertTrue(
+            (REPOSITORY_ROOT / "backend" / "native" / "ocr" / "macos" / "email_ocr.swift").is_file()
+        )
+        self.assertTrue(
+            (
+                REPOSITORY_ROOT
+                / "backend"
+                / "native"
+                / "ocr"
+                / "windows"
+                / "windows-media-ocr.ps1"
+            ).is_file()
+        )
+
     def test_playwright_install_helper_installs_only_playwright(self) -> None:
         content = (BUILD_SCRIPTS_ROOT / "install-backend-playwright.ps1").read_text(
             encoding="utf-8",
