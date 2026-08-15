@@ -657,26 +657,34 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             )
         )
 
-        async def never_finishes(**_kwargs):
-            await asyncio.Event().wait()
+        async def scenario() -> int:
+            generation_started = asyncio.Event()
 
-        with (
-            patch(
-                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
-                new=AsyncMock(side_effect=never_finishes),
-            ),
-            patch(
-                "app.modules.campaigns.drafts.runtime.WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS",
-                0.01,
-            ),
-        ):
-            processed = self._run_async(
-                run_queued_batch_drafts_once(
-                    self.session_factory,
-                    concurrency=1,
-                    coordinator=BatchDraftGenerationCoordinator(),
+            async def never_finishes(**_kwargs):
+                generation_started.set()
+                await asyncio.Event().wait()
+
+            with (
+                patch(
+                    "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                    new=AsyncMock(side_effect=never_finishes),
+                ),
+                patch(
+                    "app.modules.campaigns.drafts.runtime.WORKSPACE_DRAFT_REWRITE_TIMEOUT_SECONDS",
+                    1.0,
+                ),
+            ):
+                runner = asyncio.create_task(
+                    run_queued_batch_drafts_once(
+                        self.session_factory,
+                        concurrency=1,
+                        coordinator=BatchDraftGenerationCoordinator(),
+                    )
                 )
-            )
+                await asyncio.wait_for(generation_started.wait(), timeout=3)
+                return await asyncio.wait_for(runner, timeout=2)
+
+        processed = self._run_async(scenario())
 
         task = self._run_async(self._get_task(task_ids[0]))
         self.assertEqual(processed, 1)
