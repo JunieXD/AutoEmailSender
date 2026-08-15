@@ -1965,6 +1965,11 @@ describe("TasksPage batch draft review", () => {
     expect(within(resendDialog).getByText("AI 辅助写信")).toBeInTheDocument();
     expect(within(resendDialog).getByText("有可沿用内容 1 封 · 没有可沿用内容 0 封")).toBeInTheDocument();
     expect(within(resendDialog).getByText("沿用上次已批准内容")).toBeInTheDocument();
+    expect(
+      within(resendDialog)
+        .getByRole("checkbox", { name: "选择导师 模板直通导师" })
+        .closest("label"),
+    ).toHaveClass("items-center");
 
     fireEvent.click(
       within(resendDialog).getByRole("button", { name: "去创建新任务" }),
@@ -2341,10 +2346,14 @@ describe("TasksPage batch draft review", () => {
     expect(screen.queryByRole("button", { name: "立即发送" })).not.toBeInTheDocument();
 
     const attachmentCard = screen.getByRole("region", { name: "随信附件" });
+    const attachmentCheckbox = within(attachmentCard).getByRole("checkbox", {
+      name: "选择附件 简历.pdf",
+    });
     const reviewCard = screen.getByRole("region", { name: "审核操作" });
     const professorCard = screen.getByRole("region", { name: "导师详情" });
     const matchCard = screen.getByRole("region", { name: "匹配摘要" });
     expect(attachmentCard.nextElementSibling).toBe(reviewCard);
+    expect(attachmentCheckbox.closest("label")).toHaveClass("items-center");
     expect(reviewCard.nextElementSibling).toBe(professorCard);
     expect(professorCard.nextElementSibling).toBe(matchCard);
 

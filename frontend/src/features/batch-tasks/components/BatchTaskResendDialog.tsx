@@ -123,14 +123,13 @@ export const BatchTaskResendDialog = ({
                 return (
                   <label
                     key={item.email_task_id}
-                    className="flex cursor-pointer items-start gap-3 rounded-2xl border border-stone-100 px-4 py-3 transition hover:border-primary/25 hover:bg-primary/5"
+                    className="flex cursor-pointer items-center gap-3 rounded-2xl border border-stone-100 px-4 py-3 transition hover:border-primary/25 hover:bg-primary/5"
                   >
                     <SelectionToggleButton
                       label={`选择导师 ${item.professor_name}`}
                       selected={checked}
                       semantics="checkbox"
                       size="sm"
-                      className="mt-1"
                       onToggle={() => onToggleProfessor(professorId)}
                     />
                     <div className="min-w-0 flex-1">

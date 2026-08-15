@@ -5929,14 +5929,13 @@ export const BackgroundTasksPage = ({
                                   return (
                                     <label
                                       key={material.id}
-                                      className="flex items-start gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700"
+                                      className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700"
                                     >
                                       <SelectionToggleButton
                                         label={`选择附件 ${material.display_name}`}
                                         selected={checked}
                                         semantics="checkbox"
                                         size="sm"
-                                        className="mt-0.5"
                                         onToggle={() =>
                                           setBatchReviewSelectedMaterialIds((current) =>
                                             checked

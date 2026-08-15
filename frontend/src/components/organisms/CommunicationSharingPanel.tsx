@@ -399,7 +399,7 @@ export const CommunicationSharingPanel = () => {
                         return (
                           <label
                             key={identity.id}
-                            className="flex cursor-pointer items-start gap-3 rounded-lg border border-stone-200 px-3 py-3 transition hover:bg-stone-50"
+                            className="flex cursor-pointer items-center gap-3 rounded-lg border border-stone-200 px-3 py-3 transition hover:bg-stone-50"
                           >
                             <SelectionToggleButton
                               label={`${getIdentityName(identity)}${identity.email_address}`}
@@ -408,7 +408,6 @@ export const CommunicationSharingPanel = () => {
                               disabled={saving}
                               semantics="checkbox"
                               size="sm"
-                              className="mt-0.5"
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium text-stone-900">

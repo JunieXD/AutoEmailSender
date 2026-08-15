@@ -145,7 +145,9 @@ describe('CommunicationSharingPanel', () => {
 
     expandPanel();
     fireEvent.click(screen.getByRole('button', { name: '新建共享组' }));
-    expect(screen.getByRole('checkbox', { name: /A/ })).toBeChecked();
+    const identityCheckbox = screen.getByRole('checkbox', { name: /A/ });
+    expect(identityCheckbox).toBeChecked();
+    expect(identityCheckbox.closest('label')).toHaveClass('items-center');
     expect(screen.getByText('匹配度显示方式')).toBeInTheDocument();
     expect(
       screen.getByRole('radio', { name: /各自显示自己的匹配度/ }),
