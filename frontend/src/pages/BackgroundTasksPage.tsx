@@ -7689,7 +7689,7 @@ export const BackgroundTasksPage = ({
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-3">
                               {selectedCrawlJobCanReview ? (
-                                <div className="mt-1 shrink-0">
+                                <div className="shrink-0 self-center">
                                   <SelectionToggleButton
                                     label={`选择候选导师 ${candidate.name}`}
                                     selected={selectedReviewableCrawlCandidateIds.includes(
