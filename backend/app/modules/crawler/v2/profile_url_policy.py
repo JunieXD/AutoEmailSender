@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit, urlunsplit
 
 from .url_utils import normalize_url
 
@@ -34,15 +34,32 @@ def has_explicit_markdown_link(
     base_url: str,
     target_url: str,
 ) -> bool:
-    normalized_target = normalize_url(target_url, base_url=base_url)
+    normalized_target = normalize_profile_url(target_url, base_url=base_url)
     for match in _MARKDOWN_LINK_PATTERN.finditer(content):
         raw_link_url = urljoin(base_url, match.group(2))
-        if normalize_url(raw_link_url) == normalized_target:
+        if normalize_profile_url(raw_link_url) == normalized_target:
             return True
         for embedded_url in _extract_embedded_url_parameters(raw_link_url):
-            if normalize_url(embedded_url) == normalized_target:
+            if normalize_profile_url(embedded_url) == normalized_target:
                 return True
     return False
+
+
+def normalize_profile_url(url: str, *, base_url: str | None = None) -> str:
+    """Normalize URL forms that are equivalent for profile provenance/cache.
+
+    Faculty sites frequently emit ``/teacher`` in one place and
+    ``/teacher/`` in another. This deliberately stays local to profile URL
+    checks; the general crawler URL normalizer keeps slash-sensitive routes
+    unchanged.
+    """
+
+    normalized = normalize_url(url, base_url=base_url)
+    parsed = urlsplit(normalized)
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
 def _extract_embedded_url_parameters(link_url: str) -> tuple[str, ...]:

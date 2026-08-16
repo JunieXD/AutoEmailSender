@@ -82,6 +82,15 @@ class CrawlerV2ProfileUrlPolicyTests(unittest.TestCase):
             )
         )
 
+    def test_treats_profile_trailing_slash_as_equivalent(self) -> None:
+        self.assertTrue(
+            has_explicit_markdown_link(
+                "[张成伟](http://122.205.5.5:8081/~zhangcw/)",
+                base_url="https://ei.hust.edu.cn/xygk/szdw/txgcx.htm",
+                target_url="http://122.205.5.5:8081/~zhangcw",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

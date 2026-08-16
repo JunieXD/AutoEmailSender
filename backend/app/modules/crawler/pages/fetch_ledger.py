@@ -24,6 +24,32 @@ _TERMINAL_FAILURE_MARKERS = (
     "access denied",
     "security check",
 )
+_POLICY_FAILURE_MARKERS = (
+    "url 不在",
+    "最终 url",
+    "不允许指向",
+    "内网",
+    "本机",
+    "不可解析",
+    "已拒绝",
+    "无关页面",
+    "同域范围",
+    "重定向次数过多",
+    "缺少 location",
+)
+_TRANSIENT_FAILURE_MARKERS = (
+    "err_",
+    "connection",
+    "protocol",
+    "fetch failed",
+    "timed out",
+    "timeout",
+    "temporarily",
+    "详情页未提供可见正文",
+    "returned empty html",
+    "empty response",
+    "playwright browser fetch failed",
+)
 
 
 class PageSnapshotLike(Protocol):
@@ -73,12 +99,31 @@ def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClass
     if snapshot.status != "failed":
         raise ValueError("Only failed snapshots can be classified")
     error_message = (snapshot.error_message or "").lower()
-    if snapshot.suspicious_empty or any(marker in error_message for marker in _TERMINAL_FAILURE_MARKERS):
+    if any(marker in error_message for marker in _POLICY_FAILURE_MARKERS):
+        return FetchFailureClassification(
+            status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
+            reason="policy_rejected",
+        )
+    if any(marker in error_message for marker in _TERMINAL_FAILURE_MARKERS):
+        return FetchFailureClassification(
+            status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
+            reason="anti_bot_or_empty_response",
+        )
+    if any(marker in error_message for marker in _TRANSIENT_FAILURE_MARKERS):
+        return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
+    if snapshot.suspicious_empty:
         return FetchFailureClassification(
             status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
             reason="anti_bot_or_empty_response",
         )
     return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
+
+
+def _is_retryable_failure_message(message: str | None) -> bool:
+    normalized = (message or "").lower()
+    return bool(normalized) and any(
+        marker in normalized for marker in _TRANSIENT_FAILURE_MARKERS
+    )
 
 
 async def get_page_fetch_decision(
@@ -100,6 +145,20 @@ async def get_page_fetch_decision(
         if state is None or not isinstance(state, CrawlPageFetchState):
             return PageFetchDecision(action="allow_first_fetch", normalized_url=normalized_url)
         if state.status == CrawlPageFetchStatus.TERMINAL_FAILED.value:
+            if (
+                _is_retryable_failure_message(state.last_error_message)
+                and int(state.transient_failure_count or 0) < TRANSIENT_FETCH_RETRY_LIMIT
+            ):
+                state.status = CrawlPageFetchStatus.TRANSIENT_FAILED.value
+                state.terminal_reason = None
+                state.updated_at = utc_now()
+                await session.commit()
+                return PageFetchDecision(
+                    action="allow_retry",
+                    normalized_url=normalized_url,
+                    state_id=state.id,
+                    status=state.status,
+                )
             return PageFetchDecision(
                 action="skip_terminal_failed",
                 normalized_url=normalized_url,
@@ -216,7 +275,7 @@ async def mark_page_fetch_result(
             state.status = classification.status
             state.terminal_reason = classification.reason
             if classification.status == CrawlPageFetchStatus.TRANSIENT_FAILED.value:
-                state.transient_failure_count += 1
+                state.transient_failure_count = int(state.transient_failure_count or 0) + 1
         await session.commit()
 
 

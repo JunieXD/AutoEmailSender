@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import lru_cache
-from html import unescape
+from html import escape, unescape
 import hashlib
 import ipaddress
 import platform
@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 import httpcore
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -61,6 +61,7 @@ except Exception:  # pragma: no cover - dependency errors become fetch errors la
 
 MAX_TEXT_CHARS = 12000
 MAX_LINKS = 200
+MAX_EMBEDDED_FRAME_DOCUMENTS = 4
 MAX_HTTP_REDIRECTS = 5
 MAX_RETRIES_FOR_BROWSER_RENDER = 2
 MAX_BROWSER_INTERACTIVE_PAGES = 500
@@ -143,6 +144,24 @@ CERTIFICATE_DATE_ERROR_MARKERS = (
     "cert_not_yet_valid",
     "err_cert_date_invalid",
 )
+HTTP_COMPATIBILITY_ERROR_MARKERS = (
+    "err_connection",
+    "err_http2_protocol",
+    "connection closed",
+    "connection reset",
+    "connection refused",
+    "protocol error",
+    "fetch failed",
+    "timed out",
+    "timeout",
+    "certificate",
+)
+IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS = (
+    "err_connection_closed",
+    "err_connection_refused",
+    "err_http2_protocol_error",
+    "err_ssl_protocol_error",
+)
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -184,6 +203,9 @@ class PageSnapshot(BaseModel):
     status: Literal["succeeded", "failed"]
     error_message: str | None = None
     suspicious_empty: bool = False
+    has_client_encrypted_profile_fields: bool = False
+    has_dynamic_teacher_directory_markers: bool = False
+    has_invalid_profile_page_markers: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1294,9 +1316,34 @@ async def crawl_page_with_browser_fallback(
             intent=intent,
             force_fetch=force_fetch,
         )
+        compatibility_browser_snapshot: PageSnapshot | None = None
+        if (
+            browser_snapshot.status != "succeeded"
+            and _should_try_http_compatibility_fallback(absolute_url, browser_snapshot)
+        ):
+            compatibility_url = _http_compatibility_url(absolute_url)
+            if compatibility_url is not None and _is_resolved_allowed_crawl_url(
+                ctx.start_url,
+                compatibility_url,
+                allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+            ):
+                compatibility_browser_snapshot = await _crawl_page_with_browser(
+                    ctx,
+                    compatibility_url,
+                    "",
+                    intent,
+                )
+                await record_page_snapshot(ctx, compatibility_browser_snapshot)
         selected_snapshot = browser_snapshot
         fetch_mode = "browser"
-        if browser_snapshot.status != "succeeded" and http_snapshot.status == "succeeded":
+        if (
+            browser_snapshot.status != "succeeded"
+            and compatibility_browser_snapshot is not None
+            and compatibility_browser_snapshot.status == "succeeded"
+        ):
+            selected_snapshot = compatibility_browser_snapshot
+            fetch_mode = "direct"
+        elif browser_snapshot.status != "succeeded" and http_snapshot.status == "succeeded":
             selected_snapshot = http_snapshot
             fetch_mode = "direct"
         processed_snapshot = _apply_runtime_url_denylist_after_fetch(
@@ -1306,7 +1353,9 @@ async def crawl_page_with_browser_fallback(
         )
         ledger_urls = [processed_snapshot.url]
         if fetch_mode == "direct":
-            ledger_urls.extend((absolute_url, browser_snapshot.url))
+            ledger_urls.extend((absolute_url, browser_snapshot.url, http_snapshot.url))
+            if compatibility_browser_snapshot is not None:
+                ledger_urls.append(compatibility_browser_snapshot.url)
         recorded_urls: set[str] = set()
         for ledger_url in ledger_urls:
             normalized_ledger_url = normalize_fetch_url(ledger_url)
@@ -1495,6 +1544,8 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
         error_message = (snapshot.error_message or "").lower()
         if any(str(marker) in error_message for marker in BROWSER_FALLBACK_STATUS):
             return True
+        if any(marker in error_message for marker in HTTP_COMPATIBILITY_ERROR_MARKERS):
+            return True
         if "cf-" in error_message:
             return True
         return any(
@@ -1532,11 +1583,15 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
 
 
 def _looks_like_unrendered_or_error_profile_page(snapshot: PageSnapshot) -> bool:
+    if snapshot.has_invalid_profile_page_markers:
+        return True
     haystack = f"{snapshot.title or ''}\n{snapshot.text}\n{snapshot.html[:2000]}"
     return any(marker in haystack for marker in INVALID_PROFILE_PAGE_MARKERS)
 
 
 def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
+    if snapshot.has_client_encrypted_profile_fields:
+        return True
     html = snapshot.html or ""
     return any(marker in html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
 
@@ -1547,7 +1602,9 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
         return False
     lowered = html.lower()
     soup = BeautifulSoup(html, "html.parser")
-    if any(marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS):
+    if snapshot.has_dynamic_teacher_directory_markers or any(
+        marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS
+    ):
         legacy_containers = soup.select(".type_info")
         if legacy_containers and not any(
             container.get_text(" ", strip=True) or container.find("a", href=True)
@@ -1644,6 +1701,36 @@ def _is_http_blocked_snapshot(snapshot: PageSnapshot) -> bool:
         return False
     error_message = (snapshot.error_message or "").lower()
     return any(str(status) in error_message for status in BROWSER_FALLBACK_STATUS)
+
+
+def _http_compatibility_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return None
+    return parsed._replace(scheme="http").geturl()
+
+
+def _should_try_http_compatibility_fallback(
+    requested_url: str,
+    snapshot: PageSnapshot,
+) -> bool:
+    if snapshot.status != "failed" or urlparse(requested_url).scheme.lower() != "https":
+        return False
+    error_message = (snapshot.error_message or "").lower()
+    return any(marker in error_message for marker in HTTP_COMPATIBILITY_ERROR_MARKERS)
+
+
+def _is_immediate_http_compatibility_error(
+    requested_url: str,
+    snapshot: PageSnapshot,
+) -> bool:
+    if snapshot.status != "failed" or urlparse(requested_url).scheme.lower() != "https":
+        return False
+    error_message = (snapshot.error_message or "").lower()
+    return any(
+        marker in error_message
+        for marker in IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS
+    )
 
 
 def _browser_wait_selector_for_intent(intent: CrawlPageIntent) -> str:
@@ -2099,6 +2186,8 @@ async def _try_playwright_browser_fetch(
                 absolute_url,
                 compatibility_options,
             )
+        if _is_immediate_http_compatibility_error(absolute_url, last_result):
+            return last_result
         if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
             return last_result
     return last_result or _failed_snapshot(
@@ -2142,13 +2231,14 @@ async def _try_playwright_browser_fetch_once(
                     selector,
                     timeout=options.wait_for_timeout_ms,
                 )
-            if options.wait_for_dynamic_directory:
+            has_child_frames = len(getattr(page, "frames", ())) > 1
+            if options.wait_for_dynamic_directory and not has_child_frames:
                 html, _ = await _wait_for_dynamic_directory_html(
                     page,
                     absolute_url=absolute_url,
                     options=options,
                 )
-            elif options.wait_for_dynamic_profile:
+            elif options.wait_for_dynamic_profile and not has_child_frames:
                 html, profile_ready = await _wait_for_dynamic_profile_html(
                     page,
                     absolute_url=absolute_url,
@@ -2160,6 +2250,12 @@ async def _try_playwright_browser_fetch_once(
             else:
                 html = await page.content()
             final_url = str(getattr(page, "url", "") or absolute_url)
+            embedded_documents = await _collect_browser_embedded_documents(
+                page,
+                absolute_url=final_url,
+            )
+            if embedded_documents:
+                profile_ready = True
     except Exception as exc:
         return _failed_snapshot(
             url=absolute_url,
@@ -2180,10 +2276,49 @@ async def _try_playwright_browser_fetch_once(
         html=html,
         final_url=final_url,
         absolute_url=absolute_url,
+        embedded_documents=embedded_documents,
     )
     if options.wait_for_dynamic_profile and not profile_ready:
         snapshot.suspicious_empty = True
     return snapshot
+
+
+async def _collect_browser_embedded_documents(
+    page: Any,
+    *,
+    absolute_url: str,
+) -> tuple[tuple[str, str], ...]:
+    """Collect one bounded level of same-host frame documents.
+
+    Frame pages are common for older faculty sites. Their outer frameset has
+    no visible body, while the actual profile lives in a child document. We
+    deliberately keep this to same-host frames and one level so it cannot turn
+    into arbitrary recursive browsing.
+    """
+
+    parent_host = (urlparse(absolute_url).hostname or "").lower()
+    documents: list[tuple[str, str]] = []
+    for frame in list(getattr(page, "frames", ())):
+        if frame is getattr(page, "main_frame", None):
+            continue
+        frame_url = str(getattr(frame, "url", "") or "")
+        parsed = urlparse(frame_url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.hostname.lower() != parent_host
+            or not is_safe_public_crawl_url(frame_url)
+        ):
+            continue
+        try:
+            frame_html = await frame.content()
+        except Exception:
+            continue
+        if frame_html:
+            documents.append((frame_url, frame_html))
+        if len(documents) >= MAX_EMBEDDED_FRAME_DOCUMENTS:
+            break
+    return tuple(documents)
 
 
 async def _wait_for_dynamic_directory_html(
@@ -2339,15 +2474,27 @@ def _is_certificate_date_error(message: str | None) -> bool:
 
 
 
-def _snapshot_from_browser_html(*, html: str, final_url: str, absolute_url: str) -> PageSnapshot:
+def _snapshot_from_browser_html(
+    *,
+    html: str,
+    final_url: str,
+    absolute_url: str,
+    embedded_documents: Sequence[tuple[str, str]] = (),
+) -> PageSnapshot:
     if not html:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
             error_message="Playwright browser fetch returned empty HTML",
+            suspicious_empty=True,
         )
 
-    snapshot = html_to_snapshot(final_url or absolute_url, html, "browser")
+    snapshot = html_to_snapshot(
+        final_url or absolute_url,
+        html,
+        "browser",
+        embedded_documents=embedded_documents,
+    )
     if not snapshot.text.strip():
         snapshot.suspicious_empty = True
     return snapshot
@@ -2646,25 +2793,85 @@ async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) ->
         return row
 
 
-def html_to_snapshot(url: str, html: str, fetch_method: str) -> PageSnapshot:
-    bounded_html = html[:MAX_CRAWL_HTML_CHARS]
-    soup = BeautifulSoup(bounded_html, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
+def html_to_snapshot(
+    url: str,
+    html: str,
+    fetch_method: str,
+    *,
+    embedded_documents: Sequence[tuple[str, str]] = (),
+) -> PageSnapshot:
+    """Turn one page and optional frame documents into a bounded snapshot.
 
-    title = _clean_optional(soup.title.get_text(" ", strip=True) if soup.title else None)
-    text = html_to_text(str(soup))[:MAX_TEXT_CHARS]
+    The old implementation sliced raw HTML before parsing. Excel-exported
+    faculty pages put their contact row after a large amount of invisible
+    style/VML markup, so that slice could remove the only email. We now remove
+    non-visible markup first, extract text and links from the complete cleaned
+    documents, and only then apply the existing snapshot budget.
+    """
+
+    documents = [(url, html)] + [
+        (document_url, document_html)
+        for document_url, document_html in embedded_documents
+        if document_html
+    ]
+    cleaned_documents = [
+        (document_url, _clean_snapshot_soup(document_html))
+        for document_url, document_html in documents
+    ]
+    has_client_encrypted_profile_fields = any(
+        any(marker in document_html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
+        for _document_url, document_html in documents
+    )
+    has_dynamic_teacher_directory_markers = any(
+        any(marker in document_html.lower() for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS)
+        for _document_url, document_html in documents
+    )
+    has_invalid_profile_page_markers = any(
+        any(marker.lower() in document_html.lower() for marker in INVALID_PROFILE_PAGE_MARKERS)
+        for _document_url, document_html in documents
+    )
+    main_soup = cleaned_documents[0][1]
+    title = _clean_optional(
+        main_soup.title.get_text(" ", strip=True) if main_soup.title else None
+    )
+    if not title:
+        for _document_url, document_soup in cleaned_documents[1:]:
+            if document_soup.title:
+                title = _clean_optional(document_soup.title.get_text(" ", strip=True))
+                if title:
+                    break
+
+    text_parts = [
+        html_to_text(str(document_soup))
+        for _document_url, document_soup in cleaned_documents
+    ]
+    text = "\n\n".join(part for part in text_parts if part)
+    text = text.replace("\ufeff", "").strip()[:MAX_TEXT_CHARS]
+
     links: list[str] = []
     seen_links: set[str] = set()
-    for tag in soup.find_all("a", href=True):
-        link = urljoin(url, str(tag["href"]).strip())
-        parsed = urlparse(link)
-        if parsed.scheme not in {"http", "https"} or link in seen_links:
-            continue
-        seen_links.add(link)
-        links.append(link)
+    for document_url, document_soup in cleaned_documents:
+        for tag in document_soup.find_all("a", href=True):
+            link = urljoin(document_url, str(tag["href"]).strip())
+            parsed = urlparse(link)
+            if parsed.scheme not in {"http", "https"} or link in seen_links:
+                continue
+            seen_links.add(link)
+            links.append(link)
+            if len(links) >= MAX_LINKS:
+                break
         if len(links) >= MAX_LINKS:
             break
+
+    serialized_documents = [str(main_soup)]
+    for document_url, document_soup in cleaned_documents[1:]:
+        serialized_documents.append(
+            '<section data-crawl-frame-url="{}">{}</section>'.format(
+                escape(document_url, quote=True),
+                document_soup,
+            )
+        )
+    bounded_html = _bound_snapshot_html("\n".join(serialized_documents))
 
     return PageSnapshot(
         url=url,
@@ -2674,8 +2881,37 @@ def html_to_snapshot(url: str, html: str, fetch_method: str) -> PageSnapshot:
         links=links,
         fetch_method=fetch_method,
         status="succeeded",
-        suspicious_empty=not text.strip(),
+        suspicious_empty=not text,
+        has_client_encrypted_profile_fields=has_client_encrypted_profile_fields,
+        has_dynamic_teacher_directory_markers=has_dynamic_teacher_directory_markers,
+        has_invalid_profile_page_markers=has_invalid_profile_page_markers,
     )
+
+
+def _clean_snapshot_soup(html: str) -> BeautifulSoup:
+    soup = BeautifulSoup(html or "", "html.parser")
+    for tag in soup.find_all(True):
+        attributes = " ".join(
+            f"{attribute}={attribute_value}"
+            for attribute, attribute_value in tag.attrs.items()
+        )
+        if any(marker in attributes for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS):
+            tag.decompose()
+    for tag in soup(["script", "style", "noscript", "template", "noframes"]):
+        tag.decompose()
+    for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):
+        comment.extract()
+    return soup
+
+
+def _bound_snapshot_html(html: str) -> str:
+    if len(html) <= MAX_CRAWL_HTML_CHARS:
+        return html
+    marker = '\n<div data-crawl-truncated="true"></div>\n'
+    available = max(0, MAX_CRAWL_HTML_CHARS - len(marker))
+    head_size = available // 2
+    tail_size = available - head_size
+    return html[:head_size] + marker + (html[-tail_size:] if tail_size else "")
 
 
 def _format_exception_for_snapshot(exc: BaseException, context: str) -> str:
@@ -2808,7 +3044,13 @@ async def _get_job_status(session: AsyncSession, job_id: int) -> str | None:
     return await session.scalar(select(CrawlJob.status).where(CrawlJob.id == job_id))
 
 
-def _failed_snapshot(url: str, fetch_method: str, error_message: str) -> PageSnapshot:
+def _failed_snapshot(
+    url: str,
+    fetch_method: str,
+    error_message: str,
+    *,
+    suspicious_empty: bool = False,
+) -> PageSnapshot:
     return PageSnapshot(
         url=url,
         title=None,
@@ -2818,7 +3060,7 @@ def _failed_snapshot(url: str, fetch_method: str, error_message: str) -> PageSna
         fetch_method=fetch_method,
         status="failed",
         error_message=error_message,
-        suspicious_empty=True,
+        suspicious_empty=suspicious_empty,
     )
 
 

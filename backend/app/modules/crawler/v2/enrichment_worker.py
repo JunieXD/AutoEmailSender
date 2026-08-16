@@ -40,6 +40,7 @@ from ..pages.debug import append_crawler_v2_debug_event
 from .profile_url_policy import (
     CandidateProfileUrlPolicyError,
     has_explicit_markdown_link,
+    normalize_profile_url,
 )
 from .retry import mark_crawler_v2_failed
 from .profile_text_cache import profile_text_cache
@@ -847,7 +848,11 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
 
 
 async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:
-    cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, profile_url.strip())
+    normalized_profile_url = normalize_profile_url(
+        profile_url,
+        base_url=ctx.start_url,
+    )
+    cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, normalized_profile_url)
     cached = _PROFILE_TEXT_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -900,18 +905,43 @@ async def _discard_cached_profile_text_if_terminal(
 async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str) -> str | None:
     if not profile_url.strip():
         return None
+    normalized_profile_url = normalize_profile_url(
+        profile_url,
+        base_url=ctx.start_url,
+    )
+    url_variants = {
+        profile_url.strip(),
+        normalized_profile_url,
+        normalized_profile_url + "/"
+        if not normalized_profile_url.endswith("/")
+        else normalized_profile_url.rstrip("/"),
+    }
     async with ctx.session_factory() as session:
-        page = await session.scalar(
-            select(CrawlPage)
-            .where(
-                CrawlPage.job_id == ctx.job_id,
-                CrawlPage.url == profile_url,
-                CrawlPage.status == "succeeded",
-                CrawlPage.text_excerpt.is_not(None),
+        pages = list(
+            await session.scalars(
+                select(CrawlPage)
+                .where(
+                    CrawlPage.job_id == ctx.job_id,
+                    CrawlPage.url.in_(url_variants),
+                    CrawlPage.status == "succeeded",
+                    CrawlPage.text_excerpt.is_not(None),
+                )
+                .order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc())
+                .limit(8)
             )
-            .order_by(CrawlPage.created_at.desc(), CrawlPage.id.desc())
-            .limit(1)
         )
+    page = next(
+        (
+            candidate_page
+            for candidate_page in pages
+            if normalize_profile_url(
+                candidate_page.url,
+                base_url=ctx.start_url,
+            )
+            == normalized_profile_url
+        ),
+        None,
+    )
     if (
         page is None
         or not page.text_excerpt

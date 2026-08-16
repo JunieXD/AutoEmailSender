@@ -32,6 +32,8 @@ from app.modules.crawler.pages.tools import (
     save_candidate_payloads_shared,
     _body_content_changed_substantially,
     _crawl_page_with_browser,
+    _http_compatibility_url,
+    _should_try_http_compatibility_fallback,
     _is_resolved_allowed_crawl_url,
     _resolve_safe_public_crawl_url,
 )
@@ -82,6 +84,77 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertIn("hchuang@zju.edu.cn", snapshot.text)
         self.assertNotIn("隐藏导航", snapshot.text)
         self.assertNotIn("fake0@example.edu", snapshot.text)
+
+    def test_html_to_snapshot_cleans_before_budget_and_keeps_late_contact_text(self) -> None:
+        html = (
+            "<html><head><style>" + "x" * (crawler_tools.MAX_CRAWL_HTML_CHARS + 5000)
+            + "</style></head><body><main>朱明 邮箱 "
+            "zhuming@hust.edu.cn</main></body></html>"
+        )
+
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://example.edu/teacher/zhuming",
+            html,
+            "http",
+        )
+
+        self.assertLessEqual(len(snapshot.html), crawler_tools.MAX_CRAWL_HTML_CHARS)
+        self.assertIn("朱明", snapshot.text)
+        self.assertIn("zhuming@hust.edu.cn", snapshot.text)
+
+    def test_html_to_snapshot_combines_one_level_frame_documents(self) -> None:
+        outer = (
+            '<frameset><frame src="index.files/sheet001.htm">'
+            '<noframes><body>此页面使用了框架</body></noframes></frameset>'
+        )
+        frame_url = "https://example.edu/teacher/index.files/sheet001.htm"
+        frame_html = (
+            "<html><body><h1>鲁放</h1><p>个人邮箱："
+            "lufang@hust.edu.cn</p><a href=\"contact.htm\">联系</a>"
+            "</body></html>"
+        )
+
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://example.edu/teacher/",
+            outer,
+            "browser",
+            embedded_documents=((frame_url, frame_html),),
+        )
+
+        self.assertFalse(snapshot.suspicious_empty)
+        self.assertIn("lufang@hust.edu.cn", snapshot.text)
+        self.assertIn("https://example.edu/teacher/index.files/contact.htm", snapshot.links)
+        self.assertNotIn("此页面使用了框架", snapshot.text)
+
+    def test_http_compatibility_helpers_are_limited_to_https_network_errors(self) -> None:
+        self.assertEqual(
+            _http_compatibility_url(
+                "https://faculty.example.edu/teacher?id=1#bio",
+            ),
+            "http://faculty.example.edu/teacher?id=1#bio",
+        )
+        self.assertIsNone(_http_compatibility_url("http://faculty.example.edu/teacher"))
+        network_failure = PageSnapshot(
+            url="https://faculty.example.edu/teacher",
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+        )
+        self.assertTrue(
+            _should_try_http_compatibility_fallback(
+                "https://faculty.example.edu/teacher",
+                network_failure,
+            )
+        )
+        policy_failure = network_failure.model_copy(
+            update={"error_message": "URL 不在入口页面同域范围内，已拒绝浏览器调查"}
+        )
+        self.assertFalse(
+            _should_try_http_compatibility_fallback(
+                "https://faculty.example.edu/teacher",
+                policy_failure,
+            )
+        )
 
     def test_browser_pagination_wait_ignores_only_active_page_number_change(self) -> None:
         shared = "教师名单 " + ("张三 教授 李四 副教授 " * 80)
@@ -1164,6 +1237,78 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, browser_snapshot)
         browser.assert_awaited_once()
 
+    async def test_crawl_page_with_browser_fallback_uses_one_same_host_http_browser_attempt(self) -> None:
+        profile_url = "https://faculty.example.edu/wei/zh_CN/index.htm"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url=profile_url,
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        direct_failure = PageSnapshot(
+            url=profile_url,
+            fetch_method="http",
+            status="failed",
+            error_message="HTTP request failed: ConnectTimeout",
+        )
+        https_browser_failure = PageSnapshot(
+            url=profile_url,
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+        )
+        http_browser_success = PageSnapshot(
+            url="http://faculty.example.edu/wei/zh_CN/index.htm",
+            title="王巍",
+            text="王巍 邮箱 weiwang@example.edu",
+            html="<main>王巍 邮箱 weiwang@example.edu</main>",
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.pages.tools.crawl_page_with_http",
+                new=AsyncMock(return_value=direct_failure),
+            ) as direct_fetch,
+            patch(
+                "app.modules.crawler.pages.tools.browser_investigate",
+                new=AsyncMock(return_value=https_browser_failure),
+            ),
+            patch(
+                "app.modules.crawler.pages.tools._crawl_page_with_browser",
+                new=AsyncMock(return_value=http_browser_success),
+            ) as compatibility_fetch,
+            patch(
+                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
+                return_value=True,
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.record_page_snapshot",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.mark_page_fetch_result",
+                new=AsyncMock(),
+            ),
+        ):
+            actual = await crawl_page_with_browser_fallback(
+                ctx,
+                profile_url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertEqual(actual, http_browser_success)
+        direct_fetch.assert_awaited_once_with(ctx, profile_url)
+        compatibility_fetch.assert_awaited_once_with(
+            ctx,
+            "http://faculty.example.edu/wei/zh_CN/index.htm",
+            "",
+            "profile",
+        )
+
     async def test_crawl_page_with_browser_fallback_keeps_http_snapshot_when_browser_fails(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
@@ -1341,6 +1486,22 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
+        self.assertTrue(
+            crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        )
+
+    def test_html_snapshot_retains_dynamic_detection_metadata_after_script_cleanup(self) -> None:
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://software.fudan.edu.cn/zzjs/list.htm",
+            """
+            <html><body><div class="type_info"></div>
+            <script src="/_upload/template/js/search_teacher.js"></script>
+            </body></html>
+            """,
+            "http",
+        )
+
+        self.assertTrue(snapshot.has_dynamic_teacher_directory_markers)
         self.assertTrue(
             crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
         )

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.base import Base
@@ -83,8 +84,74 @@ class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
         self.assertEqual(result.status, "transient_failed")
         self.assertIsNone(result.reason)
 
+    def test_classifies_network_failure_as_transient_even_when_empty(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://cs.example.edu/faculty",
+            title=None,
+            text="",
+            html="",
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+            suspicious_empty=True,
+        )
+
+        result = classify_page_fetch_failure(snapshot)
+
+        self.assertEqual(result.status, "transient_failed")
+        self.assertIsNone(result.reason)
+
+    def test_classifies_url_policy_failure_as_terminal(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://other.example.edu/faculty",
+            title=None,
+            text="",
+            html="",
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            error_message="URL 不在入口页面同域范围内，已拒绝浏览器调查",
+            suspicious_empty=False,
+        )
+
+        result = classify_page_fetch_failure(snapshot)
+
+        self.assertEqual(result.status, "terminal_failed")
+        self.assertEqual(result.reason, "policy_rejected")
+
 
 class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
+    def test_old_terminal_network_failure_is_allowed_a_bounded_recovery_retry(self) -> None:
+        async def run() -> tuple[str, str | None]:
+            async with _create_test_session_factory() as session_factory:
+                async with session_factory() as session:
+                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    session.add(job)
+                    await session.flush()
+                    session.add(
+                        CrawlPageFetchState(
+                            job_id=job.id,
+                            normalized_url="https://cs.example.edu/faculty",
+                            original_url="https://cs.example.edu/faculty",
+                            status="terminal_failed",
+                            terminal_reason="anti_bot_or_empty_response",
+                            last_error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+                            transient_failure_count=0,
+                        )
+                    )
+                    await session.commit()
+                    job_id = job.id
+
+                decision = await get_page_fetch_decision(
+                    session_factory,
+                    job_id=job_id,
+                    url="https://cs.example.edu/faculty",
+                )
+                return decision.action, decision.status
+
+        self.assertEqual(asyncio.run(run()), ("allow_retry", "transient_failed"))
+
     def test_terminal_failed_decision_skips_fetch_after_restart(self) -> None:
         async def run() -> str:
             async with _create_test_session_factory() as session_factory:
@@ -195,6 +262,56 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                     return state.status, state.terminal_reason
 
         self.assertEqual(asyncio.run(run()), ("terminal_failed", "anti_bot_or_empty_response"))
+
+    def test_mark_page_fetch_result_handles_null_transient_counter(self) -> None:
+        async def run() -> tuple[str, int | None]:
+            async with _create_test_session_factory() as session_factory:
+                async with session_factory() as session:
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
+                    session.add(job)
+                    await session.flush()
+                    session.add(
+                        CrawlPageFetchState(
+                            job_id=job.id,
+                            normalized_url="https://cs.example.edu/faculty",
+                            original_url="https://cs.example.edu/faculty",
+                            status="transient_failed",
+                            transient_failure_count=None,
+                        )
+                    )
+                    await session.commit()
+                    job_id = job.id
+
+                await mark_page_fetch_result(
+                    session_factory,
+                    job_id=job_id,
+                    original_url="https://cs.example.edu/faculty",
+                    snapshot=PageSnapshot(
+                        url="https://cs.example.edu/faculty",
+                        title=None,
+                        text="",
+                        html="",
+                        links=[],
+                        fetch_method="browser",
+                        status="failed",
+                        error_message="Playwright browser fetch failed: timeout",
+                        suspicious_empty=True,
+                    ),
+                )
+                async with session_factory() as session:
+                    state = await session.scalar(
+                        select(CrawlPageFetchState).where(
+                            CrawlPageFetchState.job_id == job_id,
+                        )
+                    )
+                    assert state is not None
+                    return state.status, state.transient_failure_count
+
+        self.assertEqual(asyncio.run(run()), ("transient_failed", 1))
 
     def test_browser_preference_includes_previous_domain_preference_skip(self) -> None:
         async def run() -> bool:
