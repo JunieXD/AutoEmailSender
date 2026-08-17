@@ -2,34 +2,14 @@
 
 from . import transport
 from .addresses import email_matches, normalize_email_address, normalize_email_list
+from .email_tasks import (
+    EMAIL_TASK_RELATION_OPTIONS,
+    load_email_task,
+    record_email_task_log,
+)
 from .events import CommunicationEvent, collapse_communication_logs, load_communication_events
 from .imap.errors import is_account_level_throttle_error, is_provider_throttle_error
 from .imap.fetcher import ImapFetchedMessage
-from .imap.sync import (
-    TASK_RELATION_OPTIONS as EMAIL_TASK_RELATION_OPTIONS,
-    RecentHistoryWindow,
-    _load_email_task as load_email_task,
-    _record_email_task_log as record_email_task_log,
-    build_recent_history_window,
-    extract_message_ids,
-    get_cached_or_discover_sent_folder,
-    is_imap_history_paused,
-    is_imap_incremental_paused,
-    log_imap_history_progress,
-    mark_imap_throttled,
-    normalize_subject,
-    poll_for_replies_once,
-    poll_identity_replies,
-    poll_imap_history_once,
-    process_imap_fetched_messages,
-    repair_identity_replies,
-    sync_identity_history_once,
-    sync_identity_history_poll_once,
-    sync_identity_imap_once,
-    sync_identity_incremental_once,
-    sync_identity_incremental_poll_once,
-    sync_workspace_professor_replies,
-)
 from .imap.state import (
     RECENT_V2_STRATEGY_VERSION,
     claim_next_professor_scans,
@@ -75,6 +55,28 @@ from .transport import (
     text_to_html,
 )
 
+_IMAP_SYNC_EXPORTS = {
+    "RecentHistoryWindow",
+    "build_recent_history_window",
+    "extract_message_ids",
+    "get_cached_or_discover_sent_folder",
+    "is_imap_history_paused",
+    "is_imap_incremental_paused",
+    "log_imap_history_progress",
+    "mark_imap_throttled",
+    "normalize_subject",
+    "poll_for_replies_once",
+    "poll_identity_replies",
+    "poll_imap_history_once",
+    "process_imap_fetched_messages",
+    "repair_identity_replies",
+    "sync_identity_history_once",
+    "sync_identity_history_poll_once",
+    "sync_identity_imap_once",
+    "sync_identity_incremental_once",
+    "sync_identity_incremental_poll_once",
+    "sync_workspace_professor_replies",
+}
 _TEST_COMPOSE_SCHEMA_EXPORTS = {
     "TestComposeDraftRead",
     "TestComposeDraftUpdateRequest",
@@ -97,7 +99,9 @@ _TEST_COMPOSE_EXPORTS = {
 
 
 def __getattr__(name: str):
-    if name in _TEST_COMPOSE_SCHEMA_EXPORTS:
+    if name in _IMAP_SYNC_EXPORTS:
+        from .imap import sync as owner
+    elif name in _TEST_COMPOSE_SCHEMA_EXPORTS:
         from .test_compose import schemas as owner
     elif name in _TEST_COMPOSE_EXPORTS:
         from .test_compose import runtime as owner
@@ -110,11 +114,17 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _TEST_COMPOSE_EXPORTS | _TEST_COMPOSE_SCHEMA_EXPORTS)
+    return sorted(
+        set(globals())
+        | _IMAP_SYNC_EXPORTS
+        | _TEST_COMPOSE_EXPORTS
+        | _TEST_COMPOSE_SCHEMA_EXPORTS
+    )
 
 
 __all__ = [
     *[name for name in globals() if not name.startswith("_")],
+    *sorted(_IMAP_SYNC_EXPORTS),
     *sorted(_TEST_COMPOSE_SCHEMA_EXPORTS),
     *sorted(_TEST_COMPOSE_EXPORTS),
 ]

@@ -23,6 +23,7 @@ import type {
 } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+export const DEFAULT_BACKEND_READY_POLL_INTERVAL_MS = 200;
 
 type BackendProcessTreeTerminator = (pid: number, port?: number) => Promise<void>;
 
@@ -250,7 +251,7 @@ export async function waitForHealth(
     slowStartupMs?: number;
   } = {},
 ): Promise<void> {
-  const pollIntervalMs = options.pollIntervalMs ?? 400;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_BACKEND_READY_POLL_INTERVAL_MS;
   const timeoutMs = options.timeoutMs ?? 60_000;
   const slowStartupMs = options.slowStartupMs ?? 30_000;
   const startedAt = Date.now();
@@ -296,7 +297,7 @@ export async function waitForStartupStatus(
     hardTimeoutMs?: number;
   },
 ): Promise<void> {
-  const pollIntervalMs = options.pollIntervalMs ?? 800;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_BACKEND_READY_POLL_INTERVAL_MS;
   const hardTimeoutMs = options.hardTimeoutMs ?? 60_000;
   const startedAt = Date.now();
   const deadline = Date.now() + hardTimeoutMs;

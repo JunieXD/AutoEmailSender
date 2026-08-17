@@ -16,7 +16,12 @@ from datetime import UTC, datetime, timedelta, timezone
 from app.modules.workspace.tasks.delivery import _has_future_scheduled_at
 from app.services.runtime_manager import (
     CRAWLER_WORK_ITEM_WORKER_COUNT,
+    CRAWLER_WORKER_INITIAL_DELAY_SECONDS,
+    CRAWLER_WORKER_INITIAL_DELAY_STEP_SECONDS,
+    IMAP_HISTORY_INITIAL_DELAY_SECONDS,
+    IMAP_INCREMENTAL_INITIAL_DELAY_SECONDS,
     RuntimeManager,
+    SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS,
     _run_match_analysis_worker_once,
 )
 
@@ -82,12 +87,39 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             ) as mocked_loop:
                 await manager.start()
 
+        worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
         worker_names = [call.args[0] for call in mocked_loop.call_args_list]
         for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
             self.assertEqual(worker_names.count(f"crawler-worker-{index}"), 1)
+            self.assertEqual(
+                worker_calls[f"crawler-worker-{index}"].kwargs[
+                    "initial_delay_seconds"
+                ],
+                CRAWLER_WORKER_INITIAL_DELAY_SECONDS
+                + (index - 1) * CRAWLER_WORKER_INITIAL_DELAY_STEP_SECONDS,
+            )
         self.assertIn("dispatcher", worker_names)
         self.assertIn("imap-incremental-poller", worker_names)
         self.assertIn("imap-history-poller", worker_names)
+        self.assertNotIn("initial_delay_seconds", worker_calls["dispatcher"].kwargs)
+        self.assertNotIn(
+            "initial_delay_seconds",
+            worker_calls["match-analysis-worker-1"].kwargs,
+        )
+        self.assertEqual(
+            worker_calls["sqlite-maintenance"].kwargs["initial_delay_seconds"],
+            SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS,
+        )
+        self.assertEqual(
+            worker_calls["imap-incremental-poller"].kwargs[
+                "initial_delay_seconds"
+            ],
+            IMAP_INCREMENTAL_INITIAL_DELAY_SECONDS,
+        )
+        self.assertEqual(
+            worker_calls["imap-history-poller"].kwargs["initial_delay_seconds"],
+            IMAP_HISTORY_INITIAL_DELAY_SECONDS,
+        )
 
         await manager.stop()
 
@@ -255,6 +287,54 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(worker_calls, 2)
         self.assertEqual(sleep_calls, [10])
+
+    async def test_loop_waits_for_initial_delay_before_running_worker(self) -> None:
+        session_factory = Mock()
+        manager = RuntimeManager(session_factory)
+        events: list[str] = []
+
+        async def worker(session_factory_arg: object) -> int:
+            self.assertIs(session_factory_arg, session_factory)
+            events.append("worker")
+            manager._stopped.set()
+            return 0
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            if timeout == 0.25:
+                events.append("initial-delay")
+                getattr(awaitable, "close")()
+                raise TimeoutError
+            return await awaitable
+
+        with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+            await manager._loop(
+                "delayed-worker",
+                10,
+                worker,
+                initial_delay_seconds=0.25,
+            )
+
+        self.assertEqual(events, ["initial-delay", "worker"])
+
+    async def test_loop_stops_during_initial_delay_without_running_worker(self) -> None:
+        manager = RuntimeManager(Mock())
+        worker = AsyncMock(return_value=0)
+
+        async def fake_wait_for(awaitable: object, timeout: float) -> object:
+            self.assertEqual(timeout, 0.25)
+            manager._stopped.set()
+            return await awaitable
+
+        with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+            await manager._loop(
+                "delayed-worker",
+                10,
+                worker,
+                initial_delay_seconds=0.25,
+            )
+
+        worker.assert_not_awaited()
+
     async def test_loop_writes_backend_error_log_when_worker_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             from app.core.config import get_settings

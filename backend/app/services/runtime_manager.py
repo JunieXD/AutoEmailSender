@@ -22,7 +22,6 @@ from app.modules.campaigns.public import (
 from app.modules.crawler.public import run_crawler_v2_once
 from app.modules.matching.public import run_queued_match_analysis_jobs_once
 from app.modules.system.public import get_runtime_settings
-from app.modules.communications.public import poll_for_replies_once, poll_imap_history_once
 from app.modules.workspace.public import (
     DEFAULT_SEND_INTERVAL_MAX_SECONDS,
     dispatch_due_tasks_once,
@@ -32,6 +31,11 @@ from app.modules.workspace.public import (
 
 logger = logging.getLogger(__name__)
 CRAWLER_WORK_ITEM_WORKER_COUNT = 8
+CRAWLER_WORKER_INITIAL_DELAY_SECONDS = 0.75
+CRAWLER_WORKER_INITIAL_DELAY_STEP_SECONDS = 0.1
+IMAP_INCREMENTAL_INITIAL_DELAY_SECONDS = 1.0
+IMAP_HISTORY_INITIAL_DELAY_SECONDS = 1.25
+SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,22 @@ def _positive_int(value: Any, fallback: int) -> int:
 
 async def _load_worker_runtime_settings(session: AsyncSession) -> AppSetting | None:
     return await session.scalar(select(AppSetting).where(AppSetting.id == 1))
+
+
+async def poll_for_replies_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    from app.modules.communications.public import poll_for_replies_once as poll_once
+
+    return await poll_once(session_factory)
+
+
+async def poll_imap_history_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    from app.modules.communications.public import poll_imap_history_once as poll_once
+
+    return await poll_once(session_factory)
 
 
 class RuntimeManager:
@@ -120,6 +140,10 @@ class RuntimeManager:
                         worker_id=f"crawler-worker-{index}",
                     ),
                     processed_jitter_seconds=(2, 5),
+                    initial_delay_seconds=(
+                        CRAWLER_WORKER_INITIAL_DELAY_SECONDS
+                        + (index - 1) * CRAWLER_WORKER_INITIAL_DELAY_STEP_SECONDS
+                    ),
                 ),
             )
             for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1)
@@ -153,6 +177,7 @@ class RuntimeManager:
                     "sqlite-maintenance",
                     getattr(settings, "sqlite_maintenance_interval_seconds", 21_600),
                     run_sqlite_maintenance_once,
+                    initial_delay_seconds=SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS,
                 ),
             ),
             asyncio.create_task(
@@ -172,6 +197,7 @@ class RuntimeManager:
                     settings.imap_poll_interval_seconds,
                     poll_for_replies_once,
                     wait_after_processed=True,
+                    initial_delay_seconds=IMAP_INCREMENTAL_INITIAL_DELAY_SECONDS,
                 ),
             ),
             asyncio.create_task(
@@ -180,6 +206,7 @@ class RuntimeManager:
                     settings.imap_poll_interval_seconds,
                     poll_imap_history_once,
                     wait_after_processed=True,
+                    initial_delay_seconds=IMAP_HISTORY_INITIAL_DELAY_SECONDS,
                 ),
             ),
             asyncio.create_task(
@@ -209,7 +236,19 @@ class RuntimeManager:
         *,
         processed_jitter_seconds: tuple[float, float] | None = None,
         wait_after_processed: bool = False,
+        initial_delay_seconds: float = 0,
     ) -> None:
+        if initial_delay_seconds > 0:
+            try:
+                await asyncio.wait_for(
+                    self._stopped.wait(),
+                    timeout=initial_delay_seconds,
+                )
+            except TimeoutError:
+                pass
+            else:
+                return
+
         while not self._stopped.is_set():
             processed = 0
             try:

@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_BACKEND_READY_POLL_INTERVAL_MS,
   buildBackendEnv,
   fetchBackendRuntimeInfo,
   getBackendExecutablePath,
@@ -313,6 +314,10 @@ describe("desktop backend helpers", () => {
     );
 
     expect(source).toContain("const timeoutMs = options.timeoutMs ?? 60_000;");
+  });
+
+  it("uses a shared fast polling interval for backend readiness", () => {
+    expect(DEFAULT_BACKEND_READY_POLL_INTERVAL_MS).toBe(200);
   });
 
   it("keeps waiting after slow health startup threshold", async () => {

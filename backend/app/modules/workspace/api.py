@@ -3,18 +3,29 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_async_session, get_session_factory
 from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.operation_logs import sanitize_user_visible_error
-from app.modules.communications.public import sync_workspace_professor_replies
 
 from .schemas import WorkspaceSyncWarningRead, WorkspaceThreadRead
 from .thread import build_workspace_thread, ensure_workspace_task
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+async def sync_workspace_professor_replies(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    professor_id: int,
+) -> int:
+    from app.modules.communications.public import (
+        sync_workspace_professor_replies as sync_replies,
+    )
+
+    return await sync_replies(session_factory, identity_id, professor_id)
 
 
 @router.get("/{professor_id}", response_model=WorkspaceThreadRead)

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import case, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.agent_api_errors import AgentApiError
@@ -383,8 +383,6 @@ from app.modules.communications.public import (
     generate_test_compose_draft,
     get_test_compose_status,
     save_test_compose_draft,
-    sync_identity_history_poll_once,
-    sync_workspace_professor_replies,
 )
 from app.modules.llm.public import ThinkingAdaptationFailed
 from app.services.token_usage_records import (
@@ -397,6 +395,29 @@ from app.services.token_usage_records import (
 router = APIRouter(prefix="/api/agent/v1", tags=["agent-v1"])
 PageItem = TypeVar("PageItem")
 TestEmailActionResult = TypeVar("TestEmailActionResult")
+
+
+async def sync_identity_history_poll_once(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+) -> int:
+    from app.modules.communications.public import (
+        sync_identity_history_poll_once as sync_once,
+    )
+
+    return await sync_once(session_factory, identity_id)
+
+
+async def sync_workspace_professor_replies(
+    session_factory: async_sessionmaker[AsyncSession],
+    identity_id: int,
+    professor_id: int,
+) -> int:
+    from app.modules.communications.public import (
+        sync_workspace_professor_replies as sync_replies,
+    )
+
+    return await sync_replies(session_factory, identity_id, professor_id)
 
 
 def get_agent_community_mentor_data_service() -> CommunityMentorDataService:
