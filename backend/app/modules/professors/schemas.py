@@ -188,6 +188,7 @@ class ProfessorDashboardPageRequest(ProfessorPageRequestBase):
     keyword_search_scopes: list[ProfessorKeywordSearchScope] = Field(
         default_factory=lambda: [
             "name",
+            "email",
             "university",
             "school",
             "department",

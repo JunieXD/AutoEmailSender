@@ -1295,9 +1295,19 @@ describe("ProfessorsPage layout", () => {
 
     const searchInput = screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签");
     const toolbar = screen.getByTestId("professor-filter-toolbar");
+    const searchScopeButton = within(toolbar).getByRole("button", {
+      name: /搜索范围：选择字段：全部字段/,
+    });
+    const sortControl = within(toolbar).getByTestId("professor-sort-control");
+    const sortButton = within(sortControl).getByRole("button", { name: "排序" });
 
     expect(toolbar).toHaveClass("grid", "gap-3", "lg:items-stretch");
     expect(toolbar.contains(searchInput)).toBe(true);
+    expect(searchScopeButton).toHaveClass("border-l");
+    expect(searchScopeButton).toHaveTextContent("全部字段");
+    expect(searchScopeButton).not.toHaveTextContent("选择字段：");
+    expect(sortControl).toHaveClass("h-12");
+    expect(sortButton).not.toHaveClass("ui-select-shell");
     expect(within(toolbar).getByRole("button", { name: "排序" })).toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "重置" })).toBeInTheDocument();

@@ -9,6 +9,7 @@ import type {
 
 export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "name", label: "姓名" },
+  { value: "email", label: "邮箱" },
   { value: "university", label: "学校" },
   { value: "school", label: "学院" },
   { value: "department", label: "系所" },
@@ -32,6 +33,7 @@ const dashboardKeywordFieldByScope: Record<
   | keyof Pick<
       ProfessorDashboardItemDTO,
       | "name"
+      | "email"
       | "university"
       | "school"
       | "department"
@@ -41,6 +43,7 @@ const dashboardKeywordFieldByScope: Record<
   | "tag"
 > = {
   name: "name",
+  email: "email",
   university: "university",
   school: "school",
   department: "department",

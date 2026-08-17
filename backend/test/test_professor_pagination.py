@@ -385,6 +385,13 @@ class ProfessorPaginationTests(unittest.TestCase):
                         keyword="不存在的导师",
                     ),
                 )
+                by_email = await list_dashboard_professor_page(
+                    session,
+                    ProfessorDashboardPageRequest(
+                        identity_id=identity_id,
+                        keyword="plain-dashboard@example.edu",
+                    ),
+                )
                 score_range = await list_dashboard_professor_ids(
                     session,
                     ProfessorDashboardPageRequest(
@@ -409,6 +416,7 @@ class ProfessorPaginationTests(unittest.TestCase):
             self.assertEqual([item.name for item in replied.items], ["回复导师"])
             self.assertEqual(no_matches.total_count, 0)
             self.assertTrue(no_matches.has_any_professors)
+            self.assertEqual([item.name for item in by_email.items], ["普通导师"])
             self.assertEqual(score_range.ids, [expected["replied"]])
             self.assertEqual(
                 set(missing_score.ids), {expected["scheduled"], expected["plain"]}

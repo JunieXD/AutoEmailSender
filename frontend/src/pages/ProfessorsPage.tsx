@@ -2601,7 +2601,7 @@ export const ProfessorsPage = () => {
               data-testid="professor-filter-toolbar"
               className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_auto_auto] lg:items-stretch"
             >
-              <label className="flex min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm">
+              <label className="flex h-12 min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm">
                 <div className="shrink-0 font-medium leading-5 text-stone-800">
                   关键词
                 </div>
@@ -2623,12 +2623,16 @@ export const ProfessorsPage = () => {
                     selectedValues={normalizeManagementKeywordSearchScopes(
                       filters.keywordSearchScopes,
                     )}
+                    embedded
                     onChange={setManagementKeywordSearchScopes}
                   />
                 </div>
               </label>
 
-              <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm">
+              <div
+                data-testid="professor-sort-control"
+                className="flex h-12 min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm"
+              >
                 <div className="shrink-0 font-medium leading-5 text-stone-800">
                   排序
                 </div>
@@ -2645,8 +2649,8 @@ export const ProfessorsPage = () => {
                       event.target.value as ProfessorManagementSortKey,
                     );
                   }}
-                  wrapperClassName="min-w-0 flex-1"
-                  shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
+                  wrapperClassName="h-full min-w-0 flex-1"
+                  embedded
                   renderOption={(option, { selected, selectOption, closeMenu }) => {
                     const optionKey = option.value as ProfessorManagementSortKey;
                     const direction = sortDirections[optionKey];
@@ -2715,7 +2719,7 @@ export const ProfessorsPage = () => {
                 type="button"
                 onClick={() => setAdvancedFiltersOpen((previous) => !previous)}
                 className={clsx(
-                  "ui-btn-secondary h-full justify-center whitespace-nowrap",
+                  "ui-btn-secondary h-12 justify-center whitespace-nowrap",
                   advancedFiltersOpen &&
                     "border-primary/30 bg-primary/5 text-primary",
                 )}
@@ -2729,7 +2733,7 @@ export const ProfessorsPage = () => {
               <button
                 type="button"
                 onClick={resetAllFilters}
-                className="ui-btn-secondary h-full justify-center whitespace-nowrap"
+                className="ui-btn-secondary h-12 justify-center whitespace-nowrap"
               >
                 重置
               </button>

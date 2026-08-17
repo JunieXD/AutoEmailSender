@@ -51,6 +51,7 @@ describe("filterDashboardProfessors", () => {
     buildProfessor({
       id: 1,
       name: "Alice",
+      email: "alice@mit.edu",
       title: "教授",
       university: "MIT",
       school: "School of Engineering",
@@ -62,6 +63,7 @@ describe("filterDashboardProfessors", () => {
     buildProfessor({
       id: 2,
       name: "Bob",
+      email: "bob@stanford.edu",
       title: "副教授",
       university: "Stanford",
       school: "School of Medicine",
@@ -73,6 +75,7 @@ describe("filterDashboardProfessors", () => {
     buildProfessor({
       id: 3,
       name: "Carol",
+      email: "carol@mit.edu",
       title: "助理教授",
       university: "MIT",
       school: "AI Institute",
@@ -121,6 +124,24 @@ describe("filterDashboardProfessors", () => {
         keywordSearchScopes: ["title"],
       }),
     ).toEqual(["Normal"]);
+  });
+
+  it("matches email by default and when email is the only selected field", () => {
+    expect(namesFor(professors, { keyword: "bob@stanford.edu" })).toEqual([
+      "Bob",
+    ]);
+    expect(
+      namesFor(professors, {
+        keyword: "mit.edu",
+        keywordSearchScopes: ["email"],
+      }),
+    ).toEqual(["Alice", "Carol"]);
+    expect(
+      namesFor(professors, {
+        keyword: "alice@mit.edu",
+        keywordSearchScopes: ["name"],
+      }),
+    ).toEqual([]);
   });
 
   it("ignores dashboard search scopes when keyword is empty", () => {
@@ -183,7 +204,7 @@ describe("filterDashboardProfessors", () => {
       "姓名、职称",
     );
     expect(getDashboardKeywordSearchPlaceholder(["unknown"])).toBe(
-      "姓名、学校、学院、系所、职称、研究方向、标签",
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、标签",
     );
   });
 

@@ -1629,7 +1629,7 @@ export const HomePage = () => {
           </div>
 
           <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_auto_auto] lg:items-stretch">
-            <label className="flex items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm">
+            <label className="flex h-12 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm">
               <div className="shrink-0 font-medium leading-5 text-stone-800">
                 关键词
               </div>
@@ -1651,12 +1651,16 @@ export const HomePage = () => {
                   selectedValues={normalizeDashboardKeywordSearchScopes(
                     filters.keywordSearchScopes,
                   )}
+                  embedded
                   onChange={setDashboardKeywordSearchScopes}
                 />
               </div>
             </label>
 
-            <div className="flex items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm text-stone-600 shadow-sm">
+            <div
+              data-testid="home-sort-control"
+              className="flex h-12 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm"
+            >
               <div className="shrink-0 font-medium leading-5 text-stone-800">
                 排序
               </div>
@@ -1667,8 +1671,8 @@ export const HomePage = () => {
                 onChange={(event) =>
                   setSortKey(event.target.value as ProfessorDashboardSortKey)
                 }
-                wrapperClassName="min-w-0 flex-1"
-                shellClassName="!min-h-0 h-8 border-0 bg-stone-50 px-3 py-0 shadow-none"
+                wrapperClassName="h-full min-w-0 flex-1"
+                embedded
                 renderOption={(option, { selected, selectOption, closeMenu }) => {
                   const optionKey = option.value as ProfessorDashboardSortKey;
                   const direction = sortDirections[optionKey];
@@ -1735,7 +1739,7 @@ export const HomePage = () => {
             <button
               type="button"
               onClick={() => setAdvancedFiltersOpen((previous) => !previous)}
-              className="ui-btn-secondary h-full justify-center whitespace-nowrap"
+              className="ui-btn-secondary h-12 justify-center whitespace-nowrap"
             >
               高级筛选
               {activeAdvancedFilterCount > 0
@@ -1746,7 +1750,7 @@ export const HomePage = () => {
             <button
               type="button"
               onClick={resetAllFilters}
-              className="ui-btn-secondary h-full justify-center whitespace-nowrap"
+              className="ui-btn-secondary h-12 justify-center whitespace-nowrap"
             >
               重置
             </button>
