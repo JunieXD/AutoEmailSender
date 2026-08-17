@@ -16,6 +16,7 @@ from ..pages.tools import PageSnapshot, normalize_navigable_url, normalize_obfus
 _EMAIL_CANDIDATE_PATTERN = re.compile(
     r"[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9-]+(?:\s*\.\s*[A-Za-z0-9-]+)+"
 )
+_EMBEDDED_DOCUMENT_URL_ATTRIBUTE = "data-crawl-frame-url"
 _LINK_PRIORITY_TERMS = (
     "contact",
     "detail",
@@ -92,7 +93,10 @@ def extract_profile_link_evidence(
         raw_href = str(anchor.get("href") or "").strip()
         if not raw_href:
             continue
-        absolute_url = normalize_navigable_url(raw_href, base_url=snapshot.url)
+        absolute_url = normalize_navigable_url(
+            raw_href,
+            base_url=_document_base_url(anchor, snapshot.url),
+        )
         if not absolute_url or absolute_url == current_url or absolute_url in seen:
             continue
         parsed = urlsplit(absolute_url)
@@ -158,7 +162,7 @@ def resolve_profile_image_urls(snapshot: PageSnapshot, *, max_urls: int = 20) ->
         raw_src = str(image.get("src") or image.get("data-src") or image.get("data-original") or "").strip()
         if not raw_src or raw_src.startswith("data:"):
             continue
-        url = urljoin(snapshot.url, raw_src)
+        url = urljoin(_document_base_url(image, snapshot.url), raw_src)
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or url in seen:
             continue
@@ -175,10 +179,31 @@ def _image_context(image: Tag) -> str:
     attributes = " ".join(
         str(image.get(name) or "") for name in ("alt", "title")
     ).strip()
-    parent = image.parent
-    parent_text = (
-        " ".join(parent.get_text(" ", strip=True).split())[:240]
-        if isinstance(parent, Tag)
-        else ""
-    )
-    return " ".join(part for part in (attributes, parent_text) if part)[:320]
+    nearby_text = _nearby_image_text(image)
+    return " ".join(part for part in (attributes, nearby_text) if part)[:320]
+
+
+def _document_base_url(element: Tag, fallback_url: str) -> str:
+    container = element.find_parent(attrs={_EMBEDDED_DOCUMENT_URL_ATTRIBUTE: True})
+    if not isinstance(container, Tag):
+        return fallback_url
+    raw_url = str(container.get(_EMBEDDED_DOCUMENT_URL_ATTRIBUTE) or "").strip()
+    return normalize_navigable_url(raw_url, base_url=fallback_url) or fallback_url
+
+
+def _nearby_image_text(image: Tag) -> str:
+    node: Tag | None = image
+    for _ in range(4):
+        parent = node.parent if node is not None else None
+        if not isinstance(parent, Tag):
+            break
+        parent_text = " ".join(parent.get_text(" ", strip=True).split())
+        if 0 < len(parent_text) <= 240:
+            return parent_text
+        previous = parent.find_previous_sibling()
+        if isinstance(previous, Tag):
+            previous_text = " ".join(previous.get_text(" ", strip=True).split())
+            if 0 < len(previous_text) <= 240:
+                return previous_text
+        node = parent
+    return ""

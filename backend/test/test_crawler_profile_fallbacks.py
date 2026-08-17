@@ -70,6 +70,25 @@ class CrawlerProfileFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("mailto:", {link.url for link in links})
         self.assertNotIn("javascript:", {link.url for link in links})
 
+    def test_embedded_frame_links_use_frame_document_url(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://example.edu/zhang/",
+            html="""
+                <section data-crawl-frame-url="https://example.edu/zhang/index.files/sheet001.htm">
+                  <p>张三的联系方式 <a href="contact.htm">联系详情</a></p>
+                </section>
+            """,
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        links = extract_profile_link_evidence(snapshot)
+
+        self.assertEqual(
+            links[0].url,
+            "https://example.edu/zhang/index.files/contact.htm",
+        )
+
     def test_image_urls_are_resolved_and_deduplicated(self) -> None:
         snapshot = PageSnapshot(
             url="https://example.edu/zhang/index.html",
@@ -85,6 +104,24 @@ class CrawlerProfileFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             resolve_profile_image_urls(snapshot),
             (("https://example.edu/zhang/images/email.gif", "邮箱 邮箱"),),
+        )
+
+    def test_embedded_frame_images_use_frame_document_url(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://example.edu/zhang/",
+            html="""
+                <section data-crawl-frame-url="https://example.edu/zhang/index.files/sheet001.htm">
+                  <p>个人邮箱</p>
+                  <p><img src="image004.png"></p>
+                </section>
+            """,
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        self.assertEqual(
+            resolve_profile_image_urls(snapshot),
+            (("https://example.edu/zhang/index.files/image004.png", "个人邮箱"),),
         )
 
     def test_reads_common_raster_dimensions_and_filters_large_artwork(self) -> None:

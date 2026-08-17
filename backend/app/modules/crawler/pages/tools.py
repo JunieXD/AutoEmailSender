@@ -1280,12 +1280,29 @@ async def crawl_page_with_browser_fallback(
     )
     http_blocked_for_host = ctx.is_http_blocked(absolute_url)
     if http_blocked_for_host or prefer_browser_for_domain:
-        snapshot = await browser_investigate(
+        browser_snapshot = await browser_investigate(
             ctx,
             absolute_url,
             goal="",
             intent=intent,
             force_fetch=force_fetch,
+        )
+        compatibility_browser_snapshot = await _try_http_compatibility_browser_fallback(
+            ctx,
+            requested_url=absolute_url,
+            failed_snapshot=browser_snapshot,
+            intent=intent,
+        )
+        snapshot = (
+            compatibility_browser_snapshot
+            if compatibility_browser_snapshot is not None
+            and compatibility_browser_snapshot.status == "succeeded"
+            else browser_snapshot
+        )
+        snapshot = _apply_runtime_url_denylist_after_fetch(
+            ctx,
+            requested_url=absolute_url,
+            snapshot=snapshot,
         )
         await mark_page_fetch_result(
             ctx.session_factory,
@@ -1299,8 +1316,12 @@ async def crawl_page_with_browser_fallback(
                 if prefer_browser_for_domain
                 else "same_host_http_previously_blocked"
             ),
-            browser_status=snapshot.status,
+            browser_status=browser_snapshot.status,
         )
+        if snapshot.status == "succeeded":
+            ctx.forget_page_snapshot(absolute_url)
+            ctx.forget_page_snapshot(browser_snapshot.url)
+            ctx.remember_page_snapshot(snapshot)
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return snapshot
 
@@ -1316,24 +1337,12 @@ async def crawl_page_with_browser_fallback(
             intent=intent,
             force_fetch=force_fetch,
         )
-        compatibility_browser_snapshot: PageSnapshot | None = None
-        if (
-            browser_snapshot.status != "succeeded"
-            and _should_try_http_compatibility_fallback(absolute_url, browser_snapshot)
-        ):
-            compatibility_url = _http_compatibility_url(absolute_url)
-            if compatibility_url is not None and _is_resolved_allowed_crawl_url(
-                ctx.start_url,
-                compatibility_url,
-                allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-            ):
-                compatibility_browser_snapshot = await _crawl_page_with_browser(
-                    ctx,
-                    compatibility_url,
-                    "",
-                    intent,
-                )
-                await record_page_snapshot(ctx, compatibility_browser_snapshot)
+        compatibility_browser_snapshot = await _try_http_compatibility_browser_fallback(
+            ctx,
+            requested_url=absolute_url,
+            failed_snapshot=browser_snapshot,
+            intent=intent,
+        )
         selected_snapshot = browser_snapshot
         fetch_mode = "browser"
         if (
@@ -1718,6 +1727,32 @@ def _should_try_http_compatibility_fallback(
         return False
     error_message = (snapshot.error_message or "").lower()
     return any(marker in error_message for marker in HTTP_COMPATIBILITY_ERROR_MARKERS)
+
+
+async def _try_http_compatibility_browser_fallback(
+    ctx: CrawlToolContext,
+    *,
+    requested_url: str,
+    failed_snapshot: PageSnapshot,
+    intent: CrawlPageIntent,
+) -> PageSnapshot | None:
+    if not _should_try_http_compatibility_fallback(requested_url, failed_snapshot):
+        return None
+    compatibility_url = _http_compatibility_url(requested_url)
+    if compatibility_url is None or not _is_resolved_allowed_crawl_url(
+        ctx.start_url,
+        compatibility_url,
+        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+    ):
+        return None
+    snapshot = await _crawl_page_with_browser(
+        ctx,
+        compatibility_url,
+        "",
+        intent,
+    )
+    await record_page_snapshot(ctx, snapshot)
+    return snapshot
 
 
 def _is_immediate_http_compatibility_error(

@@ -2694,6 +2694,77 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(http_path.call_count, 1)
         self.assertEqual(browser_path.call_count, 2)
 
+    async def test_browser_preferred_domain_uses_http_after_https_connection_failure(self) -> None:
+        url = "https://faculty.example.edu/wei/zh_CN/index.htm"
+        compatibility_url = "http://faculty.example.edu/wei/zh_CN/index.htm"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url=url,
+            university="University",
+            school="School",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        https_failure = PageSnapshot(
+            url=url,
+            fetch_method="browser",
+            status="failed",
+            error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+        )
+        http_success = PageSnapshot(
+            url=compatibility_url,
+            text="王巍 邮箱 weiwangw@example.edu",
+            html="<html><body>王巍 邮箱 weiwangw@example.edu</body></html>",
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.pages.tools.should_prefer_browser_for_fetch_domain",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.browser_investigate",
+                new=AsyncMock(return_value=https_failure),
+            ) as browser_path,
+            patch(
+                "app.modules.crawler.pages.tools._crawl_page_with_browser",
+                new=AsyncMock(return_value=http_success),
+            ) as compatibility_path,
+            patch(
+                "app.modules.crawler.pages.tools.crawl_page_with_http",
+                new=AsyncMock(side_effect=AssertionError("不应走普通 HTTP 抓取")),
+            ) as http_path,
+            patch(
+                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
+                return_value=True,
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.mark_page_fetch_result",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.record_page_snapshot",
+                new=AsyncMock(),
+            ),
+        ):
+            snapshot = await crawl_page_with_browser_fallback(
+                ctx,
+                url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertIs(snapshot, http_success)
+        browser_path.assert_awaited_once()
+        compatibility_path.assert_awaited_once_with(
+            ctx,
+            compatibility_url,
+            "",
+            "profile",
+        )
+        http_path.assert_not_awaited()
+
     async def test_crawl_page_with_browser_fallback_keeps_blocked_hosts_scoped_by_host(self) -> None:
         session_factory = _FakeSessionFactory()
         ctx = CrawlToolContext(
