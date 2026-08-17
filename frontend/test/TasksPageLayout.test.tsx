@@ -323,8 +323,34 @@ describe("TasksPage layout", () => {
       .closest("main");
 
     expect(pageShell).toHaveClass("max-w-7xl");
-    expect(screen.getByRole("button", { name: "批量邮件" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "智能抓取" })).toBeInTheDocument();
+    const batchTab = screen.getByRole("button", { name: "批量邮件" });
+    const crawlTab = screen.getByRole("button", { name: "智能抓取" });
+    expect(batchTab).toBeInTheDocument();
+    expect(crawlTab).toBeInTheDocument();
+    const header = screen.getByTestId("task-center-header");
+    expect(header).toContainElement(batchTab);
+    expect(header).toContainElement(crawlTab);
+    expect(within(header).queryByText("运行中")).not.toBeInTheDocument();
+    expect(within(header).queryByText("待处理")).not.toBeInTheDocument();
+    const toolbar = screen.getByTestId("task-filter-toolbar");
+    expect(header).toContainElement(toolbar);
+    expect(header).toContainElement(screen.getByRole("group", { name: "任务范围" }));
+    expect(
+      within(toolbar).getByRole("searchbox", { name: "搜索任务" }),
+    ).toHaveAttribute("placeholder", "任务名称、邮件主题、邮件模板");
+    const searchScopeButton = within(toolbar).getByRole("button", {
+      name: /搜索范围：选择字段：全部字段/,
+    });
+    expect(searchScopeButton).toHaveClass("border-l");
+    expect(searchScopeButton).toHaveTextContent("全部字段");
+    const sortControl = within(toolbar).getByTestId("task-sort-control");
+    const sortButton = within(sortControl).getByRole("button", {
+      name: "任务排序",
+    });
+    expect(sortControl).toHaveClass("h-12");
+    expect(sortButton).not.toHaveClass("ui-select-shell");
+    expect(within(toolbar).getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "重置" })).toBeInTheDocument();
   });
 
   it("preloads match analysis count before the match tab is opened", async () => {
@@ -363,6 +389,83 @@ describe("TasksPage layout", () => {
     });
 
     expect(screen.getByRole("button", { name: "匹配分析" })).toHaveTextContent("1");
+  });
+
+  it("searches, sorts, and filters the active task type", async () => {
+    const alphabeticalFirstTask = {
+      ...buildTask(1),
+      name: "甲组申请",
+      updated_at: "2026-04-25T11:00:00Z",
+    };
+    const recentlyCompletedTask = {
+      ...buildTask(2),
+      name: "乙组专项申请",
+      email_subject: "海外合作专项主题",
+      status: "completed" as const,
+      completed_count: 10,
+      updated_at: "2026-04-27T11:00:00Z",
+    };
+    vi.mocked(listBatchTasks).mockResolvedValue([
+      alphabeticalFirstTask,
+      recentlyCompletedTask,
+    ]);
+
+    renderPage();
+
+    await screen.findByText("乙组专项申请");
+    expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent(
+      "乙组专项申请",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "任务排序" }));
+    fireEvent.click(
+      within(screen.getByRole("option", { name: /任务名称/ })).getByRole(
+        "button",
+        { name: "任务名称" },
+      ),
+    );
+    await waitFor(() => {
+      expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent(
+        "甲组申请",
+      );
+    });
+
+    const searchScopeButton = screen.getByRole("button", {
+      name: /搜索范围：选择字段：全部字段/,
+    });
+    fireEvent.click(searchScopeButton);
+    fireEvent.click(screen.getByRole("button", { name: "全部取消" }));
+    fireEvent.click(screen.getByRole("option", { name: "邮件主题" }));
+    expect(screen.getByRole("searchbox", { name: "搜索任务" })).toHaveAttribute(
+      "placeholder",
+      "邮件主题",
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索任务" }), {
+      target: { value: "海外合作" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("甲组申请")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重置" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
+    fireEvent.click(screen.getByRole("button", { name: "筛选任务状态" }));
+    fireEvent.click(screen.getByRole("option", { name: "已完成" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("甲组申请")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "高级筛选 1" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重置" }));
+    await waitFor(() => {
+      expect(screen.getByText("甲组申请")).toBeInTheDocument();
+    });
+    expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-advanced-filters")).not.toBeInTheDocument();
   });
 
   it("opens batch task details from the single-column task list", async () => {

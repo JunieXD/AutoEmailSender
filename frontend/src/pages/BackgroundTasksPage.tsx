@@ -10,13 +10,15 @@ import {
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   Ban,
   Bot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Check,
   CheckCircle2,
-  Clock3,
   FileSearch,
   FileText,
   Loader2,
@@ -196,6 +198,23 @@ import {
 
 type TasksTab = "batch" | "crawl" | "match" | "enrichment";
 type TaskListViews = Record<TasksTab, TaskListView>;
+type TaskSortKey = "updated" | "created" | "name" | "progress";
+type TaskSortDirection = "asc" | "desc";
+type TaskSearchScope =
+  | "name"
+  | "emailSubject"
+  | "template"
+  | "university"
+  | "school"
+  | "url"
+  | "event";
+type TaskListFilter = {
+  keyword: string;
+  searchScopes: TaskSearchScope[];
+  sortKey: TaskSortKey;
+  status: string;
+};
+type TaskListFilters = Record<TasksTab, TaskListFilter>;
 type BatchReviewItemActionType = "template" | "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
 type BatchSendItemAction = {
@@ -286,6 +305,173 @@ const CRAWL_JOB_STATUS_TONES: Record<CrawlJobStatusDTO, string> = {
   completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-red-200 bg-red-50 text-red-700",
   canceled: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+const TASK_SORT_OPTIONS: ReadonlyArray<{ value: TaskSortKey; label: string }> = [
+  { value: "updated", label: "最近更新" },
+  { value: "created", label: "创建时间" },
+  { value: "name", label: "任务名称" },
+  { value: "progress", label: "任务进度" },
+];
+
+const DEFAULT_TASK_SORT_DIRECTIONS: Record<TaskSortKey, TaskSortDirection> = {
+  updated: "desc",
+  created: "desc",
+  name: "asc",
+  progress: "desc",
+};
+
+const TASK_SEARCH_SCOPE_OPTIONS: Record<
+  TasksTab,
+  ReadonlyArray<{ value: TaskSearchScope; label: string }>
+> = {
+  batch: [
+    { value: "name", label: "任务名称" },
+    { value: "emailSubject", label: "邮件主题" },
+    { value: "template", label: "邮件模板" },
+  ],
+  crawl: [
+    { value: "university", label: "学校" },
+    { value: "school", label: "学院" },
+    { value: "url", label: "抓取地址" },
+    { value: "event", label: "进度消息" },
+  ],
+  match: [{ value: "name", label: "任务名称" }],
+  enrichment: [{ value: "name", label: "任务名称" }],
+};
+
+const getDefaultTaskSearchScopes = (tab: TasksTab) =>
+  TASK_SEARCH_SCOPE_OPTIONS[tab].map((option) => option.value);
+
+const normalizeTaskSearchScopes = (
+  tab: TasksTab,
+  values: TaskSearchScope[],
+) => {
+  const allowedScopes = new Set(getDefaultTaskSearchScopes(tab));
+  const normalized = values.filter((value) => allowedScopes.has(value));
+  return normalized.length > 0 ? normalized : getDefaultTaskSearchScopes(tab);
+};
+
+const getTaskSearchPlaceholder = (
+  tab: TasksTab,
+  searchScopes: TaskSearchScope[],
+) => {
+  const selectedScopes = new Set(normalizeTaskSearchScopes(tab, searchScopes));
+  return TASK_SEARCH_SCOPE_OPTIONS[tab]
+    .filter((option) => selectedScopes.has(option.value))
+    .map((option) => option.label)
+    .join("、");
+};
+
+const createDefaultTaskListFilters = (): TaskListFilters => ({
+  batch: {
+    keyword: "",
+    searchScopes: getDefaultTaskSearchScopes("batch"),
+    sortKey: "updated",
+    status: "all",
+  },
+  crawl: {
+    keyword: "",
+    searchScopes: getDefaultTaskSearchScopes("crawl"),
+    sortKey: "updated",
+    status: "all",
+  },
+  match: {
+    keyword: "",
+    searchScopes: getDefaultTaskSearchScopes("match"),
+    sortKey: "updated",
+    status: "all",
+  },
+  enrichment: {
+    keyword: "",
+    searchScopes: getDefaultTaskSearchScopes("enrichment"),
+    sortKey: "updated",
+    status: "all",
+  },
+});
+
+const TASK_STATUS_OPTIONS: Record<
+  TasksTab,
+  ReadonlyArray<{ value: string; label: string }>
+> = {
+  batch: Object.entries(BATCH_TASK_STATUS_LABELS).map(([value, label]) => ({
+    value,
+    label,
+  })),
+  crawl: Object.entries(CRAWL_JOB_STATUS_LABELS).map(([value, label]) => ({
+    value,
+    label,
+  })),
+  match: Object.entries(MATCH_ANALYSIS_JOB_STATUS_LABELS).map(
+    ([value, label]) => ({ value, label }),
+  ),
+  enrichment: Object.entries(PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS).map(
+    ([value, label]) => ({ value, label }),
+  ),
+};
+
+const TASK_NAME_COLLATOR = new Intl.Collator("zh-CN", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+const filterAndSortTaskItems = <T,>({
+  items,
+  filters,
+  direction,
+  getSearchValuesByScope,
+  getName,
+  getStatus,
+  getCreatedAt,
+  getUpdatedAt,
+  getProgress,
+}: {
+  items: T[];
+  filters: TaskListFilter;
+  direction: TaskSortDirection;
+  getSearchValuesByScope: (
+    item: T,
+  ) => Partial<
+    Record<TaskSearchScope, Array<string | number | null | undefined>>
+  >;
+  getName: (item: T) => string;
+  getStatus: (item: T) => string;
+  getCreatedAt: (item: T) => string;
+  getUpdatedAt: (item: T) => string;
+  getProgress: (item: T) => number;
+}) => {
+  const normalizedKeyword = filters.keyword.trim().toLocaleLowerCase("zh-CN");
+  const directionMultiplier = direction === "asc" ? 1 : -1;
+
+  return items
+    .filter((item) => {
+      if (filters.status !== "all" && getStatus(item) !== filters.status) {
+        return false;
+      }
+      if (!normalizedKeyword) {
+        return true;
+      }
+      const searchValuesByScope = getSearchValuesByScope(item);
+      return filters.searchScopes.some((scope) =>
+        (searchValuesByScope[scope] ?? []).some((value) =>
+          String(value ?? "")
+            .toLocaleLowerCase("zh-CN")
+            .includes(normalizedKeyword),
+        ),
+      );
+    })
+    .sort((left, right) => {
+      let comparison = 0;
+      if (filters.sortKey === "name") {
+        comparison = TASK_NAME_COLLATOR.compare(getName(left), getName(right));
+      } else if (filters.sortKey === "progress") {
+        comparison = getProgress(left) - getProgress(right);
+      } else {
+        const getDate = filters.sortKey === "created" ? getCreatedAt : getUpdatedAt;
+        comparison = Date.parse(getDate(left)) - Date.parse(getDate(right));
+      }
+      return comparison * directionMultiplier;
+    });
 };
 
 const CRAWL_CANDIDATE_REVIEW_STATUS_LABELS: Record<
@@ -689,7 +875,12 @@ export const TaskListViewSwitch = ({
   activeView,
   onViewChange,
 }: TaskListViewSwitchProps) => (
-  <div data-testid="task-list-view-switch" className="flex justify-end">
+  <div
+    role="group"
+    aria-label="任务范围"
+    data-testid="task-list-view-switch"
+    className="flex justify-end"
+  >
     <div className="inline-flex gap-1 rounded-2xl border border-stone-200 bg-white p-1 shadow-sm">
       {(["current", "trash"] as TaskListView[]).map((view) => (
         <button
@@ -1052,6 +1243,13 @@ export const BackgroundTasksPage = ({
     match: "current",
     enrichment: "current",
   });
+  const [taskListFilters, setTaskListFilters] = useState<TaskListFilters>(
+    createDefaultTaskListFilters,
+  );
+  const [taskSortDirections, setTaskSortDirections] = useState<
+    Record<TaskSortKey, TaskSortDirection>
+  >({ ...DEFAULT_TASK_SORT_DIRECTIONS });
+  const [advancedTaskFiltersOpen, setAdvancedTaskFiltersOpen] = useState(false);
   const [tasks, setTasks] = useState<BatchTaskCardDTO[]>([]);
   const [currentBatchTasks, setCurrentBatchTasks] = useState<BatchTaskCardDTO[]>([]);
   const [selectedBatchTask, setSelectedBatchTask] =
@@ -1353,6 +1551,9 @@ export const BackgroundTasksPage = ({
   const crawlCandidatesStartRef = useRef<HTMLElement | null>(null);
   const crawlCandidateFirstItemRef = useRef<HTMLDivElement | null>(null);
   const activeTaskListView = taskListViews[activeTab];
+  const activeTaskListFilters = taskListFilters[activeTab];
+  const activeTaskSortDirection =
+    taskSortDirections[activeTaskListFilters.sortKey];
   const tasksRequestKey =
     selectedIdentityId
       ? `${selectedIdentityId}:${taskListViews.batch}`
@@ -1408,69 +1609,34 @@ export const BackgroundTasksPage = ({
     },
     [],
   );
-  const batchRunningCount = useMemo(
-    () => currentBatchTasks.filter((task) => task.status === "running").length,
-    [currentBatchTasks],
-  );
-  const batchAttentionCount = useMemo(
-    () =>
-      currentBatchTasks.reduce(
-        (total, task) =>
-          total + task.review_required_count + task.draft_failed_count + task.failed_count,
-        0,
-      ),
-    [currentBatchTasks],
-  );
-  const crawlRunningCount = useMemo(
-    () =>
-      currentCrawlJobs.filter(
-        (job) => job.status === "queued" || job.status === "running",
-      ).length,
-    [currentCrawlJobs],
-  );
-  const crawlReviewCount = useMemo(
-    () => currentCrawlJobs.filter((job) => job.status === "needs_review").length,
-    [currentCrawlJobs],
-  );
-  const matchRunningCount = useMemo(
-    () =>
-      currentMatchAnalysisJobs.filter(
-        (job) => job.status === "queued" || job.status === "running",
-      ).length,
-    [currentMatchAnalysisJobs],
-  );
-  const matchAttentionCount = useMemo(
-    () =>
-      currentMatchAnalysisJobs.filter(
-        (job) => job.status === "partial_failed" || job.status === "failed",
-      ).length,
-    [currentMatchAnalysisJobs],
-  );
-  const informationEnrichmentRunningCount = useMemo(
-    () =>
-      currentInformationEnrichmentJobs.filter(
-        (job) => job.status === "queued" || job.status === "running",
-      ).length,
-    [currentInformationEnrichmentJobs],
-  );
-  const informationEnrichmentAttentionCount = useMemo(
-    () =>
-      currentInformationEnrichmentJobs.filter(
-        (job) =>
-          job.status === "partially_completed" || job.status === "failed",
-      ).length,
-    [currentInformationEnrichmentJobs],
-  );
-  const totalRunningCount =
-    batchRunningCount +
-    crawlRunningCount +
-    matchRunningCount +
-    informationEnrichmentRunningCount;
-  const totalAttentionCount =
-    batchAttentionCount +
-    crawlReviewCount +
-    matchAttentionCount +
-    informationEnrichmentAttentionCount;
+  const setActiveTaskPage = (page: number) => {
+    if (activeTab === "batch") {
+      setBatchPage(page);
+    } else if (activeTab === "crawl") {
+      setCrawlPage(page);
+    } else if (activeTab === "match") {
+      setMatchPage(page);
+    } else {
+      setInformationEnrichmentPage(page);
+    }
+  };
+  const updateActiveTaskListFilters = (patch: Partial<TaskListFilter>) => {
+    setTaskListFilters((current) => ({
+      ...current,
+      [activeTab]: { ...current[activeTab], ...patch },
+    }));
+    setActiveTaskPage(1);
+  };
+  const resetActiveTaskListFilters = () => {
+    setTaskListFilters((current) => ({
+      ...current,
+      [activeTab]: createDefaultTaskListFilters()[activeTab],
+    }));
+    setTaskSortDirections({ ...DEFAULT_TASK_SORT_DIRECTIONS });
+    setTaskListViews((current) => ({ ...current, [activeTab]: "current" }));
+    setAdvancedTaskFiltersOpen(false);
+    setActiveTaskPage(1);
+  };
   const sentBatchTaskItems = useMemo(
     () =>
       selectedBatchTaskItems.filter(
@@ -1562,22 +1728,100 @@ export const BackgroundTasksPage = ({
       ),
     [selectedBatchTaskItems],
   );
+  const filteredBatchTasks = useMemo(
+    () =>
+      filterAndSortTaskItems({
+        items: tasks,
+        filters: taskListFilters.batch,
+        direction: taskSortDirections[taskListFilters.batch.sortKey],
+        getSearchValuesByScope: (task) => ({
+          name: [task.name],
+          emailSubject: [task.email_subject],
+          template: [task.outreach_template_name_snapshot],
+        }),
+        getName: (task) => task.name,
+        getStatus: (task) => task.status,
+        getCreatedAt: (task) => task.created_at,
+        getUpdatedAt: (task) => task.updated_at,
+        getProgress: (task) =>
+          task.target_count > 0 ? task.completed_count / task.target_count : 0,
+      }),
+    [taskListFilters.batch, taskSortDirections, tasks],
+  );
+  const filteredCrawlJobs = useMemo(
+    () =>
+      filterAndSortTaskItems({
+        items: crawlJobs,
+        filters: taskListFilters.crawl,
+        direction: taskSortDirections[taskListFilters.crawl.sortKey],
+        getSearchValuesByScope: (job) => ({
+          university: [job.university],
+          school: [job.school],
+          url: [job.start_url, job.start_urls?.join(" ")],
+          event: [job.latest_event_message],
+        }),
+        getName: (job) => `${job.university} ${job.school}`,
+        getStatus: (job) => job.status,
+        getCreatedAt: (job) => job.created_at,
+        getUpdatedAt: (job) => job.updated_at,
+        getProgress: (job) =>
+          job.progress_total > 0 ? job.progress_current / job.progress_total : 0,
+      }),
+    [crawlJobs, taskListFilters.crawl, taskSortDirections],
+  );
+  const filteredMatchAnalysisJobs = useMemo(
+    () =>
+      filterAndSortTaskItems({
+        items: matchAnalysisJobs,
+        filters: taskListFilters.match,
+        direction: taskSortDirections[taskListFilters.match.sortKey],
+        getSearchValuesByScope: (job) => ({ name: [job.name] }),
+        getName: (job) => job.name,
+        getStatus: (job) => job.status,
+        getCreatedAt: (job) => job.created_at,
+        getUpdatedAt: (job) => job.updated_at,
+        getProgress: (job) =>
+          job.target_count > 0
+            ? (job.succeeded_count + job.failed_count + job.skipped_count) /
+              job.target_count
+            : 0,
+      }),
+    [matchAnalysisJobs, taskListFilters.match, taskSortDirections],
+  );
+  const filteredInformationEnrichmentJobs = useMemo(
+    () =>
+      filterAndSortTaskItems({
+        items: informationEnrichmentJobs,
+        filters: taskListFilters.enrichment,
+        direction: taskSortDirections[taskListFilters.enrichment.sortKey],
+        getSearchValuesByScope: (job) => ({ name: [job.name] }),
+        getName: (job) => job.name,
+        getStatus: (job) => job.status,
+        getCreatedAt: (job) => job.created_at,
+        getUpdatedAt: (job) => job.updated_at,
+        getProgress: (job) =>
+          job.target_count > 0 ? job.completed_count / job.target_count : 0,
+      }),
+    [informationEnrichmentJobs, taskListFilters.enrichment, taskSortDirections],
+  );
+  const activeAdvancedTaskFilterCount =
+    activeTaskListFilters.status === "all" ? 0 : 1;
   const safeBatchPage = Math.min(
     batchPage,
-    getTotalPages(tasks.length, batchPageSize),
+    getTotalPages(filteredBatchTasks.length, batchPageSize),
   );
   const safeCrawlPage = Math.min(
     crawlPage,
-    getTotalPages(crawlJobs.length, crawlPageSize),
+    getTotalPages(filteredCrawlJobs.length, crawlPageSize),
   );
   const safeMatchPage = Math.min(
     matchPage,
-    getTotalPages(matchAnalysisJobs.length, matchPageSize),
+    getTotalPages(filteredMatchAnalysisJobs.length, matchPageSize),
   );
   const safeInformationEnrichmentPage = Math.min(
     informationEnrichmentPage,
     getTotalPages(
-      informationEnrichmentJobs.length,
+      filteredInformationEnrichmentJobs.length,
       informationEnrichmentPageSize,
     ),
   );
@@ -1701,26 +1945,27 @@ export const BackgroundTasksPage = ({
     [batchReviewItemPageSize, batchReviewQueueItems, safeBatchReviewItemPage],
   );
   const visibleBatchTasks = useMemo(
-    () => getPageItems(tasks, safeBatchPage, batchPageSize),
-    [batchPageSize, safeBatchPage, tasks],
+    () => getPageItems(filteredBatchTasks, safeBatchPage, batchPageSize),
+    [batchPageSize, filteredBatchTasks, safeBatchPage],
   );
   const visibleCrawlJobs = useMemo(
-    () => getPageItems(crawlJobs, safeCrawlPage, crawlPageSize),
-    [crawlJobs, crawlPageSize, safeCrawlPage],
+    () => getPageItems(filteredCrawlJobs, safeCrawlPage, crawlPageSize),
+    [crawlPageSize, filteredCrawlJobs, safeCrawlPage],
   );
   const visibleMatchJobs = useMemo(
-    () => getPageItems(matchAnalysisJobs, safeMatchPage, matchPageSize),
-    [matchAnalysisJobs, matchPageSize, safeMatchPage],
+    () =>
+      getPageItems(filteredMatchAnalysisJobs, safeMatchPage, matchPageSize),
+    [filteredMatchAnalysisJobs, matchPageSize, safeMatchPage],
   );
   const visibleInformationEnrichmentJobs = useMemo(
     () =>
       getPageItems(
-        informationEnrichmentJobs,
+        filteredInformationEnrichmentJobs,
         safeInformationEnrichmentPage,
         informationEnrichmentPageSize,
       ),
     [
-      informationEnrichmentJobs,
+      filteredInformationEnrichmentJobs,
       informationEnrichmentPageSize,
       safeInformationEnrichmentPage,
     ],
@@ -4861,7 +5106,10 @@ export const BackgroundTasksPage = ({
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
-      <div className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-6 shadow-sm">
+      <div
+        data-testid="task-center-header"
+        className="rounded-3xl border border-stone-200 bg-[#fcfbf8] p-6 shadow-sm"
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-stone-900">任务中心</h1>
@@ -4879,48 +5127,8 @@ export const BackgroundTasksPage = ({
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-stone-500">
-              <Mail className="h-4 w-4 text-primary" />
-              批量邮件
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-stone-900">
-              {currentBatchTasks.length}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-stone-500">
-              <FileSearch className="h-4 w-4 text-sky-600" />
-              智能抓取
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-stone-900">
-              {currentCrawlJobs.length}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-stone-500">
-              <Activity className="h-4 w-4 text-emerald-600" />
-              运行中
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-stone-900">
-              {totalRunningCount}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-stone-500">
-              <Clock3 className="h-4 w-4 text-amber-600" />
-              待处理
-            </div>
-            <div className="mt-2 text-2xl font-semibold text-stone-900">
-              {totalAttentionCount}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex max-w-full gap-2 overflow-x-auto rounded-2xl border border-stone-200 bg-white p-1.5 shadow-sm">
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="inline-flex max-w-full gap-2 overflow-x-auto rounded-2xl border border-stone-200 bg-white p-1 shadow-sm">
           <button
             type="button"
             aria-label="批量邮件"
@@ -4928,8 +5136,8 @@ export const BackgroundTasksPage = ({
             onClick={() => setActiveTab("batch")}
             className={
               activeTab === "batch"
-                ? "inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-white"
-                : "inline-flex min-h-10 items-center gap-2 rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                ? "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-sm font-medium text-white"
+                : "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
             }
           >
             <Mail className="h-4 w-4" />
@@ -4948,8 +5156,8 @@ export const BackgroundTasksPage = ({
             onClick={() => setActiveTab("crawl")}
             className={
               activeTab === "crawl"
-                ? "inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-white"
-                : "inline-flex min-h-10 items-center gap-2 rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                ? "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-sm font-medium text-white"
+                : "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50"
             }
           >
             <FileSearch className="h-4 w-4" />
@@ -4969,8 +5177,8 @@ export const BackgroundTasksPage = ({
             onClick={() => setActiveTab("match")}
             className={
               activeTab === "match"
-                ? "inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-white"
-                : "inline-flex min-h-10 items-center gap-2 rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                ? "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-sm font-medium text-white"
+                : "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
             }
           >
             <Sparkles className="h-4 w-4" />
@@ -4989,8 +5197,8 @@ export const BackgroundTasksPage = ({
             onClick={() => setActiveTab("enrichment")}
             className={
               activeTab === "enrichment"
-                ? "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-white"
-                : "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                ? "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-primary px-5 text-sm font-medium text-white"
+                : "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-5 text-sm font-medium text-stone-600 hover:bg-stone-50"
             }
           >
             <Bot className="h-4 w-4" />
@@ -5009,10 +5217,200 @@ export const BackgroundTasksPage = ({
 
         <TaskListViewSwitch
           activeView={activeTaskListView}
-          onViewChange={(view) =>
-            setTaskListViews((current) => ({ ...current, [activeTab]: view }))
-          }
+          onViewChange={(view) => {
+            setTaskListViews((current) => ({ ...current, [activeTab]: view }));
+            setActiveTaskPage(1);
+          }}
         />
+      </div>
+
+      <div className="mt-3 grid gap-3">
+        <div
+          data-testid="task-filter-toolbar"
+          className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(12rem,1fr)_auto_auto] lg:items-stretch"
+        >
+          <label className="flex h-12 min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm">
+            <div className="shrink-0 font-medium leading-5 text-stone-800">
+              关键词
+            </div>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Search className="h-4 w-4 shrink-0 text-stone-400" />
+              <input
+                type="search"
+                aria-label="搜索任务"
+                value={activeTaskListFilters.keyword}
+                onChange={(event) =>
+                  updateActiveTaskListFilters({ keyword: event.target.value })
+                }
+                placeholder={getTaskSearchPlaceholder(
+                  activeTab,
+                  activeTaskListFilters.searchScopes,
+                )}
+                className="w-full min-w-0 bg-transparent leading-5 outline-none placeholder:text-stone-400"
+              />
+              <KeywordSearchScopeSelect
+                label="搜索范围"
+                options={TASK_SEARCH_SCOPE_OPTIONS[activeTab]}
+                selectedValues={activeTaskListFilters.searchScopes}
+                embedded
+                onChange={(searchScopes) =>
+                  updateActiveTaskListFilters({
+                    searchScopes: normalizeTaskSearchScopes(
+                      activeTab,
+                      searchScopes,
+                    ),
+                  })
+                }
+              />
+            </div>
+          </label>
+
+          <div
+            data-testid="task-sort-control"
+            className="flex h-12 min-w-0 items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-0 text-sm text-stone-600 shadow-sm"
+          >
+            <div className="shrink-0 font-medium leading-5 text-stone-800">
+              排序
+            </div>
+            <NativeSelectField
+              ariaLabel="任务排序"
+              value={activeTaskListFilters.sortKey}
+              selectedLabel={`${
+                TASK_SORT_OPTIONS.find(
+                  (option) => option.value === activeTaskListFilters.sortKey,
+                )?.label ?? "最近更新"
+              } ${activeTaskSortDirection === "desc" ? "↓" : "↑"}`}
+              onChange={(event) =>
+                updateActiveTaskListFilters({
+                  sortKey: event.target.value as TaskSortKey,
+                })
+              }
+              wrapperClassName="h-full min-w-0 flex-1"
+              embedded
+              renderOption={(option, { selected, selectOption, closeMenu }) => {
+                const optionKey = option.value as TaskSortKey;
+                const direction = taskSortDirections[optionKey];
+                return (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      aria-label={option.label}
+                      onClick={selectOption}
+                      className={
+                        selected
+                          ? "flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl bg-primary px-3 py-2 text-left text-[13px] leading-5 text-white shadow-sm shadow-primary/25 transition"
+                          : "flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[13px] leading-5 text-stone-700 transition hover:bg-stone-100/90 hover:text-stone-900"
+                      }
+                    >
+                      <span className="truncate">{option.label}</span>
+                      {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`切换${option.label}排序方向`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setTaskSortDirections((current) => ({
+                          ...current,
+                          [optionKey]:
+                            current[optionKey] === "desc" ? "asc" : "desc",
+                        }));
+                        updateActiveTaskListFilters({ sortKey: optionKey });
+                        closeMenu();
+                      }}
+                      className={
+                        selected
+                          ? "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary transition"
+                          : "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-stone-200 text-stone-500 transition hover:border-stone-300 hover:bg-stone-100 hover:text-stone-800"
+                      }
+                    >
+                      {direction === "desc" ? (
+                        <ArrowDown className="h-4 w-4" />
+                      ) : (
+                        <ArrowUp className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                );
+              }}
+            >
+              {TASK_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </NativeSelectField>
+          </div>
+
+          <button
+            type="button"
+            aria-expanded={advancedTaskFiltersOpen}
+            onClick={() => setAdvancedTaskFiltersOpen((current) => !current)}
+            className={
+              advancedTaskFiltersOpen
+                ? "ui-btn-secondary h-12 justify-center whitespace-nowrap border-primary/30 bg-primary/5 text-primary"
+                : "ui-btn-secondary h-12 justify-center whitespace-nowrap"
+            }
+          >
+            高级筛选
+            {activeAdvancedTaskFilterCount > 0
+              ? ` ${activeAdvancedTaskFilterCount}`
+              : ""}
+          </button>
+
+          <button
+            type="button"
+            onClick={resetActiveTaskListFilters}
+            className="ui-btn-secondary h-12 justify-center whitespace-nowrap"
+          >
+            重置
+          </button>
+        </div>
+
+        {advancedTaskFiltersOpen ? (
+          <div
+            data-testid="task-advanced-filters"
+            className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
+          >
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-stone-800">筛选条件</div>
+              <button
+                type="button"
+                onClick={() => updateActiveTaskListFilters({ status: "all" })}
+                className="ui-btn-secondary px-3 py-1.5 text-sm"
+              >
+                清空筛选
+              </button>
+            </div>
+            <div className="max-w-sm">
+              <NativeSelectField
+                label="任务状态"
+                ariaLabel="筛选任务状态"
+                value={activeTaskListFilters.status}
+                selectedLabel={
+                  activeTaskListFilters.status === "all"
+                    ? "全部状态"
+                    : TASK_STATUS_OPTIONS[activeTab].find(
+                        (option) => option.value === activeTaskListFilters.status,
+                      )?.label ?? "全部状态"
+                }
+                onChange={(event) =>
+                  updateActiveTaskListFilters({ status: event.target.value })
+                }
+                shellClassName="min-h-10 rounded-xl shadow-none"
+              >
+                <option value="all">全部状态</option>
+                {TASK_STATUS_OPTIONS[activeTab].map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </NativeSelectField>
+            </div>
+          </div>
+        ) : null}
+      </div>
       </div>
 
       <section
@@ -5029,6 +5427,10 @@ export const BackgroundTasksPage = ({
       ) : activeTab === "batch" && tasks.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
           {activeTaskListView === "trash" ? "回收站暂无任务。" : "暂无任务。可从首页创建。"}
+        </div>
+      ) : activeTab === "batch" && filteredBatchTasks.length === 0 ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+          没有符合当前条件的批量邮件任务。
         </div>
       ) : activeTab === "batch" ? (
         <>
@@ -5198,7 +5600,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeBatchPage}
             pageSize={batchPageSize}
-            totalCount={tasks.length}
+            totalCount={filteredBatchTasks.length}
             onChange={handleBatchPaginationChange}
             ariaLabel="批量邮件任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
@@ -5219,6 +5621,10 @@ export const BackgroundTasksPage = ({
           {activeTaskListView === "trash"
             ? "回收站暂无任务。"
             : "暂无匹配分析任务。可从首页创建。"}
+        </div>
+      ) : activeTab === "match" && filteredMatchAnalysisJobs.length === 0 ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+          没有符合当前条件的匹配分析任务。
         </div>
       ) : activeTab === "match" ? (
         <>
@@ -5344,7 +5750,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeMatchPage}
             pageSize={matchPageSize}
-            totalCount={matchAnalysisJobs.length}
+            totalCount={filteredMatchAnalysisJobs.length}
             onChange={handleMatchPaginationChange}
             ariaLabel="匹配分析任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
@@ -5368,6 +5774,11 @@ export const BackgroundTasksPage = ({
           {activeTaskListView === "trash"
             ? "回收站暂无任务。"
             : "暂无信息补全任务。可从导师管理页批量创建。"}
+        </div>
+      ) : activeTab === "enrichment" &&
+        filteredInformationEnrichmentJobs.length === 0 ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+          没有符合当前条件的信息补全任务。
         </div>
       ) : activeTab === "enrichment" ? (
         <>
@@ -5532,7 +5943,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeInformationEnrichmentPage}
             pageSize={informationEnrichmentPageSize}
-            totalCount={informationEnrichmentJobs.length}
+            totalCount={filteredInformationEnrichmentJobs.length}
             onChange={handleInformationEnrichmentPaginationChange}
             ariaLabel="信息补全任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
@@ -5553,6 +5964,10 @@ export const BackgroundTasksPage = ({
           {activeTaskListView === "trash"
             ? "回收站暂无任务。"
             : "暂无抓取任务。可从导师管理页创建。"}
+        </div>
+      ) : filteredCrawlJobs.length === 0 ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+          没有符合当前条件的智能抓取任务。
         </div>
       ) : (
         <>
@@ -5589,7 +6004,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeCrawlPage}
             pageSize={crawlPageSize}
-            totalCount={crawlJobs.length}
+            totalCount={filteredCrawlJobs.length}
             onChange={handleCrawlPaginationChange}
             ariaLabel="智能抓取任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}

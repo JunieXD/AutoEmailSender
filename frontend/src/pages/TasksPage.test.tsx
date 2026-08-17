@@ -1713,7 +1713,7 @@ describe("TasksPage information enrichment", () => {
 });
 
 describe("TasksPage crawl job monitor", () => {
-  it("refreshes identity-scoped dashboard counts while the global crawl tab is active", async () => {
+  it("refreshes identity-scoped task type counts while the global crawl tab is active", async () => {
     apiMocks.listCrawlJobs.mockResolvedValue([buildCrawlJob({ status: "running" })]);
     apiMocks.listBatchTasks.mockImplementation(({ identityId, view }) => {
       if (view !== "current") {
@@ -1806,21 +1806,19 @@ describe("TasksPage crawl job monitor", () => {
       });
     });
     await waitFor(() => {
-      const summaryCard = (label: string) => {
-        const labelElement = screen
-          .getAllByText(label)
-          .find((element) =>
-            element.parentElement?.className.includes(
-              "rounded-2xl border border-stone-200 bg-white",
-            ),
-          );
-        expect(labelElement).toBeDefined();
-        return labelElement?.parentElement;
-      };
-      expect(summaryCard("批量邮件")).toHaveTextContent("批量邮件2");
-      expect(summaryCard("运行中")).toHaveTextContent("运行中1");
-      expect(summaryCard("待处理")).toHaveTextContent("待处理1");
+      expect(screen.getByRole("button", { name: "批量邮件" })).toHaveTextContent(
+        "2",
+      );
+      expect(screen.getByRole("button", { name: "匹配分析" })).toHaveTextContent(
+        "1",
+      );
     });
+    const header = screen.getByTestId("task-center-header");
+    expect(header).toContainElement(
+      screen.getByRole("button", { name: "批量邮件" }),
+    );
+    expect(within(header).queryByText("运行中")).not.toBeInTheDocument();
+    expect(within(header).queryByText("待处理")).not.toBeInTheDocument();
   });
 
   it("shows cached token usage in the realtime monitor", async () => {

@@ -22,6 +22,7 @@ type NativeSelectFieldProps = {
   wrapperClassName?: string;
   shellClassName?: string;
   selectClassName?: string;
+  embedded?: boolean;
   menuPlacement?: "popover" | "inline" | "floating-up";
   children: ReactNode;
   id?: string;
@@ -92,6 +93,7 @@ export const NativeSelectField = ({
   wrapperClassName,
   shellClassName,
   selectClassName,
+  embedded = false,
   menuPlacement = "popover",
   children,
   id,
@@ -285,11 +287,14 @@ export const NativeSelectField = ({
   ) : null;
 
   return (
-    <label className={clsx("block", wrapperClassName)}>
+    <label className={clsx("block", embedded && "h-full", wrapperClassName)}>
       {label ? (
         <div className="mb-2 text-sm font-medium text-stone-800">{label}</div>
       ) : null}
-      <div ref={rootRef} className="relative min-w-0">
+      <div
+        ref={rootRef}
+        className={clsx("relative min-w-0", embedded && "h-full")}
+      >
         {name ? <input type="hidden" name={name} value={currentValue} /> : null}
         <button
           id={id}
@@ -303,9 +308,13 @@ export const NativeSelectField = ({
           onClick={() => setOpen((previous) => !previous)}
           onKeyDown={handleButtonKeyDown}
           className={clsx(
-            "ui-select-shell w-full",
+            embedded
+              ? "flex h-full min-h-0 w-full items-center gap-2 rounded-lg bg-transparent px-0 py-0 text-sm text-stone-700 outline-none transition hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/15"
+              : "ui-select-shell w-full",
             disabled && "cursor-not-allowed opacity-60",
-            open && "border-primary/45 bg-white shadow-lg shadow-stone-300/25 ring-2 ring-primary/10",
+            open && (embedded
+              ? "text-primary"
+              : "border-primary/45 bg-white shadow-lg shadow-stone-300/25 ring-2 ring-primary/10"),
             shellClassName,
             selectClassName,
           )}
@@ -313,12 +322,19 @@ export const NativeSelectField = ({
           {icon ? (
             <span className="pointer-events-none shrink-0 text-primary">{icon}</span>
           ) : null}
-          <span className="flex-1 truncate text-left text-sm text-stone-700">
+          <span
+            className={clsx(
+              "flex-1 truncate text-left text-sm",
+              embedded ? "text-inherit" : "text-stone-700",
+            )}
+          >
             {selectedLabel ?? selectedOption?.label ?? "请选择"}
           </span>
           <ChevronDown
             className={clsx(
-              "ui-select-chevron",
+              embedded
+                ? "h-4 w-4 shrink-0 text-stone-400 transition-colors"
+                : "ui-select-chevron",
               open && "rotate-180 text-primary",
             )}
           />

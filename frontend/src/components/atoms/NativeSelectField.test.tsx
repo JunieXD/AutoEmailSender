@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 
 describe("NativeSelectField", () => {
+  it("renders an embedded trigger without a second field shell", () => {
+    render(
+      <div className="h-12">
+        <NativeSelectField ariaLabel="排序" value="latest" embedded>
+          <option value="latest">最近更新</option>
+        </NativeSelectField>
+      </div>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "排序" });
+    expect(trigger).toHaveClass("h-full", "bg-transparent");
+    expect(trigger).not.toHaveClass("ui-select-shell");
+  });
+
   it("keeps the content popover below the sticky header layer", () => {
     render(
       <NativeSelectField
