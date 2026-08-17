@@ -590,7 +590,10 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         enqueued_count += 1
 
     if enqueued_count > 0 or already_active_count > 0:
-        operation_id = start_candidate_enrichment_operation(job)
+        operation_id = start_candidate_enrichment_operation(
+            job,
+            skipped_count=skipped_count,
+        )
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now

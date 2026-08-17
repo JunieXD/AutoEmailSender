@@ -679,7 +679,10 @@ async def _enqueue_crawl_candidate_enrichment_tasks(
         enqueued_count += 1
 
     if enqueued_count > 0 or runnable_existing_count > 0:
-        operation_id = start_candidate_enrichment_operation(job)
+        operation_id = start_candidate_enrichment_operation(
+            job,
+            skipped_count=skipped_count,
+        )
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now

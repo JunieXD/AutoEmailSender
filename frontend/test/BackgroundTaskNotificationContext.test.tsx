@@ -414,7 +414,8 @@ describe("BackgroundTaskNotificationProvider", () => {
       buildCrawlEvent({
         id: "evt-2",
         event_type: "enrichment",
-        message: "候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位",
+        message:
+          "候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位，跳过 2 位（缺少个人主页）",
         created_at: "2026-07-21T08:01:00Z",
         raw: {
           event_type: "enrichment",
@@ -424,6 +425,7 @@ describe("BackgroundTaskNotificationProvider", () => {
             enriched_count: 2,
             unchanged_count: 1,
             failed_count: 0,
+            skipped_count: 2,
           },
         },
       }),
@@ -434,7 +436,9 @@ describe("BackgroundTaskNotificationProvider", () => {
 
     expect(await screen.findByText("候选信息补全完成")).toBeInTheDocument();
     expect(
-      screen.getByText("候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位"),
+      screen.getByText(
+        "候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位，跳过 2 位（缺少个人主页）",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位"),

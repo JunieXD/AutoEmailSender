@@ -148,6 +148,11 @@ class CrawlJob(Base):
         String(36),
         nullable=True,
     )
+    active_candidate_enrichment_skipped_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
     current_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("crawl_job_runs.id", ondelete="SET NULL"),
         nullable=True,

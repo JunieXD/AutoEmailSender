@@ -668,6 +668,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             job = await session.get(CrawlJob, job_id)
             assert job is not None
             job.active_candidate_enrichment_operation_id = "enrichment-operation-1"
+            job.active_candidate_enrichment_skipped_count = 2
             candidate_a = CrawlCandidate(job_id=job_id, name="张三", profile_url="https://example.edu/a")
             candidate_b = CrawlCandidate(job_id=job_id, name="李四", profile_url="https://example.edu/b")
             candidate_c = CrawlCandidate(job_id=job_id, name="王五", profile_url="https://example.edu/c")
@@ -705,7 +706,7 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(item, dict)
         ]
         self.assertIn(
-            "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位",
+            "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位，跳过 2 位（缺少个人主页）",
             trace_messages,
         )
         terminal_event = next(
@@ -713,11 +714,25 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             for item in job.agent_trace or []
             if isinstance(item, dict)
             and item.get("message")
-            == "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位"
+            == "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位，跳过 2 位（缺少个人主页）"
         )
         self.assertEqual(terminal_event["raw"]["operation_id"], "enrichment-operation-1")
         self.assertEqual(terminal_event["raw"]["status"], "partially_completed")
+        self.assertEqual(terminal_event["raw"]["candidate_count"], 3)
+        self.assertEqual(terminal_event["raw"]["selected_count"], 5)
+        self.assertEqual(terminal_event["raw"]["skipped_count"], 2)
+        self.assertEqual(
+            terminal_event["raw"]["skip_reasons"],
+            [
+                {
+                    "code": "MISSING_PROFILE_URL",
+                    "count": 2,
+                    "message": "缺少个人主页",
+                }
+            ],
+        )
         self.assertIsNone(job.active_candidate_enrichment_operation_id)
+        self.assertEqual(job.active_candidate_enrichment_skipped_count, 0)
 
     async def test_scheduler_enrichment_completion_event_counts_current_run_only(self) -> None:
         job_id = await self._create_job()

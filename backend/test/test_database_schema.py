@@ -156,6 +156,50 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertNotIn("active_candidate_enrichment_operation_id", columns)
         self.assertEqual(university, ("历史大学",))
 
+    def test_crawl_enrichment_skip_migration_preserves_existing_jobs(self) -> None:
+        database_path = Path(self.temp_dir.name) / "crawl_enrichment_skip.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260817_crawl_enrichment_op"
+        migration_revision = "20260817_crawl_enrichment_skip"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO crawl_jobs(university, school, start_url)
+                VALUES ('历史大学', '历史学院', 'https://example.edu/faculty')
+                """
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+            }
+            historical_job = connection.execute(
+                """
+                SELECT university, active_candidate_enrichment_skipped_count
+                FROM crawl_jobs
+                """
+            ).fetchone()
+        self.assertIn("active_candidate_enrichment_skipped_count", columns)
+        self.assertEqual(historical_job, ("历史大学", 0))
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+            }
+            university = connection.execute(
+                "SELECT university FROM crawl_jobs",
+            ).fetchone()
+        self.assertNotIn("active_candidate_enrichment_skipped_count", columns)
+        self.assertEqual(university, ("历史大学",))
+
     def test_professor_scale_search_migration_round_trip_preserves_data(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_scale_search.db"
         env = os.environ.copy()

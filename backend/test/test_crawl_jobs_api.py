@@ -865,10 +865,15 @@ class CrawlJobsApiTests(unittest.TestCase):
         self._set_job_status(job_id, "needs_review")
         self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
         candidate_id = self._latest_candidate_id(job_id)
+        self._seed_candidate(job_id, name="李老师", profile_url="")
+        missing_profile_candidate_id = self._latest_candidate_id(job_id)
 
         response = self.client.post(
             f"/api/crawl-jobs/{job_id}/enrich",
-            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+            json={
+                "candidate_ids": [candidate_id, missing_profile_candidate_id],
+                "llm_profile_id": profile_id,
+            },
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
@@ -876,6 +881,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["selected_count"], 1)
         self.assertEqual(body["enriched_count"], 0)
         self.assertEqual(body["failed_count"], 0)
+        self.assertEqual(body["skipped_count"], 1)
         operation_id = body["operation_id"]
         self.assertEqual(str(UUID(operation_id)), operation_id)
         self.assertIn("已加入补全队列", body["message"])
@@ -885,11 +891,16 @@ class CrawlJobsApiTests(unittest.TestCase):
         import sqlite3
 
         with closing(sqlite3.connect(self.db_path)) as connection:
-            persisted_operation_id = connection.execute(
-                "SELECT active_candidate_enrichment_operation_id FROM crawl_jobs WHERE id = ?",
+            persisted_operation_id, persisted_skipped_count = connection.execute(
+                """
+                SELECT active_candidate_enrichment_operation_id,
+                       active_candidate_enrichment_skipped_count
+                FROM crawl_jobs WHERE id = ?
+                """,
                 (job_id,),
-            ).fetchone()[0]
+            ).fetchone()
         self.assertEqual(persisted_operation_id, operation_id)
+        self.assertEqual(persisted_skipped_count, 1)
 
     def test_cancel_candidate_enrichment_records_its_operation_id(self) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")

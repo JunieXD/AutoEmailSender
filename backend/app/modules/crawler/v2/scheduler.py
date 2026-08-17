@@ -699,7 +699,10 @@ async def _append_enrichment_completion_event_if_needed(
     if candidate_count == 0 and operation_id is None:
         return
 
+    skipped = max(0, job.active_candidate_enrichment_skipped_count or 0)
     message = f"候选导师详情补全完成：成功 {enriched} 位，未变化 {unchanged} 位，失败 {failed} 位"
+    if skipped:
+        message += f"，跳过 {skipped} 位（缺少个人主页）"
     status = "completed"
     if failed > 0:
         status = "failed" if enriched + unchanged == 0 else "partially_completed"

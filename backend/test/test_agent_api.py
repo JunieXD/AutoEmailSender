@@ -3447,6 +3447,14 @@ class AgentApiTests(unittest.TestCase):
                 "SELECT status FROM crawl_jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()[0]
+            active_operation = connection.execute(
+                """
+                SELECT active_candidate_enrichment_operation_id,
+                       active_candidate_enrichment_skipped_count
+                FROM crawl_jobs WHERE id = ?
+                """,
+                (job_id,),
+            ).fetchone()
             log_count = connection.execute(
                 """
                 SELECT COUNT(*) FROM operation_logs
@@ -3468,6 +3476,8 @@ class AgentApiTests(unittest.TestCase):
             connection.commit()
         self.assertEqual(enrichment_task, (candidate_id, "pending"))
         self.assertEqual(job_status, "running")
+        self.assertIsNotNone(active_operation[0])
+        self.assertEqual(active_operation[1], 1)
         self.assertEqual(log_count, 1)
         read_with_usage = self.client.get(
             f"/api/agent/v1/crawler/jobs/{job_id}",
