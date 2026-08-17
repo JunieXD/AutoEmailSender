@@ -38,6 +38,7 @@ from app.modules.llm.runtime import (
 from app.modules.crawler.v2 import enrichment_worker as crawler_v2_enrichment_worker
 from app.modules.crawler.v2.enrichment_worker import enrich_candidate_once, run_crawler_v2_enrichment_worker_once
 from app.modules.crawler.v2.profile_fallbacks import EmailEvidence
+from app.modules.crawler.v2.profile_documents import EmbeddedProfilePdfText
 
 
 class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -410,6 +411,69 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             intent="profile",
             force_fetch=True,
         )
+
+    async def test_fetch_profile_text_merges_embedded_pdf_and_updates_saved_page(self) -> None:
+        candidate_id, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html",
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            page = CrawlPage(
+                job_id=task.job_id,
+                url="https://example.edu/zhang.html",
+                fetch_method="browser",
+                status="succeeded",
+                text_excerpt="张三个人主页",
+            )
+            session.add(page)
+            await session.commit()
+            await session.refresh(page)
+            job_id = task.job_id
+            page_id = page.id
+
+        ctx = crawler_v2_enrichment_worker.CrawlToolContext(
+            job_id=job_id,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=self.session_factory,
+        )
+        snapshot = PageSnapshot(
+            page_id=page_id,
+            url="https://example.edu/zhang.html",
+            text="张三个人主页",
+            html='<iframe src="/viewer.html?file=/zhang.pdf"></iframe>',
+            fetch_method="browser",
+            status="succeeded",
+        )
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+                new=AsyncMock(return_value=snapshot),
+            ),
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.extract_primary_embedded_profile_pdf_text",
+                new=AsyncMock(
+                    return_value=EmbeddedProfilePdfText(
+                        source_url="https://example.edu/zhang.pdf",
+                        text="张三 教授 邮箱 zhang@example.edu",
+                    )
+                ),
+            ),
+        ):
+            text = await crawler_v2_enrichment_worker.fetch_profile_text(
+                ctx,
+                "https://example.edu/zhang.html",
+            )
+
+        self.assertIn("张三个人主页", text)
+        self.assertIn("zhang@example.edu", text)
+        self.assertEqual(snapshot.text, text)
+        async with self.session_factory() as session:
+            saved_page = await session.get(CrawlPage, page_id)
+        assert saved_page is not None
+        self.assertEqual(saved_page.text_excerpt, text)
 
     async def test_worker_passes_operation_start_to_profile_cache_boundary(self) -> None:
         candidate_id, task_id = await self._seed_task(

@@ -80,6 +80,10 @@ from .profile_fallbacks import (
     extract_email_evidence,
     extract_profile_link_evidence,
 )
+from .profile_documents import (
+    extract_primary_embedded_profile_pdf_text,
+    merge_profile_text_with_embedded_pdf,
+)
 
 
 _PROFILE_TEXT_CACHE = profile_text_cache
@@ -858,9 +862,34 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
     page_text = (snapshot.text or "").strip()
+    embedded_pdf = await extract_primary_embedded_profile_pdf_text(ctx, snapshot)
+    if embedded_pdf is not None:
+        page_text = merge_profile_text_with_embedded_pdf(
+            page_text,
+            embedded_pdf.text,
+            max_chars=MAX_TEXT_CHARS,
+        )
+        snapshot.text = page_text
+        snapshot.suspicious_empty = not bool(page_text)
+        await _update_saved_profile_text(ctx, snapshot, page_text)
     if not page_text:
         raise ValueError("详情页未提供可见正文")
     return page_text
+
+
+async def _update_saved_profile_text(
+    ctx: CrawlToolContext,
+    snapshot: PageSnapshot,
+    page_text: str,
+) -> None:
+    if snapshot.page_id is None:
+        return
+    async with ctx.session_factory() as session:
+        page = await session.get(CrawlPage, snapshot.page_id)
+        if page is None or page.job_id != ctx.job_id or page.status != "succeeded":
+            return
+        page.text_excerpt = page_text[:MAX_TEXT_CHARS] or None
+        await session.commit()
 
 
 async def get_or_fetch_profile_text(
