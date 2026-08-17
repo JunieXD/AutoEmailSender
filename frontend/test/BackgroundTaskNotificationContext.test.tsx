@@ -262,9 +262,33 @@ const TaskStarters = () => {
       </button>
       <button
         type="button"
-        onClick={() => trackCrawlCandidateEnrichment(91, new Set(["old-event"]))}
+        onClick={() =>
+          trackCrawlCandidateEnrichment(91, "candidate-enrichment-current")
+        }
       >
         开始候选补全
+      </button>
+    </>
+  );
+};
+
+const CandidateEnrichmentRestarter = () => {
+  const { trackCrawlCandidateEnrichment } = useBackgroundTaskNotification();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => trackCrawlCandidateEnrichment(91, "candidate-enrichment-old")}
+      >
+        跟踪旧补全
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          trackCrawlCandidateEnrichment(91, "candidate-enrichment-current")
+        }
+      >
+        跟踪新补全
       </button>
     </>
   );
@@ -369,17 +393,38 @@ describe("BackgroundTaskNotificationProvider", () => {
     ).toBeInTheDocument();
   });
 
-  it("detects candidate enrichment completion from a new crawl event", async () => {
+  it("only notifies for the tracked candidate enrichment operation", async () => {
     apiMocks.getCrawlJobEvents.mockResolvedValue([
+      buildCrawlEvent({
+        id: "evt-old",
+        event_type: "enrichment",
+        message: "候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位",
+        created_at: "2026-07-21T08:00:30Z",
+        raw: {
+          event_type: "enrichment",
+          raw: {
+            operation_id: "candidate-enrichment-old",
+            status: "completed",
+            enriched_count: 1,
+            unchanged_count: 0,
+            failed_count: 0,
+          },
+        },
+      }),
       buildCrawlEvent({
         id: "evt-2",
         event_type: "enrichment",
         message: "候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位",
         created_at: "2026-07-21T08:01:00Z",
         raw: {
-          enriched_count: 2,
-          unchanged_count: 1,
-          failed_count: 0,
+          event_type: "enrichment",
+          raw: {
+            operation_id: "candidate-enrichment-current",
+            status: "completed",
+            enriched_count: 2,
+            unchanged_count: 1,
+            failed_count: 0,
+          },
         },
       }),
     ]);
@@ -391,5 +436,54 @@ describe("BackgroundTaskNotificationProvider", () => {
     expect(
       screen.getByText("候选导师详情补全完成：成功 2 位，未变化 1 位，失败 0 位"),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("discards a stale poll when the same crawl job starts a new enrichment", async () => {
+    vi.useFakeTimers();
+    const oldPoll = deferred<CrawlJobEventDTO[]>();
+    const oldEvent = buildCrawlEvent({
+      id: "evt-old",
+      event_type: "enrichment",
+      message: "候选导师详情补全完成：成功 1 位，未变化 0 位，失败 0 位",
+      raw: {
+        operation_id: "candidate-enrichment-old",
+        status: "completed",
+      },
+    });
+    const currentEvent = buildCrawlEvent({
+      id: "evt-current",
+      event_type: "enrichment",
+      message: "候选导师详情补全完成：成功 2 位，未变化 0 位，失败 0 位",
+      raw: {
+        operation_id: "candidate-enrichment-current",
+        status: "completed",
+      },
+    });
+    apiMocks.getCrawlJobEvents
+      .mockReturnValueOnce(oldPoll.promise)
+      .mockResolvedValue([oldEvent, currentEvent]);
+
+    try {
+      renderWithProviders(<CandidateEnrichmentRestarter />);
+      fireEvent.click(screen.getByRole("button", { name: "跟踪旧补全" }));
+      await act(async () => undefined);
+      expect(apiMocks.getCrawlJobEvents).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "跟踪新补全" }));
+      await act(async () => {
+        oldPoll.resolve([oldEvent]);
+        await oldPoll.promise;
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(screen.getByText("候选信息补全完成")).toBeInTheDocument();
+      expect(screen.getByText(currentEvent.message)).toBeInTheDocument();
+      expect(screen.queryByText(oldEvent.message)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

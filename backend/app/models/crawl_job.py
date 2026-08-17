@@ -144,6 +144,10 @@ class CrawlJob(Base):
     progress_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent_trace: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True)
+    active_candidate_enrichment_operation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+    )
     current_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("crawl_job_runs.id", ondelete="SET NULL"),
         nullable=True,

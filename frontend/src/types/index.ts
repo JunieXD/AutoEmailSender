@@ -378,10 +378,12 @@ export interface CrawlJobApproveResultDTO {
 }
 
 export interface CrawlJobEnrichResultDTO {
+  operation_id: string | null;
   selected_count: number;
   enriched_count: number;
   unchanged_count: number;
   failed_count: number;
+  skipped_count: number;
   message: string;
 }
 

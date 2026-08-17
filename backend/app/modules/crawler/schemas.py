@@ -309,6 +309,7 @@ class CrawlJobEnrichObservationRead(ApiSchema):
 
 class CrawlJobEnrichResult(ApiSchema):
     phase: Literal["submission"] = "submission"
+    operation_id: str | None = None
     selected_count: int
     enriched_count: int
     unchanged_count: int

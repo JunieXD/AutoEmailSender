@@ -12,7 +12,8 @@ import {
 } from "react";
 import { useNotification } from "@/context/NotificationContext";
 import {
-  getCrawlEventStableKey,
+  getCrawlEnrichmentOperationId,
+  getCrawlEventRawPayload,
   isCrawlEnrichmentCompletionEvent,
 } from "@/features/crawl-review/client/crawlJobEvents";
 import { getCrawlJob, getCrawlJobEvents } from "@/lib/api/crawlJobsApi";
@@ -57,7 +58,7 @@ type TrackedCrawlCandidateEnrichment = {
   key: string;
   kind: "crawl_candidate_enrichment";
   jobId: number;
-  knownCompletionEventKeys: string[];
+  operationId: string;
 };
 
 type TrackedBackgroundTask =
@@ -76,7 +77,7 @@ type BackgroundTaskNotificationContextValue = {
   trackCrawlJob: (job: CrawlJobDTO) => void;
   trackCrawlCandidateEnrichment: (
     jobId: number,
-    knownCompletionEventKeys: Iterable<string>,
+    operationId: string,
   ) => void;
 };
 
@@ -262,7 +263,7 @@ const buildCrawlJobResult = (job: CrawlJobSummaryDTO): ResultNotification => {
 };
 
 const readEventCount = (event: CrawlJobEventDTO, key: string): number => {
-  const value = event.raw?.[key];
+  const value = getCrawlEventRawPayload(event)?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 };
 
@@ -272,6 +273,14 @@ const buildCrawlCandidateEnrichmentResult = (
   const enrichedCount = readEventCount(event, "enriched_count");
   const unchangedCount = readEventCount(event, "unchanged_count");
   const failedCount = readEventCount(event, "failed_count");
+  const status = getCrawlEventRawPayload(event)?.status;
+  if (status === "canceled") {
+    return {
+      level: "warning",
+      title: "候选信息补全已取消",
+      description: event.message,
+    };
+  }
   if (failedCount > 0 && enrichedCount + unchangedCount === 0) {
     return {
       level: "error",
@@ -326,12 +335,11 @@ const pollTrackedTask = async (
       : buildCrawlJobResult(job);
   }
 
-  const knownKeys = new Set(task.knownCompletionEventKeys);
   const events = await getCrawlJobEvents(task.jobId);
   const completedEvent = events.find(
     (event) =>
       isCrawlEnrichmentCompletionEvent(event) &&
-      !knownKeys.has(getCrawlEventStableKey(event)),
+      getCrawlEnrichmentOperationId(event) === task.operationId,
   );
   return completedEvent
     ? buildCrawlCandidateEnrichmentResult(completedEvent)
@@ -347,6 +355,7 @@ export const BackgroundTaskNotificationProvider = ({
   >({});
   const pollingTaskKeysRef = useRef<Set<string>>(new Set());
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set());
+  const crawlCandidateOperationIdsRef = useRef<Map<string, string>>(new Map());
 
   const trackTask = useCallback((task: TrackedBackgroundTask) => {
     notifiedTaskKeysRef.current.delete(task.key);
@@ -423,12 +432,14 @@ export const BackgroundTaskNotificationProvider = ({
   );
 
   const trackCrawlCandidateEnrichment = useCallback(
-    (jobId: number, knownCompletionEventKeys: Iterable<string>) => {
+    (jobId: number, operationId: string) => {
+      const key = getTaskKey("crawl_candidate_enrichment", jobId);
+      crawlCandidateOperationIdsRef.current.set(key, operationId);
       trackTask({
-        key: getTaskKey("crawl_candidate_enrichment", jobId),
+        key,
         kind: "crawl_candidate_enrichment",
         jobId,
-        knownCompletionEventKeys: Array.from(knownCompletionEventKeys),
+        operationId,
       });
     },
     [trackTask],
@@ -464,14 +475,26 @@ export const BackgroundTaskNotificationProvider = ({
         if (
           disposed ||
           notification === null ||
-          notifiedTaskKeysRef.current.has(task.key)
+          notifiedTaskKeysRef.current.has(task.key) ||
+          (task.kind === "crawl_candidate_enrichment" &&
+            crawlCandidateOperationIdsRef.current.get(task.key) !==
+              task.operationId)
         ) {
           return;
         }
         notifyResult(notification);
         notifiedTaskKeysRef.current.add(task.key);
+        if (task.kind === "crawl_candidate_enrichment") {
+          crawlCandidateOperationIdsRef.current.delete(task.key);
+        }
         setTrackedTasks((previous) => {
-          if (!previous[task.key]) {
+          const current = previous[task.key];
+          if (
+            !current ||
+            (task.kind === "crawl_candidate_enrichment" &&
+              (current.kind !== "crawl_candidate_enrichment" ||
+                current.operationId !== task.operationId))
+          ) {
             return previous;
           }
           const next = { ...previous };

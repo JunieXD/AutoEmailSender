@@ -34,6 +34,7 @@ from app.modules.crawler.candidate_identity import (
     canonical_candidate_clause,
     consolidate_job_candidates,
 )
+from ..jobs.enrichment_operations import append_candidate_enrichment_terminal_event
 from ..jobs.runs import (
     mark_crawl_job_run_finished,
     mark_crawl_job_run_queued,
@@ -694,25 +695,23 @@ async def _append_enrichment_completion_event_if_needed(
     unchanged = counts.get(CrawlCandidateEnrichmentTaskStatus.SKIPPED.value, 0)
     failed = counts.get(CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value, 0)
     candidate_count = enriched + unchanged + failed
-    if candidate_count == 0:
+    operation_id = job.active_candidate_enrichment_operation_id
+    if candidate_count == 0 and operation_id is None:
         return
 
     message = f"候选导师详情补全完成：成功 {enriched} 位，未变化 {unchanged} 位，失败 {failed} 位"
-    trace = list(job.agent_trace or [])
-    trace.append(
-        {
-            "event_type": "enrichment",
-            "message": message,
-            "created_at": now.isoformat(),
-            "raw": {
-                "candidate_count": candidate_count,
-                "enriched_count": enriched,
-                "unchanged_count": unchanged,
-                "failed_count": failed,
-            },
-        }
+    status = "completed"
+    if failed > 0:
+        status = "failed" if enriched + unchanged == 0 else "partially_completed"
+    append_candidate_enrichment_terminal_event(
+        job,
+        now=now,
+        status=status,
+        enriched_count=enriched,
+        unchanged_count=unchanged,
+        failed_count=failed,
+        message=message,
     )
-    job.agent_trace = trace[-100:]
 
 
 async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -> str | None:

@@ -4,7 +4,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function getCrawlEventRawPayload(
+export function getCrawlEventRawPayload(
   event: CrawlJobEventDTO,
 ): Record<string, unknown> | null {
   if (!isRecord(event.raw)) {
@@ -100,30 +100,29 @@ export function getCrawlEventFailureReason(event: CrawlJobEventDTO): string | nu
   return rawErrorMessage;
 }
 
-export function getCrawlEventStableKey(event: CrawlJobEventDTO): string {
-  return [
-    event.id,
-    event.event_type,
-    event.created_at ?? "",
-    event.message,
-  ].join("|");
+const crawlEnrichmentTerminalStatuses = new Set([
+  "completed",
+  "partially_completed",
+  "failed",
+  "canceled",
+]);
+
+export function getCrawlEnrichmentOperationId(
+  event: CrawlJobEventDTO,
+): string | null {
+  const operationId = getCrawlEventRawPayload(event)?.operation_id;
+  return typeof operationId === "string" && operationId.trim()
+    ? operationId
+    : null;
 }
 
 export function isCrawlEnrichmentCompletionEvent(
   event: CrawlJobEventDTO,
 ): boolean {
+  const status = getCrawlEventRawPayload(event)?.status;
   return (
     event.event_type === "enrichment" &&
-    event.message.trim().startsWith("候选导师详情补全完成：")
-  );
-}
-
-export function getCrawlEnrichmentCompletionEventKeys(
-  events: CrawlJobEventDTO[],
-): Set<string> {
-  return new Set(
-    events
-      .filter(isCrawlEnrichmentCompletionEvent)
-      .map(getCrawlEventStableKey),
+    typeof status === "string" &&
+    crawlEnrichmentTerminalStatuses.has(status)
   );
 }

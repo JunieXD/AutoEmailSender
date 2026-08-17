@@ -665,6 +665,9 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_records_enrichment_completion_event_when_queue_finishes(self) -> None:
         job_id = await self._create_job()
         async with self.session_factory() as session:
+            job = await session.get(CrawlJob, job_id)
+            assert job is not None
+            job.active_candidate_enrichment_operation_id = "enrichment-operation-1"
             candidate_a = CrawlCandidate(job_id=job_id, name="张三", profile_url="https://example.edu/a")
             candidate_b = CrawlCandidate(job_id=job_id, name="李四", profile_url="https://example.edu/b")
             candidate_c = CrawlCandidate(job_id=job_id, name="王五", profile_url="https://example.edu/c")
@@ -705,6 +708,16 @@ class CrawlerV2SchedulerTests(unittest.IsolatedAsyncioTestCase):
             "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位",
             trace_messages,
         )
+        terminal_event = next(
+            item
+            for item in job.agent_trace or []
+            if isinstance(item, dict)
+            and item.get("message")
+            == "候选导师详情补全完成：成功 1 位，未变化 1 位，失败 1 位"
+        )
+        self.assertEqual(terminal_event["raw"]["operation_id"], "enrichment-operation-1")
+        self.assertEqual(terminal_event["raw"]["status"], "partially_completed")
+        self.assertIsNone(job.active_candidate_enrichment_operation_id)
 
     async def test_scheduler_enrichment_completion_event_counts_current_run_only(self) -> None:
         job_id = await self._create_job()

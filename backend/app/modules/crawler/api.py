@@ -49,6 +49,10 @@ from .schemas import (
     CrawlJobResumePayload,
 )
 from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
+from .jobs.enrichment_operations import (
+    append_candidate_enrichment_terminal_event,
+    start_candidate_enrichment_operation,
+)
 from .candidate_identity import (
     candidate_identity_values,
     canonical_candidate_clause,
@@ -622,6 +626,7 @@ async def _enqueue_crawl_candidate_enrichment_tasks(
         )
 
     now = utc_now()
+    operation_id: str | None = None
     enqueued_count = 0
     existing_count = 0
     runnable_existing_count = 0
@@ -679,10 +684,28 @@ async def _enqueue_crawl_candidate_enrichment_tasks(
         enqueued_count += 1
 
     if enqueued_count > 0 or runnable_existing_count > 0:
+        operation_id = start_candidate_enrichment_operation(job)
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now
         await mark_crawl_job_run_running(session, job, now=now)
+
+    await record_operation_log(
+        session,
+        category="crawler",
+        event_name="crawl_job.candidate_enrichment_queued",
+        entity_type="crawl_job",
+        entity_id=str(job.id),
+        metadata={
+            "selected_count": len(enrichable_candidates),
+            "enqueued_count": enqueued_count,
+            "existing_count": existing_count,
+            "runnable_existing_count": runnable_existing_count,
+            "skipped_count": skipped_count,
+            "llm_profile_id": llm_profile_id,
+            "operation_id": operation_id,
+        },
+    )
 
     await session.commit()
     selected_count = len(enrichable_candidates)
@@ -695,6 +718,7 @@ async def _enqueue_crawl_candidate_enrichment_tasks(
     else:
         message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{completed_skipped_message}{skipped_message}"
     return CrawlJobEnrichResult(
+        operation_id=operation_id,
         selected_count=selected_count,
         enriched_count=0,
         unchanged_count=existing_count,
@@ -852,6 +876,16 @@ async def cancel_crawl_job(
         return job
 
     now = utc_now()
+    if job.active_candidate_enrichment_operation_id is not None:
+        append_candidate_enrichment_terminal_event(
+            job,
+            now=now,
+            status="canceled",
+            enriched_count=0,
+            unchanged_count=0,
+            failed_count=0,
+            message="候选导师详情补全已取消",
+        )
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
     await _release_processing_work(session, job.id, reason="任务已取消，释放处理中工作项")

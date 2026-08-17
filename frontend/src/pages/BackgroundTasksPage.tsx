@@ -141,7 +141,6 @@ import {
 } from "@/features/crawl-review/client/reviewCandidates";
 import {
   getCandidateEnrichmentFailureMessage,
-  getCrawlEnrichmentCompletionEventKeys,
   getCrawlEventFailureReason,
 } from "@/features/crawl-review/client/crawlJobEvents";
 import {
@@ -3572,18 +3571,15 @@ export const BackgroundTasksPage = ({
     }
 
     setCrawlJobEnrichLoading(true);
-    const completionEventBaseline =
-      getCrawlEnrichmentCompletionEventKeys(crawlJobEvents);
     try {
       const result = await enrichCrawlCandidates(
         selectedCrawlJobId,
         selectedReviewableCrawlCandidateIds,
         llmProfileId,
       );
-      trackCrawlCandidateEnrichment(
-        selectedCrawlJobId,
-        completionEventBaseline,
-      );
+      if (result.operation_id) {
+        trackCrawlCandidateEnrichment(selectedCrawlJobId, result.operation_id);
+      }
       notifySuccess("候选信息补全已开始", result.message);
       await loadCrawlJobs({ showLoading: false });
       await loadCrawlJobDetails(selectedCrawlJobId, { showLoading: false });

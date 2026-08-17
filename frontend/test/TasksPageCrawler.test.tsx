@@ -186,9 +186,13 @@ describe("TasksPage crawler jobs tab", () => {
       message: "审核完成",
     });
     vi.mocked(enrichCrawlCandidates).mockResolvedValue({
-      updated_count: 2,
+      operation_id: "candidate-enrichment-default",
+      selected_count: 2,
+      enriched_count: 0,
+      unchanged_count: 0,
       failed_count: 0,
-      message: "补全完成",
+      skipped_count: 0,
+      message: "已加入补全队列",
     });
     vi.mocked(cancelCrawlJob).mockResolvedValue(runningJob);
     vi.mocked(getCrawlJob).mockResolvedValue(runningJob);
@@ -1501,6 +1505,7 @@ describe("TasksPage crawler jobs tab", () => {
     vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
     vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
     vi.mocked(enrichCrawlCandidates).mockResolvedValue({
+      operation_id: "candidate-enrichment-started",
       selected_count: 1,
       enriched_count: 0,
       unchanged_count: 0,
@@ -1538,6 +1543,7 @@ describe("TasksPage crawler jobs tab", () => {
     vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
     vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
     vi.mocked(enrichCrawlCandidates).mockResolvedValue({
+      operation_id: "candidate-enrichment-tracked",
       selected_count: 1,
       enriched_count: 0,
       unchanged_count: 0,
@@ -1558,11 +1564,48 @@ describe("TasksPage crawler jobs tab", () => {
     await waitFor(() => {
       expect(
         backgroundTaskNotificationMocks.trackCrawlCandidateEnrichment,
-      ).toHaveBeenCalledWith(7, new Set());
+      ).toHaveBeenCalledWith(7, "candidate-enrichment-tracked");
     });
     expect(notifySuccess).not.toHaveBeenCalledWith(
       "候选信息补全完成",
       expect.any(String),
     );
+  });
+
+  it("does not track candidate enrichment when no operation was started", async () => {
+    const reviewJob = {
+      ...runningJob,
+      status: "needs_review",
+    } as const;
+    vi.mocked(listCrawlJobs).mockResolvedValue([reviewJob]);
+    vi.mocked(getCrawlJob).mockResolvedValue(reviewJob);
+    vi.mocked(enrichCrawlCandidates).mockResolvedValue({
+      operation_id: null,
+      selected_count: 1,
+      enriched_count: 0,
+      unchanged_count: 1,
+      failed_count: 0,
+      skipped_count: 0,
+      message: "选中 1 位，已补全跳过 1 位。",
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "抓取任务详情" });
+    selectAllCandidatesWithoutEmail(dialog);
+    fireEvent.click(within(dialog).getByRole("button", { name: "补全缺失信息" }));
+
+    await waitFor(() => {
+      expect(notifySuccess).toHaveBeenCalledWith(
+        "候选信息补全已开始",
+        "选中 1 位，已补全跳过 1 位。",
+      );
+    });
+    expect(
+      backgroundTaskNotificationMocks.trackCrawlCandidateEnrichment,
+    ).not.toHaveBeenCalled();
   });
 });

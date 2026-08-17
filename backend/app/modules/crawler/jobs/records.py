@@ -37,6 +37,10 @@ from ..schemas import (
     CrawlPageRead,
 )
 from .events import normalize_agent_trace_event
+from .enrichment_operations import (
+    append_candidate_enrichment_terminal_event,
+    start_candidate_enrichment_operation,
+)
 from .metrics import build_crawl_job_metrics
 from .llm_context import public_llm_context, snapshot_crawl_job_llm_profile
 from .runs import (
@@ -515,6 +519,7 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         )
 
     now = utc_now()
+    operation_id: str | None = None
     enqueued_count = 0
     already_active_count = 0
     already_completed_count = 0
@@ -585,6 +590,7 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         enqueued_count += 1
 
     if enqueued_count > 0 or already_active_count > 0:
+        operation_id = start_candidate_enrichment_operation(job)
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now
@@ -614,10 +620,12 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             "skipped_count": skipped_count,
             "selection_mode": selection.mode,
             "llm_profile_id": job.llm_profile_id,
+            "operation_id": operation_id,
         },
         actor=actor,
     )
     return CrawlJobEnrichResult(
+        operation_id=operation_id,
         selected_count=selected_count,
         enriched_count=0,
         unchanged_count=existing_count,
@@ -690,6 +698,16 @@ async def cancel_faculty_crawl_job_record(
         profile_text_cache.discard_job(job_id=job.id)
         return job
     now = utc_now()
+    if job.active_candidate_enrichment_operation_id is not None:
+        append_candidate_enrichment_terminal_event(
+            job,
+            now=now,
+            status="canceled",
+            enriched_count=0,
+            unchanged_count=0,
+            failed_count=0,
+            message="候选导师详情补全已取消",
+        )
     job.status = CrawlJobStatus.CANCELED.value
     job.updated_at = now
     await _release_processing_work(session, job.id, reason="任务已取消，释放处理中工作项")
