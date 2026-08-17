@@ -540,17 +540,9 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         existing_task = existing_tasks_by_candidate_id.get(candidate.id)
         if existing_task is not None:
             if existing_task.status == CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value:
-                if _candidate_has_missing_enrichment_fields(candidate):
-                    tasks_to_enqueue.append((candidate, existing_task))
+                if not _candidate_has_missing_enrichment_fields(candidate):
+                    already_completed_count += 1
                     continue
-                already_completed_count += 1
-                continue
-            if existing_task.status in {
-                CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-                CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-            }:
-                already_active_count += 1
-                continue
         tasks_to_enqueue.append((candidate, existing_task))
 
     if tasks_to_enqueue:
@@ -568,10 +560,18 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             existing_task.worker_id = None
             existing_task.claimed_at = None
             existing_task.lease_expires_at = None
+            existing_task.attempt_count = 0
+            existing_task.failure_count = 0
             existing_task.last_error = None
             existing_task.skip_reason = None
+            existing_task.enriched_fields = None
+            existing_task.started_at = None
             existing_task.finished_at = None
             existing_task.updated_at = now
+            profile_text_cache.discard_candidate(
+                job_id=job.id,
+                candidate_id=candidate.id,
+            )
             enqueued_count += 1
             continue
         try:

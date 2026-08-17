@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.modules.crawler.pages.tools import (
     build_candidate_enrichment_prompt,
     ProfessorCandidatePayload,
     extract_first_email_from_text,
+    fetch_binary_resource,
     normalize_obfuscated_email_tokens,
     crawl_page_with_browser_fallback,
     crawl_page_with_http,
@@ -2216,6 +2218,241 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         recorded = session_factory.added[0]
         self.assertEqual(recorded.status, "failed")
         self.assertIsNone(recorded.text_excerpt)
+
+    async def test_explicit_profile_http_redirect_accepts_one_public_landing_host(self) -> None:
+        session_factory = _FakeSessionFactory()
+        profile_url = "https://faculty.example.edu/people/zhang"
+        landing_url = "https://profiles.example.net/teacher/42"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=session_factory,  # type: ignore[arg-type]
+            profile_entry_url=profile_url,
+        )
+        requested_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(request.url))
+            if str(request.url) == profile_url:
+                return httpx.Response(
+                    302,
+                    headers={"Location": landing_url},
+                    request=request,
+                )
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><body>张三 zhang@example.edu"
+                    "<a href='/teacher/contact'>联系方式</a>"
+                    "<a href='https://unrelated.example.org/news'>站外新闻</a>"
+                    "</body></html>"
+                ),
+                request=request,
+            )
+
+        transport = httpx.MockTransport(handler)
+        async_client = httpx.AsyncClient
+
+        def client_factory(**kwargs: object) -> httpx.AsyncClient:
+            kwargs.pop("transport", None)
+            return async_client(transport=transport, **kwargs)
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            snapshot = await crawl_page_with_http(ctx, profile_url)
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(snapshot.url, landing_url)
+        self.assertEqual(
+            snapshot.links,
+            ["https://profiles.example.net/teacher/contact"],
+        )
+        self.assertEqual(requested_urls, [profile_url, landing_url])
+        self.assertTrue(ctx.allows_url("https://profiles.example.net/images/email.png"))
+        self.assertFalse(ctx.allows_url("https://unrelated.example.org/news"))
+
+    async def test_explicit_profile_redirect_does_not_request_unresolvable_host(self) -> None:
+        session_factory = _FakeSessionFactory()
+        profile_url = "https://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=session_factory,  # type: ignore[arg-type]
+            profile_entry_url=profile_url,
+        )
+        requested_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(request.url))
+            return httpx.Response(
+                302,
+                headers={"Location": "https://missing.invalid/teacher/42"},
+                request=request,
+            )
+
+        transport = httpx.MockTransport(handler)
+        async_client = httpx.AsyncClient
+
+        def client_factory(**kwargs: object) -> httpx.AsyncClient:
+            kwargs.pop("transport", None)
+            return async_client(transport=transport, **kwargs)
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            side_effect=[
+                [(0, 0, 0, "", ("93.184.216.34", 443))],
+                socket.gaierror("not found"),
+            ],
+        ), patch(
+            "app.modules.crawler.pages.tools.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            snapshot = await crawl_page_with_http(ctx, profile_url)
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertEqual(requested_urls, [profile_url])
+        self.assertFalse(ctx.profile_landing_hosts)
+
+    async def test_external_profile_landing_host_allows_its_binary_assets_only(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+            profile_entry_url="https://faculty.example.edu/people/zhang",
+            profile_landing_hosts={"profiles.example.net"},
+        )
+        requested_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(request.url))
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "image/png"},
+                content=b"email-image",
+                request=request,
+            )
+
+        transport = httpx.MockTransport(handler)
+        async_client = httpx.AsyncClient
+
+        def client_factory(**kwargs: object) -> httpx.AsyncClient:
+            kwargs.pop("transport", None)
+            return async_client(transport=transport, **kwargs)
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools.httpx.AsyncClient",
+            side_effect=client_factory,
+        ):
+            final_url, content_type, content = await fetch_binary_resource(
+                ctx,
+                "https://profiles.example.net/images/email.png",
+            )
+            with self.assertRaises(ValueError):
+                await fetch_binary_resource(
+                    ctx,
+                    "https://unrelated.example.org/images/email.png",
+                )
+
+        self.assertEqual(final_url, "https://profiles.example.net/images/email.png")
+        self.assertEqual(content_type, "image/png")
+        self.assertEqual(content, b"email-image")
+        self.assertEqual(
+            requested_urls,
+            ["https://profiles.example.net/images/email.png"],
+        )
+
+    async def test_browser_redirect_is_scoped_to_explicit_profile_entry(self) -> None:
+        profile_url = "https://faculty.example.edu/people/zhang"
+        landing_url = "https://profiles.example.net/teacher/42"
+        browser_snapshot = PageSnapshot(
+            url=landing_url,
+            text="张三 zhang@example.edu",
+            fetch_method="browser",
+            status="succeeded",
+        )
+        profile_ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+            profile_entry_url=profile_url,
+        )
+        ordinary_ctx = CrawlToolContext(
+            job_id=2,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools._fetch_page_with_playwright_direct",
+            new=AsyncMock(return_value=browser_snapshot),
+        ):
+            accepted = await _crawl_page_with_browser(
+                profile_ctx,
+                profile_url,
+                "",
+                "profile",
+            )
+            rejected = await _crawl_page_with_browser(
+                ordinary_ctx,
+                profile_url,
+                "",
+                "profile",
+            )
+
+        self.assertEqual(accepted.status, "succeeded")
+        self.assertEqual(profile_ctx.profile_landing_hosts, {"profiles.example.net"})
+        self.assertEqual(rejected.status, "failed")
+        self.assertIn("最终 URL 不在允许的同校公网域名范围内", rejected.error_message or "")
+
+    async def test_browser_profile_redirect_still_rejects_private_final_url(self) -> None:
+        profile_url = "https://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+            profile_entry_url=profile_url,
+        )
+        browser_snapshot = PageSnapshot(
+            url="http://127.0.0.1/private",
+            text="private",
+            fetch_method="browser",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
+        ), patch(
+            "app.modules.crawler.pages.tools._fetch_page_with_playwright_direct",
+            new=AsyncMock(return_value=browser_snapshot),
+        ):
+            snapshot = await _crawl_page_with_browser(ctx, profile_url, "", "profile")
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertFalse(ctx.profile_landing_hosts)
 
     async def test_crawl_page_with_http_rejects_unsafe_final_url(self) -> None:
         session_factory = _FakeSessionFactory()

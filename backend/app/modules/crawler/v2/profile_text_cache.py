@@ -4,7 +4,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 
 
-ProfileTextCacheKey = tuple[int, int, int, str]
+ProfileTextCacheKey = tuple[int, int, int, str] | tuple[int, int, int, str, str]
 
 PROFILE_TEXT_CACHE_MAX_ENTRIES = 128
 PROFILE_TEXT_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024

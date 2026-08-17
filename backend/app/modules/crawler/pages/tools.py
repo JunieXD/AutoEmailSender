@@ -12,7 +12,6 @@ import ipaddress
 import platform
 import re
 import socket
-from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
 from urllib.parse import urljoin, urlparse
 
@@ -24,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
 from app.modules.crawler.candidate_identity import (
     candidate_identity_values,
@@ -596,6 +596,8 @@ class CrawlToolContext:
     entry_type: str | None = None
     claim_fence: CrawlerV2ClaimFence | None = None
     allow_public_dns_fallback: bool = False
+    profile_entry_url: str | None = None
+    profile_landing_hosts: set[str] = field(default_factory=set)
 
     def mark_http_blocked(self, url: str) -> None:
         host = (urlparse(url).hostname or "").lower()
@@ -634,6 +636,37 @@ class CrawlToolContext:
 
     def forget_page_snapshot(self, url: str) -> None:
         self.page_snapshot_cache.pop(_normalize_page_cache_url(url), None)
+
+    def allows_url(self, url: str) -> bool:
+        if is_allowed_crawl_url(self.start_url, url):
+            return True
+        parsed = urlparse(urljoin(self.start_url, url))
+        host = (parsed.hostname or "").lower()
+        return bool(
+            host
+            and host in self.profile_landing_hosts
+            and is_safe_public_crawl_url(parsed.geturl())
+        )
+
+    def accept_profile_redirect(self, requested_url: str, target_url: str) -> bool:
+        if not self.profile_entry_url or not _is_profile_entry_request(
+            self.profile_entry_url,
+            requested_url,
+        ):
+            return False
+        try:
+            safe_url = _resolve_safe_public_crawl_url(
+                target_url,
+                allow_public_dns_fallback=self.allow_public_dns_fallback,
+            )
+        except ValueError:
+            return False
+        if is_allowed_crawl_url(self.start_url, target_url):
+            return True
+        if self.profile_landing_hosts and safe_url.hostname not in self.profile_landing_hosts:
+            return False
+        self.profile_landing_hosts.add(safe_url.hostname)
+        return True
 
 
 class CrawlJobPaused(RuntimeError):
@@ -686,6 +719,36 @@ def _is_resolved_allowed_crawl_url(
     except ValueError:
         return False
     return True
+
+
+def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
+    absolute_candidate_url = urljoin(ctx.start_url, candidate_url)
+    if not ctx.allows_url(absolute_candidate_url):
+        return False
+    try:
+        _resolve_safe_public_crawl_url(
+            ctx.start_url,
+            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+        )
+        _resolve_safe_public_crawl_url(
+            absolute_candidate_url,
+            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
+        )
+    except ValueError:
+        return False
+    return True
+
+
+def _is_profile_entry_request(profile_entry_url: str, requested_url: str) -> bool:
+    entry = urlparse(profile_entry_url)
+    requested = urlparse(requested_url)
+    return bool(
+        entry.scheme in {"http", "https"}
+        and requested.scheme in {"http", "https"}
+        and (entry.hostname or "").lower() == (requested.hostname or "").lower()
+        and (entry.path or "/") == (requested.path or "/")
+        and entry.query == requested.query
+    )
 
 
 def is_safe_public_crawl_url(url: str) -> bool:
@@ -1114,6 +1177,8 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                 return snapshot
 
             next_url = urljoin(str(response.url), location)
+            if not ctx.allows_url(next_url):
+                ctx.accept_profile_redirect(absolute_url, next_url)
             snapshot = _pre_request_rejected_snapshot(ctx, next_url, "http")
             if snapshot is not None:
                 await record_page_snapshot(ctx, snapshot)
@@ -1140,7 +1205,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
         await record_page_snapshot(ctx, snapshot)
         return snapshot
 
-    if not is_allowed_crawl_url(ctx.start_url, final_url):
+    if not ctx.allows_url(final_url):
         snapshot = _final_url_rejected_snapshot(
             final_url=final_url,
             fetch_method="http",
@@ -1150,7 +1215,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
 
     snapshot = html_to_snapshot(final_url, response.text, "http")
     snapshot.links = [
-        link for link in snapshot.links if _is_same_host_http_url(ctx.start_url, link)
+        link for link in snapshot.links if _is_same_host_http_url(final_url, link)
     ][:MAX_LINKS]
     await record_page_snapshot(ctx, snapshot)
     return snapshot
@@ -1167,11 +1232,7 @@ async def fetch_binary_resource(
     absolute_url = urljoin(ctx.start_url, url)
     current_url = absolute_url
     for redirect_count in range(MAX_HTTP_REDIRECTS + 1):
-        if not _is_resolved_allowed_crawl_url(
-            ctx.start_url,
-            current_url,
-            allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-        ):
+        if not _is_resolved_context_url(ctx, current_url):
             raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
         safe_url = _resolve_safe_public_crawl_url(
             current_url,
@@ -1434,7 +1495,10 @@ def _apply_runtime_url_denylist_after_fetch(
     if snapshot.status != "succeeded":
         return snapshot
     final_url = snapshot.url or requested_url
-    if not is_allowed_crawl_url(ctx.start_url, final_url):
+    if not ctx.allows_url(final_url) and not ctx.accept_profile_redirect(
+        requested_url,
+        final_url,
+    ):
         ctx.mark_denied_url(final_url, "最终地址不在允许的同校公网域名范围内")
         return _failed_snapshot(
             url=final_url,
@@ -1482,7 +1546,7 @@ async def browser_investigate(
         await _ensure_crawl_job_can_continue_for_context(ctx)
         return snapshot
 
-    if not is_allowed_crawl_url(ctx.start_url, url):
+    if not ctx.allows_url(absolute_url):
         snapshot = _failed_snapshot(
             url=url,
             fetch_method="browser",
@@ -1820,11 +1884,7 @@ async def _crawl_page_with_browser(
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    if not _is_resolved_allowed_crawl_url(
-        ctx.start_url,
-        absolute_url,
-        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-    ):
+    if not _is_resolved_context_url(ctx, absolute_url):
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
@@ -1839,16 +1899,13 @@ async def _crawl_page_with_browser(
         )
     else:
         snapshot = await _fetch_page_with_playwright_direct(absolute_url, goal, intent)
-    if snapshot.status == "succeeded" and not _is_resolved_allowed_crawl_url(
-        ctx.start_url,
-        snapshot.url,
-        allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-    ):
-        return _failed_snapshot(
-            url=snapshot.url,
-            fetch_method="browser",
-            error_message="浏览器最终 URL 不在允许的同校公网域名范围内",
-        )
+    if snapshot.status == "succeeded" and not _is_resolved_context_url(ctx, snapshot.url):
+        if not ctx.accept_profile_redirect(absolute_url, snapshot.url):
+            return _failed_snapshot(
+                url=snapshot.url,
+                fetch_method="browser",
+                error_message="浏览器最终 URL 不在允许的同校公网域名范围内",
+            )
     return snapshot
 
 
@@ -2812,6 +2869,7 @@ async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) ->
         title=snapshot.title,
         text_excerpt=snapshot.text[:MAX_TEXT_CHARS] or None,
         error_message=snapshot.error_message,
+        created_at=utc_now(),
     )
     async with ctx.session_factory() as session:
         if await _is_crawl_job_stopped(session, ctx.job_id):
@@ -3124,7 +3182,7 @@ def _pre_request_rejected_snapshot(
             error_message=UNSAFE_CRAWL_URL_MESSAGE,
         )
 
-    if not is_allowed_crawl_url(ctx.start_url, target_url):
+    if not ctx.allows_url(target_url):
         return _failed_snapshot(
             url=target_url,
             fetch_method=fetch_method,

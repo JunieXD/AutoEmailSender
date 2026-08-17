@@ -3478,6 +3478,71 @@ class AgentApiTests(unittest.TestCase):
             ["test-model"],
         )
 
+    def test_agent_reenrichment_resets_previous_task_attempt_state(self) -> None:
+        llm_profile_id = self._create_llm_profile()
+        created = self.client.post(
+            "/api/agent/v1/crawler/jobs",
+            headers={**self._agent_headers(), "Idempotency-Key": "fresh-enrich-job"},
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "entry_type": "list",
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?",
+                (job_id,),
+            )
+            candidate_id = connection.execute(
+                """
+                INSERT INTO crawl_candidates (job_id, name, profile_url)
+                VALUES (?, '重新补全导师', 'https://example.edu/faculty/retry')
+                RETURNING id
+                """,
+                (job_id,),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO crawl_candidate_enrichment_tasks (
+                    job_id, candidate_id, status, worker_id, claimed_at,
+                    lease_expires_at, attempt_count, failure_count, last_error,
+                    skip_reason, enriched_fields, started_at, finished_at
+                ) VALUES (
+                    ?, ?, 'failed_terminal', 'old-worker', CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP, 4, 3, '旧失败', '旧跳过原因', '["email"]',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                """,
+                (job_id, candidate_id),
+            )
+
+        response = self.client.post(
+            f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
+            headers={**self._agent_headers(), "Idempotency-Key": "fresh-enrich-request"},
+            json={"candidate_ids": [candidate_id], "llm_profile_id": llm_profile_id},
+        )
+
+        self.assertEqual(response.status_code, 201, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT status, worker_id, claimed_at, lease_expires_at,
+                       attempt_count, failure_count, last_error, skip_reason,
+                       enriched_fields, started_at, finished_at
+                FROM crawl_candidate_enrichment_tasks
+                WHERE job_id = ? AND candidate_id = ?
+                """,
+                (job_id, candidate_id),
+            ).fetchone()
+        self.assertEqual(
+            row,
+            ("pending", None, None, None, 0, 0, None, None, "null", None, None),
+        )
+
     def test_agent_can_enrich_all_crawl_candidates_with_exclusions(self) -> None:
         llm_profile_id = self._create_llm_profile()
         created = self.client.post(

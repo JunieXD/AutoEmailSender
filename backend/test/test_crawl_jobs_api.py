@@ -975,6 +975,67 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertIn("入队 1 位", body["message"])
         self.assertEqual(self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["pending"])
 
+    def test_v2_enrich_resets_previous_task_attempt_state(self) -> None:
+        from app.modules.crawler.v2.profile_text_cache import profile_text_cache
+
+        profile_id = self._create_llm_profile("测试模型", "test-model")
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": profile_id,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "needs_review")
+        self._seed_candidate(job_id, name="重新补全导师", profile_url="https://example.edu/retry")
+        candidate_id = self._latest_candidate_id(job_id)
+        self._seed_enrichment_task(candidate_id, status="failed_terminal", last_error="旧失败")
+        cache_key = (999, job_id, candidate_id, "https://example.edu/retry")
+        profile_text_cache.put(cache_key, "旧轮次正文 old@example.edu")
+
+        import sqlite3
+
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                UPDATE crawl_candidate_enrichment_tasks
+                SET worker_id = 'old-worker', claimed_at = CURRENT_TIMESTAMP,
+                    lease_expires_at = CURRENT_TIMESTAMP, attempt_count = 4,
+                    failure_count = 3, skip_reason = '旧跳过原因',
+                    enriched_fields = '["email"]', started_at = CURRENT_TIMESTAMP,
+                    finished_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? AND candidate_id = ?
+                """,
+                (job_id, candidate_id),
+            )
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/enrich",
+            json={"candidate_ids": [candidate_id], "llm_profile_id": profile_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT status, worker_id, claimed_at, lease_expires_at,
+                       attempt_count, failure_count, last_error, skip_reason,
+                       enriched_fields, started_at, finished_at
+                FROM crawl_candidate_enrichment_tasks
+                WHERE job_id = ? AND candidate_id = ?
+                """,
+                (job_id, candidate_id),
+            ).fetchone()
+        self.assertEqual(
+            row,
+            ("pending", None, None, None, 0, 0, None, None, "null", None, None),
+        )
+        self.assertNotIn(cache_key, profile_text_cache)
+
     def test_v2_enrich_skips_succeeded_task_only_when_candidate_is_complete(self) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(

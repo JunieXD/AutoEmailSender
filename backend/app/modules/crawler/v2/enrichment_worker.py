@@ -31,7 +31,6 @@ from ..pages.tools import (
     PageSnapshot,
     build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
-    is_allowed_crawl_url,
     profile_text_has_meaningful_content,
     validate_safe_public_crawl_url,
 )
@@ -143,6 +142,7 @@ async def run_crawler_v2_enrichment_worker_once(
             model_name = getattr(profile, "model_name", None) if profile is not None else None
         job_id = task.job_id
         candidate_id = candidate.id
+        enrichment_started_at = task.started_at
         if not (candidate.profile_url or "").strip():
             task.status = CrawlCandidateEnrichmentTaskStatus.SKIPPED.value
             task.skip_reason = MISSING_PROFILE_URL_SKIP_REASON.legacy_message
@@ -159,7 +159,11 @@ async def run_crawler_v2_enrichment_worker_once(
             return 1
 
     try:
-        enrichment_result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
+        enrichment_result = await enrich_candidate_once_with_usage(
+            session_factory,
+            candidate_id=candidate_id,
+            fresh_after=enrichment_started_at,
+        )
         raw_model_text = None
         if isinstance(enrichment_result, tuple):
             if len(enrichment_result) >= 3:
@@ -462,6 +466,7 @@ async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     candidate_id: int,
+    fresh_after: datetime | None = None,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     async with session_factory() as session:
         candidate = await session.get(CrawlCandidate, candidate_id)
@@ -490,8 +495,14 @@ async def enrich_candidate_once_with_usage(
             start_url=profile_crawl_root,
             llm_adaptation=adaptation,
             allow_public_dns_fallback=True,
+            profile_entry_url=profile_url,
         )
-    page_text = await get_or_fetch_profile_text(ctx, candidate.id, profile_url)
+    page_text = await get_or_fetch_profile_text(
+        ctx,
+        candidate.id,
+        profile_url,
+        fresh_after=fresh_after,
+    )
     return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
 
 
@@ -612,7 +623,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
             snapshot,
             max_links=_MAX_PROFILE_LINK_EVIDENCE_ITEMS,
         )
-        if is_allowed_crawl_url(ctx.start_url, link.url)
+        if ctx.allows_url(link.url)
     )
     selected_links, auxiliary_usage, auxiliary_raw = await _select_profile_links(
         ctx,
@@ -838,7 +849,12 @@ def _join_raw_model_texts(values: Sequence[str | None]) -> str | None:
 
 
 async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
-    snapshot: PageSnapshot = await crawl_page_with_browser_fallback(ctx, profile_url, intent="profile")
+    snapshot: PageSnapshot = await crawl_page_with_browser_fallback(
+        ctx,
+        profile_url,
+        intent="profile",
+        force_fetch=True,
+    )
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
     page_text = (snapshot.text or "").strip()
@@ -847,16 +863,31 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
     return page_text
 
 
-async def get_or_fetch_profile_text(ctx: CrawlToolContext, candidate_id: int, profile_url: str) -> str:
+async def get_or_fetch_profile_text(
+    ctx: CrawlToolContext,
+    candidate_id: int,
+    profile_url: str,
+    *,
+    fresh_after: datetime | None = None,
+) -> str:
     normalized_profile_url = normalize_profile_url(
         profile_url,
         base_url=ctx.start_url,
     )
-    cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, normalized_profile_url)
+    base_cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, normalized_profile_url)
+    cache_key = (
+        (*base_cache_key, as_utc_aware(fresh_after).isoformat())
+        if fresh_after is not None
+        else base_cache_key
+    )
     cached = _PROFILE_TEXT_CACHE.get(cache_key)
     if cached is not None:
         return cached
-    stored = await _load_successful_profile_text(ctx, profile_url)
+    stored = await _load_successful_profile_text(
+        ctx,
+        profile_url,
+        fresh_after=fresh_after,
+    )
     if stored:
         _PROFILE_TEXT_CACHE.put(cache_key, stored)
         return stored
@@ -902,7 +933,12 @@ async def _discard_cached_profile_text_if_terminal(
         )
 
 
-async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str) -> str | None:
+async def _load_successful_profile_text(
+    ctx: CrawlToolContext,
+    profile_url: str,
+    *,
+    fresh_after: datetime | None = None,
+) -> str | None:
     if not profile_url.strip():
         return None
     normalized_profile_url = normalize_profile_url(
@@ -945,6 +981,10 @@ async def _load_successful_profile_text(ctx: CrawlToolContext, profile_url: str)
     if (
         page is None
         or not page.text_excerpt
+        or (
+            fresh_after is not None
+            and as_utc_aware(page.created_at) < as_utc_aware(fresh_after)
+        )
         or as_utc_aware(page.created_at) < utc_now() - _PROFILE_TEXT_DATABASE_CACHE_TTL
         or not profile_text_has_meaningful_content(page.text_excerpt)
         or not _stored_profile_text_has_acceptable_quality(page.text_excerpt)
