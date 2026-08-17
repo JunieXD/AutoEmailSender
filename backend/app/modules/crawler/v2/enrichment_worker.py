@@ -31,6 +31,7 @@ from ..pages.tools import (
     PageSnapshot,
     build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
+    looks_like_unavailable_profile_page,
     profile_text_has_meaningful_content,
     validate_safe_public_crawl_url,
 )
@@ -111,6 +112,10 @@ _TERMINAL_JOB_STATUSES = {
     CrawlJobStatus.FAILED.value,
     CrawlJobStatus.CANCELED.value,
 }
+
+
+class CandidateProfileUnavailableError(ValueError):
+    pass
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -374,7 +379,13 @@ async def run_crawler_v2_enrichment_worker_once(
                     terminal_status=CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
                     max_attempts=(
                         1
-                        if isinstance(exc, CandidateProfileUrlPolicyError)
+                        if isinstance(
+                            exc,
+                            (
+                                CandidateProfileUrlPolicyError,
+                                CandidateProfileUnavailableError,
+                            ),
+                        )
                         else None
                     ),
                 )
@@ -859,6 +870,8 @@ async def fetch_profile_text(ctx: CrawlToolContext, profile_url: str) -> str:
         intent="profile",
         force_fetch=True,
     )
+    if looks_like_unavailable_profile_page(snapshot):
+        raise CandidateProfileUnavailableError("个人资料页不存在或已失效")
     if snapshot.status != "succeeded":
         raise ValueError(snapshot.error_message or "详情页抓取失败")
     page_text = (snapshot.text or "").strip()

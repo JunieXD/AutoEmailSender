@@ -77,6 +77,19 @@ INVALID_PROFILE_PAGE_MARKERS = (
     "FineCMS error",
     "SQL syntax",
 )
+UNAVAILABLE_PROFILE_HTTP_STATUS_CODES = frozenset({404, 410})
+_SOFT_404_PROFILE_TITLE_PATTERNS = (
+    re.compile(r"(?:^|\s)404(?:\s|$|错误|页面)", re.IGNORECASE),
+    re.compile(r"\b(?:page\s+)?not\s+found\b", re.IGNORECASE),
+    re.compile(r"(?:页面|内容|资源)(?:未找到|不存在|已删除)"),
+)
+_SOFT_404_PROFILE_BODY_PATTERNS = (
+    re.compile(r"(?:访问|请求|查找)的?(?:页面|内容|资源).{0,20}(?:未找到|不存在|已删除)"),
+    re.compile(r"(?:页面|内容|资源)(?:未找到|不存在|已删除)"),
+    re.compile(r"\b(?:requested\s+)?(?:page|url|resource).{0,30}not\s+found\b", re.IGNORECASE),
+    re.compile(r"\b(?:page|resource).{0,20}(?:was\s+)?(?:removed|deleted)\b", re.IGNORECASE),
+)
+_MAX_SOFT_404_PROFILE_TEXT_CHARS = 800
 CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS = ("_tsites_encrypt_field",)
 DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "search_teacher.js",
@@ -201,6 +214,7 @@ class PageSnapshot(BaseModel):
     links: list[str] = Field(default_factory=list)
     fetch_method: str
     status: Literal["succeeded", "failed"]
+    http_status_code: int | None = None
     error_message: str | None = None
     suspicious_empty: bool = False
     has_client_encrypted_profile_fields: bool = False
@@ -1146,6 +1160,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
             if not getattr(response, "is_redirect", False):
                 if response.status_code in BROWSER_FALLBACK_STATUS:
                     snapshot = html_to_snapshot(str(response.url), response.text, "http")
+                    snapshot.http_status_code = response.status_code
                     snapshot.status = "failed"
                     snapshot.error_message = (
                         f"HTTP {response.status_code} blocked, browser fallback advised"
@@ -1191,6 +1206,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
             url=absolute_url,
             fetch_method="http",
             error_message=_format_exception_for_snapshot(exc, "HTTP request failed"),
+            http_status_code=getattr(response, "status_code", None),
         )
         await record_page_snapshot(ctx, snapshot)
         return snapshot
@@ -1214,6 +1230,7 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
         return snapshot
 
     snapshot = html_to_snapshot(final_url, response.text, "http")
+    snapshot.http_status_code = response.status_code
     snapshot.links = [
         link for link in snapshot.links if _is_same_host_http_url(final_url, link)
     ][:MAX_LINKS]
@@ -1660,6 +1677,23 @@ def _looks_like_unrendered_or_error_profile_page(snapshot: PageSnapshot) -> bool
         return True
     haystack = f"{snapshot.title or ''}\n{snapshot.text}\n{snapshot.html[:2000]}"
     return any(marker in haystack for marker in INVALID_PROFILE_PAGE_MARKERS)
+
+
+def looks_like_unavailable_profile_page(snapshot: PageSnapshot) -> bool:
+    """Identify a missing profile without treating arbitrary 404 text as fatal."""
+
+    if snapshot.http_status_code in UNAVAILABLE_PROFILE_HTTP_STATUS_CODES:
+        return True
+    if snapshot.status != "succeeded":
+        return False
+
+    title = (snapshot.title or "").strip()
+    text = re.sub(r"\s+", " ", snapshot.text or "").strip()
+    if not title or not text or len(text) > _MAX_SOFT_404_PROFILE_TEXT_CHARS:
+        return False
+    return any(pattern.search(title) for pattern in _SOFT_404_PROFILE_TITLE_PATTERNS) and any(
+        pattern.search(text) for pattern in _SOFT_404_PROFILE_BODY_PATTERNS
+    )
 
 
 def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
@@ -2302,6 +2336,7 @@ async def _try_playwright_browser_fetch_once(
 
     browser = None
     profile_ready = True
+    http_status_code: int | None = None
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
@@ -2310,11 +2345,14 @@ async def _try_playwright_browser_fetch_once(
                 ignore_https_errors=options.ignore_https_errors,
             )
             page = await context.new_page()
-            await page.goto(
+            navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,
                 timeout=options.page_timeout_ms,
             )
+            response_status = getattr(navigation_response, "status", None)
+            if isinstance(response_status, int):
+                http_status_code = response_status
             if options.wait_for:
                 selector = options.wait_for
                 if selector.startswith("css:"):
@@ -2356,6 +2394,7 @@ async def _try_playwright_browser_fetch_once(
                 exc,
                 "Playwright browser fetch failed",
             ),
+            http_status_code=http_status_code,
         )
     finally:
         if browser is not None:
@@ -2370,6 +2409,7 @@ async def _try_playwright_browser_fetch_once(
         absolute_url=absolute_url,
         embedded_documents=embedded_documents,
     )
+    snapshot.http_status_code = http_status_code
     if options.wait_for_dynamic_profile and not profile_ready:
         snapshot.suspicious_empty = True
     return snapshot
@@ -3143,6 +3183,7 @@ def _failed_snapshot(
     error_message: str,
     *,
     suspicious_empty: bool = False,
+    http_status_code: int | None = None,
 ) -> PageSnapshot:
     return PageSnapshot(
         url=url,
@@ -3152,6 +3193,7 @@ def _failed_snapshot(
         links=[],
         fetch_method=fetch_method,
         status="failed",
+        http_status_code=http_status_code,
         error_message=error_message,
         suspicious_empty=suspicious_empty,
     )

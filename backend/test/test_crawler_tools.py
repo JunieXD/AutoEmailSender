@@ -87,6 +87,40 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertNotIn("隐藏导航", snapshot.text)
         self.assertNotIn("fake0@example.edu", snapshot.text)
 
+    def test_unavailable_profile_requires_http_status_or_matching_error_page(self) -> None:
+        http_404 = PageSnapshot(
+            url="https://example.edu/missing",
+            text="",
+            fetch_method="browser",
+            status="succeeded",
+            http_status_code=404,
+        )
+        soft_404 = PageSnapshot(
+            url="https://example.edu/missing",
+            title="404错误提示",
+            text="系统提示 您访问的页面未找到，5秒后自动跳转到首页",
+            fetch_method="browser",
+            status="succeeded",
+            http_status_code=200,
+        )
+        normal_page = PageSnapshot(
+            url="https://example.edu/teacher/zhang",
+            title="张三 - 教师主页",
+            text="张三教授的研究方向包括 HTTP 404 错误检测与网络可靠性。",
+            fetch_method="browser",
+            status="succeeded",
+            http_status_code=200,
+        )
+
+        self.assertTrue(crawler_tools.looks_like_unavailable_profile_page(http_404))
+        self.assertTrue(
+            crawler_tools.looks_like_unavailable_profile_page(
+                http_404.model_copy(update={"http_status_code": 410})
+            )
+        )
+        self.assertTrue(crawler_tools.looks_like_unavailable_profile_page(soft_404))
+        self.assertFalse(crawler_tools.looks_like_unavailable_profile_page(normal_page))
+
     def test_html_to_snapshot_cleans_before_budget_and_keeps_late_contact_text(self) -> None:
         html = (
             "<html><head><style>" + "x" * (crawler_tools.MAX_CRAWL_HTML_CHARS + 5000)
@@ -1790,6 +1824,67 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(snapshot.error_message)
             self.assertIn("Directory navigation remains available", snapshot.text)
             self.assertEqual(content_calls, 3)
+
+        asyncio.run(run())
+
+    def test_playwright_browser_snapshot_keeps_navigation_status(self) -> None:
+        async def run() -> None:
+            class _Page:
+                url = "https://example.edu/missing"
+                frames: tuple[object, ...] = ()
+
+                async def goto(self, url: str, *, wait_until: str, timeout: int) -> object:
+                    self.url = url
+                    return SimpleNamespace(status=404)
+
+                async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                    return None
+
+                async def wait_for_timeout(self, timeout: float) -> None:
+                    return None
+
+                async def content(self) -> str:
+                    return (
+                        "<html><head><title>404错误提示</title></head>"
+                        "<body>您访问的页面未找到</body></html>"
+                    )
+
+            class _Context:
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                delay_before_return_html_seconds=0,
+            )
+            with patch("app.modules.crawler.pages.tools.async_playwright", return_value=_Playwright()):
+                snapshot = await crawler_tools._try_playwright_browser_fetch_once(
+                    "https://example.edu/missing",
+                    options,
+                )
+
+            self.assertEqual(snapshot.status, "succeeded")
+            self.assertEqual(snapshot.http_status_code, 404)
+            self.assertTrue(crawler_tools.looks_like_unavailable_profile_page(snapshot))
 
         asyncio.run(run())
 

@@ -412,6 +412,55 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             force_fetch=True,
         )
 
+    async def test_unavailable_profile_fails_once_without_rejecting_candidate(self) -> None:
+        profile_url = "https://example.edu/missing.html"
+        candidate_id, task_id = await self._seed_task(profile_url=profile_url)
+        snapshot = PageSnapshot(
+            url=profile_url,
+            title="404错误提示",
+            text="系统提示 您访问的页面未找到，5秒后自动跳转到首页",
+            fetch_method="browser",
+            status="succeeded",
+            http_status_code=404,
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.ensure_llm_runtime_adaptation",
+                new=AsyncMock(
+                    return_value=LLMRuntimeAdaptation("chat_completions", None)
+                ),
+            ),
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+                new=AsyncMock(return_value=snapshot),
+            ),
+            patch(
+                "app.modules.crawler.v2.enrichment_worker.request_crawler_structured_completion",
+                new=AsyncMock(),
+            ) as llm_mock,
+        ):
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        llm_mock.assert_not_awaited()
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert candidate is not None and task is not None
+        self.assertEqual(candidate.profile_url, profile_url)
+        self.assertNotEqual(candidate.review_status, "rejected")
+        self.assertEqual(
+            task.status,
+            CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+        )
+        self.assertEqual(task.failure_count, 1)
+        self.assertEqual(task.last_error, "个人资料页不存在或已失效")
+
     async def test_fetch_profile_text_merges_embedded_pdf_and_updates_saved_page(self) -> None:
         candidate_id, task_id = await self._seed_task(
             profile_url="https://example.edu/zhang.html",
