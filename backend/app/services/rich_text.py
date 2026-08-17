@@ -5,7 +5,7 @@ from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from app.services.beautiful_soup import parse_html
 
 ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
 ALLOWED_HTML_TAGS = {
@@ -96,7 +96,7 @@ def text_to_email_html(value: str) -> RichTextRenderResult:
 
 
 def sanitize_email_html(value: str) -> str:
-    soup = BeautifulSoup(value.strip(), "html.parser")
+    soup = parse_html(value.strip())
     for tag in list(soup.find_all(True)):
         if tag.name in {"script", "style"}:
             tag.decompose()
@@ -126,7 +126,7 @@ def sanitize_email_html(value: str) -> str:
 
 
 def html_to_text(value: str) -> str:
-    soup = BeautifulSoup(value, "html.parser")
+    soup = parse_html(value)
     lines: list[str] = []
     for element in soup.find_all(["p", "li", "td", "th"]):
         if element.name in {"td", "th"} and element.find(["p", "li"]):

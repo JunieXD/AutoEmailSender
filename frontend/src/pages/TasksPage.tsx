@@ -1,4 +1,4 @@
-import { Activity, useCallback, useRef, useState } from "react";
+import { Activity, lazy, Suspense, useCallback, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
@@ -10,15 +10,19 @@ import { EmailDeliveryPlan } from "@/features/email-deliveries/components/EmailD
 import type { TaskCenterSection } from "@/features/email-deliveries/components/TaskCenterSectionSwitch";
 import { getCrawlJobDetails } from "@/lib/api/crawlJobsApi";
 import { getEmailTaskThread } from "@/lib/api/emailTasksApi";
-import {
-  BackgroundTasksPage,
-  type PendingCrawlJobHandoff,
-} from "@/pages/BackgroundTasksPage";
+import type { PendingCrawlJobHandoff } from "@/pages/BackgroundTasksPage";
 
-export {
-  CrawlJobCard,
-  TaskListViewSwitch,
-} from "@/pages/BackgroundTasksPage";
+const BackgroundTasksPage = lazy(() =>
+  import("@/pages/BackgroundTasksPage").then((module) => ({
+    default: module.BackgroundTasksPage,
+  })),
+);
+
+const sectionLoadingFallback = (
+  <div className="flex min-h-[16rem] items-center justify-center text-sm text-muted-foreground">
+    页面加载中…
+  </div>
+);
 
 export const TasksPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -28,6 +32,20 @@ export const TasksPage = () => {
   const crawlHandoffTokenRef = useRef(0);
   const section: TaskCenterSection =
     searchParams.get("section") === "background" ? "background" : "delivery";
+  const [mountedSections, setMountedSections] = useState<
+    Record<TaskCenterSection, boolean>
+  >(() => ({
+    delivery: section === "delivery",
+    background: section === "background",
+  }));
+
+  // Mount each section on first visit, then let Activity preserve its state.
+  // The render-phase adjustment prevents a blank frame when the URL changes sections.
+  if (!mountedSections[section]) {
+    setMountedSections((current) =>
+      current[section] ? current : { ...current, [section]: true },
+    );
+  }
 
   const updateSection = useCallback(
     (nextSection: TaskCenterSection) => {
@@ -155,18 +173,24 @@ export const TasksPage = () => {
 
   return (
     <>
-      <Activity mode={section === "delivery" ? "visible" : "hidden"}>
-        <EmailDeliveryPlan
-          onSectionChange={updateSection}
-          onOpenBatchTask={openBatchTask}
-        />
-      </Activity>
-      <Activity mode={section === "background" ? "visible" : "hidden"}>
-        <BackgroundTasksPage
-          pendingCrawlJobHandoff={pendingCrawlJobHandoff}
-          onCrawlHandoffApplied={handleCrawlHandoffApplied}
-        />
-      </Activity>
+      {mountedSections.delivery ? (
+        <Activity mode={section === "delivery" ? "visible" : "hidden"}>
+          <EmailDeliveryPlan
+            onSectionChange={updateSection}
+            onOpenBatchTask={openBatchTask}
+          />
+        </Activity>
+      ) : null}
+      {mountedSections.background ? (
+        <Activity mode={section === "background" ? "visible" : "hidden"}>
+          <Suspense fallback={sectionLoadingFallback}>
+            <BackgroundTasksPage
+              pendingCrawlJobHandoff={pendingCrawlJobHandoff}
+              onCrawlHandoffApplied={handleCrawlHandoffApplied}
+            />
+          </Suspense>
+        </Activity>
+      ) : null}
     </>
   );
 };

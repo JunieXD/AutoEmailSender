@@ -38,11 +38,8 @@ import {
   isBatchTaskItemMissingResearchDirection,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { getCrawlEventFailureReason } from "@/features/crawl-review/client/crawlJobEvents";
-import {
-  CrawlJobCard,
-  TasksPage,
-  TaskListViewSwitch,
-} from "./TasksPage";
+import { CrawlJobCard, TaskListViewSwitch } from "./BackgroundTasksPage";
+import { TasksPage } from "./TasksPage";
 import { KeepAliveLayout } from "@/components/organisms/KeepAliveLayout";
 
 const apiMocks = vi.hoisted(() => ({
@@ -564,7 +561,7 @@ describe("TasksPage crawl job action copy", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(await screen.findByRole("button", { name: "智能抓取" }));
     fireEvent.click(await screen.findByRole("button", { name: "取消抓取" }));
 
     await waitFor(() => {
@@ -1194,7 +1191,7 @@ describe("TasksPage Agent UI handoffs", () => {
 });
 
 describe("TasksPage section isolation", () => {
-  it("does not mount background task effects while the delivery section is active", async () => {
+  it("mounts the background section on first visit and preserves it afterwards", async () => {
     render(
       <RouterMemoryRouter initialEntries={["/tasks?section=delivery"]}>
         <TasksPage />
@@ -1202,10 +1199,24 @@ describe("TasksPage section isolation", () => {
     );
 
     expect(await screen.findByText("发送计划定位结果")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "批量邮件", hidden: true }),
+    ).not.toBeInTheDocument();
     expect(apiMocks.listBatchTasks).not.toHaveBeenCalled();
     expect(apiMocks.listCrawlJobs).not.toHaveBeenCalled();
     expect(apiMocks.listMatchAnalysisJobs).not.toHaveBeenCalled();
     expect(apiMocks.listProfessorInformationEnrichmentJobs).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+    expect(
+      await screen.findByRole("button", { name: "批量邮件" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "发送计划" }));
+    expect(await screen.findByText("发送计划定位结果")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "批量邮件", hidden: true }),
+    ).toBeInTheDocument();
   });
 
   it.each(["批量邮件", "智能抓取", "匹配分析", "信息补全"])(

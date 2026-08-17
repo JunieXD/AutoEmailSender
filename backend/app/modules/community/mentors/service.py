@@ -16,8 +16,6 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 
 import httpx
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1855,6 +1853,9 @@ def build_community_records_response(
 
 
 def build_community_share_package(professors: list[Professor]) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
     if not professors:
         raise ValueError("请选择至少一位导师")
     workbook = Workbook()

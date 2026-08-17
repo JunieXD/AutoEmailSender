@@ -11,9 +11,6 @@ import sqlite3
 from typing import Any
 from urllib.parse import urlsplit
 
-from openpyxl import load_workbook
-
-
 PUBLICATION_SCHEMA_VERSION = 3
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TARGET_ALIASES_PATH = REPOSITORY_ROOT / "config" / "crawl-benchmark-aliases.json"
@@ -255,6 +252,8 @@ def _database_row_to_public_record(row: Mapping[str, Any]) -> dict[str, object] 
 
 
 def load_legacy_xlsx_records(workbook_path: Path) -> list[dict[str, object]]:
+    from openpyxl import load_workbook
+
     resolved_path = workbook_path.expanduser().resolve()
     if not resolved_path.is_file():
         raise FileNotFoundError(f"未找到历史测试工作簿：{resolved_path}")

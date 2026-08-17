@@ -11,10 +11,9 @@ from app.core.time import local_now
 from html import escape
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-
 from app.services.html_text import html_to_text as convert_html_to_text
 from app.services.html_text import normalize_plain_text
+from app.services.beautiful_soup import parse_html
 from app.models import IdentityProfile, Professor
 from app.services.file_storage import extract_text_from_document
 from app.modules.communications.public import text_to_html
@@ -390,7 +389,7 @@ def normalize_html_template(value: str) -> str:
     if "<" not in text or ">" not in text:
         return text_to_html(text)
 
-    soup = BeautifulSoup(text, "html.parser")
+    soup = parse_html(text)
     if not soup.get_text(" ", strip=True):
         raise ValueError("HTML 模板缺少可见正文")
     return str(soup)
@@ -474,7 +473,7 @@ def _convert_docx_template_to_formatted_html(content: bytes) -> str:
     if not html_parts:
         return ""
 
-    container = BeautifulSoup("", "html.parser").new_tag(
+    container = parse_html("").new_tag(
         "div",
         style=(
             f"font-family:{EMAIL_TEMPLATE_FONT_STACK};"
@@ -484,7 +483,7 @@ def _convert_docx_template_to_formatted_html(content: bytes) -> str:
             "max-width:100%;"
         ),
     )
-    container.append(BeautifulSoup("".join(html_parts), "html.parser"))
+    container.append(parse_html("".join(html_parts)))
     return str(container)
 
 
@@ -495,12 +494,12 @@ def _render_docx_paragraph(paragraph, visible_index: int) -> str:
         return ""
 
     tag_name = _get_docx_paragraph_tag_name(paragraph)
-    soup = BeautifulSoup("", "html.parser")
+    soup = parse_html("")
     tag = soup.new_tag(tag_name)
     style = _build_docx_paragraph_style(paragraph, tag_name, visible_index)
     if style:
         tag["style"] = style
-    tag.append(BeautifulSoup(body_html or escape(text), "html.parser"))
+    tag.append(parse_html(body_html or escape(text)))
     return str(tag)
 
 
@@ -731,7 +730,7 @@ def _extract_docx_template_to_text(content: bytes) -> str:
 
 
 def _decorate_docx_email_html(value: str) -> str:
-    soup = BeautifulSoup(value, "html.parser")
+    soup = parse_html(value)
     container = soup.new_tag(
         "div",
         style=(

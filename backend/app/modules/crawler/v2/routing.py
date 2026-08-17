@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
 
-from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import LLMProfile
+from app.services.beautiful_soup import parse_html
 from ..jobs.runs import extract_token_usage_from_llm_response
 from ..llm.structured_output import request_crawler_structured_completion
 from ..pages.tools import is_safe_public_crawl_url
@@ -196,7 +196,7 @@ async def invoke_v2_page_routing_agent(
 
 
 def extract_page_route_links(source_url: str, page_html: str) -> list[PageRouteLink]:
-    soup = BeautifulSoup(page_html or "", "html.parser")
+    soup = parse_html(page_html or "")
     links_by_url: dict[str, PageRouteLink] = {}
     for tag in soup.find_all(["a", "iframe"]):
         kind: Literal["link", "iframe"] = "iframe" if tag.name == "iframe" else "link"
@@ -228,7 +228,7 @@ def extract_page_route_links(source_url: str, page_html: str) -> list[PageRouteL
 
 
 def extract_page_route_controls(page_html: str) -> list[PageRouteControl]:
-    soup = BeautifulSoup(page_html or "", "html.parser")
+    soup = parse_html(page_html or "")
     controls: list[PageRouteControl] = []
     signature_counts: dict[tuple[object, ...], int] = {}
     for tag in soup.select("button, [role='button'], li[tabindex], a"):

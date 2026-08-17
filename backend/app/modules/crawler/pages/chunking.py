@@ -5,9 +5,17 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from math import ceil
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from app.services.beautiful_soup import (
+    is_tag,
+    make_navigable_string,
+    parse_html,
+)
+
+if TYPE_CHECKING:
+    from bs4 import Tag
 
 
 _STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
@@ -211,7 +219,7 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
     attributes, or other HTML metadata are exposed to the model.
     """
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = parse_html(html)
     candidates: list[tuple[int, Tag]] = []
 
     for tag in soup.find_all("tr"):
@@ -250,8 +258,8 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
         if _can_expose_unlabeled_record_links(tag):
             _label_unlabeled_record_links(tag)
         boundary = f"\n{_STRUCTURE_BOUNDARY_SENTINEL}\n"
-        tag.insert_before(NavigableString(boundary))
-        tag.insert_after(NavigableString(boundary))
+        tag.insert_before(make_navigable_string(boundary))
+        tag.insert_after(make_navigable_string(boundary))
     return str(soup)
 
 
@@ -276,7 +284,7 @@ def _label_unlabeled_record_links(tag: Tag) -> None:
         if raw_href in seen_hrefs:
             continue
         seen_hrefs.add(raw_href)
-        anchor.append(NavigableString(_unlabeled_record_link_text(anchor)))
+        anchor.append(make_navigable_string(_unlabeled_record_link_text(anchor)))
 
 
 def _is_navigable_record_href(value: object) -> bool:
@@ -306,7 +314,11 @@ def _unlabeled_record_link_text(anchor: Tag) -> str:
 
 
 def _is_eligible_structure_block(tag: Tag, *, max_tokens: int, max_links: int) -> bool:
-    if any(parent.name in _LinkTextHTMLParser._SKIPPED_TAGS for parent in tag.parents if isinstance(parent, Tag)):
+    if any(
+        parent.name in _LinkTextHTMLParser._SKIPPED_TAGS
+        for parent in tag.parents
+        if is_tag(parent)
+    ):
         return False
     text = _normalize_space(tag.get_text(" ", strip=True))
     if not text or estimate_tokens(text) > max_tokens:
@@ -321,7 +333,7 @@ def _is_repeated_card(tag: Tag) -> bool:
     signature = (tag.name, classes)
     matching_siblings = 0
     for sibling in tag.parent.find_all(recursive=False):
-        if not isinstance(sibling, Tag):
+        if not is_tag(sibling):
             continue
         if (sibling.name, tuple(sibling.get("class") or ())) == signature:
             matching_siblings += 1

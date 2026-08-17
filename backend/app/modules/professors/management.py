@@ -9,10 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 from zipfile import BadZipFile
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils.exceptions import InvalidFileException
-
 from .normalization import normalize_recent_papers
 from .schemas import MAX_PERSONAL_NOTE_LENGTH, ProfessorUpsertPayload
 
@@ -227,6 +223,9 @@ def build_professor_template(format_name: str) -> tuple[bytes, str, str]:
         return content, "text/csv; charset=utf-8", "professors_import_template.csv"
 
     if normalized == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Professors"
@@ -280,6 +279,9 @@ def build_professor_export(professors: Sequence[Any], format_name: str) -> tuple
         return content, "text/csv; charset=utf-8", "professors_export.csv"
 
     if normalized == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Professors"
@@ -380,6 +382,9 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, Any]]:
 
 
 def _parse_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
+
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except (BadZipFile, InvalidFileException, OSError) as error:

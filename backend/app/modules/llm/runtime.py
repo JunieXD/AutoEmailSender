@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 if TYPE_CHECKING:
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
 from app.core.config import get_settings
 from app.models import IdentityMaterial, IdentityProfile, LLMProfile, Professor
 from app.modules.campaigns.public import build_template_context
+from app.services.beautiful_soup import parse_html
 from app.services.html_text import html_to_text
 from app.modules.communications.public import text_to_html
 from app.services.rich_text import (
@@ -2745,7 +2745,7 @@ def _normalize_html_field(value: str, fallback_text: str) -> str:
     if "<" not in cleaned or ">" not in cleaned:
         return text_to_html(cleaned)
 
-    soup = BeautifulSoup(cleaned, "html.parser")
+    soup = parse_html(cleaned)
     if not soup.get_text(" ", strip=True):
         raise LLMRuntimeError("模型返回的 body_html 缺少可见正文")
     return str(soup)

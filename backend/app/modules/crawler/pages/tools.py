@@ -12,12 +12,11 @@ import ipaddress
 import platform
 import re
 import socket
-from typing import Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 from urllib.parse import urljoin, urlparse
 
 import httpx
 import httpcore
-from bs4 import BeautifulSoup, Comment
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -42,6 +41,7 @@ from .fetch_ledger import (
     should_prefer_browser_for_fetch_domain,
 )
 from app.services.html_text import html_to_text
+from app.services.beautiful_soup import is_comment, parse_html
 from app.modules.llm.public import LLMRuntimeAdaptation
 from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 from app.modules.professors.public import (
@@ -53,10 +53,25 @@ from app.modules.professors.public import (
     normalize_research_direction,
 )
 
-try:
-    from playwright.async_api import async_playwright
-except Exception:  # pragma: no cover - dependency errors become fetch errors later
-    async_playwright = None  # type: ignore[assignment]
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup
+
+async_playwright = None
+
+
+@lru_cache(maxsize=1)
+def _load_async_playwright() -> Any:
+    try:
+        from playwright.async_api import async_playwright as playwright_factory
+    except Exception:  # pragma: no cover - dependency errors become fetch errors later
+        return None
+    return playwright_factory
+
+
+def _get_async_playwright() -> Any:
+    if async_playwright is not None:
+        return async_playwright
+    return _load_async_playwright()
 
 
 MAX_TEXT_CHARS = 12000
@@ -1708,7 +1723,7 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
     if not html:
         return False
     lowered = html.lower()
-    soup = BeautifulSoup(html, "html.parser")
+    soup = parse_html(html)
     if snapshot.has_dynamic_teacher_directory_markers or any(
         marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS
     ):
@@ -2070,7 +2085,8 @@ async def _try_fetch_browser_pagination_once(
     max_pages: int,
     ignore_https_errors: bool = False,
 ) -> BrowserPaginationExpansion:
-    if async_playwright is None:
+    playwright_factory = _get_async_playwright()
+    if playwright_factory is None:
         return BrowserPaginationExpansion(
             status="failed",
             stopped_reason="playwright_unavailable",
@@ -2080,7 +2096,7 @@ async def _try_fetch_browser_pagination_once(
     options = _browser_fetch_options_for_intent(intent)
     browser = None
     try:
-        async with async_playwright() as playwright:
+        async with playwright_factory() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
             context = await browser.new_context(
                 user_agent=options.user_agent,
@@ -2327,7 +2343,8 @@ async def _try_playwright_browser_fetch_once(
     absolute_url: str,
     options: BrowserFetchOptions,
 ) -> PageSnapshot:
-    if async_playwright is None:
+    playwright_factory = _get_async_playwright()
+    if playwright_factory is None:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
@@ -2338,7 +2355,7 @@ async def _try_playwright_browser_fetch_once(
     profile_ready = True
     http_status_code: int | None = None
     try:
-        async with async_playwright() as playwright:
+        async with playwright_factory() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
             context = await browser.new_context(
                 user_agent=options.user_agent,
@@ -3022,7 +3039,7 @@ def html_to_snapshot(
 
 
 def _clean_snapshot_soup(html: str) -> BeautifulSoup:
-    soup = BeautifulSoup(html or "", "html.parser")
+    soup = parse_html(html or "")
     for tag in soup.find_all(True):
         attributes = " ".join(
             f"{attribute}={attribute_value}"
@@ -3032,7 +3049,7 @@ def _clean_snapshot_soup(html: str) -> BeautifulSoup:
             tag.decompose()
     for tag in soup(["script", "style", "noscript", "template", "noframes"]):
         tag.decompose()
-    for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):
+    for comment in soup.find_all(string=is_comment):
         comment.extract()
     return soup
 

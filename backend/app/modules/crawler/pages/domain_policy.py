@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import ipaddress
+from functools import lru_cache
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-import tldextract
+if TYPE_CHECKING:
+    from tldextract import TLDExtract
 
 
-_PUBLIC_SUFFIX_EXTRACTOR = tldextract.TLDExtract(
-    cache_dir=None,
-    suffix_list_urls=(),
-    include_psl_private_domains=True,
-)
+@lru_cache(maxsize=1)
+def _get_public_suffix_extractor() -> TLDExtract:
+    from tldextract import TLDExtract
+
+    return TLDExtract(
+        cache_dir=None,
+        suffix_list_urls=(),
+        include_psl_private_domains=True,
+    )
 
 
 def registrable_domain_from_hostname(hostname: str | None) -> str:
@@ -22,7 +29,7 @@ def registrable_domain_from_hostname(hostname: str | None) -> str:
     try:
         ipaddress.ip_address(normalized)
     except ValueError:
-        extracted = _PUBLIC_SUFFIX_EXTRACTOR(normalized)
+        extracted = _get_public_suffix_extractor()(normalized)
         return extracted.top_domain_under_public_suffix or normalized
     return normalized
 

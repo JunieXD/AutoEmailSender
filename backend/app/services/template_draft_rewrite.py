@@ -4,10 +4,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from html import escape
+from typing import TYPE_CHECKING
 
-from bs4 import BeautifulSoup, NavigableString, Tag
-
+from app.services.beautiful_soup import is_navigable_string, is_tag, parse_html
 from app.services.rich_text import RichTextRenderResult, normalize_email_html
+
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup, NavigableString, Tag
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{[a-zA-Z0-9_]+\}\}")
 # Only unresolved runtime placeholders are structural data. Literal dates, years,
@@ -89,7 +92,7 @@ class DraftRewriteDocument:
 
 
 def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRewriteDocument:
-    soup = BeautifulSoup(html.strip(), "html.parser")
+    soup = parse_html(html.strip())
     _render_template_text_nodes(soup, context)
     blocks: list[DraftRewriteSourceBlock] = []
     protected_tokens: list[DraftRewriteProtectedToken] = []
@@ -146,7 +149,7 @@ def render_draft_template_text(value: str | None, context: dict[str, str]) -> st
 def _iter_segment_elements(soup: BeautifulSoup) -> list[Tag]:
     elements: list[Tag] = []
     for tag in soup.find_all(SEGMENT_TAG_NAMES):
-        if not isinstance(tag, Tag):
+        if not is_tag(tag):
             continue
         if tag.name == "table":
             elements.append(tag)
@@ -165,7 +168,7 @@ def _build_rewrite_text(
 ) -> tuple[str, str, list[DraftRewriteStyleRegion], list[DraftRewriteStyleSpan]]:
     runs: list[tuple[str, str, dict[str, object]]] = []
     for text_node in element.find_all(string=True, recursive=True):
-        if not isinstance(text_node, NavigableString):
+        if not is_navigable_string(text_node):
             continue
         raw_text = str(text_node)
         if not raw_text.strip():
@@ -238,7 +241,7 @@ def _segment_type(element: Tag) -> str:
 def _collect_marks(text_node: NavigableString, container: Tag) -> list[str]:
     marks: list[str] = []
     for parent in text_node.parents:
-        if not isinstance(parent, Tag):
+        if not is_tag(parent):
             continue
         if parent is container:
             break
@@ -289,7 +292,7 @@ def _relative_inline_style(
         style["color"] = effective_color
 
     for parent in text_node.parents:
-        if not isinstance(parent, Tag) or parent is container:
+        if not is_tag(parent) or parent is container:
             break
         if parent.name == "a":
             href = str(parent.get("href", "")).strip()
@@ -304,7 +307,7 @@ def _select_base_inline_style(element: Tag) -> str | None:
     first_seen: dict[str, int] = {}
     order = 0
     for text_node in element.find_all(string=True, recursive=True):
-        if not isinstance(text_node, NavigableString):
+        if not is_navigable_string(text_node):
             continue
         text = str(text_node)
         if not text.strip():
@@ -323,7 +326,7 @@ def _select_base_inline_style(element: Tag) -> str | None:
 
 def _nearest_inline_style(text_node: NavigableString, container: Tag) -> str | None:
     for parent in text_node.parents:
-        if not isinstance(parent, Tag) or parent is container:
+        if not is_tag(parent) or parent is container:
             break
         style = str(parent.get("style", "")).strip()
         if style:
@@ -365,7 +368,7 @@ def _resolve_tag_color(tag: Tag) -> str | None:
 
 def _resolve_effective_color(text_node: NavigableString, container: Tag) -> str | None:
     for parent in text_node.parents:
-        if not isinstance(parent, Tag):
+        if not is_tag(parent):
             continue
         color = _resolve_tag_color(parent)
         if color:
@@ -379,13 +382,13 @@ def _has_visible_segment_text(text: str) -> bool:
 
 
 def select_dominant_font_and_size(html: str) -> DraftRewriteFontStyle:
-    soup = BeautifulSoup(html.strip(), "html.parser")
+    soup = parse_html(html.strip())
     counts: dict[tuple[str | None, str | None], int] = {}
     first_seen: dict[tuple[str | None, str | None], int] = {}
     order = 0
 
     for text_node in soup.find_all(string=True):
-        if not isinstance(text_node, NavigableString):
+        if not is_navigable_string(text_node):
             continue
         text = str(text_node).strip()
         if not text:
@@ -411,7 +414,7 @@ def apply_draft_rewrite_replacements(
     document: DraftRewriteDocument,
     replacements: list[dict[str, object]],
 ) -> RichTextRenderResult:
-    soup = BeautifulSoup(document.html, "html.parser")
+    soup = parse_html(document.html)
     elements = _iter_segment_elements(soup)
     element_map = {block.segment_id: element for block, element in zip(document.blocks, elements)}
     editable_blocks = [
@@ -433,7 +436,7 @@ def apply_draft_rewrite_replacements(
             str(replacement["text"]),
             document,
         )
-        fragment = BeautifulSoup(f"<div>{fragment_html}</div>", "html.parser")
+        fragment = parse_html(f"<div>{fragment_html}</div>")
         element.clear()
         for child in list(fragment.div.contents if fragment.div else []):
             element.append(child)
@@ -443,8 +446,11 @@ def apply_draft_rewrite_replacements(
             continue
         if not block.html_fragment or element is None:
             continue
-        original_fragment = BeautifulSoup(block.html_fragment, "html.parser")
-        original_root = next((node for node in original_fragment.contents if isinstance(node, Tag)), None)
+        original_fragment = parse_html(block.html_fragment)
+        original_root = next(
+            (node for node in original_fragment.contents if is_tag(node)),
+            None,
+        )
         if original_root is not None:
             element.replace_with(original_root)
 
@@ -572,7 +578,7 @@ def _render_text_fragment(
 
 def _render_template_text_nodes(soup: BeautifulSoup, context: dict[str, str]) -> None:
     for text_node in list(soup.find_all(string=True)):
-        if not isinstance(text_node, NavigableString):
+        if not is_navigable_string(text_node):
             continue
         rendered_text = _render_template_text(str(text_node), context)
         if rendered_text != str(text_node):
@@ -606,7 +612,7 @@ def _is_within_table(tag: Tag) -> bool:
     if tag.name == "table":
         return True
     for parent in tag.parents:
-        if isinstance(parent, Tag) and parent.name == "table":
+        if is_tag(parent) and parent.name == "table":
             return True
     return False
 
@@ -636,7 +642,7 @@ def _merge_font_style(style: str, dominant: DraftRewriteFontStyle) -> str:
 def _resolve_effective_font_family(text_node: NavigableString) -> str | None:
     text = str(text_node)
     for parent in text_node.parents:
-        if not isinstance(parent, Tag):
+        if not is_tag(parent):
             continue
         families = _extract_font_family_candidates(parent)
         if families:
@@ -646,7 +652,7 @@ def _resolve_effective_font_family(text_node: NavigableString) -> str | None:
 
 def _resolve_effective_font_size(text_node: NavigableString) -> str | None:
     for parent in text_node.parents:
-        if not isinstance(parent, Tag):
+        if not is_tag(parent):
             continue
         size = _extract_font_size(parent)
         if size:

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
-from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+from app.services.beautiful_soup import (
+    is_comment,
+    is_navigable_string,
+    is_tag,
+    parse_html,
+)
+
+if TYPE_CHECKING:
+    from bs4 import Tag
 
 
 BLOCK_TAGS = {
@@ -45,7 +54,7 @@ def html_to_text(value: str) -> str:
     if not text:
         return ""
 
-    soup = BeautifulSoup(text, "html.parser")
+    soup = parse_html(text)
     root = soup.body or soup
     return _join_blocks(_extract_blocks(root))
 
@@ -72,14 +81,14 @@ def _extract_blocks(node: Tag) -> list[str]:
             blocks.append(text)
 
     for child in node.children:
-        if isinstance(child, Comment):
+        if is_comment(child):
             continue
 
-        if isinstance(child, NavigableString):
+        if is_navigable_string(child):
             inline_parts.append(str(child))
             continue
 
-        if not isinstance(child, Tag) or child.name in SKIP_TAGS:
+        if not is_tag(child) or child.name in SKIP_TAGS:
             continue
 
         if child.name == "br":
@@ -108,14 +117,14 @@ def _extract_inline_text(node: Tag) -> str:
     parts: list[str] = []
 
     for child in node.children:
-        if isinstance(child, Comment):
+        if is_comment(child):
             continue
 
-        if isinstance(child, NavigableString):
+        if is_navigable_string(child):
             parts.append(str(child))
             continue
 
-        if not isinstance(child, Tag) or child.name in SKIP_TAGS:
+        if not is_tag(child) or child.name in SKIP_TAGS:
             continue
 
         if child.name == "br":

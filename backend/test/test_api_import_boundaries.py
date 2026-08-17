@@ -41,6 +41,33 @@ print(json.dumps({name: name in sys.modules for name in [
         self.assertGreaterEqual(len(routers.API_ROUTERS), 10)
         self.assertTrue(all(hasattr(router, "routes") for router in routers.API_ROUTERS))
 
+    def test_router_aggregation_keeps_on_demand_dependencies_lazy(self) -> None:
+        script = """
+import importlib
+import json
+import sys
+
+importlib.import_module("app.api.routers")
+print(json.dumps({name: name in sys.modules for name in [
+    "bs4",
+    "openpyxl",
+    "playwright.async_api",
+    "tldextract",
+]}))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        loaded_modules = json.loads(result.stdout)
+
+        self.assertFalse(loaded_modules["bs4"])
+        self.assertFalse(loaded_modules["openpyxl"])
+        self.assertFalse(loaded_modules["playwright.async_api"])
+        self.assertFalse(loaded_modules["tldextract"])
+
 
 if __name__ == "__main__":
     unittest.main()
