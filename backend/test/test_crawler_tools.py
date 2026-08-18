@@ -53,6 +53,112 @@ class CrawlerToolTests(unittest.TestCase):
             session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
         )
 
+    def _fetch_with_cached_cookie(
+        self,
+        responses: list[tuple[int, str]],
+    ) -> tuple[PageSnapshot, int, list[list[dict[str, object]]], tuple[dict[str, object], ...]]:
+        async def run() -> tuple[
+            PageSnapshot,
+            int,
+            list[list[dict[str, object]]],
+            tuple[dict[str, object], ...],
+        ]:
+            scope = ("run", 91999)
+            url = "https://example.edu/faculty"
+            cached = crawler_tools.browser_cookie_session_cache
+            cached.discard_scope(scope)
+            restored: list[list[dict[str, object]]] = []
+            attempts = 0
+            cookie = {
+                "name": "challenge",
+                "value": "stale",
+                "domain": "example.edu",
+                "path": "/",
+                "expires": -1,
+            }
+            cached.remember(scope, [cookie])
+
+            class _Page:
+                frames: tuple[object, ...] = ()
+
+                def __init__(self, index: int) -> None:
+                    self.index = index
+                    self.url = url
+
+                async def goto(
+                    self,
+                    target_url: str,
+                    *,
+                    wait_until: str,
+                    timeout: int,
+                ) -> object:
+                    self.url = target_url
+                    return SimpleNamespace(status=responses[self.index][0])
+
+                async def wait_for_timeout(self, timeout: float) -> None:
+                    return None
+
+                async def content(self) -> str:
+                    return responses[self.index][1]
+
+            class _Context:
+                def __init__(self, index: int) -> None:
+                    self.index = index
+
+                async def add_cookies(self, cookies: list[dict[str, object]]) -> None:
+                    restored.append(cookies)
+
+                async def cookies(self) -> list[dict[str, object]]:
+                    return [cookie] if self.index == 0 else []
+
+                async def new_page(self) -> _Page:
+                    return _Page(self.index)
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    nonlocal attempts
+                    index = attempts
+                    attempts += 1
+                    return _Context(index)
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for=None,
+                delay_before_return_html_seconds=0,
+                max_retries=0,
+            )
+            try:
+                with patch(
+                    "app.modules.crawler.pages.tools.async_playwright",
+                    return_value=_Playwright(),
+                ):
+                    snapshot = await crawler_tools._try_playwright_browser_fetch_once(
+                        url,
+                        options,
+                        browser_session_scope=scope,
+                    )
+                remaining = cached.get_for_url(scope, url)
+                return snapshot, attempts, restored, remaining
+            finally:
+                cached.discard_scope(scope)
+
+        return asyncio.run(run())
+
     def test_html_to_snapshot_caps_untrusted_html_before_parsing(self) -> None:
         oversized_html = "<main>教师名单</main>" + "x" * crawler_tools.MAX_CRAWL_HTML_CHARS
 
@@ -735,6 +841,69 @@ class CrawlerToolTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_playwright_browser_fetch_retries_http_400_without_cached_cookie(self) -> None:
+        snapshot, attempts, restored, remaining = self._fetch_with_cached_cookie(
+            [
+                (400, "<html><body>invalid browser session</body></html>"),
+                (200, "<html><body>教师目录 张三 李四</body></html>"),
+            ]
+        )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(snapshot.http_status_code, 200)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(remaining, ())
+
+    def test_playwright_browser_fetch_retries_empty_200_without_cached_cookie(self) -> None:
+        snapshot, attempts, restored, remaining = self._fetch_with_cached_cookie(
+            [
+                (200, "<html><body></body></html>"),
+                (200, "<html><body>教师目录 张三 李四</body></html>"),
+            ]
+        )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertFalse(snapshot.suspicious_empty)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(remaining, ())
+
+    def test_playwright_browser_fetch_keeps_cached_cookie_for_complete_412(self) -> None:
+        snapshot, attempts, restored, remaining = self._fetch_with_cached_cookie(
+            [(412, "<html><body>完整教师目录 张三 李四 王五</body></html>")]
+        )
+
+        self.assertEqual(snapshot.status, "succeeded")
+        self.assertEqual(snapshot.http_status_code, 412)
+        self.assertFalse(snapshot.suspicious_empty)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(len(restored), 1)
+        self.assertEqual([cookie["name"] for cookie in remaining], ["challenge"])
+
+    def test_playwright_browser_fetch_does_not_retry_real_404(self) -> None:
+        snapshot, attempts, restored, remaining = self._fetch_with_cached_cookie(
+            [(404, "<html><body>404 页面不存在</body></html>")]
+        )
+
+        self.assertEqual(snapshot.http_status_code, 404)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(len(restored), 1)
+        self.assertEqual([cookie["name"] for cookie in remaining], ["challenge"])
+
+    def test_playwright_browser_fetch_resets_cached_cookie_only_once(self) -> None:
+        snapshot, attempts, restored, remaining = self._fetch_with_cached_cookie(
+            [
+                (400, "<html><body>invalid browser session</body></html>"),
+                (400, "<html><body>request still rejected</body></html>"),
+            ]
+        )
+
+        self.assertEqual(snapshot.http_status_code, 400)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(remaining, ())
+
     def test_browser_pagination_retries_date_error_once_in_compatibility_mode(self) -> None:
         async def run() -> None:
             failed = crawler_tools.BrowserPaginationExpansion(
@@ -767,6 +936,86 @@ class CrawlerToolTests(unittest.TestCase):
             self.assertTrue(
                 fetch_once.await_args_list[1].kwargs["ignore_https_errors"]
             )
+
+        asyncio.run(run())
+
+    def test_browser_pagination_discards_cached_cookie_after_http_400(self) -> None:
+        async def run() -> None:
+            scope = ("run", 92000)
+            url = "https://example.edu/faculty"
+
+            class _Page:
+                url = "https://example.edu/faculty"
+
+                async def goto(
+                    self,
+                    target_url: str,
+                    *,
+                    wait_until: str,
+                    timeout: int,
+                ) -> object:
+                    self.url = target_url
+                    return SimpleNamespace(status=400)
+
+                async def wait_for_selector(
+                    self,
+                    selector: str,
+                    *,
+                    timeout: int,
+                ) -> None:
+                    return None
+
+                async def wait_for_timeout(self, timeout: float) -> None:
+                    return None
+
+                async def content(self) -> str:
+                    return "<html><body>invalid browser session</body></html>"
+
+            class _Context:
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            with patch(
+                "app.modules.crawler.pages.tools.async_playwright",
+                return_value=_Playwright(),
+            ), patch(
+                "app.modules.crawler.pages.tools._restore_browser_session_cookies",
+                new=AsyncMock(return_value=True),
+            ), patch.object(
+                crawler_tools.browser_cookie_session_cache,
+                "discard_for_url",
+            ) as discard:
+                result = await crawler_tools._try_fetch_browser_pagination_once(
+                    url,
+                    {"tag": "a"},
+                    intent="generic",
+                    max_pages=2,
+                    browser_session_scope=scope,
+                )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.stopped_reason, "browser_error")
+            discard.assert_called_once_with(scope, url)
 
         asyncio.run(run())
 

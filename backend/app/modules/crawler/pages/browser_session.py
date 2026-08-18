@@ -87,6 +87,30 @@ class BrowserCookieSessionCache:
         with self._lock:
             self._cookies.pop(scope, None)
 
+    def discard_for_url(self, scope: BrowserSessionScope, url: str) -> None:
+        hostname = (urlparse(url).hostname or "").lower()
+        if not hostname:
+            return
+        with self._lock:
+            now = time.monotonic()
+            self._discard_expired_scopes(now)
+            entry = self._cookies.get(scope)
+            if entry is None:
+                return
+            _, cookies = entry
+            matching_keys = [
+                key
+                for key, cookie in cookies.items()
+                if _cookie_matches_hostname(cookie, hostname)
+            ]
+            for key in matching_keys:
+                cookies.pop(key, None)
+            if not cookies:
+                self._cookies.pop(scope, None)
+                return
+            self._cookies[scope] = (now, cookies)
+            self._cookies.move_to_end(scope)
+
     def clear(self) -> None:
         with self._lock:
             self._cookies.clear()
