@@ -12,6 +12,7 @@ from app.modules.crawler.jobs.runs import (
     create_initial_crawl_job_run,
     create_retry_crawl_job_run,
     extract_token_usage_from_llm_response,
+    mark_crawl_job_run_finished,
 )
 
 
@@ -52,6 +53,29 @@ class CrawlJobRunAppVersionSnapshotTests(unittest.TestCase):
         self.assertEqual(retry.app_version, "9.8.7")
         self.assertEqual(initial.attempt_number, 1)
         self.assertEqual(retry.attempt_number, 2)
+
+    def test_terminal_run_discards_browser_cookie_session(self) -> None:
+        run = CrawlJobRun(
+            id=77,
+            job_id=42,
+            attempt_number=1,
+            status="running",
+        )
+        session = SimpleNamespace(get=AsyncMock(return_value=run))
+        job = SimpleNamespace(id=42, current_run_id=77)
+
+        with patch(
+            "app.modules.crawler.jobs.runs.browser_cookie_session_cache.discard_scope"
+        ) as discard:
+            asyncio.run(
+                mark_crawl_job_run_finished(
+                    session,
+                    job,
+                    status="completed",
+                )
+            )
+
+        discard.assert_called_once_with(("run", 77))
 
 
 class _FakeLLMResponse:

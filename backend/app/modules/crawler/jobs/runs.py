@@ -9,6 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CrawlJob, CrawlJobRun, CrawlJobStatus
+from app.modules.crawler.pages.browser_session import browser_cookie_session_cache
+
+
+_BROWSER_SESSION_TERMINAL_STATUSES = {
+    CrawlJobStatus.COMPLETED.value,
+    CrawlJobStatus.PARTIALLY_COMPLETED.value,
+    CrawlJobStatus.FAILED.value,
+    CrawlJobStatus.CANCELED.value,
+}
 
 
 async def create_initial_crawl_job_run(
@@ -38,6 +47,8 @@ async def create_retry_crawl_job_run(
     *,
     now: datetime | None = None,
 ) -> CrawlJobRun:
+    if job.current_run_id is not None:
+        browser_cookie_session_cache.discard_scope(("run", job.current_run_id))
     resolved_now = as_utc_aware(now) if now is not None else utc_now()
     max_attempt = await session.scalar(
         select(func.max(CrawlJobRun.attempt_number)).where(CrawlJobRun.job_id == job.id)
@@ -131,6 +142,8 @@ async def mark_crawl_job_run_finished(
     run.finished_at = resolved_now
     run.error_message = error_message
     run.updated_at = resolved_now
+    if status in _BROWSER_SESSION_TERMINAL_STATUSES:
+        browser_cookie_session_cache.discard_scope(("run", run.id))
     return run
 
 

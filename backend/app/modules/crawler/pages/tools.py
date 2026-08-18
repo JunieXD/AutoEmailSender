@@ -32,6 +32,10 @@ from app.modules.crawler.candidate_identity import (
     merge_candidate_payload as merge_candidate_payload_shared,
 )
 from .chunking import MAX_CRAWL_HTML_CHARS
+from .browser_session import (
+    BrowserSessionScope,
+    browser_cookie_session_cache,
+)
 from .domain_policy import registrable_domain_from_hostname
 from .fetch_ledger import (
     PageFetchDecision,
@@ -161,6 +165,7 @@ BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS = 1.0
 BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS = 80
 BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS = 8_000
 BROWSER_SPARSE_DIRECTORY_MAX_LINKS = 5
+BROWSER_RESTRICTED_RESPONSE_SETTLE_MS = 2_500
 DYNAMIC_PROFILE_READY_TIMEOUT_MS = 10000
 DYNAMIC_PROFILE_READY_POLL_MS = 200
 DYNAMIC_PROFILE_STABLE_MS = 400
@@ -635,6 +640,13 @@ class CrawlToolContext:
     allow_public_dns_fallback: bool = False
     profile_entry_url: str | None = None
     profile_landing_hosts: set[str] = field(default_factory=set)
+    crawl_run_id: int | None = None
+
+    @property
+    def browser_session_scope(self) -> BrowserSessionScope:
+        if self.crawl_run_id is not None:
+            return "run", self.crawl_run_id
+        return "job", self.job_id
 
     def mark_http_blocked(self, url: str) -> None:
         host = (urlparse(url).hostname or "").lower()
@@ -1952,15 +1964,22 @@ async def _crawl_page_with_browser(
             fetch_method="browser",
             error_message=UNSAFE_CRAWL_URL_MESSAGE,
         )
+    browser_session_scope = ctx.browser_session_scope
     if _should_offload_browser_fetch_to_thread():
         snapshot = await asyncio.to_thread(
             _run_browser_fetch_with_proactor_loop,
             absolute_url,
             goal,
             intent,
+            browser_session_scope,
         )
     else:
-        snapshot = await _fetch_page_with_playwright_direct(absolute_url, goal, intent)
+        snapshot = await _fetch_page_with_playwright_direct(
+            absolute_url,
+            goal,
+            intent,
+            browser_session_scope=browser_session_scope,
+        )
     if snapshot.status == "succeeded" and not _is_resolved_context_url(ctx, snapshot.url):
         if not ctx.accept_profile_redirect(absolute_url, snapshot.url):
             return _failed_snapshot(
@@ -1975,11 +1994,14 @@ async def _fetch_page_with_playwright_direct(
     absolute_url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
+    *,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> PageSnapshot:
     _ = goal
     first_result = await _try_playwright_browser_fetch(
         absolute_url,
         _browser_fetch_options_for_intent(intent),
+        browser_session_scope=browser_session_scope,
     )
     if first_result.status == "succeeded":
         return first_result
@@ -1988,6 +2010,7 @@ async def _fetch_page_with_playwright_direct(
         return await _try_playwright_browser_fetch(
             absolute_url,
             _browser_fetch_options_for_intent(intent, wait_for=None),
+            browser_session_scope=browser_session_scope,
         )
 
     return first_result
@@ -2027,6 +2050,7 @@ async def expand_browser_pagination(
         "classTokens": list(class_tokens),
         "matchIndex": max(0, int(match_index)),
     }
+    browser_session_scope = ctx.browser_session_scope
     if _should_offload_browser_fetch_to_thread():
         result = await asyncio.to_thread(
             _run_browser_pagination_with_proactor_loop,
@@ -2034,6 +2058,7 @@ async def expand_browser_pagination(
             target,
             intent,
             max_pages,
+            browser_session_scope,
         )
     else:
         result = await _fetch_browser_pagination_direct(
@@ -2041,6 +2066,7 @@ async def expand_browser_pagination(
             target,
             intent=intent,
             max_pages=max_pages,
+            browser_session_scope=browser_session_scope,
         )
     for snapshot in result.snapshots:
         if not _is_resolved_allowed_crawl_url(
@@ -2063,6 +2089,7 @@ async def _fetch_browser_pagination_direct(
     *,
     intent: CrawlPageIntent,
     max_pages: int,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> BrowserPaginationExpansion:
     last_result: BrowserPaginationExpansion | None = None
     for _attempt in range(MAX_RETRIES_FOR_BROWSER_RENDER + 1):
@@ -2071,6 +2098,7 @@ async def _fetch_browser_pagination_direct(
             target,
             intent=intent,
             max_pages=max_pages,
+            browser_session_scope=browser_session_scope,
         )
         if _is_certificate_date_error(result.error_message):
             return await _try_fetch_browser_pagination_once(
@@ -2079,6 +2107,7 @@ async def _fetch_browser_pagination_direct(
                 intent=intent,
                 max_pages=max_pages,
                 ignore_https_errors=True,
+                browser_session_scope=browser_session_scope,
             )
         if result.status == "succeeded" or result.stopped_reason != "browser_error":
             return result
@@ -2097,6 +2126,7 @@ async def _try_fetch_browser_pagination_once(
     intent: CrawlPageIntent,
     max_pages: int,
     ignore_https_errors: bool = False,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> BrowserPaginationExpansion:
     playwright_factory = _get_async_playwright()
     if playwright_factory is None:
@@ -2115,12 +2145,18 @@ async def _try_fetch_browser_pagination_once(
                 user_agent=options.user_agent,
                 ignore_https_errors=ignore_https_errors,
             )
+            await _restore_browser_session_cookies(
+                context,
+                browser_session_scope,
+                absolute_url,
+            )
             page = await context.new_page()
-            await page.goto(
+            navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,
                 timeout=options.page_timeout_ms,
             )
+            response_status = getattr(navigation_response, "status", None)
             if options.wait_for:
                 selector = options.wait_for
                 if selector.startswith("css:"):
@@ -2129,6 +2165,8 @@ async def _try_fetch_browser_pagination_once(
                     selector,
                     timeout=options.wait_for_timeout_ms,
                 )
+            if response_status in BROWSER_FALLBACK_STATUS:
+                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
             if options.wait_for_dynamic_directory:
                 initial_html, _ = await _wait_for_dynamic_directory_html(
                     page,
@@ -2147,6 +2185,10 @@ async def _try_fetch_browser_pagination_once(
                 html=initial_html,
                 final_url=initial_url,
                 absolute_url=absolute_url,
+            )
+            await _remember_browser_session_cookies(
+                context,
+                browser_session_scope,
             )
             if initial_snapshot.suspicious_empty:
                 return BrowserPaginationExpansion(
@@ -2324,11 +2366,17 @@ _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT = """
 async def _try_playwright_browser_fetch(
     absolute_url: str,
     options: BrowserFetchOptions,
+    *,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> PageSnapshot:
     last_result: PageSnapshot | None = None
     max_attempts = max(0, options.max_retries) + 1
     for attempt in range(max_attempts):
-        last_result = await _try_playwright_browser_fetch_once(absolute_url, options)
+        last_result = await _try_playwright_browser_fetch_once(
+            absolute_url,
+            options,
+            browser_session_scope=browser_session_scope,
+        )
         if (
             not options.ignore_https_errors
             and _is_certificate_date_error(last_result.error_message)
@@ -2341,6 +2389,7 @@ async def _try_playwright_browser_fetch(
             return await _try_playwright_browser_fetch_once(
                 absolute_url,
                 compatibility_options,
+                browser_session_scope=browser_session_scope,
             )
         if _is_immediate_http_compatibility_error(absolute_url, last_result):
             return last_result
@@ -2369,6 +2418,8 @@ async def _try_playwright_browser_fetch(
 async def _try_playwright_browser_fetch_once(
     absolute_url: str,
     options: BrowserFetchOptions,
+    *,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> PageSnapshot:
     playwright_factory = _get_async_playwright()
     if playwright_factory is None:
@@ -2388,6 +2439,11 @@ async def _try_playwright_browser_fetch_once(
                 user_agent=options.user_agent,
                 ignore_https_errors=options.ignore_https_errors,
             )
+            await _restore_browser_session_cookies(
+                context,
+                browser_session_scope,
+                absolute_url,
+            )
             page = await context.new_page()
             navigation_response = await page.goto(
                 absolute_url,
@@ -2405,6 +2461,8 @@ async def _try_playwright_browser_fetch_once(
                     selector,
                     timeout=options.wait_for_timeout_ms,
                 )
+            if http_status_code in BROWSER_FALLBACK_STATUS:
+                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
             has_child_frames = len(getattr(page, "frames", ())) > 1
             if options.wait_for_dynamic_directory and not has_child_frames:
                 html, _ = await _wait_for_dynamic_directory_html(
@@ -2430,6 +2488,10 @@ async def _try_playwright_browser_fetch_once(
             )
             if embedded_documents:
                 profile_ready = True
+            await _remember_browser_session_cookies(
+                context,
+                browser_session_scope,
+            )
     except Exception as exc:
         return _failed_snapshot(
             url=absolute_url,
@@ -2459,6 +2521,34 @@ async def _try_playwright_browser_fetch_once(
     if options.wait_for_dynamic_profile and not profile_ready:
         snapshot.suspicious_empty = True
     return snapshot
+
+
+async def _restore_browser_session_cookies(
+    context: Any,
+    browser_session_scope: BrowserSessionScope | None,
+    absolute_url: str,
+) -> None:
+    if browser_session_scope is None:
+        return
+    cookies = browser_cookie_session_cache.get_for_url(
+        browser_session_scope,
+        absolute_url,
+    )
+    if cookies:
+        await context.add_cookies(list(cookies))
+
+
+async def _remember_browser_session_cookies(
+    context: Any,
+    browser_session_scope: BrowserSessionScope | None,
+) -> None:
+    if browser_session_scope is None:
+        return
+    try:
+        cookies = await context.cookies()
+    except Exception:
+        return
+    browser_cookie_session_cache.remember(browser_session_scope, cookies)
 
 
 def _looks_like_sparse_browser_directory_shell(
@@ -2724,11 +2814,19 @@ def _run_browser_fetch_with_proactor_loop(
     absolute_url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> PageSnapshot:
     from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 
     ensure_windows_proactor_event_loop_policy()
-    return asyncio.run(_fetch_page_with_playwright_direct(absolute_url, goal, intent))
+    return asyncio.run(
+        _fetch_page_with_playwright_direct(
+            absolute_url,
+            goal,
+            intent,
+            browser_session_scope=browser_session_scope,
+        )
+    )
 
 
 def _run_browser_pagination_with_proactor_loop(
@@ -2736,6 +2834,7 @@ def _run_browser_pagination_with_proactor_loop(
     target: dict[str, object],
     intent: CrawlPageIntent,
     max_pages: int,
+    browser_session_scope: BrowserSessionScope | None = None,
 ) -> BrowserPaginationExpansion:
     from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
 
@@ -2746,6 +2845,7 @@ def _run_browser_pagination_with_proactor_loop(
             target,
             intent=intent,
             max_pages=max_pages,
+            browser_session_scope=browser_session_scope,
         )
     )
 

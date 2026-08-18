@@ -395,6 +395,18 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(directory_options.dynamic_directory_ready_timeout_ms, 5000)
         self.assertEqual(directory_options.max_retries, 1)
 
+    def test_browser_session_scope_prefers_current_crawl_run(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=7,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+            crawl_run_id=23,
+        )
+
+        self.assertEqual(ctx.browser_session_scope, ("run", 23))
+
     def test_playwright_launch_options_disable_chromium_https_upgrades_and_automation_controlled(self) -> None:
         options = crawler_tools._playwright_launch_options()
 
@@ -570,6 +582,156 @@ class CrawlerToolTests(unittest.TestCase):
             self.assertEqual(actual, complete)
             fetch_once.assert_awaited_once()
             sleep.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_playwright_browser_fetch_waits_for_restricted_response_to_settle(self) -> None:
+        async def run() -> None:
+            waits: list[float] = []
+
+            class _Page:
+                url = "https://example.edu/faculty"
+                frames: tuple[object, ...] = ()
+
+                async def goto(self, url: str, *, wait_until: str, timeout: int) -> object:
+                    self.url = url
+                    return SimpleNamespace(status=412)
+
+                async def wait_for_timeout(self, timeout: float) -> None:
+                    waits.append(timeout)
+
+                async def content(self) -> str:
+                    return "<html><body>完整教师目录 张三 李四 王五</body></html>"
+
+            class _Context:
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for=None,
+                delay_before_return_html_seconds=0,
+                max_retries=0,
+            )
+            with patch(
+                "app.modules.crawler.pages.tools.async_playwright",
+                return_value=_Playwright(),
+            ):
+                snapshot = await crawler_tools._try_playwright_browser_fetch_once(
+                    "https://example.edu/faculty",
+                    options,
+                )
+
+            self.assertEqual(snapshot.status, "succeeded")
+            self.assertEqual(snapshot.http_status_code, 412)
+            self.assertEqual(
+                waits,
+                [crawler_tools.BROWSER_RESTRICTED_RESPONSE_SETTLE_MS],
+            )
+
+        asyncio.run(run())
+
+    def test_playwright_browser_fetch_reuses_cookies_within_run(self) -> None:
+        async def run() -> None:
+            scope = ("run", 91234)
+            cached = crawler_tools.browser_cookie_session_cache
+            cached.discard_scope(scope)
+            restored: list[list[dict[str, object]]] = []
+            cookie = {
+                "name": "challenge",
+                "value": "passed",
+                "domain": "example.edu",
+                "path": "/",
+                "expires": -1,
+            }
+
+            class _Page:
+                url = "https://example.edu/faculty"
+                frames: tuple[object, ...] = ()
+
+                async def goto(self, url: str, *, wait_until: str, timeout: int) -> object:
+                    self.url = url
+                    return SimpleNamespace(status=200)
+
+                async def content(self) -> str:
+                    return "<html><body>教师目录 张三</body></html>"
+
+            class _Context:
+                async def add_cookies(self, cookies: list[dict[str, object]]) -> None:
+                    restored.append(cookies)
+
+                async def cookies(self) -> list[dict[str, object]]:
+                    return [cookie]
+
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for=None,
+                delay_before_return_html_seconds=0,
+                max_retries=0,
+            )
+            try:
+                with patch(
+                    "app.modules.crawler.pages.tools.async_playwright",
+                    return_value=_Playwright(),
+                ):
+                    first = await crawler_tools._try_playwright_browser_fetch_once(
+                        "https://example.edu/faculty",
+                        options,
+                        browser_session_scope=scope,
+                    )
+                    second = await crawler_tools._try_playwright_browser_fetch_once(
+                        "https://example.edu/faculty",
+                        options,
+                        browser_session_scope=scope,
+                    )
+            finally:
+                cached.discard_scope(scope)
+
+            self.assertEqual(first.status, "succeeded")
+            self.assertEqual(second.status, "succeeded")
+            self.assertEqual(len(restored), 1)
+            self.assertEqual(restored[0][0]["name"], "challenge")
 
         asyncio.run(run())
 
@@ -2227,10 +2389,17 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
 
-        async def fake_direct(absolute_url: str, goal: str, intent: str = "generic") -> PageSnapshot:
+        async def fake_direct(
+            absolute_url: str,
+            goal: str,
+            intent: str = "generic",
+            *,
+            browser_session_scope: object = None,
+        ) -> PageSnapshot:
             self.assertEqual(absolute_url, "https://example.edu/faculty")
             self.assertEqual(goal, "提取导师信息")
             self.assertEqual(intent, "generic")
+            self.assertEqual(browser_session_scope, ("job", 1))
             return expected
 
         with (

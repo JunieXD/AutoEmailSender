@@ -511,6 +511,7 @@ async def enrich_candidate_once_with_usage(
             llm_adaptation=adaptation,
             allow_public_dns_fallback=True,
             profile_entry_url=profile_url,
+            crawl_run_id=job.current_run_id,
         )
     page_text = await get_or_fetch_profile_text(
         ctx,
