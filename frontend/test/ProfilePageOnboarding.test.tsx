@@ -371,6 +371,10 @@ describe("ProfilePage onboarding", () => {
     expect(mailGuide.parentElement).toHaveClass("gap-x-1", "flex-wrap");
     expect(mailGuide).toHaveClass("min-h-0", "px-1", "leading-5");
     fireEvent.click(mailGuide);
+    expect(screen.getByRole("button", { name: /^发件身份/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(mockedOpenExternalHttpUrl).toHaveBeenLastCalledWith(
       PROFILE_HELP_LINKS.mailAuthorization,
     );
@@ -406,6 +410,11 @@ describe("ProfilePage onboarding", () => {
     );
     expect(modelGuide.parentElement).toBe(modelDescription.parentElement);
     expect(modelGuide).toHaveClass("min-h-0", "px-1", "leading-5");
+    fireEvent.click(modelGuide);
+    expect(screen.getByRole("button", { name: /^模型配置/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     openSetupSection("模型配置");
     expect(
       screen.getByRole("link", { name: "查看填写示例" }),
@@ -762,6 +771,29 @@ describe("ProfilePage onboarding", () => {
     );
     expect(await screen.findByLabelText("身份名称")).toHaveValue("博士申请配置");
     expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("toggles every setup card from its description", () => {
+    renderPage();
+
+    const setupCards = [
+      ["发件身份", "管理发件邮箱与收发设置。"],
+      ["材料与模板", "准备匹配材料和发信模板。"],
+      ["模型配置", "连接并测试用于写信的 AI 模型。"],
+      ["测试写信", "先给自己发送一封测试邮件。"],
+    ] as const;
+
+    for (const [title, description] of setupCards) {
+      const toggle = screen.getByRole("button", {
+        name: new RegExp(`^${title}`),
+      });
+
+      fireEvent.click(screen.getByText(description));
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(screen.getByText(description));
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+    }
   });
 
   it("animates setup section content while opening and closing", async () => {

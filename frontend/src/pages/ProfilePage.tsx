@@ -508,7 +508,18 @@ function ProfileSetupSection({
       ref={sectionRef}
       className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm"
     >
-      <div className="px-6 py-5 transition hover:bg-stone-50">
+      <div
+        onClick={(event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest("a, button")
+          ) {
+            return;
+          }
+          onToggle();
+        }}
+        className="cursor-pointer px-6 py-5 transition hover:bg-stone-50 active:bg-stone-50"
+      >
         <button
           type="button"
           aria-expanded={open}
