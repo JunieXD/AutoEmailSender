@@ -45,6 +45,19 @@ from app.modules.llm.public import ensure_llm_runtime_adaptation, format_llm_run
 
 
 MAX_PAGE_TASKS_PER_JOB = 5000
+# A selected sibling list may have two more category layers (for example, a
+# broad rank page followed by concrete rank lists). Keep category decisions
+# bounded; pagination remains the only unbounded page traversal.
+MAX_ENTRY_DISCOVERY_DEPTH = 2
+
+
+def _child_expansion_mode(*, discovery_reason: str, parent_depth: int) -> str:
+    if (
+        discovery_reason == ENTRY_DISCOVERY_REASON
+        and parent_depth < MAX_ENTRY_DISCOVERY_DEPTH
+    ):
+        return ENTRY_EXPANSION_MODE
+    return PAGINATION_EXPANSION_MODE
 
 async def run_crawler_v2_page_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
@@ -603,6 +616,10 @@ async def _complete_list_page_routing(
                 continue
             try:
                 async with session.begin_nested():
+                    child_expansion_mode = _child_expansion_mode(
+                        discovery_reason=discovery_reason,
+                        parent_depth=task.depth,
+                    )
                     session.add(
                         CrawlPageTask(
                             job_id=task.job_id,
@@ -610,7 +627,7 @@ async def _complete_list_page_routing(
                             original_url=normalized_url,
                             parent_url=source_url,
                             discovery_reason=discovery_reason,
-                            expansion_mode=PAGINATION_EXPANSION_MODE,
+                            expansion_mode=child_expansion_mode,
                             allow_expansion=None,
                             depth=task.depth + 1,
                             priority=task.priority,

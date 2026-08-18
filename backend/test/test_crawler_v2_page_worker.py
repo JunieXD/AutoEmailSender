@@ -15,8 +15,16 @@ from test.schema_database import create_schema_sqlite_database
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageChunk, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, CrawlWorkerTokenUsage, LLMProfile
 from app.modules.crawler.pages.tools import BrowserPaginationExpansion, PageSnapshot
 from app.modules.llm.runtime import LLMRuntimeAdaptation
-from app.modules.crawler.v2.page_worker import fetch_page_browser, fetch_page_direct, run_crawler_v2_page_worker_once
+from app.modules.crawler.v2.page_worker import (
+    MAX_ENTRY_DISCOVERY_DEPTH,
+    _child_expansion_mode,
+    fetch_page_browser,
+    fetch_page_direct,
+    run_crawler_v2_page_worker_once,
+)
 from app.modules.crawler.v2.routing import (
+    ENTRY_DISCOVERY_REASON,
+    ENTRY_EXPANSION_MODE,
     IFRAME_DISCOVERY_REASON,
     PAGINATION_DISCOVERY_REASON,
     PAGINATION_EXPANSION_MODE,
@@ -27,6 +35,29 @@ from app.modules.crawler.v2.scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON
 
 
 class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def test_entry_discovery_depth_is_bounded(self) -> None:
+        self.assertEqual(
+            _child_expansion_mode(
+                discovery_reason=ENTRY_DISCOVERY_REASON,
+                parent_depth=MAX_ENTRY_DISCOVERY_DEPTH - 1,
+            ),
+            ENTRY_EXPANSION_MODE,
+        )
+        self.assertEqual(
+            _child_expansion_mode(
+                discovery_reason=ENTRY_DISCOVERY_REASON,
+                parent_depth=MAX_ENTRY_DISCOVERY_DEPTH,
+            ),
+            PAGINATION_EXPANSION_MODE,
+        )
+        self.assertEqual(
+            _child_expansion_mode(
+                discovery_reason=IFRAME_DISCOVERY_REASON,
+                parent_depth=0,
+            ),
+            PAGINATION_EXPANSION_MODE,
+        )
+
     async def test_profile_extraction_adaptation_cache_is_committed_before_session_closes(self) -> None:
         from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
@@ -163,6 +194,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_page_routing_enqueues_entry_and_pagination_with_auditable_metadata(self) -> None:
         job_id, task_id = await self._seed_page_task()
         iframe_url = "https://welcome.example.edu/#/teacher/computer"
+        entry_url = "https://example.edu/faculty/associate"
         page2_url = "https://example.edu/faculty?page=2"
         snapshot = PageSnapshot(
             url="https://example.edu/faculty",
@@ -170,6 +202,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             text="人员入口",
             html=(
                 f'<iframe title="主名单" src="{iframe_url}"></iframe>'
+                f'<a href="{entry_url}">副高级</a>'
                 f'<a href="{page2_url}">2</a>'
             ),
             links=[iframe_url, page2_url],
@@ -177,8 +210,11 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
         self.routing_mock.return_value = V2PageRoutingResult(
-            discovered_urls=[iframe_url],
-            entry_discovery_reasons={iframe_url: IFRAME_DISCOVERY_REASON},
+            discovered_urls=[entry_url, iframe_url],
+            entry_discovery_reasons={
+                entry_url: ENTRY_DISCOVERY_REASON,
+                iframe_url: IFRAME_DISCOVERY_REASON,
+            },
             allow_expansion=True,
             pagination_urls=[page2_url],
             usage=None,
@@ -205,18 +241,24 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             page = await session.scalar(select(CrawlPage).where(CrawlPage.job_id == job_id))
-        self.assertEqual([task.normalized_url for task in tasks], [snapshot.url, iframe_url, page2_url])
+        self.assertEqual(
+            [task.normalized_url for task in tasks],
+            [snapshot.url, entry_url, iframe_url, page2_url],
+        )
         self.assertTrue(tasks[0].allow_expansion)
         self.assertEqual(
             [task.discovery_reason for task in tasks[1:]],
-            [IFRAME_DISCOVERY_REASON, PAGINATION_DISCOVERY_REASON],
+            [ENTRY_DISCOVERY_REASON, IFRAME_DISCOVERY_REASON, PAGINATION_DISCOVERY_REASON],
         )
         self.assertEqual(
             [task.expansion_mode for task in tasks[1:]],
-            [PAGINATION_EXPANSION_MODE, PAGINATION_EXPANSION_MODE],
+            [ENTRY_EXPANSION_MODE, PAGINATION_EXPANSION_MODE, PAGINATION_EXPANSION_MODE],
         )
-        self.assertEqual([task.parent_url for task in tasks[1:]], [snapshot.url, snapshot.url])
-        self.assertEqual([task.depth for task in tasks[1:]], [1, 1])
+        self.assertEqual(
+            [task.parent_url for task in tasks[1:]],
+            [snapshot.url, snapshot.url, snapshot.url],
+        )
+        self.assertEqual([task.depth for task in tasks[1:]], [1, 1, 1])
         assert page is not None
         self.assertIsNone(page.parent_url)
         self.assertEqual(page.page_type, "entry")
