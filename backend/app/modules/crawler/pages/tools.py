@@ -2145,7 +2145,7 @@ async def _try_fetch_browser_pagination_once(
                 user_agent=options.user_agent,
                 ignore_https_errors=ignore_https_errors,
             )
-            await _restore_browser_session_cookies(
+            used_cached_cookies = await _restore_browser_session_cookies(
                 context,
                 browser_session_scope,
                 absolute_url,
@@ -2186,10 +2186,28 @@ async def _try_fetch_browser_pagination_once(
                 final_url=initial_url,
                 absolute_url=absolute_url,
             )
+            if isinstance(response_status, int):
+                initial_snapshot.http_status_code = response_status
             await _remember_browser_session_cookies(
                 context,
                 browser_session_scope,
             )
+            if (
+                used_cached_cookies
+                and browser_session_scope is not None
+                and _browser_snapshot_unusable_after_cached_cookies(initial_snapshot)
+            ):
+                browser_cookie_session_cache.discard_for_url(
+                    browser_session_scope,
+                    absolute_url,
+                )
+                return BrowserPaginationExpansion(
+                    status="failed",
+                    stopped_reason="browser_error",
+                    error_message=(
+                        "Playwright browser pagination rejected cached browser session"
+                    ),
+                )
             if initial_snapshot.suspicious_empty:
                 return BrowserPaginationExpansion(
                     status="failed",
@@ -2420,6 +2438,7 @@ async def _try_playwright_browser_fetch_once(
     options: BrowserFetchOptions,
     *,
     browser_session_scope: BrowserSessionScope | None = None,
+    _allow_cached_cookie_reset_retry: bool = True,
 ) -> PageSnapshot:
     playwright_factory = _get_async_playwright()
     if playwright_factory is None:
@@ -2432,6 +2451,7 @@ async def _try_playwright_browser_fetch_once(
     browser = None
     profile_ready = True
     http_status_code: int | None = None
+    used_cached_cookies = False
     try:
         async with playwright_factory() as playwright:
             browser = await playwright.chromium.launch(**_playwright_launch_options())
@@ -2439,7 +2459,7 @@ async def _try_playwright_browser_fetch_once(
                 user_agent=options.user_agent,
                 ignore_https_errors=options.ignore_https_errors,
             )
-            await _restore_browser_session_cookies(
+            used_cached_cookies = await _restore_browser_session_cookies(
                 context,
                 browser_session_scope,
                 absolute_url,
@@ -2520,6 +2540,22 @@ async def _try_playwright_browser_fetch_once(
         snapshot.suspicious_empty = True
     if options.wait_for_dynamic_profile and not profile_ready:
         snapshot.suspicious_empty = True
+    if (
+        used_cached_cookies
+        and browser_session_scope is not None
+        and _allow_cached_cookie_reset_retry
+        and _browser_snapshot_unusable_after_cached_cookies(snapshot)
+    ):
+        browser_cookie_session_cache.discard_for_url(
+            browser_session_scope,
+            absolute_url,
+        )
+        return await _try_playwright_browser_fetch_once(
+            absolute_url,
+            options,
+            browser_session_scope=browser_session_scope,
+            _allow_cached_cookie_reset_retry=False,
+        )
     return snapshot
 
 
@@ -2527,15 +2563,17 @@ async def _restore_browser_session_cookies(
     context: Any,
     browser_session_scope: BrowserSessionScope | None,
     absolute_url: str,
-) -> None:
+) -> bool:
     if browser_session_scope is None:
-        return
+        return False
     cookies = browser_cookie_session_cache.get_for_url(
         browser_session_scope,
         absolute_url,
     )
     if cookies:
         await context.add_cookies(list(cookies))
+        return True
+    return False
 
 
 async def _remember_browser_session_cookies(
@@ -2568,6 +2606,12 @@ def _looks_like_sparse_browser_directory_shell(
         and len(snapshot.html or "") <= BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS
         and len(set(snapshot.links or ())) <= BROWSER_SPARSE_DIRECTORY_MAX_LINKS
     )
+
+
+def _browser_snapshot_unusable_after_cached_cookies(snapshot: PageSnapshot) -> bool:
+    if snapshot.suspicious_empty:
+        return True
+    return snapshot.http_status_code in {400, 401, 403, 429}
 
 
 async def _collect_browser_embedded_documents(

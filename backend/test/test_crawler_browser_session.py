@@ -71,3 +71,55 @@ class BrowserCookieSessionCacheTests(unittest.TestCase):
             cache.get_for_url(other_scope, "https://example.edu")[0]["value"],
             "old",
         )
+
+    def test_discards_only_cookies_applicable_to_target_hostname(self) -> None:
+        cache = BrowserCookieSessionCache()
+        scope = ("run", 17)
+        cache.remember(
+            scope,
+            [
+                {
+                    "name": "parent",
+                    "value": "parent",
+                    "domain": ".example.edu",
+                    "path": "/",
+                    "expires": -1,
+                },
+                {
+                    "name": "exact",
+                    "value": "exact",
+                    "domain": "cs.example.edu",
+                    "path": "/",
+                    "expires": -1,
+                },
+                {
+                    "name": "sibling",
+                    "value": "sibling",
+                    "domain": "ai.example.edu",
+                    "path": "/",
+                    "expires": -1,
+                },
+                {
+                    "name": "unrelated",
+                    "value": "unrelated",
+                    "domain": "other.edu",
+                    "path": "/",
+                    "expires": -1,
+                },
+            ],
+        )
+
+        cache.discard_for_url(scope, "https://cs.example.edu/faculty")
+
+        self.assertEqual(cache.get_for_url(scope, "https://cs.example.edu"), ())
+        self.assertEqual(
+            [
+                cookie["name"]
+                for cookie in cache.get_for_url(scope, "https://ai.example.edu")
+            ],
+            ["sibling"],
+        )
+        self.assertEqual(
+            [cookie["name"] for cookie in cache.get_for_url(scope, "https://other.edu")],
+            ["unrelated"],
+        )
