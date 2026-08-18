@@ -16,7 +16,7 @@
 
 SMTP 和 IMAP 密码请填授权码（应用专用密码），不要填邮箱登录密码。可在邮箱设置、账户安全或客户端授权页面中获取。
 
-### 邮箱授权码教程
+### 邮箱授权码教程 {#mail-authorization-code}
 
 <details class="mail-guide">
 <summary>163 邮箱：开启 IMAP/SMTP 并获取授权码</summary>
@@ -86,7 +86,7 @@ SMTP 和 IMAP 密码请填授权码（应用专用密码），不要填邮箱登
 
 保存后，点击 SMTP 和 IMAP 测试按钮。两项都通过后，再进入下一步。
 
-## 2. 配置模型
+## 2. 配置模型 {#llm-configuration}
 
 在“个人中心”的模型配置中添加一套 OpenAI 兼容模型配置。
 
