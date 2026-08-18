@@ -157,6 +157,10 @@ DYNAMIC_DIRECTORY_READY_TIMEOUT_MS = 5000
 DYNAMIC_DIRECTORY_READY_POLL_MS = 200
 DYNAMIC_DIRECTORY_STABLE_MS = 500
 DYNAMIC_DIRECTORY_MAX_RETRIES = 1
+BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS = 1.0
+BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS = 80
+BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS = 8_000
+BROWSER_SPARSE_DIRECTORY_MAX_LINKS = 5
 DYNAMIC_PROFILE_READY_TIMEOUT_MS = 10000
 DYNAMIC_PROFILE_READY_POLL_MS = 200
 DYNAMIC_PROFILE_STABLE_MS = 400
@@ -2322,7 +2326,8 @@ async def _try_playwright_browser_fetch(
     options: BrowserFetchOptions,
 ) -> PageSnapshot:
     last_result: PageSnapshot | None = None
-    for _attempt in range(max(0, options.max_retries) + 1):
+    max_attempts = max(0, options.max_retries) + 1
+    for attempt in range(max_attempts):
         last_result = await _try_playwright_browser_fetch_once(absolute_url, options)
         if (
             not options.ignore_https_errors
@@ -2339,6 +2344,19 @@ async def _try_playwright_browser_fetch(
             )
         if _is_immediate_http_compatibility_error(absolute_url, last_result):
             return last_result
+        if _looks_like_sparse_browser_directory_shell(last_result, options=options):
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS)
+                continue
+            return last_result.model_copy(
+                update={
+                    "status": "failed",
+                    "error_message": (
+                        "Playwright browser fetch returned sparse directory shell after retry"
+                    ),
+                    "suspicious_empty": True,
+                }
+            )
         if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
             return last_result
     return last_result or _failed_snapshot(
@@ -2436,9 +2454,30 @@ async def _try_playwright_browser_fetch_once(
         embedded_documents=embedded_documents,
     )
     snapshot.http_status_code = http_status_code
+    if _looks_like_sparse_browser_directory_shell(snapshot, options=options):
+        snapshot.suspicious_empty = True
     if options.wait_for_dynamic_profile and not profile_ready:
         snapshot.suspicious_empty = True
     return snapshot
+
+
+def _looks_like_sparse_browser_directory_shell(
+    snapshot: PageSnapshot,
+    *,
+    options: BrowserFetchOptions,
+) -> bool:
+    if (
+        not options.wait_for_dynamic_directory
+        or snapshot.status != "succeeded"
+        or snapshot.http_status_code not in BROWSER_FALLBACK_STATUS
+    ):
+        return False
+    normalized_text = " ".join((snapshot.text or "").split())
+    return (
+        len(normalized_text) <= BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS
+        and len(snapshot.html or "") <= BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS
+        and len(set(snapshot.links or ())) <= BROWSER_SPARSE_DIRECTORY_MAX_LINKS
+    )
 
 
 async def _collect_browser_embedded_documents(

@@ -465,6 +465,114 @@ class CrawlerToolTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_playwright_browser_fetch_retries_sparse_restricted_directory_shell(self) -> None:
+        async def run() -> None:
+            shell = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="English 登录",
+                html="<html><body><a href='/en'>English</a><a href='/login'>登录</a></body></html>",
+                links=["https://example.edu/en", "https://example.edu/login"],
+                fetch_method="browser",
+                status="succeeded",
+                http_status_code=412,
+                suspicious_empty=True,
+            )
+            complete = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="教授名单 张三 李四 王五 个人主页 联系方式" * 10,
+                html="<html><body>完整教师目录</body></html>",
+                links=[f"https://example.edu/teacher/{index}" for index in range(12)],
+                fetch_method="browser",
+                status="succeeded",
+                http_status_code=412,
+            )
+            options = crawler_tools._browser_fetch_options_for_intent("directory")
+
+            with patch(
+                "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                new=AsyncMock(side_effect=[shell, complete]),
+            ) as fetch_once, patch(
+                "app.modules.crawler.pages.tools.asyncio.sleep",
+                new=AsyncMock(),
+            ) as sleep:
+                actual = await crawler_tools._try_playwright_browser_fetch(
+                    shell.url,
+                    options,
+                )
+
+            self.assertEqual(actual, complete)
+            self.assertEqual(fetch_once.await_count, 2)
+            sleep.assert_awaited_once_with(
+                crawler_tools.BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS
+            )
+
+        asyncio.run(run())
+
+    def test_playwright_browser_fetch_fails_when_directory_shell_remains_sparse(self) -> None:
+        async def run() -> None:
+            shell = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="English 登录",
+                html="<html><body><a href='/en'>English</a><a href='/login'>登录</a></body></html>",
+                links=["https://example.edu/en", "https://example.edu/login"],
+                fetch_method="browser",
+                status="succeeded",
+                http_status_code=412,
+                suspicious_empty=True,
+            )
+            options = crawler_tools._browser_fetch_options_for_intent("directory")
+
+            with patch(
+                "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                new=AsyncMock(side_effect=[shell, shell]),
+            ) as fetch_once, patch(
+                "app.modules.crawler.pages.tools.asyncio.sleep",
+                new=AsyncMock(),
+            ):
+                actual = await crawler_tools._try_playwright_browser_fetch(
+                    shell.url,
+                    options,
+                )
+
+            self.assertEqual(fetch_once.await_count, 2)
+            self.assertEqual(actual.status, "failed")
+            self.assertTrue(actual.suspicious_empty)
+            self.assertEqual(actual.http_status_code, 412)
+            self.assertIn("sparse directory shell after retry", actual.error_message or "")
+
+        asyncio.run(run())
+
+    def test_playwright_browser_fetch_accepts_complete_restricted_directory(self) -> None:
+        async def run() -> None:
+            complete = PageSnapshot(
+                url="https://example.edu/faculty",
+                text="教授名单 张三 李四 王五 个人主页 联系方式" * 10,
+                html="<html><body>完整教师目录</body></html>",
+                links=[f"https://example.edu/teacher/{index}" for index in range(12)],
+                fetch_method="browser",
+                status="succeeded",
+                http_status_code=412,
+            )
+            options = crawler_tools._browser_fetch_options_for_intent("directory")
+
+            with patch(
+                "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                new=AsyncMock(return_value=complete),
+            ) as fetch_once, patch(
+                "app.modules.crawler.pages.tools.asyncio.sleep",
+                new=AsyncMock(),
+            ) as sleep:
+                actual = await crawler_tools._try_playwright_browser_fetch(
+                    complete.url,
+                    options,
+                )
+
+            self.assertEqual(actual, complete)
+            fetch_once.assert_awaited_once()
+            sleep.assert_not_awaited()
+
+        asyncio.run(run())
+
     def test_browser_pagination_retries_date_error_once_in_compatibility_mode(self) -> None:
         async def run() -> None:
             failed = crawler_tools.BrowserPaginationExpansion(
