@@ -87,6 +87,24 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertNotIn("隐藏导航", snapshot.text)
         self.assertNotIn("fake0@example.edu", snapshot.text)
 
+    def test_terminal_fetch_skip_does_not_duplicate_existing_reason_prefix(self) -> None:
+        decision = crawler_tools.PageFetchDecision(
+            action="skip_terminal_failed",
+            normalized_url="https://example.edu/faculty",
+            message="该页面此前已明确抓取失败，已跳过：Playwright browser fetch failed",
+        )
+
+        snapshot = crawler_tools._snapshot_from_page_fetch_decision(
+            "https://example.edu/faculty",
+            decision,
+        )
+
+        assert snapshot is not None
+        self.assertEqual(
+            snapshot.error_message,
+            "该页面此前已明确抓取失败，已跳过：Playwright browser fetch failed",
+        )
+
     def test_unavailable_profile_requires_http_status_or_matching_error_page(self) -> None:
         http_404 = PageSnapshot(
             url="https://example.edu/missing",
@@ -1741,6 +1759,45 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(page.wait_for_timeout.await_count, 2)
 
         asyncio.run(run())
+
+    async def test_dynamic_directory_browser_retries_content_during_navigation(self) -> None:
+        shell_html = "<html><body><main></main></body></html>"
+        ready_html = """
+        <html><body><main class="content">
+          <ul class="teacher-list"><li><a href="/zhang">张三</a></li></ul>
+        </main></body></html>
+        """
+        page = SimpleNamespace(
+            url="https://example.edu/faculty",
+            content=AsyncMock(
+                side_effect=[
+                    shell_html,
+                    RuntimeError(
+                        "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                    ),
+                    ready_html,
+                    ready_html,
+                    ready_html,
+                ]
+            ),
+            wait_for_timeout=AsyncMock(),
+        )
+        options = crawler_tools.BrowserFetchOptions(
+            wait_for_dynamic_directory=True,
+            dynamic_directory_ready_timeout_ms=1000,
+            dynamic_directory_ready_poll_ms=100,
+            dynamic_directory_stable_ms=200,
+        )
+
+        html, ready = await crawler_tools._wait_for_dynamic_directory_html(
+            page,
+            absolute_url=page.url,
+            options=options,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(html, ready_html)
+        self.assertEqual(page.content.await_count, 5)
 
     def test_profile_meaningful_content_accepts_email_or_substantial_text(self) -> None:
         self.assertFalse(

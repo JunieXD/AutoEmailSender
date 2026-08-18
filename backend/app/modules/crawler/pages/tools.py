@@ -184,6 +184,10 @@ HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "timeout",
     "certificate",
 )
+_BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS = (
+    "page.content",
+    "page is navigating",
+)
 IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "err_connection_closed",
     "err_connection_refused",
@@ -1319,10 +1323,15 @@ async def fetch_binary_resource(
 
 def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) -> PageSnapshot | None:
     if decision.action == "skip_terminal_failed":
+        message = decision.message or decision.terminal_reason or "terminal_failed"
+        if message.startswith("该页面此前已明确抓取失败，已跳过："):
+            error_message = message
+        else:
+            error_message = f"该页面此前已明确抓取失败，已跳过：{message}"
         return _failed_snapshot(
             url=url,
             fetch_method="ledger",
-            error_message=f"该页面此前已明确抓取失败，已跳过：{decision.message or decision.terminal_reason or 'terminal_failed'}",
+            error_message=error_message,
         )
     if decision.action == "skip_processed":
         return _failed_snapshot(
@@ -2487,32 +2496,37 @@ async def _wait_for_dynamic_directory_html(
     best_quality: tuple[int, int, int] = (-1, -1, -1)
 
     while True:
-        latest_html = await page.content()
-        final_url = str(getattr(page, "url", "") or absolute_url)
-        snapshot = _snapshot_from_browser_html(
-            html=latest_html,
-            final_url=final_url,
-            absolute_url=absolute_url,
-        )
-        quality = _dynamic_directory_snapshot_quality(snapshot)
-        if quality > best_quality:
-            best_html = latest_html
-            best_quality = quality
-        if (
-            snapshot.status == "succeeded"
-            and not looks_like_unrendered_dynamic_teacher_directory(snapshot)
-        ):
-            signature = _dynamic_directory_render_signature(snapshot)
-            if signature == ready_signature:
-                stable_elapsed_ms += poll_ms
-            else:
-                ready_signature = signature
-                stable_elapsed_ms = 0
-            if stable_elapsed_ms >= stable_ms:
-                return best_html or latest_html, True
-        else:
+        latest_html = await _try_read_browser_page_content(page)
+        if latest_html is None:
             ready_signature = None
             stable_elapsed_ms = 0
+        else:
+            final_url = str(getattr(page, "url", "") or absolute_url)
+            snapshot = _snapshot_from_browser_html(
+                html=latest_html,
+                final_url=final_url,
+                absolute_url=absolute_url,
+            )
+            quality = _dynamic_directory_snapshot_quality(snapshot)
+            if quality > best_quality:
+                best_html = latest_html
+                best_quality = quality
+            if (
+                snapshot.status == "succeeded"
+                and not snapshot.suspicious_empty
+                and not looks_like_unrendered_dynamic_teacher_directory(snapshot)
+            ):
+                signature = _dynamic_directory_render_signature(snapshot)
+                if signature == ready_signature:
+                    stable_elapsed_ms += poll_ms
+                else:
+                    ready_signature = signature
+                    stable_elapsed_ms = 0
+                if stable_elapsed_ms >= stable_ms:
+                    return best_html or latest_html, True
+            else:
+                stable_elapsed_ms = 0
+                ready_signature = None
 
         if elapsed_ms >= timeout_ms:
             return best_html or latest_html, False
@@ -2548,30 +2562,34 @@ async def _wait_for_dynamic_profile_html(
     best_quality: tuple[int, int, int] = (-1, -1, -1)
 
     while True:
-        latest_html = await page.content()
-        final_url = str(getattr(page, "url", "") or absolute_url)
-        snapshot = _snapshot_from_browser_html(
-            html=latest_html,
-            final_url=final_url,
-            absolute_url=absolute_url,
-        )
-        quality = _dynamic_profile_snapshot_quality(snapshot)
-        if quality > best_quality:
-            best_html = latest_html
-            best_quality = quality
-
-        if profile_text_has_meaningful_content(snapshot.text):
-            signature = _dynamic_directory_render_signature(snapshot)
-            if signature == ready_signature:
-                stable_elapsed_ms += poll_ms
-            else:
-                ready_signature = signature
-                stable_elapsed_ms = 0
-            if stable_elapsed_ms >= stable_ms:
-                return latest_html, True
-        else:
+        latest_html = await _try_read_browser_page_content(page)
+        if latest_html is None:
             ready_signature = None
             stable_elapsed_ms = 0
+        else:
+            final_url = str(getattr(page, "url", "") or absolute_url)
+            snapshot = _snapshot_from_browser_html(
+                html=latest_html,
+                final_url=final_url,
+                absolute_url=absolute_url,
+            )
+            quality = _dynamic_profile_snapshot_quality(snapshot)
+            if quality > best_quality:
+                best_html = latest_html
+                best_quality = quality
+
+            if profile_text_has_meaningful_content(snapshot.text):
+                signature = _dynamic_directory_render_signature(snapshot)
+                if signature == ready_signature:
+                    stable_elapsed_ms += poll_ms
+                else:
+                    ready_signature = signature
+                    stable_elapsed_ms = 0
+                if stable_elapsed_ms >= stable_ms:
+                    return latest_html, True
+            else:
+                stable_elapsed_ms = 0
+                ready_signature = None
 
         if elapsed_ms >= timeout_ms:
             return best_html or latest_html, False
@@ -2603,6 +2621,20 @@ def _dynamic_profile_snapshot_quality(snapshot: PageSnapshot) -> tuple[int, int,
 def _dynamic_directory_render_signature(snapshot: PageSnapshot) -> str:
     content = snapshot.text + "\0" + "\n".join(snapshot.links)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _is_browser_content_navigation_error(exc: BaseException) -> bool:
+    normalized = str(exc).casefold()
+    return all(marker in normalized for marker in _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS)
+
+
+async def _try_read_browser_page_content(page: Any) -> str | None:
+    try:
+        return await page.content()
+    except Exception as exc:
+        if _is_browser_content_navigation_error(exc):
+            return None
+        raise
 
 def _is_wait_condition_failure(message: str | None) -> bool:
     normalized_message = (message or "").lower()

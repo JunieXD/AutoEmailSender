@@ -949,6 +949,7 @@ def _snapshot_debug_payload(snapshot: PageSnapshot) -> dict[str, object]:
     return {
         "url": snapshot.url,
         "status": snapshot.status,
+        "http_status_code": snapshot.http_status_code,
         "title": getattr(snapshot, "title", None),
         "fetch_method": snapshot.fetch_method,
         "error_message": snapshot.error_message,
