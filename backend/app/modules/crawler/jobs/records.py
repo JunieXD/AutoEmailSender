@@ -21,6 +21,7 @@ from app.models import (
     CrawlPage,
     CrawlPageChunk,
     CrawlPageChunkStatus,
+    CrawlPageFetchState,
     CrawlPageTask,
     CrawlPageTaskStatus,
     CrawlWorkerTokenUsage,
@@ -822,6 +823,11 @@ async def retry_faculty_crawl_job_record(
         ),
     )
     await session.execute(delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id))
+    # A user-requested retry must revisit the web pages instead of reusing a
+    # previous run's terminal/transient fetch ledger.
+    await session.execute(
+        delete(CrawlPageFetchState).where(CrawlPageFetchState.job_id == job.id),
+    )
     if payload.clear_existing_data:
         await session.execute(
             delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),

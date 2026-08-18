@@ -25,6 +25,7 @@ from app.models import (
     CrawlPage,
     CrawlPageChunk,
     CrawlPageChunkStatus,
+    CrawlPageFetchState,
     CrawlPageTask,
     CrawlPageTaskStatus,
     CrawlCandidateEnrichmentTask,
@@ -990,6 +991,11 @@ async def retry_crawl_job(
     )
     await session.execute(
         delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
+    )
+    # An explicit retry is a fresh web-crawl attempt.  Do not let a previous
+    # terminal/transient fetch decision short-circuit the new run.
+    await session.execute(
+        delete(CrawlPageFetchState).where(CrawlPageFetchState.job_id == job.id),
     )
     if payload.clear_existing_data:
         await session.execute(

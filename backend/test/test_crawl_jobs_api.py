@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import closing
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -1262,6 +1263,50 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self._count_page_chunks(job_id), 0)
+
+    def test_retry_crawl_job_clears_previous_page_fetch_ledger(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        self._set_job_status(job_id, "failed")
+
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO crawl_page_fetch_states
+                    (job_id, normalized_url, original_url, status,
+                     transient_failure_count, terminal_reason, last_error_message)
+                VALUES (?, ?, ?, 'terminal_failed', 2, ?, ?)
+                """,
+                (
+                    job_id,
+                    "https://example.edu/faculty",
+                    "https://example.edu/faculty",
+                    "transient_retry_exhausted",
+                    "旧轮次失败",
+                ),
+            )
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/retry",
+            json={"clear_existing_data": False},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            state_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_page_fetch_states WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        self.assertEqual(state_count, 0)
 
     def test_crawl_job_events_include_status_trace_page_and_candidate_messages(self) -> None:
         create_response = self.client.post(

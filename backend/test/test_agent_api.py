@@ -3204,6 +3204,21 @@ class AgentApiTests(unittest.TestCase):
                 """,
                 (job_id, "待清空候选", "retry-candidate@example.edu"),
             )
+            connection.execute(
+                """
+                INSERT INTO crawl_page_fetch_states
+                    (job_id, normalized_url, original_url, status,
+                     transient_failure_count, terminal_reason, last_error_message)
+                VALUES (?, ?, ?, 'terminal_failed', 2, ?, ?)
+                """,
+                (
+                    job_id,
+                    "https://example.edu/faculty",
+                    "https://example.edu/faculty",
+                    "transient_retry_exhausted",
+                    "旧轮次失败",
+                ),
+            )
             connection.commit()
 
         headers = {**self._agent_headers(), "Idempotency-Key": "crawl-retry-plan"}
@@ -3277,6 +3292,10 @@ class AgentApiTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM crawl_page_tasks WHERE job_id = ?",
                 (job_id,),
             ).fetchone()[0]
+            fetch_state_count = connection.execute(
+                "SELECT COUNT(*) FROM crawl_page_fetch_states WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
             status_value = connection.execute(
                 "SELECT status FROM crawl_jobs WHERE id = ?",
                 (job_id,),
@@ -3290,6 +3309,7 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(candidate_count, 0)
         self.assertEqual(page_count, 0)
         self.assertEqual(page_task_count, 1)
+        self.assertEqual(fetch_state_count, 0)
         self.assertEqual(status_value, "queued")
         self.assertEqual(retry_log_count, 1)
 
