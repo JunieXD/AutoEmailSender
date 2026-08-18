@@ -367,25 +367,25 @@ const createDefaultTaskListFilters = (): TaskListFilters => ({
   batch: {
     keyword: "",
     searchScopes: getDefaultTaskSearchScopes("batch"),
-    sortKey: "updated",
+    sortKey: "created",
     status: "all",
   },
   crawl: {
     keyword: "",
     searchScopes: getDefaultTaskSearchScopes("crawl"),
-    sortKey: "updated",
+    sortKey: "created",
     status: "all",
   },
   match: {
     keyword: "",
     searchScopes: getDefaultTaskSearchScopes("match"),
-    sortKey: "updated",
+    sortKey: "created",
     status: "all",
   },
   enrichment: {
     keyword: "",
     searchScopes: getDefaultTaskSearchScopes("enrichment"),
-    sortKey: "updated",
+    sortKey: "created",
     status: "all",
   },
 });
@@ -5278,7 +5278,7 @@ export const BackgroundTasksPage = ({
               selectedLabel={`${
                 TASK_SORT_OPTIONS.find(
                   (option) => option.value === activeTaskListFilters.sortKey,
-                )?.label ?? "最近更新"
+                )?.label ?? "创建时间"
               } ${activeTaskSortDirection === "desc" ? "↓" : "↑"}`}
               onChange={(event) =>
                 updateActiveTaskListFilters({

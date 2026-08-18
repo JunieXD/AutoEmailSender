@@ -349,6 +349,15 @@ describe("TasksPage layout", () => {
     });
     expect(sortControl).toHaveClass("h-12");
     expect(sortButton).not.toHaveClass("ui-select-shell");
+    expect(sortButton).toHaveTextContent("创建时间 ↓");
+
+    for (const tabName of ["智能抓取", "匹配分析", "信息补全"]) {
+      fireEvent.click(screen.getByRole("button", { name: tabName }));
+      expect(screen.getByRole("button", { name: "任务排序" })).toHaveTextContent(
+        "创建时间 ↓",
+      );
+    }
+
     expect(within(toolbar).getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "重置" })).toBeInTheDocument();
   });
@@ -392,29 +401,31 @@ describe("TasksPage layout", () => {
   });
 
   it("searches, sorts, and filters the active task type", async () => {
-    const alphabeticalFirstTask = {
+    const newestCreatedTask = {
       ...buildTask(1),
-      name: "甲组申请",
+      name: "乙组申请",
+      created_at: "2026-04-27T10:00:00Z",
       updated_at: "2026-04-25T11:00:00Z",
     };
-    const recentlyCompletedTask = {
+    const olderCreatedTask = {
       ...buildTask(2),
-      name: "乙组专项申请",
+      name: "甲组专项申请",
       email_subject: "海外合作专项主题",
       status: "completed" as const,
       completed_count: 10,
+      created_at: "2026-04-25T10:00:00Z",
       updated_at: "2026-04-27T11:00:00Z",
     };
     vi.mocked(listBatchTasks).mockResolvedValue([
-      alphabeticalFirstTask,
-      recentlyCompletedTask,
+      olderCreatedTask,
+      newestCreatedTask,
     ]);
 
     renderPage();
 
-    await screen.findByText("乙组专项申请");
+    await screen.findByText("乙组申请");
     expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent(
-      "乙组专项申请",
+      "乙组申请",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "任务排序" }));
@@ -426,7 +437,7 @@ describe("TasksPage layout", () => {
     );
     await waitFor(() => {
       expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent(
-        "甲组申请",
+        "甲组专项申请",
       );
     });
 
@@ -445,9 +456,9 @@ describe("TasksPage layout", () => {
       target: { value: "海外合作" },
     });
     await waitFor(() => {
-      expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+      expect(screen.getByText("甲组专项申请")).toBeInTheDocument();
     });
-    expect(screen.queryByText("甲组申请")).not.toBeInTheDocument();
+    expect(screen.queryByText("乙组申请")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "重置" }));
     fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
@@ -455,16 +466,16 @@ describe("TasksPage layout", () => {
     fireEvent.click(screen.getByRole("option", { name: "已完成" }));
 
     await waitFor(() => {
-      expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+      expect(screen.getByText("甲组专项申请")).toBeInTheDocument();
     });
-    expect(screen.queryByText("甲组申请")).not.toBeInTheDocument();
+    expect(screen.queryByText("乙组申请")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "高级筛选 1" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "重置" }));
     await waitFor(() => {
-      expect(screen.getByText("甲组申请")).toBeInTheDocument();
+      expect(screen.getByText("乙组申请")).toBeInTheDocument();
     });
-    expect(screen.getByText("乙组专项申请")).toBeInTheDocument();
+    expect(screen.getByText("甲组专项申请")).toBeInTheDocument();
     expect(screen.queryByTestId("task-advanced-filters")).not.toBeInTheDocument();
   });
 
