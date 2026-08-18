@@ -190,15 +190,24 @@ SYSTEM_DRAFT_REWRITE_PROMPT = dedent(
     """
     你是研究生套磁邮件改写助理。基于 input.source_blocks 改写，不从零重写。
 
-    输出协议优先：只输出 JSON；replacements 按原序列出 locked=false 且非 table 的修改块，每项仅含 segment_id 和完整段落 text，删除时 text 为空。不得合并、拆分或重排；[[S1]]、[[/S1]] 标记和 [[P1]] 占位符须原样、成对、有序保留；标记内正文可改写。
+    输出协议最高优先级：
+    - 只输出一个 JSON 对象，顶层仅含 replacements；不要输出解释、Markdown、HTML、subject 或完整正文。
+    - replacements 必须为数组；每项必须为 JSON 对象，禁止字符串、数字、数组或 null。
+    - 每项仅含字符串 segment_id 和字符串 text。segment_id 只能原样取自 input.source_blocks 中 locked=false 且非 table 的块，不能使用索引、负数或内部字段名。
+    - 只列需要修改的块并保持原顺序；删除块时 text 使用空字符串。不得合并、拆分或重排块。
+    - [[S1]]、[[/S1]] 标记和 [[P1]] 占位符须原样、成对、有序保留；标记内正文可以改写。
 
-    user_custom_instruction 是最高优先级的内容要求，除非它破坏输出协议，否则必须优先、完整执行。未被它覆盖且 input.default_personalization_task 存在时，必须执行该任务并产生实质修改。
+    user_custom_instruction 是最高优先级的内容要求，除非它破坏输出协议，否则必须优先、完整执行。未被它覆盖且 input.professor.research_direction 存在时，必须完成至少一处可见、实质的导师方向个性化，不能原样返回。
 
-    默认个性化基于原信和资料。有学生经历时就地结合；无直接依据时在最自然处克制表达兴趣。每个契合点只表达一次。
+    默认个性化规则：
+    - 导师称呼沿用 input.professor.name；仅当末尾括号明显是职称时，例如“程炜（研究员）”，可省略括号。数字或字母也视为姓名的一部分；不要用学生姓名替换导师姓名，也不要猜测或纠正姓名。
+    - 范围随原信，可概括或结合多个有依据的方向，位置和数量以自然为准。每个契合点放入唯一、最合适的 segment_id，只表达一次，不输出规划过程。
+    - 有直接学生经历时在相关段落就地结合；无直接依据时，在最自然处克制表达一次兴趣或学习意愿。
+    - professor 只有短标签或宽泛词时，只按字面呼应；最多一个 replacement 可以新增该标签，其余段落不再提及，也不扩展子方向、技术问题或应用。
 
-    学生事实只依据 student_material_text 和 source_blocks，导师事实只依据 professor；不补充材料未明说的工具、方法、任务、结果或认知，也不因共享“大模型”“人工智能”等宽泛词就建立技术关联。可以表达关注或学习意愿，但不要写成长久关注、正在学习或研究、高度契合、具体研究计划或应用设想。日期、年份、时间及其格式不应修改；人物身份、数字结果、专有名称、联系方式和附件信息一般不改。导师姓名一般不改，数字或字母也视为姓名的一部分，不要用学生姓名替换导师姓名；只有末尾括号明显为职称时，例如“程炜（研究员）”，称呼可省略括号内容，除此之外不要猜测或纠正姓名。
+    学生事实只依据 student_material_text 和 source_blocks，导师事实只依据 professor；不补充材料未明说的工具、方法、任务、结果或认知，也不因共享“大模型”“人工智能”等宽泛词就建立技术关联，不写“相通之处”“潜在联系”或“高度契合”。可以表达关注或学习意愿，但不要写成长久关注、正在学习或研究、具体研究计划或应用设想。日期、年份、时间及其格式不应修改；人物身份、数字结果、专有名称、联系方式和附件信息一般不改。
 
-    方向短而自然时沿用；长、多、像清单时才改写列表本身。“上位领域（多个细分方向）”这类写法转成自然层级表述，不照搬括号清单；多个有依据的方向均可保留。
+    如果 source_blocks 已展开 research_direction：方向短而自然时沿用；长、多、层级密集或像清单时，直接用自然研究重心改写列表本身，不要保留整表后只追加说明，先改列表再补充学生联系。“上位领域（多个细分方向）”这类写法转成自然层级表述，不照搬括号清单；位于 [[S数字]] 内时保留标记，多个有依据的方向均可保留。最后删除重复、无依据或无关内容，并确认有实质修改。
 
     输出示例：{"replacements":[{"segment_id":"seg_1","text":"我在[[S1]]项目实践[[/S1]]中积累了相关经验。"}]}
     """
@@ -1955,11 +1964,12 @@ def build_draft_rewrite_prompt_parts(
     preferences = rewrite_preferences or DraftRewritePreferences()
     protected_tokens = protected_tokens or []
     instructions = [
-        "只返回符合 response_schema 的 JSON 对象，不要输出解释、Markdown、HTML 或完整正文。",
-        "不要返回 subject。",
-        "replacements 只列需要修改的可编辑块（locked=false 且非 table），按原顺序；每项只含 segment_id 和完整连续段落 text，删除时 text 为空。",
+        "只返回 response_schema 形状的 JSON，不要输出解释、Markdown、HTML、subject 或完整正文。",
+        "顶层仅含 replacements；每项必须是仅含字符串 segment_id 和字符串 text 的对象，禁止其他类型或字段。",
+        "segment_id 必须来自可编辑 source_blocks，不能使用索引、负数或内部字段名。",
+        "replacements 只列需要修改的可编辑块（locked=false 且非 table），按原顺序；text 是完整连续段落，删除时为空字符串。",
         "保留全部成对、有序的 [[S数字]]...[[/S数字]] 样式标记和 [[P数字]] 占位符；不要合并、拆分或重排块。",
-        "user_custom_instruction 是最高优先级的内容要求；未覆盖的内容必须执行 default_personalization_task。",
+        "user_custom_instruction 是最高优先级的内容要求；未覆盖且 professor.research_direction 存在时，必须完成至少一处实质个性化。",
     ]
     response_schema: dict[str, object] = {
         "replacements": [
@@ -1984,6 +1994,11 @@ def build_draft_rewrite_prompt_parts(
         "instructions": instructions,
         "response_schema": response_schema,
         "input": prompt_input,
+        "output_reminder": (
+            "最终只返回顶层仅含 replacements 的 JSON 对象；每项必须是仅含字符串 segment_id 和"
+            "字符串 text 的对象，禁止字符串、数字、数组或 null。segment_id 必须来自可编辑"
+            " source_blocks；不要输出内部字段名、规划、索引或说明。"
+        ),
     }
     if not prompt_input["rewrite_preferences"]:
         del prompt_input["rewrite_preferences"]
@@ -2004,9 +2019,6 @@ def build_draft_rewrite_prompt_parts(
         for token in protected_tokens
     ]
     prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
-    default_personalization_task = _build_draft_rewrite_default_personalization_task(professor)
-    if default_personalization_task:
-        prompt_input["default_personalization_task"] = default_personalization_task
 
     prompt = json.dumps(payload, ensure_ascii=False, indent=2)
     return DraftRewritePromptParts(
@@ -2180,27 +2192,10 @@ def _build_draft_rewrite_professor_context(
     return context
 
 
-def _build_draft_rewrite_default_personalization_task(
-    professor: Professor,
-) -> dict[str, object]:
-    if _non_empty_text(professor.research_direction) is None:
-        return {}
-
-    return {
-        "objective": "至少完成一处可见、实质的导师方向个性化，不能原样返回。",
-        "professor_name": "导师称呼沿用 professor.name；仅可省略末尾职称括号。",
-        "scope": "范围随原信，可概括或结合多个有依据的方向；位置、多少以自然为准。",
-        "planning": "判断学生材料支持的契合点；多个点各放入唯一、最合适的 segment_id；不要输出规划。",
-        "placement": "有直接经历时就地结合；无直接经历时在最自然处克制表达一次兴趣或学习意愿。",
-        "sparse_professor_context": "professor 只有短标签或宽泛词时，只按字面呼应；仅一个 replacement 可新增该标签，其余不提，也不扩展子方向、技术问题或应用。",
-        "fact_boundary": "学生事实只用输入中明说的内容；宽泛词重合不代表研究任务相关。不补工具、方法、结果或技术联系，不写“相通之处”“潜在联系”“高度契合”。",
-        "direction_in_source": "如果 source_blocks 已展开 research_direction：短而自然则保留；长、多、像清单时，直接用自然研究重心替换列表文字；位于 [[S数字]] 内则保留标记。不要保留整表后只追加说明；先改列表，再补充学生联系。",
-        "final_check": "检查方向段落：短而自然的不动；长、多或层级密集且仍像清单时，改写列表本身，不只在后面追加说明。再删去重复、无依据或无关内容，并确认有实质修改。",
-    }
-
 def _serialize_draft_rewrite_preferences(preferences: DraftRewritePreferences) -> dict[str, str]:
     _ = preferences
     return {}
+
 
 def _format_professor_info_block(professor: Professor) -> str:
     context = _build_professor_prompt_context(professor)
@@ -2263,7 +2258,7 @@ def _build_draft_rewrite_prompt_cache_key(
     identity_id = identity.id if identity.id is not None else "none"
     material_id = primary_material.id if primary_material is not None else "none"
     return (
-        f"draft-rewrite:v5:{identity_id}:{material_id}:{llm_profile.id}:"
+        f"draft-rewrite:v6:{identity_id}:{material_id}:{llm_profile.id}:"
         f"{stable_prefix_hash[:16]}"
     )
 

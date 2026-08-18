@@ -1378,10 +1378,16 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("task", payload)
         self.assertNotIn("prompt_version", payload)
         self.assertNotIn("subject", payload["response_schema"])
-        self.assertIn("不要返回 subject。", payload["instructions"])
+        instructions_text = "\n".join(payload["instructions"])
+        self.assertIn("不要输出解释、Markdown、HTML、subject 或完整正文", instructions_text)
+        self.assertIn("每项必须是仅含字符串 segment_id 和字符串 text 的对象", instructions_text)
+        self.assertIn("禁止其他类型或字段", instructions_text)
+        self.assertIn("禁止字符串、数字、数组或 null", payload["output_reminder"])
         self.assertLess(prompt.index('"instructions"'), prompt.index('"input"'))
         self.assertLess(prompt.index('"response_schema"'), prompt.index('"input"'))
         self.assertLess(prompt.index('"input"'), prompt.rindex('"source_blocks"'))
+        self.assertLess(prompt.rindex('"professor"'), prompt.rindex('"output_reminder"'))
+        self.assertEqual(list(payload)[-1], "output_reminder")
         self.assertEqual(
             payload["input"]["professor"],
             {
@@ -1390,6 +1396,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(payload["input"]["student_material_text"], "我做过信息抽取与智能体相关研究。")
+        self.assertNotIn("default_personalization_task", payload["input"])
+        self.assertNotIn('"professor_name"', prompt)
         self.assertNotIn("current_match", payload["input"])
         self.assertNotIn("rewrite_preferences", payload["input"])
         self.assertNotIn("email_address", prompt)
@@ -1533,6 +1541,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("source_blocks", stable_input)
         self.assertNotIn("protected_tokens", stable_input)
         self.assertNotIn("professor", stable_input)
+        self.assertIn("每项必须是", stable_payload["output_reminder"])
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
         self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("professor"))
@@ -1543,7 +1552,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(parts.stable_prefix_hash), 64)
         self.assertEqual(
             parts.prompt_cache_key,
-            f"draft-rewrite:v5:1:12:7:{parts.stable_prefix_hash[:16]}",
+            f"draft-rewrite:v6:1:12:7:{parts.stable_prefix_hash[:16]}",
         )
         self.assertNotIn(":5:", parts.prompt_cache_key or "")
 
@@ -1737,41 +1746,16 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2024 年", prompt_text)
         self.assertIn("2026年5月21日", prompt_text)
         self.assertIn("日期、年份、时间及其格式不应修改", SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertIn("必须执行 default_personalization_task", instructions_text)
-        default_task = payload["input"]["default_personalization_task"]
-        self.assertNotIn("professor_direction_options", default_task)
-        self.assertIn("可见、实质的导师方向个性化", default_task["objective"])
-        self.assertIn("不能原样返回", default_task["objective"])
-        self.assertIn("导师称呼沿用 professor.name", default_task["professor_name"])
-        self.assertIn("仅可省略末尾职称括号", default_task["professor_name"])
-        self.assertIn("范围随原信", default_task["scope"])
-        self.assertIn("可概括或结合多个有依据的方向", default_task["scope"])
-        self.assertIn("位置、多少以自然为准", default_task["scope"])
-        self.assertIn("判断学生材料支持的契合点", default_task["planning"])
-        self.assertIn("多个点各放入唯一、最合适的 segment_id", default_task["planning"])
-        self.assertIn("不要输出规划", default_task["planning"])
-        self.assertIn("有直接经历时就地结合", default_task["placement"])
-        self.assertIn("最自然处克制表达一次兴趣或学习意愿", default_task["placement"])
-        self.assertIn("只有短标签或宽泛词时", default_task["sparse_professor_context"])
-        self.assertIn("仅一个 replacement 可新增该标签", default_task["sparse_professor_context"])
-        self.assertIn("其余不提", default_task["sparse_professor_context"])
-        self.assertIn("不扩展子方向、技术问题或应用", default_task["sparse_professor_context"])
-        self.assertIn("宽泛词重合不代表研究任务相关", default_task["fact_boundary"])
-        self.assertIn("不补工具、方法、结果或技术联系", default_task["fact_boundary"])
-        self.assertIn("相通之处", default_task["fact_boundary"])
-        self.assertIn("潜在联系", default_task["fact_boundary"])
-        self.assertIn("source_blocks 已展开 research_direction", default_task["direction_in_source"])
-        self.assertIn("短而自然则保留", default_task["direction_in_source"])
-        self.assertIn("长、多、像清单时", default_task["direction_in_source"])
-        self.assertIn("直接用自然研究重心替换列表文字", default_task["direction_in_source"])
-        self.assertIn("位于 [[S数字]] 内则保留标记", default_task["direction_in_source"])
-        self.assertIn("不要保留整表后只追加说明", default_task["direction_in_source"])
-        self.assertIn("先改列表", default_task["direction_in_source"])
-        self.assertIn("短而自然的不动", default_task["final_check"])
-        self.assertIn("长、多或层级密集且仍像清单时", default_task["final_check"])
-        self.assertIn("改写列表本身，不只在后面追加说明", default_task["final_check"])
-        self.assertIn("删去重复、无依据或无关内容", default_task["final_check"])
-        self.assertIn("确认有实质修改", default_task["final_check"])
+        self.assertNotIn("default_personalization_task", payload["input"])
+        self.assertNotIn('"professor_name"', prompt)
+        self.assertIn("professor.research_direction 存在时", instructions_text)
+        self.assertIn("至少一处实质个性化", instructions_text)
+        self.assertIn("每项必须是仅含字符串 segment_id 和字符串 text 的对象", instructions_text)
+        self.assertIn("禁止其他类型或字段", instructions_text)
+        self.assertIn("禁止字符串、数字、数组或 null", payload["output_reminder"])
+        self.assertIn("不能使用索引、负数或内部字段名", instructions_text)
+        self.assertEqual(list(payload)[-1], "output_reminder")
+        self.assertIn("不要输出内部字段名、规划、索引或说明", payload["output_reminder"])
 
     def test_draft_rewrite_prompts_use_soft_fact_anchors_by_default(self) -> None:
         system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
@@ -1779,20 +1763,29 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("user_custom_instruction", system_prompt)
         self.assertIn("最高优先级的内容要求", system_prompt)
         self.assertIn("未被它覆盖", system_prompt)
-        self.assertIn("必须执行该任务并产生实质修改", system_prompt)
-        self.assertIn("标记内正文可改写", system_prompt)
+        self.assertIn("必须完成至少一处可见、实质的导师方向个性化", system_prompt)
+        self.assertIn("每项必须为 JSON 对象", system_prompt)
+        self.assertIn("禁止字符串、数字、数组或 null", system_prompt)
+        self.assertIn("不能使用索引、负数或内部字段名", system_prompt)
+        self.assertIn("标记内正文可以改写", system_prompt)
         self.assertIn("方向短而自然时沿用", system_prompt)
-        self.assertIn("长、多、像清单时才改写列表本身", system_prompt)
+        self.assertIn("长、多、层级密集或像清单时", system_prompt)
+        self.assertIn("改写列表本身", system_prompt)
+        self.assertIn("先改列表再补充学生联系", system_prompt)
         self.assertIn("上位领域（多个细分方向）", system_prompt)
         self.assertIn("不照搬括号清单", system_prompt)
         self.assertIn("多个有依据的方向均可保留", system_prompt)
-        self.assertIn("有学生经历时就地结合", system_prompt)
-        self.assertIn("无直接依据时在最自然处克制表达兴趣", system_prompt)
-        self.assertIn("每个契合点只表达一次", system_prompt)
+        self.assertIn("有直接学生经历时在相关段落就地结合", system_prompt)
+        self.assertIn("最自然处克制表达一次兴趣或学习意愿", system_prompt)
+        self.assertIn("只表达一次", system_prompt)
+        self.assertIn("最多一个 replacement 可以新增该标签", system_prompt)
+        self.assertIn("不扩展子方向、技术问题或应用", system_prompt)
         self.assertIn("学生事实只依据 student_material_text 和 source_blocks", system_prompt)
         self.assertIn("导师事实只依据 professor", system_prompt)
         self.assertIn("不补充材料未明说的工具、方法、任务、结果或认知", system_prompt)
         self.assertIn("不因共享“大模型”“人工智能”等宽泛词就建立技术关联", system_prompt)
+        self.assertIn("相通之处", system_prompt)
+        self.assertIn("潜在联系", system_prompt)
         self.assertIn("不要写成长久关注", system_prompt)
         self.assertIn("具体研究计划或应用设想", system_prompt)
         self.assertIn("人物身份、数字结果", system_prompt)
@@ -1803,27 +1796,16 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("默认只改写一个", system_prompt)
         self.assertNotIn("选中方向原文", system_prompt)
 
-    def test_default_personalization_keeps_direction_and_scope_flexible(self) -> None:
-        from app.models import Professor
-        from app.modules.llm.runtime import (
-            _build_draft_rewrite_default_personalization_task,
-        )
+    def test_default_personalization_rules_are_static_and_not_nested_in_input(self) -> None:
+        system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
 
-        task = _build_draft_rewrite_default_personalization_task(
-            Professor(
-                name="李老师",
-                research_direction="机器学习系统，大模型训练与推理；联邦学习、数据中心网络",
-            ),
-        )
-
-        self.assertNotIn("professor_direction_options", task)
-        task_text = json.dumps(task, ensure_ascii=False)
-        self.assertIn("范围随原信", task_text)
-        self.assertIn("多个点各放入唯一、最合适的 segment_id", task_text)
-        self.assertIn("可概括或结合多个有依据的方向", task_text)
-        self.assertNotIn("只改写一个", task_text)
-        self.assertNotIn("选中方向原文", task_text)
-        self.assertNotIn("全量或接近全量复述视为未完成任务", task_text)
+        self.assertIn("范围随原信", system_prompt)
+        self.assertIn("可概括或结合多个有依据的方向", system_prompt)
+        self.assertIn("唯一、最合适的 segment_id", system_prompt)
+        self.assertIn("不输出规划过程", system_prompt)
+        self.assertNotIn("只改写一个", system_prompt)
+        self.assertNotIn("选中方向原文", system_prompt)
+        self.assertNotIn("professor_direction_options", system_prompt)
 
 
     def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
@@ -2037,7 +2019,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("{{name}}", prompt)
         self.assertEqual(
             payload["prompt_cache_key"],
-            f"draft-rewrite:v5:1:12:5:{result.stable_prefix_hash[:16]}",
+            f"draft-rewrite:v6:1:12:5:{result.stable_prefix_hash[:16]}",
         )
         self.assertIsNotNone(result.prompt_hash)
         self.assertIsNotNone(result.stable_prefix_hash)
