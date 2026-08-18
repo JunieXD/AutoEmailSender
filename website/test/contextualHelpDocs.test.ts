@@ -24,4 +24,11 @@ describe("contextual help documentation", () => {
     expect(relatedDocs).not.toContain("#邮箱授权码教程");
     expect(relatedDocs).not.toContain("#_2-配置模型");
   });
+
+  it("explains how to create and protect a DeepSeek API Key", () => {
+    expect(firstRun).toContain("https://platform.deepseek.com/api_keys");
+    expect(firstRun).toContain("点击“创建 API key”");
+    expect(firstRun).toContain("立即复制生成的密钥");
+    expect(firstRun).toContain("请不要发送给他人，也不要在截图中公开");
+  });
 });

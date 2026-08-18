@@ -99,6 +99,15 @@ SMTP 和 IMAP 密码请填授权码（应用专用密码），不要填邮箱登
 - **API Key：** 模型服务的密钥。
 - **模型名称：** 实际调用的模型名。
 
+### 获取 DeepSeek API Key
+
+1. 登录 [DeepSeek 开放平台](https://platform.deepseek.com/)。
+2. 打开 [API keys](https://platform.deepseek.com/api_keys)，点击“创建 API key”。
+3. 填写名称并创建，然后立即复制生成的密钥。关闭页面后通常无法再次查看完整密钥。
+4. 回到应用，将密钥粘贴到“API Key”。
+
+API Key 相当于模型账户密码，请不要发送给他人，也不要在截图中公开。
+
 尚未选定模型服务时，可以先试用 [DeepSeek](https://platform.deepseek.com/)。API Base URL 填 `https://api.deepseek.com`，模型名可用 `deepseek-v4-flash`；可用名称可能变化，请以平台当前列表为准。
 
 保存后，先获取模型列表，再测试模型。测试通过后，将该配置设为当前使用或默认模型。

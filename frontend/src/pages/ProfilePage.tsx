@@ -430,7 +430,9 @@ const ContextualHelpLink = ({
     }}
     className={clsx(
       "inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary underline decoration-primary/30 underline-offset-4 transition hover:bg-primary/5 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
-      compact ? "min-h-8 rounded-lg px-1" : "min-h-9 rounded-xl px-2.5",
+      compact
+        ? "min-h-0 rounded px-1 py-0 leading-5"
+        : "min-h-9 rounded-xl px-2.5",
       tone === "surface" &&
         "border border-stone-200 bg-white/90 no-underline shadow-sm hover:border-primary/25 hover:bg-white",
     )}
@@ -451,7 +453,7 @@ const FormFieldHeader = ({
   required?: boolean;
   help?: ReactNode;
 }) => (
-  <div className="mb-2 flex min-h-6 flex-wrap items-center justify-start gap-x-1 gap-y-1">
+  <div className="mb-2 flex min-h-[22px] flex-wrap items-center justify-start gap-x-1 gap-y-1">
     <label
       htmlFor={id}
       className="inline-flex items-center gap-1 text-sm font-medium text-stone-800"
@@ -506,22 +508,17 @@ function ProfileSetupSection({
       ref={sectionRef}
       className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm"
     >
-      <div className="flex flex-col sm:flex-row sm:items-stretch">
+      <div className="px-6 py-5 transition hover:bg-stone-50">
         <button
           type="button"
           aria-expanded={open}
           aria-controls={`${sectionId}-setup-content`}
           onClick={onToggle}
-          className="collapsible-card-toggle flex min-w-0 flex-1 items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-stone-50 active:bg-stone-50"
+          className="collapsible-card-toggle flex w-full min-w-0 items-center justify-between gap-4 text-left active:bg-stone-50"
         >
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
-              {badge}
-            </div>
-            {description ? (
-              <p className="mt-2 text-sm leading-6 text-stone-600">{description}</p>
-            ) : null}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
+            {badge}
           </div>
           <ChevronDown
             className={clsx(
@@ -530,8 +527,13 @@ function ProfileSetupSection({
             )}
           />
         </button>
-        {helpAction ? (
-          <div className="flex items-center px-6 pb-4 sm:border-l sm:border-stone-200 sm:px-5 sm:py-4">
+        {description || helpAction ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+            {description ? (
+              <p className="text-xs leading-5 text-stone-600 sm:text-sm sm:leading-6">
+                {description}
+              </p>
+            ) : null}
             {helpAction}
           </div>
         ) : null}
@@ -3527,7 +3529,10 @@ export const ProfilePage = () => {
               </span>
             }
             helpAction={
-              <ContextualHelpLink href={PROFILE_HELP_LINKS.mailAuthorization}>
+              <ContextualHelpLink
+                href={PROFILE_HELP_LINKS.mailAuthorization}
+                compact
+              >
                 邮箱配置教程
               </ContextualHelpLink>
             }
@@ -3775,7 +3780,10 @@ export const ProfilePage = () => {
               </span>
             }
             helpAction={
-              <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration}>
+              <ContextualHelpLink
+                href={PROFILE_HELP_LINKS.llmConfiguration}
+                compact
+              >
                 模型配置教程
               </ContextualHelpLink>
             }

@@ -366,6 +366,10 @@ describe("ProfilePage onboarding", () => {
       "href",
       PROFILE_HELP_LINKS.mailAuthorization,
     );
+    const mailDescription = screen.getByText("管理发件邮箱与收发设置。");
+    expect(mailGuide.parentElement).toBe(mailDescription.parentElement);
+    expect(mailGuide.parentElement).toHaveClass("gap-x-1", "flex-wrap");
+    expect(mailGuide).toHaveClass("min-h-0", "px-1", "leading-5");
     fireEvent.click(mailGuide);
     expect(mockedOpenExternalHttpUrl).toHaveBeenLastCalledWith(
       PROFILE_HELP_LINKS.mailAuthorization,
@@ -383,7 +387,13 @@ describe("ProfilePage onboarding", () => {
       "justify-start",
       "gap-x-1",
     );
-    expect(authorizationGuide).toHaveClass("min-h-8", "px-1");
+    expect(authorizationGuide.parentElement).toHaveClass("min-h-[22px]");
+    expect(authorizationGuide).toHaveClass(
+      "min-h-0",
+      "px-1",
+      "py-0",
+      "leading-5",
+    );
     expect(screen.getByText(/不是邮箱登录密码/)).toBeInTheDocument();
 
     const modelGuide = screen.getByRole("link", { name: "模型配置教程" });
@@ -391,6 +401,11 @@ describe("ProfilePage onboarding", () => {
       "href",
       PROFILE_HELP_LINKS.llmConfiguration,
     );
+    const modelDescription = screen.getByText(
+      "连接并测试用于写信的 AI 模型。",
+    );
+    expect(modelGuide.parentElement).toBe(modelDescription.parentElement);
+    expect(modelGuide).toHaveClass("min-h-0", "px-1", "leading-5");
     openSetupSection("模型配置");
     expect(
       screen.getByRole("link", { name: "查看填写示例" }),
