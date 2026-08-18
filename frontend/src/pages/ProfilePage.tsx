@@ -413,10 +413,12 @@ const ContextualHelpLink = ({
   href,
   children,
   tone = "quiet",
+  compact = false,
 }: {
   href: string;
   children: ReactNode;
   tone?: "quiet" | "surface";
+  compact?: boolean;
 }) => (
   <a
     href={href}
@@ -427,7 +429,8 @@ const ContextualHelpLink = ({
       openExternalHttpUrl(href);
     }}
     className={clsx(
-      "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium text-primary underline decoration-primary/30 underline-offset-4 transition hover:bg-primary/5 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
+      "inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary underline decoration-primary/30 underline-offset-4 transition hover:bg-primary/5 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
+      compact ? "min-h-8 rounded-lg px-1" : "min-h-9 rounded-xl px-2.5",
       tone === "surface" &&
         "border border-stone-200 bg-white/90 no-underline shadow-sm hover:border-primary/25 hover:bg-white",
     )}
@@ -448,7 +451,7 @@ const FormFieldHeader = ({
   required?: boolean;
   help?: ReactNode;
 }) => (
-  <div className="mb-2 flex min-h-6 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+  <div className="mb-2 flex min-h-6 flex-wrap items-center justify-start gap-x-1 gap-y-1">
     <label
       htmlFor={id}
       className="inline-flex items-center gap-1 text-sm font-medium text-stone-800"
@@ -3611,7 +3614,10 @@ export const ProfilePage = () => {
                   label="邮箱授权码"
                   required
                   help={
-                    <ContextualHelpLink href={PROFILE_HELP_LINKS.mailAuthorization}>
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.mailAuthorization}
+                      compact
+                    >
                       如何获取授权码
                     </ContextualHelpLink>
                   }
@@ -3824,7 +3830,10 @@ export const ProfilePage = () => {
                   label="API Base URL"
                   required
                   help={
-                    <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration}>
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.llmConfiguration}
+                      compact
+                    >
                       查看填写示例
                     </ContextualHelpLink>
                   }
@@ -3851,7 +3860,10 @@ export const ProfilePage = () => {
                   label="API Key"
                   required
                   help={
-                    <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration}>
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.llmConfiguration}
+                      compact
+                    >
                       如何获取 API Key
                     </ContextualHelpLink>
                   }

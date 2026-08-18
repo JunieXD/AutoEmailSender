@@ -372,9 +372,18 @@ describe("ProfilePage onboarding", () => {
     );
 
     openSetupSection("发件身份");
-    expect(
-      screen.getByRole("link", { name: "如何获取授权码" }),
-    ).toHaveAttribute("href", PROFILE_HELP_LINKS.mailAuthorization);
+    const authorizationGuide = screen.getByRole("link", {
+      name: "如何获取授权码",
+    });
+    expect(authorizationGuide).toHaveAttribute(
+      "href",
+      PROFILE_HELP_LINKS.mailAuthorization,
+    );
+    expect(authorizationGuide.parentElement).toHaveClass(
+      "justify-start",
+      "gap-x-1",
+    );
+    expect(authorizationGuide).toHaveClass("min-h-8", "px-1");
     expect(screen.getByText(/不是邮箱登录密码/)).toBeInTheDocument();
 
     const modelGuide = screen.getByRole("link", { name: "模型配置教程" });
