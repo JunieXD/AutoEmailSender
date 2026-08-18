@@ -96,10 +96,14 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             routing_context=context,
         )
 
-        self.assertIn("不依赖任何固定栏目字眼", entry_prompt)
+        self.assertIn("不依赖固定栏目字眼", entry_prompt)
         self.assertIn("不判断分页", entry_prompt)
-        self.assertIn("discovered_urls 必须为空", entry_prompt)
-        self.assertIn("只有当前页没有直接人员名单", entry_prompt)
+        self.assertIn("无论姓名能否点击都算名单", entry_prompt)
+        self.assertIn("并列分类", entry_prompt)
+        self.assertIn("分类绝不包括同一名单的前后页或页码", entry_prompt)
+        self.assertIn("人员类别或单位内部组织", entry_prompt)
+        self.assertIn("不要混选多套", entry_prompt)
+        self.assertIn("返回网站首页或上级目录", entry_prompt)
         self.assertIn("只判断当前页是否还有同一份人员名单的下一部分", pagination_prompt)
         self.assertIn("同一份人员名单", pagination_prompt)
         self.assertIn("最多选择一个", pagination_prompt)
