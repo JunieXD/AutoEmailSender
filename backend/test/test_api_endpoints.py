@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
+import gc
 import io
 import json
 import os
@@ -85,6 +86,7 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
+        gc.collect()
         self.temp_dir.cleanup()
 
     def test_email_delivery_pagination_accepts_one_item_per_page(self) -> None:

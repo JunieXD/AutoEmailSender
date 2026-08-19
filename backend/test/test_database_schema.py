@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import gc
 import json
 import logging
 import os
@@ -73,6 +74,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
+        gc.collect()
         self.temp_dir.cleanup()
 
     def test_alembic_revision_ids_are_unique(self) -> None:
