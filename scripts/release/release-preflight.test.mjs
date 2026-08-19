@@ -7,7 +7,7 @@ import { assertReleasePreflight } from "./release-preflight.mjs";
 
 const version = "9.9.9";
 const tag = `v${version}`;
-const note = `# ${tag}\n\n### 新增功能\n\n### 体验优化\n\n### 问题修复\n\n## 安装说明\n\n## 自动更新\n\n## 导师抓取 Skill\n`;
+const note = `# ${tag}\n\n### 新增功能\n\n### 体验优化\n\n### 问题修复\n\n## 安装说明\n`;
 
 async function createFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "release-preflight-test-"));
@@ -54,6 +54,27 @@ test("rejects stale package versions and release note copies", async () => {
       assertReleasePreflight({ version, repoRoot: root }),
       /发布公告不一致/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects retired announcement sections and Intel Mac copy", async () => {
+  const root = await createFixture();
+  try {
+    for (const retiredContent of [
+      "## 自动更新",
+      "## 导师抓取 Skill",
+      "Intel Mac 暂未提供安装包。",
+    ]) {
+      const invalidNote = `${note}\n${retiredContent}\n`;
+      await writeFile(path.join(root, "docs", "releases", `${tag}.md`), invalidNote);
+      await writeFile(path.join(root, "desktop", "release-notes.md"), invalidNote);
+      await assert.rejects(
+        assertReleasePreflight({ version, repoRoot: root }),
+        /不应包含/,
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

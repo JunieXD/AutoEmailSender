@@ -61,8 +61,6 @@ function assertReleaseNote(note, tag, label) {
     "### 体验优化",
     "### 问题修复",
     "## 安装说明",
-    "## 自动更新",
-    "## 导师抓取 Skill",
   ];
   let previousIndex = -1;
   for (const heading of requiredHeadings) {
@@ -70,6 +68,14 @@ function assertReleaseNote(note, tag, label) {
     if (currentIndex < 0) throw new Error(`${label} 缺少标题：${heading}`);
     if (currentIndex <= previousIndex) throw new Error(`${label} 的标题顺序不正确：${heading}`);
     previousIndex = currentIndex;
+  }
+  const forbiddenContent = [
+    "## 自动更新",
+    "## 导师抓取 Skill",
+    "Intel Mac 暂未提供安装包。",
+  ];
+  for (const content of forbiddenContent) {
+    if (note.includes(content)) throw new Error(`${label} 不应包含：${content}`);
   }
 }
 

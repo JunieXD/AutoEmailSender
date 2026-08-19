@@ -53,10 +53,6 @@ cat > "$release_repo/docs/releases/v9.9.9.md" <<'NOTES'
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 NOTES
 
 new_shim git '#!/usr/bin/env bash

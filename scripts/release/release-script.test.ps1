@@ -54,10 +54,6 @@ try {
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 "@
 
   New-CmdShim -Directory $tempBin -Name "git" -Content @"
@@ -117,10 +113,6 @@ Write-Host "fake CLI build -Clean"
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 "@
 
   New-CmdShim -Directory $tempBin -Name "git" -Content @"
