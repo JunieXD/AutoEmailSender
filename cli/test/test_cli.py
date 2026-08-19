@@ -1454,6 +1454,7 @@ class CliTests(unittest.TestCase):
                         [4, 5],
                     )
 
+    @unittest.skipIf(os.name == "nt", "macOS symlink binding is not available on Windows")
     def test_schema_v5_installation_verifies_onedir_bundle_and_macos_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
