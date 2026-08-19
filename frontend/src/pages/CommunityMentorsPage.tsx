@@ -82,6 +82,7 @@ const MAX_SELECTED_UNITS = MAX_SELECTED_COMMUNITY_UNITS;
 const MAX_SELECTED_RECORDS = MAX_SELECTED_COMMUNITY_MENTORS;
 const MAX_LOADED_RECORDS = MAX_LOADED_COMMUNITY_MENTORS;
 const RECORDS_PER_PAGE = 100;
+const RECORD_PAGE_SIZE_OPTIONS = [25, 50, RECORDS_PER_PAGE] as const;
 const DEFAULT_CATALOG_UNITS_PER_PAGE = 9;
 const CATALOG_UNIT_PAGE_SIZE_OPTIONS = [9, 18, 36] as const;
 const CATALOG_UNIT_SELECTOR_SCROLL_GAP_PX = 16;
@@ -803,6 +804,9 @@ export const CommunityMentorsPage = () => {
   const [recordPage, setRecordPage] = useState(
     () => initialPageSnapshot?.recordPage ?? 1,
   );
+  const [recordPageSize, setRecordPageSize] = useState(
+    () => initialPageSnapshot?.recordPageSize ?? RECORDS_PER_PAGE,
+  );
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>(
     () => initialPageSnapshot?.selectedRecordIds ?? [],
   );
@@ -920,6 +924,7 @@ export const CommunityMentorsPage = () => {
       recordTitleFilters,
       categoryFilters,
       recordPage,
+      recordPageSize,
       selectedRecordIds,
       previewPayload,
       previewPage,
@@ -955,6 +960,7 @@ export const CommunityMentorsPage = () => {
     recordDepartmentFilters,
     recordKeyword,
     recordPage,
+    recordPageSize,
     recordSchoolFilters,
     recordSearchScopes,
     recordTitleFilters,
@@ -1374,12 +1380,12 @@ export const CommunityMentorsPage = () => {
   } = getVisibleRecordSelectionState(selectedRecordIds, selectableVisibleIds);
   const totalRecordPages = Math.max(
     1,
-    Math.ceil(visibleRecords.length / RECORDS_PER_PAGE),
+    Math.ceil(visibleRecords.length / recordPageSize),
   );
   const currentRecordPage = Math.min(recordPage, totalRecordPages);
   const paginatedVisibleRecords = visibleRecords.slice(
-    (currentRecordPage - 1) * RECORDS_PER_PAGE,
-    currentRecordPage * RECORDS_PER_PAGE,
+    (currentRecordPage - 1) * recordPageSize,
+    currentRecordPage * recordPageSize,
   );
   const recordsSelectionStale = Boolean(
     recordsPayload &&
@@ -2189,6 +2195,7 @@ export const CommunityMentorsPage = () => {
                 </div>
                 <div
                   ref={recordListRef}
+                  tabIndex={-1}
                   data-testid="community-mentor-record-list"
                   className="community-mentor-record-list mt-4 space-y-3 [&.is-bulk-selecting_.selection-toggle-button]:transition-none"
                 >
@@ -2205,34 +2212,23 @@ export const CommunityMentorsPage = () => {
                     />
                   ))}
                 </div>
-                {visibleRecords.length > RECORDS_PER_PAGE ? (
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
-                    <span className="text-xs text-stone-500">
-                      {visibleRecords.length} 位 · {currentRecordPage}/{totalRecordPages} 页
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        aria-label="上一页"
-                        disabled={currentRecordPage <= 1}
-                        onClick={() => setRecordPage((current) => Math.max(1, current - 1))}
-                        className="ui-btn-secondary px-3 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                        上一页
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="下一页"
-                        disabled={currentRecordPage >= totalRecordPages}
-                        onClick={() => setRecordPage((current) => Math.min(totalRecordPages, current + 1))}
-                        className="ui-btn-secondary px-3 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        下一页
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
+                {visibleRecords.length > 0 ? (
+                  <Pagination
+                    page={currentRecordPage}
+                    pageSize={recordPageSize}
+                    totalCount={visibleRecords.length}
+                    onChange={(change) => {
+                      setRecordPage(change.page);
+                      setRecordPageSize(change.pageSize);
+                    }}
+                    ariaLabel="社区导师列表分页"
+                    pageSizeAriaLabel="社区导师每页数量"
+                    pageSizeOptions={RECORD_PAGE_SIZE_OPTIONS}
+                    unitLabel="位"
+                    itemLabel="位导师"
+                    focusTargetRef={recordListRef}
+                    className="mt-5 border-t border-stone-100 pt-4"
+                  />
                 ) : null}
               </>
             )}
