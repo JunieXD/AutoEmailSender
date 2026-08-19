@@ -28,6 +28,15 @@ export function assertDraftSparkleAssets({
   if (release.isDraft !== true) {
     throw new Error(`拒绝核验非 draft Release：${tag}`);
   }
+  if (release.tagName !== tag) {
+    throw new Error(`draft Release tag 与候选不一致：${release.tagName ?? "<missing>"}`);
+  }
+
+  const draftDownloadReference = extractDraftDownloadReference(
+    release.url,
+    repository,
+    tag,
+  );
 
   const expectedNames = extractCurrentReleaseAssetNames(
     appcast,
@@ -44,12 +53,42 @@ export function assertDraftSparkleAssets({
     if (!Number.isInteger(asset.size) || asset.size <= 0) {
       throw new Error(`draft Release 资产为空或大小无效：${name}`);
     }
-    const expectedUrl = `https://github.com/${repository}/releases/download/${tag}/${name}`;
-    if (asset.url !== expectedUrl) {
+    const expectedUrl = new URL(`https://github.com/${repository}/`);
+    expectedUrl.pathname = `/${repository}/releases/download/${draftDownloadReference}/${name}`;
+    if (asset.url !== expectedUrl.toString()) {
       throw new Error(`draft Release 资产 URL 与 appcast.xml 不一致：${name}`);
     }
   }
   return expectedNames;
+}
+
+function extractDraftDownloadReference(value, repository, tag) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`draft Release 页面 URL 无效：${value ?? "<missing>"}`);
+  }
+
+  const [owner, repo] = repository.split("/");
+  const match = /^\/([^/]+)\/([^/]+)\/releases\/tag\/([^/]+)$/.exec(url.pathname);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "github.com" ||
+    !owner ||
+    !repo ||
+    match === null ||
+    match[1].toLowerCase() !== owner.toLowerCase() ||
+    match[2].toLowerCase() !== repo.toLowerCase()
+  ) {
+    throw new Error(`draft Release 页面 URL 与仓库不一致：${value}`);
+  }
+
+  const reference = decodeURIComponent(match[3]);
+  if (reference !== tag && !/^untagged-[0-9a-f]+$/i.test(reference)) {
+    throw new Error(`draft Release 页面引用无效：${reference}`);
+  }
+  return reference;
 }
 
 function parseArguments(argv) {
@@ -75,7 +114,15 @@ function parseArguments(argv) {
 function loadDraftRelease(repository, tag) {
   const result = spawnSync(
     "gh",
-    ["release", "view", tag, "--repo", repository, "--json", "isDraft,assets"],
+    [
+      "release",
+      "view",
+      tag,
+      "--repo",
+      repository,
+      "--json",
+      "isDraft,tagName,url,assets",
+    ],
     { encoding: "utf8" },
   );
   if (result.error) throw result.error;

@@ -38,7 +38,7 @@ const MACOS_PACKAGING_PATTERNS = [
   /^desktop\/native\/sparkle\//,
   /^scripts\/build\/setup-sparkle\.sh$/,
   /^scripts\/packaging\/(?:configure-sparkle-info|sanitize-macos-bundle)(?:\.test)?\.mjs$/,
-  /^scripts\/release\/(?:prepare-sparkle-release|verify-sparkle-draft-assets)(?:\.test)?\.mjs$/,
+  /^scripts\/release\/prepare-sparkle-release(?:\.test)?\.mjs$/,
 ];
 
 function matchesAny(file, patterns) {

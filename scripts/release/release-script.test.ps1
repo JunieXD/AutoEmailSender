@@ -145,10 +145,14 @@ exit 0
   New-CmdShim -Directory $tempBin -Name "gh" -Content @"
 @echo off
 echo %* >> "$ghCallsPath"
+if "%1 %2"=="run view" echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 exit /b 0
 "@ -PosixContent (@'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> '__GH_CALLS_PATH__'
+if [[ "${1:-} ${2:-}" == "run view" ]]; then
+  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+fi
 exit 0
 '@).Replace("__GH_CALLS_PATH__", $ghCallsPath)
   New-CmdShim -Directory $tempBin -Name "node" -Content @"

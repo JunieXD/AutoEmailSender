@@ -426,11 +426,10 @@ jobs:
       CANDIDATE_RUN_ID: ${{ github.event_name == 'push' && github.run_id || inputs.candidate_run_id }}
 
     steps:
-      - name: Checkout
+      - name: Checkout promotion tooling
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_SHA }}
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -523,7 +522,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git cat-file -e "$RELEASE_SHA^{commit}"
           remote_target="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
           if [[ -n "$remote_target" && "$remote_target" != "$RELEASE_SHA" ]]; then
             echo "Refusing to move existing tag $RELEASE_TAG from $remote_target to $RELEASE_SHA." >&2

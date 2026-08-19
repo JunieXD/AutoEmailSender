@@ -234,8 +234,15 @@ if [[ -n "$promote_run_id" ]]; then
     invoke_release_preflight "<release-commit-sha>"
     echo "[dry-run] gh workflow run release.yml --ref master -f release_tag=$release_tag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$promote_run_id"
   else
-    release_sha="$(git -C "$repo_root" rev-parse HEAD)"
-    invoke_release_preflight "$release_sha"
+    invoke_release_preflight
+    release_sha="$(
+      cd "$repo_root"
+      gh run view "$promote_run_id" --json headSha --jq .headSha
+    )"
+    if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "候选 run $promote_run_id 没有有效的 head SHA。" >&2
+      exit 1
+    fi
     (
       cd "$repo_root"
       gh workflow run release.yml \

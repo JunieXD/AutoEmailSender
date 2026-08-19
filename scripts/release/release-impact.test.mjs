@@ -93,6 +93,16 @@ test("Sparkle helper changes require release contracts and macOS certification",
   ]);
 });
 
+test("Sparkle draft verification changes only rerun release contracts", () => {
+  const plan = planReleaseImpact([
+    "scripts/release/verify-sparkle-draft-assets.mjs",
+    "scripts/release/verify-sparkle-draft-assets.test.mjs",
+  ]);
+
+  assert.deepEqual(plan.categories, ["release-orchestration"]);
+  assert.deepEqual(requiredIds(plan), ["release-contracts", "windows-release-contracts"]);
+});
+
 test("Sparkle-native desktop changes do not trigger Windows QA", () => {
   const plan = planReleaseImpact(["desktop/native/sparkle/SparkleController.mm"]);
 
