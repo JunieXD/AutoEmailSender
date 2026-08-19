@@ -170,7 +170,7 @@ exit 0
 '@
 
   $oldPath = $env:PATH
-  $env:PATH = "$tempBin;$oldPath"
+  $env:PATH = "$tempBin$([System.IO.Path]::PathSeparator)$oldPath"
   try {
     $pwshPath = (Get-Command pwsh).Source
     $failureProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
