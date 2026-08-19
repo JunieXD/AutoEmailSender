@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 import sqlite3
@@ -16,6 +17,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
+        gc.collect()
         self.temp_dir.cleanup()
 
     def test_upgrade_quarantines_candidates_and_downgrade_preserves_every_row(self) -> None:

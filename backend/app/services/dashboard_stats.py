@@ -118,7 +118,7 @@ async def build_dashboard_overview(
         communication_identity_ids=communication_scope.identity_ids,
         match_source_identity_id=match_scope.source_identity_id,
     )
-    mentor_section = await _build_mentor_section_from_database(
+    mentor_section, school_coverage_rows = await _build_mentor_section_from_database(
         session,
         identity=identity,
         match_scope=match_scope,
@@ -186,6 +186,7 @@ async def build_dashboard_overview(
         follow_ups=follow_ups,
         identity_id=identity_id,
         communication_identity_ids=communication_scope.identity_ids,
+        school_coverage_rows=school_coverage_rows,
         email_university=email_university,
         email_school=email_school,
         start_date=start_date,
@@ -269,7 +270,7 @@ async def _build_mentor_section_from_database(
     expressions: dict[str, Any],
     university: str | None,
     school: str | None,
-) -> DashboardMentorSectionRead:
+) -> tuple[DashboardMentorSectionRead, list[tuple[str, str, int]]]:
     threshold = identity.match_threshold or HIGH_SCORE_DEFAULT
     conditions = _mentor_database_conditions(
         university=university,
@@ -404,34 +405,29 @@ async def _build_mentor_section_from_database(
 
     university_label = _sql_professor_label(Professor.university, "学校未填写")
     school_label = _sql_professor_label(Professor.school, "学院未填写")
-    distribution_rows = (
-        await session.execute(
-            select(
-                university_label.label("university"),
-                func.count(Professor.id).label("count"),
+    school_filter_rows = [
+        (str(row.university), str(row.school), int(row.count))
+        for row in (
+            await session.execute(
+                select(
+                    university_label.label("university"),
+                    school_label.label("school"),
+                    func.count(Professor.id).label("count"),
+                )
+                .where(Professor.archived_at.is_(None))
+                .group_by(university_label, school_label),
             )
-            .where(Professor.archived_at.is_(None))
-            .group_by(university_label)
-            .order_by(func.count(Professor.id).desc(), university_label.asc())
-            .limit(DASHBOARD_DISTRIBUTION_LIMIT),
-        )
-    ).all()
-    school_filter_rows = (
-        await session.execute(
-            select(
-                university_label.label("university"),
-                school_label.label("school"),
-                func.count(Professor.id).label("count"),
-            )
-            .where(Professor.archived_at.is_(None))
-            .group_by(university_label, school_label),
-        )
-    ).all()
+        ).all()
+    ]
+    university_counts: Counter[str] = Counter()
     schools_by_university: dict[str, list[tuple[str, int]]] = defaultdict(list)
-    for row in school_filter_rows:
-        schools_by_university[str(row.university)].append(
-            (str(row.school), int(row.count)),
-        )
+    for row_university, school_name, count in school_filter_rows:
+        university_counts[row_university] += count
+        schools_by_university[row_university].append((school_name, count))
+    distribution_rows = sorted(
+        university_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[:DASHBOARD_DISTRIBUTION_LIMIT]
     school_filters = [
         DashboardSchoolFilterRead(
             university=university_name,
@@ -551,10 +547,10 @@ async def _build_mentor_section_from_database(
         ],
         school_distribution=[
             DashboardSchoolDistributionRead(
-                school_name=str(row.university),
-                count=int(row.count),
+                school_name=university_name,
+                count=count,
             )
-            for row in distribution_rows
+            for university_name, count in distribution_rows
         ],
         school_filters=school_filters,
         active_filter=DashboardMentorFilterRead(
@@ -601,7 +597,7 @@ async def _build_mentor_section_from_database(
             )
             for row in incomplete_rows
         ],
-    )
+    ), school_filter_rows
 
 
 def _build_missing_fields_from_values(
@@ -1090,6 +1086,7 @@ async def _build_email_section(
     email_school: str | None,
     start_date: str | None,
     end_date: str | None,
+    school_coverage_rows: list[tuple[str, str, int]] | None = None,
 ) -> DashboardEmailSectionRead:
     local_timezone = _local_timezone()
     start_at = _parse_date_filter(
@@ -1301,6 +1298,7 @@ async def _build_email_section(
         sent_professor_ids=all_sent_professor_ids,
         contacted_professor_ids=all_contacted_professor_ids,
         replied_professor_ids=all_replied_professor_ids,
+        coverage_rows=school_coverage_rows,
     )
     reply_wait = _build_reply_wait(
         professors=list(professor_by_id.values()),
@@ -1556,27 +1554,29 @@ async def _build_outreach_coverage_from_database(
     sent_professor_ids: set[int],
     contacted_professor_ids: set[int],
     replied_professor_ids: set[int],
+    coverage_rows: list[tuple[str, str, int]] | None = None,
 ) -> DashboardOutreachCoverageRead:
-    university_label = _sql_professor_label(Professor.university, "学校未填写")
-    school_label = _sql_professor_label(Professor.school, "学院未填写")
-    rows = (
-        await session.execute(
-            select(
-                university_label.label("university"),
-                school_label.label("school"),
-                func.count(Professor.id).label("count"),
-            )
-            .where(Professor.archived_at.is_(None))
-            .group_by(university_label, school_label),
-        )
-    ).mappings().all()
+    if coverage_rows is None:
+        university_label = _sql_professor_label(Professor.university, "学校未填写")
+        school_label = _sql_professor_label(Professor.school, "学院未填写")
+        coverage_rows = [
+            (str(row["university"]), str(row["school"]), int(row["count"]))
+            for row in (
+                await session.execute(
+                    select(
+                        university_label.label("university"),
+                        school_label.label("school"),
+                        func.count(Professor.id).label("count"),
+                    )
+                    .where(Professor.archived_at.is_(None))
+                    .group_by(university_label, school_label),
+                )
+            ).mappings().all()
+        ]
 
     university_totals: Counter[str] = Counter()
     school_totals: Counter[tuple[str, str]] = Counter()
-    for row in rows:
-        university = str(row["university"])
-        school = str(row["school"])
-        count = int(row["count"])
+    for university, school, count in coverage_rows:
         university_totals[university] += count
         school_totals[(university, school)] += count
 
