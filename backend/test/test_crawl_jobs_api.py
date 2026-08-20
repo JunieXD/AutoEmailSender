@@ -182,6 +182,29 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["school"], "学院 2")
         self.assertEqual(payload[1]["school"], "学院 1")
 
+    def test_list_crawl_jobs_without_limit_returns_all_task_center_jobs(self) -> None:
+        for index in range(51):
+            response = self.client.post(
+                "/api/crawl-jobs",
+                json={
+                    "university": "示例大学",
+                    "school": f"任务中心学院 {index}",
+                    "start_url": f"https://example.edu/task-center/{index}",
+                    "llm_profile_id": None,
+                },
+            )
+            self.assertEqual(response.status_code, 201, msg=response.text)
+
+        response = self.client.get("/api/crawl-jobs")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(len(response.json()), 51)
+        self.assertEqual(response.json()[0]["school"], "任务中心学院 50")
+        self.assertEqual(
+            len(self.client.get("/api/crawl-jobs?limit=50").json()),
+            50,
+        )
+
     def test_crawl_job_delete_restore_and_trash_view(self) -> None:
         blocked = self.client.post(
             "/api/crawl-jobs",

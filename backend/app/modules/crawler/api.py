@@ -170,7 +170,7 @@ async def create_crawl_job(
 
 @router.get("", response_model=list[CrawlJobSummaryRead])
 async def list_crawl_jobs(
-    limit: CrawlJobListLimit = 50,
+    limit: CrawlJobListLimit | None = None,
     view: str = "current",
     session: AsyncSession = Depends(get_async_session),
 ) -> list[CrawlJobSummaryRead]:
@@ -185,13 +185,10 @@ async def list_crawl_jobs(
         statement = statement.where(CrawlJob.deleted_at.is_(None))
     else:
         raise HTTPException(status_code=400, detail="未知任务视图")
-    jobs = list(
-        (
-            await session.execute(
-                statement.order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc()).limit(limit),
-            )
-        ).scalars(),
-    )
+    statement = statement.order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    jobs = list((await session.execute(statement)).scalars())
     return await _build_crawl_job_summaries(session, jobs)
 
 

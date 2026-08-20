@@ -288,7 +288,7 @@ async def list_professor_information_enrichment_jobs(
     *,
     view: str,
     offset: int = 0,
-    limit: int = 50,
+    limit: int | None = None,
     status: str | None = None,
     llm_profile_id: int | None = None,
 ) -> list[ProfessorInformationEnrichmentJobRead]:
@@ -301,8 +301,9 @@ async def list_professor_information_enrichment_jobs(
         )
         .order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
         .offset(offset)
-        .limit(limit)
     )
+    if limit is not None:
+        statement = statement.limit(limit)
     if view == "current":
         statement = statement.where(CrawlJob.deleted_at.is_(None))
     elif view == "trash":

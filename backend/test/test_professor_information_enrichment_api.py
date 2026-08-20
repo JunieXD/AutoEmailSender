@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.models import CrawlJob, CrawlJobKind, CrawlJobStatus, CrawlJobTriggerMode
 from test.migrated_database import create_migrated_sqlite_database
 
 
@@ -106,6 +107,48 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(candidate_update.status_code, 404, msg=candidate_update.text)
+
+    def test_task_center_lists_all_information_enrichment_jobs_without_limit(self) -> None:
+        async def seed_jobs() -> None:
+            from app.core.database import get_session_factory
+
+            async with get_session_factory()() as session:
+                session.add_all(
+                    [
+                        CrawlJob(
+                            university="示例大学",
+                            school="计算机学院",
+                            start_url=f"https://example.edu/enrichment/{index}",
+                            job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+                            trigger_mode=CrawlJobTriggerMode.BATCH.value,
+                            task_center_visible=True,
+                            display_name=f"信息补全任务 {index}",
+                            llm_profile_id=self.llm_profile_id,
+                            status=CrawlJobStatus.QUEUED.value,
+                            progress_current=0,
+                            progress_total=0,
+                            agent_trace=[],
+                        )
+                        for index in range(51)
+                    ]
+                )
+                await session.commit()
+
+        asyncio.run(seed_jobs())
+
+        response = self.client.get("/api/professor-information-enrichment-jobs")
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(len(response.json()), 51)
+        self.assertEqual(response.json()[0]["name"], "信息补全任务 50")
+        self.assertEqual(
+            len(
+                self.client.get(
+                    "/api/professor-information-enrichment-jobs?limit=50"
+                ).json()
+            ),
+            50,
+        )
 
     def test_batch_job_retains_conflicts_as_skipped_and_supports_trash_actions(self) -> None:
         professor_id = self._create_professor(

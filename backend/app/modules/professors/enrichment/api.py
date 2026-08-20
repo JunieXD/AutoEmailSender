@@ -88,7 +88,7 @@ async def get_single_professor_information_enrichment_active(
 @router.get("", response_model=list[ProfessorInformationEnrichmentJobRead])
 async def list_information_enrichment_jobs(
     view: str = Query(default="current"),
-    limit: JobListLimit = 50,
+    limit: JobListLimit | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> list[ProfessorInformationEnrichmentJobRead]:
     try:
