@@ -117,26 +117,43 @@ async def run_crawler_v2_page_worker_once(
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
-        elif await _prefer_browser_for_task_domain(session_factory, task.job_id, target_url):
-            direct_status = "skipped_by_domain_browser_preference"
-            fallback_reason = "same_domain_previously_required_browser"
-            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
-            browser_status = browser_snapshot.status
-            snapshot = browser_snapshot
-            fetch_mode = "browser"
         elif fetch_intent == "directory":
-            direct_status = "skipped_for_directory_browser_preference"
-            fallback_reason = "directory_prefers_rendered_browser"
-            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
-            browser_status = browser_snapshot.status
-            snapshot = browser_snapshot
-            fetch_mode = "browser"
-            if browser_snapshot.status != "succeeded":
+            if await _prefer_browser_for_task_domain(
+                session_factory,
+                task.job_id,
+                target_url,
+            ):
+                direct_status = "skipped_by_domain_browser_preference"
+                fallback_reason = "same_domain_previously_required_browser"
+                browser_snapshot = await fetch_page_browser(
+                    ctx,
+                    target_url,
+                    intent=fetch_intent,
+                )
+                browser_status = browser_snapshot.status
+                snapshot = browser_snapshot
+                fetch_mode = "browser"
+            else:
                 direct_snapshot = await fetch_page_direct(ctx, target_url)
+                snapshot = direct_snapshot
+                fetch_mode = "direct"
                 direct_status = direct_snapshot.status
-                if direct_snapshot.status == "succeeded":
-                    snapshot = direct_snapshot
-                    fetch_mode = "direct"
+                fallback_reason = None
+                browser_status = None
+                if _should_use_browser_fallback(direct_snapshot):
+                    fallback_reason = _fallback_reason(direct_snapshot)
+                    browser_snapshot = await fetch_page_browser(
+                        ctx,
+                        target_url,
+                        intent=fetch_intent,
+                    )
+                    browser_status = browser_snapshot.status
+                    if (
+                        browser_snapshot.status == "succeeded"
+                        or direct_snapshot.status != "succeeded"
+                    ):
+                        snapshot = browser_snapshot
+                        fetch_mode = "browser"
         else:
             direct_snapshot = await fetch_page_direct(ctx, target_url)
             snapshot = direct_snapshot

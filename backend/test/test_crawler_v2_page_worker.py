@@ -898,7 +898,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page_call.kwargs["work_item_id"], task_id)
         self.assertEqual(page_call.kwargs["payload"]["snapshot"]["status"], "succeeded")
 
-    async def test_directory_browser_success_skips_direct_fetch(self) -> None:
+    async def test_directory_uses_browser_after_direct_fetch_fails(self) -> None:
         _, task_id = await self._seed_page_task()
         direct = PageSnapshot(url="https://example.edu/faculty", text="", html="", links=[], fetch_method="http", status="failed", error_message="403")
         browser = PageSnapshot(url="https://example.edu/faculty", text="张三", html="<p>张三</p>", links=[], fetch_method="browser", status="succeeded")
@@ -912,11 +912,11 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             assert task is not None
             self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
             self.assertEqual(task.fetch_mode, "browser")
-            self.assertEqual(task.direct_status, "skipped_for_directory_browser_preference")
-        direct_mock.assert_not_awaited()
+            self.assertEqual(task.direct_status, "failed")
+        direct_mock.assert_awaited_once()
         self.assertIsNotNone(task.fallback_reason)
 
-    async def test_directory_prefers_rendered_browser_snapshot(self) -> None:
+    async def test_static_directory_keeps_useful_direct_snapshot(self) -> None:
         _, task_id = await self._seed_page_task()
         direct = PageSnapshot(
             url="https://example.edu/faculty",
@@ -936,7 +936,7 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         with patch(
             "app.modules.crawler.v2.page_worker.fetch_page_browser",
             new=AsyncMock(return_value=browser),
-        ), patch(
+        ) as browser_mock, patch(
             "app.modules.crawler.v2.page_worker.fetch_page_direct",
             new=AsyncMock(return_value=direct),
         ) as direct_mock:
@@ -947,12 +947,13 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(processed, 1)
-        direct_mock.assert_not_awaited()
+        direct_mock.assert_awaited_once()
+        browser_mock.assert_not_awaited()
         async with self.session_factory() as session:
             task = await session.get(CrawlPageTask, task_id)
         assert task is not None
-        self.assertEqual(task.fetch_mode, "browser")
-        self.assertEqual(task.browser_status, "succeeded")
+        self.assertEqual(task.fetch_mode, "direct")
+        self.assertIsNone(task.browser_status)
 
     async def test_directory_falls_back_to_direct_when_browser_fails(self) -> None:
         _, task_id = await self._seed_page_task()
@@ -964,10 +965,11 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
         direct = PageSnapshot(
             url="https://example.edu/faculty",
-            text="张三",
-            html="<a href='/zhang'>张三</a>",
+            text="",
+            html="",
             fetch_method="http",
             status="succeeded",
+            suspicious_empty=True,
         )
 
         with patch(

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 import json
 import re
+import time
 from datetime import datetime, timedelta
 
 from app.core.time import as_utc_aware, utc_now
@@ -89,6 +92,9 @@ from .profile_documents import (
 
 _PROFILE_TEXT_CACHE = profile_text_cache
 _PROFILE_TEXT_DATABASE_CACHE_TTL = timedelta(hours=1)
+_PROFILE_CHILD_SNAPSHOT_CACHE_TTL_SECONDS = 60 * 60
+_PROFILE_CHILD_SNAPSHOT_CACHE_MAX_ENTRIES = 128
+_PROFILE_CHILD_SNAPSHOT_CACHE_MAX_CHARACTERS = 16 * 1024 * 1024
 _MAX_EMAIL_EVIDENCE_ITEMS = 16
 _MAX_PROFILE_LINK_EVIDENCE_ITEMS = 40
 _HTML_TAG_REMNANT_PATTERN = re.compile(
@@ -116,6 +122,55 @@ _TERMINAL_JOB_STATUSES = {
 
 class CandidateProfileUnavailableError(ValueError):
     pass
+
+
+class ProfileChildSnapshotCache:
+    def __init__(self) -> None:
+        self._entries: OrderedDict[
+            tuple[object, str, int, str],
+            tuple[float, int, PageSnapshot],
+        ] = OrderedDict()
+        self._total_characters = 0
+
+    def get(self, key: tuple[object, str, int, str]) -> PageSnapshot | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        stored_at, size, snapshot = entry
+        if time.monotonic() - stored_at >= _PROFILE_CHILD_SNAPSHOT_CACHE_TTL_SECONDS:
+            self._entries.pop(key, None)
+            self._total_characters -= size
+            return None
+        self._entries.move_to_end(key)
+        return snapshot.model_copy(deep=True)
+
+    def put(self, key: tuple[object, str, int, str], snapshot: PageSnapshot) -> None:
+        size = len(snapshot.text or "") + len(snapshot.html or "")
+        if size > _PROFILE_CHILD_SNAPSHOT_CACHE_MAX_CHARACTERS:
+            return
+        previous = self._entries.pop(key, None)
+        if previous is not None:
+            self._total_characters -= previous[1]
+        while self._entries and (
+            len(self._entries) >= _PROFILE_CHILD_SNAPSHOT_CACHE_MAX_ENTRIES
+            or self._total_characters + size
+            > _PROFILE_CHILD_SNAPSHOT_CACHE_MAX_CHARACTERS
+        ):
+            _, (_, evicted_size, _) = self._entries.popitem(last=False)
+            self._total_characters -= evicted_size
+        self._entries[key] = (time.monotonic(), size, snapshot.model_copy(deep=True))
+        self._total_characters += size
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._total_characters = 0
+
+
+_PROFILE_CHILD_SNAPSHOT_CACHE = ProfileChildSnapshotCache()
+_PROFILE_CHILD_SNAPSHOT_INFLIGHT: dict[
+    tuple[int, object, str, int, str],
+    asyncio.Task[PageSnapshot],
+] = {}
 
 
 async def run_crawler_v2_enrichment_worker_once(
@@ -501,6 +556,15 @@ async def enrich_candidate_once_with_usage(
         if llm_profile is None:
             raise ValueError("缺少可用的 LLM Profile")
         adaptation = await ensure_llm_runtime_adaptation(session, llm_profile)
+        known_listing_urls: set[str] = set()
+        if job.entry_type == "list":
+            known_listing_urls = set(
+                await session.scalars(
+                    select(CrawlPageChunk.source_url).where(
+                        CrawlPageChunk.job_id == job.id,
+                    )
+                )
+            )
         await session.commit()
         ctx = CrawlToolContext(
             session_factory=session_factory,
@@ -513,13 +577,25 @@ async def enrich_candidate_once_with_usage(
             profile_entry_url=profile_url,
             crawl_run_id=job.current_run_id,
         )
+        ctx.known_listing_urls.update(
+            normalize_profile_url(url, base_url=profile_crawl_root)
+            for url in known_listing_urls
+            if url and url.strip()
+        )
     page_text = await get_or_fetch_profile_text(
         ctx,
         candidate.id,
         profile_url,
         fresh_after=fresh_after,
     )
-    return await enrich_candidate_profile_with_llm_with_usage(ctx, llm_profile, candidate, page_text)
+    profile_snapshot = ctx.get_cached_page_snapshot(profile_url)
+    return await enrich_candidate_profile_with_llm_with_usage(
+        ctx,
+        llm_profile,
+        candidate,
+        page_text,
+        page_snapshot=profile_snapshot,
+    )
 
 
 async def _resolve_profile_crawl_root(
@@ -563,6 +639,8 @@ async def enrich_candidate_profile_with_llm_with_usage(
     llm_profile: LLMProfile,
     candidate: CrawlCandidate,
     page_text: str,
+    *,
+    page_snapshot: PageSnapshot | None = None,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     prompt = build_candidate_enrichment_prompt(candidate, page_text)
     completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
@@ -612,12 +690,14 @@ async def enrich_candidate_profile_with_llm_with_usage(
         return payload, usage, _join_raw_model_texts(raw_model_texts)
 
     profile_url = (candidate.profile_url or "").strip()
-    snapshot = await crawl_page_with_browser_fallback(
-        ctx,
-        profile_url,
-        intent="profile",
-        force_fetch=True,
-    )
+    snapshot = page_snapshot
+    if snapshot is None:
+        snapshot = await crawl_page_with_browser_fallback(
+            ctx,
+            profile_url,
+            intent="profile",
+            force_fetch=True,
+        )
     if snapshot.status != "succeeded":
         return payload, usage, _join_raw_model_texts(raw_model_texts)
 
@@ -637,10 +717,10 @@ async def enrich_candidate_profile_with_llm_with_usage(
         link
         for link in extract_profile_link_evidence(
             snapshot,
-            max_links=_MAX_PROFILE_LINK_EVIDENCE_ITEMS,
+            max_links=_MAX_PROFILE_LINK_EVIDENCE_ITEMS * 2,
         )
-        if ctx.allows_url(link.url)
-    )
+        if ctx.allows_url(link.url) and not _is_known_listing_url(ctx, link.url)
+    )[:_MAX_PROFILE_LINK_EVIDENCE_ITEMS]
     selected_links, auxiliary_usage, auxiliary_raw = await _select_profile_links(
         ctx,
         llm_profile,
@@ -654,12 +734,7 @@ async def enrich_candidate_profile_with_llm_with_usage(
 
     child_snapshots: list[PageSnapshot] = []
     for link in selected_links:
-        child_snapshot = await crawl_page_with_browser_fallback(
-            ctx,
-            link.url,
-            intent="profile",
-            force_fetch=True,
-        )
+        child_snapshot = await _fetch_profile_child_snapshot(ctx, link.url)
         if child_snapshot.status == "succeeded":
             child_snapshots.append(child_snapshot)
 
@@ -829,6 +904,77 @@ def _profile_link_evidence_dict(value: ProfileLinkEvidence) -> dict[str, str | i
         "label": value.label,
         "context": value.context,
     }
+
+
+def _is_known_listing_url(ctx: CrawlToolContext, url: str) -> bool:
+    normalized_url = normalize_profile_url(url, base_url=ctx.start_url)
+    normalized_start_url = normalize_profile_url(ctx.start_url, base_url=ctx.start_url)
+    return normalized_url == normalized_start_url or normalized_url in ctx.known_listing_urls
+
+
+def _profile_child_snapshot_cache_key(
+    ctx: CrawlToolContext,
+    url: str,
+) -> tuple[object, str, int, str]:
+    scope_kind, scope_id = ctx.browser_session_scope
+    return (
+        ctx.session_factory,
+        scope_kind,
+        scope_id,
+        normalize_profile_url(url, base_url=ctx.start_url),
+    )
+
+
+async def _fetch_profile_child_snapshot(
+    ctx: CrawlToolContext,
+    url: str,
+) -> PageSnapshot:
+    cache_key = _profile_child_snapshot_cache_key(ctx, url)
+    cached = _PROFILE_CHILD_SNAPSHOT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    in_flight_key = (id(asyncio.get_running_loop()), *cache_key)
+    task = _PROFILE_CHILD_SNAPSHOT_INFLIGHT.get(in_flight_key)
+    if task is None:
+        task = asyncio.create_task(
+            _load_profile_child_snapshot(ctx, url, cache_key),
+        )
+        _PROFILE_CHILD_SNAPSHOT_INFLIGHT[in_flight_key] = task
+        task.add_done_callback(
+            lambda completed, key=in_flight_key: _finish_profile_child_snapshot_fetch(
+                key,
+                completed,
+            )
+        )
+    snapshot = await asyncio.shield(task)
+    return snapshot.model_copy(deep=True)
+
+
+async def _load_profile_child_snapshot(
+    ctx: CrawlToolContext,
+    url: str,
+    cache_key: tuple[object, str, int, str],
+) -> PageSnapshot:
+    snapshot = await crawl_page_with_browser_fallback(
+        ctx,
+        url,
+        intent="profile",
+        force_fetch=True,
+    )
+    if snapshot.status == "succeeded":
+        _PROFILE_CHILD_SNAPSHOT_CACHE.put(cache_key, snapshot)
+    return snapshot
+
+
+def _finish_profile_child_snapshot_fetch(
+    key: tuple[int, object, str, int, str],
+    task: asyncio.Task[PageSnapshot],
+) -> None:
+    if _PROFILE_CHILD_SNAPSHOT_INFLIGHT.get(key) is task:
+        _PROFILE_CHILD_SNAPSHOT_INFLIGHT.pop(key, None)
+    if not task.cancelled():
+        task.exception()
 
 
 def _deduplicate_email_evidence(values: Iterable[EmailEvidence]) -> tuple[EmailEvidence, ...]:

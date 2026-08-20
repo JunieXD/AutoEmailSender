@@ -234,6 +234,7 @@ async def should_prefer_browser_for_fetch_domain(
                     CrawlPageFetchState.job_id == job_id,
                     CrawlPageFetchState.fetch_mode == "browser",
                     CrawlPageFetchState.browser_status == "succeeded",
+                    CrawlPageFetchState.direct_status.in_(("failed", "succeeded")),
                     CrawlPageFetchState.fallback_reason.is_not(None),
                 )
             )

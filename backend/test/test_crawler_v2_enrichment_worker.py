@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import unittest
@@ -84,6 +85,8 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def asyncSetUp(self) -> None:
+        crawler_v2_enrichment_worker._PROFILE_CHILD_SNAPSHOT_CACHE.clear()
+        crawler_v2_enrichment_worker._PROFILE_CHILD_SNAPSHOT_INFLIGHT.clear()
         crawler_v2_enrichment_worker._PROFILE_TEXT_CACHE.clear()
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -1472,15 +1475,11 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 profile,
                 candidate,
                 "张三 教授",
+                page_snapshot=snapshot,
             )
 
         self.assertEqual(payload.email, "zhang@example.edu")
-        crawl_mock.assert_awaited_once_with(
-            ctx,
-            "https://example.edu/zhang.html",
-            intent="profile",
-            force_fetch=True,
-        )
+        crawl_mock.assert_not_awaited()
         ocr_mock.assert_awaited_once_with(ctx, snapshot)
 
     async def test_subpage_fallback_is_one_hop_and_uses_only_selected_link(self) -> None:
@@ -1537,7 +1536,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             ) as request_mock,
             patch(
                 "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
-                new=AsyncMock(side_effect=[parent, child]),
+                new=AsyncMock(return_value=child),
             ) as crawl_mock,
             patch(
                 "app.modules.crawler.v2.enrichment_worker.extract_ocr_email_evidence",
@@ -1549,16 +1548,115 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 profile,
                 candidate,
                 "张三 教授",
+                page_snapshot=parent,
             )
 
         self.assertEqual(payload.email, "zhang@example.edu")
         self.assertEqual(request_mock.await_count, 3)
-        self.assertEqual(crawl_mock.await_count, 2)
+        self.assertEqual(crawl_mock.await_count, 1)
         self.assertEqual(ocr_mock.await_count, 1)
-        self.assertEqual(crawl_mock.await_args_list[1].args[1], child.url)
+        self.assertEqual(crawl_mock.await_args_list[0].args[1], child.url)
         self.assertIn(
             '{"link_ids":[2]}',
             request_mock.await_args_list[1].kwargs["prompt"],
+        )
+
+    async def test_profile_child_snapshot_is_reused_within_crawl_run(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang/",
+        )
+        _candidate, _profile, ctx = await self._load_enrichment_context(candidate_id)
+        child = PageSnapshot(
+            url="https://example.edu/common-contact",
+            text="公共联系页面",
+            html="<main>公共联系页面</main>",
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+            new=AsyncMock(return_value=child),
+        ) as crawl_mock:
+            first = await crawler_v2_enrichment_worker._fetch_profile_child_snapshot(
+                ctx,
+                child.url,
+            )
+            second = await crawler_v2_enrichment_worker._fetch_profile_child_snapshot(
+                ctx,
+                child.url,
+            )
+
+        self.assertEqual(first.text, child.text)
+        self.assertEqual(second.text, child.text)
+        self.assertIsNot(first, second)
+        crawl_mock.assert_awaited_once()
+
+    async def test_concurrent_profile_child_fetches_share_one_request(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang/",
+        )
+        _candidate, _profile, ctx = await self._load_enrichment_context(candidate_id)
+        child = PageSnapshot(
+            url="https://example.edu/common-contact",
+            text="公共联系页面",
+            html="<main>公共联系页面</main>",
+            fetch_method="http",
+            status="succeeded",
+        )
+        fetch_started = asyncio.Event()
+        allow_fetch_to_finish = asyncio.Event()
+
+        async def fetch_once(*_args, **_kwargs):
+            fetch_started.set()
+            await allow_fetch_to_finish.wait()
+            return child
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.crawl_page_with_browser_fallback",
+            new=AsyncMock(side_effect=fetch_once),
+        ) as crawl_mock:
+            first_task = asyncio.create_task(
+                crawler_v2_enrichment_worker._fetch_profile_child_snapshot(
+                    ctx,
+                    child.url,
+                )
+            )
+            await fetch_started.wait()
+            second_task = asyncio.create_task(
+                crawler_v2_enrichment_worker._fetch_profile_child_snapshot(
+                    ctx,
+                    child.url,
+                )
+            )
+            await asyncio.sleep(0)
+            self.assertEqual(crawl_mock.await_count, 1)
+            allow_fetch_to_finish.set()
+            first, second = await asyncio.gather(first_task, second_task)
+
+        self.assertEqual(first.text, child.text)
+        self.assertEqual(second.text, child.text)
+        self.assertIsNot(first, second)
+        crawl_mock.assert_awaited_once()
+
+    async def test_known_listing_page_is_not_offered_as_profile_child(self) -> None:
+        candidate_id, _ = await self._seed_task(
+            profile_url="https://example.edu/zhang/",
+        )
+        _candidate, _profile, ctx = await self._load_enrichment_context(candidate_id)
+        ctx.known_listing_urls.add("https://example.edu/faculty")
+
+        self.assertTrue(
+            crawler_v2_enrichment_worker._is_known_listing_url(
+                ctx,
+                "https://example.edu/faculty",
+            )
+        )
+        self.assertFalse(
+            crawler_v2_enrichment_worker._is_known_listing_url(
+                ctx,
+                "https://example.edu/zhang/contact",
+            )
         )
 
     async def test_clear_mismatch_removes_wrong_profile_and_rejects_contactless_candidate(self) -> None:

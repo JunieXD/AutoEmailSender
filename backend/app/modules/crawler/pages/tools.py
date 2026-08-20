@@ -88,6 +88,14 @@ MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
 BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
+BROWSER_BLOCKED_RESOURCE_TYPES = frozenset({"font", "media"})
+# Preserve image load events without downloading the original asset. OCR still
+# fetches selected image URLs explicitly through fetch_binary_resource.
+_TRANSPARENT_IMAGE_BYTES = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff"
+    b"!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00"
+    b"\x00\x02\x02D\x01\x00;"
+)
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
 TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429})
 TRANSIENT_SERVER_STATUS_MIN = 500
@@ -1451,10 +1459,12 @@ async def crawl_page_with_browser_fallback(
             await _ensure_crawl_job_can_continue_for_context(ctx)
             return decision_snapshot
 
-    prefer_browser_for_domain = await should_prefer_browser_for_fetch_domain(
-        ctx.session_factory,
-        job_id=ctx.job_id,
-        url=absolute_url,
+    prefer_browser_for_domain = intent != "profile" and (
+        await should_prefer_browser_for_fetch_domain(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            url=absolute_url,
+        )
     )
     http_blocked_for_host = ctx.is_http_blocked(absolute_url)
     if http_blocked_for_host or prefer_browser_for_domain:
@@ -2012,6 +2022,27 @@ def _playwright_launch_options() -> dict[str, object]:
     }
 
 
+async def _apply_browser_bandwidth_policy(route: Any) -> None:
+    resource_type = str(getattr(getattr(route, "request", None), "resource_type", ""))
+    if resource_type == "image":
+        await route.fulfill(
+            status=200,
+            content_type="image/gif",
+            body=_TRANSPARENT_IMAGE_BYTES,
+        )
+        return
+    if resource_type in BROWSER_BLOCKED_RESOURCE_TYPES:
+        await route.abort()
+        return
+    await route.continue_()
+
+
+async def _install_browser_bandwidth_policy(page: Any) -> None:
+    route = getattr(page, "route", None)
+    if callable(route):
+        await route("**/*", _apply_browser_bandwidth_policy)
+
+
 async def _crawl_page_with_browser(
     ctx: CrawlToolContext,
     absolute_url: str,
@@ -2228,6 +2259,7 @@ async def _try_fetch_browser_pagination_once(
                 absolute_url,
             )
             page = await context.new_page()
+            await _install_browser_bandwidth_policy(page)
             navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,
@@ -2796,6 +2828,7 @@ async def _try_playwright_browser_fetch_once(
                 absolute_url,
             )
             page = await context.new_page()
+            await _install_browser_bandwidth_policy(page)
             navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,

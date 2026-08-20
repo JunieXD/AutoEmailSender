@@ -522,6 +522,41 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertTrue(options["headless"])
         self.assertNotIn("channel", options)
 
+    def test_browser_bandwidth_policy_preserves_rendering_requests(self) -> None:
+        class FakeRoute:
+            def __init__(self, resource_type: str) -> None:
+                self.request = SimpleNamespace(resource_type=resource_type)
+                self.fulfill = AsyncMock()
+                self.abort = AsyncMock()
+                self.continue_ = AsyncMock()
+
+        async def run() -> None:
+            image_route = FakeRoute("image")
+            await crawler_tools._apply_browser_bandwidth_policy(image_route)
+            image_route.fulfill.assert_awaited_once()
+            self.assertEqual(
+                image_route.fulfill.await_args.kwargs["body"],
+                crawler_tools._TRANSPARENT_IMAGE_BYTES,
+            )
+            image_route.abort.assert_not_awaited()
+            image_route.continue_.assert_not_awaited()
+
+            for resource_type in ("font", "media"):
+                route = FakeRoute(resource_type)
+                await crawler_tools._apply_browser_bandwidth_policy(route)
+                route.abort.assert_awaited_once()
+                route.fulfill.assert_not_awaited()
+                route.continue_.assert_not_awaited()
+
+            for resource_type in ("document", "stylesheet", "script", "xhr", "fetch"):
+                route = FakeRoute(resource_type)
+                await crawler_tools._apply_browser_bandwidth_policy(route)
+                route.continue_.assert_awaited_once()
+                route.fulfill.assert_not_awaited()
+                route.abort.assert_not_awaited()
+
+        asyncio.run(run())
+
     def test_certificate_compatibility_only_accepts_date_errors(self) -> None:
         self.assertTrue(
             crawler_tools._is_certificate_date_error(
@@ -1708,7 +1743,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 "app.modules.crawler.pages.tools.browser_investigate",
                 new=AsyncMock(return_value=browser_snapshot),
             ) as browser:
-                actual = await crawl_page_with_browser_fallback(ctx, "https://teacher.example.edu/li", intent="profile")
+                actual = await crawl_page_with_browser_fallback(
+                    ctx,
+                    "https://teacher.example.edu/li",
+                    intent="generic",
+                )
 
             self.assertEqual(actual.fetch_method, "browser")
             http_fetch.assert_not_awaited()
@@ -3664,9 +3703,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(http_path.call_count, 1)
         self.assertEqual(browser_path.call_count, 2)
 
-    async def test_browser_preferred_domain_uses_http_after_https_connection_failure(self) -> None:
+    async def test_profile_fetch_ignores_domain_browser_preference(self) -> None:
         url = "https://faculty.example.edu/wei/zh_CN/index.htm"
-        compatibility_url = "http://faculty.example.edu/wei/zh_CN/index.htm"
         ctx = CrawlToolContext(
             job_id=1,
             start_url=url,
@@ -3674,17 +3712,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             school="School",
             session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
         )
-        https_failure = PageSnapshot(
-            url=url,
-            fetch_method="browser",
-            status="failed",
-            error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
-        )
         http_success = PageSnapshot(
-            url=compatibility_url,
+            url=url,
             text="王巍 邮箱 weiwangw@example.edu",
             html="<html><body>王巍 邮箱 weiwangw@example.edu</body></html>",
-            fetch_method="browser",
+            fetch_method="http",
             status="succeeded",
         )
 
@@ -3695,20 +3727,12 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch(
                 "app.modules.crawler.pages.tools.browser_investigate",
-                new=AsyncMock(return_value=https_failure),
+                new=AsyncMock(),
             ) as browser_path,
             patch(
-                "app.modules.crawler.pages.tools._crawl_page_with_browser",
-                new=AsyncMock(return_value=http_success),
-            ) as compatibility_path,
-            patch(
                 "app.modules.crawler.pages.tools.crawl_page_with_http",
-                new=AsyncMock(side_effect=AssertionError("不应走普通 HTTP 抓取")),
+                new=AsyncMock(return_value=http_success),
             ) as http_path,
-            patch(
-                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
-                return_value=True,
-            ),
             patch(
                 "app.modules.crawler.pages.tools.mark_page_fetch_result",
                 new=AsyncMock(),
@@ -3726,14 +3750,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIs(snapshot, http_success)
-        browser_path.assert_awaited_once()
-        compatibility_path.assert_awaited_once_with(
-            ctx,
-            compatibility_url,
-            "",
-            "profile",
-        )
-        http_path.assert_not_awaited()
+        browser_path.assert_not_awaited()
+        http_path.assert_awaited_once_with(ctx, url)
 
     async def test_crawl_page_with_browser_fallback_keeps_blocked_hosts_scoped_by_host(self) -> None:
         session_factory = _FakeSessionFactory()

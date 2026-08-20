@@ -351,7 +351,7 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(run()), ("transient_failed", 1))
 
-    def test_browser_preference_includes_previous_domain_preference_skip(self) -> None:
+    def test_browser_preference_excludes_previous_domain_preference_skip(self) -> None:
         async def run() -> bool:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
@@ -379,9 +379,9 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                     url="https://teacher.example.edu/b",
                 )
 
-        self.assertTrue(asyncio.run(run()))
+        self.assertFalse(asyncio.run(run()))
 
-    def test_browser_preference_includes_any_browser_success_with_fallback_reason(self) -> None:
+    def test_browser_preference_requires_a_real_direct_attempt(self) -> None:
         async def run() -> bool:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
@@ -395,7 +395,7 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                             original_url="https://teacher.example.edu/a",
                             status="succeeded",
                             fetch_mode="browser",
-                            direct_status="direct_unusable",
+                            direct_status="succeeded",
                             fallback_reason="direct_fetch_unusable",
                             browser_status="succeeded",
                         )
