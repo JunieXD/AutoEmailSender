@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from .schemas import (
     ProfessorInformationEnrichmentItemRead,
     ProfessorInformationEnrichmentItemsPageRead,
     ProfessorInformationEnrichmentJobActionRead,
+    ProfessorInformationEnrichmentJobsPageRead,
     ProfessorInformationEnrichmentJobRead,
 )
 from .service import (
@@ -26,6 +27,7 @@ from .service import (
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
     list_professor_information_enrichment_items_page,
+    list_professor_information_enrichment_jobs_page,
     list_professor_information_enrichment_jobs,
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
@@ -88,7 +90,7 @@ async def get_single_professor_information_enrichment_active(
 @router.get("", response_model=list[ProfessorInformationEnrichmentJobRead])
 async def list_information_enrichment_jobs(
     view: str = Query(default="current"),
-    limit: JobListLimit | None = None,
+    limit: JobListLimit = 50,
     session: AsyncSession = Depends(get_async_session),
 ) -> list[ProfessorInformationEnrichmentJobRead]:
     try:
@@ -99,6 +101,38 @@ async def list_information_enrichment_jobs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/page", response_model=ProfessorInformationEnrichmentJobsPageRead)
+async def list_information_enrichment_jobs_page(
+    view: Literal["current", "trash"] = Query(default="current"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=8, ge=1, le=100),
+    keyword: str | None = Query(default=None, max_length=200),
+    status_filter: str | None = Query(default=None, alias="status"),
+    sort_key: Literal["updated", "created", "progress"] = Query(default="created"),
+    sort_direction: Literal["asc", "desc"] = Query(default="desc"),
+    unpaged: bool = Query(default=False),
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorInformationEnrichmentJobsPageRead:
+    jobs, total_count, current_total_count = (
+        await list_professor_information_enrichment_jobs_page(
+            session,
+            view=view,
+            offset=offset,
+            limit=limit,
+            keyword=keyword,
+            status=status_filter,
+            sort_key=sort_key,
+            sort_direction=sort_direction,
+            unpaged=unpaged,
+        )
+    )
+    return ProfessorInformationEnrichmentJobsPageRead(
+        items=jobs,
+        total_count=total_count,
+        current_total_count=current_total_count,
+    )
 
 
 @router.post(

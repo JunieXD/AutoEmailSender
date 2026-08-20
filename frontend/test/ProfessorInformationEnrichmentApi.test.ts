@@ -6,6 +6,7 @@ import {
   listProfessorInformationEnrichmentItems,
   listProfessorInformationEnrichmentItemsPage,
   listProfessorInformationEnrichmentJobs,
+  listProfessorInformationEnrichmentJobsPage,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
 } from "@/entities/professor/api/informationEnrichment";
@@ -78,6 +79,34 @@ describe("professorInformationEnrichmentApi", () => {
       "/api/professor-information-enrichment-jobs/23/items/page",
       undefined,
       { cursor: 20, limit: 10, status: "failed" },
+    );
+  });
+
+  it("lists a filtered task-center information enrichment page", async () => {
+    await listProfessorInformationEnrichmentJobsPage({
+      offset: 32,
+      limit: 16,
+      view: "current",
+      keyword: "重点导师",
+      status: "running",
+      sortKey: "updated",
+      sortDirection: "desc",
+      unpaged: true,
+    });
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/api/professor-information-enrichment-jobs/page",
+      undefined,
+      {
+        offset: 32,
+        limit: 16,
+        view: "current",
+        keyword: "重点导师",
+        status: "running",
+        sort_key: "updated",
+        sort_direction: "desc",
+        unpaged: 1,
+      },
     );
   });
 

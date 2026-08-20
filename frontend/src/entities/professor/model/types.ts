@@ -282,6 +282,12 @@ export interface ProfessorInformationEnrichmentJobDTO {
   last_error: string | null;
 }
 
+export interface ProfessorInformationEnrichmentJobsPageDTO {
+  items: ProfessorInformationEnrichmentJobDTO[];
+  total_count: number;
+  current_total_count: number;
+}
+
 export interface ProfessorInformationEnrichmentItemDTO {
   id: number;
   job_id: number;

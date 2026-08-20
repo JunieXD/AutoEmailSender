@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Float, String, case, cast, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -288,7 +288,7 @@ async def list_professor_information_enrichment_jobs(
     *,
     view: str,
     offset: int = 0,
-    limit: int | None = None,
+    limit: int = 50,
     status: str | None = None,
     llm_profile_id: int | None = None,
 ) -> list[ProfessorInformationEnrichmentJobRead]:
@@ -302,8 +302,7 @@ async def list_professor_information_enrichment_jobs(
         .order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
         .offset(offset)
     )
-    if limit is not None:
-        statement = statement.limit(limit)
+    statement = statement.limit(limit)
     if view == "current":
         statement = statement.where(CrawlJob.deleted_at.is_(None))
     elif view == "trash":
@@ -316,6 +315,119 @@ async def list_professor_information_enrichment_jobs(
         statement = statement.where(CrawlJob.llm_profile_id == llm_profile_id)
     jobs = list(await session.scalars(statement))
     return await _serialize_professor_information_enrichment_jobs(session, jobs)
+
+
+async def list_professor_information_enrichment_jobs_page(
+    session: AsyncSession,
+    *,
+    view: str,
+    offset: int,
+    limit: int,
+    keyword: str | None,
+    status: str | None,
+    sort_key: str,
+    sort_direction: str,
+    unpaged: bool,
+) -> tuple[list[ProfessorInformationEnrichmentJobRead], int, int]:
+    base_filters = [
+        CrawlJob.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+        CrawlJob.task_center_visible.is_(True),
+    ]
+    if view == "current":
+        base_filters.append(CrawlJob.deleted_at.is_(None))
+    elif view == "trash":
+        base_filters.append(CrawlJob.deleted_at.is_not(None))
+    else:
+        raise ValueError("未知任务视图")
+    if status is not None:
+        base_filters.append(CrawlJob.status == status)
+
+    normalized_keyword = (keyword or "").strip().lower()
+    if normalized_keyword:
+        display_name = func.coalesce(
+            CrawlJob.display_name,
+            literal("信息补全 #") + cast(CrawlJob.id, String),
+        )
+        base_filters.append(
+            func.lower(display_name).like(
+                f"%{_escape_task_search_keyword(normalized_keyword)}%",
+                escape="\\",
+            )
+        )
+
+    total_count = int(
+        (
+            await session.scalar(
+                select(func.count()).select_from(CrawlJob).where(*base_filters)
+            )
+        )
+        or 0
+    )
+    current_total_count = int(
+        (
+            await session.scalar(
+                select(func.count())
+                .select_from(CrawlJob)
+                .where(
+                    CrawlJob.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+                    CrawlJob.task_center_visible.is_(True),
+                    CrawlJob.deleted_at.is_(None),
+                )
+            )
+        )
+        or 0
+    )
+    statement = (
+        select(CrawlJob)
+        .options(selectinload(CrawlJob.current_run))
+        .where(*base_filters)
+    )
+    statement = _order_information_enrichment_jobs(
+        statement,
+        sort_key=sort_key,
+        sort_direction=sort_direction,
+    )
+    if not unpaged:
+        statement = statement.offset(offset).limit(limit)
+    jobs = list(await session.scalars(statement))
+    return (
+        await _serialize_professor_information_enrichment_jobs(session, jobs),
+        total_count,
+        current_total_count,
+    )
+
+
+def _order_information_enrichment_jobs(
+    statement: object,
+    *,
+    sort_key: str,
+    sort_direction: str,
+):
+    if sort_key == "updated":
+        primary_sort = CrawlJob.updated_at
+    elif sort_key == "progress":
+        primary_sort = case(
+            (
+                CrawlJob.progress_total > 0,
+                cast(CrawlJob.progress_current, Float)
+                / cast(CrawlJob.progress_total, Float),
+            ),
+            else_=0.0,
+        )
+    else:
+        primary_sort = CrawlJob.created_at
+    ordered_primary = (
+        primary_sort.asc() if sort_direction == "asc" else primary_sort.desc()
+    )
+    return statement.order_by(
+        ordered_primary,
+        CrawlJob.created_at.desc(),
+        CrawlJob.id.desc(),
+    )
+
+
+def _escape_task_search_keyword(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def get_professor_information_enrichment_job(

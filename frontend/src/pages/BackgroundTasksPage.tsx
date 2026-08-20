@@ -105,7 +105,7 @@ import {
   cancelProfessorInformationEnrichmentJob,
   deleteProfessorInformationEnrichmentJob,
   listProfessorInformationEnrichmentItemsPage,
-  listProfessorInformationEnrichmentJobs,
+  listProfessorInformationEnrichmentJobsPage,
   restoreProfessorInformationEnrichmentJob,
   retryFailedProfessorInformationEnrichmentJob,
 } from "@/entities/professor/api/informationEnrichment";
@@ -117,7 +117,7 @@ import {
   enrichCrawlCandidates,
   getCrawlJob,
   getCrawlJobDetails,
-  listCrawlJobs,
+  listCrawlJobsPage,
   pauseCrawlJob,
   retryCrawlJob,
   restoreCrawlJob,
@@ -1308,8 +1308,10 @@ export const BackgroundTasksPage = ({
   const [informationEnrichmentJobs, setInformationEnrichmentJobs] = useState<
     ProfessorInformationEnrichmentJobDTO[]
   >([]);
-  const [currentInformationEnrichmentJobs, setCurrentInformationEnrichmentJobs] =
-    useState<ProfessorInformationEnrichmentJobDTO[]>([]);
+  const [informationEnrichmentJobTotalCount, setInformationEnrichmentJobTotalCount] =
+    useState(0);
+  const [currentInformationEnrichmentJobCount, setCurrentInformationEnrichmentJobCount] =
+    useState(0);
   const [informationEnrichmentJobsLoading, setInformationEnrichmentJobsLoading] =
     useState(false);
   const [selectedInformationEnrichmentJob, setSelectedInformationEnrichmentJob] =
@@ -1326,7 +1328,8 @@ export const BackgroundTasksPage = ({
   const [informationEnrichmentItemStatusFilter, setInformationEnrichmentItemStatusFilterState] =
     useState<"all" | ProfessorInformationEnrichmentItemStatus>("all");
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
-  const [currentCrawlJobs, setCurrentCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
+  const [crawlJobTotalCount, setCrawlJobTotalCount] = useState(0);
+  const [currentCrawlJobCount, setCurrentCrawlJobCount] = useState(0);
   const [crawlJobsLoading, setCrawlJobsLoading] = useState(false);
   const {
     page: batchPage,
@@ -1749,8 +1752,11 @@ export const BackgroundTasksPage = ({
     [taskListFilters.batch, taskSortDirections, tasks],
   );
   const filteredCrawlJobs = useMemo(
-    () =>
-      filterAndSortTaskItems({
+    () => {
+      if (taskListFilters.crawl.sortKey !== "name") {
+        return crawlJobs;
+      }
+      return filterAndSortTaskItems({
         items: crawlJobs,
         filters: taskListFilters.crawl,
         direction: taskSortDirections[taskListFilters.crawl.sortKey],
@@ -1766,7 +1772,8 @@ export const BackgroundTasksPage = ({
         getUpdatedAt: (job) => job.updated_at,
         getProgress: (job) =>
           job.progress_total > 0 ? job.progress_current / job.progress_total : 0,
-      }),
+      });
+    },
     [crawlJobs, taskListFilters.crawl, taskSortDirections],
   );
   const filteredMatchAnalysisJobs = useMemo(
@@ -1789,8 +1796,11 @@ export const BackgroundTasksPage = ({
     [matchAnalysisJobs, taskListFilters.match, taskSortDirections],
   );
   const filteredInformationEnrichmentJobs = useMemo(
-    () =>
-      filterAndSortTaskItems({
+    () => {
+      if (taskListFilters.enrichment.sortKey !== "name") {
+        return informationEnrichmentJobs;
+      }
+      return filterAndSortTaskItems({
         items: informationEnrichmentJobs,
         filters: taskListFilters.enrichment,
         direction: taskSortDirections[taskListFilters.enrichment.sortKey],
@@ -1801,9 +1811,20 @@ export const BackgroundTasksPage = ({
         getUpdatedAt: (job) => job.updated_at,
         getProgress: (job) =>
           job.target_count > 0 ? job.completed_count / job.target_count : 0,
-      }),
+      });
+    },
     [informationEnrichmentJobs, taskListFilters.enrichment, taskSortDirections],
   );
+  const crawlUsesClientPagination = taskListFilters.crawl.sortKey === "name";
+  const informationEnrichmentUsesClientPagination =
+    taskListFilters.enrichment.sortKey === "name";
+  const displayedCrawlJobTotalCount = crawlUsesClientPagination
+    ? filteredCrawlJobs.length
+    : crawlJobTotalCount;
+  const displayedInformationEnrichmentJobTotalCount =
+    informationEnrichmentUsesClientPagination
+      ? filteredInformationEnrichmentJobs.length
+      : informationEnrichmentJobTotalCount;
   const activeAdvancedTaskFilterCount =
     activeTaskListFilters.status === "all" ? 0 : 1;
   const safeBatchPage = Math.min(
@@ -1812,7 +1833,7 @@ export const BackgroundTasksPage = ({
   );
   const safeCrawlPage = Math.min(
     crawlPage,
-    getTotalPages(filteredCrawlJobs.length, crawlPageSize),
+    getTotalPages(displayedCrawlJobTotalCount, crawlPageSize),
   );
   const safeMatchPage = Math.min(
     matchPage,
@@ -1821,7 +1842,7 @@ export const BackgroundTasksPage = ({
   const safeInformationEnrichmentPage = Math.min(
     informationEnrichmentPage,
     getTotalPages(
-      filteredInformationEnrichmentJobs.length,
+      displayedInformationEnrichmentJobTotalCount,
       informationEnrichmentPageSize,
     ),
   );
@@ -1949,8 +1970,16 @@ export const BackgroundTasksPage = ({
     [batchPageSize, filteredBatchTasks, safeBatchPage],
   );
   const visibleCrawlJobs = useMemo(
-    () => getPageItems(filteredCrawlJobs, safeCrawlPage, crawlPageSize),
-    [crawlPageSize, filteredCrawlJobs, safeCrawlPage],
+    () =>
+      crawlUsesClientPagination
+        ? getPageItems(filteredCrawlJobs, safeCrawlPage, crawlPageSize)
+        : filteredCrawlJobs.slice(0, crawlPageSize),
+    [
+      crawlPageSize,
+      crawlUsesClientPagination,
+      filteredCrawlJobs,
+      safeCrawlPage,
+    ],
   );
   const visibleMatchJobs = useMemo(
     () =>
@@ -1959,14 +1988,20 @@ export const BackgroundTasksPage = ({
   );
   const visibleInformationEnrichmentJobs = useMemo(
     () =>
-      getPageItems(
-        filteredInformationEnrichmentJobs,
-        safeInformationEnrichmentPage,
-        informationEnrichmentPageSize,
-      ),
+      informationEnrichmentUsesClientPagination
+        ? getPageItems(
+            filteredInformationEnrichmentJobs,
+            safeInformationEnrichmentPage,
+            informationEnrichmentPageSize,
+          )
+        : filteredInformationEnrichmentJobs.slice(
+            0,
+            informationEnrichmentPageSize,
+          ),
     [
       filteredInformationEnrichmentJobs,
       informationEnrichmentPageSize,
+      informationEnrichmentUsesClientPagination,
       safeInformationEnrichmentPage,
     ],
   );
@@ -2195,21 +2230,41 @@ export const BackgroundTasksPage = ({
         setCrawlJobsLoading(true);
       }
       try {
-        const data = await listCrawlJobs({ view: taskListViews.crawl });
-        const currentData =
-          taskListViews.crawl === "current"
-            ? data
-            : await listCrawlJobs({ view: "current" });
+        const filters = taskListFilters.crawl;
+        const usesClientPagination = filters.sortKey === "name";
+        const serverSortKey =
+          filters.sortKey === "name" ? "created" : filters.sortKey;
+        const serverSortDirection = usesClientPagination
+          ? "desc"
+          : taskSortDirections[filters.sortKey];
+        const data = await listCrawlJobsPage({
+          offset: usesClientPagination ? 0 : (crawlPage - 1) * crawlPageSize,
+          limit: crawlPageSize,
+          view: taskListViews.crawl,
+          keyword: filters.keyword.trim() || undefined,
+          searchScopes: filters.searchScopes,
+          status: filters.status === "all" ? undefined : filters.status,
+          sortKey: serverSortKey,
+          sortDirection: serverSortDirection,
+          unpaged: usesClientPagination,
+        });
         if (latestCrawlJobsRequestIdRef.current !== requestId) {
           return;
         }
-        setCrawlJobs(data);
-        setCurrentCrawlJobs(currentData);
+        setCrawlJobTotalCount(data.total_count);
+        setCurrentCrawlJobCount(data.current_total_count);
+        const totalPages = getTotalPages(data.total_count, crawlPageSize);
+        if (!usesClientPagination && crawlPage > totalPages) {
+          setCrawlPage(totalPages);
+          lastCrawlJobsLoadErrorRef.current = null;
+          return;
+        }
+        setCrawlJobs(data.items);
         setSelectedCrawlJob((currentJob) => {
           if (!currentJob) {
             return currentJob;
           }
-          return data.find((job) => job.id === currentJob.id) ?? currentJob;
+          return data.items.find((job) => job.id === currentJob.id) ?? currentJob;
         });
         lastCrawlJobsLoadErrorRef.current = null;
       } catch (loadError) {
@@ -2231,7 +2286,15 @@ export const BackgroundTasksPage = ({
         }
       }
     },
-    [notifyError, taskListViews.crawl],
+    [
+      crawlPage,
+      crawlPageSize,
+      notifyError,
+      setCrawlPage,
+      taskListFilters.crawl,
+      taskListViews.crawl,
+      taskSortDirections,
+    ],
   );
 
   const loadMatchAnalysisJobs = useCallback(async (options?: { showLoading?: boolean }) => {
@@ -2430,23 +2493,48 @@ export const BackgroundTasksPage = ({
         setInformationEnrichmentJobsLoading(true);
       }
       try {
-        const data = await listProfessorInformationEnrichmentJobs({
+        const filters = taskListFilters.enrichment;
+        const usesClientPagination = filters.sortKey === "name";
+        const serverSortKey =
+          filters.sortKey === "name" ? "created" : filters.sortKey;
+        const serverSortDirection = usesClientPagination
+          ? "desc"
+          : taskSortDirections[filters.sortKey];
+        const data = await listProfessorInformationEnrichmentJobsPage({
+          offset: usesClientPagination
+            ? 0
+            : (informationEnrichmentPage - 1) * informationEnrichmentPageSize,
+          limit: informationEnrichmentPageSize,
           view: taskListViews.enrichment,
+          keyword: filters.keyword.trim() || undefined,
+          status: filters.status === "all" ? undefined : filters.status,
+          sortKey: serverSortKey,
+          sortDirection: serverSortDirection,
+          unpaged: usesClientPagination,
         });
-        const currentData =
-          taskListViews.enrichment === "current"
-            ? data
-            : await listProfessorInformationEnrichmentJobs({ view: "current" });
         if (latestInformationEnrichmentJobsRequestIdRef.current !== requestId) {
           return;
         }
-        setInformationEnrichmentJobs(data);
-        setCurrentInformationEnrichmentJobs(currentData);
+        setInformationEnrichmentJobTotalCount(data.total_count);
+        setCurrentInformationEnrichmentJobCount(data.current_total_count);
+        const totalPages = getTotalPages(
+          data.total_count,
+          informationEnrichmentPageSize,
+        );
+        if (
+          !usesClientPagination &&
+          informationEnrichmentPage > totalPages
+        ) {
+          setInformationEnrichmentPage(totalPages);
+          lastInformationEnrichmentJobsLoadErrorRef.current = null;
+          return;
+        }
+        setInformationEnrichmentJobs(data.items);
         setSelectedInformationEnrichmentJob((currentJob) => {
           if (!currentJob) {
             return currentJob;
           }
-          return data.find((job) => job.id === currentJob.id) ?? currentJob;
+          return data.items.find((job) => job.id === currentJob.id) ?? currentJob;
         });
         lastInformationEnrichmentJobsLoadErrorRef.current = null;
       } catch (loadError) {
@@ -2470,7 +2558,15 @@ export const BackgroundTasksPage = ({
         }
       }
     },
-    [notifyError, taskListViews.enrichment],
+    [
+      informationEnrichmentPage,
+      informationEnrichmentPageSize,
+      notifyError,
+      setInformationEnrichmentPage,
+      taskListFilters.enrichment,
+      taskListViews.enrichment,
+      taskSortDirections,
+    ],
   );
 
   const cacheInformationEnrichmentItemsPage = useCallback(
@@ -2857,9 +2953,12 @@ export const BackgroundTasksPage = ({
 
   useEffect(() => {
     setCrawlPage((currentPage) =>
-      Math.min(currentPage, getTotalPages(crawlJobs.length, crawlPageSize)),
+      Math.min(
+        currentPage,
+        getTotalPages(displayedCrawlJobTotalCount, crawlPageSize),
+      ),
     );
-  }, [crawlJobs.length, crawlPageSize, setCrawlPage]);
+  }, [crawlPageSize, displayedCrawlJobTotalCount, setCrawlPage]);
 
   useEffect(() => {
     setMatchPage((currentPage) =>
@@ -2875,13 +2974,13 @@ export const BackgroundTasksPage = ({
       Math.min(
         currentPage,
         getTotalPages(
-          informationEnrichmentJobs.length,
+          displayedInformationEnrichmentJobTotalCount,
           informationEnrichmentPageSize,
         ),
       ),
     );
   }, [
-    informationEnrichmentJobs.length,
+    displayedInformationEnrichmentJobTotalCount,
     informationEnrichmentPageSize,
     setInformationEnrichmentPage,
   ]);
@@ -3634,10 +3733,9 @@ export const BackgroundTasksPage = ({
     setCancelingInformationEnrichmentJobId(jobId);
     try {
       const result = await cancelProfessorInformationEnrichmentJob(jobId);
+      latestInformationEnrichmentJobsRequestIdRef.current += 1;
+      setInformationEnrichmentJobsLoading(false);
       setInformationEnrichmentJobs((currentJobs) =>
-        currentJobs.map((job) => (job.id === jobId ? result.job : job)),
-      );
-      setCurrentInformationEnrichmentJobs((currentJobs) =>
         currentJobs.map((job) => (job.id === jobId ? result.job : job)),
       );
       if (selectedInformationEnrichmentJob?.id === jobId) {
@@ -3662,10 +3760,9 @@ export const BackgroundTasksPage = ({
     setRetryingInformationEnrichmentJobId(jobId);
     try {
       const job = await retryFailedProfessorInformationEnrichmentJob(jobId);
-      setInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
-      setCurrentInformationEnrichmentJobs((currentJobs) => [job, ...currentJobs]);
       trackInformationEnrichmentJob(job);
       notifySuccess("已创建重试任务", "失败或取消项已重新加入信息补全队列。");
+      await loadInformationEnrichmentJobs({ showLoading: false });
     } catch (actionError) {
       const message =
         actionError instanceof Error
@@ -5167,7 +5264,7 @@ export const BackgroundTasksPage = ({
                 activeTab === "crawl" ? "text-white/80" : "text-stone-400"
               }
             >
-              {currentCrawlJobs.length}
+              {currentCrawlJobCount}
             </span>
           </button>
           <button
@@ -5210,7 +5307,7 @@ export const BackgroundTasksPage = ({
                   : "text-stone-400"
               }
             >
-              {currentInformationEnrichmentJobs.length}
+              {currentInformationEnrichmentJobCount}
             </span>
           </button>
         </div>
@@ -5769,14 +5866,14 @@ export const BackgroundTasksPage = ({
           正在加载信息补全任务列表…
         </div>
       ) : activeTab === "enrichment" &&
-        informationEnrichmentJobs.length === 0 ? (
+        informationEnrichmentJobTotalCount === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
           {activeTaskListView === "trash"
             ? "回收站暂无任务。"
             : "暂无信息补全任务。可从导师管理页批量创建。"}
         </div>
       ) : activeTab === "enrichment" &&
-        filteredInformationEnrichmentJobs.length === 0 ? (
+        displayedInformationEnrichmentJobTotalCount === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
           没有符合当前条件的信息补全任务。
         </div>
@@ -5943,7 +6040,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeInformationEnrichmentPage}
             pageSize={informationEnrichmentPageSize}
-            totalCount={filteredInformationEnrichmentJobs.length}
+            totalCount={displayedInformationEnrichmentJobTotalCount}
             onChange={handleInformationEnrichmentPaginationChange}
             ariaLabel="信息补全任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
@@ -5959,13 +6056,13 @@ export const BackgroundTasksPage = ({
           <Loader2 className="h-4 w-4 animate-spin" />
           正在加载抓取任务列表…
         </div>
-      ) : crawlJobs.length === 0 ? (
+      ) : crawlJobTotalCount === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
           {activeTaskListView === "trash"
             ? "回收站暂无任务。"
             : "暂无抓取任务。可从导师管理页创建。"}
         </div>
-      ) : filteredCrawlJobs.length === 0 ? (
+      ) : displayedCrawlJobTotalCount === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
           没有符合当前条件的智能抓取任务。
         </div>
@@ -6004,7 +6101,7 @@ export const BackgroundTasksPage = ({
           <Pagination
             page={safeCrawlPage}
             pageSize={crawlPageSize}
-            totalCount={filteredCrawlJobs.length}
+            totalCount={displayedCrawlJobTotalCount}
             onChange={handleCrawlPaginationChange}
             ariaLabel="智能抓取任务分页"
             pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}

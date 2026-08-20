@@ -152,6 +152,12 @@ class CrawlJobSummaryRead(CrawlJobRead):
     effective_models: list[str] = Field(default_factory=list)
 
 
+class CrawlJobSummaryPageRead(ApiSchema):
+    items: list[CrawlJobSummaryRead]
+    total_count: int
+    current_total_count: int
+
+
 class CrawlJobDetailsRead(ApiSchema):
     job: CrawlJobSummaryRead
     pages: list["CrawlPageRead"]

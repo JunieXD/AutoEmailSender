@@ -304,6 +304,12 @@ export interface CrawlJobSummaryDTO extends CrawlJobDTO {
   duration_seconds: number;
 }
 
+export interface CrawlJobSummaryPageDTO {
+  items: CrawlJobSummaryDTO[];
+  total_count: number;
+  current_total_count: number;
+}
+
 export interface CrawlJobDetailsDTO {
   job: CrawlJobSummaryDTO;
   pages: CrawlPageDTO[];

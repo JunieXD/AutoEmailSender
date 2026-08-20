@@ -108,7 +108,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         )
         self.assertEqual(candidate_update.status_code, 404, msg=candidate_update.text)
 
-    def test_task_center_lists_all_information_enrichment_jobs_without_limit(self) -> None:
+    def test_task_center_information_enrichment_page_reports_complete_counts(self) -> None:
         async def seed_jobs() -> None:
             from app.core.database import get_session_factory
 
@@ -139,16 +139,97 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         response = self.client.get("/api/professor-information-enrichment-jobs")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(len(response.json()), 51)
+        self.assertEqual(len(response.json()), 50)
         self.assertEqual(response.json()[0]["name"], "信息补全任务 50")
-        self.assertEqual(
-            len(
-                self.client.get(
-                    "/api/professor-information-enrichment-jobs?limit=50"
-                ).json()
-            ),
-            50,
+
+        page = self.client.get(
+            "/api/professor-information-enrichment-jobs/page?offset=48&limit=8"
         )
+
+        self.assertEqual(page.status_code, 200, msg=page.text)
+        self.assertEqual(len(page.json()["items"]), 3)
+        self.assertEqual(page.json()["total_count"], 51)
+        self.assertEqual(page.json()["current_total_count"], 51)
+        self.assertEqual(page.json()["items"][0]["name"], "信息补全任务 2")
+
+        unpaged = self.client.get(
+            "/api/professor-information-enrichment-jobs/page?limit=1&unpaged=true"
+        )
+        self.assertEqual(unpaged.status_code, 200, msg=unpaged.text)
+        self.assertEqual(len(unpaged.json()["items"]), 51)
+
+    def test_task_center_information_enrichment_page_filters_and_counts_views(
+        self,
+    ) -> None:
+        async def seed_jobs() -> list[int]:
+            from app.core.database import get_session_factory
+
+            async with get_session_factory()() as session:
+                jobs = [
+                    CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url=f"https://example.edu/enrichment-filter/{index}",
+                        job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
+                        trigger_mode=CrawlJobTriggerMode.BATCH.value,
+                        task_center_visible=True,
+                        display_name=name,
+                        llm_profile_id=self.llm_profile_id,
+                        status=status,
+                        progress_current=progress_current,
+                        progress_total=4,
+                        agent_trace=[],
+                    )
+                    for index, (name, status, progress_current) in enumerate(
+                        [
+                            ("重点导师补全", CrawlJobStatus.RUNNING.value, 1),
+                            ("普通导师补全", CrawlJobStatus.FAILED.value, 3),
+                            ("回收任务", CrawlJobStatus.COMPLETED.value, 4),
+                        ]
+                    )
+                ]
+                session.add_all(jobs)
+                await session.flush()
+                job_ids = [job.id for job in jobs]
+                jobs[2].deleted_at = jobs[2].updated_at
+                await session.commit()
+                return job_ids
+
+        job_ids = asyncio.run(seed_jobs())
+
+        current = self.client.get(
+            "/api/professor-information-enrichment-jobs/page"
+            "?sort_key=progress&sort_direction=asc"
+        )
+        self.assertEqual(current.status_code, 200, msg=current.text)
+        self.assertEqual(current.json()["total_count"], 2)
+        self.assertEqual(current.json()["current_total_count"], 2)
+        self.assertEqual(
+            [item["id"] for item in current.json()["items"]],
+            [job_ids[0], job_ids[1]],
+        )
+
+        failed = self.client.get(
+            "/api/professor-information-enrichment-jobs/page?status=failed"
+        )
+        self.assertEqual(failed.status_code, 200, msg=failed.text)
+        self.assertEqual(failed.json()["total_count"], 1)
+        self.assertEqual(failed.json()["items"][0]["id"], job_ids[1])
+        self.assertEqual(failed.json()["current_total_count"], 2)
+
+        search = self.client.get(
+            "/api/professor-information-enrichment-jobs/page?keyword=重点"
+        )
+        self.assertEqual(search.status_code, 200, msg=search.text)
+        self.assertEqual(search.json()["items"][0]["id"], job_ids[0])
+
+        trash = self.client.get(
+            "/api/professor-information-enrichment-jobs/page?view=trash"
+        )
+        self.assertEqual(trash.status_code, 200, msg=trash.text)
+        self.assertEqual(trash.json()["total_count"], 1)
+        self.assertEqual(trash.json()["current_total_count"], 2)
+        self.assertEqual(trash.json()["items"][0]["id"], job_ids[2])
 
     def test_batch_job_retains_conflicts_as_skipped_and_supports_trash_actions(self) -> None:
         professor_id = self._create_professor(

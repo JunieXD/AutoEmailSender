@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
+import json
 import os
 import sqlite3
 import tempfile
@@ -182,7 +183,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["school"], "学院 2")
         self.assertEqual(payload[1]["school"], "学院 1")
 
-    def test_list_crawl_jobs_without_limit_returns_all_task_center_jobs(self) -> None:
+    def test_task_center_crawl_job_page_reports_complete_counts(self) -> None:
         for index in range(51):
             response = self.client.post(
                 "/api/crawl-jobs",
@@ -198,12 +199,121 @@ class CrawlJobsApiTests(unittest.TestCase):
         response = self.client.get("/api/crawl-jobs")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(len(response.json()), 51)
+        self.assertEqual(len(response.json()), 50)
         self.assertEqual(response.json()[0]["school"], "任务中心学院 50")
-        self.assertEqual(
-            len(self.client.get("/api/crawl-jobs?limit=50").json()),
-            50,
+
+        page = self.client.get("/api/crawl-jobs/page?offset=48&limit=8")
+
+        self.assertEqual(page.status_code, 200, msg=page.text)
+        self.assertEqual(len(page.json()["items"]), 3)
+        self.assertEqual(page.json()["total_count"], 51)
+        self.assertEqual(page.json()["current_total_count"], 51)
+        self.assertEqual(page.json()["items"][0]["school"], "任务中心学院 2")
+
+        unpaged = self.client.get("/api/crawl-jobs/page?limit=1&unpaged=true")
+        self.assertEqual(unpaged.status_code, 200, msg=unpaged.text)
+        self.assertEqual(len(unpaged.json()["items"]), 51)
+
+    def test_task_center_crawl_job_page_filters_sorts_and_counts_views(self) -> None:
+        jobs = []
+        for university, school, url in [
+            ("甲大学", "计算机学院", "https://example.edu/alpha"),
+            ("乙大学", "自动化学院", "https://example.edu/beta"),
+            ("丙大学", "材料学院", "https://example.edu/gamma"),
+        ]:
+            response = self.client.post(
+                "/api/crawl-jobs",
+                json={
+                    "university": university,
+                    "school": school,
+                    "start_url": url,
+                    "llm_profile_id": None,
+                },
+            )
+            self.assertEqual(response.status_code, 201, msg=response.text)
+            jobs.append(response.json())
+
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                UPDATE crawl_jobs
+                SET status = ?, progress_current = ?, progress_total = ?,
+                    updated_at = ?, agent_trace = ?
+                WHERE id = ?
+                """,
+                (
+                    "running",
+                    1,
+                    4,
+                    "2026-08-20 10:00:00.000000",
+                    json.dumps([{"summary": "正在解析重点教师页面"}]),
+                    jobs[0]["id"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE crawl_jobs
+                SET status = ?, progress_current = ?, progress_total = ?,
+                    updated_at = ?, agent_trace = ?
+                WHERE id = ?
+                """,
+                (
+                    "failed",
+                    3,
+                    4,
+                    "2026-08-20 11:00:00.000000",
+                    json.dumps([{"summary": "连接失败"}]),
+                    jobs[1]["id"],
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE crawl_jobs
+                SET status = ?, deleted_at = ?
+                WHERE id = ?
+                """,
+                ("completed", "2026-08-20 12:00:00.000000", jobs[2]["id"]),
+            )
+
+        current = self.client.get(
+            "/api/crawl-jobs/page?limit=8&sort_key=progress&sort_direction=asc"
         )
+        self.assertEqual(current.status_code, 200, msg=current.text)
+        self.assertEqual(current.json()["total_count"], 2)
+        self.assertEqual(current.json()["current_total_count"], 2)
+        self.assertEqual(
+            [item["id"] for item in current.json()["items"]],
+            [jobs[0]["id"], jobs[1]["id"]],
+        )
+
+        failed = self.client.get("/api/crawl-jobs/page?status=failed")
+        self.assertEqual(failed.status_code, 200, msg=failed.text)
+        self.assertEqual(failed.json()["total_count"], 1)
+        self.assertEqual(failed.json()["items"][0]["id"], jobs[1]["id"])
+        self.assertEqual(failed.json()["current_total_count"], 2)
+
+        school_search = self.client.get(
+            "/api/crawl-jobs/page?keyword=计算机&search_scopes=school"
+        )
+        self.assertEqual(school_search.status_code, 200, msg=school_search.text)
+        self.assertEqual(school_search.json()["items"][0]["id"], jobs[0]["id"])
+
+        event_search = self.client.get(
+            "/api/crawl-jobs/page?keyword=重点教师&search_scopes=event"
+        )
+        self.assertEqual(event_search.status_code, 200, msg=event_search.text)
+        self.assertEqual(event_search.json()["items"][0]["id"], jobs[0]["id"])
+
+        trash = self.client.get("/api/crawl-jobs/page?view=trash")
+        self.assertEqual(trash.status_code, 200, msg=trash.text)
+        self.assertEqual(trash.json()["total_count"], 1)
+        self.assertEqual(trash.json()["current_total_count"], 2)
+        self.assertEqual(trash.json()["items"][0]["id"], jobs[2]["id"])
+
+        invalid_scope = self.client.get(
+            "/api/crawl-jobs/page?keyword=x&search_scopes=unknown"
+        )
+        self.assertEqual(invalid_scope.status_code, 400, msg=invalid_scope.text)
 
     def test_crawl_job_delete_restore_and_trash_view(self) -> None:
         blocked = self.client.post(

@@ -115,6 +115,7 @@
       "exported_actions": [
         "createCrawlJob",
         "listCrawlJobs",
+        "listCrawlJobsPage",
         "getCrawlJob",
         "getCrawlJobDetails",
         "listCrawlCandidates",
@@ -455,6 +456,7 @@
         "getActiveProfessorInformationEnrichment",
         "createProfessorInformationEnrichmentJob",
         "listProfessorInformationEnrichmentJobs",
+        "listProfessorInformationEnrichmentJobsPage",
         "getProfessorInformationEnrichmentJob",
         "listProfessorInformationEnrichmentItems",
         "listProfessorInformationEnrichmentItemsPage",

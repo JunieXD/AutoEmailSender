@@ -9,6 +9,7 @@ import type {
   CrawlJobDTO,
   CrawlJobEventDTO,
   CrawlJobRetryPayloadDTO,
+  CrawlJobSummaryPageDTO,
   CrawlJobSummaryDTO,
   CrawlPageDTO,
   TaskListView,
@@ -24,6 +25,29 @@ export const listCrawlJobs = (params: { limit?: number; view?: TaskListView } = 
   apiFetch<CrawlJobSummaryDTO[]>('/api/crawl-jobs', undefined, {
     limit: params.limit,
     view: params.view,
+  });
+
+export const listCrawlJobsPage = (params: {
+  offset: number;
+  limit: number;
+  view: TaskListView;
+  keyword?: string;
+  searchScopes?: string[];
+  status?: string;
+  sortKey?: 'updated' | 'created' | 'progress';
+  sortDirection?: 'asc' | 'desc';
+  unpaged?: boolean;
+}) =>
+  apiFetch<CrawlJobSummaryPageDTO>('/api/crawl-jobs/page', undefined, {
+    offset: params.offset,
+    limit: params.limit,
+    view: params.view,
+    keyword: params.keyword,
+    search_scopes: params.searchScopes?.join(','),
+    status: params.status,
+    sort_key: params.sortKey,
+    sort_direction: params.sortDirection,
+    unpaged: params.unpaged ? 1 : undefined,
   });
 
 export const getCrawlJob = (jobId: number) =>

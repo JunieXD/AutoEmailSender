@@ -8,6 +8,7 @@ import {
   getCrawlJobDetails,
   getCrawlJobEvents,
   listCrawlJobs,
+  listCrawlJobsPage,
   listCrawlPages,
   restoreCrawlJob,
   resumeCrawlJobReview,
@@ -87,6 +88,42 @@ describe('crawlJobsApi', () => {
       limit: undefined,
       view: undefined,
     });
+  });
+
+  it('lists a filtered task-center crawl job page', async () => {
+    mockedApiFetch.mockResolvedValue({
+      items: [],
+      total_count: 53,
+      current_total_count: 61,
+    });
+
+    await listCrawlJobsPage({
+      offset: 16,
+      limit: 8,
+      view: 'trash',
+      keyword: '计算机',
+      searchScopes: ['university', 'school'],
+      status: 'failed',
+      sortKey: 'progress',
+      sortDirection: 'asc',
+      unpaged: true,
+    });
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      '/api/crawl-jobs/page',
+      undefined,
+      {
+        offset: 16,
+        limit: 8,
+        view: 'trash',
+        keyword: '计算机',
+        search_scopes: 'university,school',
+        status: 'failed',
+        sort_key: 'progress',
+        sort_direction: 'asc',
+        unpaged: 1,
+      },
+    );
   });
 
   it('gets a crawl job summary from the expected URL', async () => {
