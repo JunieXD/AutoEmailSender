@@ -477,7 +477,13 @@ async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask
         return True
     if state.status == CrawlPageFetchStatus.TERMINAL_FAILED.value:
         task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
-        task.last_error = state.last_error_message or "页面此前已终止失败，跳过重复抓取"
+        if state.terminal_reason == "transient_retry_exhausted":
+            task.last_error = (
+                "页面暂时无法访问，重试次数已用尽："
+                f"{state.last_error_message or '网络访问失败'}"
+            )
+        else:
+            task.last_error = state.last_error_message or "页面此前已终止失败，跳过重复抓取"
         task.worker_id = None
         task.claimed_at = None
         task.lease_expires_at = None

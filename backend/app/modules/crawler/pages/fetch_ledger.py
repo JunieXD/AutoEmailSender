@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Protocol
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.crawl_job import CrawlPageFetchState, CrawlPageFetchStatus
 from ..v2.url_utils import is_spa_route_fragment
 
-TRANSIENT_FETCH_RETRY_LIMIT = 2
+# Keep the ledger budget aligned with the crawler's existing connectivity retry
+# budget so it cannot prematurely turn a network outage into a terminal skip.
+TRANSIENT_FETCH_RETRY_LIMIT = 12
 
 _TERMINAL_FAILURE_MARKERS = (
     "anti-bot",
@@ -40,6 +43,8 @@ _POLICY_FAILURE_MARKERS = (
 _TRANSIENT_FAILURE_MARKERS = (
     "err_",
     "connection",
+    "connection closed",
+    "connection aborted",
     "protocol",
     "fetch failed",
     "timed out",
@@ -49,7 +54,13 @@ _TRANSIENT_FAILURE_MARKERS = (
     "returned empty html",
     "empty response",
     "playwright browser fetch failed",
+    "temporary server response",
+    "http 5",
+    "temporary dns",
+    "name resolution",
+    "暂时无法解析",
 )
+_TRANSIENT_HTTP_STATUS_PATTERN = re.compile(r"\b(?:408|425|429|5\d{2})\b")
 
 
 class PageSnapshotLike(Protocol):
@@ -58,6 +69,7 @@ class PageSnapshotLike(Protocol):
     status: str
     error_message: str | None
     suspicious_empty: bool
+    http_status_code: int | None
     page_id: int | None
 
 
@@ -109,6 +121,8 @@ def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClass
             status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
             reason="anti_bot_or_empty_response",
         )
+    if _is_transient_http_status(getattr(snapshot, "http_status_code", None)):
+        return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
     if any(marker in error_message for marker in _TRANSIENT_FAILURE_MARKERS):
         return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
     if snapshot.suspicious_empty:
@@ -121,8 +135,16 @@ def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClass
 
 def _is_retryable_failure_message(message: str | None) -> bool:
     normalized = (message or "").lower()
-    return bool(normalized) and any(
-        marker in normalized for marker in _TRANSIENT_FAILURE_MARKERS
+    return bool(normalized) and (
+        any(marker in normalized for marker in _TRANSIENT_FAILURE_MARKERS)
+        or bool(_TRANSIENT_HTTP_STATUS_PATTERN.search(normalized))
+    )
+
+
+def _is_transient_http_status(status_code: int | None) -> bool:
+    return bool(
+        status_code is not None
+        and (status_code in {408, 425, 429} or 500 <= status_code <= 599)
     )
 
 

@@ -89,6 +89,9 @@ BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
+TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429})
+TRANSIENT_SERVER_STATUS_MIN = 500
+TRANSIENT_SERVER_STATUS_MAX = 599
 INVALID_PROFILE_PAGE_MARKERS = (
     "{{name}}",
     "{{email}}",
@@ -162,6 +165,7 @@ DYNAMIC_DIRECTORY_READY_POLL_MS = 200
 DYNAMIC_DIRECTORY_STABLE_MS = 500
 DYNAMIC_DIRECTORY_MAX_RETRIES = 1
 BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS = 1.0
+BROWSER_TRANSIENT_RETRY_DELAY_SECONDS = 1.0
 BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS = 80
 BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS = 8_000
 BROWSER_SPARSE_DIRECTORY_MAX_LINKS = 5
@@ -197,6 +201,16 @@ _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS = (
     "page.content",
     "page is navigating",
 )
+_TRANSIENT_BROWSER_ERROR_MARKERS = (
+    "err_",
+    "connection",
+    "protocol",
+    "fetch failed",
+    "timed out",
+    "timeout",
+    "dns",
+    "name resolution",
+)
 IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "err_connection_closed",
     "err_connection_refused",
@@ -209,6 +223,8 @@ BROWSER_USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 UNSAFE_CRAWL_URL_MESSAGE = "URL 不允许指向本机、内网或不可解析地址"
+TEMPORARY_DNS_RESOLUTION_MESSAGE = "页面地址暂时无法解析，稍后将自动重试"
+TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE = "浏览器最终地址暂时无法解析，稍后将自动重试"
 CrawlPageIntent = Literal["generic", "directory", "profile"]
 _DEFAULT_BROWSER_WAIT_FOR = object()
 
@@ -732,6 +748,10 @@ class _SafeCrawlUrl:
     resolved_ips: tuple[str, ...]
 
 
+class TemporaryCrawlDNSResolutionError(ValueError):
+    """The hostname could not be resolved for this attempt."""
+
+
 def is_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
     start = urlparse(start_url)
     candidate = urlparse(urljoin(start_url, candidate_url))
@@ -753,9 +773,25 @@ def _is_resolved_allowed_crawl_url(
     *,
     allow_public_dns_fallback: bool = False,
 ) -> bool:
+    return (
+        _resolved_allowed_crawl_url_error(
+            start_url,
+            candidate_url,
+            allow_public_dns_fallback=allow_public_dns_fallback,
+        )
+        is None
+    )
+
+
+def _resolved_allowed_crawl_url_error(
+    start_url: str,
+    candidate_url: str,
+    *,
+    allow_public_dns_fallback: bool = False,
+) -> str | None:
     absolute_candidate_url = urljoin(start_url, candidate_url)
     if not is_allowed_crawl_url(start_url, absolute_candidate_url):
-        return False
+        return UNSAFE_CRAWL_URL_MESSAGE
     try:
         _resolve_safe_public_crawl_url(
             start_url,
@@ -765,15 +801,24 @@ def _is_resolved_allowed_crawl_url(
             absolute_candidate_url,
             allow_public_dns_fallback=allow_public_dns_fallback,
         )
+    except TemporaryCrawlDNSResolutionError:
+        return TEMPORARY_DNS_RESOLUTION_MESSAGE
     except ValueError:
-        return False
-    return True
+        return UNSAFE_CRAWL_URL_MESSAGE
+    return None
 
 
 def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
+    return _resolved_context_url_error(ctx, candidate_url) is None
+
+
+def _resolved_context_url_error(
+    ctx: CrawlToolContext,
+    candidate_url: str,
+) -> str | None:
     absolute_candidate_url = urljoin(ctx.start_url, candidate_url)
     if not ctx.allows_url(absolute_candidate_url):
-        return False
+        return UNSAFE_CRAWL_URL_MESSAGE
     try:
         _resolve_safe_public_crawl_url(
             ctx.start_url,
@@ -783,9 +828,11 @@ def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
             absolute_candidate_url,
             allow_public_dns_fallback=ctx.allow_public_dns_fallback,
         )
+    except TemporaryCrawlDNSResolutionError:
+        return TEMPORARY_DNS_RESOLUTION_MESSAGE
     except ValueError:
-        return False
-    return True
+        return UNSAFE_CRAWL_URL_MESSAGE
+    return None
 
 
 def _is_profile_entry_request(profile_entry_url: str, requested_url: str) -> bool:
@@ -858,7 +905,7 @@ def _resolve_system_host_ips(host: str, port: int) -> tuple[str, ...]:
     try:
         address_infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+        raise TemporaryCrawlDNSResolutionError(TEMPORARY_DNS_RESOLUTION_MESSAGE) from exc
 
     if not address_infos:
         raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
@@ -1204,6 +1251,17 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                     await record_page_snapshot(ctx, snapshot)
                     return snapshot
 
+                if _is_transient_http_status(response.status_code):
+                    snapshot = html_to_snapshot(str(response.url), response.text, "http")
+                    snapshot.http_status_code = response.status_code
+                    snapshot.status = "failed"
+                    snapshot.error_message = (
+                        f"HTTP {response.status_code} temporary server response"
+                    )
+                    snapshot.suspicious_empty = True
+                    await record_page_snapshot(ctx, snapshot)
+                    return snapshot
+
                 response.raise_for_status()
                 break
 
@@ -1340,7 +1398,9 @@ async def fetch_binary_resource(
 def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) -> PageSnapshot | None:
     if decision.action == "skip_terminal_failed":
         message = decision.message or decision.terminal_reason or "terminal_failed"
-        if message.startswith("该页面此前已明确抓取失败，已跳过："):
+        if decision.terminal_reason == "transient_retry_exhausted":
+            error_message = f"页面暂时无法访问，重试次数已用尽：{message}"
+        elif message.startswith("该页面此前已明确抓取失败，已跳过："):
             error_message = message
         else:
             error_message = f"该页面此前已明确抓取失败，已跳过：{message}"
@@ -1958,11 +2018,12 @@ async def _crawl_page_with_browser(
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    if not _is_resolved_context_url(ctx, absolute_url):
+    context_url_error = _resolved_context_url_error(ctx, absolute_url)
+    if context_url_error is not None:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
-            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+            error_message=context_url_error,
         )
     browser_session_scope = ctx.browser_session_scope
     if _should_offload_browser_fetch_to_thread():
@@ -1980,7 +2041,17 @@ async def _crawl_page_with_browser(
             intent,
             browser_session_scope=browser_session_scope,
         )
-    if snapshot.status == "succeeded" and not _is_resolved_context_url(ctx, snapshot.url):
+    if snapshot.status == "succeeded":
+        final_url_error = _resolved_context_url_error(ctx, snapshot.url)
+    else:
+        final_url_error = None
+    if snapshot.status == "succeeded" and final_url_error is not None:
+        if final_url_error == TEMPORARY_DNS_RESOLUTION_MESSAGE:
+            return _failed_snapshot(
+                url=snapshot.url,
+                fetch_method="browser",
+                error_message=TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE,
+            )
         if not ctx.accept_profile_redirect(absolute_url, snapshot.url):
             return _failed_snapshot(
                 url=snapshot.url,
@@ -2032,15 +2103,16 @@ async def expand_browser_pagination(
     """Replay one model-selected next-page control and collect each changed state."""
 
     absolute_url = urljoin(ctx.start_url, url)
-    if not _is_resolved_allowed_crawl_url(
+    allowed_url_error = _resolved_allowed_crawl_url_error(
         ctx.start_url,
         absolute_url,
         allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-    ):
+    )
+    if allowed_url_error is not None:
         return BrowserPaginationExpansion(
             status="failed",
             stopped_reason="unsafe_url",
-            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+            error_message=allowed_url_error,
         )
     target = {
         "tag": tag,
@@ -2069,16 +2141,21 @@ async def expand_browser_pagination(
             browser_session_scope=browser_session_scope,
         )
     for snapshot in result.snapshots:
-        if not _is_resolved_allowed_crawl_url(
+        final_url_error = _resolved_allowed_crawl_url_error(
             ctx.start_url,
             snapshot.url,
             allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-        ):
+        )
+        if final_url_error is not None:
             return BrowserPaginationExpansion(
                 status="failed",
                 snapshots=result.snapshots,
                 stopped_reason="unsafe_final_url",
-                error_message="浏览器分页后的最终 URL 不在允许的同校公网域名范围内",
+                error_message=(
+                    TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE
+                    if final_url_error == TEMPORARY_DNS_RESOLUTION_MESSAGE
+                    else "浏览器分页后的最终 URL 不在允许的同校公网域名范围内"
+                ),
             )
     return result
 
@@ -2411,6 +2488,20 @@ async def _try_playwright_browser_fetch(
             )
         if _is_immediate_http_compatibility_error(absolute_url, last_result):
             return last_result
+        if _is_transient_http_status(last_result.http_status_code):
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
+                continue
+            status_code = last_result.http_status_code
+            return last_result.model_copy(
+                update={
+                    "status": "failed",
+                    "error_message": (
+                        f"Playwright browser fetch returned temporary HTTP {status_code}"
+                    ),
+                    "suspicious_empty": True,
+                }
+            )
         if _looks_like_sparse_browser_directory_shell(last_result, options=options):
             if attempt + 1 < max_attempts:
                 await asyncio.sleep(BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS)
@@ -2426,6 +2517,11 @@ async def _try_playwright_browser_fetch(
             )
         if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
             return last_result
+        if (
+            attempt + 1 < max_attempts
+            and _looks_like_transient_browser_error(last_result.error_message)
+        ):
+            await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
     return last_result or _failed_snapshot(
         url=absolute_url,
         fetch_method="browser",
@@ -2605,6 +2701,23 @@ def _looks_like_sparse_browser_directory_shell(
         len(normalized_text) <= BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS
         and len(snapshot.html or "") <= BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS
         and len(set(snapshot.links or ())) <= BROWSER_SPARSE_DIRECTORY_MAX_LINKS
+    )
+
+
+def _is_transient_http_status(status_code: int | None) -> bool:
+    return bool(
+        status_code is not None
+        and (
+            status_code in TRANSIENT_HTTP_STATUS_CODES
+            or TRANSIENT_SERVER_STATUS_MIN <= status_code <= TRANSIENT_SERVER_STATUS_MAX
+        )
+    )
+
+
+def _looks_like_transient_browser_error(message: str | None) -> bool:
+    normalized = (message or "").lower()
+    return bool(normalized) and any(
+        marker in normalized for marker in _TRANSIENT_BROWSER_ERROR_MARKERS
     )
 
 

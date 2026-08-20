@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.models.base import Base
 from app.models.crawl_job import CrawlJob, CrawlPageFetchState
 from app.modules.crawler.pages.fetch_ledger import (
+    TRANSIENT_FETCH_RETRY_LIMIT,
     classify_page_fetch_failure,
     get_page_fetch_decision,
     mark_page_fetch_result,
@@ -94,6 +95,43 @@ class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
             fetch_method="browser",
             status="failed",
             error_message="Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED",
+            suspicious_empty=True,
+        )
+
+        result = classify_page_fetch_failure(snapshot)
+
+        self.assertEqual(result.status, "transient_failed")
+        self.assertIsNone(result.reason)
+
+    def test_classifies_http_502_empty_shell_as_transient(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://cs.example.edu/faculty",
+            title=None,
+            text="",
+            html="<html><head></head><body></body></html>",
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            http_status_code=502,
+            error_message="Playwright browser fetch returned temporary HTTP 502",
+            suspicious_empty=True,
+        )
+
+        result = classify_page_fetch_failure(snapshot)
+
+        self.assertEqual(result.status, "transient_failed")
+        self.assertIsNone(result.reason)
+
+    def test_classifies_temporary_dns_resolution_as_transient(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://cs.example.edu/faculty",
+            title=None,
+            text="",
+            html="",
+            links=[],
+            fetch_method="browser",
+            status="failed",
+            error_message="页面地址暂时无法解析，稍后将自动重试",
             suspicious_empty=True,
         )
 
@@ -219,7 +257,7 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                             normalized_url="https://cs.example.edu/faculty",
                             original_url="https://cs.example.edu/faculty",
                             status="transient_failed",
-                            transient_failure_count=2,
+                            transient_failure_count=TRANSIENT_FETCH_RETRY_LIMIT,
                             last_error_message="timeout",
                         )
                     )

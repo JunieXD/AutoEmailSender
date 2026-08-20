@@ -2620,6 +2620,30 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(to_thread.await_count, 1)
 
+    async def test_browser_fetch_reports_temporary_dns_failure_separately_from_policy_rejection(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            side_effect=socket.gaierror(socket.EAI_AGAIN, "temporary failure in name resolution"),
+        ):
+            snapshot = await _crawl_page_with_browser(
+                ctx,
+                "https://example.edu/faculty",
+                "",
+                "directory",
+            )
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertIn("暂时无法解析", snapshot.error_message or "")
+        self.assertNotIn("URL 不允许指向本机、内网", snapshot.error_message or "")
+
     async def test_playwright_browser_fetch_runs_inline_without_thread_on_supported_loop(self) -> None:
         ctx = CrawlToolContext(
             job_id=1,
@@ -2896,6 +2920,37 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         recorded = session_factory.added[0]
         self.assertEqual(recorded.status, "failed")
         self.assertIsNone(recorded.text_excerpt)
+
+    async def test_crawl_page_with_http_marks_http_502_as_transient(self) -> None:
+        session_factory = _FakeSessionFactory()
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://cs.example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=session_factory,  # type: ignore[arg-type]
+        )
+        response = _FakeHttpResponse(
+            url="https://cs.example.edu/faculty",
+            text="<html><head></head><body></body></html>",
+            status_code=502,
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            return_value=[
+                (0, 0, 0, "", ("93.184.216.34", 443)),
+            ],
+        ), patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class:
+            client = client_class.return_value.__aenter__.return_value
+            client.get.return_value = response
+
+            snapshot = await crawl_page_with_http(ctx, "https://cs.example.edu/faculty")
+
+        self.assertEqual(snapshot.status, "failed")
+        self.assertEqual(snapshot.http_status_code, 502)
+        self.assertTrue(snapshot.suspicious_empty)
+        self.assertIn("temporary server response", snapshot.error_message or "")
 
     async def test_explicit_profile_http_redirect_accepts_one_public_landing_host(self) -> None:
         session_factory = _FakeSessionFactory()
@@ -4365,6 +4420,94 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.status, "succeeded")
         self.assertEqual(attempts, 2)
         self.assertIn("zfeng@bupt.edu.cn", snapshot.text)
+
+    async def test_playwright_browser_fetch_retries_http_502_shell_before_routing(self) -> None:
+        async def run_with_responses(
+            responses: list[tuple[int, str]],
+        ) -> tuple[PageSnapshot, int]:
+            attempts = 0
+
+            class _Page:
+                frames: tuple[object, ...] = ()
+                url = "https://teacher.example.edu/zhoufeng"
+
+                async def goto(self, url: str, *, wait_until: str, timeout: int) -> object:
+                    nonlocal attempts
+                    self.url = url
+                    response = responses[attempts]
+                    attempts += 1
+                    return SimpleNamespace(status=response[0])
+
+                async def wait_for_selector(self, selector: str, *, timeout: int) -> None:
+                    return None
+
+                async def content(self) -> str:
+                    return responses[attempts - 1][1]
+
+            class _Context:
+                async def new_page(self) -> _Page:
+                    return _Page()
+
+                async def cookies(self) -> list[dict[str, object]]:
+                    return []
+
+            class _Browser:
+                async def new_context(self, **kwargs: object) -> _Context:
+                    return _Context()
+
+                async def close(self) -> None:
+                    return None
+
+            class _Chromium:
+                async def launch(self, **kwargs: object) -> _Browser:
+                    return _Browser()
+
+            class _Playwright:
+                chromium = _Chromium()
+
+                async def __aenter__(self) -> "_Playwright":
+                    return self
+
+                async def __aexit__(self, *args: object) -> None:
+                    return None
+
+            options = crawler_tools.BrowserFetchOptions(
+                wait_for=None,
+                delay_before_return_html_seconds=0,
+                max_retries=1,
+                wait_for_dynamic_directory=False,
+            )
+            with patch(
+                "app.modules.crawler.pages.tools.async_playwright",
+                return_value=_Playwright(),
+            ):
+                snapshot = await crawler_tools._try_playwright_browser_fetch(
+                    "https://teacher.example.edu/zhoufeng",
+                    options,
+                )
+            return snapshot, attempts
+
+        recovered, recovered_attempts = await run_with_responses(
+            [
+                (502, "<html><head></head><body></body></html>"),
+                (200, "<html><body>周锋 邮箱 zfeng@example.edu</body></html>"),
+            ]
+        )
+        exhausted, exhausted_attempts = await run_with_responses(
+            [
+                (502, "<html><head></head><body></body></html>"),
+                (502, "<html><head></head><body></body></html>"),
+            ]
+        )
+
+        self.assertEqual(recovered.status, "succeeded")
+        self.assertEqual(recovered.http_status_code, 200)
+        self.assertEqual(recovered_attempts, 2)
+        self.assertIn("zfeng@example.edu", recovered.text)
+        self.assertEqual(exhausted.status, "failed")
+        self.assertEqual(exhausted.http_status_code, 502)
+        self.assertEqual(exhausted_attempts, 2)
+        self.assertIn("temporary HTTP 502", exhausted.error_message or "")
 
     async def test_playwright_browser_pagination_retries_transient_browser_failure(self) -> None:
         failed = crawler_tools.BrowserPaginationExpansion(
