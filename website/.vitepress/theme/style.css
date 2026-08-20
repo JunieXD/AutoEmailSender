@@ -224,6 +224,7 @@
 
 .supporter-list {
   margin: 36px 0 40px;
+  counter-reset: supporter-entry;
   border-top: 1px solid var(--vp-c-divider);
 }
 
@@ -250,11 +251,22 @@
 
 .supporter-entry {
   display: grid;
-  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 2fr);
+  grid-template-columns: 28px minmax(180px, 0.72fr) minmax(0, 2fr);
   gap: 18px 32px;
   align-items: center;
   padding: 12px 0;
   border-bottom: 1px solid var(--vp-c-divider);
+  counter-increment: supporter-entry;
+}
+
+.supporter-entry::before {
+  align-self: center;
+  color: var(--vp-c-text-3);
+  content: "#" counter(supporter-entry);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  text-align: left;
 }
 
 .supporter-entry__identity,
@@ -270,7 +282,7 @@
   display: block;
   width: 56px;
   height: 56px;
-  margin: 0 auto 8px;
+  margin: 0 auto 10px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 50%;
   background: var(--vp-c-bg-soft);
@@ -333,6 +345,25 @@
     display: none;
   }
 
+  .VPDoc.has-aside:has(.acknowledgement-group) .VPDocAsideOutline .VPDocOutlineItem.root {
+    counter-reset: acknowledgement-nav;
+  }
+
+  .VPDoc.has-aside:has(.acknowledgement-group) .VPDocAsideOutline .VPDocOutlineItem.root > li {
+    counter-increment: acknowledgement-nav;
+  }
+
+  .VPDoc.has-aside:has(.acknowledgement-group) .VPDocAsideOutline .VPDocOutlineItem.root > li > a::before {
+    display: inline-block;
+    width: 24px;
+    margin-right: 6px;
+    color: var(--vp-c-text-3);
+    content: "#" counter(acknowledgement-nav);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+  }
+
   .VPDoc.has-aside:has(.acknowledgement-group) > .container > .content {
     max-width: 880px;
   }
@@ -388,6 +419,10 @@
     grid-template-columns: 1fr;
     gap: 10px;
     padding: 16px 0;
+  }
+
+  .supporter-entry::before {
+    display: none;
   }
 
   .supporter-entry__avatar {

@@ -16,12 +16,12 @@ describe("acknowledgements page", () => {
     expect(page).toContain(
       'class="supporter-entry__avatar" src="https://q1.qlogo.cn/g?b=qq&amp;nk=1136870663&amp;s=100"',
     );
-    expect(page.match(/class="supporter-entry__avatar"/g)).toHaveLength(50);
-    expect(page.match(/<article class="supporter-entry"/g)).toHaveLength(50);
-    expect(page.match(/<ul>/g)).toHaveLength(50);
+    expect(page.match(/class="supporter-entry__avatar"/g)).toHaveLength(60);
+    expect(page.match(/<article class="supporter-entry"/g)).toHaveLength(60);
+    expect(page.match(/<ul>/g)).toHaveLength(60);
     expect(page.match(/<section class="acknowledgement-group"/g)).toHaveLength(1);
     expect(page).toContain(
-      "名单根据 2026 年 6 月至 8 月 QQ 群聊中可核实的项目反馈整理，不代表贡献排序。",
+      "名单根据 QQ 群聊和 GitHub 仓库公开 Issue、PR 中可核实的项目反馈与代码贡献整理，并按合并后的贡献事项数量和影响范围大致排列，不代表严格排名。",
     );
     expect(page).not.toContain("supporter-entry__qq");
     expect(page).not.toContain("(QQ:");
@@ -41,7 +41,12 @@ describe("acknowledgements page", () => {
     expect(page).toContain("奇华");
     expect(page).toContain("pretty");
     expect(page).toContain("hygge");
-    expect(page).toContain("woodfish");
+    expect(page).toContain("woodfishhhh");
+    expect(page).toContain("thosehow");
+    expect(page).toContain("RoderickDevX");
+    expect(page).toContain(
+      'class="supporter-entry__avatar" src="https://avatars.githubusercontent.com/u/176751902?v=4"',
+    );
     expect(page).toContain("青青草原领头羊");
     expect(page).toContain(">#define</h3>");
     expect(page).toContain(">！</h3>");
@@ -58,6 +63,8 @@ describe("acknowledgements page", () => {
     expect(page).not.toContain("邮件与配置测试");
     expect(page).toContain(">“⠀”</h3>");
     expect(page).not.toContain("空白昵称");
+    expect(page).not.toContain(">掷清露</h3>");
+    expect(page).not.toContain(">JunieXD</h3>");
     expect(page.match(/<h3[^>]*>疯狂轮指八度音<\/h3>/g)).toHaveLength(1);
     expect(page.match(/<h3[^>]*>奇华<\/h3>/g)).toHaveLength(1);
     expect(page.match(/<h3[^>]*>k<\/h3>/g)).toHaveLength(1);
@@ -89,7 +96,16 @@ describe("acknowledgements page", () => {
     expect(contributionTexts.every((text) => /[。？]$/.test(text))).toBe(true);
 
     const names = entries.map(([, name]) => name);
-    expect(new Set(names).size).toBe(50);
+    expect(new Set(names).size).toBe(60);
+    expect(names.slice(0, 6)).toEqual([
+      "疯狂轮指八度音",
+      "羽华丶",
+      "奇华",
+      "000",
+      "thosehow",
+      "Lestine-Yan",
+    ]);
+    expect(names.at(-1)).toBe("whitea133");
     expect(names.filter((name) => name === "疯狂轮指八度音")).toHaveLength(1);
     expect(names.filter((name) => name === "奇华")).toHaveLength(1);
     expect(names.filter((name) => name === "k")).toHaveLength(1);
