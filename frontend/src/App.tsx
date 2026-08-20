@@ -10,6 +10,7 @@ import { AgentSupportOnboarding } from '@/components/organisms/AgentSupportOnboa
 import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
+import { TruncatedTextTooltipProvider } from '@/components/organisms/TruncatedTextTooltipProvider';
 import { BackgroundTaskNotificationProvider } from '@/app/providers/BackgroundTaskNotificationContext';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -66,6 +67,7 @@ const AppShell = () => (
                   data-app-shell="true"
                   className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background"
                 >
+                  <TruncatedTextTooltipProvider />
                   <DesktopStartupStatusBanner />
                   <AgentSupportOnboarding />
                   <TopNavBar />
