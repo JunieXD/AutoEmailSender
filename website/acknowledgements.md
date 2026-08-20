@@ -1,27 +1,80 @@
 ---
 title: 致谢
-description: 感谢为 Auto Email Sender 开发与测试提供支持的社区伙伴。
+description: 感谢为 Auto Email Sender 开发、测试、数据整理和社区交流提供支持的伙伴。
 ---
 
 # 致谢
 
-感谢每一位提供额度、提交反馈、完善数据和参与测试的朋友。这里记录大家对项目的帮助。
+感谢每一位提出建议、报告问题、参与复测、提供教师目录和完善导师数据的朋友。Auto Email Sender 的许多细节，都是在真实使用场景和一次次复现中逐渐变得可靠的。
 
-<section class="supporter-list" aria-label="社区支持记录">
-  <article class="supporter-entry" aria-labelledby="supporter-yuhua">
-    <div class="supporter-entry__identity">
-      <h2 id="supporter-yuhua">羽华丶</h2>
-      <p>模型额度支持</p>
-    </div>
-    <dl class="supporter-entry__details">
-      <div>
-        <dt>支持</dt>
-        <dd>中转站 GPT 模型 $800 额度</dd>
+<p class="acknowledgement-note">
+  以下名单依据 2026 年 6 月 17 日至 8 月 19 日 QQ 交流群导出记录中的公开昵称和群号整理，仅记录可以从聊天内容中确认的项目帮助，不代表贡献排序或官方背书。若希望匿名、修改昵称或补充贡献说明，请联系项目维护者。
+</p>
+
+<section class="acknowledgement-group" aria-labelledby="acknowledgement-support">
+  <h2 id="acknowledgement-support">额度与基础支持</h2>
+  <div class="supporter-list">
+    <article class="supporter-entry" aria-labelledby="supporter-yuhua">
+      <div class="supporter-entry__identity">
+        <h3 id="supporter-yuhua">羽华丶</h3>
+        <p class="supporter-entry__qq">(QQ: 1136870663)</p>
+        <p class="supporter-entry__role">模型额度支持</p>
       </div>
-      <div>
-        <dt>用途</dt>
-        <dd>项目开发与测试</dd>
-      </div>
-    </dl>
-  </article>
+      <dl class="supporter-entry__details">
+        <div><dt>支持</dt><dd>中转站 GPT 模型 $800 额度</dd></div>
+        <div><dt>用途</dt><dd>项目开发与测试</dd></div>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<section class="acknowledgement-group" aria-labelledby="acknowledgement-feedback">
+  <h2 id="acknowledgement-feedback">功能建议与问题反馈</h2>
+  <div class="supporter-list">
+    <article class="supporter-entry" aria-labelledby="supporter-fengkuang"><div class="supporter-entry__identity"><h3 id="supporter-fengkuang">疯狂轮指八度音</h3><p class="supporter-entry__qq">(QQ: 2739509130)</p><p class="supporter-entry__role">持续反馈与需求建议</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测重复发送、附件、定时任务和匹配分析等问题</dd></div><div><dt>建议</dt><dd>批量审核、任务重试、已排程标记、未完整导师导出和自定义匹配词</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-qihua"><div class="supporter-entry__identity"><h3 id="supporter-qihua">奇华</h3><p class="supporter-entry__qq">(QQ: 2855735504)</p><p class="supporter-entry__role">抓取反馈与功能建议</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>持续提供智能抓取失败、缺邮箱和任务导出案例</dd></div><div><dt>建议</dt><dd>无邮箱候选筛选、批量补全和网易邮件追踪</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-000"><div class="supporter-entry__identity"><h3 id="supporter-000">000</h3><p class="supporter-entry__qq">(QQ: 1187631449)</p><p class="supporter-entry__role">任务与草稿反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告草稿生成、匹配分和批量发送异常</dd></div><div><dt>建议</dt><dd>自动重试、重新补全已有导师、提高批量上限和息屏发送</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-lin"><div class="supporter-entry__identity"><h3 id="supporter-lin">Lin.</h3><p class="supporter-entry__qq">(QQ: 3566962487)</p><p class="supporter-entry__role">批量任务体验反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈定时发送、抓取数量、邮箱校验和生成速度</dd></div><div><dt>建议</dt><dd>直接修改发送时间和一键审核批量草稿</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-k"><div class="supporter-entry__identity"><h3 id="supporter-k">k</h3><p class="supporter-entry__qq">(QQ: 3498164480)</p><p class="supporter-entry__role">导师管理与邮件反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测 SMTP、任务状态和导师资料补全流程</dd></div><div><dt>建议</dt><dd>缺研究方向筛选、任务改名/迁移、邮件追踪和多所学校抓取</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-guo"><div class="supporter-entry__identity"><h3 id="supporter-guo">过</h3><p class="supporter-entry__qq">(QQ: 2837690369)</p><p class="supporter-entry__role">模板编辑反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测模板导入、字体和颜色在发送后的表现</dd></div><div><dt>建议</dt><dd>增加格式刷并改善模板审核体验</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-cloud"><div class="supporter-entry__identity"><h3 id="supporter-cloud">☁️</h3><p class="supporter-entry__qq">(QQ: 2217322483)</p><p class="supporter-entry__role">界面与数据一致性反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告重复发送记录、分页和导师邮箱保存异常</dd></div><div><dt>建议</dt><dd>首页支持手动刷新，减少重复加载等待</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-mount"><div class="supporter-entry__identity"><h3 id="supporter-mount">Mount</h3><p class="supporter-entry__qq">(QQ: 1065143597)</p><p class="supporter-entry__role">工作区与批量流程反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测 AI 改写、已发送邮件和批量审核流程</dd></div><div><dt>建议</dt><dd>支持再次发送和一键审批，并关注发送频率限制</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-blank-braille"><div class="supporter-entry__identity"><h3 id="supporter-blank-braille">“⠀”</h3><p class="supporter-entry__qq">(QQ: 1296732486)</p><p class="supporter-entry__role">导师筛选建议</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈西电杭抓取结果和多邮箱导师的使用场景</dd></div><div><dt>建议</dt><dd>区分 edu 与其他邮箱，便于后续整理和补充</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-blank-ideographic"><div class="supporter-entry__identity"><h3 id="supporter-blank-ideographic">“ㅤ”</h3><p class="supporter-entry__qq">(QQ: 3342963031)</p><p class="supporter-entry__role">重复联系场景反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>说明删除导师后再次联系时的真实使用障碍</dd></div><div><dt>建议</dt><dd>保留历史联系记录，支持后续捡漏和再次发送</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-world"><div class="supporter-entry__identity"><h3 id="supporter-world">world.execute(me);</h3><p class="supporter-entry__qq">(QQ: 2083372123)</p><p class="supporter-entry__role">导入与抓取建议</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告材料删除、测试写信 JSON 和任务导出问题</dd></div><div><dt>建议</dt><dd>动态导师主页抓取，并可只导入有邮箱的导师</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-17"><div class="supporter-entry__identity"><h3 id="supporter-17">17</h3><p class="supporter-entry__qq">(QQ: 1974089953)</p><p class="supporter-entry__role">任务与性能反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告任务创建卡在“开始抓取”和数据库性能问题</dd></div><div><dt>建议</dt><dd>按导师研究方向提供写信提示词入口</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-tears"><div class="supporter-entry__identity"><h3 id="supporter-tears">眼泪写成诗</h3><p class="supporter-entry__qq">(QQ: 2413978028)</p><p class="supporter-entry__role">智能抓取反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测智能抓取与导入筛选，报告匹配方向不相关和新增为零</dd></div><div><dt>帮助</dt><dd>提供真实操作路径，协助定位候选审核体验</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-un-eat"><div class="supporter-entry__identity"><h3 id="supporter-un-eat">不吃给我</h3><p class="supporter-entry__qq">(QQ: 3328756641)</p><p class="supporter-entry__role">邮箱补全反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈抓到姓名但未抓到邮箱，以及补全入口不易发现</dd></div><div><dt>帮助</dt><dd>提供从抓取到补全的完整使用路径</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-siù"><div class="supporter-entry__identity"><h3 id="supporter-siù">siù</h3><p class="supporter-entry__qq">(QQ: 634004981)</p><p class="supporter-entry__role">发送策略建议</p></div><dl class="supporter-entry__details"><div><dt>建议</dt><dd>为同一导师设置多次联系的时间间隔</dd></div><div><dt>帮助</dt><dd>参与邮件发送场景讨论和版本体验</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-fake"><div class="supporter-entry__identity"><h3 id="supporter-fake">假物</h3><p class="supporter-entry__qq">(QQ: 1489792514)</p><p class="supporter-entry__role">附件流程建议</p></div><dl class="supporter-entry__details"><div><dt>建议</dt><dd>批量任务自动勾选身份默认附件，减少逐个进入工作区的操作</dd></div><div><dt>帮助</dt><dd>提供真实批量发信操作反馈</dd></div></dl></article>
+  </div>
+</section>
+
+<section class="acknowledgement-group" aria-labelledby="acknowledgement-data">
+  <h2 id="acknowledgement-data">导师数据与抓取测试</h2>
+  <div class="supporter-list">
+    <article class="supporter-entry" aria-labelledby="supporter-pretty"><div class="supporter-entry__identity"><h3 id="supporter-pretty">pretty</h3><p class="supporter-entry__qq">(QQ: 2518341867)</p><p class="supporter-entry__role">多校抓取回归</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>连续提供中山大学、复旦大学、上海交通大学和西安交通大学页面案例</dd></div><div><dt>帮助</dt><dd>报告导师数量、研究方向和个人信息提取不完整</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-hygge"><div class="supporter-entry__identity"><h3 id="supporter-hygge">hygge</h3><p class="supporter-entry__qq">(QQ: 1114752131)</p><p class="supporter-entry__role">数据质量核对</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>发现列表页邮箱错位和社区导师库姓名/邮箱不一致</dd></div><div><dt>帮助</dt><dd>提供厦门大学页面与本地对比结果，帮助定位数据关联问题</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-too-good"><div class="supporter-entry__identity"><h3 id="supporter-too-good">太棒了</h3><p class="supporter-entry__qq">(QQ: 824105190)</p><p class="supporter-entry__role">抓取与写信复测</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈东南大学、厦门大学抓取字段不完整</dd></div><div><dt>帮助</dt><dd>复测 AI 草稿称呼、日期和补充要求的执行效果</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-kitten"><div class="supporter-entry__identity"><h3 id="supporter-kitten">kitten</h3><p class="supporter-entry__qq">(QQ: 3158643092)</p><p class="supporter-entry__role">抓取场景与筛选建议</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>提供厦门大学、北京交通大学等目录页面</dd></div><div><dt>建议</dt><dd>关注长任务耗时，并增加按匹配度区间筛选</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-ellipsis"><div class="supporter-entry__identity"><h3 id="supporter-ellipsis">……</h3><p class="supporter-entry__qq">(QQ: 3871321040)</p><p class="supporter-entry__role">学校目录测试</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈厦门大学信息学院和电子科技大学招生目录的页面差异</dd></div><div><dt>帮助</dt><dd>指出部分导师主页和研究方向无法直接打开或识别</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-5271"><div class="supporter-entry__identity"><h3 id="supporter-5271">5271</h3><p class="supporter-entry__qq">(QQ: 961536079)</p><p class="supporter-entry__role">抓取规模反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈长时间抓取和多学院整理的实际需求</dd></div><div><dt>建议</dt><dd>支持一次处理多个学院</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-rescue"><div class="supporter-entry__identity"><h3 id="supporter-rescue">救赎.</h3><p class="supporter-entry__qq">(QQ: 1768837224)</p><p class="supporter-entry__role">缺邮箱案例反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告自动抓取能得到其他资料但缺少邮箱的页面</dd></div><div><dt>帮助</dt><dd>协助区分抓取缺失与网页本身未公开邮箱</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-coconut"><div class="supporter-entry__identity"><h3 id="supporter-coconut">椰丝椰丝</h3><p class="supporter-entry__qq">(QQ: 1908683157)</p><p class="supporter-entry__role">缺失字段反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告页面明确提供邮箱但未被抓取的案例</dd></div><div><dt>帮助</dt><dd>帮助完善受保护页面和字段提取测试</dd></div></dl></article>
+  </div>
+</section>
+
+<section class="acknowledgement-group" aria-labelledby="acknowledgement-delivery">
+  <h2 id="acknowledgement-delivery">邮件与配置测试</h2>
+  <div class="supporter-list">
+    <article class="supporter-entry" aria-labelledby="supporter-tui"><div class="supporter-entry__identity"><h3 id="supporter-tui">退</h3><p class="supporter-entry__qq">(QQ: 2477739397)</p><p class="supporter-entry__role">投递与追踪复测</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>对学校邮箱、163 和 Gmail 进行投递对照测试</dd></div><div><dt>建议</dt><dd>反馈网易邮件追踪在应用内的使用需求</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-genius"><div class="supporter-entry__identity"><h3 id="supporter-genius">小天才</h3><p class="supporter-entry__qq">(QQ: 2805015263)</p><p class="supporter-entry__role">邮箱与模型复测</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>复测 SMTP 加密端口和发送测试</dd></div><div><dt>帮助</dt><dd>提供模型返回 JSON 结构错误的完整信息</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-nine"><div class="supporter-entry__identity"><h3 id="supporter-nine">9</h3><p class="supporter-entry__qq">(QQ: 919983110)</p><p class="supporter-entry__role">连接问题复现</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>对模型连接、IMAP/SMTP 和材料删除进行多轮复测</dd></div><div><dt>帮助</dt><dd>提供切换网络、邮箱和授权码后的对照结果</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-white-cloud"><div class="supporter-entry__identity"><h3 id="supporter-white-cloud">白云苍狗</h3><p class="supporter-entry__qq">(QQ: 3472879524)</p><p class="supporter-entry__role">SMTP 问题复现</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>提供网易 SMTP 超时/连接失败的连续复现</dd></div><div><dt>帮助</dt><dd>对比家庭网络、手机热点和代理设置，缩小排查范围</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-pablo"><div class="supporter-entry__identity"><h3 id="supporter-pablo">Pablo</h3><p class="supporter-entry__qq">(QQ: 1649810357)</p><p class="supporter-entry__role">投递体验反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>反馈邮件被识别为垃圾邮件的实际情况</dd></div><div><dt>帮助</dt><dd>补充不同邮箱投递效果的社区观察</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-angel"><div class="supporter-entry__identity"><h3 id="supporter-angel">angel</h3><p class="supporter-entry__qq">(QQ: 893450907)</p><p class="supporter-entry__role">附件投递反馈</p></div><dl class="supporter-entry__details"><div><dt>记录</dt><dd>报告附件显示已读但没有下载的情况</dd></div><div><dt>建议</dt><dd>关注附件大小和收件端展示差异</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-pigeon"><div class="supporter-entry__identity"><h3 id="supporter-pigeon">黑色鸽子</h3><p class="supporter-entry__qq">(QQ: 1397553260)</p><p class="supporter-entry__role">反垃圾投递反馈</p></div><dl class="supporter-entry__details"><div><dt>建议</dt><dd>关注遍历导师和批量发送进入垃圾箱的风险</dd></div><div><dt>帮助</dt><dd>补充手动发送与自动发送的对照体验</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-fleur"><div class="supporter-entry__identity"><h3 id="supporter-fleur">Fleur</h3><p class="supporter-entry__qq">(QQ: 1207726349)</p><p class="supporter-entry__role">海外场景建议</p></div><dl class="supporter-entry__details"><div><dt>建议</dt><dd>分享 EURAXESS 等海外导师岗位信息来源</dd></div><div><dt>帮助</dt><dd>帮助讨论海外院校导师数据的抓取边界</dd></div></dl></article>
+    <article class="supporter-entry" aria-labelledby="supporter-clear-dew"><div class="supporter-entry__identity"><h3 id="supporter-clear-dew">掷清露</h3><p class="supporter-entry__qq">(QQ: 1425619793)</p><p class="supporter-entry__role">工程实践建议</p></div><dl class="supporter-entry__details"><div><dt>建议</dt><dd>讨论将爬虫与后端业务解耦，并关注反爬场景</dd></div><div><dt>帮助</dt><dd>提供工程结构和邮件数据库的使用观察</dd></div></dl></article>
+  </div>
 </section>

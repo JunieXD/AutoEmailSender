@@ -3,12 +3,52 @@ import { openExternalHttpUrl } from "@/lib/externalUrls";
 
 const ACKNOWLEDGEMENTS_URL =
   "https://juniexd.github.io/AutoEmailSender/acknowledgements";
-const SUPPORTER_NAMES = ["羽华丶"];
+const COMMUNITY_CONTRIBUTOR_NAMES = [
+  "羽华丶",
+  "疯狂轮指八度音",
+  "奇华",
+  "“⠀”",
+  "kitten",
+  "Mount",
+  "000",
+  "Lin.",
+  "k",
+  "过",
+  "☁️",
+  "pretty",
+  "hygge",
+  "“ㅤ”",
+  "world.execute(me);",
+  "17",
+  "眼泪写成诗",
+  "不吃给我",
+  "siù",
+  "假物",
+  "太棒了",
+  "……",
+  "5271",
+  "救赎.",
+  "椰丝椰丝",
+  "退",
+  "小天才",
+  "9",
+  "白云苍狗",
+  "Pablo",
+  "angel",
+  "黑色鸽子",
+  "Fleur",
+  "掷清露",
+];
 const SUPPORTER_PREVIEW_LIMIT = 6;
 
 export function ProjectAcknowledgements() {
-  const visibleSupporters = SUPPORTER_NAMES.slice(0, SUPPORTER_PREVIEW_LIMIT);
-  const hiddenSupporters = SUPPORTER_NAMES.slice(SUPPORTER_PREVIEW_LIMIT);
+  const visibleSupporters = COMMUNITY_CONTRIBUTOR_NAMES.slice(
+    0,
+    SUPPORTER_PREVIEW_LIMIT,
+  );
+  const hiddenSupporters = COMMUNITY_CONTRIBUTOR_NAMES.slice(
+    SUPPORTER_PREVIEW_LIMIT,
+  );
 
   return (
     <section
@@ -27,13 +67,13 @@ export function ProjectAcknowledgements() {
             致谢
           </h2>
           <p className="mt-1 text-sm leading-6 text-stone-600">
-            感谢所有提供模型额度和开发支持的贡献者。
+            感谢所有提出建议、报告问题、参与测试和完善数据的群友。
           </p>
           <div
             className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs leading-5"
-            aria-label={`支持名单：${SUPPORTER_NAMES.join("、")}`}
+            aria-label={`社区致谢名单：${COMMUNITY_CONTRIBUTOR_NAMES.join("、")}`}
           >
-            <span className="text-stone-500">支持名单</span>
+            <span className="text-stone-500">社区致谢</span>
             <span className="font-medium text-stone-800">
               {visibleSupporters.join("、")}
             </span>
@@ -41,7 +81,7 @@ export function ProjectAcknowledgements() {
           {hiddenSupporters.length > 0 ? (
             <details className="mt-1 text-xs leading-5 text-stone-600">
               <summary className="w-fit cursor-pointer font-medium text-stone-700 hover:text-stone-900">
-                另有 {hiddenSupporters.length} 位同学
+                展开其余 {hiddenSupporters.length} 位群友
               </summary>
               <p className="mt-1 text-stone-700">{hiddenSupporters.join("、")}</p>
             </details>

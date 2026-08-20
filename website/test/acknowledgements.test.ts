@@ -9,12 +9,23 @@ describe("acknowledgements page", () => {
     const page = readWebsiteFile("acknowledgements.md");
 
     expect(page).toContain(
-      "感谢每一位提供额度、提交反馈、完善数据和参与测试的朋友。这里记录大家对项目的帮助。",
+      "感谢每一位提出建议、报告问题、参与复测、提供教师目录和完善导师数据的朋友。",
     );
     expect(page).toContain("羽华丶");
+    expect(page).toContain("(QQ: 1136870663)");
+    expect(page).toContain("(QQ: 2739509130)");
     expect(page).toContain("<dt>支持</dt>");
     expect(page).toContain("中转站 GPT 模型 $800 额度");
     expect(page).toContain("项目开发与测试");
+    expect(page).toContain("疯狂轮指八度音");
+    expect(page).toContain("奇华");
+    expect(page).toContain("pretty");
+    expect(page).toContain("hygge");
+    expect(page).toContain("功能建议与问题反馈");
+    expect(page).toContain("导师数据与抓取测试");
+    expect(page).toContain("邮件与配置测试");
+    expect(page).toContain(">“⠀”</h3>");
+    expect(page).not.toContain("空白昵称");
     expect(page).not.toContain("记录原则");
     expect(page).not.toContain("捐赠 GPT 模型调用额度");
     expect(page).not.toContain("个人主页链接");
