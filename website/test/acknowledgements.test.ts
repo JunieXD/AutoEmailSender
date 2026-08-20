@@ -26,6 +26,9 @@ describe("acknowledgements page", () => {
     expect(page).toContain("邮件与配置测试");
     expect(page).toContain(">“⠀”</h3>");
     expect(page).not.toContain("空白昵称");
+    expect(page.match(/<h3[^>]*>疯狂轮指八度音<\/h3>/g)).toHaveLength(3);
+    expect(page.match(/<h3[^>]*>奇华<\/h3>/g)).toHaveLength(3);
+    expect(page.match(/<h3[^>]*>k<\/h3>/g)).toHaveLength(3);
     expect(page).not.toContain("记录原则");
     expect(page).not.toContain("捐赠 GPT 模型调用额度");
     expect(page).not.toContain("个人主页链接");
