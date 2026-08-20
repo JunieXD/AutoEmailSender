@@ -344,6 +344,76 @@ class CrawlerV2PageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tasks), 1)
         self.assertGreaterEqual(len(chunks), 2)
 
+    async def test_interactive_pagination_failure_still_queues_confirmed_entry_pages(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员入口",
+            text="张三 教授",
+            html='<a href="/faculty/associate">副教授</a>',
+            links=["https://example.edu/faculty/associate"],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        entry_url = "https://example.edu/faculty/associate"
+        control = PageRouteControl(
+            control_id="control-2",
+            tag="a",
+            text="下一页",
+            title="",
+            aria_label="",
+            class_tokens=("next",),
+            match_index=0,
+        )
+        self.routing_mock.return_value = V2PageRoutingResult(
+            discovered_urls=[entry_url],
+            entry_discovery_reasons={entry_url: ENTRY_DISCOVERY_REASON},
+            allow_expansion=True,
+            pagination_urls=[],
+            usage=None,
+            pagination_control=control,
+            attempts=[],
+        )
+        pagination_mock = AsyncMock(
+            return_value=BrowserPaginationExpansion(
+                status="failed",
+                stopped_reason="browser_error",
+                error_message="分页控件点击失败",
+            )
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.v2.page_worker.fetch_page_direct",
+                new=AsyncMock(return_value=snapshot),
+            ),
+            patch(
+                "app.modules.crawler.v2.page_worker.expand_browser_pagination",
+                new=pagination_mock,
+            ),
+        ):
+            processed = await run_crawler_v2_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        pagination_mock.assert_awaited_once()
+        async with self.session_factory() as session:
+            task = await session.get(CrawlPageTask, task_id)
+            tasks = list(
+                await session.scalars(
+                    select(CrawlPageTask)
+                    .where(CrawlPageTask.job_id == job_id)
+                    .order_by(CrawlPageTask.id)
+                )
+            )
+        assert task is not None
+        self.assertEqual(task.status, CrawlPageTaskStatus.SUCCEEDED.value)
+        self.assertTrue(task.allow_expansion)
+        self.assertEqual([item.normalized_url for item in tasks], [snapshot.url, entry_url])
+
     async def test_spa_route_uses_browser_without_direct_fetch(self) -> None:
         spa_url = "https://welcome.example.edu/#/teacher/computer?page=2"
         parent_url = "https://cs.example.edu/faculty"

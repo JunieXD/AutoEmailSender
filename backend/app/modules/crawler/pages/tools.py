@@ -2294,6 +2294,19 @@ async def _try_fetch_browser_pagination_once(
             seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
             initial_link_signature = await _browser_link_signature(page)
             seen_link_signatures = {initial_link_signature}
+            try:
+                pagination_state = await _browser_pagination_state(page)
+            except Exception:
+                pagination_state = None
+            if _should_use_page_number_pagination(pagination_state):
+                return await _collect_browser_pagination_by_page_number(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                    initial_state=pagination_state,
+                    max_pages=max_pages,
+                    seen_fingerprints=seen_fingerprints,
+                )
             dynamic_link_pagination = False
             snapshots: list[PageSnapshot] = []
             stopped_reason = "page_limit_reached"
@@ -2421,6 +2434,150 @@ async def _browser_link_signature(page: Any) -> tuple[str, ...]:
     return tuple(str(value) for value in values)
 
 
+async def _browser_pagination_state(page: Any) -> dict[str, int | None] | None:
+    state = await page.evaluate(_BROWSER_PAGINATION_STATE_SCRIPT)
+    if not isinstance(state, dict):
+        return None
+    normalized: dict[str, int | None] = {}
+    for key in ("currentPage", "pageCount", "inputIndex", "jumpControlIndex"):
+        value = state.get(key)
+        normalized[key] = value if isinstance(value, int) and not isinstance(value, bool) else None
+    return normalized
+
+
+def _should_use_page_number_pagination(
+    state: dict[str, int | None] | None,
+) -> bool:
+    if state is None:
+        return False
+    return (
+        isinstance(state.get("currentPage"), int)
+        and int(state["currentPage"] or 0) > 0
+        and isinstance(state.get("pageCount"), int)
+        and int(state["pageCount"] or 0) > 0
+        and isinstance(state.get("inputIndex"), int)
+        and int(state["inputIndex"]) >= 0
+        and isinstance(state.get("jumpControlIndex"), int)
+        and int(state["jumpControlIndex"]) >= 0
+    )
+
+
+async def _collect_browser_pagination_by_page_number(
+    page: Any,
+    *,
+    absolute_url: str,
+    options: BrowserFetchOptions,
+    initial_state: dict[str, int | None],
+    max_pages: int,
+    seen_fingerprints: set[str],
+) -> BrowserPaginationExpansion:
+    snapshots: list[PageSnapshot] = []
+    current_page = int(initial_state["currentPage"] or 1)
+    page_count = int(initial_state["pageCount"] or current_page)
+    last_page = min(page_count, max(1, int(max_pages)))
+    stopped_reason = "page_limit_reached"
+
+    for target_page in range(current_page + 1, last_page + 1):
+        try:
+            await page.goto(
+                absolute_url,
+                wait_until=options.wait_until,
+                timeout=options.page_timeout_ms,
+            )
+            if options.wait_for:
+                selector = options.wait_for
+                if selector.startswith("css:"):
+                    selector = selector[4:]
+                await page.wait_for_selector(
+                    selector,
+                    timeout=options.wait_for_timeout_ms,
+                )
+            if options.wait_for_dynamic_directory:
+                await _wait_for_dynamic_directory_html(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                )
+            elif options.delay_before_return_html_seconds > 0:
+                await page.wait_for_timeout(
+                    options.delay_before_return_html_seconds * 1000
+                )
+            state = await _browser_pagination_state(page)
+            if not _should_use_page_number_pagination(state):
+                stopped_reason = "page_jump_controls_disappeared"
+                break
+            await page.evaluate(
+                _BROWSER_PAGINATION_JUMP_SCRIPT,
+                {
+                    "inputIndex": state["inputIndex"],
+                    "jumpControlIndex": state["jumpControlIndex"],
+                    "targetPage": target_page,
+                },
+            )
+            if not await _wait_for_browser_pagination_page(
+                page,
+                expected_page=target_page,
+            ):
+                stopped_reason = "page_jump_timeout"
+                break
+            await page.wait_for_timeout(350)
+            html = await page.content()
+            final_url = str(getattr(page, "url", "") or absolute_url)
+            snapshot = _snapshot_from_browser_html(
+                html=html,
+                final_url=final_url,
+                absolute_url=absolute_url,
+            )
+            fingerprint = _pagination_snapshot_fingerprint(snapshot)
+            if fingerprint in seen_fingerprints:
+                stopped_reason = "content_repeated"
+                break
+            seen_fingerprints.add(fingerprint)
+            snapshots.append(snapshot)
+        except Exception as exc:
+            stopped_reason = "page_jump_failed"
+            if not snapshots:
+                return BrowserPaginationExpansion(
+                    status="failed",
+                    stopped_reason="browser_error",
+                    error_message=_format_exception_for_snapshot(
+                        exc,
+                        "Playwright browser pagination failed",
+                    ),
+                )
+            break
+
+    if not snapshots and stopped_reason != "page_limit_reached":
+        return BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="browser_error",
+            error_message=(
+                "Playwright browser pagination page jump failed: "
+                f"{stopped_reason}"
+            ),
+        )
+    return BrowserPaginationExpansion(
+        status="succeeded",
+        snapshots=tuple(snapshots),
+        stopped_reason=stopped_reason,
+    )
+
+
+async def _wait_for_browser_pagination_page(
+    page: Any,
+    *,
+    expected_page: int,
+) -> bool:
+    elapsed_ms = 0
+    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
+        state = await _browser_pagination_state(page)
+        if state is not None and state.get("currentPage") == expected_page:
+            return True
+        await page.wait_for_timeout(250)
+        elapsed_ms += 250
+    return False
+
+
 def _body_content_changed_substantially(before: str, after: str) -> bool:
     if not after or after == before:
         return False
@@ -2454,6 +2611,84 @@ _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT = """
     matches.push({index, disabled});
   });
   return matches[Math.max(0, Number(target.matchIndex) || 0)] || null;
+}
+"""
+
+
+_BROWSER_PAGINATION_STATE_SCRIPT = """
+/* crawler-pagination-state */
+() => {
+  const numberValue = (value) => {
+    const match = String(value || '').replace(/,/g, '').match(/\\d+/);
+    return match ? Number(match[0]) : null;
+  };
+  const visible = (element) => {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && element.getClientRects().length > 0;
+  };
+  const current = Array.from(document.querySelectorAll(
+    '[curr_page], [data-current-page], [aria-current="page"], .curr_page'
+  )).map((element) => numberValue(
+    element.getAttribute('curr_page')
+      || element.getAttribute('data-current-page')
+      || element.textContent
+  )).find((value) => value !== null) || null;
+  const pageCountFromAttribute = Array.from(document.querySelectorAll(
+    '[pagecount], [pageCount], [data-page-count], .all_pages'
+  )).map((element) => numberValue(
+    element.getAttribute('pagecount')
+      || element.getAttribute('pageCount')
+      || element.getAttribute('data-page-count')
+      || element.textContent
+  )).find((value) => value !== null) || null;
+  const perPage = Array.from(document.querySelectorAll(
+    '.per_count, [data-page-size], [page-size]'
+  )).map((element) => numberValue(element.textContent || element.getAttribute('data-page-size') || element.getAttribute('page-size')))
+    .find((value) => value !== null) || null;
+  const totalRecords = Array.from(document.querySelectorAll(
+    '.all_count em, [data-total], [total]'
+  )).map((element) => numberValue(element.textContent || element.getAttribute('data-total') || element.getAttribute('total')))
+    .find((value) => value !== null) || null;
+  const pageCount = pageCountFromAttribute || (
+    perPage && totalRecords ? Math.ceil(totalRecords / perPage) : null
+  );
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const inputIndex = inputs.findIndex((element) => {
+    if (!visible(element) || ['hidden', 'button', 'submit'].includes(String(element.type || '').toLowerCase())) return false;
+    const signal = `${element.id} ${element.className} ${element.name}`.toLowerCase();
+    return /page|pager|pagination|jump/.test(signal);
+  });
+  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+  const jumpControlIndex = controls.findIndex((element) => {
+    if (!visible(element)) return false;
+    const signal = `${element.textContent || ''} ${element.id} ${element.className} ${element.getAttribute('aria-label') || ''}`.toLowerCase();
+    return /jump|go|跳转|转到/.test(signal);
+  });
+  return {
+    currentPage: current,
+    pageCount,
+    inputIndex: inputIndex >= 0 ? inputIndex : null,
+    jumpControlIndex: jumpControlIndex >= 0 ? jumpControlIndex : null,
+  };
+}
+"""
+
+
+_BROWSER_PAGINATION_JUMP_SCRIPT = """
+/* crawler-pagination-jump */
+({inputIndex, jumpControlIndex, targetPage}) => {
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+  const input = inputs[Number(inputIndex)];
+  const control = controls[Number(jumpControlIndex)];
+  if (!input || !control) return false;
+  input.value = String(targetPage);
+  input.dispatchEvent(new Event('input', {bubbles: true}));
+  input.dispatchEvent(new Event('change', {bubbles: true}));
+  setTimeout(() => control.click(), 0);
+  return true;
 }
 """
 

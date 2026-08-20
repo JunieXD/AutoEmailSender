@@ -293,6 +293,7 @@ async def run_crawler_v2_page_worker_once(
                     )
                 interactive_snapshots: tuple[PageSnapshot, ...] = ()
                 interactive_stopped_reason: str | None = None
+                interactive_pagination_failed = False
                 if routing_failure is None and routing_result.pagination_control is not None:
                     control = routing_result.pagination_control
                     try:
@@ -313,6 +314,7 @@ async def run_crawler_v2_page_worker_once(
                         interactive_snapshots = interactive_result.snapshots
                         interactive_stopped_reason = interactive_result.stopped_reason
                         if interactive_result.status != "succeeded":
+                            interactive_pagination_failed = True
                             routing_failure = (
                                 interactive_result.error_message
                                 or "交互式分页执行失败"
@@ -351,7 +353,10 @@ async def run_crawler_v2_page_worker_once(
                         page_id=page_id,
                         snapshot=interactive_snapshot,
                     )
-                if routing_failure is None:
+                if routing_failure is None or (
+                    interactive_pagination_failed
+                    and routing_result.discovered_urls
+                ):
                     expansion_result = await _complete_list_page_routing(
                         session_factory,
                         task_id=task_id,
