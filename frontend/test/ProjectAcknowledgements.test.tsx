@@ -18,10 +18,14 @@ describe("ProjectAcknowledgements", () => {
         "感谢所有提出建议、报告问题、参与测试和完善数据的群友。",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText(/^社区致谢名单：/)).toBeInTheDocument();
+    const supporterList = screen.getByLabelText(/^社区致谢名单：/);
+    expect(supporterList).toBeInTheDocument();
+    expect(supporterList.getAttribute("aria-label")).toContain("woodfish");
+    expect(supporterList.getAttribute("aria-label")).toContain("青青草原领头羊");
     expect(
       screen.getByText("羽华丶、疯狂轮指八度音、奇华、“⠀”、kitten、Mount"),
     ).toBeInTheDocument();
+    expect(screen.getByText("展开其余 44 位群友")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("(QQ:");
     expect(screen.queryByText(/US\$800|800 美元/)).not.toBeInTheDocument();
   });

@@ -38,6 +38,22 @@ const COMMUNITY_CONTRIBUTOR_NAMES = [
   "黑色鸽子",
   "Fleur",
   "掷清露",
+  ".",
+  "xkgc__",
+  "woodfish",
+  "方思禾",
+  "2128044046",
+  "OKgo.",
+  "静电屏蔽",
+  "斜灵且斜感",
+  "2623509681",
+  "青青草原领头羊",
+  "#define",
+  "^_",
+  "ttt",
+  "Flamingo.",
+  "！",
+  "。",
 ];
 const SUPPORTER_PREVIEW_LIMIT = 6;
 
