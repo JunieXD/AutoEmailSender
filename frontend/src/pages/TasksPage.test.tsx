@@ -555,6 +555,43 @@ describe("CrawlJobCard", () => {
 });
 
 describe("TasksPage task-center server pagination", () => {
+  it("keeps the initial crawl count at zero and makes one initial list request", async () => {
+    selectionMock.selectedIdentityId = null;
+    let resolveRequest: ((value: {
+      items: CrawlJobSummaryDTO[];
+      total_count: number;
+      current_total_count: number;
+    }) => void) | undefined;
+    apiMocks.listCrawlJobsPage.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    const crawlTab = await screen.findByRole("button", { name: "智能抓取" });
+    expect(within(crawlTab).getByText("0")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      resolveRequest?.({ items: [], total_count: 0, current_total_count: 0 });
+    });
+    expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+      await Promise.resolve();
+    });
+    expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the server total for the crawl badge and requests the selected page", async () => {
     apiMocks.listCrawlJobsPage.mockResolvedValue({
       items: [buildCrawlJob({ status: "running" })],

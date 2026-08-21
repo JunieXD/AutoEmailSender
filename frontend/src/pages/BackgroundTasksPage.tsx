@@ -3113,12 +3113,16 @@ export const BackgroundTasksPage = ({
   ]);
 
   useEffect(() => {
-    if (taskCenterSection !== "background" || crawlJobsPreloadedRef.current) {
+    if (
+      taskCenterSection !== "background" ||
+      activeTab === "crawl" ||
+      crawlJobsPreloadedRef.current
+    ) {
       return;
     }
     crawlJobsPreloadedRef.current = true;
     void loadCrawlJobs({ showLoading: false });
-  }, [loadCrawlJobs, taskCenterSection]);
+  }, [activeTab, loadCrawlJobs, taskCenterSection]);
 
   useEffect(() => {
     if (
@@ -3200,38 +3204,36 @@ export const BackgroundTasksPage = ({
     if (taskCenterSection !== "background" || activeTab !== "crawl") {
       return undefined;
     }
-    void loadCrawlJobs({ showLoading: crawlJobs.length === 0 });
+    crawlJobsPreloadedRef.current = true;
+    void loadCrawlJobs();
     const timer = window.setInterval(() => {
       void loadCrawlJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [activeTab, crawlJobs.length, loadCrawlJobs, taskCenterSection]);
+  }, [activeTab, loadCrawlJobs, taskCenterSection]);
 
   useEffect(() => {
     if (taskCenterSection !== "background" || activeTab !== "match") {
       return undefined;
     }
-    void loadMatchAnalysisJobs({ showLoading: matchAnalysisJobs.length === 0 });
+    void loadMatchAnalysisJobs();
     const timer = window.setInterval(() => {
       void loadMatchAnalysisJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [activeTab, loadMatchAnalysisJobs, matchAnalysisJobs.length, taskCenterSection]);
+  }, [activeTab, loadMatchAnalysisJobs, taskCenterSection]);
 
   useEffect(() => {
     if (taskCenterSection !== "background" || activeTab !== "enrichment") {
       return undefined;
     }
-    void loadInformationEnrichmentJobs({
-      showLoading: informationEnrichmentJobs.length === 0,
-    });
+    void loadInformationEnrichmentJobs();
     const timer = window.setInterval(() => {
       void loadInformationEnrichmentJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [
     activeTab,
-    informationEnrichmentJobs.length,
     loadInformationEnrichmentJobs,
     taskCenterSection,
   ]);

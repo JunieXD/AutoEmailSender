@@ -15,6 +15,23 @@ import type {
   TaskListView,
 } from '@/types';
 
+type CrawlJobsPageParams = {
+  offset: number;
+  limit: number;
+  view: TaskListView;
+  keyword?: string;
+  searchScopes?: string[];
+  status?: string;
+  sortKey?: 'updated' | 'created' | 'progress';
+  sortDirection?: 'asc' | 'desc';
+  unpaged?: boolean;
+};
+
+const pendingCrawlJobsPageRequests = new Map<
+  string,
+  Promise<CrawlJobSummaryPageDTO>
+>();
+
 export const createCrawlJob = (payload: CrawlJobCreatePayloadDTO) =>
   apiFetch<CrawlJobDTO>('/api/crawl-jobs', {
     method: 'POST',
@@ -27,18 +44,8 @@ export const listCrawlJobs = (params: { limit?: number; view?: TaskListView } = 
     view: params.view,
   });
 
-export const listCrawlJobsPage = (params: {
-  offset: number;
-  limit: number;
-  view: TaskListView;
-  keyword?: string;
-  searchScopes?: string[];
-  status?: string;
-  sortKey?: 'updated' | 'created' | 'progress';
-  sortDirection?: 'asc' | 'desc';
-  unpaged?: boolean;
-}) =>
-  apiFetch<CrawlJobSummaryPageDTO>('/api/crawl-jobs/page', undefined, {
+export const listCrawlJobsPage = (params: CrawlJobsPageParams) => {
+  const requestParams = {
     offset: params.offset,
     limit: params.limit,
     view: params.view,
@@ -48,7 +55,27 @@ export const listCrawlJobsPage = (params: {
     sort_key: params.sortKey,
     sort_direction: params.sortDirection,
     unpaged: params.unpaged ? 1 : undefined,
-  });
+  };
+  const requestKey = JSON.stringify(requestParams);
+  const pendingRequest = pendingCrawlJobsPageRequests.get(requestKey);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const request = apiFetch<CrawlJobSummaryPageDTO>(
+    '/api/crawl-jobs/page',
+    undefined,
+    requestParams,
+  );
+  pendingCrawlJobsPageRequests.set(requestKey, request);
+  const clearPendingRequest = () => {
+    if (pendingCrawlJobsPageRequests.get(requestKey) === request) {
+      pendingCrawlJobsPageRequests.delete(requestKey);
+    }
+  };
+  void request.then(clearPendingRequest, clearPendingRequest);
+  return request;
+};
 
 export const getCrawlJob = (jobId: number) =>
   apiFetch<CrawlJobSummaryDTO>(`/api/crawl-jobs/${jobId}`);

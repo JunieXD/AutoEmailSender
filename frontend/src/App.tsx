@@ -12,6 +12,7 @@ import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestor
 import { TopNavBar } from '@/components/organisms/TopNavBar';
 import { TruncatedTextTooltipProvider } from '@/components/organisms/TruncatedTextTooltipProvider';
 import { BackgroundTaskNotificationProvider } from '@/app/providers/BackgroundTaskNotificationContext';
+import { loadTasksPage } from '@/app/taskCenterPreload';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
@@ -40,7 +41,9 @@ const DashboardPage = lazy(() =>
 const ProfilePage = lazy(() =>
   import('@/pages/ProfilePage').then((module) => ({ default: module.ProfilePage })),
 );
-const TasksPage = lazy(() => import('@/pages/TasksPage').then((module) => ({ default: module.TasksPage })));
+const TasksPage = lazy(() =>
+  loadTasksPage().then((module) => ({ default: module.TasksPage })),
+);
 const TestComposePage = lazy(() =>
   import('@/pages/TestComposePage').then((module) => ({ default: module.TestComposePage })),
 );

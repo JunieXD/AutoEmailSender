@@ -221,19 +221,22 @@ async def list_crawl_jobs_page(
         sort_direction=sort_direction,
         unpaged=unpaged,
     )
-    current_total_count = int(
-        (
-            await session.scalar(
-                select(func.count())
-                .select_from(CrawlJob)
-                .where(
-                    CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
-                    CrawlJob.deleted_at.is_(None),
+    if view == "current" and keyword is None and status_filter is None:
+        current_total_count = total_count
+    else:
+        current_total_count = int(
+            (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(CrawlJob)
+                    .where(
+                        CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
+                        CrawlJob.deleted_at.is_(None),
+                    )
                 )
             )
+            or 0
         )
-        or 0
-    )
     return CrawlJobSummaryPageRead(
         items=await _build_crawl_job_summaries(session, jobs),
         total_count=total_count,

@@ -126,6 +126,38 @@ describe('crawlJobsApi', () => {
     );
   });
 
+  it('coalesces identical task-center page requests while they are pending', async () => {
+    let resolveRequest: ((value: {
+      items: never[];
+      total_count: number;
+      current_total_count: number;
+    }) => void) | undefined;
+    mockedApiFetch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    const params = {
+      offset: 0,
+      limit: 8,
+      view: 'current' as const,
+      sortKey: 'created' as const,
+      sortDirection: 'desc' as const,
+    };
+
+    const firstRequest = listCrawlJobsPage(params);
+    const secondRequest = listCrawlJobsPage({ ...params });
+
+    expect(secondRequest).toBe(firstRequest);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+
+    resolveRequest?.({ items: [], total_count: 0, current_total_count: 0 });
+    await Promise.all([firstRequest, secondRequest]);
+
+    await listCrawlJobsPage(params);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('gets a crawl job summary from the expected URL', async () => {
     const job = {
       id: 1,
