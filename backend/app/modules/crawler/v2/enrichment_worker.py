@@ -84,6 +84,7 @@ from .profile_fallbacks import (
     EmailEvidence,
     ProfileLinkEvidence,
     extract_email_evidence,
+    extract_profile_document_email_evidence,
     extract_profile_link_evidence,
 )
 from .profile_documents import (
@@ -850,15 +851,16 @@ async def enrich_candidate_profile_with_llm_with_usage(
     ):
         return payload, usage, _join_raw_model_texts(raw_model_texts)
 
+    page_email_evidence = extract_email_evidence(
+        page_text,
+        source_url=(candidate.profile_url or "").strip(),
+        source_kind="profile_text",
+    )
     selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
         ctx,
         llm_profile,
         candidate,
-        extract_email_evidence(
-            page_text,
-            source_url=(candidate.profile_url or "").strip(),
-            source_kind="profile_text",
-        ),
+        page_email_evidence,
     )
     usage = _merge_token_usage(usage, auxiliary_usage)
     raw_model_texts.append(auxiliary_raw)
@@ -876,6 +878,24 @@ async def enrich_candidate_profile_with_llm_with_usage(
             force_fetch=True,
         )
     if snapshot.status != "succeeded":
+        return payload, usage, _join_raw_model_texts(raw_model_texts)
+
+    known_page_emails = {item.email for item in page_email_evidence}
+    document_email_evidence = tuple(
+        item
+        for item in extract_profile_document_email_evidence(snapshot)
+        if item.email not in known_page_emails
+    )
+    selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(
+        ctx,
+        llm_profile,
+        candidate,
+        document_email_evidence,
+    )
+    usage = _merge_token_usage(usage, auxiliary_usage)
+    raw_model_texts.append(auxiliary_raw)
+    if selected_email:
+        payload.email = selected_email
         return payload, usage, _join_raw_model_texts(raw_model_texts)
 
     selected_email, auxiliary_usage, auxiliary_raw = await _select_email_from_evidence(

@@ -10,6 +10,7 @@ from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
 )
+from app.services.html_text import html_to_text
 from ..pages.tools import (
     PageSnapshot,
     normalize_navigable_url,
@@ -82,6 +83,31 @@ def extract_email_evidence(
             )
         )
     return tuple(evidence)
+
+
+def extract_profile_document_email_evidence(
+    snapshot: PageSnapshot,
+) -> tuple[EmailEvidence, ...]:
+    """Find readable email evidence in a browser-repaired profile document.
+
+    Some profile templates put visible contact fields after ``</body>``.  The
+    normal snapshot text intentionally follows the body, so inspect the
+    already-cleaned/bounded HTML only as a late enrichment fallback.  The
+    existing LLM selector still decides whether any discovered address belongs
+    to the current teacher.
+    """
+
+    document_text = html_to_text(
+        snapshot.html or "",
+        include_document_fallback=True,
+    )
+    if not document_text:
+        return ()
+    return extract_email_evidence(
+        document_text,
+        source_url=snapshot.url,
+        source_kind="profile_document",
+    )
 
 
 def extract_profile_link_evidence(
