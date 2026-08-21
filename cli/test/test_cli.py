@@ -1072,6 +1072,8 @@ class CliTests(unittest.TestCase):
             ("列出当前系统中所有姓名包含英文字母的导师", "professors.list"),
             ("批量将指定导师移入回收站", "professors.prepare-bulk-archive"),
             ("确认并执行已有变更计划", "plans.execute"),
+            ("准备社区导师批量投稿包", "professors.community.export-package"),
+            ("查看社区导师库", "professors.community.catalog"),
         )
         for query, expected in cases:
             with self.subTest(query=query):
@@ -1117,6 +1119,62 @@ class CliTests(unittest.TestCase):
         self.assertEqual(match["confidence"], "high")
         self.assertIn("command_alias", match["reasons"])
         self.assertTrue(match["matched_terms"])
+
+    def test_community_export_accepts_a_frozen_professor_id_file(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/community-mentors/share-package": b"community xlsx"}
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ids_file = root / "selection.json"
+            ids_file.write_text(json.dumps({"professor_ids": [7, 9]}), encoding="utf-8")
+            output = root / "community-share.xlsx"
+            with patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                return_value=fake_client,
+            ):
+                result = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "community",
+                        "export-package",
+                        "--professor-id-file",
+                        ids_file.as_posix(),
+                        "--output",
+                        output.as_posix(),
+                    ],
+                )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        self.assertEqual(fake_client.download_params[0], {"professor_ids": "7,9"})
+
+    def test_community_export_rejects_conflicting_selection_sources(self) -> None:
+        fake_client = _FakeAgentClient({})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ids_file = Path(temp_dir) / "selection.txt"
+            ids_file.write_text("7\n", encoding="utf-8")
+            with patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                return_value=fake_client,
+            ):
+                result = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "community",
+                        "export-package",
+                        "--professor-id",
+                        "7",
+                        "--professor-id-file",
+                        ids_file.as_posix(),
+                    ],
+                )
+        self.assertEqual(result.exit_code, 2, msg=result.output)
+        self.assertEqual(json.loads(result.stdout)["error"]["code"], "PROFESSOR_ID_INPUT_CONFLICT")
 
     def test_capabilities_no_match_distinguishes_query_from_existing_resource(
         self,

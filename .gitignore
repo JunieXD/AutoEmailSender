@@ -52,6 +52,11 @@ desktop/native/sparkle/vendor/
 .agents/skills/*
 !.agents/skills/crawl-mentors-to-xlsx/
 !.agents/skills/crawl-mentors-to-xlsx/**
+!.agents/skills/submit-mentors-to-community/
+!.agents/skills/submit-mentors-to-community/**
+!.agents/skills/submit-mentors-to-community/**/
+.agents/skills/submit-mentors-to-community/**/__pycache__/
+.agents/skills/submit-mentors-to-community/**/*.py[cod]
 .agents/skills/crawl-mentors-to-xlsx/**/__pycache__/
 .agents/skills/crawl-mentors-to-xlsx/**/*.py[cod]
 skills-lock.json

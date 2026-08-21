@@ -386,6 +386,17 @@ def export_community_share_package(
         list[int],
         typer.Option("--professor-id", min=1, help="重复指定要导出的本地导师 ID。"),
     ] = [],
+    professor_id_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--professor-id-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="从 JSON 数组、{professor_ids:[...]} 或换行文本读取冻结的导师 ID。",
+        ),
+    ] = None,
     output: Annotated[
         Path, typer.Option("--output", "-o", help="导出文件保存位置。")
     ] = Path("community-share.xlsx"),
@@ -393,6 +404,50 @@ def export_community_share_package(
 ) -> None:
     context = cli_context(ctx)
     command = "professors.community.export-package"
+    if professor_ids and professor_id_file is not None:
+        error = CliError(
+            code="PROFESSOR_ID_INPUT_CONFLICT",
+            message="--professor-id 与 --professor-id-file 不能同时使用。",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code)
+    if professor_id_file is not None:
+        try:
+            raw = professor_id_file.read_text(encoding="utf-8")
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = [line.strip() for line in raw.splitlines() if line.strip()]
+            if isinstance(parsed, dict):
+                parsed = parsed.get("professor_ids")
+            if not isinstance(parsed, list) or not parsed:
+                raise ValueError("文件必须包含非空 ID 数组")
+            professor_ids = [int(value) for value in parsed]
+        except (OSError, UnicodeDecodeError, TypeError, ValueError) as exc:
+            error = CliError(
+                code="PROFESSOR_ID_FILE_INVALID",
+                message=f"导师 ID 文件无效：{exc}",
+                exit_code=2,
+            )
+            emit_error(context, command=command, error=error, guide_topic="community")
+            raise typer.Exit(error.exit_code) from exc
+        if any(professor_id < 1 for professor_id in professor_ids):
+            error = CliError(
+                code="PROFESSOR_ID_FILE_INVALID",
+                message="导师 ID 必须是正整数。",
+                exit_code=2,
+            )
+            emit_error(context, command=command, error=error, guide_topic="community")
+            raise typer.Exit(error.exit_code)
+    if len(set(professor_ids)) != len(professor_ids):
+        error = CliError(
+            code="PROFESSOR_IDS_DUPLICATE",
+            message="导师 ID 不能重复；请先冻结并去重选择文件。",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code)
     if not professor_ids:
         error = CliError(
             code="PROFESSOR_IDS_REQUIRED",
@@ -440,6 +495,9 @@ def export_community_share_package(
             data={
                 "output": destination.as_posix(),
                 "professor_ids": professor_ids,
+                "professor_id_file": professor_id_file.expanduser().resolve().as_posix()
+                if professor_id_file is not None
+                else None,
                 "size_bytes": len(content),
             },
             human_text=f"已导出社区共享包到：\n{destination}",

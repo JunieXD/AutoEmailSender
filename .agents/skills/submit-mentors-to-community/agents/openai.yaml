@@ -1,0 +1,4 @@
+interface:
+  display_name: "社区导师投稿"
+  short_description: "校验、准备、提交并审计社区导师投稿"
+  default_prompt: "使用 $submit-mentors-to-community 准备并审计社区导师投稿。"

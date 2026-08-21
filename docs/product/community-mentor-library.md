@@ -31,6 +31,10 @@
 - 导师编辑页仍保留“贡献到社区”，用于临时补充或修正单独一位导师；它会复制公开职业字段并打开单条投稿表。
 - 社区导师卡片的“反馈错误”会复制当前社区值和稳定记录 ID，然后打开错误反馈表。反馈本身不会直接修改数据。
 
+### 维护者 CLI 投稿
+
+维护者可以在仓库内使用 `submit-mentors-to-community` Skill 的纯 CLI 入口：先由 `prepare_submissions.py` 和 `audit_submissions.py` 校验社区安全 XLSX，再用 `submit_submissions.py` 生成并（明确指定 `--execute` 后）创建带稳定 `batch_id` 的 draft PR。该入口不改变普通用户的 Issue Form 流程，也不会把本地标签、备注、邮件或其他私有字段放入批次。外部结果未知时必须先查询同一批次的 PR，禁止盲目重试。
+
 ## 实体与重复处理
 
 邮箱不是导师实体 ID。社区使用不透明、稳定的 `mentor_*` ID；邮箱只在第一次导入时作为候选匹配线索。
