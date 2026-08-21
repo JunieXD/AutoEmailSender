@@ -23,7 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.time import utc_now
-from app.models.crawl_job import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageTask
+from app.models.crawl_job import (
+    CrawlCandidate,
+    CrawlJob,
+    CrawlJobStatus,
+    CrawlPage,
+    CrawlPageTask,
+)
 from app.modules.crawler.candidate_identity import (
     candidate_identity_values,
     canonical_candidate_clause,
@@ -48,6 +54,7 @@ from app.services.html_text import html_to_text
 from app.services.beautiful_soup import is_comment, parse_html
 from app.modules.llm.public import LLMRuntimeAdaptation
 from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from ..v2.url_utils import recover_embedded_absolute_url
 from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,
     is_valid_professor_email,
@@ -88,7 +95,18 @@ MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
 BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
+BROWSER_BLOCKED_RESOURCE_TYPES = frozenset({"font", "media"})
+# Preserve image load events without downloading the original asset. OCR still
+# fetches selected image URLs explicitly through fetch_binary_resource.
+_TRANSPARENT_IMAGE_BYTES = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff"
+    b"!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00"
+    b"\x00\x02\x02D\x01\x00;"
+)
 BROWSER_FALLBACK_STATUS = {403, 412, 429}
+TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429})
+TRANSIENT_SERVER_STATUS_MIN = 500
+TRANSIENT_SERVER_STATUS_MAX = 599
 INVALID_PROFILE_PAGE_MARKERS = (
     "{{name}}",
     "{{email}}",
@@ -103,10 +121,16 @@ _SOFT_404_PROFILE_TITLE_PATTERNS = (
     re.compile(r"(?:页面|内容|资源)(?:未找到|不存在|已删除)"),
 )
 _SOFT_404_PROFILE_BODY_PATTERNS = (
-    re.compile(r"(?:访问|请求|查找)的?(?:页面|内容|资源).{0,20}(?:未找到|不存在|已删除)"),
+    re.compile(
+        r"(?:访问|请求|查找)的?(?:页面|内容|资源).{0,20}(?:未找到|不存在|已删除)"
+    ),
     re.compile(r"(?:页面|内容|资源)(?:未找到|不存在|已删除)"),
-    re.compile(r"\b(?:requested\s+)?(?:page|url|resource).{0,30}not\s+found\b", re.IGNORECASE),
-    re.compile(r"\b(?:page|resource).{0,20}(?:was\s+)?(?:removed|deleted)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:requested\s+)?(?:page|url|resource).{0,30}not\s+found\b", re.IGNORECASE
+    ),
+    re.compile(
+        r"\b(?:page|resource).{0,20}(?:was\s+)?(?:removed|deleted)\b", re.IGNORECASE
+    ),
 )
 _MAX_SOFT_404_PROFILE_TEXT_CHARS = 800
 CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS = ("_tsites_encrypt_field",)
@@ -162,6 +186,7 @@ DYNAMIC_DIRECTORY_READY_POLL_MS = 200
 DYNAMIC_DIRECTORY_STABLE_MS = 500
 DYNAMIC_DIRECTORY_MAX_RETRIES = 1
 BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS = 1.0
+BROWSER_TRANSIENT_RETRY_DELAY_SECONDS = 1.0
 BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS = 80
 BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS = 8_000
 BROWSER_SPARSE_DIRECTORY_MAX_LINKS = 5
@@ -197,6 +222,16 @@ _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS = (
     "page.content",
     "page is navigating",
 )
+_TRANSIENT_BROWSER_ERROR_MARKERS = (
+    "err_",
+    "connection",
+    "protocol",
+    "fetch failed",
+    "timed out",
+    "timeout",
+    "dns",
+    "name resolution",
+)
 IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "err_connection_closed",
     "err_connection_refused",
@@ -209,6 +244,8 @@ BROWSER_USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 UNSAFE_CRAWL_URL_MESSAGE = "URL 不允许指向本机、内网或不可解析地址"
+TEMPORARY_DNS_RESOLUTION_MESSAGE = "页面地址暂时无法解析，稍后将自动重试"
+TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE = "浏览器最终地址暂时无法解析，稍后将自动重试"
 CrawlPageIntent = Literal["generic", "directory", "profile"]
 _DEFAULT_BROWSER_WAIT_FOR = object()
 
@@ -416,8 +453,10 @@ class CandidatePersistenceResult:
     merged_count: int = 0
     skipped_duplicate_count: int = 0
 
+
 def _is_spa_route_fragment(fragment: str) -> bool:
     return fragment.startswith("/") or fragment.startswith("!/")
+
 
 def _normalize_url_for_deduplication(url: str) -> str:
     parsed = urlparse(url.strip())
@@ -425,7 +464,10 @@ def _normalize_url_for_deduplication(url: str) -> str:
         parsed = parsed._replace(fragment="")
     return parsed.geturl()
 
-def normalize_navigable_url(value: object, *, base_url: str | None = None) -> str | None:
+
+def normalize_navigable_url(
+    value: object, *, base_url: str | None = None
+) -> str | None:
     if value is None:
         return None
     raw = str(value).strip()
@@ -438,11 +480,14 @@ def normalize_navigable_url(value: object, *, base_url: str | None = None) -> st
     normalized = parsed.geturl().rstrip("/")
     return normalized or None
 
+
 def _normalize_page_cache_url(url: str) -> str:
     return _normalize_url_for_deduplication(url)
 
 
-def normalize_candidate_profile_url(value: object, *, base_url: str | None = None) -> str | None:
+def normalize_candidate_profile_url(
+    value: object, *, base_url: str | None = None
+) -> str | None:
     if value is None:
         return None
     raw = str(value).strip()
@@ -451,7 +496,8 @@ def normalize_candidate_profile_url(value: object, *, base_url: str | None = Non
     if base_url and _looks_like_hostname_without_scheme(raw):
         base_scheme = urlparse(base_url).scheme.lower()
         raw = f"{base_scheme if base_scheme in {'http', 'https'} else 'https'}://{raw}"
-    return normalize_navigable_url(raw, base_url=base_url)
+    absolute = urljoin(base_url or "", raw) if base_url else raw
+    return normalize_navigable_url(recover_embedded_absolute_url(absolute))
 
 
 def _looks_like_hostname_without_scheme(value: str) -> bool:
@@ -460,7 +506,11 @@ def _looks_like_hostname_without_scheme(value: str) -> bool:
     authority = re.split(r"[/#?]", value, maxsplit=1)[0]
     if "@" in authority:
         return False
-    host = authority.rsplit(":", 1)[0] if authority.rsplit(":", 1)[-1].isdigit() else authority
+    host = (
+        authority.rsplit(":", 1)[0]
+        if authority.rsplit(":", 1)[-1].isdigit()
+        else authority
+    )
     labels = host.rstrip(".").split(".")
     if len(labels) < 3:
         return False
@@ -472,16 +522,19 @@ def _looks_like_hostname_without_scheme(value: str) -> bool:
     )
 
 
-
 def _normalize_listing_url(value: object, *, base_url: str | None = None) -> str | None:
     return normalize_navigable_url(value, base_url=base_url)
 
 
-def _candidate_profile_url_matches_known_listing_url(profile_url: str | None, listing_urls: set[str]) -> bool:
+def _candidate_profile_url_matches_known_listing_url(
+    profile_url: str | None, listing_urls: set[str]
+) -> bool:
     return bool(profile_url and profile_url in listing_urls)
 
 
-def _clear_listing_profile_url(payload: dict[str, Any], removed_profile_url: str) -> None:
+def _clear_listing_profile_url(
+    payload: dict[str, Any], removed_profile_url: str
+) -> None:
     payload["profile_url"] = None
     field_confidence = payload.get("field_confidence")
     if isinstance(field_confidence, dict):
@@ -493,10 +546,12 @@ def _clear_listing_profile_url(payload: dict[str, Any], removed_profile_url: str
     evidence["removed_profile_url"] = removed_profile_url
     payload["evidence"] = evidence
 
+
 def _candidate_missing_contact_path(payload: dict[str, Any]) -> bool:
     email = str(payload.get("email") or "").strip()
     profile_url = str(payload.get("profile_url") or "").strip()
     return not email and not profile_url
+
 
 _MERGEABLE_TEXT_FIELDS = (
     "email",
@@ -519,7 +574,9 @@ def _merge_json_dict(current: object, incoming: object) -> dict[str, object]:
     return merged
 
 
-def _append_json_list(current: object, item: dict[str, object], *, limit: int = 20) -> list[dict[str, object]]:
+def _append_json_list(
+    current: object, item: dict[str, object], *, limit: int = 20
+) -> list[dict[str, object]]:
     entries = list(current) if isinstance(current, list) else []
     entries.append(item)
     return entries[-limit:]
@@ -553,7 +610,9 @@ def should_replace_field(
         return False
     if old_value in (None, ""):
         return True
-    if _SOURCE_PRIORITY.get(new_source_kind, 1) > _SOURCE_PRIORITY.get(old_source_kind, 1):
+    if _SOURCE_PRIORITY.get(new_source_kind, 1) > _SOURCE_PRIORITY.get(
+        old_source_kind, 1
+    ):
         return True
     if old_boundary_risk and not new_boundary_risk:
         return True
@@ -571,7 +630,9 @@ def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) 
     return merge_candidate_payload_shared(existing, payload)
 
 
-async def _known_listing_urls_for_job(session: AsyncSession, *, job_id: int, start_url: str) -> set[str]:
+async def _known_listing_urls_for_job(
+    session: AsyncSession, *, job_id: int, start_url: str
+) -> set[str]:
     listing_urls: set[str] = set()
     job = await session.get(CrawlJob, job_id)
     if job is not None:
@@ -584,7 +645,9 @@ async def _known_listing_urls_for_job(session: AsyncSession, *, job_id: int, sta
         if normalized:
             listing_urls.add(normalized)
 
-    rows = await session.scalars(select(CrawlPageTask.normalized_url).where(CrawlPageTask.job_id == job_id))
+    rows = await session.scalars(
+        select(CrawlPageTask.normalized_url).where(CrawlPageTask.job_id == job_id)
+    )
     for url in rows:
         normalized = _normalize_listing_url(url, base_url=start_url)
         if normalized:
@@ -630,7 +693,9 @@ class CrawlToolContext:
     session_factory: async_sessionmaker[AsyncSession]
     http_blocked_hosts: set[str] = field(default_factory=set)
     denied_urls: dict[str, str] = field(default_factory=dict)
-    page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(default_factory=OrderedDict)
+    page_snapshot_cache: OrderedDict[str, PageSnapshot] = field(
+        default_factory=OrderedDict
+    )
     known_listing_urls: set[str] = field(default_factory=set)
     llm_adaptation: LLMRuntimeAdaptation = field(
         default_factory=lambda: LLMRuntimeAdaptation("chat_completions", None)
@@ -677,11 +742,18 @@ class CrawlToolContext:
 
     def remember_page_snapshot(self, snapshot: PageSnapshot) -> None:
         if snapshot.url:
-            normalized = _normalize_page_cache_url(snapshot.url)
-            self.page_snapshot_cache[normalized] = snapshot
-            self.page_snapshot_cache.move_to_end(normalized)
-            while len(self.page_snapshot_cache) > MAX_PAGE_SNAPSHOT_CACHE_ENTRIES:
-                self.page_snapshot_cache.popitem(last=False)
+            self.remember_page_snapshot_for_url(snapshot.url, snapshot)
+
+    def remember_page_snapshot_for_url(
+        self,
+        url: str,
+        snapshot: PageSnapshot,
+    ) -> None:
+        normalized = _normalize_page_cache_url(url)
+        self.page_snapshot_cache[normalized] = snapshot
+        self.page_snapshot_cache.move_to_end(normalized)
+        while len(self.page_snapshot_cache) > MAX_PAGE_SNAPSHOT_CACHE_ENTRIES:
+            self.page_snapshot_cache.popitem(last=False)
 
     def forget_page_snapshot(self, url: str) -> None:
         self.page_snapshot_cache.pop(_normalize_page_cache_url(url), None)
@@ -712,7 +784,10 @@ class CrawlToolContext:
             return False
         if is_allowed_crawl_url(self.start_url, target_url):
             return True
-        if self.profile_landing_hosts and safe_url.hostname not in self.profile_landing_hosts:
+        if (
+            self.profile_landing_hosts
+            and safe_url.hostname not in self.profile_landing_hosts
+        ):
             return False
         self.profile_landing_hosts.add(safe_url.hostname)
         return True
@@ -730,6 +805,10 @@ class CrawlJobCanceled(RuntimeError):
 class _SafeCrawlUrl:
     hostname: str
     resolved_ips: tuple[str, ...]
+
+
+class TemporaryCrawlDNSResolutionError(ValueError):
+    """The hostname could not be resolved for this attempt."""
 
 
 def is_allowed_crawl_url(start_url: str, candidate_url: str) -> bool:
@@ -753,9 +832,25 @@ def _is_resolved_allowed_crawl_url(
     *,
     allow_public_dns_fallback: bool = False,
 ) -> bool:
+    return (
+        _resolved_allowed_crawl_url_error(
+            start_url,
+            candidate_url,
+            allow_public_dns_fallback=allow_public_dns_fallback,
+        )
+        is None
+    )
+
+
+def _resolved_allowed_crawl_url_error(
+    start_url: str,
+    candidate_url: str,
+    *,
+    allow_public_dns_fallback: bool = False,
+) -> str | None:
     absolute_candidate_url = urljoin(start_url, candidate_url)
     if not is_allowed_crawl_url(start_url, absolute_candidate_url):
-        return False
+        return UNSAFE_CRAWL_URL_MESSAGE
     try:
         _resolve_safe_public_crawl_url(
             start_url,
@@ -765,15 +860,24 @@ def _is_resolved_allowed_crawl_url(
             absolute_candidate_url,
             allow_public_dns_fallback=allow_public_dns_fallback,
         )
+    except TemporaryCrawlDNSResolutionError:
+        return TEMPORARY_DNS_RESOLUTION_MESSAGE
     except ValueError:
-        return False
-    return True
+        return UNSAFE_CRAWL_URL_MESSAGE
+    return None
 
 
 def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
+    return _resolved_context_url_error(ctx, candidate_url) is None
+
+
+def _resolved_context_url_error(
+    ctx: CrawlToolContext,
+    candidate_url: str,
+) -> str | None:
     absolute_candidate_url = urljoin(ctx.start_url, candidate_url)
     if not ctx.allows_url(absolute_candidate_url):
-        return False
+        return UNSAFE_CRAWL_URL_MESSAGE
     try:
         _resolve_safe_public_crawl_url(
             ctx.start_url,
@@ -783,9 +887,11 @@ def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
             absolute_candidate_url,
             allow_public_dns_fallback=ctx.allow_public_dns_fallback,
         )
+    except TemporaryCrawlDNSResolutionError:
+        return TEMPORARY_DNS_RESOLUTION_MESSAGE
     except ValueError:
-        return False
-    return True
+        return UNSAFE_CRAWL_URL_MESSAGE
+    return None
 
 
 def _is_profile_entry_request(profile_entry_url: str, requested_url: str) -> bool:
@@ -828,11 +934,19 @@ def _validate_safe_crawl_url_literal(url: str) -> tuple[str, str, int]:
     try:
         ip_address = ipaddress.ip_address(normalized_host)
     except ValueError:
-        return normalized_host, parsed.scheme, parsed.port or _default_port_for_scheme(parsed.scheme)
+        return (
+            normalized_host,
+            parsed.scheme,
+            parsed.port or _default_port_for_scheme(parsed.scheme),
+        )
 
     if _is_unsafe_ip_address(ip_address):
         raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
-    return normalized_host, parsed.scheme, parsed.port or _default_port_for_scheme(parsed.scheme)
+    return (
+        normalized_host,
+        parsed.scheme,
+        parsed.port or _default_port_for_scheme(parsed.scheme),
+    )
 
 
 def _resolve_safe_public_crawl_url(
@@ -858,7 +972,9 @@ def _resolve_system_host_ips(host: str, port: int) -> tuple[str, ...]:
     try:
         address_infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+        raise TemporaryCrawlDNSResolutionError(
+            TEMPORARY_DNS_RESOLUTION_MESSAGE
+        ) from exc
 
     if not address_infos:
         raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
@@ -896,23 +1012,27 @@ def _resolve_public_dns_host_ips(host: str) -> tuple[str, ...]:
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
-            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+            raise TemporaryCrawlDNSResolutionError(
+                TEMPORARY_DNS_RESOLUTION_MESSAGE
+            ) from exc
         if payload.get("Status") != 0:
-            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+            raise TemporaryCrawlDNSResolutionError(TEMPORARY_DNS_RESOLUTION_MESSAGE)
         for answer in payload.get("Answer") or []:
             if not isinstance(answer, dict) or answer.get("type") not in {1, 28}:
                 continue
             try:
                 ip_address = ipaddress.ip_address(str(answer.get("data") or ""))
             except ValueError as exc:
-                raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+                raise TemporaryCrawlDNSResolutionError(
+                    TEMPORARY_DNS_RESOLUTION_MESSAGE
+                ) from exc
             if _is_unsafe_ip_address(ip_address):
                 raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
             normalized_ip = str(ip_address)
             if normalized_ip not in resolved_ips:
                 resolved_ips.append(normalized_ip)
     if not resolved_ips:
-        raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+        raise TemporaryCrawlDNSResolutionError(TEMPORARY_DNS_RESOLUTION_MESSAGE)
     return tuple(resolved_ips)
 
 
@@ -994,7 +1114,9 @@ def _build_safe_crawl_transport(
     return transport
 
 
-def _is_unsafe_ip_address(ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def _is_unsafe_ip_address(
+    ip_address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
     return any(
         (
             not ip_address.is_global,
@@ -1014,7 +1136,9 @@ def normalize_candidate_payload(
     university: str,
     school: str,
 ) -> dict[str, Any]:
-    papers = normalize_recent_papers(candidate.recent_papers, max_items=RECENT_PAPERS_MAX_ITEMS)
+    papers = normalize_recent_papers(
+        candidate.recent_papers, max_items=RECENT_PAPERS_MAX_ITEMS
+    )
     field_confidence = None
     if candidate.field_confidence is not None:
         field_confidence = {
@@ -1027,7 +1151,8 @@ def normalize_candidate_payload(
         "name": _clean_required(candidate.name),
         "email": _first_valid_email(candidate.email),
         "title": normalize_professor_title(_clean_optional(candidate.title)),
-        "university": _clean_optional(candidate.university) or _clean_required(university),
+        "university": _clean_optional(candidate.university)
+        or _clean_required(university),
         "school": _clean_optional(candidate.school) or _clean_required(school),
         "department": _clean_optional(candidate.department),
         "research_direction": _clean_optional(candidate.research_direction),
@@ -1194,11 +1319,26 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                 )
             if not getattr(response, "is_redirect", False):
                 if response.status_code in BROWSER_FALLBACK_STATUS:
-                    snapshot = html_to_snapshot(str(response.url), response.text, "http")
+                    snapshot = html_to_snapshot(
+                        str(response.url), response.text, "http"
+                    )
                     snapshot.http_status_code = response.status_code
                     snapshot.status = "failed"
                     snapshot.error_message = (
                         f"HTTP {response.status_code} blocked, browser fallback advised"
+                    )
+                    snapshot.suspicious_empty = True
+                    await record_page_snapshot(ctx, snapshot)
+                    return snapshot
+
+                if _is_transient_http_status(response.status_code):
+                    snapshot = html_to_snapshot(
+                        str(response.url), response.text, "http"
+                    )
+                    snapshot.http_status_code = response.status_code
+                    snapshot.status = "failed"
+                    snapshot.error_message = (
+                        f"HTTP {response.status_code} temporary server response"
                     )
                     snapshot.suspicious_empty = True
                     await record_page_snapshot(ctx, snapshot)
@@ -1216,7 +1356,9 @@ async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
                 await record_page_snapshot(ctx, snapshot)
                 return snapshot
 
-            location = response.headers.get("Location") or response.headers.get("location")
+            location = response.headers.get("Location") or response.headers.get(
+                "location"
+            )
             if not location:
                 snapshot = _failed_snapshot(
                     url=str(response.url),
@@ -1308,7 +1450,9 @@ async def fetch_binary_resource(
                 if response.is_redirect:
                     if redirect_count >= MAX_HTTP_REDIRECTS:
                         raise ValueError("资源重定向次数过多，已拒绝抓取")
-                    location = response.headers.get("Location") or response.headers.get("location")
+                    location = response.headers.get("Location") or response.headers.get(
+                        "location"
+                    )
                     if not location:
                         raise ValueError("资源重定向响应缺少 Location，已拒绝抓取")
                     current_url = urljoin(str(response.url), location)
@@ -1331,16 +1475,23 @@ async def fetch_binary_resource(
                     chunks.append(chunk)
                 return (
                     str(response.url),
-                    str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower(),
+                    str(response.headers.get("Content-Type") or "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower(),
                     b"".join(chunks),
                 )
     raise ValueError("资源抓取失败")
 
 
-def _snapshot_from_page_fetch_decision(url: str, decision: PageFetchDecision) -> PageSnapshot | None:
+def _snapshot_from_page_fetch_decision(
+    url: str, decision: PageFetchDecision
+) -> PageSnapshot | None:
     if decision.action == "skip_terminal_failed":
         message = decision.message or decision.terminal_reason or "terminal_failed"
-        if message.startswith("该页面此前已明确抓取失败，已跳过："):
+        if decision.terminal_reason == "transient_retry_exhausted":
+            error_message = f"页面暂时无法访问，重试次数已用尽：{message}"
+        elif message.startswith("该页面此前已明确抓取失败，已跳过："):
             error_message = message
         else:
             error_message = f"该页面此前已明确抓取失败，已跳过：{message}"
@@ -1385,16 +1536,20 @@ async def crawl_page_with_browser_fallback(
             await _ensure_crawl_job_can_continue_for_context(ctx)
             return cached
 
-        decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+        decision = await get_page_fetch_decision(
+            ctx.session_factory, job_id=ctx.job_id, url=absolute_url
+        )
         decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
         if decision_snapshot is not None:
             await _ensure_crawl_job_can_continue_for_context(ctx)
             return decision_snapshot
 
-    prefer_browser_for_domain = await should_prefer_browser_for_fetch_domain(
-        ctx.session_factory,
-        job_id=ctx.job_id,
-        url=absolute_url,
+    prefer_browser_for_domain = intent != "profile" and (
+        await should_prefer_browser_for_fetch_domain(
+            ctx.session_factory,
+            job_id=ctx.job_id,
+            url=absolute_url,
+        )
     )
     http_blocked_for_host = ctx.is_http_blocked(absolute_url)
     if http_blocked_for_host or prefer_browser_for_domain:
@@ -1445,6 +1600,51 @@ async def crawl_page_with_browser_fallback(
 
     http_snapshot = await crawl_page_with_http(ctx, url)
     await _ensure_crawl_job_can_continue_for_context(ctx)
+    https_upgrade_url = _profile_https_upgrade_url(
+        start_url=ctx.start_url,
+        requested_url=absolute_url,
+        intent=intent,
+        failed_snapshot=http_snapshot,
+    )
+    if https_upgrade_url is not None:
+        upgraded_snapshot = await crawl_page_with_browser_fallback(
+            ctx,
+            https_upgrade_url,
+            intent=intent,
+            force_fetch=True,
+        )
+        await _ensure_crawl_job_can_continue_for_context(ctx)
+        if upgraded_snapshot.status == "succeeded":
+            processed_snapshot = _apply_runtime_url_denylist_after_fetch(
+                ctx,
+                requested_url=absolute_url,
+                snapshot=upgraded_snapshot,
+            )
+            if processed_snapshot.status == "succeeded":
+                await mark_page_fetch_result(
+                    ctx.session_factory,
+                    job_id=ctx.job_id,
+                    original_url=absolute_url,
+                    snapshot=processed_snapshot.model_copy(
+                        update={"url": absolute_url}
+                    ),
+                    fetch_mode=(
+                        "browser"
+                        if processed_snapshot.fetch_method == "browser"
+                        else "direct"
+                    ),
+                    direct_status=http_snapshot.status,
+                    fallback_reason="same_host_http_profile_upgraded_to_https_after_400",
+                    browser_status=(
+                        processed_snapshot.status
+                        if processed_snapshot.fetch_method == "browser"
+                        else None
+                    ),
+                )
+                ctx.forget_page_snapshot(absolute_url)
+                ctx.remember_page_snapshot(processed_snapshot)
+                ctx.remember_page_snapshot_for_url(absolute_url, processed_snapshot)
+                return processed_snapshot
     if _should_use_browser_fallback(http_snapshot):
         if _is_http_blocked_snapshot(http_snapshot):
             ctx.mark_http_blocked(http_snapshot.url or absolute_url)
@@ -1470,7 +1670,10 @@ async def crawl_page_with_browser_fallback(
         ):
             selected_snapshot = compatibility_browser_snapshot
             fetch_mode = "direct"
-        elif browser_snapshot.status != "succeeded" and http_snapshot.status == "succeeded":
+        elif (
+            browser_snapshot.status != "succeeded"
+            and http_snapshot.status == "succeeded"
+        ):
             selected_snapshot = http_snapshot
             fetch_mode = "direct"
         processed_snapshot = _apply_runtime_url_denylist_after_fetch(
@@ -1587,7 +1790,9 @@ async def browser_investigate(
             await _ensure_crawl_job_can_continue_for_context(ctx)
             return cached
 
-        decision = await get_page_fetch_decision(ctx.session_factory, job_id=ctx.job_id, url=absolute_url)
+        decision = await get_page_fetch_decision(
+            ctx.session_factory, job_id=ctx.job_id, url=absolute_url
+        )
         decision_snapshot = _snapshot_from_page_fetch_decision(absolute_url, decision)
         if decision_snapshot is not None:
             await _ensure_crawl_job_can_continue_for_context(ctx)
@@ -1630,7 +1835,6 @@ async def browser_investigate(
         ctx.remember_page_snapshot(processed_snapshot)
     await _ensure_crawl_job_can_continue_for_context(ctx)
     return processed_snapshot
-
 
 
 def _should_remember_page_snapshot(snapshot: PageSnapshot) -> bool:
@@ -1731,9 +1935,9 @@ def looks_like_unavailable_profile_page(snapshot: PageSnapshot) -> bool:
     text = re.sub(r"\s+", " ", snapshot.text or "").strip()
     if not title or not text or len(text) > _MAX_SOFT_404_PROFILE_TEXT_CHARS:
         return False
-    return any(pattern.search(title) for pattern in _SOFT_404_PROFILE_TITLE_PATTERNS) and any(
-        pattern.search(text) for pattern in _SOFT_404_PROFILE_BODY_PATTERNS
-    )
+    return any(
+        pattern.search(title) for pattern in _SOFT_404_PROFILE_TITLE_PATTERNS
+    ) and any(pattern.search(text) for pattern in _SOFT_404_PROFILE_BODY_PATTERNS)
 
 
 def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
@@ -1769,20 +1973,30 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
     for container in collections:
         if _dynamic_collection_has_content(container):
             continue
-        if container.has_attr("hidden") or str(container.get("aria-hidden") or "").lower() == "true":
+        if (
+            container.has_attr("hidden")
+            or str(container.get("aria-hidden") or "").lower() == "true"
+        ):
             continue
 
         container_tokens = _html_structure_tokens(container)
-        if container.name != "tbody" and not container_tokens.intersection(_DYNAMIC_COLLECTION_TOKENS):
+        if container.name != "tbody" and not container_tokens.intersection(
+            _DYNAMIC_COLLECTION_TOKENS
+        ):
             continue
 
         ancestors = list(container.parents)
-        context_tokens = set().union(*(_html_structure_tokens(parent) for parent in ancestors))
+        context_tokens = set().union(
+            *(_html_structure_tokens(parent) for parent in ancestors)
+        )
         if container_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
             continue
         if context_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
             continue
-        if any(getattr(parent, "name", None) in {"header", "footer", "nav", "aside"} for parent in ancestors):
+        if any(
+            getattr(parent, "name", None) in {"header", "footer", "nav", "aside"}
+            for parent in ancestors
+        ):
             continue
         if not (
             any(getattr(parent, "name", None) == "main" for parent in ancestors)
@@ -1821,9 +2035,7 @@ def _html_class_tokens(element: Any) -> set[str]:
     else:
         values = [str(item) for item in classes]
     return {
-        token
-        for token in re.split(r"[^a-z0-9]+", " ".join(values).lower())
-        if token
+        token for token in re.split(r"[^a-z0-9]+", " ".join(values).lower()) if token
     }
 
 
@@ -1837,9 +2049,7 @@ def _html_structure_tokens(element: Any) -> set[str]:
     else:
         values.extend(str(item) for item in classes)
     return {
-        token
-        for token in re.split(r"[^a-z0-9]+", " ".join(values).lower())
-        if token
+        token for token in re.split(r"[^a-z0-9]+", " ".join(values).lower()) if token
     }
 
 
@@ -1855,6 +2065,34 @@ def _http_compatibility_url(url: str) -> str | None:
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         return None
     return parsed._replace(scheme="http").geturl()
+
+
+def _profile_https_upgrade_url(
+    *,
+    start_url: str,
+    requested_url: str,
+    intent: CrawlPageIntent,
+    failed_snapshot: PageSnapshot,
+) -> str | None:
+    if (
+        intent != "profile"
+        or failed_snapshot.status != "failed"
+        or failed_snapshot.http_status_code != 400
+    ):
+        return None
+    start = urlparse(start_url)
+    requested = urlparse(requested_url)
+    if (
+        start.scheme.lower() != "https"
+        or requested.scheme.lower() != "http"
+        or not start.hostname
+        or not requested.hostname
+        or start.hostname.lower() != requested.hostname.lower()
+        or start.port is not None
+        or requested.port is not None
+    ):
+        return None
+    return requested._replace(scheme="https").geturl()
 
 
 def _should_try_http_compatibility_fallback(
@@ -1901,8 +2139,7 @@ def _is_immediate_http_compatibility_error(
         return False
     error_message = (snapshot.error_message or "").lower()
     return any(
-        marker in error_message
-        for marker in IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS
+        marker in error_message for marker in IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS
     )
 
 
@@ -1952,17 +2189,39 @@ def _playwright_launch_options() -> dict[str, object]:
     }
 
 
+async def _apply_browser_bandwidth_policy(route: Any) -> None:
+    resource_type = str(getattr(getattr(route, "request", None), "resource_type", ""))
+    if resource_type == "image":
+        await route.fulfill(
+            status=200,
+            content_type="image/gif",
+            body=_TRANSPARENT_IMAGE_BYTES,
+        )
+        return
+    if resource_type in BROWSER_BLOCKED_RESOURCE_TYPES:
+        await route.abort()
+        return
+    await route.continue_()
+
+
+async def _install_browser_bandwidth_policy(page: Any) -> None:
+    route = getattr(page, "route", None)
+    if callable(route):
+        await route("**/*", _apply_browser_bandwidth_policy)
+
+
 async def _crawl_page_with_browser(
     ctx: CrawlToolContext,
     absolute_url: str,
     goal: str,
     intent: CrawlPageIntent = "generic",
 ) -> PageSnapshot:
-    if not _is_resolved_context_url(ctx, absolute_url):
+    context_url_error = _resolved_context_url_error(ctx, absolute_url)
+    if context_url_error is not None:
         return _failed_snapshot(
             url=absolute_url,
             fetch_method="browser",
-            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+            error_message=context_url_error,
         )
     browser_session_scope = ctx.browser_session_scope
     if _should_offload_browser_fetch_to_thread():
@@ -1980,7 +2239,17 @@ async def _crawl_page_with_browser(
             intent,
             browser_session_scope=browser_session_scope,
         )
-    if snapshot.status == "succeeded" and not _is_resolved_context_url(ctx, snapshot.url):
+    if snapshot.status == "succeeded":
+        final_url_error = _resolved_context_url_error(ctx, snapshot.url)
+    else:
+        final_url_error = None
+    if snapshot.status == "succeeded" and final_url_error is not None:
+        if final_url_error == TEMPORARY_DNS_RESOLUTION_MESSAGE:
+            return _failed_snapshot(
+                url=snapshot.url,
+                fetch_method="browser",
+                error_message=TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE,
+            )
         if not ctx.accept_profile_redirect(absolute_url, snapshot.url):
             return _failed_snapshot(
                 url=snapshot.url,
@@ -2032,15 +2301,16 @@ async def expand_browser_pagination(
     """Replay one model-selected next-page control and collect each changed state."""
 
     absolute_url = urljoin(ctx.start_url, url)
-    if not _is_resolved_allowed_crawl_url(
+    allowed_url_error = _resolved_allowed_crawl_url_error(
         ctx.start_url,
         absolute_url,
         allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-    ):
+    )
+    if allowed_url_error is not None:
         return BrowserPaginationExpansion(
             status="failed",
             stopped_reason="unsafe_url",
-            error_message=UNSAFE_CRAWL_URL_MESSAGE,
+            error_message=allowed_url_error,
         )
     target = {
         "tag": tag,
@@ -2069,16 +2339,21 @@ async def expand_browser_pagination(
             browser_session_scope=browser_session_scope,
         )
     for snapshot in result.snapshots:
-        if not _is_resolved_allowed_crawl_url(
+        final_url_error = _resolved_allowed_crawl_url_error(
             ctx.start_url,
             snapshot.url,
             allow_public_dns_fallback=ctx.allow_public_dns_fallback,
-        ):
+        )
+        if final_url_error is not None:
             return BrowserPaginationExpansion(
                 status="failed",
                 snapshots=result.snapshots,
                 stopped_reason="unsafe_final_url",
-                error_message="浏览器分页后的最终 URL 不在允许的同校公网域名范围内",
+                error_message=(
+                    TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE
+                    if final_url_error == TEMPORARY_DNS_RESOLUTION_MESSAGE
+                    else "浏览器分页后的最终 URL 不在允许的同校公网域名范围内"
+                ),
             )
     return result
 
@@ -2151,6 +2426,7 @@ async def _try_fetch_browser_pagination_once(
                 absolute_url,
             )
             page = await context.new_page()
+            await _install_browser_bandwidth_policy(page)
             navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,
@@ -2217,6 +2493,19 @@ async def _try_fetch_browser_pagination_once(
             seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
             initial_link_signature = await _browser_link_signature(page)
             seen_link_signatures = {initial_link_signature}
+            try:
+                pagination_state = await _browser_pagination_state(page)
+            except Exception:
+                pagination_state = None
+            if _should_use_page_number_pagination(pagination_state):
+                return await _collect_browser_pagination_by_page_number(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                    initial_state=pagination_state,
+                    max_pages=max_pages,
+                    seen_fingerprints=seen_fingerprints,
+                )
             dynamic_link_pagination = False
             snapshots: list[PageSnapshot] = []
             stopped_reason = "page_limit_reached"
@@ -2226,7 +2515,9 @@ async def _try_fetch_browser_pagination_once(
                     _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT,
                     target,
                 )
-                if not isinstance(match, dict) or not isinstance(match.get("index"), int):
+                if not isinstance(match, dict) or not isinstance(
+                    match.get("index"), int
+                ):
                     if snapshots:
                         stopped_reason = "control_disappeared"
                         break
@@ -2245,8 +2536,12 @@ async def _try_fetch_browser_pagination_once(
                 for _click_attempt in range(MAX_BROWSER_PAGINATION_CLICK_RETRIES + 1):
                     body_before = await page.locator("body").inner_text()
                     links_before = await _browser_link_signature(page)
-                    await page.locator(str(target["tag"])).nth(int(match["index"])).click(
-                        timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+                    await (
+                        page.locator(str(target["tag"]))
+                        .nth(int(match["index"]))
+                        .click(
+                            timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+                        )
                     )
                     changed, _, links_after = await _wait_for_browser_content_change(
                         page,
@@ -2344,6 +2639,151 @@ async def _browser_link_signature(page: Any) -> tuple[str, ...]:
     return tuple(str(value) for value in values)
 
 
+async def _browser_pagination_state(page: Any) -> dict[str, int | None] | None:
+    state = await page.evaluate(_BROWSER_PAGINATION_STATE_SCRIPT)
+    if not isinstance(state, dict):
+        return None
+    normalized: dict[str, int | None] = {}
+    for key in ("currentPage", "pageCount", "inputIndex", "jumpControlIndex"):
+        value = state.get(key)
+        normalized[key] = (
+            value if isinstance(value, int) and not isinstance(value, bool) else None
+        )
+    return normalized
+
+
+def _should_use_page_number_pagination(
+    state: dict[str, int | None] | None,
+) -> bool:
+    if state is None:
+        return False
+    return (
+        isinstance(state.get("currentPage"), int)
+        and int(state["currentPage"] or 0) > 0
+        and isinstance(state.get("pageCount"), int)
+        and int(state["pageCount"] or 0) > 0
+        and isinstance(state.get("inputIndex"), int)
+        and int(state["inputIndex"]) >= 0
+        and isinstance(state.get("jumpControlIndex"), int)
+        and int(state["jumpControlIndex"]) >= 0
+    )
+
+
+async def _collect_browser_pagination_by_page_number(
+    page: Any,
+    *,
+    absolute_url: str,
+    options: BrowserFetchOptions,
+    initial_state: dict[str, int | None],
+    max_pages: int,
+    seen_fingerprints: set[str],
+) -> BrowserPaginationExpansion:
+    snapshots: list[PageSnapshot] = []
+    current_page = int(initial_state["currentPage"] or 1)
+    page_count = int(initial_state["pageCount"] or current_page)
+    last_page = min(page_count, max(1, int(max_pages)))
+    stopped_reason = "page_limit_reached"
+
+    for target_page in range(current_page + 1, last_page + 1):
+        try:
+            await page.goto(
+                absolute_url,
+                wait_until=options.wait_until,
+                timeout=options.page_timeout_ms,
+            )
+            if options.wait_for:
+                selector = options.wait_for
+                if selector.startswith("css:"):
+                    selector = selector[4:]
+                await page.wait_for_selector(
+                    selector,
+                    timeout=options.wait_for_timeout_ms,
+                )
+            if options.wait_for_dynamic_directory:
+                await _wait_for_dynamic_directory_html(
+                    page,
+                    absolute_url=absolute_url,
+                    options=options,
+                )
+            elif options.delay_before_return_html_seconds > 0:
+                await page.wait_for_timeout(
+                    options.delay_before_return_html_seconds * 1000
+                )
+            state = await _browser_pagination_state(page)
+            if not _should_use_page_number_pagination(state):
+                stopped_reason = "page_jump_controls_disappeared"
+                break
+            await page.evaluate(
+                _BROWSER_PAGINATION_JUMP_SCRIPT,
+                {
+                    "inputIndex": state["inputIndex"],
+                    "jumpControlIndex": state["jumpControlIndex"],
+                    "targetPage": target_page,
+                },
+            )
+            if not await _wait_for_browser_pagination_page(
+                page,
+                expected_page=target_page,
+            ):
+                stopped_reason = "page_jump_timeout"
+                break
+            await page.wait_for_timeout(350)
+            html = await page.content()
+            final_url = str(getattr(page, "url", "") or absolute_url)
+            snapshot = _snapshot_from_browser_html(
+                html=html,
+                final_url=final_url,
+                absolute_url=absolute_url,
+            )
+            fingerprint = _pagination_snapshot_fingerprint(snapshot)
+            if fingerprint in seen_fingerprints:
+                stopped_reason = "content_repeated"
+                break
+            seen_fingerprints.add(fingerprint)
+            snapshots.append(snapshot)
+        except Exception as exc:
+            stopped_reason = "page_jump_failed"
+            if not snapshots:
+                return BrowserPaginationExpansion(
+                    status="failed",
+                    stopped_reason="browser_error",
+                    error_message=_format_exception_for_snapshot(
+                        exc,
+                        "Playwright browser pagination failed",
+                    ),
+                )
+            break
+
+    if not snapshots and stopped_reason != "page_limit_reached":
+        return BrowserPaginationExpansion(
+            status="failed",
+            stopped_reason="browser_error",
+            error_message=(
+                f"Playwright browser pagination page jump failed: {stopped_reason}"
+            ),
+        )
+    return BrowserPaginationExpansion(
+        status="succeeded",
+        snapshots=tuple(snapshots),
+        stopped_reason=stopped_reason,
+    )
+
+
+async def _wait_for_browser_pagination_page(
+    page: Any,
+    *,
+    expected_page: int,
+) -> bool:
+    elapsed_ms = 0
+    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
+        state = await _browser_pagination_state(page)
+        if state is not None and state.get("currentPage") == expected_page:
+            return True
+        await page.wait_for_timeout(250)
+        elapsed_ms += 250
+    return False
+
+
 def _body_content_changed_substantially(before: str, after: str) -> bool:
     if not after or after == before:
         return False
@@ -2381,6 +2821,84 @@ _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT = """
 """
 
 
+_BROWSER_PAGINATION_STATE_SCRIPT = """
+/* crawler-pagination-state */
+() => {
+  const numberValue = (value) => {
+    const match = String(value || '').replace(/,/g, '').match(/\\d+/);
+    return match ? Number(match[0]) : null;
+  };
+  const visible = (element) => {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && element.getClientRects().length > 0;
+  };
+  const current = Array.from(document.querySelectorAll(
+    '[curr_page], [data-current-page], [aria-current="page"], .curr_page'
+  )).map((element) => numberValue(
+    element.getAttribute('curr_page')
+      || element.getAttribute('data-current-page')
+      || element.textContent
+  )).find((value) => value !== null) || null;
+  const pageCountFromAttribute = Array.from(document.querySelectorAll(
+    '[pagecount], [pageCount], [data-page-count], .all_pages'
+  )).map((element) => numberValue(
+    element.getAttribute('pagecount')
+      || element.getAttribute('pageCount')
+      || element.getAttribute('data-page-count')
+      || element.textContent
+  )).find((value) => value !== null) || null;
+  const perPage = Array.from(document.querySelectorAll(
+    '.per_count, [data-page-size], [page-size]'
+  )).map((element) => numberValue(element.textContent || element.getAttribute('data-page-size') || element.getAttribute('page-size')))
+    .find((value) => value !== null) || null;
+  const totalRecords = Array.from(document.querySelectorAll(
+    '.all_count em, [data-total], [total]'
+  )).map((element) => numberValue(element.textContent || element.getAttribute('data-total') || element.getAttribute('total')))
+    .find((value) => value !== null) || null;
+  const pageCount = pageCountFromAttribute || (
+    perPage && totalRecords ? Math.ceil(totalRecords / perPage) : null
+  );
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const inputIndex = inputs.findIndex((element) => {
+    if (!visible(element) || ['hidden', 'button', 'submit'].includes(String(element.type || '').toLowerCase())) return false;
+    const signal = `${element.id} ${element.className} ${element.name}`.toLowerCase();
+    return /page|pager|pagination|jump/.test(signal);
+  });
+  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+  const jumpControlIndex = controls.findIndex((element) => {
+    if (!visible(element)) return false;
+    const signal = `${element.textContent || ''} ${element.id} ${element.className} ${element.getAttribute('aria-label') || ''}`.toLowerCase();
+    return /jump|go|跳转|转到/.test(signal);
+  });
+  return {
+    currentPage: current,
+    pageCount,
+    inputIndex: inputIndex >= 0 ? inputIndex : null,
+    jumpControlIndex: jumpControlIndex >= 0 ? jumpControlIndex : null,
+  };
+}
+"""
+
+
+_BROWSER_PAGINATION_JUMP_SCRIPT = """
+/* crawler-pagination-jump */
+({inputIndex, jumpControlIndex, targetPage}) => {
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+  const input = inputs[Number(inputIndex)];
+  const control = controls[Number(jumpControlIndex)];
+  if (!input || !control) return false;
+  input.value = String(targetPage);
+  input.dispatchEvent(new Event('input', {bubbles: true}));
+  input.dispatchEvent(new Event('change', {bubbles: true}));
+  setTimeout(() => control.click(), 0);
+  return true;
+}
+"""
+
+
 async def _try_playwright_browser_fetch(
     absolute_url: str,
     options: BrowserFetchOptions,
@@ -2395,9 +2913,8 @@ async def _try_playwright_browser_fetch(
             options,
             browser_session_scope=browser_session_scope,
         )
-        if (
-            not options.ignore_https_errors
-            and _is_certificate_date_error(last_result.error_message)
+        if not options.ignore_https_errors and _is_certificate_date_error(
+            last_result.error_message
         ):
             compatibility_options = replace(
                 options,
@@ -2411,6 +2928,20 @@ async def _try_playwright_browser_fetch(
             )
         if _is_immediate_http_compatibility_error(absolute_url, last_result):
             return last_result
+        if _is_transient_http_status(last_result.http_status_code):
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
+                continue
+            status_code = last_result.http_status_code
+            return last_result.model_copy(
+                update={
+                    "status": "failed",
+                    "error_message": (
+                        f"Playwright browser fetch returned temporary HTTP {status_code}"
+                    ),
+                    "suspicious_empty": True,
+                }
+            )
         if _looks_like_sparse_browser_directory_shell(last_result, options=options):
             if attempt + 1 < max_attempts:
                 await asyncio.sleep(BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS)
@@ -2424,8 +2955,14 @@ async def _try_playwright_browser_fetch(
                     "suspicious_empty": True,
                 }
             )
-        if last_result.status == "succeeded" or _is_wait_condition_failure(last_result.error_message):
+        if last_result.status == "succeeded" or _is_wait_condition_failure(
+            last_result.error_message
+        ):
             return last_result
+        if attempt + 1 < max_attempts and _looks_like_transient_browser_error(
+            last_result.error_message
+        ):
+            await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
     return last_result or _failed_snapshot(
         url=absolute_url,
         fetch_method="browser",
@@ -2465,6 +3002,7 @@ async def _try_playwright_browser_fetch_once(
                 absolute_url,
             )
             page = await context.new_page()
+            await _install_browser_bandwidth_policy(page)
             navigation_response = await page.goto(
                 absolute_url,
                 wait_until=options.wait_until,
@@ -2497,7 +3035,9 @@ async def _try_playwright_browser_fetch_once(
                     options=options,
                 )
             elif options.delay_before_return_html_seconds > 0:
-                await page.wait_for_timeout(options.delay_before_return_html_seconds * 1000)
+                await page.wait_for_timeout(
+                    options.delay_before_return_html_seconds * 1000
+                )
                 html = await page.content()
             else:
                 html = await page.content()
@@ -2605,6 +3145,23 @@ def _looks_like_sparse_browser_directory_shell(
         len(normalized_text) <= BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS
         and len(snapshot.html or "") <= BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS
         and len(set(snapshot.links or ())) <= BROWSER_SPARSE_DIRECTORY_MAX_LINKS
+    )
+
+
+def _is_transient_http_status(status_code: int | None) -> bool:
+    return bool(
+        status_code is not None
+        and (
+            status_code in TRANSIENT_HTTP_STATUS_CODES
+            or TRANSIENT_SERVER_STATUS_MIN <= status_code <= TRANSIENT_SERVER_STATUS_MAX
+        )
+    )
+
+
+def _looks_like_transient_browser_error(message: str | None) -> bool:
+    normalized = (message or "").lower()
+    return bool(normalized) and any(
+        marker in normalized for marker in _TRANSIENT_BROWSER_ERROR_MARKERS
     )
 
 
@@ -2798,7 +3355,9 @@ def _dynamic_directory_render_signature(snapshot: PageSnapshot) -> str:
 
 def _is_browser_content_navigation_error(exc: BaseException) -> bool:
     normalized = str(exc).casefold()
-    return all(marker in normalized for marker in _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS)
+    return all(
+        marker in normalized for marker in _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS
+    )
 
 
 async def _try_read_browser_page_content(page: Any) -> str | None:
@@ -2808,6 +3367,7 @@ async def _try_read_browser_page_content(page: Any) -> str | None:
         if _is_browser_content_navigation_error(exc):
             return None
         raise
+
 
 def _is_wait_condition_failure(message: str | None) -> bool:
     normalized_message = (message or "").lower()
@@ -2821,11 +3381,8 @@ def _is_wait_condition_failure(message: str | None) -> bool:
 def _is_certificate_date_error(message: str | None) -> bool:
     normalized_message = (message or "").strip().lower()
     return any(
-        marker in normalized_message
-        for marker in CERTIFICATE_DATE_ERROR_MARKERS
+        marker in normalized_message for marker in CERTIFICATE_DATE_ERROR_MARKERS
     )
-
-
 
 
 def _snapshot_from_browser_html(
@@ -3036,11 +3593,17 @@ async def _save_normalized_candidate_payloads(
             return CandidatePersistenceResult(saved=[])
 
         for payload in payloads:
-            payload["recent_papers"] = normalize_recent_papers(payload.get("recent_papers"))
+            payload["recent_papers"] = normalize_recent_papers(
+                payload.get("recent_papers")
+            )
             email = payload["email"]
             normalized_email = str(email).lower() if email else None
             normalized_profile_url = payload.get("profile_url")
-            identity_key = payload.get("identity_key") or normalized_email or normalized_profile_url
+            identity_key = (
+                payload.get("identity_key")
+                or normalized_email
+                or normalized_profile_url
+            )
 
             existing = await _find_existing_candidate_for_payload(
                 session,
@@ -3130,7 +3693,9 @@ async def _save_normalized_candidate_payloads(
     )
 
 
-async def record_page_snapshot(ctx: CrawlToolContext, snapshot: PageSnapshot) -> CrawlPage | None:
+async def record_page_snapshot(
+    ctx: CrawlToolContext, snapshot: PageSnapshot
+) -> CrawlPage | None:
     row = CrawlPage(
         job_id=ctx.job_id,
         url=snapshot.url,
@@ -3184,15 +3749,23 @@ def html_to_snapshot(
         for document_url, document_html in documents
     ]
     has_client_encrypted_profile_fields = any(
-        any(marker in document_html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
+        any(
+            marker in document_html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS
+        )
         for _document_url, document_html in documents
     )
     has_dynamic_teacher_directory_markers = any(
-        any(marker in document_html.lower() for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS)
+        any(
+            marker in document_html.lower()
+            for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS
+        )
         for _document_url, document_html in documents
     )
     has_invalid_profile_page_markers = any(
-        any(marker.lower() in document_html.lower() for marker in INVALID_PROFILE_PAGE_MARKERS)
+        any(
+            marker.lower() in document_html.lower()
+            for marker in INVALID_PROFILE_PAGE_MARKERS
+        )
         for _document_url, document_html in documents
     )
     main_soup = cleaned_documents[0][1]
@@ -3260,7 +3833,9 @@ def _clean_snapshot_soup(html: str) -> BeautifulSoup:
             f"{attribute}={attribute_value}"
             for attribute, attribute_value in tag.attrs.items()
         )
-        if any(marker in attributes for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS):
+        if any(
+            marker in attributes for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS
+        ):
             tag.decompose()
     for tag in soup(["script", "style", "noscript", "template", "noframes"]):
         tag.decompose()
@@ -3363,7 +3938,9 @@ def _clamp_confidence(value: object) -> float:
     return min(1.0, max(0.0, number))
 
 
-async def _load_existing_candidate_emails(session: AsyncSession, job_id: int) -> set[str]:
+async def _load_existing_candidate_emails(
+    session: AsyncSession, job_id: int
+) -> set[str]:
     result = await session.scalars(
         select(CrawlCandidate.email).where(
             CrawlCandidate.job_id == job_id,
@@ -3373,7 +3950,9 @@ async def _load_existing_candidate_emails(session: AsyncSession, job_id: int) ->
     return {email.lower() for email in result if email}
 
 
-async def _load_existing_candidate_profile_urls(session: AsyncSession, job_id: int) -> set[str]:
+async def _load_existing_candidate_profile_urls(
+    session: AsyncSession, job_id: int
+) -> set[str]:
     result = await session.scalars(
         select(CrawlCandidate.profile_url).where(
             CrawlCandidate.job_id == job_id,
@@ -3432,7 +4011,9 @@ def _failed_snapshot(
 
 
 def _has_unsafe_public_crawl_url(start_url: str, candidate_url: str) -> bool:
-    return not is_safe_public_crawl_url(start_url) or not is_safe_public_crawl_url(candidate_url)
+    return not is_safe_public_crawl_url(start_url) or not is_safe_public_crawl_url(
+        candidate_url
+    )
 
 
 def _is_same_host_http_url(start_url: str, candidate_url: str) -> bool:

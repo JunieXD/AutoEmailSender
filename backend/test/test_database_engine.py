@@ -142,7 +142,9 @@ class DatabaseEngineTests(unittest.TestCase):
         self.assertEqual(enabled_mode.lower(), "wal")
         self.assertNotEqual(disabled_mode.lower(), "wal")
 
-    def test_sqlite_online_maintenance_uses_session_bind_and_runs_all_pragmas(self) -> None:
+    def test_sqlite_online_maintenance_uses_session_bind_and_runs_all_pragmas(
+        self,
+    ) -> None:
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
         from app.core.sqlite_maintenance import run_sqlite_maintenance_once

@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 
-AgentSkillState = Literal["not_configured", "not_installed", "installed", "needs_update"]
+AgentSkillState = Literal[
+    "not_configured", "not_installed", "installed", "needs_update"
+]
 
 
 AGENT_SUPPORT_MANIFEST_SCHEMA_VERSION = 5
@@ -33,14 +35,23 @@ def get_agent_support_manifest_path() -> Path:
         return Path(data_dir).expanduser().resolve() / "agent" / "installation.json"
 
     if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support" / "auto-email-sender-desktop"
+        base = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "auto-email-sender-desktop"
+        )
     elif sys.platform == "win32":
         app_data = os.getenv("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
         base = base / "auto-email-sender-desktop"
     else:
         state_home = os.getenv("XDG_STATE_HOME")
-        base = (Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state") / "auto-email-sender"
+        base = (
+            Path(state_home).expanduser()
+            if state_home
+            else Path.home() / ".local" / "state"
+        ) / "auto-email-sender"
     return base / "agent" / "installation.json"
 
 
@@ -51,7 +62,9 @@ def inspect_agent_skill_installation() -> dict[str, object]:
     except FileNotFoundError:
         return _not_configured(manifest_path, "尚未启用命令行与 Agent 支持。")
     except (OSError, json.JSONDecodeError):
-        return _not_configured(manifest_path, "无法读取 Agent 安装信息；请在个人中心重新安装。", ok=False)
+        return _not_configured(
+            manifest_path, "无法读取 Agent 安装信息；请在个人中心重新安装。", ok=False
+        )
 
     if not isinstance(manifest, dict) or manifest.get("enabled") is not True:
         return _not_configured(manifest_path, "尚未启用命令行与 Agent 支持。")
@@ -79,7 +92,9 @@ def inspect_agent_skill_installation() -> dict[str, object]:
         }
 
     skill_source = manifest.get("skill_source")
-    source_hash = _sha256_directory(Path(skill_source)) if isinstance(skill_source, str) else None
+    source_hash = (
+        _sha256_directory(Path(skill_source)) if isinstance(skill_source, str) else None
+    )
     items: list[dict[str, object]] = []
     malformed_agent_entry = False
     for agent_id, record in agents.items():
@@ -88,7 +103,9 @@ def inspect_agent_skill_installation() -> dict[str, object]:
             continue
         target = record.get("skill_target")
         expected_hash = record.get("skill_sha256")
-        target_hash = _sha256_directory(Path(target)) if isinstance(target, str) else None
+        target_hash = (
+            _sha256_directory(Path(target)) if isinstance(target, str) else None
+        )
         healthy = (
             isinstance(expected_hash, str)
             and len(expected_hash) == 64
@@ -101,7 +118,9 @@ def inspect_agent_skill_installation() -> dict[str, object]:
                 "name": AGENT_NAMES.get(agent_id, agent_id),
                 "state": "installed" if healthy else "needs_update",
                 "skill_path": target,
-                "message": "已安装官方 Skill" if healthy else "Skill 内容已过期或被修改，需要更新。",
+                "message": "已安装官方 Skill"
+                if healthy
+                else "Skill 内容已过期或被修改，需要更新。",
             },
         )
 
@@ -133,7 +152,9 @@ def inspect_agent_skill_installation() -> dict[str, object]:
     }
 
 
-def _not_configured(manifest_path: Path, message: str, *, ok: bool = True) -> dict[str, object]:
+def _not_configured(
+    manifest_path: Path, message: str, *, ok: bool = True
+) -> dict[str, object]:
     return {
         "ok": ok,
         "state": "not_configured",
@@ -320,7 +341,9 @@ def _inspect_cli_target_binding(*, source: Path, target: Path) -> dict[str, obje
         elif target.is_file() and target.suffix.lower() in {".cmd", ".bat"}:
             binding_type = "windows_launcher"
             expected_source = str(source.resolve()).replace("%", "%%")
-            expected = f'@echo off\r\n"{expected_source}" %*\r\nexit /b %ERRORLEVEL%\r\n'
+            expected = (
+                f'@echo off\r\n"{expected_source}" %*\r\nexit /b %ERRORLEVEL%\r\n'
+            )
             with target.open("r", encoding="utf-8", newline="") as stream:
                 healthy = stream.read() == expected
         elif target.is_file():
@@ -355,7 +378,9 @@ def _cli_needs_update(
 
 
 def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdefABCDEF" for character in value)
+    return len(value) == 64 and all(
+        character in "0123456789abcdefABCDEF" for character in value
+    )
 
 
 def _safe_sha256_file(file_path: Path) -> str | None:
@@ -381,7 +406,9 @@ def _sha256_directory(directory: Path) -> str | None:
     return hashlib.sha256(canonical_listing.encode("utf-8")).hexdigest()
 
 
-def _append_directory_entries(root: Path, relative_directory: Path, entries: list[str]) -> None:
+def _append_directory_entries(
+    root: Path, relative_directory: Path, entries: list[str]
+) -> None:
     directory = root / relative_directory
     children = sorted(directory.iterdir(), key=lambda child: child.name)
     for child in children:

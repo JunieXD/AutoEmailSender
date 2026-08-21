@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
+import gc
 import io
 import json
 import os
@@ -85,6 +86,7 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
+        gc.collect()
         self.temp_dir.cleanup()
 
     def test_email_delivery_pagination_accepts_one_item_per_page(self) -> None:
@@ -97,7 +99,9 @@ class ApiEndpointTests(unittest.TestCase):
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         identities = self.client.get("/api/identities").json()
-        created_identity = next(item for item in identities if item["id"] == identity_id)
+        created_identity = next(
+            item for item in identities if item["id"] == identity_id
+        )
 
         with (
             patch(
@@ -110,7 +114,11 @@ class ApiEndpointTests(unittest.TestCase):
             ),
             patch(
                 "app.modules.llm.api.ensure_llm_runtime_adaptation",
-                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
+                AsyncMock(
+                    return_value=LLMRuntimeAdaptation(
+                        "chat_completions", {"enable_thinking": False}
+                    )
+                ),
             ),
             patch(
                 "app.modules.llm.api.probe_llm_profile",
@@ -141,7 +149,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(created_identity["imap_username"], "sender@example.com")
         self.assertEqual(created_identity["imap_password"], "secret")
 
-    def test_smtp_connectivity_failure_includes_possible_cause_and_raw_error(self) -> None:
+    def test_smtp_connectivity_failure_includes_possible_cause_and_raw_error(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         raw_error = (
             "SMTP 登录凭据编码失败：UnicodeEncodeError("
@@ -162,7 +172,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("邮箱授权码", payload["possible_cause"])
         self.assertIn("不可见字符", payload["possible_cause"])
 
-    def test_identity_accepts_profile_name_and_sender_name_with_name_compatibility(self) -> None:
+    def test_identity_accepts_profile_name_and_sender_name_with_name_compatibility(
+        self,
+    ) -> None:
         payload = self._build_identity_payload(
             with_imap=False,
             outreach_template_subject="申请与{{name}}老师交流",
@@ -261,7 +273,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         duplicate_response = self.client.post("/api/identities", json=payload)
 
-        self.assertEqual(duplicate_response.status_code, 409, msg=duplicate_response.text)
+        self.assertEqual(
+            duplicate_response.status_code, 409, msg=duplicate_response.text
+        )
         self.assertEqual(
             duplicate_response.json()["detail"],
             "该发件邮箱已存在，请改用编辑已有身份或更换邮箱",
@@ -354,24 +368,40 @@ class ApiEndpointTests(unittest.TestCase):
             ) as probe_mock,
             patch(
                 "app.modules.llm.api.ensure_llm_runtime_adaptation",
-                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", {"enable_thinking": False})),
+                AsyncMock(
+                    return_value=LLMRuntimeAdaptation(
+                        "chat_completions", {"enable_thinking": False}
+                    )
+                ),
             ) as adaptation_mock,
         ):
-            models_response = self.client.post("/api/llm-profiles/preview/models", json=payload)
-            test_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
+            models_response = self.client.post(
+                "/api/llm-profiles/preview/models", json=payload
+            )
+            test_response = self.client.post(
+                "/api/llm-profiles/preview/test", json=payload
+            )
 
         self.assertEqual(models_response.status_code, 200, msg=models_response.text)
         self.assertEqual(test_response.status_code, 200, msg=test_response.text)
         fetch_mock.assert_awaited_once()
         probe_mock.assert_awaited_once()
         adaptation_mock.assert_awaited_once()
-        self.assertEqual(fetch_mock.await_args.args[0].api_base_url, payload["api_base_url"])
+        self.assertEqual(
+            fetch_mock.await_args.args[0].api_base_url, payload["api_base_url"]
+        )
         self.assertEqual(fetch_mock.await_args.args[0].api_key, payload["api_key"])
-        self.assertEqual(probe_mock.await_args.args[0].api_base_url, payload["api_base_url"])
-        self.assertEqual(probe_mock.await_args.args[0].model_name, payload["model_name"])
+        self.assertEqual(
+            probe_mock.await_args.args[0].api_base_url, payload["api_base_url"]
+        )
+        self.assertEqual(
+            probe_mock.await_args.args[0].model_name, payload["model_name"]
+        )
 
     def test_llm_profile_preview_test_commits_thinking_adaptation_cache(self) -> None:
-        payload = self._build_llm_payload(api_base_url="https://cache-preview.example.com/v1")
+        payload = self._build_llm_payload(
+            api_base_url="https://cache-preview.example.com/v1"
+        )
         payload["model_name"] = "cache-preview-model"
 
         async def record_adaptation(session, profile):
@@ -417,8 +447,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(json.loads(row[0]), {"enable_thinking": False})
 
-    def test_llm_profile_test_detects_responses_protocol_and_commits_both_adaptation_caches(self) -> None:
-        payload = self._build_llm_payload(api_base_url="https://responses-only.example.com/v1")
+    def test_llm_profile_test_detects_responses_protocol_and_commits_both_adaptation_caches(
+        self,
+    ) -> None:
+        payload = self._build_llm_payload(
+            api_base_url="https://responses-only.example.com/v1"
+        )
         payload["model_name"] = "responses-only-model"
         calls: list[str] = []
 
@@ -447,7 +481,9 @@ class ApiEndpointTests(unittest.TestCase):
                 return FakeResponse({"output_text": "OK"})
 
         with patch("app.modules.llm.runtime.httpx.AsyncClient", FakeAsyncClient):
-            preview_response = self.client.post("/api/llm-profiles/preview/test", json=payload)
+            preview_response = self.client.post(
+                "/api/llm-profiles/preview/test", json=payload
+            )
             created_response = self.client.post("/api/llm-profiles", json=payload)
             profile_id = created_response.json()["id"]
             saved_response = self.client.post(f"/api/llm-profiles/{profile_id}/test")
@@ -458,7 +494,9 @@ class ApiEndpointTests(unittest.TestCase):
             data = response.json()
             self.assertTrue(data["ok"])
             self.assertEqual(data["endpoint_kind"], "responses")
-            self.assertEqual(data["request_url"], "https://responses-only.example.com/v1/responses")
+            self.assertEqual(
+                data["request_url"], "https://responses-only.example.com/v1/responses"
+            )
         self.assertEqual(
             preview_response.json()["attempted_urls"],
             [
@@ -466,7 +504,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "https://responses-only.example.com/v1/responses",
             ],
         )
-        self.assertEqual(calls[0], "https://responses-only.example.com/v1/chat/completions")
+        self.assertEqual(
+            calls[0], "https://responses-only.example.com/v1/chat/completions"
+        )
         self.assertEqual(calls[1], "https://responses-only.example.com/v1/responses")
         self.assertTrue(all(url.endswith("/responses") for url in calls[1:]))
 
@@ -485,13 +525,19 @@ class ApiEndpointTests(unittest.TestCase):
                 FROM thinking_adaptation_cache
                 WHERE api_base_url = ? AND model_name = ? AND endpoint_kind = ?
                 """,
-                ("https://responses-only.example.com/v1", "responses-only-model", "responses"),
+                (
+                    "https://responses-only.example.com/v1",
+                    "responses-only-model",
+                    "responses",
+                ),
             ).fetchone()
         self.assertEqual(endpoint_row, ("responses",))
         self.assertIsNotNone(thinking_row)
         self.assertIsNone(json.loads(thinking_row[0]))
 
-    def test_llm_profile_preview_test_returns_failure_when_thinking_adaptation_fails(self) -> None:
+    def test_llm_profile_preview_test_returns_failure_when_thinking_adaptation_fails(
+        self,
+    ) -> None:
         from app.modules.llm.runtime import LLMRuntimeError
 
         payload = self._build_llm_payload(api_base_url="https://tls.example.com/v1")
@@ -515,21 +561,33 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         data = response.json()
         self.assertFalse(data["ok"])
-        self.assertEqual(data["message"], "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。")
-        self.assertEqual(data["request_url"], "https://tls.example.com/v1/chat/completions")
-        self.assertEqual(data["attempted_urls"], ["https://tls.example.com/v1/chat/completions"])
+        self.assertEqual(
+            data["message"], "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。"
+        )
+        self.assertEqual(
+            data["request_url"], "https://tls.example.com/v1/chat/completions"
+        )
+        self.assertEqual(
+            data["attempted_urls"], ["https://tls.example.com/v1/chat/completions"]
+        )
         self.assertEqual(data["endpoint_kind"], "chat_completions")
         self.assertEqual(data["duration_ms"], 23)
         self.assertNotIn("_ssl.c", response.text)
         probe_mock.assert_not_awaited()
 
-    def test_identity_template_import_endpoint_supports_unsaved_identity_flow(self) -> None:
+    def test_identity_template_import_endpoint_supports_unsaved_identity_flow(
+        self,
+    ) -> None:
         response = self.client.post(
             "/api/identities/template-import",
             files={
                 "file": (
                     "template.html",
-                    io.BytesIO("<p>{{name}}老师您好，</p><p>我是{{sender_name}}。</p>".encode("utf-8")),
+                    io.BytesIO(
+                        "<p>{{name}}老师您好，</p><p>我是{{sender_name}}。</p>".encode(
+                            "utf-8"
+                        )
+                    ),
                     "text/html",
                 )
             },
@@ -539,7 +597,9 @@ class ApiEndpointTests(unittest.TestCase):
         payload = response.json()
         self.assertIsNone(payload["subject"])
         self.assertEqual(payload["format_name"], "html")
-        self.assertEqual(payload["body_text"], "{{name}}老师您好，\n\n我是{{sender_name}}。")
+        self.assertEqual(
+            payload["body_text"], "{{name}}老师您好，\n\n我是{{sender_name}}。"
+        )
         self.assertIn("<p>{{name}}老师您好，</p>", payload["body_html"])
 
     def test_identity_template_import_endpoint_requires_file_name(self) -> None:
@@ -580,7 +640,9 @@ class ApiEndpointTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 201, msg=response.text)
                 self.assertIsNone(response.json()["outreach_template_subject"])
 
-    def test_identity_allows_missing_plain_text_template_body_even_when_html_exists(self) -> None:
+    def test_identity_allows_missing_plain_text_template_body_even_when_html_exists(
+        self,
+    ) -> None:
         response = self.client.post(
             "/api/identities",
             json=self._build_identity_payload(
@@ -594,7 +656,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         self.assertIsNone(response.json()["outreach_template_body_text"])
-        self.assertEqual(response.json()["outreach_template_body_html"], "<p>老师您好，我是{{sender_name}}。</p>")
+        self.assertEqual(
+            response.json()["outreach_template_body_html"],
+            "<p>老师您好，我是{{sender_name}}。</p>",
+        )
 
     def test_identity_update_allows_incomplete_template_defaults(self) -> None:
         cases = [
@@ -629,8 +694,12 @@ class ApiEndpointTests(unittest.TestCase):
                 )
                 create_payload["email_address"] = unique_email
                 create_payload["smtp_username"] = unique_email
-                create_response = self.client.post("/api/identities", json=create_payload)
-                self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+                create_response = self.client.post(
+                    "/api/identities", json=create_payload
+                )
+                self.assertEqual(
+                    create_response.status_code, 201, msg=create_response.text
+                )
                 identity_id = create_response.json()["id"]
                 update_payload = self._build_identity_payload(
                     with_imap=False,
@@ -647,17 +716,29 @@ class ApiEndpointTests(unittest.TestCase):
                 )
 
                 self.assertEqual(response.status_code, 200, msg=response.text)
-                self.assertEqual(response.json()["outreach_template_subject"], case["subject"])
-                self.assertEqual(response.json()["outreach_template_body_text"], case["body_text"])
-                self.assertEqual(response.json()["outreach_template_body_html"], case["body_html"])
+                self.assertEqual(
+                    response.json()["outreach_template_subject"], case["subject"]
+                )
+                self.assertEqual(
+                    response.json()["outreach_template_body_text"], case["body_text"]
+                )
+                self.assertEqual(
+                    response.json()["outreach_template_body_html"], case["body_html"]
+                )
 
     def test_llm_structured_result_validation_rejects_invalid_json(self) -> None:
-        from app.modules.llm.runtime import DraftGenerationResult, LLMRuntimeError, parse_structured_result
+        from app.modules.llm.runtime import (
+            DraftGenerationResult,
+            LLMRuntimeError,
+            parse_structured_result,
+        )
 
         with self.assertRaises(LLMRuntimeError):
             parse_structured_result('{"subject":"only-subject"}', DraftGenerationResult)
 
-    def test_professor_management_crud_archive_restore_and_dashboard_filtering(self) -> None:
+    def test_professor_management_crud_archive_restore_and_dashboard_filtering(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/professors",
             json={
@@ -695,7 +776,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(update_response.json()["title"], "副教授")
         self.assertEqual(update_response.json()["recent_papers"], ["Paper C"])
 
-        active_list = self.client.get("/api/professors/management", params={"archived": "active"})
+        active_list = self.client.get(
+            "/api/professors/management", params={"archived": "active"}
+        )
         self.assertEqual(active_list.status_code, 200)
         self.assertEqual(len(active_list.json()), 1)
 
@@ -707,7 +790,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(dashboard_list.status_code, 200)
         self.assertEqual(dashboard_list.json(), [])
 
-        archived_list = self.client.get("/api/professors/management", params={"archived": "archived"})
+        archived_list = self.client.get(
+            "/api/professors/management", params={"archived": "archived"}
+        )
         self.assertEqual(archived_list.status_code, 200)
         self.assertEqual(len(archived_list.json()), 1)
         self.assertIsNotNone(archived_list.json()[0]["archived_at"])
@@ -839,17 +924,27 @@ class ApiEndpointTests(unittest.TestCase):
 
         dashboard_list = self.client.get("/api/professors")
         self.assertEqual(dashboard_list.status_code, 200, msg=dashboard_list.text)
-        dashboard_professor = next(item for item in dashboard_list.json() if item["id"] == professor_id)
-        self.assertEqual(dashboard_professor["personal_note"], "6 月 20 日上午 Zoom 面试")
+        dashboard_professor = next(
+            item for item in dashboard_list.json() if item["id"] == professor_id
+        )
+        self.assertEqual(
+            dashboard_professor["personal_note"], "6 月 20 日上午 Zoom 面试"
+        )
 
         management_list = self.client.get("/api/professors/management")
         self.assertEqual(management_list.status_code, 200, msg=management_list.text)
-        management_professor = next(item for item in management_list.json() if item["id"] == professor_id)
-        self.assertEqual(management_professor["personal_note"], "6 月 20 日上午 Zoom 面试")
+        management_professor = next(
+            item for item in management_list.json() if item["id"] == professor_id
+        )
+        self.assertEqual(
+            management_professor["personal_note"], "6 月 20 日上午 Zoom 面试"
+        )
 
         detail_response = self.client.get(f"/api/professors/{professor_id}")
         self.assertEqual(detail_response.status_code, 200, msg=detail_response.text)
-        self.assertEqual(detail_response.json()["personal_note"], "6 月 20 日上午 Zoom 面试")
+        self.assertEqual(
+            detail_response.json()["personal_note"], "6 月 20 日上午 Zoom 面试"
+        )
 
         update_response = self.client.patch(
             f"/api/professors/{professor_id}/note",
@@ -884,7 +979,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(clear_response.status_code, 200, msg=clear_response.text)
         self.assertIsNone(clear_response.json()["personal_note"])
 
-    def test_update_professor_personal_note_returns_404_for_missing_professor(self) -> None:
+    def test_update_professor_personal_note_returns_404_for_missing_professor(
+        self,
+    ) -> None:
         response = self.client.patch(
             "/api/professors/999999/note",
             json={"personal_note": "备注"},
@@ -893,7 +990,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "未找到导师")
 
-    def test_update_professor_without_personal_note_preserves_existing_note(self) -> None:
+    def test_update_professor_without_personal_note_preserves_existing_note(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/professors",
             json={
@@ -937,7 +1036,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(detail_response.json()["personal_note"], "已有备注")
 
         management_response = self.client.get("/api/professors/management")
-        self.assertEqual(management_response.status_code, 200, msg=management_response.text)
+        self.assertEqual(
+            management_response.status_code, 200, msg=management_response.text
+        )
         management_professor = next(
             item for item in management_response.json() if item["id"] == professor_id
         )
@@ -947,17 +1048,57 @@ class ApiEndpointTests(unittest.TestCase):
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_cases = [
-            ("未联系导师", "dashboard-not-contacted@example.edu", None, "not_contacted"),
+            (
+                "未联系导师",
+                "dashboard-not-contacted@example.edu",
+                None,
+                "not_contacted",
+            ),
             ("准备中导师", "dashboard-preparing@example.edu", "matched", "preparing"),
-            ("生成中导师", "dashboard-generating@example.edu", "generating_draft", "preparing"),
-            ("待审核导师", "dashboard-review@example.edu", "review_required", "preparing"),
-            ("approved 导师", "dashboard-approved@example.edu", "approved", "ready_to_send"),
+            (
+                "生成中导师",
+                "dashboard-generating@example.edu",
+                "generating_draft",
+                "preparing",
+            ),
+            (
+                "待审核导师",
+                "dashboard-review@example.edu",
+                "review_required",
+                "preparing",
+            ),
+            (
+                "approved 导师",
+                "dashboard-approved@example.edu",
+                "approved",
+                "ready_to_send",
+            ),
             ("待发送导师", "dashboard-ready@example.edu", "scheduled", "ready_to_send"),
-            ("草稿失败导师", "dashboard-draft-failed@example.edu", "draft_failed", "failed"),
-            ("send_failed 导师", "dashboard-send-failed@example.edu", "send_failed", "failed"),
-            ("已取消导师", "dashboard-canceled@example.edu", "canceled", "not_contacted"),
+            (
+                "草稿失败导师",
+                "dashboard-draft-failed@example.edu",
+                "draft_failed",
+                "failed",
+            ),
+            (
+                "send_failed 导师",
+                "dashboard-send-failed@example.edu",
+                "send_failed",
+                "failed",
+            ),
+            (
+                "已取消导师",
+                "dashboard-canceled@example.edu",
+                "canceled",
+                "not_contacted",
+            ),
             ("已联系导师", "dashboard-contacted@example.edu", "sent", "contacted"),
-            ("已回复导师", "dashboard-replied@example.edu", "reply_detected", "replied"),
+            (
+                "已回复导师",
+                "dashboard-replied@example.edu",
+                "reply_detected",
+                "replied",
+            ),
         ]
 
         professor_ids: dict[str, int] = {}
@@ -1027,7 +1168,14 @@ class ApiEndpointTests(unittest.TestCase):
             self.assertEqual(payload["status"], expected_status)
             self.assertNotIn(
                 payload["status"],
-                {"matched", "scheduled", "sent", "skipped", "send_failed", "needs_attention"},
+                {
+                    "matched",
+                    "scheduled",
+                    "sent",
+                    "skipped",
+                    "send_failed",
+                    "needs_attention",
+                },
             )
 
     def test_outreach_template_library_saves_drafts_without_identity(self) -> None:
@@ -1059,7 +1207,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(len(templates), 2)
         self.assertEqual(templates[0]["id"], created["id"])
 
-    def test_outreach_template_defaults_switch_safely_and_duplicate_names_fit_limit(self) -> None:
+    def test_outreach_template_defaults_switch_safely_and_duplicate_names_fit_limit(
+        self,
+    ) -> None:
         first_response = self.client.post(
             "/api/outreach-templates",
             json={
@@ -1074,7 +1224,9 @@ class ApiEndpointTests(unittest.TestCase):
         duplicate_response = self.client.post(
             f"/api/outreach-templates/{first['id']}/duplicate",
         )
-        self.assertEqual(duplicate_response.status_code, 201, msg=duplicate_response.text)
+        self.assertEqual(
+            duplicate_response.status_code, 201, msg=duplicate_response.text
+        )
         duplicate = duplicate_response.json()
         self.assertEqual(len(duplicate["name"]), 120)
         self.assertTrue(duplicate["name"].endswith("（副本）"))
@@ -1147,7 +1299,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         updated_template = self.client.put(
             f"/api/outreach-templates/{template_id}",
-            json={"body_text": "更新后的模板正文", "body_html": "<p>更新后的模板正文</p>"},
+            json={
+                "body_text": "更新后的模板正文",
+                "body_html": "<p>更新后的模板正文</p>",
+            },
         )
         self.assertEqual(updated_template.status_code, 200, msg=updated_template.text)
         refreshed_identity = next(
@@ -1155,7 +1310,9 @@ class ApiEndpointTests(unittest.TestCase):
             for item in self.client.get("/api/identities").json()
             if item["id"] == identity_id
         )
-        self.assertEqual(refreshed_identity["outreach_template_body_text"], "更新后的模板正文")
+        self.assertEqual(
+            refreshed_identity["outreach_template_body_text"], "更新后的模板正文"
+        )
 
         archived = self.client.delete(f"/api/outreach-templates/{template_id}")
         self.assertEqual(archived.status_code, 200, msg=archived.text)
@@ -1206,7 +1363,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(replacement_response.json()["id"], identity_id)
         self.assertEqual(len(self.client.get("/api/outreach-templates").json()), 2)
 
-    def test_global_default_template_is_snapshotted_by_workspace_and_test_compose(self) -> None:
+    def test_global_default_template_is_snapshotted_by_workspace_and_test_compose(
+        self,
+    ) -> None:
         identity_response = self.client.post(
             "/api/identities",
             json=self._build_identity_payload(
@@ -1251,11 +1410,17 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/workspaces/{professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         )
-        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        self.assertEqual(
+            workspace_response.status_code, 200, msg=workspace_response.text
+        )
         workspace_task = workspace_response.json()["current_task"]
         self.assertEqual(workspace_task["outreach_template_id"], template_id)
-        self.assertEqual(workspace_task["outreach_template_subject"], "全局主题 {{name}}")
-        self.assertEqual(workspace_task["outreach_template_body_text"], "全局正文 {{sender_name}}")
+        self.assertEqual(
+            workspace_task["outreach_template_subject"], "全局主题 {{name}}"
+        )
+        self.assertEqual(
+            workspace_task["outreach_template_body_text"], "全局正文 {{sender_name}}"
+        )
 
         compose_response = self.client.get(
             f"/api/test-compose/{identity_id}/{llm_id}",
@@ -1266,7 +1431,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(compose_draft["subject"], "全局主题 {{name}}")
         self.assertEqual(compose_draft["body_text"], "全局正文 {{sender_name}}")
 
-    def test_legacy_mode_only_task_can_fall_back_to_global_default_template(self) -> None:
+    def test_legacy_mode_only_task_can_fall_back_to_global_default_template(
+        self,
+    ) -> None:
         identity_payload = self._build_identity_payload(
             with_imap=False,
             outreach_template_subject=None,
@@ -1278,7 +1445,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(identity_response.status_code, 201, msg=identity_response.text)
         identity_id = identity_response.json()["id"]
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="legacy-global-template@example.edu")
+        professor_id = self._create_professor(
+            email="legacy-global-template@example.edu"
+        )
         template_response = self.client.post(
             "/api/outreach-templates",
             json={
@@ -1305,7 +1474,9 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/workspaces/{professor_id}",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         )
-        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        self.assertEqual(
+            workspace_response.status_code, 200, msg=workspace_response.text
+        )
         workspace_task = workspace_response.json()["current_task"]
         self.assertEqual(workspace_task["id"], task_id)
         self.assertIsNone(workspace_task["outreach_template_id"])
@@ -1348,7 +1519,9 @@ class ApiEndpointTests(unittest.TestCase):
             ),
         )
 
-    def test_workspace_can_select_incomplete_template_until_generation_or_send(self) -> None:
+    def test_workspace_can_select_incomplete_template_until_generation_or_send(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="draft-template@example.edu")
@@ -1494,7 +1667,9 @@ class ApiEndpointTests(unittest.TestCase):
         unlinked = unlink_response.json()["current_task"]
         self.assertIsNone(unlinked["outreach_template_id"])
         self.assertEqual(unlinked["outreach_template_subject"], "独立旧主题 {{name}}")
-        self.assertEqual(unlinked["outreach_template_body_text"], "独立旧正文 {{sender_name}}")
+        self.assertEqual(
+            unlinked["outreach_template_body_text"], "独立旧正文 {{sender_name}}"
+        )
         self.assertEqual(unlinked["status"], generated_before_unlink["status"])
         self.assertEqual(
             unlinked["generated_subject"],
@@ -1505,7 +1680,9 @@ class ApiEndpointTests(unittest.TestCase):
             generated_before_unlink["generated_content_text"],
         )
 
-    def test_test_compose_generates_from_explicit_template_and_keeps_provenance(self) -> None:
+    def test_test_compose_generates_from_explicit_template_and_keeps_provenance(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         template_response = self.client.post(
@@ -1556,7 +1733,9 @@ class ApiEndpointTests(unittest.TestCase):
             template_id,
         )
 
-    def test_batch_task_keeps_selected_template_snapshot_after_library_edit(self) -> None:
+    def test_batch_task_keeps_selected_template_snapshot_after_library_edit(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="template-snapshot@example.edu")
@@ -1794,10 +1973,14 @@ class ApiEndpointTests(unittest.TestCase):
             "<p>创建页最终正文 {{sender_name}}</p>",
         )
 
-    def test_batch_resend_keeps_archived_template_provenance_with_explicit_snapshot(self) -> None:
+    def test_batch_resend_keeps_archived_template_provenance_with_explicit_snapshot(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="archived-resend-template@example.edu")
+        professor_id = self._create_professor(
+            email="archived-resend-template@example.edu"
+        )
         template_response = self.client.post(
             "/api/outreach-templates",
             json={
@@ -1913,7 +2096,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(switched["draft"]["source"], "template")
         self.assertIn("新模板正文", switched["draft"]["body_text"])
 
-    def test_professor_dashboard_ignores_failed_send_logs_for_contact_state(self) -> None:
+    def test_professor_dashboard_ignores_failed_send_logs_for_contact_state(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="failed-log-dashboard@example.edu")
@@ -1941,7 +2126,13 @@ class ApiEndpointTests(unittest.TestCase):
                 )
                 VALUES (?, ?, ?, ?, 'sent', 'subject', 'content', '网络不可达', ?)
                 """,
-                (task_id, identity_id, llm_id, professor_id, "2026-06-01T10:30:00+00:00"),
+                (
+                    task_id,
+                    identity_id,
+                    llm_id,
+                    professor_id,
+                    "2026-06-01T10:30:00+00:00",
+                ),
             )
             connection.commit()
         finally:
@@ -1962,7 +2153,9 @@ class ApiEndpointTests(unittest.TestCase):
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         replied_professor_id = self._create_professor(email="time-replied@example.edu")
-        sent_only_professor_id = self._create_professor(email="time-sent-only@example.edu")
+        sent_only_professor_id = self._create_professor(
+            email="time-sent-only@example.edu"
+        )
         untouched_professor_id = self._create_professor(email="time-empty@example.edu")
 
         replied_task_id = self.client.post(
@@ -2127,7 +2320,10 @@ class ApiEndpointTests(unittest.TestCase):
         professor = next(item for item in response.json() if item["id"] == professor_id)
         self.assertEqual(professor["last_sent_at"], "2026-06-02T11:00:00Z")
         self.assertEqual(professor["last_replied_at"], "2026-06-02T12:30:00Z")
-    def test_professor_dashboard_prioritizes_existing_contact_over_follow_up_draft(self) -> None:
+
+    def test_professor_dashboard_prioritizes_existing_contact_over_follow_up_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -2145,7 +2341,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -2214,10 +2412,14 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(replied_response.status_code, 200, msg=replied_response.text)
-        replied_professor = next(item for item in replied_response.json() if item["id"] == professor_id)
+        replied_professor = next(
+            item for item in replied_response.json() if item["id"] == professor_id
+        )
         self.assertEqual(replied_professor["status"], "replied")
 
-    def test_professor_dashboard_keeps_contacted_when_later_task_is_canceled(self) -> None:
+    def test_professor_dashboard_keeps_contacted_when_later_task_is_canceled(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_sent_professor_with_later_task(
@@ -2256,33 +2458,56 @@ class ApiEndpointTests(unittest.TestCase):
         professor = next(item for item in response.json() if item["id"] == professor_id)
         self.assertEqual(professor["status"], "contacted")
 
-    def test_professor_template_download_and_import_file_upserts_existing_records(self) -> None:
-        csv_template = self.client.get("/api/professors/template", params={"format": "csv"})
-        xlsx_template = self.client.get("/api/professors/template", params={"format": "xlsx"})
+    def test_professor_template_download_and_import_file_upserts_existing_records(
+        self,
+    ) -> None:
+        csv_template = self.client.get(
+            "/api/professors/template", params={"format": "csv"}
+        )
+        xlsx_template = self.client.get(
+            "/api/professors/template", params={"format": "xlsx"}
+        )
         self.assertEqual(csv_template.status_code, 200)
-        self.assertIn("professors_import_template.csv", csv_template.headers["content-disposition"])
+        self.assertIn(
+            "professors_import_template.csv",
+            csv_template.headers["content-disposition"],
+        )
         self.assertIn("# 导师导入模板", csv_template.text)
         self.assertIn("# name：导师姓名，必填。示例：张明远", csv_template.text)
         self.assertIn("# title：导师职称。示例：教授", csv_template.text)
         self.assertIn("# university：学校名称。示例：示例大学", csv_template.text)
         self.assertIn("# school：学院名称。示例：人工智能学院", csv_template.text)
         self.assertIn("# department：院系或系所。示例：计算机科学系", csv_template.text)
-        self.assertIn("# research_direction：研究方向，多个方向用中文分号 ； 分隔。示例：大语言模型；智能体；信息抽取", csv_template.text)
-        self.assertIn("# recent_papers：近期论文，多篇用 | 分隔；最多保留前 8 篇。示例：Paper A|Paper B", csv_template.text)
+        self.assertIn(
+            "# research_direction：研究方向，多个方向用中文分号 ； 分隔。示例：大语言模型；智能体；信息抽取",
+            csv_template.text,
+        )
+        self.assertIn(
+            "# recent_papers：近期论文，多篇用 | 分隔；最多保留前 8 篇。示例：Paper A|Paper B",
+            csv_template.text,
+        )
         self.assertIn("# tags：导师标签，多个标签用中文分号", csv_template.text)
         self.assertIn("# personal_note：个人备注", csv_template.text)
         self.assertIn("name,email,title", csv_template.text)
         self.assertIn("tags,personal_note", csv_template.text)
-        self.assertIn("示例：张明远,zhang@example.edu,教授,示例大学,人工智能学院,计算机科学系,大语言模型；智能体；信息抽取", csv_template.text)
+        self.assertIn(
+            "示例：张明远,zhang@example.edu,教授,示例大学,人工智能学院,计算机科学系,大语言模型；智能体；信息抽取",
+            csv_template.text,
+        )
         self.assertEqual(xlsx_template.status_code, 200)
-        self.assertIn("professors_import_template.xlsx", xlsx_template.headers["content-disposition"])
+        self.assertIn(
+            "professors_import_template.xlsx",
+            xlsx_template.headers["content-disposition"],
+        )
         workbook_from_template = load_workbook(io.BytesIO(xlsx_template.content))
         template_sheet = workbook_from_template.active
         template_values = list(template_sheet.iter_rows(values_only=True))
         self.assertEqual(template_values[0][0], "# 导师导入模板")
         self.assertEqual(template_values[3][0], "# name：导师姓名，必填。示例：张明远")
         self.assertEqual(template_values[5][0], "# title：导师职称。示例：教授")
-        self.assertEqual(template_values[6][0], "# university：学校名称。示例：示例大学")
+        self.assertEqual(
+            template_values[6][0], "# university：学校名称。示例：示例大学"
+        )
         template_headers = next(
             list(row[: len(PROFESSOR_TEMPLATE_COLUMNS)])
             for row in template_values
@@ -2290,12 +2515,20 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(template_headers, PROFESSOR_TEMPLATE_COLUMNS)
         example_row_index = next(
-            index for index, row in enumerate(template_values) if row and row[0] == "示例：张明远"
+            index
+            for index, row in enumerate(template_values)
+            if row and row[0] == "示例：张明远"
         )
         self.assertEqual(template_values[example_row_index][0], "示例：张明远")
         self.assertEqual(
             list(template_values[example_row_index][2:7]),
-            ["教授", "示例大学", "人工智能学院", "计算机科学系", "大语言模型；智能体；信息抽取"],
+            [
+                "教授",
+                "示例大学",
+                "人工智能学院",
+                "计算机科学系",
+                "大语言模型；智能体；信息抽取",
+            ],
         )
 
         created_professor = self.client.post(
@@ -2337,12 +2570,25 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(csv_body["updated_count"], 1)
         self.assertEqual(csv_body["failed_count"], 1)
 
-        refreshed = self.client.get("/api/professors/management", params={"archived": "active"}).json()
-        li_professor = next(item for item in refreshed if item["email"] == "li@example.edu")
+        refreshed = self.client.get(
+            "/api/professors/management", params={"archived": "active"}
+        ).json()
+        li_professor = next(
+            item for item in refreshed if item["email"] == "li@example.edu"
+        )
         self.assertEqual(li_professor["title"], "副教授")
         self.assertEqual(
             li_professor["recent_papers"],
-            ["Paper 1", "Paper 2", "Paper 3", "Paper 4", "Paper 5", "Paper 6", "Paper 7", "Paper 8"],
+            [
+                "Paper 1",
+                "Paper 2",
+                "Paper 3",
+                "Paper 4",
+                "Paper 5",
+                "Paper 6",
+                "Paper 7",
+                "Paper 8",
+            ],
         )
         self.assertIsNone(li_professor["archived_at"])
         self.assertEqual(li_professor["personal_note"], "原备注保留")
@@ -2354,20 +2600,28 @@ class ApiEndpointTests(unittest.TestCase):
         ).encode("utf-8-sig")
         new_template_import = self.client.post(
             "/api/professors/import-file",
-            files={"file": ("professors.csv", io.BytesIO(new_template_content), "text/csv")},
+            files={
+                "file": ("professors.csv", io.BytesIO(new_template_content), "text/csv")
+            },
         )
-        self.assertEqual(new_template_import.status_code, 200, msg=new_template_import.text)
+        self.assertEqual(
+            new_template_import.status_code, 200, msg=new_template_import.text
+        )
         refreshed_after_note = self.client.get(
             "/api/professors/management",
             params={"archived": "active"},
         ).json()
-        li_after_note = next(item for item in refreshed_after_note if item["email"] == "li@example.edu")
+        li_after_note = next(
+            item for item in refreshed_after_note if item["email"] == "li@example.edu"
+        )
         self.assertEqual(li_after_note["personal_note"], "新备注")
 
         workbook = Workbook()
         sheet = workbook.active
         sheet.append(["# 导师导入模板"])
-        sheet.append(["# 从字段名下一行开始填写；说明行和示例行可以保留，系统导入时会自动忽略"])
+        sheet.append(
+            ["# 从字段名下一行开始填写；说明行和示例行可以保留，系统导入时会自动忽略"]
+        )
         sheet.append(["# 必填字段：name, email"])
         sheet.append(
             [
@@ -2428,12 +2682,18 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(xlsx_import.json()["inserted_count"], 0)
         self.assertEqual(xlsx_import.json()["updated_count"], 1)
 
-        management_all = self.client.get("/api/professors/management", params={"archived": "all"}).json()
-        wang_professor = next(item for item in management_all if item["email"] == "wang@example.edu")
+        management_all = self.client.get(
+            "/api/professors/management", params={"archived": "all"}
+        ).json()
+        wang_professor = next(
+            item for item in management_all if item["email"] == "wang@example.edu"
+        )
         self.assertEqual(wang_professor["university"], "Updated University")
         self.assertEqual(wang_professor["recent_papers"], ["Paper 8", "Paper 9"])
 
-    def test_professor_export_downloads_active_records_that_can_be_reimported(self) -> None:
+    def test_professor_export_downloads_active_records_that_can_be_reimported(
+        self,
+    ) -> None:
         active = self.client.post(
             "/api/professors",
             json={
@@ -2462,7 +2722,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(csv_export.status_code, 200, msg=csv_export.text)
         self.assertEqual(csv_export.content[:3], b"\xef\xbb\xbf")
         self.assertIn("text/csv", csv_export.headers["content-type"])
-        self.assertIn("professors_export.csv", csv_export.headers["content-disposition"])
+        self.assertIn(
+            "professors_export.csv", csv_export.headers["content-disposition"]
+        )
         decoded = csv_export.content.decode("utf-8-sig")
         self.assertIn("tags,personal_note", decoded)
         self.assertIn("export@example.edu", decoded)
@@ -2472,20 +2734,34 @@ class ApiEndpointTests(unittest.TestCase):
 
         csv_reimport = self.client.post(
             "/api/professors/import-file",
-            files={"file": ("professors_export.csv", io.BytesIO(csv_export.content), "text/csv")},
+            files={
+                "file": (
+                    "professors_export.csv",
+                    io.BytesIO(csv_export.content),
+                    "text/csv",
+                )
+            },
         )
         self.assertEqual(csv_reimport.status_code, 200, msg=csv_reimport.text)
         self.assertEqual(csv_reimport.json()["inserted_count"], 0)
         self.assertEqual(csv_reimport.json()["updated_count"], 1)
         self.assertEqual(csv_reimport.json()["failed_count"], 0)
         after_csv_reimport = self.client.get("/api/professors/management").json()
-        csv_reimported = next(item for item in after_csv_reimport if item["email"] == "export@example.edu")
+        csv_reimported = next(
+            item for item in after_csv_reimport if item["email"] == "export@example.edu"
+        )
         self.assertEqual(csv_reimported["personal_note"], "导出备注")
 
-        xlsx_export = self.client.get("/api/professors/export", params={"format": "xlsx"})
+        xlsx_export = self.client.get(
+            "/api/professors/export", params={"format": "xlsx"}
+        )
         self.assertEqual(xlsx_export.status_code, 200, msg=xlsx_export.text)
-        self.assertIn("professors_export.xlsx", xlsx_export.headers["content-disposition"])
-        workbook = load_workbook(io.BytesIO(xlsx_export.content), read_only=True, data_only=True)
+        self.assertIn(
+            "professors_export.xlsx", xlsx_export.headers["content-disposition"]
+        )
+        workbook = load_workbook(
+            io.BytesIO(xlsx_export.content), read_only=True, data_only=True
+        )
         rows = list(workbook.active.iter_rows(values_only=True))
         self.assertEqual(list(rows[0]), PROFESSOR_TEMPLATE_COLUMNS)
         self.assertEqual(rows[1][1], "export@example.edu")
@@ -2506,14 +2782,22 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(xlsx_reimport.json()["updated_count"], 1)
         self.assertEqual(xlsx_reimport.json()["failed_count"], 0)
         after_xlsx_reimport = self.client.get("/api/professors/management").json()
-        xlsx_reimported = next(item for item in after_xlsx_reimport if item["email"] == "export@example.edu")
+        xlsx_reimported = next(
+            item
+            for item in after_xlsx_reimport
+            if item["email"] == "export@example.edu"
+        )
         self.assertEqual(xlsx_reimported["personal_note"], "导出备注")
 
-        bad_format = self.client.get("/api/professors/export", params={"format": "json"})
+        bad_format = self.client.get(
+            "/api/professors/export", params={"format": "json"}
+        )
         self.assertEqual(bad_format.status_code, 400)
         self.assertEqual(bad_format.json()["detail"], "仅支持 csv 或 xlsx 导出")
 
-    def test_workspace_endpoint_without_existing_task_returns_empty_thread(self) -> None:
+    def test_workspace_endpoint_without_existing_task_returns_empty_thread(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -2532,14 +2816,18 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         workspace_response = self.client.get(
             f"/api/workspaces/{professor_id}",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         )
-        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        self.assertEqual(
+            workspace_response.status_code, 200, msg=workspace_response.text
+        )
 
         payload = workspace_response.json()
         self.assertEqual(payload["professor"]["id"], professor_id)
@@ -2549,7 +2837,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload["current_task"]["match_keywords"], [])
         self.assertEqual(payload["messages"], [])
 
-    def test_workspace_communication_history_follows_identity_not_llm_profile(self) -> None:
+    def test_workspace_communication_history_follows_identity_not_llm_profile(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()
         second_llm_response = self.client.post(
@@ -2567,15 +2857,21 @@ class ApiEndpointTests(unittest.TestCase):
                 "is_default": False,
             },
         )
-        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        self.assertEqual(
+            second_llm_response.status_code, 201, msg=second_llm_response.text
+        )
         second_llm_id = second_llm_response.json()["id"]
 
         other_identity_payload = self._build_identity_payload(with_imap=False)
         other_identity_payload["name"] = "另一个身份"
         other_identity_payload["email_address"] = "other-sender@example.com"
         other_identity_payload["smtp_username"] = "other-sender@example.com"
-        other_identity_response = self.client.post("/api/identities", json=other_identity_payload)
-        self.assertEqual(other_identity_response.status_code, 201, msg=other_identity_response.text)
+        other_identity_response = self.client.post(
+            "/api/identities", json=other_identity_payload
+        )
+        self.assertEqual(
+            other_identity_response.status_code, 201, msg=other_identity_response.text
+        )
         other_identity_id = other_identity_response.json()["id"]
 
         professor_response = self.client.post(
@@ -2593,7 +2889,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -2658,16 +2956,26 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/workspaces/{professor_id}",
             params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
         )
-        self.assertEqual(switched_model_response.status_code, 200, msg=switched_model_response.text)
+        self.assertEqual(
+            switched_model_response.status_code, 200, msg=switched_model_response.text
+        )
         switched_messages = switched_model_response.json()["messages"]
-        self.assertEqual([message["direction"] for message in switched_messages], ["sent", "received", "draft"])
-        self.assertEqual([message["subject"] for message in switched_messages], ["首封联系", "Re: 首封联系", "模型 A 草稿"])
+        self.assertEqual(
+            [message["direction"] for message in switched_messages],
+            ["sent", "received", "draft"],
+        )
+        self.assertEqual(
+            [message["subject"] for message in switched_messages],
+            ["首封联系", "Re: 首封联系", "模型 A 草稿"],
+        )
 
         switched_ensure_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
         )
-        self.assertEqual(switched_ensure_response.status_code, 200, msg=switched_ensure_response.text)
+        self.assertEqual(
+            switched_ensure_response.status_code, 200, msg=switched_ensure_response.text
+        )
         switched_task = switched_ensure_response.json()["current_task"]
         self.assertEqual(switched_task["id"], task_id)
         self.assertEqual(switched_task["status"], "reply_detected")
@@ -2681,7 +2989,9 @@ class ApiEndpointTests(unittest.TestCase):
             "/api/professors",
             params={"identity_id": identity_id, "llm_profile_id": second_llm_id},
         )
-        self.assertEqual(dashboard_response.status_code, 200, msg=dashboard_response.text)
+        self.assertEqual(
+            dashboard_response.status_code, 200, msg=dashboard_response.text
+        )
         dashboard_professor = next(
             item for item in dashboard_response.json() if item["id"] == professor_id
         )
@@ -2699,7 +3009,9 @@ class ApiEndpointTests(unittest.TestCase):
             msg=dashboard_without_model_response.text,
         )
         dashboard_without_model_professor = next(
-            item for item in dashboard_without_model_response.json() if item["id"] == professor_id
+            item
+            for item in dashboard_without_model_response.json()
+            if item["id"] == professor_id
         )
         self.assertEqual(dashboard_without_model_professor["match_score"], 88)
         self.assertEqual(dashboard_without_model_professor["sent_count"], 1)
@@ -2709,16 +3021,22 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/workspaces/{professor_id}",
             params={"identity_id": other_identity_id, "llm_profile_id": second_llm_id},
         )
-        self.assertEqual(other_identity_response.status_code, 200, msg=other_identity_response.text)
+        self.assertEqual(
+            other_identity_response.status_code, 200, msg=other_identity_response.text
+        )
         self.assertEqual(other_identity_response.json()["messages"], [])
 
         other_dashboard_response = self.client.get(
             "/api/professors",
             params={"identity_id": other_identity_id, "llm_profile_id": second_llm_id},
         )
-        self.assertEqual(other_dashboard_response.status_code, 200, msg=other_dashboard_response.text)
+        self.assertEqual(
+            other_dashboard_response.status_code, 200, msg=other_dashboard_response.text
+        )
         other_dashboard_professor = next(
-            item for item in other_dashboard_response.json() if item["id"] == professor_id
+            item
+            for item in other_dashboard_response.json()
+            if item["id"] == professor_id
         )
         self.assertIsNone(other_dashboard_professor["match_score"])
         self.assertEqual(other_dashboard_professor["sent_count"], 0)
@@ -2749,7 +3067,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         first_response = self.client.post(
@@ -2761,7 +3081,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNotNone(first_payload["current_task"]["id"])
         self.assertEqual(first_payload["current_task"]["batch_task_id"], None)
         self.assertEqual(first_payload["current_task"]["status"], "discovered")
-        self.assertEqual(first_payload["current_task"]["primary_material_id"], material_id)
+        self.assertEqual(
+            first_payload["current_task"]["primary_material_id"], material_id
+        )
 
         second_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
@@ -2775,7 +3097,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(second_payload["messages"], [])
 
-    def test_workspace_ensure_task_backfills_existing_task_from_identity_primary_material(self) -> None:
+    def test_workspace_ensure_task_backfills_existing_task_from_identity_primary_material(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -2784,10 +3108,16 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research focuses on agents and information extraction.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
-        professor_id = self._create_professor(email="workspace-backfill-material@example.edu")
+        professor_id = self._create_professor(
+            email="workspace-backfill-material@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -2821,7 +3151,9 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(stored_material_id, material_id)
 
-    def test_workspace_new_task_inherits_latest_successful_manual_attachments(self) -> None:
+    def test_workspace_new_task_inherits_latest_successful_manual_attachments(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         recent_material_id = self._upload_material(
@@ -2883,7 +3215,9 @@ class ApiEndpointTests(unittest.TestCase):
             approved_body_text="Failed body",
         )
 
-        target_professor_id = self._create_professor(email="inherits-recent@example.edu")
+        target_professor_id = self._create_professor(
+            email="inherits-recent@example.edu"
+        )
         response = self.client.post(
             f"/api/workspaces/{target_professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
@@ -2895,7 +3229,9 @@ class ApiEndpointTests(unittest.TestCase):
             [recent_material_id],
         )
 
-    def test_workspace_attachment_defaults_do_not_skip_latest_attachmentless_send(self) -> None:
+    def test_workspace_attachment_defaults_do_not_skip_latest_attachmentless_send(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -2905,7 +3241,9 @@ class ApiEndpointTests(unittest.TestCase):
             material_type="resume",
         )
 
-        older_professor_id = self._create_professor(email="older-with-attachment@example.edu")
+        older_professor_id = self._create_professor(
+            email="older-with-attachment@example.edu"
+        )
         older_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -2918,7 +3256,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self._mark_email_task_sent(older_task_id, minutes_ago=10)
 
-        latest_professor_id = self._create_professor(email="latest-without-attachment@example.edu")
+        latest_professor_id = self._create_professor(
+            email="latest-without-attachment@example.edu"
+        )
         latest_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -2931,7 +3271,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self._mark_email_task_sent(latest_task_id, minutes_ago=5)
 
-        target_professor_id = self._create_professor(email="no-stale-default@example.edu")
+        target_professor_id = self._create_professor(
+            email="no-stale-default@example.edu"
+        )
         response = self.client.post(
             f"/api/workspaces/{target_professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
@@ -2950,17 +3292,23 @@ class ApiEndpointTests(unittest.TestCase):
             material_type="resume",
         )
 
-        pristine_professor_id = self._create_professor(email="pristine-before-send@example.edu")
+        pristine_professor_id = self._create_professor(
+            email="pristine-before-send@example.edu"
+        )
         pristine_before_send = self.client.post(
             f"/api/workspaces/{pristine_professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         )
-        self.assertEqual(pristine_before_send.status_code, 200, msg=pristine_before_send.text)
+        self.assertEqual(
+            pristine_before_send.status_code, 200, msg=pristine_before_send.text
+        )
         self.assertIsNone(
             pristine_before_send.json()["current_task"]["selected_material_ids"],
         )
 
-        sent_professor_id = self._create_professor(email="sent-after-pristine-created@example.edu")
+        sent_professor_id = self._create_professor(
+            email="sent-after-pristine-created@example.edu"
+        )
         sent_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -2973,7 +3321,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self._mark_email_task_sent(sent_task_id, minutes_ago=1)
 
-        explicit_empty_professor_id = self._create_professor(email="explicit-empty@example.edu")
+        explicit_empty_professor_id = self._create_professor(
+            email="explicit-empty@example.edu"
+        )
         explicit_empty_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -2982,7 +3332,9 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=None,
             selected_material_ids=[],
         )
-        existing_draft_professor_id = self._create_professor(email="existing-draft@example.edu")
+        existing_draft_professor_id = self._create_professor(
+            email="existing-draft@example.edu"
+        )
         existing_draft_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -3027,7 +3379,9 @@ class ApiEndpointTests(unittest.TestCase):
             existing_draft_response.json()["current_task"]["selected_material_ids"],
         )
 
-    def test_workspace_attachment_defaults_remain_disabled_for_shared_service_callers(self) -> None:
+    def test_workspace_attachment_defaults_remain_disabled_for_shared_service_callers(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -3048,9 +3402,13 @@ class ApiEndpointTests(unittest.TestCase):
             approved_body_text="Source body",
         )
         self._mark_email_task_sent(sent_task_id, minutes_ago=1)
-        target_professor_id = self._create_professor(email="shared-service-target@example.edu")
+        target_professor_id = self._create_professor(
+            email="shared-service-target@example.edu"
+        )
 
-        async def load_without_ui_defaults() -> tuple[list[int] | None, list[int] | None]:
+        async def load_without_ui_defaults() -> tuple[
+            list[int] | None, list[int] | None
+        ]:
             from app.core.database import get_session_factory
             from app.modules.workspace.thread import (
                 build_workspace_thread,
@@ -3077,7 +3435,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(asyncio.run(load_without_ui_defaults()), (None, None))
 
-    def test_workspace_ensure_task_creates_new_manual_task_after_schedule_expired_history(self) -> None:
+    def test_workspace_ensure_task_creates_new_manual_task_after_schedule_expired_history(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -3096,7 +3456,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         first_response = self.client.post(
@@ -3136,10 +3498,14 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(second_task["batch_task_id"], None)
         self.assertNotEqual(second_task["status"], "canceled")
 
-    def test_workspace_ensure_task_creates_manual_task_after_expired_batch_send_failure(self) -> None:
+    def test_workspace_ensure_task_creates_manual_task_after_expired_batch_send_failure(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
-        professor_id = self._create_professor(email="expired-batch-send-failed@example.edu")
+        professor_id = self._create_professor(
+            email="expired-batch-send-failed@example.edu"
+        )
 
         created = self.client.post(
             "/api/batch-tasks",
@@ -3152,7 +3518,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "window_start_time": "09:00",
                 "window_end_time": "10:00",
                 "emails_per_window": 1,
-                "scheduled_dates": [(datetime.now(UTC) + timedelta(days=1)).date().isoformat()],
+                "scheduled_dates": [
+                    (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+                ],
                 "primary_material_id": None,
                 "email_subject": "Hello {{name}}",
                 "email_body": "Body",
@@ -3165,7 +3533,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         batch_task_id = created.json()["id"]
-        batch_item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        batch_item_id = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items"
+        ).json()[0]["id"]
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -3206,7 +3576,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(current_task["parent_task_id"])
         self.assertIsNone(current_task["batch_task_id"])
 
-    def test_workspace_ensure_task_creates_independent_manual_task_when_batch_task_exists(self) -> None:
+    def test_workspace_ensure_task_creates_independent_manual_task_when_batch_task_exists(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         cases = [
@@ -3242,7 +3614,10 @@ class ApiEndpointTests(unittest.TestCase):
 
                 workspace = self.client.post(
                     f"/api/workspaces/{professor_id}/ensure-task",
-                    params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+                    params={
+                        "identity_id": identity_id,
+                        "llm_profile_id": llm_profile_id,
+                    },
                 )
 
                 self.assertEqual(workspace.status_code, 200, msg=workspace.text)
@@ -3255,16 +3630,30 @@ class ApiEndpointTests(unittest.TestCase):
 
                 workspace_after_ensure = self.client.get(
                     f"/api/workspaces/{professor_id}",
-                    params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
+                    params={
+                        "identity_id": identity_id,
+                        "llm_profile_id": llm_profile_id,
+                    },
                 )
-                self.assertEqual(workspace_after_ensure.status_code, 200, msg=workspace_after_ensure.text)
-                self.assertEqual(workspace_after_ensure.json()["current_task"]["id"], current_task["id"])
+                self.assertEqual(
+                    workspace_after_ensure.status_code,
+                    200,
+                    msg=workspace_after_ensure.text,
+                )
+                self.assertEqual(
+                    workspace_after_ensure.json()["current_task"]["id"],
+                    current_task["id"],
+                )
 
-    def test_workspace_thread_keeps_current_task_visible_after_model_switch(self) -> None:
+    def test_workspace_thread_keeps_current_task_visible_after_model_switch(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm(name="旧模型", model_name="gpt-old-visible")
         second_llm_id = self._create_llm(name="新模型", model_name="gpt-new-visible")
-        professor_id = self._create_professor(email="visible-after-model-switch@example.edu")
+        professor_id = self._create_professor(
+            email="visible-after-model-switch@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=first_llm_id,
@@ -3285,13 +3674,19 @@ class ApiEndpointTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["llm_profile"]["id"], second_llm_id)
         self.assertEqual(payload["current_task"]["id"], task_id)
-        self.assertEqual(payload["current_task"]["generated_subject"], "旧模型创建的任务")
+        self.assertEqual(
+            payload["current_task"]["generated_subject"], "旧模型创建的任务"
+        )
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), first_llm_id)
 
     def test_template_generation_does_not_rebind_task_to_selected_model(self) -> None:
         identity_id = self._create_identity(with_imap=False)
-        first_llm_id = self._create_llm(name="原任务模型", model_name="gpt-original-template")
-        second_llm_id = self._create_llm(name="当前选择模型", model_name="gpt-selected-template")
+        first_llm_id = self._create_llm(
+            name="原任务模型", model_name="gpt-original-template"
+        )
+        second_llm_id = self._create_llm(
+            name="当前选择模型", model_name="gpt-selected-template"
+        )
         professor_id = self._create_professor(email="template-model-switch@example.edu")
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
@@ -3317,7 +3712,9 @@ class ApiEndpointTests(unittest.TestCase):
     def test_workspace_llm_actions_use_selected_model_after_model_switch(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()
-        second_llm_id = self._create_llm(name="切换后的执行模型", model_name="gpt-runtime-selected")
+        second_llm_id = self._create_llm(
+            name="切换后的执行模型", model_name="gpt-runtime-selected"
+        )
         material_id = self._upload_material(
             identity_id,
             filename="runtime-model-resume.txt",
@@ -3364,9 +3761,13 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(draft_response.status_code, 200, msg=draft_response.text)
         draft_payload = draft_response.json()
-        self.assertEqual(captured_profiles, [("draft", second_llm_id, "gpt-runtime-selected")])
+        self.assertEqual(
+            captured_profiles, [("draft", second_llm_id, "gpt-runtime-selected")]
+        )
         self.assertEqual(draft_payload["llm_profile"]["id"], second_llm_id)
-        self.assertEqual(draft_payload["current_task"]["generated_subject"], "切换模型生成主题")
+        self.assertEqual(
+            draft_payload["current_task"]["generated_subject"], "切换模型生成主题"
+        )
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
 
         with patch(
@@ -3391,12 +3792,16 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(match_payload["thread"]["current_task"]["match_score"], 91)
         self.assertEqual(self._get_email_task_llm_profile_id(task_id), second_llm_id)
 
-    def test_generate_draft_passes_workflow_session_and_runtime_adaptation(self) -> None:
+    def test_generate_draft_passes_workflow_session_and_runtime_adaptation(
+        self,
+    ) -> None:
         task_id = self._create_rewrite_ready_task()
         adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
         workflow_sessions: list[AsyncSession] = []
 
-        async def fake_ensure(session: AsyncSession, _profile: object) -> LLMRuntimeAdaptation:
+        async def fake_ensure(
+            session: AsyncSession, _profile: object
+        ) -> LLMRuntimeAdaptation:
             self.assertIsInstance(session, AsyncSession)
             workflow_sessions.append(session)
             return adaptation
@@ -3421,7 +3826,9 @@ class ApiEndpointTests(unittest.TestCase):
                 AsyncMock(side_effect=fake_generate_draft_content),
             ) as generate_mock,
         ):
-            response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft", json={})
+            response = self.client.post(
+                f"/api/email-tasks/{task_id}/generate-draft", json={}
+            )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         adaptation_mock.assert_awaited_once()
@@ -3544,7 +3951,10 @@ class ApiEndpointTests(unittest.TestCase):
         extra_body = {"thinking": {"type": "disabled"}}
 
         async def fake_generate_draft_content(**kwargs):
-            self.assertEqual(kwargs["adaptation"], LLMRuntimeAdaptation("chat_completions", extra_body))
+            self.assertEqual(
+                kwargs["adaptation"],
+                LLMRuntimeAdaptation("chat_completions", extra_body),
+            )
             self.assertIsNotNone(kwargs["session"])
             return self._build_draft_generation_result(
                 subject="AI 改写主题",
@@ -3557,7 +3967,9 @@ class ApiEndpointTests(unittest.TestCase):
         with (
             patch(
                 "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
-                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", extra_body)),
+                AsyncMock(
+                    return_value=LLMRuntimeAdaptation("chat_completions", extra_body)
+                ),
             ) as adaptation_mock,
             patch(
                 "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
@@ -3598,7 +4010,9 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400, msg=response.text)
-        self.assertEqual(response.json()["detail"], "先写入正文或配置默认模板后再使用 AI 改写")
+        self.assertEqual(
+            response.json()["detail"], "先写入正文或配置默认模板后再使用 AI 改写"
+        )
 
     def test_rewrite_draft_persists_source_before_llm_returns(self) -> None:
         task_id = self._create_rewrite_ready_task()
@@ -3721,8 +4135,12 @@ class ApiEndpointTests(unittest.TestCase):
             "selected_material_ids": [],
         }
 
-        save_response = self.client.post(f"/api/email-tasks/{task_id}/save-draft", json=payload)
-        send_response = self.client.post(f"/api/email-tasks/{task_id}/approve-and-send", json=payload)
+        save_response = self.client.post(
+            f"/api/email-tasks/{task_id}/save-draft", json=payload
+        )
+        send_response = self.client.post(
+            f"/api/email-tasks/{task_id}/approve-and-send", json=payload
+        )
         schedule_response = self.client.post(
             f"/api/email-tasks/{task_id}/approve-and-schedule",
             json={**payload, "scheduled_at": "2030-01-01T10:00:00+00:00"},
@@ -3731,9 +4149,16 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(save_response.status_code, 400, msg=save_response.text)
         self.assertEqual(send_response.status_code, 400, msg=send_response.text)
         self.assertEqual(schedule_response.status_code, 400, msg=schedule_response.text)
-        self.assertEqual(save_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再保存。")
-        self.assertEqual(send_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
-        self.assertEqual(schedule_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。")
+        self.assertEqual(
+            save_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再保存。"
+        )
+        self.assertEqual(
+            send_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再发送。"
+        )
+        self.assertEqual(
+            schedule_response.json()["detail"],
+            "AI 正在改写当前草稿，请等待完成后再发送。",
+        )
 
     def test_material_and_mode_changes_reject_generating_rewrite(self) -> None:
         task_id = self._create_generating_workspace_rewrite_task()
@@ -3764,8 +4189,13 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(material_response.status_code, 400, msg=material_response.text)
         self.assertEqual(mode_response.status_code, 400, msg=mode_response.text)
-        self.assertEqual(material_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再修改。")
-        self.assertEqual(mode_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再修改。")
+        self.assertEqual(
+            material_response.json()["detail"],
+            "AI 正在改写当前草稿，请等待完成后再修改。",
+        )
+        self.assertEqual(
+            mode_response.json()["detail"], "AI 正在改写当前草稿，请等待完成后再修改。"
+        )
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -3821,7 +4251,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -3837,10 +4269,16 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
         payload = generate_response.json()
         self.assertEqual(payload["current_task"]["status"], "review_required")
-        self.assertEqual(payload["current_task"]["generated_subject"], "申请与模板导师老师交流")
-        self.assertIn("模板导师老师您好", payload["current_task"]["generated_content_text"])
+        self.assertEqual(
+            payload["current_task"]["generated_subject"], "申请与模板导师老师交流"
+        )
+        self.assertIn(
+            "模板导师老师您好", payload["current_task"]["generated_content_text"]
+        )
 
-    def test_template_mode_regeneration_keeps_task_template_snapshot_after_default_changes(self) -> None:
+    def test_template_mode_regeneration_keeps_task_template_snapshot_after_default_changes(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -3871,7 +4309,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -3883,7 +4323,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         first_generate = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(first_generate.status_code, 200, msg=first_generate.text)
-        self.assertEqual(first_generate.json()["current_task"]["generated_subject"], "旧模板主题 模板更新导师")
+        self.assertEqual(
+            first_generate.json()["current_task"]["generated_subject"],
+            "旧模板主题 模板更新导师",
+        )
 
         update_template_response = self.client.put(
             f"/api/identities/{identity_id}",
@@ -3895,14 +4338,24 @@ class ApiEndpointTests(unittest.TestCase):
                 outreach_template_body_html="<p>新模板正文 {{name}}</p>",
             ),
         )
-        self.assertEqual(update_template_response.status_code, 200, msg=update_template_response.text)
+        self.assertEqual(
+            update_template_response.status_code, 200, msg=update_template_response.text
+        )
 
         second_generate = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
         self.assertEqual(second_generate.status_code, 200, msg=second_generate.text)
         payload = second_generate.json()
-        self.assertEqual(payload["current_task"]["generated_subject"], "旧模板主题 模板更新导师")
-        self.assertIn("旧模板正文 模板更新导师", payload["current_task"]["generated_content_text"])
-        latest_draft = [message for message in payload["messages"] if message["direction"] == "draft"][-1]
+        self.assertEqual(
+            payload["current_task"]["generated_subject"], "旧模板主题 模板更新导师"
+        )
+        self.assertIn(
+            "旧模板正文 模板更新导师", payload["current_task"]["generated_content_text"]
+        )
+        latest_draft = [
+            message
+            for message in payload["messages"]
+            if message["direction"] == "draft"
+        ][-1]
         self.assertEqual(latest_draft["subject"], "旧模板主题 模板更新导师")
         self.assertIn("旧模板正文 模板更新导师", latest_draft["content"])
 
@@ -3941,7 +4394,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -3961,7 +4416,9 @@ class ApiEndpointTests(unittest.TestCase):
             task["rendered_template_body_html"],
         )
 
-    def test_child_manual_template_regeneration_keeps_parent_template_snapshot(self) -> None:
+    def test_child_manual_template_regeneration_keeps_parent_template_snapshot(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         update_response = self.client.put(
@@ -3991,7 +4448,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -4019,8 +4478,12 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        follow_up_response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
-        self.assertEqual(follow_up_response.status_code, 200, msg=follow_up_response.text)
+        follow_up_response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
+        self.assertEqual(
+            follow_up_response.status_code, 200, msg=follow_up_response.text
+        )
         child_task = follow_up_response.json()["current_task"]
         self.assertEqual(child_task["parent_task_id"], parent_task_id)
         self.assertEqual(child_task["generated_subject"], None)
@@ -4036,13 +4499,19 @@ class ApiEndpointTests(unittest.TestCase):
                 outreach_template_body_html="<p>子任务新正文 {{name}}</p>",
             ),
         )
-        self.assertEqual(update_template_response.status_code, 200, msg=update_template_response.text)
+        self.assertEqual(
+            update_template_response.status_code, 200, msg=update_template_response.text
+        )
 
-        generate_response = self.client.post(f"/api/email-tasks/{child_task_id}/generate-draft")
+        generate_response = self.client.post(
+            f"/api/email-tasks/{child_task_id}/generate-draft"
+        )
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
         generated = generate_response.json()["current_task"]
         self.assertEqual(generated["generated_subject"], "父任务旧主题 子任务模板导师")
-        self.assertIn("父任务旧正文 子任务模板导师", generated["generated_content_text"])
+        self.assertIn(
+            "父任务旧正文 子任务模板导师", generated["generated_content_text"]
+        )
 
     def test_manual_send_renders_subject_and_body_placeholders(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -4062,7 +4531,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         ensure_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
@@ -4071,19 +4542,24 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(ensure_response.status_code, 200, msg=ensure_response.text)
         task_id = ensure_response.json()["current_task"]["id"]
 
-        with patch(
-            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
-            AsyncMock(return_value=self._build_send_result(message_id="<subject-render@example.com>", provider_payload={})),
-        ) as mocked_send, patch(
-            "app.modules.campaigns.templates.rendering.datetime",
-        ) as mocked_datetime:
+        with (
+            patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+                AsyncMock(
+                    return_value=self._build_send_result(
+                        message_id="<subject-render@example.com>", provider_payload={}
+                    )
+                ),
+            ) as mocked_send,
+            patch(
+                "app.modules.campaigns.templates.rendering.datetime",
+            ) as mocked_datetime,
+        ):
             from datetime import UTC, datetime
 
             mocked_datetime.now.return_value = datetime(2026, 5, 19, 16, 30, tzinfo=UTC)
             expected_local_date = mocked_datetime.now.return_value.astimezone()
-            expected_date = (
-                f"{expected_local_date.year}年{expected_local_date.month}月{expected_local_date.day}日"
-            )
+            expected_date = f"{expected_local_date.year}年{expected_local_date.month}月{expected_local_date.day}日"
             response = self.client.post(
                 f"/api/email-tasks/{task_id}/approve-and-send",
                 json={
@@ -4102,8 +4578,14 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertNotIn("{{name}}", kwargs["body_html"])
         self.assertNotIn("{{year}}", kwargs["body_html"])
         self.assertIn(f"发送日期：{expected_date}", kwargs["body_html"])
-        self.assertEqual(response.json()["current_task"]["approved_subject"], "申请与{{name}}老师交流")
-        self.assertIn("{{year}}年{{month}}月{{day}}日", response.json()["current_task"]["approved_body_text"])
+        self.assertEqual(
+            response.json()["current_task"]["approved_subject"],
+            "申请与{{name}}老师交流",
+        )
+        self.assertIn(
+            "{{year}}年{{month}}月{{day}}日",
+            response.json()["current_task"]["approved_body_text"],
+        )
 
     def test_approve_draft_snapshots_content_without_immediate_send(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -4123,7 +4605,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         ensure_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
@@ -4148,10 +4632,14 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["current_task"]["status"], "approved")
-        self.assertEqual(response.json()["current_task"]["approved_subject"], "审核后的主题")
+        self.assertEqual(
+            response.json()["current_task"]["approved_subject"], "审核后的主题"
+        )
         mocked_send.assert_not_awaited()
 
-    def test_save_workspace_draft_persists_edited_content_without_approving(self) -> None:
+    def test_save_workspace_draft_persists_edited_content_without_approving(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -4169,7 +4657,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         material_id = self._upload_material(
             identity_id,
@@ -4214,7 +4704,9 @@ class ApiEndpointTests(unittest.TestCase):
     def test_save_workspace_draft_preserves_empty_subject(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="empty-subject-save-draft@example.edu")
+        professor_id = self._create_professor(
+            email="empty-subject-save-draft@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4282,7 +4774,9 @@ class ApiEndpointTests(unittest.TestCase):
     def test_save_workspace_draft_preserves_empty_tiptap_body(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="empty-tiptap-body-save-draft@example.edu")
+        professor_id = self._create_professor(
+            email="empty-tiptap-body-save-draft@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4315,7 +4809,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(stored_task["approved_body_text"], "")
         self.assertEqual(stored_task["approved_body_html"], "")
 
-    def test_save_workspace_draft_rejects_sent_task_without_mutating_snapshot(self) -> None:
+    def test_save_workspace_draft_rejects_sent_task_without_mutating_snapshot(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="sent-save-draft@example.edu")
@@ -4348,7 +4844,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(stored_task["approved_body_text"], "真实发送正文")
         self.assertEqual(stored_task["approved_body_html"], "<p>真实发送正文</p>")
 
-    def test_save_workspace_draft_rejects_canceled_task_without_mutating_snapshot(self) -> None:
+    def test_save_workspace_draft_rejects_canceled_task_without_mutating_snapshot(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="canceled-save-draft@example.edu")
@@ -4419,22 +4917,32 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(identity["current_primary_material_id"], resume_material_id)
         self.assertEqual(len(identity["materials"]), 2)
 
-        invalid_primary_response = self.client.post(f"/api/materials/{image_material_id}/set-primary")
+        invalid_primary_response = self.client.post(
+            f"/api/materials/{image_material_id}/set-primary"
+        )
         self.assertEqual(invalid_primary_response.status_code, 400)
 
         open_response = self.client.get(f"/api/materials/{resume_material_id}/open")
         self.assertEqual(open_response.status_code, 200)
         self.assertIn("inline", open_response.headers.get("content-disposition", ""))
 
-        download_response = self.client.get(f"/api/materials/{resume_material_id}/download")
+        download_response = self.client.get(
+            f"/api/materials/{resume_material_id}/download"
+        )
         self.assertEqual(download_response.status_code, 200)
-        self.assertIn("cv.txt", download_response.headers.get("content-disposition", ""))
+        self.assertIn(
+            "cv.txt", download_response.headers.get("content-disposition", "")
+        )
 
-        delete_primary_response = self.client.delete(f"/api/materials/{resume_material_id}")
+        delete_primary_response = self.client.delete(
+            f"/api/materials/{resume_material_id}"
+        )
         self.assertEqual(delete_primary_response.status_code, 204)
 
         identity_after_primary_delete = next(
-            item for item in self.client.get("/api/identities").json() if item["id"] == identity_id
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
         )
         self.assertIsNone(identity_after_primary_delete["current_primary_material_id"])
         self.assertEqual(len(identity_after_primary_delete["materials"]), 1)
@@ -4443,11 +4951,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(delete_response.status_code, 204)
 
         refreshed_identity = next(
-            item for item in self.client.get("/api/identities").json() if item["id"] == identity_id
+            item
+            for item in self.client.get("/api/identities").json()
+            if item["id"] == identity_id
         )
         self.assertEqual(len(refreshed_identity["materials"]), 0)
 
-    def test_global_material_is_reusable_and_survives_source_identity_deletion(self) -> None:
+    def test_global_material_is_reusable_and_survives_source_identity_deletion(
+        self,
+    ) -> None:
         source_identity_id = self._create_identity(
             email_address="material-source@example.com",
             with_imap=False,
@@ -4473,7 +4985,9 @@ class ApiEndpointTests(unittest.TestCase):
         target_default_response = self.client.post(
             f"/api/identities/{target_identity_id}/materials/{material_id}/set-primary",
         )
-        self.assertEqual(target_default_response.status_code, 200, msg=target_default_response.text)
+        self.assertEqual(
+            target_default_response.status_code, 200, msg=target_default_response.text
+        )
         self.assertEqual(
             target_default_response.json()["default_for_identity_ids"],
             [source_identity_id, target_identity_id],
@@ -4484,7 +4998,9 @@ class ApiEndpointTests(unittest.TestCase):
             params={"identity_id": target_identity_id},
         )
         self.assertEqual(target_catalog.status_code, 200, msg=target_catalog.text)
-        shared = next(item for item in target_catalog.json() if item["id"] == material_id)
+        shared = next(
+            item for item in target_catalog.json() if item["id"] == material_id
+        )
         self.assertTrue(shared["is_primary"])
         self.assertEqual(
             shared["default_for_identity_ids"],
@@ -4495,7 +5011,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(delete_source.status_code, 204, msg=delete_source.text)
 
         surviving_catalog = self.client.get("/api/materials").json()
-        surviving = next(item for item in surviving_catalog if item["id"] == material_id)
+        surviving = next(
+            item for item in surviving_catalog if item["id"] == material_id
+        )
         self.assertIsNone(surviving["source_identity_id"])
         self.assertEqual(surviving["default_for_identity_ids"], [target_identity_id])
         target_identity = next(
@@ -4588,11 +5106,14 @@ class ApiEndpointTests(unittest.TestCase):
 
         deleted = self.client.delete(f"/api/materials/{material_id}")
         self.assertEqual(deleted.status_code, 204, msg=deleted.text)
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [])
         identities = {
-            identity["id"]: identity for identity in self.client.get("/api/identities").json()
+            identity["id"]: identity
+            for identity in self.client.get("/api/identities").json()
         }
         self.assertIsNone(identities[source_identity_id]["current_primary_material_id"])
         self.assertIsNone(identities[target_identity_id]["current_primary_material_id"])
@@ -4606,7 +5127,9 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(json.loads(rewrite_snapshot), [999999])
 
-    def test_delete_global_material_is_blocked_by_another_identity_active_task(self) -> None:
+    def test_delete_global_material_is_blocked_by_another_identity_active_task(
+        self,
+    ) -> None:
         source_identity_id = self._create_identity(
             email_address="global-block-source@example.com",
             with_imap=False,
@@ -4633,9 +5156,16 @@ class ApiEndpointTests(unittest.TestCase):
 
         blocked = self.client.delete(f"/api/materials/{material_id}")
         self.assertEqual(blocked.status_code, 400, msg=blocked.text)
-        self.assertTrue(any(item["id"] == material_id for item in self.client.get("/api/materials").json()))
+        self.assertTrue(
+            any(
+                item["id"] == material_id
+                for item in self.client.get("/api/materials").json()
+            )
+        )
 
-    def test_delete_material_detaches_discovered_and_matched_primary_material_references(self) -> None:
+    def test_delete_material_detaches_discovered_and_matched_primary_material_references(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -4644,8 +5174,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research background is in information extraction.",
             material_type="resume",
         )
-        discovered_professor_id = self._create_professor(email="discovered-material-delete@example.edu")
-        matched_professor_id = self._create_professor(email="matched-material-delete@example.edu")
+        discovered_professor_id = self._create_professor(
+            email="discovered-material-delete@example.edu"
+        )
+        matched_professor_id = self._create_professor(
+            email="matched-material-delete@example.edu"
+        )
         discovered_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4666,12 +5200,19 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        self.assertEqual(self._get_email_task_delete_state(discovered_task_id)["status"], "discovered")
-        self.assertEqual(self._get_email_task_delete_state(matched_task_id)["status"], "matched")
+        self.assertEqual(
+            self._get_email_task_delete_state(discovered_task_id)["status"],
+            "discovered",
+        )
+        self.assertEqual(
+            self._get_email_task_delete_state(matched_task_id)["status"], "matched"
+        )
         self.assertIsNone(self._get_task_material_references(discovered_task_id)[0])
         self.assertIsNone(self._get_task_material_references(matched_task_id)[0])
 
-    def test_delete_material_detaches_match_analysis_run_primary_material_reference(self) -> None:
+    def test_delete_material_detaches_match_analysis_run_primary_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -4703,7 +5244,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
         self.assertIsNone(self._get_match_analysis_run_primary_material_id(run_id))
 
-    def test_delete_material_resets_review_required_primary_material_draft(self) -> None:
+    def test_delete_material_resets_review_required_primary_material_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -4712,7 +5255,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research background is in information extraction.",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="review-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="review-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4743,7 +5288,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(state["approved_body_html"])
         self.assertIsNone(state["approved_at"])
 
-    def test_delete_material_removes_review_required_attachment_and_requires_review(self) -> None:
+    def test_delete_material_removes_review_required_attachment_and_requires_review(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         deleted_material_id = self._upload_material(
@@ -4758,7 +5305,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"resume",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="review-attachment-delete@example.edu")
+        professor_id = self._create_professor(
+            email="review-attachment-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4795,7 +5344,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"resume",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="send-failed-primary-delete@example.edu")
+        professor_id = self._create_professor(
+            email="send-failed-primary-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4820,7 +5371,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(state["approved_subject"])
         self.assertIsNone(state["last_error"])
 
-    def test_delete_material_turns_send_failed_attachment_into_review_required(self) -> None:
+    def test_delete_material_turns_send_failed_attachment_into_review_required(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         deleted_material_id = self._upload_material(
@@ -4829,7 +5382,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"attachment",
             material_type="portfolio",
         )
-        professor_id = self._create_professor(email="send-failed-attachment-delete@example.edu")
+        professor_id = self._create_professor(
+            email="send-failed-attachment-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4854,7 +5409,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(state["generated_subject"], "保留主题")
         self.assertIsNone(state["approved_subject"])
 
-    def test_delete_material_clears_draft_failed_primary_material_reference(self) -> None:
+    def test_delete_material_clears_draft_failed_primary_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -4863,7 +5420,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research background is in information extraction.",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="draft-failed-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="draft-failed-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4875,11 +5434,15 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertIsNone(primary_material_id)
         self.assertIsNone(selected_material_ids)
 
-    def test_delete_material_clears_send_failed_primary_material_reference(self) -> None:
+    def test_delete_material_clears_send_failed_primary_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -4888,7 +5451,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research background is in information extraction.",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="send-failed-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="send-failed-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4900,11 +5465,15 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertIsNone(primary_material_id)
         self.assertIsNone(selected_material_ids)
 
-    def test_delete_material_removes_failed_task_selected_material_reference(self) -> None:
+    def test_delete_material_removes_failed_task_selected_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         deleted_material_id = self._upload_material(
@@ -4919,7 +5488,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"Transcript content",
             material_type="transcript",
         )
-        professor_id = self._create_professor(email="failed-selected-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="failed-selected-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -4932,7 +5503,9 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
@@ -4962,7 +5535,9 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
@@ -4986,12 +5561,18 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被可继续批量任务使用")
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        self.assertEqual(
+            delete_response.json()["detail"], "当前材料仍被可继续批量任务使用"
+        )
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertEqual(primary_material_id, material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
-    def test_delete_material_allows_completed_batch_task_with_stale_running_status(self) -> None:
+    def test_delete_material_allows_completed_batch_task_with_stale_running_status(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5013,7 +5594,9 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=material_id,
             selected_material_ids=[material_id, remaining_material_id],
         )
-        professor_id = self._create_professor(email="completed-batch-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="completed-batch-material-delete@example.edu"
+        )
         self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5029,11 +5612,15 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
         self.assertEqual(self._get_batch_task_status(batch_task_id), "completed")
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
-    def test_delete_material_detaches_soft_deleted_running_batch_task_reference(self) -> None:
+    def test_delete_material_detaches_soft_deleted_running_batch_task_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         deleted_material_id = self._upload_material(
@@ -5060,7 +5647,9 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{deleted_material_id}")
 
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
@@ -5068,11 +5657,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(restore_response.status_code, 200, msg=restore_response.text)
         restored_task = restore_response.json()["task"]
         self.assertEqual(restored_task["status"], "stopped")
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
-    def test_delete_material_detaches_soft_deleted_stopped_batch_approved_item_reference(self) -> None:
+    def test_delete_material_detaches_soft_deleted_stopped_batch_approved_item_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         deleted_material_id = self._upload_material(
@@ -5095,7 +5688,9 @@ class ApiEndpointTests(unittest.TestCase):
             selected_material_ids=[deleted_material_id, remaining_material_id],
             deleted=True,
         )
-        professor_id = self._create_professor(email="soft-deleted-approved-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="soft-deleted-approved-material-delete@example.edu"
+        )
         email_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5122,11 +5717,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(task_state["approved_body_text"])
         self.assertIsNone(task_state["approved_body_html"])
         self.assertIsNone(task_state["approved_at"])
-        primary_material_id, selected_material_ids = self._get_batch_task_material_references(batch_task_id)
+        primary_material_id, selected_material_ids = (
+            self._get_batch_task_material_references(batch_task_id)
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [remaining_material_id])
 
-    def test_delete_material_does_not_partially_detach_when_blocked_task_exists(self) -> None:
+    def test_delete_material_does_not_partially_detach_when_blocked_task_exists(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5135,8 +5734,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"resume",
             material_type="resume",
         )
-        detachable_professor_id = self._create_professor(email="detachable-blocked-delete@example.edu")
-        blocked_professor_id = self._create_professor(email="approved-blocked-delete@example.edu")
+        detachable_professor_id = self._create_professor(
+            email="detachable-blocked-delete@example.edu"
+        )
+        blocked_professor_id = self._create_professor(
+            email="approved-blocked-delete@example.edu"
+        )
         detachable_task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5155,11 +5758,20 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
-        self.assertEqual(self._get_task_material_references(detachable_task_id)[0], material_id)
-        self.assertEqual(self._get_task_material_references(blocked_task_id)[0], material_id)
+        self.assertEqual(
+            delete_response.json()["detail"],
+            "当前材料仍被已批准、定时或发送中的任务使用",
+        )
+        self.assertEqual(
+            self._get_task_material_references(detachable_task_id)[0], material_id
+        )
+        self.assertEqual(
+            self._get_task_material_references(blocked_task_id)[0], material_id
+        )
 
-    def test_delete_material_clears_primary_and_attachment_reference_together(self) -> None:
+    def test_delete_material_clears_primary_and_attachment_reference_together(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5168,7 +5780,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"resume",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="primary-and-attachment-delete@example.edu")
+        professor_id = self._create_professor(
+            email="primary-and-attachment-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5190,7 +5804,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(state["selected_material_ids"], [])
         self.assertIsNone(state["generated_subject"])
 
-    def test_delete_material_still_blocks_active_primary_material_reference(self) -> None:
+    def test_delete_material_still_blocks_active_primary_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5199,7 +5815,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research background is in information extraction.",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="active-primary-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="active-primary-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5211,12 +5829,19 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        self.assertEqual(
+            delete_response.json()["detail"],
+            "当前材料仍被已批准、定时或发送中的任务使用",
+        )
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertEqual(primary_material_id, material_id)
         self.assertIsNone(selected_material_ids)
 
-    def test_delete_material_still_blocks_active_selected_material_reference(self) -> None:
+    def test_delete_material_still_blocks_active_selected_material_reference(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5225,7 +5850,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"Portfolio content",
             material_type="portfolio",
         )
-        professor_id = self._create_professor(email="active-selected-material-delete@example.edu")
+        professor_id = self._create_professor(
+            email="active-selected-material-delete@example.edu"
+        )
         task_id = self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -5238,8 +5865,13 @@ class ApiEndpointTests(unittest.TestCase):
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
         self.assertEqual(delete_response.status_code, 400)
-        self.assertEqual(delete_response.json()["detail"], "当前材料仍被已批准、定时或发送中的任务使用")
-        primary_material_id, selected_material_ids = self._get_task_material_references(task_id)
+        self.assertEqual(
+            delete_response.json()["detail"],
+            "当前材料仍被已批准、定时或发送中的任务使用",
+        )
+        primary_material_id, selected_material_ids = self._get_task_material_references(
+            task_id
+        )
         self.assertIsNone(primary_material_id)
         self.assertEqual(selected_material_ids, [material_id])
 
@@ -5251,7 +5883,13 @@ class ApiEndpointTests(unittest.TestCase):
         ) as mocked_extractor:
             response = self.client.post(
                 f"/api/identities/{identity_id}/materials",
-                files={"file": ("transcript.pdf", b"%PDF-pretend-transcript", "application/pdf")},
+                files={
+                    "file": (
+                        "transcript.pdf",
+                        b"%PDF-pretend-transcript",
+                        "application/pdf",
+                    )
+                },
                 data={"material_type": "transcript"},
             )
 
@@ -5261,7 +5899,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(body["material_type"], "transcript")
         self.assertEqual(body["display_name"], "transcript")
 
-    def test_primary_material_text_is_extracted_on_demand_when_generating_draft(self) -> None:
+    def test_primary_material_text_is_extracted_on_demand_when_generating_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -5303,7 +5943,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(task_response.status_code, 201)
 
         batch_task_id = task_response.json()["id"]
-        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0][
+            "id"
+        ]
 
         with patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
@@ -5351,9 +5993,13 @@ class ApiEndpointTests(unittest.TestCase):
         metadata = operation_logs.json()["items"][0]["metadata"]
         self.assertEqual(metadata["prompt_hash"], "a" * 64)
         self.assertEqual(metadata["stable_prefix_hash"], "b" * 64)
-        self.assertEqual(metadata["prompt_cache_key"], "draft-rewrite:v5:generation-test")
+        self.assertEqual(
+            metadata["prompt_cache_key"], "draft-rewrite:v5:generation-test"
+        )
 
-    def test_immediate_template_batch_task_queues_without_synchronous_send(self) -> None:
+    def test_immediate_template_batch_task_queues_without_synchronous_send(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         update_response = self.client.put(
             f"/api/identities/{identity_id}",
@@ -5485,7 +6131,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("发送日期", response.json()["detail"])
 
-    def test_cancel_and_restore_scheduled_batch_item_preserves_original_plan(self) -> None:
+    def test_cancel_and_restore_scheduled_batch_item_preserves_original_plan(
+        self,
+    ) -> None:
         batch_task_id = self._create_scheduled_template_batch(professor_count=2)
         before_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(before_items.status_code, 200, msg=before_items.text)
@@ -5545,7 +6193,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(restored_item["can_cancel_send"])
         self.assertFalse(restored_item["can_restore_send"])
 
-    def test_canceled_scheduled_item_cannot_be_restored_after_original_time(self) -> None:
+    def test_canceled_scheduled_item_cannot_be_restored_after_original_time(
+        self,
+    ) -> None:
         batch_task_id = self._create_scheduled_template_batch()
         item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
         canceled = self.client.post(
@@ -5569,7 +6219,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(restored.status_code, 400, msg=restored.text)
         self.assertEqual(restored.json()["detail"], "原定发送时间已过，无法恢复发送")
-        expired_item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+        expired_item = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items"
+        ).json()[0]
         self.assertIsNotNone(expired_item["batch_send_canceled_at"])
         self.assertFalse(expired_item["can_restore_send"])
         task = next(
@@ -5583,7 +6235,9 @@ class ApiEndpointTests(unittest.TestCase):
 
     def test_cancel_scheduled_batch_item_rejects_sent_and_sending_states(self) -> None:
         batch_task_id = self._create_scheduled_template_batch()
-        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0][
+            "id"
+        ]
 
         for task_status in ("sending", "sent"):
             with self.subTest(task_status=task_status):
@@ -5597,7 +6251,9 @@ class ApiEndpointTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-                item = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]
+                item = self.client.get(
+                    f"/api/batch-tasks/{batch_task_id}/items"
+                ).json()[0]
                 self.assertFalse(item["can_cancel_send"])
                 canceled = self.client.post(
                     f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
@@ -5615,18 +6271,26 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(row, ("sent", None))
 
-    def test_cancel_scheduled_batch_item_loses_cleanly_to_concurrent_send_claim(self) -> None:
+    def test_cancel_scheduled_batch_item_loses_cleanly_to_concurrent_send_claim(
+        self,
+    ) -> None:
         batch_task_id = self._create_scheduled_template_batch()
-        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        item_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0][
+            "id"
+        ]
 
         from app.core.database import get_engine
 
         claim_once = True
 
-        def claim_before_cancel(conn, _cursor, statement, _parameters, _context, _executemany):
+        def claim_before_cancel(
+            conn, _cursor, statement, _parameters, _context, _executemany
+        ):
             nonlocal claim_once
             normalized_statement = statement.lstrip().upper()
-            if not claim_once or not normalized_statement.startswith("UPDATE EMAIL_TASKS"):
+            if not claim_once or not normalized_statement.startswith(
+                "UPDATE EMAIL_TASKS"
+            ):
                 return
             if "BATCH_SEND_CANCELED_AT" not in normalized_statement:
                 return
@@ -5648,7 +6312,9 @@ class ApiEndpointTests(unittest.TestCase):
                 f"/api/batch-tasks/{batch_task_id}/items/{item_id}/cancel-send",
             )
         finally:
-            event.remove(engine.sync_engine, "before_cursor_execute", claim_before_cancel)
+            event.remove(
+                engine.sync_engine, "before_cursor_execute", claim_before_cancel
+            )
 
         self.assertEqual(canceled.status_code, 400, msg=canceled.text)
         self.assertIn("已进入发送流程", canceled.json()["detail"])
@@ -5744,7 +6410,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "is_default": False,
             },
         )
-        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        self.assertEqual(
+            second_llm_response.status_code, 201, msg=second_llm_response.text
+        )
         second_llm_id = second_llm_response.json()["id"]
         self.client.post("/api/professors/import-sample")
         professor_id = self.client.get("/api/professors").json()[0]["id"]
@@ -5791,7 +6459,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(unloaded_task_relationships)
         self.assertIn("email_tasks", unloaded_task_relationships[0])
 
-    def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(self) -> None:
+    def test_remove_batch_task_item_soft_deletes_single_draft_and_updates_target_count(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
@@ -5839,13 +6509,17 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete")
+        removed = self.client.post(
+            f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete"
+        )
 
         self.assertEqual(removed.status_code, 200, msg=removed.text)
         self.assertEqual(removed.json()["task"]["target_count"], 1)
         refreshed_items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(refreshed_items.status_code, 200, msg=refreshed_items.text)
-        self.assertEqual([item["id"] for item in refreshed_items.json()], [items.json()[1]["id"]])
+        self.assertEqual(
+            [item["id"] for item in refreshed_items.json()], [items.json()[1]["id"]]
+        )
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -5865,7 +6539,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(row[3])
         self.assertIsNone(row[4])
 
-    def test_batch_task_items_keep_legacy_canceled_items_without_reason_visible(self) -> None:
+    def test_batch_task_items_keep_legacy_canceled_items_without_reason_visible(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
@@ -5950,7 +6626,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET status = 'sent' WHERE id = ?", (item_id,))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'sent' WHERE id = ?", (item_id,)
+            )
             connection.commit()
         finally:
             connection.close()
@@ -6003,7 +6681,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(removed.status_code, 400)
         self.assertIn("不能从批量任务中移除", removed.json()["detail"])
 
-    def test_remove_batch_task_item_does_not_overwrite_concurrent_schedule(self) -> None:
+    def test_remove_batch_task_item_does_not_overwrite_concurrent_schedule(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
@@ -6033,7 +6713,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'review_required' WHERE id = ?",
+                (item_id,),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -6042,7 +6725,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         schedule_once = True
 
-        def schedule_before_delete(conn, _cursor, statement, _parameters, _context, _executemany):
+        def schedule_before_delete(
+            conn, _cursor, statement, _parameters, _context, _executemany
+        ):
             nonlocal schedule_once
             if not schedule_once:
                 return
@@ -6062,11 +6747,17 @@ class ApiEndpointTests(unittest.TestCase):
                 connection.close()
 
         engine = get_engine()
-        event.listen(engine.sync_engine, "before_cursor_execute", schedule_before_delete)
+        event.listen(
+            engine.sync_engine, "before_cursor_execute", schedule_before_delete
+        )
         try:
-            removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
+            removed = self.client.post(
+                f"/api/batch-tasks/{task_id}/items/{item_id}/delete"
+            )
         finally:
-            event.remove(engine.sync_engine, "before_cursor_execute", schedule_before_delete)
+            event.remove(
+                engine.sync_engine, "before_cursor_execute", schedule_before_delete
+            )
 
         self.assertEqual(removed.status_code, 400, msg=removed.text)
         self.assertIn("不能从批量任务中移除", removed.json()["detail"])
@@ -6118,11 +6809,16 @@ class ApiEndpointTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (removed_item_id,))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'review_required' WHERE id = ?",
+                (removed_item_id,),
+            )
             connection.commit()
         finally:
             connection.close()
-        removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete")
+        removed = self.client.post(
+            f"/api/batch-tasks/{task_id}/items/{removed_item_id}/delete"
+        )
         self.assertEqual(removed.status_code, 200, msg=removed.text)
 
         stopped = self.client.post(f"/api/batch-tasks/{task_id}/stop")
@@ -6130,7 +6826,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         refreshed_items = self.client.get(f"/api/batch-tasks/{task_id}/items")
         self.assertEqual(refreshed_items.status_code, 200, msg=refreshed_items.text)
-        self.assertEqual([item["id"] for item in refreshed_items.json()], [kept_item_id])
+        self.assertEqual(
+            [item["id"] for item in refreshed_items.json()], [kept_item_id]
+        )
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -6171,7 +6869,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'review_required' WHERE id = ?",
+                (item_id,),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -6198,7 +6899,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"AI agents and information extraction",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="dashboard-user-removed@example.edu")
+        professor_id = self._create_professor(
+            email="dashboard-user-removed@example.edu"
+        )
 
         created = self.client.post(
             "/api/batch-tasks",
@@ -6242,7 +6945,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         dashboard = self.client.get(
             "/api/professors",
-            params={"identity_id": identity_id, "llm_profile_id": llm_profile_id, "ids": str(professor_id)},
+            params={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_profile_id,
+                "ids": str(professor_id),
+            },
         )
 
         self.assertEqual(dashboard.status_code, 200, msg=dashboard.text)
@@ -6250,7 +6957,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(professor["status"], "not_contacted")
         self.assertIsNone(professor["match_score"])
 
-    def test_removed_batch_item_does_not_reappear_when_generation_finishes(self) -> None:
+    def test_removed_batch_item_does_not_reappear_when_generation_finishes(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         material_id = self._upload_material(
@@ -6259,7 +6968,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"AI agents and information extraction",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="removed-generation-race@example.edu")
+        professor_id = self._create_professor(
+            email="removed-generation-race@example.edu"
+        )
 
         created = self.client.post(
             "/api/batch-tasks",
@@ -6316,7 +7027,9 @@ class ApiEndpointTests(unittest.TestCase):
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
             AsyncMock(side_effect=_remove_item_before_generation_returns),
         ):
-            self._run_async(generate_task_draft(get_session_factory(), item_id, force=True))
+            self._run_async(
+                generate_task_draft(get_session_factory(), item_id, force=True)
+            )
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -6350,7 +7063,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"AI agents and information extraction",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="removed-generation-failure@example.edu")
+        professor_id = self._create_professor(
+            email="removed-generation-failure@example.edu"
+        )
 
         created = self.client.post(
             "/api/batch-tasks",
@@ -6374,7 +7089,9 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
-        item_id = self.client.get(f"/api/batch-tasks/{created.json()['id']}/items").json()[0]["id"]
+        item_id = self.client.get(
+            f"/api/batch-tasks/{created.json()['id']}/items"
+        ).json()[0]["id"]
 
         async def _remove_item_then_fail(**_kwargs):
             connection = sqlite3.connect(self.db_path)
@@ -6403,7 +7120,9 @@ class ApiEndpointTests(unittest.TestCase):
             AsyncMock(side_effect=_remove_item_then_fail),
         ):
             with self.assertRaises(llm_runtime.LLMRuntimeError):
-                self._run_async(generate_task_draft(get_session_factory(), item_id, force=True))
+                self._run_async(
+                    generate_task_draft(get_session_factory(), item_id, force=True)
+                )
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -6415,7 +7134,9 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(row, ("canceled", "user_removed"))
 
-    def test_removed_batch_item_stays_removed_when_automatic_generation_is_canceled(self) -> None:
+    def test_removed_batch_item_stays_removed_when_automatic_generation_is_canceled(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         material_id = self._upload_material(
@@ -6424,7 +7145,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"AI agents and information extraction",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="removed-generation-canceled@example.edu")
+        professor_id = self._create_professor(
+            email="removed-generation-canceled@example.edu"
+        )
 
         created = self.client.post(
             "/api/batch-tasks",
@@ -6448,7 +7171,9 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
-        item_id = self.client.get(f"/api/batch-tasks/{created.json()['id']}/items").json()[0]["id"]
+        item_id = self.client.get(
+            f"/api/batch-tasks/{created.json()['id']}/items"
+        ).json()[0]["id"]
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -6521,7 +7246,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"AI agents and information extraction",
             material_type="resume",
         )
-        professor_id = self._create_professor(email="manual-generation-canceled@example.edu")
+        professor_id = self._create_professor(
+            email="manual-generation-canceled@example.edu"
+        )
         ensure_response = self.client.post(
             f"/api/workspaces/{professor_id}/ensure-task",
             params={"identity_id": identity_id, "llm_profile_id": llm_profile_id},
@@ -6565,7 +7292,9 @@ class ApiEndpointTests(unittest.TestCase):
             AsyncMock(side_effect=_cancel_generation),
         ):
             with self.assertRaises(asyncio.CancelledError):
-                self._run_async(generate_task_draft(get_session_factory(), task_id, force=True))
+                self._run_async(
+                    generate_task_draft(get_session_factory(), task_id, force=True)
+                )
 
         connection = sqlite3.connect(self.db_path)
         try:
@@ -6611,7 +7340,10 @@ class ApiEndpointTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (item_id,))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'review_required' WHERE id = ?",
+                (item_id,),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -6646,7 +7378,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         created = self.client.post(
@@ -6687,8 +7421,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.status_code, 200, msg=items.text)
         self.assertEqual(items.json()["total_count"], 1)
         self.assertFalse(items.json()["has_more"])
-        self.assertEqual(items.json()["items"][0]["professor_university"], "Example University")
-        self.assertEqual(items.json()["items"][0]["professor_school"], "School of Computing")
+        self.assertEqual(
+            items.json()["items"][0]["professor_university"], "Example University"
+        )
+        self.assertEqual(
+            items.json()["items"][0]["professor_school"], "School of Computing"
+        )
         self.assertIn("recent_papers", unloaded_professor_columns[0])
 
         filtered_items = self.client.get(
@@ -6717,7 +7455,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "is_default": False,
             },
         )
-        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        self.assertEqual(
+            second_llm_response.status_code, 201, msg=second_llm_response.text
+        )
         second_llm_id = second_llm_response.json()["id"]
         self._upload_material(
             identity_id,
@@ -6769,7 +7509,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         created = self.client.post(
             "/api/match-analysis-jobs",
             json={
@@ -6803,7 +7545,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         trash = self.client.get(
             "/api/match-analysis-jobs",
-            params={"identity_id": identity_id, "llm_profile_id": llm_id, "view": "trash"},
+            params={
+                "identity_id": identity_id,
+                "llm_profile_id": llm_id,
+                "view": "trash",
+            },
         )
         self.assertEqual(trash.status_code, 200)
         self.assertEqual([item["id"] for item in trash.json()], [job_id])
@@ -6812,7 +7558,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
-        repeated_restore = self.client.post(f"/api/match-analysis-jobs/{job_id}/restore")
+        repeated_restore = self.client.post(
+            f"/api/match-analysis-jobs/{job_id}/restore"
+        )
         self.assertEqual(repeated_restore.status_code, 200, msg=repeated_restore.text)
 
     def test_cancel_match_analysis_job(self) -> None:
@@ -6839,7 +7587,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         created = self.client.post(
             "/api/match-analysis-jobs",
@@ -6857,7 +7607,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(canceled.json()["ok"])
         self.assertEqual(canceled.json()["job"]["status"], "canceled")
 
-    def test_retry_failed_match_analysis_job_returns_400_when_no_failed_items(self) -> None:
+    def test_retry_failed_match_analysis_job_returns_400_when_no_failed_items(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         self._upload_material(
@@ -6881,7 +7633,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         created = self.client.post(
             "/api/match-analysis-jobs",
@@ -6898,7 +7652,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(retried.status_code, 400)
         self.assertIn("没有可重试的失败项", retried.json()["detail"])
 
-    def test_create_scheduled_batch_task_returns_normalized_scheduled_dates(self) -> None:
+    def test_create_scheduled_batch_task_returns_normalized_scheduled_dates(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
@@ -6930,13 +7686,17 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["scheduled_dates"], [tomorrow, day_after_tomorrow])
+        self.assertEqual(
+            response.json()["scheduled_dates"], [tomorrow, day_after_tomorrow]
+        )
 
     def test_create_scheduled_batch_task_assigns_jittered_scheduled_at(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
-        professor_ids = [item["id"] for item in self.client.get("/api/professors").json()[:3]]
+        professor_ids = [
+            item["id"] for item in self.client.get("/api/professors").json()[:3]
+        ]
         tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
 
         response = self.client.post(
@@ -6971,11 +7731,15 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(all(value is not None for value in scheduled_values))
         self.assertEqual(scheduled_values, sorted(scheduled_values))
 
-    def test_create_scheduled_batch_task_rejects_insufficient_schedule_capacity(self) -> None:
+    def test_create_scheduled_batch_task_rejects_insufficient_schedule_capacity(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
-        professor_ids = [item["id"] for item in self.client.get("/api/professors").json()[:2]]
+        professor_ids = [
+            item["id"] for item in self.client.get("/api/professors").json()[:2]
+        ]
         tomorrow = (datetime.now().date() + timedelta(days=1)).isoformat()
 
         response = self.client.post(
@@ -7037,7 +7801,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("发送窗口已全部过期", response.json()["detail"])
 
-    def test_create_scheduled_batch_task_rejects_invalid_window_time_format(self) -> None:
+    def test_create_scheduled_batch_task_rejects_invalid_window_time_format(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_profile_id = self._create_llm()
         self.client.post("/api/professors/import-sample")
@@ -7120,7 +7886,9 @@ class ApiEndpointTests(unittest.TestCase):
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         ).json()
         selected_professor = next(
-            item for item in updated_professors if item["id"] == selected_professor_ids[0]
+            item
+            for item in updated_professors
+            if item["id"] == selected_professor_ids[0]
         )
         self.assertEqual(selected_professor["status"], "preparing")
         self.assertIsNone(selected_professor["match_score"])
@@ -7132,7 +7900,9 @@ class ApiEndpointTests(unittest.TestCase):
             for item in batch_items
             if item["professor_id"] == selected_professor_ids[0]
         )
-        workspace_before = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
+        workspace_before = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        )
         self.assertEqual(workspace_before.status_code, 200)
         self.assertEqual(
             workspace_before.json()["current_task"]["primary_material_id"],
@@ -7177,16 +7947,30 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(match_workspace.status_code, 200)
-        matched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        matched_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(matched_thread["current_task"]["match_score"], 93)
         self.assertEqual(generated_workspace.status_code, 200)
-        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        generated_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(generated_thread["current_task"]["status"], "review_required")
-        self.assertEqual(generated_thread["current_task"]["generated_subject"], "更新后的套磁申请")
-        self.assertEqual(generated_thread["current_task"]["last_draft_prompt_tokens"], 612)
-        self.assertEqual(generated_thread["current_task"]["last_draft_completion_tokens"], 248)
-        self.assertEqual(generated_thread["current_task"]["last_draft_total_tokens"], 860)
-        self.assertGreater(generated_thread["current_task"]["estimated_prompt_tokens"], 0)
+        self.assertEqual(
+            generated_thread["current_task"]["generated_subject"], "更新后的套磁申请"
+        )
+        self.assertEqual(
+            generated_thread["current_task"]["last_draft_prompt_tokens"], 612
+        )
+        self.assertEqual(
+            generated_thread["current_task"]["last_draft_completion_tokens"], 248
+        )
+        self.assertEqual(
+            generated_thread["current_task"]["last_draft_total_tokens"], 860
+        )
+        self.assertGreater(
+            generated_thread["current_task"]["estimated_prompt_tokens"], 0
+        )
         self.assertEqual(generated_thread["messages"][-1]["prompt_tokens"], 612)
         self.assertEqual(generated_thread["messages"][-1]["completion_tokens"], 248)
         self.assertEqual(generated_thread["messages"][-1]["total_tokens"], 860)
@@ -7200,8 +7984,13 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(draft_generated_metadata["completion_tokens"], 248)
         self.assertEqual(draft_generated_metadata["total_tokens"], 860)
         self.assertEqual(switched_workspace.status_code, 200)
-        switched_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
-        self.assertEqual(switched_thread["current_task"]["primary_material_id"], publication_material_id)
+        switched_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
+        self.assertEqual(
+            switched_thread["current_task"]["primary_material_id"],
+            publication_material_id,
+        )
         self.assertEqual(switched_thread["current_task"]["status"], "review_required")
 
         with patch(
@@ -7222,7 +8011,9 @@ class ApiEndpointTests(unittest.TestCase):
                     "selected_material_ids": [],
                 },
             )
-        payload = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        payload = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(workspace_after.status_code, 200)
         self.assertEqual(payload["current_task"]["status"], "sent")
         self.assertNotIn("delivery_mode", payload["current_task"])
@@ -7262,7 +8053,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         workspace = self.client.post(
@@ -7294,7 +8087,10 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(refreshed.status_code, 200, msg=refreshed.text)
         self.assertFalse(
-            any(message["direction"] == "draft" for message in refreshed.json()["messages"]),
+            any(
+                message["direction"] == "draft"
+                for message in refreshed.json()["messages"]
+            ),
         )
 
     def test_template_draft_does_not_require_professor_research_direction(self) -> None:
@@ -7326,7 +8122,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         workspace = self.client.post(
@@ -7372,7 +8170,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         workspace = self.client.post(
@@ -7410,7 +8210,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(refreshed.status_code, 200, msg=refreshed.text)
         self.assertIsNone(refreshed.json()["current_task"]["generated_subject"])
         self.assertFalse(
-            any(message["direction"] == "draft" for message in refreshed.json()["messages"]),
+            any(
+                message["direction"] == "draft"
+                for message in refreshed.json()["messages"]
+            ),
         )
 
     def test_generate_draft_returns_bad_gateway_when_llm_fails(self) -> None:
@@ -7422,8 +8225,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -7440,7 +8247,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         workspace = self.client.post(
@@ -7454,7 +8263,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         with patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
-            AsyncMock(side_effect=llm_runtime.LLMRuntimeError("模型未返回可用改写内容")),
+            AsyncMock(
+                side_effect=llm_runtime.LLMRuntimeError("模型未返回可用改写内容")
+            ),
         ):
             response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
 
@@ -7566,8 +8377,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -7584,7 +8399,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         connection = sqlite3.connect(self.db_path)
@@ -7627,8 +8444,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -7645,7 +8466,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -7703,8 +8526,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -7721,7 +8548,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -7738,9 +8567,13 @@ class ApiEndpointTests(unittest.TestCase):
             response = self.client.post(f"/api/email-tasks/{task_id}/calculate-match")
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "缺少研究方向或近期论文，暂不能分析匹配度")
+        self.assertEqual(
+            response.json()["detail"], "缺少研究方向或近期论文，暂不能分析匹配度"
+        )
 
-    def test_calculate_match_uses_identity_primary_material_when_task_material_is_empty(self) -> None:
+    def test_calculate_match_uses_identity_primary_material_when_task_material_is_empty(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -7749,8 +8582,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -7767,7 +8604,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -7829,7 +8668,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "该任务正在分析中")
 
-    def test_workspace_thread_includes_professor_profile_enrichment_fields(self) -> None:
+    def test_workspace_thread_includes_professor_profile_enrichment_fields(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -7848,7 +8689,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         response = self.client.post(
@@ -7857,7 +8700,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.json()["professor"]["recent_papers"], ["Paper Evidence"])
+        self.assertEqual(
+            response.json()["professor"]["recent_papers"], ["Paper Evidence"]
+        )
         self.assertEqual(
             response.json()["professor"]["profile_url"],
             "https://example.edu/faculty/paper-only",
@@ -7868,7 +8713,9 @@ class ApiEndpointTests(unittest.TestCase):
         llm_id = self._create_llm()
 
         self.client.post("/api/professors/import-sample")
-        professor_ids = [item["id"] for item in self.client.get("/api/professors").json()[:3]]
+        professor_ids = [
+            item["id"] for item in self.client.get("/api/professors").json()[:3]
+        ]
 
         create_response = self.client.post(
             "/api/batch-tasks",
@@ -7979,7 +8826,9 @@ class ApiEndpointTests(unittest.TestCase):
         llm_id = self._create_llm()
 
         self.client.post("/api/professors/import-sample")
-        professor_ids = [item["id"] for item in self.client.get("/api/professors").json()[:2]]
+        professor_ids = [
+            item["id"] for item in self.client.get("/api/professors").json()[:2]
+        ]
 
         create_response = self.client.post(
             "/api/batch-tasks",
@@ -8057,7 +8906,9 @@ class ApiEndpointTests(unittest.TestCase):
             ],
         )
 
-    def test_continue_manually_creates_manual_child_task_from_batch_stopped_task(self) -> None:
+    def test_continue_manually_creates_manual_child_task_from_batch_stopped_task(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         primary_material_id = self._upload_material(
@@ -8072,8 +8923,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"%PDF-1.4 test attachment",
             material_type="portfolio",
         )
-        set_primary_response = self.client.post(f"/api/materials/{primary_material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{primary_material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -8090,7 +8945,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         create_response = self.client.post(
@@ -8172,7 +9029,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(before_task["id"])
         self.assertFalse(before_task["can_write_follow_up"])
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/continue-manually"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
@@ -8184,7 +9043,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["status"], "review_required")
         self.assertIsNone(current_task["cancellation_reason"])
         self.assertEqual(current_task["primary_material_id"], primary_material_id)
-        self.assertEqual(current_task["selected_material_ids"], [attachment_material_id])
+        self.assertEqual(
+            current_task["selected_material_ids"], [attachment_material_id]
+        )
         self.assertEqual(current_task["match_score"], 91)
         self.assertEqual(current_task["match_reason"], "研究方向与材料高度匹配")
         self.assertEqual(current_task["fit_points"], ["研究方向契合"])
@@ -8195,8 +9056,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["generated_content_html"], "<p>旧草稿正文</p>")
         self.assertEqual(current_task["outreach_generation_mode"], "template")
         self.assertEqual(current_task["outreach_template_subject"], "继续联系 {{name}}")
-        self.assertEqual(current_task["outreach_template_body_text"], "继续联系正文 {{name}}")
-        self.assertEqual(current_task["outreach_template_body_html"], "<p>继续联系正文 {{name}}</p>")
+        self.assertEqual(
+            current_task["outreach_template_body_text"], "继续联系正文 {{name}}"
+        )
+        self.assertEqual(
+            current_task["outreach_template_body_html"], "<p>继续联系正文 {{name}}</p>"
+        )
         self.assertFalse(current_task["can_continue_manually"])
         self.assertFalse(current_task["can_write_follow_up"])
 
@@ -8243,7 +9108,9 @@ class ApiEndpointTests(unittest.TestCase):
             ],
         )
 
-    def test_continue_manually_restores_matched_when_parent_has_match_without_draft(self) -> None:
+    def test_continue_manually_restores_matched_when_parent_has_match_without_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         primary_material_id = self._upload_material(
@@ -8252,8 +9119,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers agent systems and information extraction.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{primary_material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{primary_material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -8270,7 +9141,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         create_response = self.client.post(
@@ -8332,7 +9205,9 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/continue-manually"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         current_task = response.json()["current_task"]
@@ -8344,7 +9219,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["match_score"], 75)
         self.assertEqual(current_task["match_reason"], "匹配结果仍可复用")
 
-    def test_continue_manually_restores_discovered_when_parent_has_no_match(self) -> None:
+    def test_continue_manually_restores_discovered_when_parent_has_no_match(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -8363,7 +9240,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         create_response = self.client.post(
@@ -8416,7 +9295,9 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/continue-manually"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         current_task = response.json()["current_task"]
@@ -8445,7 +9326,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         create_response = self.client.post(
@@ -8486,8 +9369,12 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        first_response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")
-        second_response = self.client.post(f"/api/email-tasks/{parent_task_id}/continue-manually")
+        first_response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/continue-manually"
+        )
+        second_response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/continue-manually"
+        )
 
         self.assertEqual(first_response.status_code, 200, msg=first_response.text)
         self.assertEqual(second_response.status_code, 400, msg=second_response.text)
@@ -8498,7 +9385,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404, msg=response.text)
         self.assertEqual(response.json()["detail"], "EmailTask 9999 不存在")
 
-    def test_continue_manually_rejects_task_without_canceled_batch_stopped_guard(self) -> None:
+    def test_continue_manually_rejects_task_without_canceled_batch_stopped_guard(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -8517,7 +9406,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -8532,7 +9423,9 @@ class ApiEndpointTests(unittest.TestCase):
             ("canceled", None),
         ]
         for status_value, cancellation_reason in cases:
-            with self.subTest(status=status_value, cancellation_reason=cancellation_reason):
+            with self.subTest(
+                status=status_value, cancellation_reason=cancellation_reason
+            ):
                 connection = sqlite3.connect(self.db_path)
                 try:
                     connection.execute(
@@ -8547,7 +9440,9 @@ class ApiEndpointTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-                response = self.client.post(f"/api/email-tasks/{task_id}/continue-manually")
+                response = self.client.post(
+                    f"/api/email-tasks/{task_id}/continue-manually"
+                )
 
                 self.assertEqual(response.status_code, 400, msg=response.text)
 
@@ -8582,7 +9477,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
         mocked_send.assert_not_awaited()
 
-    def test_approve_and_schedule_rejects_canceled_batch_stopped_parent_task(self) -> None:
+    def test_approve_and_schedule_rejects_canceled_batch_stopped_parent_task(
+        self,
+    ) -> None:
         task_id = self._create_canceled_batch_stopped_parent_task(
             email="approve-schedule-guard@example.edu",
         )
@@ -8613,8 +9510,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers agent systems and information extraction.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{primary_material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{primary_material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -8631,7 +9532,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -8665,7 +9568,9 @@ class ApiEndpointTests(unittest.TestCase):
             params={"identity_id": identity_id, "llm_profile_id": llm_id},
         )
 
-        self.assertEqual(workspace_response.status_code, 200, msg=workspace_response.text)
+        self.assertEqual(
+            workspace_response.status_code, 200, msg=workspace_response.text
+        )
         current_task = workspace_response.json()["current_task"]
         self.assertEqual(current_task["id"], task_id)
         self.assertEqual(current_task["status"], "sent")
@@ -8686,8 +9591,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"%PDF-1.4 follow up attachment",
             material_type="portfolio",
         )
-        set_primary_response = self.client.post(f"/api/materials/{primary_material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{primary_material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -8704,7 +9613,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -8782,7 +9693,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertFalse(before_task["can_continue_manually"])
         self.assertTrue(before_task["can_write_follow_up"])
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         payload = response.json()
@@ -8794,7 +9707,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(current_task["status"], "matched")
         self.assertIsNone(current_task["cancellation_reason"])
         self.assertEqual(current_task["primary_material_id"], primary_material_id)
-        self.assertEqual(current_task["selected_material_ids"], [attachment_material_id])
+        self.assertEqual(
+            current_task["selected_material_ids"], [attachment_material_id]
+        )
         self.assertEqual(current_task["match_score"], 88)
         self.assertEqual(current_task["match_reason"], "已建立初步联系")
         self.assertEqual(current_task["fit_points"], ["研究主题重合"])
@@ -8808,8 +9723,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(current_task["approved_body_html"])
         self.assertEqual(current_task["outreach_generation_mode"], "template")
         self.assertEqual(current_task["outreach_template_subject"], "跟进主题 {{name}}")
-        self.assertEqual(current_task["outreach_template_body_text"], "跟进正文 {{name}}")
-        self.assertEqual(current_task["outreach_template_body_html"], "<p>跟进正文 {{name}}</p>")
+        self.assertEqual(
+            current_task["outreach_template_body_text"], "跟进正文 {{name}}"
+        )
+        self.assertEqual(
+            current_task["outreach_template_body_html"], "<p>跟进正文 {{name}}</p>"
+        )
         self.assertFalse(current_task["can_continue_manually"])
         self.assertFalse(current_task["can_write_follow_up"])
 
@@ -8861,7 +9780,9 @@ class ApiEndpointTests(unittest.TestCase):
             ],
         )
 
-    def test_start_follow_up_restores_matched_when_parent_has_no_match_result(self) -> None:
+    def test_start_follow_up_restores_matched_when_parent_has_no_match_result(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -8880,7 +9801,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -8917,7 +9840,9 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         current_task = response.json()["current_task"]
@@ -8926,7 +9851,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIsNone(current_task["match_score"])
         self.assertIsNone(current_task["match_reason"])
 
-    def test_start_follow_up_creates_manual_child_task_from_reply_detected_task(self) -> None:
+    def test_start_follow_up_creates_manual_child_task_from_reply_detected_task(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         primary_material_id = self._upload_material(
@@ -8935,8 +9862,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background covers agent systems and information extraction.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{primary_material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{primary_material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         professor_response = self.client.post(
             "/api/professors",
@@ -8953,7 +9884,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -9015,7 +9948,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(workspace_before.status_code, 200, msg=workspace_before.text)
         self.assertTrue(workspace_before.json()["current_task"]["can_write_follow_up"])
 
-        response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
+        response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         current_task = response.json()["current_task"]
@@ -9048,7 +9983,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -9072,8 +10009,12 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        first_response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
-        second_response = self.client.post(f"/api/email-tasks/{parent_task_id}/start-follow-up")
+        first_response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
+        second_response = self.client.post(
+            f"/api/email-tasks/{parent_task_id}/start-follow-up"
+        )
 
         self.assertEqual(first_response.status_code, 200, msg=first_response.text)
         self.assertEqual(second_response.status_code, 400, msg=second_response.text)
@@ -9084,7 +10025,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404, msg=response.text)
         self.assertEqual(response.json()["detail"], "EmailTask 9999 不存在")
 
-    def test_start_follow_up_rejects_task_without_sent_or_reply_detected_guard(self) -> None:
+    def test_start_follow_up_rejects_task_without_sent_or_reply_detected_guard(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -9103,7 +10046,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -9159,13 +10104,21 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
 
         batch_task_id = response.json()["id"]
-        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
-        task_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0][
+            "id"
+        ]
+        task_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        )
         self.assertIsNone(task_thread.json()["current_task"]["primary_material_id"])
 
-        regenerate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
+        regenerate_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft"
+        )
         self.assertEqual(regenerate_response.status_code, 400)
-        self.assertEqual(regenerate_response.json()["detail"], "请选择 AI 写信参考材料后再生成草稿")
+        self.assertEqual(
+            regenerate_response.json()["detail"], "请选择 AI 写信参考材料后再生成草稿"
+        )
 
         with patch(
             "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
@@ -9186,10 +10139,14 @@ class ApiEndpointTests(unittest.TestCase):
                 },
             )
         self.assertEqual(send_response.status_code, 200)
-        sent_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        sent_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(sent_thread["current_task"]["status"], "sent")
 
-    def test_batch_task_generation_requires_selected_template_to_be_complete(self) -> None:
+    def test_batch_task_generation_requires_selected_template_to_be_complete(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -9237,7 +10194,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "请先填写默认套磁信主题和纯文本正文")
+        self.assertEqual(
+            response.json()["detail"], "请先填写默认套磁信主题和纯文本正文"
+        )
 
     def test_llm_mode_requires_complete_template_before_generating_draft(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -9292,10 +10251,14 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ),
         ) as mocked_generate:
-            generate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
+            generate_response = self.client.post(
+                f"/api/email-tasks/{task_id}/generate-draft"
+            )
 
         self.assertEqual(generate_response.status_code, 400)
-        self.assertEqual(generate_response.json()["detail"], "请先填写默认套磁信主题和纯文本正文")
+        self.assertEqual(
+            generate_response.json()["detail"], "请先填写默认套磁信主题和纯文本正文"
+        )
         mocked_generate.assert_not_awaited()
 
     def test_schedule_and_reply_detection_use_sent_message_id(self) -> None:
@@ -9325,7 +10288,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         batch_task_id = response.json()["id"]
-        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0]["id"]
+        task_id = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()[0][
+            "id"
+        ]
 
         schedule_time = datetime.now(UTC) + timedelta(hours=1)
         with patch(
@@ -9352,9 +10317,13 @@ class ApiEndpointTests(unittest.TestCase):
             self._run_async(self._force_task_due(task_id))
             self._run_async(self._dispatch_due_tasks())
 
-        sent_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        sent_workspace = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(sent_workspace["current_task"]["status"], "sent")
-        self.assertEqual(sent_workspace["current_task"]["last_rfc_message_id"], "<msg-1@example.com>")
+        self.assertEqual(
+            sent_workspace["current_task"]["last_rfc_message_id"], "<msg-1@example.com>"
+        )
 
         reply_sent_at = datetime(2026, 5, 1, 8, 0, tzinfo=UTC)
         reply_received_at = datetime(2026, 5, 1, 8, 30, tzinfo=UTC)
@@ -9378,9 +10347,13 @@ class ApiEndpointTests(unittest.TestCase):
                 f"/api/workspaces/{professor_id}/refresh-replies",
                 params={"identity_id": identity_id, "llm_profile_id": llm_id},
             )
-            self.assertEqual(refresh_response.status_code, 200, msg=refresh_response.text)
+            self.assertEqual(
+                refresh_response.status_code, 200, msg=refresh_response.text
+            )
 
-        replied_workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread").json()
+        replied_workspace = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        ).json()
         self.assertEqual(replied_workspace["current_task"]["status"], "reply_detected")
         self.assertTrue(replied_workspace["current_task"]["is_replied"])
         received_message = next(
@@ -9510,23 +10483,38 @@ class ApiEndpointTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["task"]["identity_id"], identity_id)
         self.assertEqual(payload["defaults"]["identity_id"], identity_id)
-        self.assertEqual(payload["defaults"]["outreach_template_subject"], "原主题 {{name}}")
+        self.assertEqual(
+            payload["defaults"]["outreach_template_subject"], "原主题 {{name}}"
+        )
         self.assertNotIn("llm_profile_id", payload["defaults"])
         self.assertNotIn("scheduled_dates", payload["defaults"])
         selectable_items = [item for item in payload["items"] if item["selectable"]]
-        self.assertEqual([item["professor_id"] for item in selectable_items], professor_ids[:3])
-        self.assertEqual([item["reason_label"] for item in selectable_items], ["发送窗口已过期", "任务中止后未发送", "发送失败"])
+        self.assertEqual(
+            [item["professor_id"] for item in selectable_items], professor_ids[:3]
+        )
+        self.assertEqual(
+            [item["reason_label"] for item in selectable_items],
+            ["发送窗口已过期", "任务中止后未发送", "发送失败"],
+        )
         self.assertTrue(all(item["default_selected"] for item in selectable_items))
         self.assertEqual(payload["summary"]["candidate_count"], 3)
         self.assertEqual(payload["summary"]["default_selected_count"], 3)
 
-    def test_batch_resend_creation_reuses_each_items_best_available_content(self) -> None:
+    def test_batch_resend_creation_reuses_each_items_best_available_content(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        approved_professor_id = self._create_professor(email="approved-resend@example.edu")
-        generated_professor_id = self._create_professor(email="generated-resend@example.edu")
+        approved_professor_id = self._create_professor(
+            email="approved-resend@example.edu"
+        )
+        generated_professor_id = self._create_professor(
+            email="generated-resend@example.edu"
+        )
         saved_professor_id = self._create_professor(email="saved-resend@example.edu")
-        regenerate_professor_id = self._create_professor(email="regenerate-resend@example.edu")
+        regenerate_professor_id = self._create_professor(
+            email="regenerate-resend@example.edu"
+        )
         source_batch_task_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -9586,7 +10574,9 @@ class ApiEndpointTests(unittest.TestCase):
             outreach_generation_mode="llm",
         )
 
-        context = self.client.get(f"/api/batch-tasks/{source_batch_task_id}/resend-context")
+        context = self.client.get(
+            f"/api/batch-tasks/{source_batch_task_id}/resend-context"
+        )
         self.assertEqual(context.status_code, 200, msg=context.text)
         reuse_kinds = {
             item["professor_id"]: item["content_reuse_kind"]
@@ -9690,7 +10680,9 @@ class ApiEndpointTests(unittest.TestCase):
             ("discovered", None, None, None, None, None, None, None, 0),
         )
 
-    def test_batch_resend_template_strategy_replaces_old_ai_content_without_review(self) -> None:
+    def test_batch_resend_template_strategy_replaces_old_ai_content_without_review(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="template-resend@example.edu")
@@ -9777,10 +10769,14 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(row[8], "原任务匹配依据")
         self.assertNotIn("不应沿用", " ".join(str(value or "") for value in row))
 
-    def test_batch_resend_template_strategy_schedules_archived_template_snapshot(self) -> None:
+    def test_batch_resend_template_strategy_schedules_archived_template_snapshot(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="archived-template-resend@example.edu")
+        professor_id = self._create_professor(
+            email="archived-template-resend@example.edu"
+        )
         template_response = self.client.post(
             "/api/outreach-templates",
             json={
@@ -9976,7 +10972,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(row[8], 88)
         self.assertEqual(row[9], "保留的匹配信息")
 
-    def test_batch_resend_legacy_reuse_keeps_expired_auto_approved_template_ready(self) -> None:
+    def test_batch_resend_legacy_reuse_keeps_expired_auto_approved_template_ready(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="legacy-template-reuse@example.edu")
@@ -10046,7 +11044,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.json()["review_required_count"], 0)
         self.assertEqual(response.json()["approved_count"], 1)
 
-    def test_batch_resend_content_strategy_requires_source_and_known_value(self) -> None:
+    def test_batch_resend_content_strategy_requires_source_and_known_value(
+        self,
+    ) -> None:
         payload = {
             "identity_id": 1,
             "llm_profile_id": 1,
@@ -10123,7 +11123,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, msg=response.text)
         self.assertIn("已成功触达", response.json()["detail"])
 
-    def test_batch_resend_normalizes_html_requires_review_and_uses_new_materials(self) -> None:
+    def test_batch_resend_normalizes_html_requires_review_and_uses_new_materials(
+        self,
+    ) -> None:
         identity_response = self.client.post(
             "/api/identities",
             json=self._build_identity_payload(with_imap=False),
@@ -10238,7 +11240,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(row[4], "历史 HTML 正文")
         self.assertEqual(row[5], "<p>历史 HTML 正文</p>")
 
-    def test_batch_resend_requires_fallback_template_when_content_must_regenerate(self) -> None:
+    def test_batch_resend_requires_fallback_template_when_content_must_regenerate(
+        self,
+    ) -> None:
         identity_response = self.client.post(
             "/api/identities",
             json=self._build_identity_payload(with_imap=False),
@@ -10289,8 +11293,18 @@ class ApiEndpointTests(unittest.TestCase):
     def test_batch_task_resend_context_filters_deleted_material_defaults(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        primary_id = self._upload_material(identity_id, filename="resume.txt", content=b"resume", material_type="resume")
-        attachment_id = self._upload_material(identity_id, filename="paper.pdf", content=b"paper", material_type="publication")
+        primary_id = self._upload_material(
+            identity_id,
+            filename="resume.txt",
+            content=b"resume",
+            material_type="resume",
+        )
+        attachment_id = self._upload_material(
+            identity_id,
+            filename="paper.pdf",
+            content=b"paper",
+            material_type="publication",
+        )
         professor_id = self._create_professor(email="material-resend@example.edu")
         batch_task_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
@@ -10310,8 +11324,13 @@ class ApiEndpointTests(unittest.TestCase):
         )
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE email_tasks SET cancellation_reason = ? WHERE batch_task_id = ?", ("schedule_expired", batch_task_id))
-            connection.execute("DELETE FROM identity_materials WHERE id = ?", (primary_id,))
+            connection.execute(
+                "UPDATE email_tasks SET cancellation_reason = ? WHERE batch_task_id = ?",
+                ("schedule_expired", batch_task_id),
+            )
+            connection.execute(
+                "DELETE FROM identity_materials WHERE id = ?", (primary_id,)
+            )
             connection.commit()
         finally:
             connection.close()
@@ -10335,7 +11354,10 @@ class ApiEndpointTests(unittest.TestCase):
         )
         connection = sqlite3.connect(self.db_path)
         try:
-            connection.execute("UPDATE batch_tasks SET identity_id = ? WHERE id = ?", (999999, batch_task_id))
+            connection.execute(
+                "UPDATE batch_tasks SET identity_id = ? WHERE id = ?",
+                (999999, batch_task_id),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -10343,7 +11365,10 @@ class ApiEndpointTests(unittest.TestCase):
         response = self.client.get(f"/api/batch-tasks/{batch_task_id}/resend-context")
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "原任务身份已不存在，无法直接重新发起。")
+        self.assertEqual(
+            response.json()["detail"], "原任务身份已不存在，无法直接重新发起。"
+        )
+
     def test_batch_task_card_hides_delivery_mode_snapshot(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
@@ -10423,9 +11448,18 @@ class ApiEndpointTests(unittest.TestCase):
                 ).fetchall()
             ]
             self.assertEqual(len(task_ids), 4)
-            connection.execute("UPDATE email_tasks SET status = 'generating_draft' WHERE id = ?", (task_ids[0],))
-            connection.execute("UPDATE email_tasks SET status = 'draft_failed' WHERE id = ?", (task_ids[1],))
-            connection.execute("UPDATE email_tasks SET status = 'review_required' WHERE id = ?", (task_ids[2],))
+            connection.execute(
+                "UPDATE email_tasks SET status = 'generating_draft' WHERE id = ?",
+                (task_ids[0],),
+            )
+            connection.execute(
+                "UPDATE email_tasks SET status = 'draft_failed' WHERE id = ?",
+                (task_ids[1],),
+            )
+            connection.execute(
+                "UPDATE email_tasks SET status = 'review_required' WHERE id = ?",
+                (task_ids[2],),
+            )
             connection.execute(
                 "UPDATE email_tasks SET primary_material_id = NULL WHERE id = ?",
                 (task_ids[3],),
@@ -10436,7 +11470,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         response = self.client.get("/api/batch-tasks")
         self.assertEqual(response.status_code, 200, msg=response.text)
-        task_payload = next(item for item in response.json() if item["id"] == batch_task_id)
+        task_payload = next(
+            item for item in response.json() if item["id"] == batch_task_id
+        )
         self.assertEqual(task_payload["generating_draft_count"], 1)
         self.assertEqual(task_payload["draft_failed_count"], 1)
         self.assertEqual(task_payload["pending_generation_count"], 1)
@@ -10477,8 +11513,12 @@ class ApiEndpointTests(unittest.TestCase):
             status="running",
             primary_material_id=None,
         )
-        for index, batch_task_id in enumerate([first_batch_task_id, second_batch_task_id], start=1):
-            professor_id = self._create_professor(email=f"stale-completed-batch-{index}@example.edu")
+        for index, batch_task_id in enumerate(
+            [first_batch_task_id, second_batch_task_id], start=1
+        ):
+            professor_id = self._create_professor(
+                email=f"stale-completed-batch-{index}@example.edu"
+            )
             self._insert_email_task_with_material(
                 identity_id=identity_id,
                 llm_id=llm_id,
@@ -10498,7 +11538,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(self._get_batch_task_status(first_batch_task_id), "completed")
         self.assertEqual(self._get_batch_task_status(second_batch_task_id), "completed")
 
-    def test_template_scheduled_batch_task_creates_scheduled_items_without_review(self) -> None:
+    def test_template_scheduled_batch_task_creates_scheduled_items_without_review(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_response = self.client.post(
@@ -10516,7 +11558,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         scheduled_date = (datetime.now().date() + timedelta(days=1)).isoformat()
 
@@ -10635,9 +11679,15 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(thread_response.status_code, 200, msg=thread_response.text)
         self.assertEqual(thread_response.json()["current_task"]["id"], first_task_id)
-        self.assertEqual(thread_response.json()["current_task"]["batch_task_id"], first_batch_id)
-        self.assertEqual(thread_response.json()["current_task"]["generated_subject"], "第一批草稿")
-        self.assertEqual(thread_response.json()["professor"]["department"], "Computer Science")
+        self.assertEqual(
+            thread_response.json()["current_task"]["batch_task_id"], first_batch_id
+        )
+        self.assertEqual(
+            thread_response.json()["current_task"]["generated_subject"], "第一批草稿"
+        )
+        self.assertEqual(
+            thread_response.json()["professor"]["department"], "Computer Science"
+        )
 
         mismatch_response = self.client.get(
             f"/api/batch-tasks/{first_batch_id}/items/{second_task_id}/thread",
@@ -10927,7 +11977,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.json()[0]["status"], "scheduled")
         self.assertIsNotNone(items.json()[0]["scheduled_at"])
 
-    def test_bulk_approve_batch_drafts_is_atomic_when_review_snapshot_changes(self) -> None:
+    def test_bulk_approve_batch_drafts_is_atomic_when_review_snapshot_changes(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         first_professor_id = self._create_professor(
@@ -11035,7 +12087,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["current_task"]["id"], first_task_id)
-        self.assertEqual(response.json()["current_task"]["batch_task_id"], first_batch_id)
+        self.assertEqual(
+            response.json()["current_task"]["batch_task_id"], first_batch_id
+        )
         self.assertEqual(response.json()["current_task"]["status"], "approved")
         second_state = self._get_email_task_delete_state(second_task_id)
         self.assertEqual(second_state["status"], "review_required")
@@ -11061,7 +12115,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(items.json()[0]["status"], "review_required")
 
     def test_resume_scheduled_batch_task_expires_when_window_has_passed(self) -> None:
-        batch_task_id, task_id = self._create_expired_scheduled_batch_review_task(batch_status="paused")
+        batch_task_id, task_id = self._create_expired_scheduled_batch_review_task(
+            batch_status="paused"
+        )
 
         response = self.client.post(f"/api/batch-tasks/{batch_task_id}/resume")
 
@@ -11091,7 +12147,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         with patch(
@@ -11158,7 +12216,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
 
         response = self.client.post(
             "/api/batch-tasks",
@@ -11195,7 +12255,9 @@ class ApiEndpointTests(unittest.TestCase):
             f"/api/batch-tasks/{batch_task_id}/items/{item['id']}/thread",
         )
         self.assertEqual(thread.status_code, 200, msg=thread.text)
-        self.assertEqual(thread.json()["current_task"]["outreach_generation_mode"], "llm")
+        self.assertEqual(
+            thread.json()["current_task"]["outreach_generation_mode"], "llm"
+        )
         self.assertEqual(
             thread.json()["current_task"]["generated_subject"],
             "申请与缺研究方向导师老师交流",
@@ -11454,7 +12516,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertIn("generated_content_html", unloaded_task_columns[0])
         self.assertIn("recent_papers", unloaded_professor_columns[0])
 
-    def test_batch_task_items_include_next_action_for_blocked_draft_generation(self) -> None:
+    def test_batch_task_items_include_next_action_for_blocked_draft_generation(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11478,7 +12542,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         batch_task_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -11499,7 +12565,9 @@ class ApiEndpointTests(unittest.TestCase):
         response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.json()[0]["next_action"], "complete_professor_profile")
+        self.assertEqual(
+            response.json()[0]["next_action"], "complete_professor_profile"
+        )
 
     def test_batch_task_items_retry_draft_after_profile_is_completed(self) -> None:
         identity_id = self._create_identity(with_imap=False)
@@ -11546,7 +12614,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()[0]["next_action"], "retry_draft_generation")
 
-    def test_setting_primary_material_unblocks_batch_task_items_missing_material(self) -> None:
+    def test_setting_primary_material_unblocks_batch_task_items_missing_material(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11575,19 +12645,31 @@ class ApiEndpointTests(unittest.TestCase):
 
         before_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(before_response.status_code, 200, msg=before_response.text)
-        self.assertEqual(before_response.json()[0]["next_action"], "select_primary_material")
+        self.assertEqual(
+            before_response.json()[0]["next_action"], "select_primary_material"
+        )
 
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
 
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
         after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(after_response.status_code, 200, msg=after_response.text)
-        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+        self.assertEqual(
+            after_response.json()[0]["next_action"], "waiting_draft_generation"
+        )
 
-    def test_null_generation_mode_batch_item_uses_llm_next_action_contract(self) -> None:
+    def test_null_generation_mode_batch_item_uses_llm_next_action_contract(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
-        professor_id = self._create_professor(email="null-mode-missing-material@example.edu")
+        professor_id = self._create_professor(
+            email="null-mode-missing-material@example.edu"
+        )
         batch_task_id = self._insert_batch_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -11610,7 +12692,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()[0]["next_action"], "select_primary_material")
 
-    def test_setting_primary_material_unblocks_null_generation_mode_batch_items(self) -> None:
+    def test_setting_primary_material_unblocks_null_generation_mode_batch_items(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11637,12 +12721,18 @@ class ApiEndpointTests(unittest.TestCase):
             outreach_generation_mode=None,
         )
 
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
 
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
         after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(after_response.status_code, 200, msg=after_response.text)
-        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+        self.assertEqual(
+            after_response.json()[0]["next_action"], "waiting_draft_generation"
+        )
         connection = sqlite3.connect(self.db_path)
         try:
             primary_material_id, generation_mode = connection.execute(
@@ -11654,7 +12744,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(primary_material_id, material_id)
         self.assertEqual(generation_mode, "llm")
 
-    def test_uploading_first_primary_material_unblocks_batch_task_items_missing_material(self) -> None:
+    def test_uploading_first_primary_material_unblocks_batch_task_items_missing_material(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="upload-unblocks@example.edu")
@@ -11677,7 +12769,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         before_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(before_response.status_code, 200, msg=before_response.text)
-        self.assertEqual(before_response.json()[0]["next_action"], "select_primary_material")
+        self.assertEqual(
+            before_response.json()[0]["next_action"], "select_primary_material"
+        )
 
         material_id = self._upload_material(
             identity_id,
@@ -11688,7 +12782,9 @@ class ApiEndpointTests(unittest.TestCase):
 
         after_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
         self.assertEqual(after_response.status_code, 200, msg=after_response.text)
-        self.assertEqual(after_response.json()[0]["next_action"], "waiting_draft_generation")
+        self.assertEqual(
+            after_response.json()[0]["next_action"], "waiting_draft_generation"
+        )
         connection = sqlite3.connect(self.db_path)
         try:
             primary_material_id = connection.execute(
@@ -11699,7 +12795,9 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(primary_material_id, material_id)
 
-    def test_retry_batch_task_item_draft_moves_failed_item_back_to_generation_queue(self) -> None:
+    def test_retry_batch_task_item_draft_moves_failed_item_back_to_generation_queue(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11726,7 +12824,9 @@ class ApiEndpointTests(unittest.TestCase):
             outreach_generation_mode="llm",
         )
 
-        response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+        response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertTrue(response.json()["ok"])
@@ -11764,7 +12864,9 @@ class ApiEndpointTests(unittest.TestCase):
             outreach_generation_mode=None,
         )
 
-        response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+        response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft"
+        )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         items_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
@@ -11782,7 +12884,9 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         self.assertEqual(generation_mode, "llm")
 
-    def test_template_draft_failed_batch_item_does_not_expose_ai_retry_action(self) -> None:
+    def test_template_draft_failed_batch_item_does_not_expose_ai_retry_action(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         professor_id = self._create_professor(email="template-draft-failed@example.edu")
@@ -11804,7 +12908,9 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         items_response = self.client.get(f"/api/batch-tasks/{batch_task_id}/items")
-        retry_response = self.client.post(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft")
+        retry_response = self.client.post(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/retry-draft"
+        )
 
         self.assertEqual(items_response.status_code, 200, msg=items_response.text)
         self.assertEqual(items_response.json()[0]["next_action"], None)
@@ -11819,8 +12925,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research focuses on information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         with (
             patch(
@@ -11843,8 +12953,12 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ) as mocked_send,
         ):
-            thread_response = self.client.get(f"/api/test-compose/{identity_id}/{llm_id}")
-            draft_response = self.client.post(f"/api/test-compose/{identity_id}/{llm_id}/generate-draft")
+            thread_response = self.client.get(
+                f"/api/test-compose/{identity_id}/{llm_id}"
+            )
+            draft_response = self.client.post(
+                f"/api/test-compose/{identity_id}/{llm_id}/generate-draft"
+            )
             send_response = self.client.post(
                 f"/api/test-compose/{identity_id}/{llm_id}/send",
                 json={
@@ -11866,12 +12980,18 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(thread_payload["draft"]["selected_material_ids"], [])
         self.assertEqual(draft_payload["draft"]["subject"], "测试主题")
         self.assertEqual(draft_payload["draft"]["body_text"], "测试正文")
-        self.assertEqual(send_payload["history"][0]["recipient_email"], "sender@example.com")
+        self.assertEqual(
+            send_payload["history"][0]["recipient_email"], "sender@example.com"
+        )
         self.assertEqual(send_payload["history"][0]["status"], "sent")
-        self.assertEqual(send_payload["history"][0]["rfc_message_id"], "<self-test@example.com>")
+        self.assertEqual(
+            send_payload["history"][0]["rfc_message_id"], "<self-test@example.com>"
+        )
         mocked_send.assert_awaited_once()
 
-    def test_delete_material_removes_stale_test_compose_attachment_selection(self) -> None:
+    def test_delete_material_removes_stale_test_compose_attachment_selection(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11891,7 +13011,9 @@ class ApiEndpointTests(unittest.TestCase):
             },
         )
         self.assertEqual(save_response.status_code, 200, msg=save_response.text)
-        self.assertEqual(save_response.json()["draft"]["selected_material_ids"], [material_id])
+        self.assertEqual(
+            save_response.json()["draft"]["selected_material_ids"], [material_id]
+        )
 
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
@@ -11904,7 +13026,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(payload["draft"]["selected_material_ids"], [])
         self.assertEqual(payload["material_options"], [])
 
-    def test_test_compose_generate_draft_returns_bad_gateway_when_llm_fails(self) -> None:
+    def test_test_compose_generate_draft_returns_bad_gateway_when_llm_fails(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -11913,8 +13037,12 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My research focuses on information extraction and agents.",
             material_type="resume",
         )
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
 
         from app.modules.llm import runtime as llm_runtime
 
@@ -11928,12 +13056,16 @@ class ApiEndpointTests(unittest.TestCase):
                 ),
             ),
         ):
-            response = self.client.post(f"/api/test-compose/{identity_id}/{llm_id}/generate-draft")
+            response = self.client.post(
+                f"/api/test-compose/{identity_id}/{llm_id}/generate-draft"
+            )
 
         self.assertEqual(response.status_code, 502, msg=response.text)
         self.assertEqual(response.json()["detail"], "模型返回的正文无效")
 
-    def test_test_compose_status_is_completed_by_identity_across_llm_profiles(self) -> None:
+    def test_test_compose_status_is_completed_by_identity_across_llm_profiles(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()
         second_llm_response = self.client.post(
@@ -11951,7 +13083,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "is_default": False,
             },
         )
-        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        self.assertEqual(
+            second_llm_response.status_code, 201, msg=second_llm_response.text
+        )
 
         with patch(
             "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
@@ -11979,7 +13113,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(status_response.status_code, 200, msg=status_response.text)
         self.assertTrue(status_response.json()["completed"])
 
-    def test_test_compose_draft_and_history_are_identity_scoped_not_llm_scoped(self) -> None:
+    def test_test_compose_draft_and_history_are_identity_scoped_not_llm_scoped(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()
         second_llm_response = self.client.post(
@@ -11997,7 +13133,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "is_default": False,
             },
         )
-        self.assertEqual(second_llm_response.status_code, 201, msg=second_llm_response.text)
+        self.assertEqual(
+            second_llm_response.status_code, 201, msg=second_llm_response.text
+        )
         second_llm_id = second_llm_response.json()["id"]
 
         save_response = self.client.post(
@@ -12036,15 +13174,22 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-        switched_thread = self.client.get(f"/api/test-compose/{identity_id}/{second_llm_id}")
+        switched_thread = self.client.get(
+            f"/api/test-compose/{identity_id}/{second_llm_id}"
+        )
 
         self.assertEqual(switched_thread.status_code, 200, msg=switched_thread.text)
         payload = switched_thread.json()
         self.assertEqual(payload["draft"]["subject"], "模型 A 保存的测试主题")
         self.assertEqual(payload["draft"]["body_text"], "模型 A 保存的测试正文")
-        self.assertEqual(payload["history"][0]["rfc_message_id"], "<identity-compose-switch@example.com>")
+        self.assertEqual(
+            payload["history"][0]["rfc_message_id"],
+            "<identity-compose-switch@example.com>",
+        )
 
-    def test_test_compose_template_generation_preserves_placeholders_in_draft(self) -> None:
+    def test_test_compose_template_generation_preserves_placeholders_in_draft(
+        self,
+    ) -> None:
         response = self.client.post(
             "/api/identities",
             json=self._build_identity_payload(
@@ -12059,7 +13204,9 @@ class ApiEndpointTests(unittest.TestCase):
         identity_id = response.json()["id"]
         llm_id = self._create_llm()
 
-        draft_response = self.client.post(f"/api/test-compose/{identity_id}/{llm_id}/generate-draft")
+        draft_response = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/generate-draft"
+        )
 
         self.assertEqual(draft_response.status_code, 200, msg=draft_response.text)
         draft = draft_response.json()["draft"]
@@ -12085,7 +13232,11 @@ class ApiEndpointTests(unittest.TestCase):
 
         with patch(
             "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
-            AsyncMock(return_value=self._build_send_result(message_id="<test-render@example.com>", provider_payload={})),
+            AsyncMock(
+                return_value=self._build_send_result(
+                    message_id="<test-render@example.com>", provider_payload={}
+                )
+            ),
         ) as mocked_send:
             response = self.client.post(
                 f"/api/test-compose/{identity_id}/{llm_id}/send",
@@ -12186,15 +13337,27 @@ class ApiEndpointTests(unittest.TestCase):
 
         batch_task_id = response.json()["id"]
         batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
-        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
-        workspace = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
+        task_id = next(
+            item["id"] for item in batch_items if item["professor_id"] == professor_id
+        )
+        workspace = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        )
         self.assertEqual(workspace.status_code, 200, msg=workspace.text)
         payload = workspace.json()
-        self.assertEqual(payload["current_task"]["outreach_generation_mode"], "template")
-        self.assertEqual(payload["current_task"]["outreach_template_subject"], "批量主题 {{name}}")
-        self.assertEqual(payload["current_task"]["outreach_template_body_text"], "批量正文 {{name}}")
+        self.assertEqual(
+            payload["current_task"]["outreach_generation_mode"], "template"
+        )
+        self.assertEqual(
+            payload["current_task"]["outreach_template_subject"], "批量主题 {{name}}"
+        )
+        self.assertEqual(
+            payload["current_task"]["outreach_template_body_text"], "批量正文 {{name}}"
+        )
 
-    def test_llm_batch_task_prefers_outreach_template_fields_for_snapshot_and_draft(self) -> None:
+    def test_llm_batch_task_prefers_outreach_template_fields_for_snapshot_and_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
         material_id = self._upload_material(
@@ -12231,7 +13394,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         batch_subject = "批量润色主题 {{name}}"
@@ -12264,13 +13429,27 @@ class ApiEndpointTests(unittest.TestCase):
 
         batch_task_id = create_response.json()["id"]
         batch_items = self.client.get(f"/api/batch-tasks/{batch_task_id}/items").json()
-        task_id = next(item["id"] for item in batch_items if item["professor_id"] == professor_id)
-        workspace_before_generate = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread")
-        self.assertEqual(workspace_before_generate.status_code, 200, msg=workspace_before_generate.text)
+        task_id = next(
+            item["id"] for item in batch_items if item["professor_id"] == professor_id
+        )
+        workspace_before_generate = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+        )
+        self.assertEqual(
+            workspace_before_generate.status_code,
+            200,
+            msg=workspace_before_generate.text,
+        )
         task_before_generate = workspace_before_generate.json()["current_task"]
-        self.assertEqual(task_before_generate["outreach_template_subject"], batch_subject)
-        self.assertEqual(task_before_generate["outreach_template_body_text"], batch_body_text)
-        self.assertEqual(task_before_generate["outreach_template_body_html"], batch_body_html)
+        self.assertEqual(
+            task_before_generate["outreach_template_subject"], batch_subject
+        )
+        self.assertEqual(
+            task_before_generate["outreach_template_body_text"], batch_body_text
+        )
+        self.assertEqual(
+            task_before_generate["outreach_template_body_html"], batch_body_html
+        )
 
         async def _fake_generate_draft_content(**kwargs):
             self.assertEqual(kwargs["custom_subject"], batch_subject)
@@ -12292,10 +13471,16 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
-        generated_thread = self.client.get(f"/api/batch-tasks/{batch_task_id}/items/{task_before_generate['id']}/thread").json()
+        generated_thread = self.client.get(
+            f"/api/batch-tasks/{batch_task_id}/items/{task_before_generate['id']}/thread"
+        ).json()
         generated_task = generated_thread["current_task"]
-        self.assertEqual(generated_task["generated_subject"], f"润色后: {batch_subject}")
-        self.assertEqual(generated_task["generated_content_text"], f"润色后正文: {batch_body_text}")
+        self.assertEqual(
+            generated_task["generated_subject"], f"润色后: {batch_subject}"
+        )
+        self.assertEqual(
+            generated_task["generated_content_text"], f"润色后正文: {batch_body_text}"
+        )
         mocked_generate.assert_awaited_once()
 
     def test_identity_missing_returns_utf8_detail_message(self) -> None:
@@ -12304,7 +13489,9 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "未找到身份配置")
 
-    def test_workspace_generate_draft_uses_latest_identity_template_defaults(self) -> None:
+    def test_workspace_generate_draft_uses_latest_identity_template_defaults(
+        self,
+    ) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()
 
@@ -12354,7 +13541,9 @@ class ApiEndpointTests(unittest.TestCase):
                 outreach_template_body_html="<p>后来切换成新的默认正文 {{name}}</p>",
             ),
         )
-        self.assertEqual(clear_identity_response.status_code, 200, msg=clear_identity_response.text)
+        self.assertEqual(
+            clear_identity_response.status_code, 200, msg=clear_identity_response.text
+        )
 
         switch_response = self.client.post(
             f"/api/email-tasks/{task_id}/outreach-config",
@@ -12363,15 +13552,27 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(switch_response.status_code, 200, msg=switch_response.text)
         switched_task = switch_response.json()["current_task"]
         self.assertEqual(switched_task["outreach_generation_mode"], "template")
-        self.assertEqual(switched_task["outreach_template_subject"], "后来切换成新的默认主题")
-        self.assertEqual(switched_task["outreach_template_body_text"], "后来切换成新的默认正文 {{name}}")
+        self.assertEqual(
+            switched_task["outreach_template_subject"], "后来切换成新的默认主题"
+        )
+        self.assertEqual(
+            switched_task["outreach_template_body_text"],
+            "后来切换成新的默认正文 {{name}}",
+        )
 
-        generate_response = self.client.post(f"/api/email-tasks/{task_id}/generate-draft")
+        generate_response = self.client.post(
+            f"/api/email-tasks/{task_id}/generate-draft"
+        )
         self.assertEqual(generate_response.status_code, 200, msg=generate_response.text)
         generated = generate_response.json()
         self.assertEqual(generated["current_task"]["status"], "review_required")
-        self.assertEqual(generated["current_task"]["generated_subject"], "后来切换成新的默认主题")
-        self.assertIn("后来切换成新的默认正文 工作区切换导师", generated["current_task"]["generated_content_text"])
+        self.assertEqual(
+            generated["current_task"]["generated_subject"], "后来切换成新的默认主题"
+        )
+        self.assertIn(
+            "后来切换成新的默认正文 工作区切换导师",
+            generated["current_task"]["generated_content_text"],
+        )
 
     def _create_sent_professor_with_later_task(
         self,
@@ -12397,7 +13598,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         ensure_response = self.client.post(
@@ -12435,7 +13638,14 @@ class ApiEndpointTests(unittest.TestCase):
                 )
                 VALUES ('manual', ?, ?, ?, ?, ?, ?, datetime('now', '+1 minute'), datetime('now', '+1 minute'))
                 """,
-                (parent_task_id, identity_id, llm_id, professor_id, later_status, cancellation_reason),
+                (
+                    parent_task_id,
+                    identity_id,
+                    llm_id,
+                    professor_id,
+                    later_status,
+                    cancellation_reason,
+                ),
             )
             connection.commit()
         finally:
@@ -12543,7 +13753,9 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"My background is in AI agents and research workflows.",
             material_type="resume",
         )
-        professor_id = self._create_professor(email=f"rewrite-ready-{datetime.now(UTC).timestamp()}@example.edu")
+        professor_id = self._create_professor(
+            email=f"rewrite-ready-{datetime.now(UTC).timestamp()}@example.edu"
+        )
         return self._insert_email_task_with_material(
             identity_id=identity_id,
             llm_id=llm_id,
@@ -12640,7 +13852,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
 
         create_response = self.client.post(
@@ -12718,7 +13932,9 @@ class ApiEndpointTests(unittest.TestCase):
                 "source_url": None,
             },
         )
-        self.assertEqual(professor_response.status_code, 201, msg=professor_response.text)
+        self.assertEqual(
+            professor_response.status_code, 201, msg=professor_response.text
+        )
         professor_id = professor_response.json()["id"]
         scheduled_date = (datetime.now().date() + timedelta(days=1)).isoformat()
         expired_date = (datetime.now().date() - timedelta(days=1)).isoformat()
@@ -12928,7 +14144,9 @@ class ApiEndpointTests(unittest.TestCase):
         try:
             approved_at = (
                 "datetime('now')"
-                if approved_subject is not None or approved_body_text is not None or approved_body_html is not None
+                if approved_subject is not None
+                or approved_body_text is not None
+                or approved_body_html is not None
                 else "NULL"
             )
             task_id = connection.execute(
@@ -12952,8 +14170,12 @@ class ApiEndpointTests(unittest.TestCase):
                     professor_id,
                     status,
                     primary_material_id,
-                    json.dumps(selected_material_ids) if selected_material_ids is not None else None,
-                    "失败任务错误" if status in {"draft_failed", "send_failed"} else None,
+                    json.dumps(selected_material_ids)
+                    if selected_material_ids is not None
+                    else None,
+                    "失败任务错误"
+                    if status in {"draft_failed", "send_failed"}
+                    else None,
                     generated_subject,
                     generated_content_text,
                     generated_content_html,
@@ -12980,7 +14202,9 @@ class ApiEndpointTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def _get_task_material_references(self, task_id: int) -> tuple[int | None, list[int] | None]:
+    def _get_task_material_references(
+        self, task_id: int
+    ) -> tuple[int | None, list[int] | None]:
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -13056,6 +14280,7 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()[0]
         finally:
             connection.close()
+
     def _get_email_task_delete_state(self, task_id: int) -> dict[str, object | None]:
         connection = sqlite3.connect(self.db_path)
         try:
@@ -13114,7 +14339,9 @@ class ApiEndpointTests(unittest.TestCase):
                     "材料删除测试批量任务",
                     status,
                     primary_material_id,
-                    json.dumps(selected_material_ids) if selected_material_ids is not None else None,
+                    json.dumps(selected_material_ids)
+                    if selected_material_ids is not None
+                    else None,
                     1,
                     1 if deleted else 0,
                 ),
@@ -13124,7 +14351,9 @@ class ApiEndpointTests(unittest.TestCase):
             connection.close()
         return batch_task_id
 
-    def _get_batch_task_material_references(self, batch_task_id: int) -> tuple[int | None, list[int] | None]:
+    def _get_batch_task_material_references(
+        self, batch_task_id: int
+    ) -> tuple[int | None, list[int] | None]:
         connection = sqlite3.connect(self.db_path)
         try:
             row = connection.execute(
@@ -13153,7 +14382,9 @@ class ApiEndpointTests(unittest.TestCase):
         return response.json()["id"]
 
     @staticmethod
-    def _build_probe_result(*, ok: bool, message: str, resolved_base_url: str, response_preview: str):
+    def _build_probe_result(
+        *, ok: bool, message: str, resolved_base_url: str, response_preview: str
+    ):
         from app.modules.llm.runtime import LLMProbeResult
 
         return LLMProbeResult(

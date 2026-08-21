@@ -92,10 +92,14 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             delivery_key=delivery_key,
         )
 
-    def test_qq_rewritten_message_id_matches_unique_system_send_even_when_sync_is_late(self) -> None:
+    def test_qq_rewritten_message_id_matches_unique_system_send_even_when_sync_is_late(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 10, 10, 0, tzinfo=UTC)
 
-        async def scenario() -> tuple[int, int, str, int | None, str, datetime, datetime]:
+        async def scenario() -> tuple[
+            int, int, str, int | None, str, datetime, datetime
+        ]:
             async with self.session_factory() as session:
                 system_log = EmailLog(
                     email_task_id=99,
@@ -120,7 +124,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     ),
                 )
                 await session.commit()
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 observation_count = await session.scalar(
                     select(func.count()).select_from(EmailObservation),
                 )
@@ -233,14 +239,20 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                 )
                 await session.commit()
                 count = await session.scalar(select(func.count()).select_from(EmailLog))
-                return int(count or 0), result.resolution, result.observation.email_log_id
+                return (
+                    int(count or 0),
+                    result.resolution,
+                    result.observation.email_log_id,
+                )
 
         self.assertEqual(
             self._run_async(scenario()),
             (2, EmailObservationResolution.PENDING.value, None),
         )
 
-    def test_provider_body_mutation_stays_pending_instead_of_creating_duplicate(self) -> None:
+    def test_provider_body_mutation_stays_pending_instead_of_creating_duplicate(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 11, 11, 0, tzinfo=UTC)
 
         async def scenario() -> tuple[int, str]:
@@ -359,7 +371,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
     def test_better_mailbox_copy_replaces_earlier_manual_candidate(self) -> None:
         sent_at = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
 
-        async def scenario() -> tuple[int, int, list[tuple[str, int | None, int | None]]]:
+        async def scenario() -> tuple[
+            int, int, list[tuple[str, int | None, int | None]]
+        ]:
             async with self.session_factory() as session:
                 session.add(
                     EmailLog(
@@ -394,7 +408,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                 await session.commit()
                 await session.refresh(manual.observation)
                 await session.refresh(provider.observation)
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 observation_count = await session.scalar(
                     select(func.count()).select_from(EmailObservation),
                 )
@@ -572,7 +588,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             ),
         )
 
-    def test_same_provider_message_id_across_folders_shares_folded_delivery(self) -> None:
+    def test_same_provider_message_id_across_folders_shares_folded_delivery(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 11, 12, 45, tzinfo=UTC)
 
         async def scenario() -> tuple[int, int, list[str]]:
@@ -641,7 +659,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             ),
         )
 
-    def test_custom_delivery_key_matches_without_relying_on_provider_message_id(self) -> None:
+    def test_custom_delivery_key_matches_without_relying_on_provider_message_id(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
         delivery_key = str(uuid.uuid4())
 
@@ -654,8 +674,12 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     professor_id=2,
                     attempt_number=1,
                     recipient_email="teacher@example.edu",
-                    subject_fingerprint=build_reconciliation_fingerprint("Research opportunity"),
-                    content_fingerprint=build_reconciliation_fingerprint("Dear Professor,\n\nBody"),
+                    subject_fingerprint=build_reconciliation_fingerprint(
+                        "Research opportunity"
+                    ),
+                    content_fingerprint=build_reconciliation_fingerprint(
+                        "Dear Professor,\n\nBody"
+                    ),
                     status=EmailDeliveryAttemptStatus.ACCEPTED.value,
                     started_at=sent_at,
                 )
@@ -705,8 +729,12 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                         professor_id=2,
                         attempt_number=1,
                         recipient_email="teacher@example.edu",
-                        subject_fingerprint=build_reconciliation_fingerprint("Research opportunity"),
-                        content_fingerprint=build_reconciliation_fingerprint("Dear Professor,\n\nBody"),
+                        subject_fingerprint=build_reconciliation_fingerprint(
+                            "Research opportunity"
+                        ),
+                        content_fingerprint=build_reconciliation_fingerprint(
+                            "Dear Professor,\n\nBody"
+                        ),
                         status=EmailDeliveryAttemptStatus.ACCEPTED.value,
                         started_at=sent_at,
                     ),
@@ -722,7 +750,11 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                 )
                 await session.commit()
                 count = await session.scalar(select(func.count()).select_from(EmailLog))
-                return int(count or 0), result.resolution, result.observation.email_log_id
+                return (
+                    int(count or 0),
+                    result.resolution,
+                    result.observation.email_log_id,
+                )
 
         self.assertEqual(
             self._run_async(scenario()),
@@ -752,7 +784,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                 )
                 second = await ingest_sent_email_observation(session, moved_record)
                 await session.commit()
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 observation_count = await session.scalar(
                     select(func.count()).select_from(EmailObservation),
                 )
@@ -787,8 +821,12 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     professor_id=2,
                     attempt_number=1,
                     recipient_email="teacher@example.edu",
-                    subject_fingerprint=build_reconciliation_fingerprint("Research opportunity"),
-                    content_fingerprint=build_reconciliation_fingerprint("Dear Professor,\n\nBody"),
+                    subject_fingerprint=build_reconciliation_fingerprint(
+                        "Research opportunity"
+                    ),
+                    content_fingerprint=build_reconciliation_fingerprint(
+                        "Dear Professor,\n\nBody"
+                    ),
                     status=EmailDeliveryAttemptStatus.PREPARED.value,
                     started_at=sent_at,
                 )
@@ -807,7 +845,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                 await session.commit()
                 await session.refresh(recovered.observation)
                 await session.refresh(attempt)
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 return (
                     recovered.resolution,
                     recovered.observation.resolution,
@@ -952,7 +992,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             ),
         )
 
-    def test_two_legitimate_repeated_sends_keep_separate_delivery_attempts(self) -> None:
+    def test_two_legitimate_repeated_sends_keep_separate_delivery_attempts(
+        self,
+    ) -> None:
         base = datetime(2026, 8, 11, 16, 0, tzinfo=UTC)
         delivery_keys = [str(uuid.uuid4()), str(uuid.uuid4())]
 
@@ -1008,7 +1050,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                         ),
                     )
                 await session.commit()
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 observation_count = await session.scalar(
                     select(func.count()).select_from(EmailObservation),
                 )
@@ -1016,7 +1060,11 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     int(log_count or 0),
                     int(observation_count or 0),
                     [result.resolution for result in results],
-                    [result.email_log.id for result in results if result.email_log is not None],
+                    [
+                        result.email_log.id
+                        for result in results
+                        if result.email_log is not None
+                    ],
                 )
 
         self.assertEqual(
@@ -1032,7 +1080,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             ),
         )
 
-    def test_retry_observation_matches_successful_attempt_not_failed_attempt(self) -> None:
+    def test_retry_observation_matches_successful_attempt_not_failed_attempt(
+        self,
+    ) -> None:
         base = datetime(2026, 8, 11, 17, 0, tzinfo=UTC)
         failed_key = str(uuid.uuid4())
         accepted_key = str(uuid.uuid4())
@@ -1182,7 +1232,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             (2, EmailObservationResolution.EXTERNAL.value, None),
         )
 
-    def test_provider_without_sent_folder_copy_keeps_system_log_authoritative(self) -> None:
+    def test_provider_without_sent_folder_copy_keeps_system_log_authoritative(
+        self,
+    ) -> None:
         delivery_key = str(uuid.uuid4())
         sent_at = datetime(2026, 8, 11, 18, 0, tzinfo=UTC)
 
@@ -1197,8 +1249,12 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                             professor_id=2,
                             attempt_number=1,
                             recipient_email="teacher@example.edu",
-                            subject_fingerprint=build_reconciliation_fingerprint("Subject"),
-                            content_fingerprint=build_reconciliation_fingerprint("Body"),
+                            subject_fingerprint=build_reconciliation_fingerprint(
+                                "Subject"
+                            ),
+                            content_fingerprint=build_reconciliation_fingerprint(
+                                "Body"
+                            ),
                             status=EmailDeliveryAttemptStatus.ACCEPTED.value,
                             started_at=sent_at,
                         ),
@@ -1217,7 +1273,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     ],
                 )
                 await session.commit()
-                log_count = await session.scalar(select(func.count()).select_from(EmailLog))
+                log_count = await session.scalar(
+                    select(func.count()).select_from(EmailLog)
+                )
                 observation_count = await session.scalar(
                     select(func.count()).select_from(EmailObservation),
                 )
@@ -1229,7 +1287,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             (1, 0, EmailDeliveryAttemptStatus.ACCEPTED.value),
         )
 
-    def test_shared_recipient_address_does_not_create_log_for_wrong_professor(self) -> None:
+    def test_shared_recipient_address_does_not_create_log_for_wrong_professor(
+        self,
+    ) -> None:
         delivery_key = str(uuid.uuid4())
         sent_at = datetime(2026, 8, 11, 19, 0, tzinfo=UTC)
 
@@ -1290,7 +1350,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             (2, EmailObservationResolution.EXTERNAL.value, 2),
         )
 
-    def test_nearby_external_webmail_with_different_subject_remains_canonical(self) -> None:
+    def test_nearby_external_webmail_with_different_subject_remains_canonical(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 11, 20, 0, tzinfo=UTC)
 
         async def scenario() -> tuple[int, str]:
@@ -1327,7 +1389,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
             (2, EmailObservationResolution.EXTERNAL.value),
         )
 
-    def test_missing_message_id_folder_copy_remains_separate_without_strong_evidence(self) -> None:
+    def test_missing_message_id_folder_copy_remains_separate_without_strong_evidence(
+        self,
+    ) -> None:
         sent_at = datetime(2026, 8, 11, 21, 0, tzinfo=UTC)
 
         async def scenario() -> tuple[int, list[str], int | None]:
@@ -1374,7 +1438,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
 
         async def scenario() -> tuple[int, int, int]:
             async with self.session_factory() as session:
-                session.add(Professor(id=2, name="Teacher", email="teacher@example.edu"))
+                session.add(
+                    Professor(id=2, name="Teacher", email="teacher@example.edu")
+                )
                 session.add_all(
                     [
                         EmailLog(
@@ -1438,7 +1504,9 @@ class EmailDeliveryReconciliationTestCase(unittest.TestCase):
                     ),
                     expressions["joins"],
                 ).where(Professor.id == 2)
-                dashboard_sent_count = (await session.execute(statement)).one().sent_count
+                dashboard_sent_count = (
+                    (await session.execute(statement)).one().sent_count
+                )
                 return (
                     len(events),
                     statuses[2].sent_count,

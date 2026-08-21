@@ -120,6 +120,9 @@ class BrowserCookieSessionCacheTests(unittest.TestCase):
             ["sibling"],
         )
         self.assertEqual(
-            [cookie["name"] for cookie in cache.get_for_url(scope, "https://other.edu")],
+            [
+                cookie["name"]
+                for cookie in cache.get_for_url(scope, "https://other.edu")
+            ],
             ["unrelated"],
         )

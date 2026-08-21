@@ -65,7 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     except FileNotFoundError:
         issues = [ContractIssue("--input", f"文件不存在：{input_path}")]
-        print(json.dumps(_error_payload(issues), ensure_ascii=False, indent=2), file=sys.stderr)
+        print(
+            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         return 2
     except json.JSONDecodeError as error:
         issues = [
@@ -74,7 +77,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"JSON 解析失败：第 {error.lineno} 行第 {error.colno} 列 {error.msg}",
             )
         ]
-        print(json.dumps(_error_payload(issues), ensure_ascii=False, indent=2), file=sys.stderr)
+        print(
+            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         return 2
     except (OSError, ContractValidationError) as error:
         issues = (
@@ -82,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(error, ContractValidationError)
             else [ContractIssue("--input", str(error))]
         )
-        print(json.dumps(_error_payload(issues), ensure_ascii=False, indent=2), file=sys.stderr)
+        print(
+            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         return 2
 
     columns = FULL_COLUMNS if args.include_user_fields else SAFE_COLUMNS
@@ -130,7 +139,10 @@ def main(argv: list[str] | None = None) -> int:
         temporary_path = None
     except (OSError, ValueError) as error:
         issues = [ContractIssue("--output", str(error))]
-        print(json.dumps(_error_payload(issues), ensure_ascii=False, indent=2), file=sys.stderr)
+        print(
+            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         return 3
     finally:
         if temporary_path is not None:
@@ -148,9 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         "active_sheet": active_sheet,
         "sheets": sheet_summaries,
         "formula_count": sum(item["formula_count"] for item in sheet_summaries),
-        "error_value_count": sum(
-            item["error_value_count"] for item in sheet_summaries
-        ),
+        "error_value_count": sum(item["error_value_count"] for item in sheet_summaries),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

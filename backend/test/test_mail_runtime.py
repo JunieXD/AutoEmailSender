@@ -89,7 +89,9 @@ class _FakeImapClient:
     def select(self, mailbox: str):
         self.commands.append(f"select:{mailbox}")
         status = self.select_status_by_mailbox.get(mailbox, self.select_status)
-        return status, self.select_data or [b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"]
+        return status, self.select_data or [
+            b"EXAMINE Unsafe Login. Please contact kefu@188.com for help"
+        ]
 
     def list(self):
         self.commands.append("list")
@@ -106,13 +108,18 @@ class _FakeImapClient:
             self.search_called = True
             self.search_criteria.append(str(args[-1]))
             criterion = str(args[-1])
-            self._search_counts_by_criterion[criterion] = self._search_counts_by_criterion.get(criterion, 0) + 1
+            self._search_counts_by_criterion[criterion] = (
+                self._search_counts_by_criterion.get(criterion, 0) + 1
+            )
             search_data = self.search_data_by_criterion.get(
                 criterion,
                 self._appended_message_ids.get(criterion, self.search_data),
             )
             if isinstance(search_data, list):
-                index = min(self._search_counts_by_criterion[criterion] - 1, len(search_data) - 1)
+                index = min(
+                    self._search_counts_by_criterion[criterion] - 1,
+                    len(search_data) - 1,
+                )
                 search_data = search_data[index]
             return (
                 self.search_status_by_criterion.get(criterion, "OK"),
@@ -147,10 +154,12 @@ class _FakeImapClient:
         self.commands.append(f"fetch:{query}")
         return "OK", self.fetch_payload or []
 
-    def append(self, mailbox: str, flags: str | None, date_time: object | None, message: bytes):
+    def append(
+        self, mailbox: str, flags: str | None, date_time: object | None, message: bytes
+    ):
         self.commands.append(f"append:{mailbox}")
         self.append_calls.append((mailbox, flags, date_time, message))
-        message_id_match = re.search(br"(?im)^Message-ID:\s*(<[^>\r\n]+>)", message)
+        message_id_match = re.search(rb"(?im)^Message-ID:\s*(<[^>\r\n]+>)", message)
         if message_id_match:
             message_id = message_id_match.group(1).decode("utf-8", errors="ignore")
             self._appended_message_ids[f'(HEADER Message-ID "{message_id}")'] = b"99"
@@ -205,7 +214,7 @@ class _MultipartBase64ImapClient(_FakeImapClient):
                     b"Subject: Re: hello\r\n"
                     b"Message-ID: <reply-base64@example.com>\r\n"
                     b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
-                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                    b'Content-Type: multipart/mixed; boundary="mix"\r\n\r\n',
                 ),
             ]
         if "BODYSTRUCTURE" in query:
@@ -251,11 +260,15 @@ class _MultipartFallbackImapClient(_FakeImapClient):
                     b"Subject: Re: hello\r\n"
                     b"Message-ID: <reply-fallback@example.com>\r\n"
                     b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
-                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                    b'Content-Type: multipart/mixed; boundary="mix"\r\n\r\n',
                 ),
             ]
         if "BODYSTRUCTURE" in query:
-            return "OK", [(b'1 (BODYSTRUCTURE ("APPLICATION" "OCTET-STREAM" NIL NIL NIL "BASE64" 8 NIL NIL NIL))',)]
+            return "OK", [
+                (
+                    b'1 (BODYSTRUCTURE ("APPLICATION" "OCTET-STREAM" NIL NIL NIL "BASE64" 8 NIL NIL NIL))',
+                )
+            ]
         if "BODY.PEEK[TEXT]" in query:
             return "OK", [
                 (
@@ -266,7 +279,7 @@ class _MultipartFallbackImapClient(_FakeImapClient):
                     b"5L2g5aW9\r\n"
                     b"--mix\r\n"
                     b"Content-Type: application/pdf\r\n"
-                    b"Content-Disposition: attachment; filename=\"cv.pdf\"\r\n\r\n"
+                    b'Content-Disposition: attachment; filename="cv.pdf"\r\n\r\n'
                     b"ignored attachment\r\n"
                     b"--mix--\r\n",
                 ),
@@ -290,7 +303,7 @@ class _DuplicateTextPartImapClient(_FakeImapClient):
                     b"Subject: Re: hello\r\n"
                     b"Message-ID: <reply-duplicate@example.com>\r\n"
                     b"Date: Fri, 08 May 2026 20:00:00 +0800\r\n"
-                    b"Content-Type: multipart/mixed; boundary=\"mix\"\r\n\r\n",
+                    b'Content-Type: multipart/mixed; boundary="mix"\r\n\r\n',
                 ),
             ]
         if "BODYSTRUCTURE" in query:
@@ -302,7 +315,12 @@ class _DuplicateTextPartImapClient(_FakeImapClient):
                 ),
             ]
         if "BODY.PEEK[1.MIME]" in query:
-            return "OK", [(b"1 (BODY[1.MIME] {48}", b"Content-Type: text/plain; charset=utf-8\r\n\r\n")]
+            return "OK", [
+                (
+                    b"1 (BODY[1.MIME] {48}",
+                    b"Content-Type: text/plain; charset=utf-8\r\n\r\n",
+                )
+            ]
         if "BODY.PEEK[1]" in query:
             return "OK", [(b"1 (BODY[1] {5}", b"first")]
         if "BODY.PEEK[2" in query:
@@ -501,7 +519,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertTrue(hostname.startswith("xn--"))
         self.assertTrue(hostname.endswith(".example"))
 
-    def test_smtp_local_hostname_uses_address_literal_for_undotted_unicode_name(self) -> None:
+    def test_smtp_local_hostname_uses_address_literal_for_undotted_unicode_name(
+        self,
+    ) -> None:
         with (
             patch(
                 "app.modules.communications.transport.socket.getfqdn",
@@ -581,7 +601,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         identity.smtp_password = "secret\u200bvalue"
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch(
+                "app.modules.communications.transport._open_smtp_client"
+            ) as open_smtp,
             patch("app.modules.communications.transport.logger.warning") as log_warning,
         ):
             ok, message = asyncio.run(test_smtp_connection(identity))
@@ -603,7 +625,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         identity.smtp_username = "sender＠example.com"
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch(
+                "app.modules.communications.transport._open_smtp_client"
+            ) as open_smtp,
             patch("app.modules.communications.transport.logger.warning"),
         ):
             ok, message = asyncio.run(test_smtp_connection(identity))
@@ -627,7 +651,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_smtp_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.logger.warning") as log_warning,
         ):
             ok, message = asyncio.run(test_smtp_connection(_build_identity()))
@@ -643,12 +670,17 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _FakeImapClient(select_status="OK")
         previous_id_command = imaplib.Commands.pop("ID", None)
         self.addCleanup(
-            lambda: imaplib.Commands.__setitem__("ID", previous_id_command)
-            if previous_id_command is not None
-            else imaplib.Commands.pop("ID", None),
+            lambda: (
+                imaplib.Commands.__setitem__("ID", previous_id_command)
+                if previous_id_command is not None
+                else imaplib.Commands.pop("ID", None)
+            ),
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             _test_imap_connection_sync(_build_identity())
 
         self.assertEqual(client.commands[:3], ["login", "ID", "select:INBOX"])
@@ -657,16 +689,24 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_imap_connection_fails_when_inbox_select_is_rejected(self) -> None:
         client = _FakeImapClient(select_status="NO")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             with self.assertRaisesRegex(MailRuntimeError, "IMAP 选择收件箱失败"):
                 _test_imap_connection_sync(_build_identity())
 
     def test_fetch_messages_from_sender_uses_from_search_without_rfc822(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
-                fetch_inbox_messages_from_sender(_build_identity(), "teacher@example.com"),
+                fetch_inbox_messages_from_sender(
+                    _build_identity(), "teacher@example.com"
+                ),
             )
 
         self.assertEqual(client.search_criteria[-1], '(FROM "teacher@example.com")')
@@ -692,10 +732,17 @@ class MailRuntimeTestCase(unittest.TestCase):
             delivery_key,
         )
 
-    def test_send_email_disables_post_send_sent_folder_sync_even_when_imap_is_configured(self) -> None:
+    def test_send_email_disables_post_send_sent_folder_sync_even_when_imap_is_configured(
+        self,
+    ) -> None:
         with (
-            patch("app.modules.communications.transport._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.modules.communications.transport._open_imap_client") as open_imap,
+            patch(
+                "app.modules.communications.transport._open_smtp_client",
+                return_value=_FakeSmtpClient(),
+            ),
+            patch(
+                "app.modules.communications.transport._open_imap_client"
+            ) as open_imap,
         ):
             result = asyncio.run(
                 send_email_to_recipient(
@@ -710,17 +757,26 @@ class MailRuntimeTestCase(unittest.TestCase):
             )
 
         open_imap.assert_not_called()
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
+        self.assertEqual(
+            result.provider_payload["sent_folder_sync"]["status"],
+            "sent_folder_sync_disabled",
+        )
 
-    def test_send_email_reports_sanitized_invalid_authorization_code_error(self) -> None:
+    def test_send_email_reports_sanitized_invalid_authorization_code_error(
+        self,
+    ) -> None:
         identity = _build_identity()
         identity.smtp_password = "secret全角"
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client") as open_smtp,
+            patch(
+                "app.modules.communications.transport._open_smtp_client"
+            ) as open_smtp,
             patch("app.modules.communications.transport.logger.warning") as log_warning,
         ):
-            with self.assertRaisesRegex(MailRuntimeError, SMTP_PASSWORD_ENCODING_ERROR_CODE) as raised:
+            with self.assertRaisesRegex(
+                MailRuntimeError, SMTP_PASSWORD_ENCODING_ERROR_CODE
+            ) as raised:
                 asyncio.run(
                     send_email_to_recipient(
                         identity=identity,
@@ -738,7 +794,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("全角", str(raised.exception))
         open_smtp.assert_not_called()
 
-    def test_send_email_skips_sent_folder_sync_when_imap_is_not_configured(self) -> None:
+    def test_send_email_skips_sent_folder_sync_when_imap_is_not_configured(
+        self,
+    ) -> None:
         identity = _build_identity()
         identity.imap_host = None
         identity.imap_port = None
@@ -746,8 +804,13 @@ class MailRuntimeTestCase(unittest.TestCase):
         identity.imap_password = None
 
         with (
-            patch("app.modules.communications.transport._open_smtp_client", return_value=_FakeSmtpClient()),
-            patch("app.modules.communications.transport._open_imap_client") as open_imap,
+            patch(
+                "app.modules.communications.transport._open_smtp_client",
+                return_value=_FakeSmtpClient(),
+            ),
+            patch(
+                "app.modules.communications.transport._open_imap_client"
+            ) as open_imap,
         ):
             result = asyncio.run(
                 send_email_to_recipient(
@@ -762,7 +825,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             )
 
         open_imap.assert_not_called()
-        self.assertEqual(result.provider_payload["sent_folder_sync"]["status"], "sent_folder_sync_disabled")
+        self.assertEqual(
+            result.provider_payload["sent_folder_sync"]["status"],
+            "sent_folder_sync_disabled",
+        )
 
     def test_discover_sent_folder_prefers_special_use_sent(self) -> None:
         client = _FakeImapClient(
@@ -772,7 +838,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             ],
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
@@ -786,7 +855,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             ],
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
@@ -796,7 +868,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _FakeImapClient()
         client.list = None
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent")
@@ -811,29 +886,42 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertEqual(folder, "Sent Items")
         self.assertIn("select:Sent", client.commands)
         self.assertIn("select:Sent Items", client.commands)
 
-    def test_discover_sent_folder_returns_none_when_login_raises_imap_error(self) -> None:
+    def test_discover_sent_folder_returns_none_when_login_raises_imap_error(
+        self,
+    ) -> None:
         client = _FakeImapClient(login_error=imaplib.IMAP4.error("login failed"))
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertIsNone(folder)
         self.assertEqual(client.commands, ["login", "logout"])
 
-    def test_discover_sent_folder_returns_none_when_login_and_logout_raise_imap_errors(self) -> None:
+    def test_discover_sent_folder_returns_none_when_login_and_logout_raise_imap_errors(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             login_error=imaplib.IMAP4.error("login failed"),
             logout_error=imaplib.IMAP4.error("logout failed"),
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             folder = asyncio.run(discover_sent_folder(_build_identity()))
 
         self.assertIsNone(folder)
@@ -842,11 +930,16 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_discover_sent_folder_reraises_provider_throttle(self) -> None:
         client = _FakeImapClient(login_error=RuntimeError("Too many requests"))
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             with self.assertRaisesRegex(RuntimeError, "Too many requests"):
                 asyncio.run(discover_sent_folder(_build_identity()))
 
-    def test_incremental_fetch_sent_mailbox_selects_folder_and_parses_recipients(self) -> None:
+    def test_incremental_fetch_sent_mailbox_selects_folder_and_parses_recipients(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             search_data=b"5",
             headers_by_uid={
@@ -863,17 +956,24 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
             )
 
         self.assertEqual(max_seen_uid, 5)
         self.assertIn("select:Sent", client.commands)
-        self.assertEqual(messages[0].to_emails, ["teacher@example.com", "other@example.com"])
+        self.assertEqual(
+            messages[0].to_emails, ["teacher@example.com", "other@example.com"]
+        )
         self.assertEqual(messages[0].cc_emails, ["copy@example.com"])
         self.assertEqual(messages[0].bcc_emails, ["hidden@example.com"])
-        self.assertEqual(messages[0].raw_to, "Teacher <Teacher@Example.com>, other@example.com")
+        self.assertEqual(
+            messages[0].raw_to, "Teacher <Teacher@Example.com>, other@example.com"
+        )
         self.assertEqual(messages[0].headers["bcc"], "Hidden <hidden@example.com>")
         self.assertEqual(
             messages[0].headers["x-autoemailsender-delivery-id"],
@@ -887,7 +987,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             _, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
             )
@@ -907,7 +1010,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             _, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(_build_identity(), "Sent", None),
             )
@@ -917,14 +1023,19 @@ class MailRuntimeTestCase(unittest.TestCase):
             datetime(2026, 5, 8, 12, 30, tzinfo=UTC),
         )
 
-    def test_incremental_fetch_resets_search_cursor_when_uidvalidity_changes(self) -> None:
+    def test_incremental_fetch_resets_search_cursor_when_uidvalidity_changes(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             search_data=b"1",
             select_data=[b"1"],
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             max_seen_uid, messages, uidvalidity = asyncio.run(
                 fetch_incremental_mailbox_messages_with_uidvalidity(
                     _build_identity(),
@@ -939,14 +1050,19 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(messages[0].uid, 1)
         self.assertIn("UID 1:*", client.search_criteria)
 
-    def test_incremental_fetch_resets_legacy_cursor_when_uidvalidity_becomes_known(self) -> None:
+    def test_incremental_fetch_resets_legacy_cursor_when_uidvalidity_becomes_known(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             search_data=b"1",
             select_data=[b"1"],
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             max_seen_uid, messages, uidvalidity = asyncio.run(
                 fetch_incremental_mailbox_messages_with_uidvalidity(
                     _build_identity(),
@@ -961,14 +1077,19 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(messages[0].uid, 1)
         self.assertIn("UID 1:*", client.search_criteria)
 
-    def test_incremental_fetch_legacy_api_keeps_cursor_when_uidvalidity_becomes_known(self) -> None:
+    def test_incremental_fetch_legacy_api_keeps_cursor_when_uidvalidity_becomes_known(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             search_data=b"",
             select_data=[b"1"],
         )
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_mailbox_messages(
                     _build_identity(),
@@ -1020,7 +1141,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -1032,7 +1156,9 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual(
             client.search_criteria,
-            ['(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'],
+            [
+                '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'
+            ],
         )
         self.assertIn("select:Sent", client.commands)
         self.assertEqual([message.uid for message in messages], [7, 8, 9, 10])
@@ -1071,7 +1197,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -1092,7 +1221,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         self.assertEqual([message.uid for message in messages], [7, 8, 9])
 
-    def test_sent_history_does_not_fallback_when_combined_search_succeeds_empty(self) -> None:
+    def test_sent_history_does_not_fallback_when_combined_search_succeeds_empty(
+        self,
+    ) -> None:
         combined = '(OR (OR (TO "teacher@example.com") (CC "teacher@example.com")) (BCC "teacher@example.com"))'
         client = _FakeImapClient(
             search_data_by_criterion={
@@ -1101,7 +1232,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -1134,7 +1268,10 @@ class MailRuntimeTestCase(unittest.TestCase):
             },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
                 fetch_professor_history_mailbox_messages(
                     _build_identity(),
@@ -1159,8 +1296,13 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_mailbox_history_rejects_unknown_folder_role(self) -> None:
         client = _FakeImapClient()
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
-            with self.assertRaisesRegex(MailRuntimeError, "folder_role|unsupported|Unsupported"):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
+            with self.assertRaisesRegex(
+                MailRuntimeError, "folder_role|unsupported|Unsupported"
+            ):
                 asyncio.run(
                     fetch_professor_history_mailbox_messages(
                         _build_identity(),
@@ -1175,7 +1317,10 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_incremental_fetch_reads_body_and_internaldate(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             max_seen_uid, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1183,7 +1328,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(max_seen_uid, 1)
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].body_text, "reply body")
-        self.assertEqual(messages[0].received_at, datetime(2026, 5, 8, 12, 30, tzinfo=UTC))
+        self.assertEqual(
+            messages[0].received_at, datetime(2026, 5, 8, 12, 30, tzinfo=UTC)
+        )
         serialized_commands = " ".join(client.commands)
         self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
         self.assertNotIn("RFC822", serialized_commands)
@@ -1191,20 +1338,30 @@ class MailRuntimeTestCase(unittest.TestCase):
     def test_professor_history_inbox_wrapper_still_searches_from_sender(self) -> None:
         client = _FakeImapClient(search_data=b"1")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             messages = asyncio.run(
-                fetch_professor_history_inbox_messages(_build_identity(), "teacher@example.com"),
+                fetch_professor_history_inbox_messages(
+                    _build_identity(), "teacher@example.com"
+                ),
             )
 
         self.assertEqual(client.search_criteria[-1], '(FROM "teacher@example.com")')
         self.assertIn("select:INBOX", client.commands)
         self.assertEqual([message.uid for message in messages], [1])
 
-    def test_professor_history_header_fetch_batches_uids_without_fetching_body(self) -> None:
+    def test_professor_history_header_fetch_batches_uids_without_fetching_body(
+        self,
+    ) -> None:
         client = _BatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1221,13 +1378,21 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("uid:FETCH:('1,2'", serialized_commands)
         self.assertNotIn("BODYSTRUCTURE", serialized_commands)
         self.assertNotIn("BODY.PEEK[TEXT]", serialized_commands)
-        self.assertEqual([message.message_id for message in messages], ["<first@example.com>", "<second@example.com>"])
+        self.assertEqual(
+            [message.message_id for message in messages],
+            ["<first@example.com>", "<second@example.com>"],
+        )
 
-    def test_professor_history_header_fetch_falls_back_for_batch_items_without_uid(self) -> None:
+    def test_professor_history_header_fetch_falls_back_for_batch_items_without_uid(
+        self,
+    ) -> None:
         client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1241,13 +1406,21 @@ class MailRuntimeTestCase(unittest.TestCase):
             )
 
         self.assertEqual([message.uid for message in messages], [1, 2])
-        self.assertEqual([message.message_id for message in messages], ["<first@example.com>", "<reply-from-sender@example.com>"])
+        self.assertEqual(
+            [message.message_id for message in messages],
+            ["<first@example.com>", "<reply-from-sender@example.com>"],
+        )
 
-    def test_professor_history_header_fetch_falls_back_when_batch_payload_omits_uid(self) -> None:
+    def test_professor_history_header_fetch_falls_back_when_batch_payload_omits_uid(
+        self,
+    ) -> None:
         client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1269,15 +1442,22 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("uid:FETCH:('2'", serialized_commands)
         self.assertEqual(result.command_count, 3)
 
-    def test_professor_history_header_fetch_uses_history_rate_limiter_per_imap_command(self) -> None:
+    def test_professor_history_header_fetch_uses_history_rate_limiter_per_imap_command(
+        self,
+    ) -> None:
         client = _MissingUidBatchHeaderImapClient(search_data=b"1 2")
         identity = _build_identity()
         seen: list[tuple[str, str]] = []
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
-            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch(
+                "app.modules.communications.transport.acquire_history_imap_command_slot_sync"
+            ) as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda current_identity, command: seen.append(
@@ -1325,7 +1505,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
@@ -1340,15 +1523,22 @@ class MailRuntimeTestCase(unittest.TestCase):
             )
 
         self.assertEqual([message.uid for message in result.messages], [7, 9])
-        self.assertEqual([message.uidvalidity for message in result.messages], [777, 777])
+        self.assertEqual(
+            [message.uidvalidity for message in result.messages], [777, 777]
+        )
         self.assertIn("select:Sent", client.commands)
         self.assertIn("SINCE 01-Jan-2025", client.search_criteria)
         self.assertNotIn("UID 1:*", client.search_criteria)
         self.assertFalse(
-            any(re.fullmatch(r"\d+:\*|\d+:\d+", criterion) for criterion in client.search_criteria),
+            any(
+                re.fullmatch(r"\d+:\*|\d+:\d+", criterion)
+                for criterion in client.search_criteria
+            ),
         )
 
-    def test_recent_mailbox_headers_reuse_probe_uids_when_uidvalidity_matches(self) -> None:
+    def test_recent_mailbox_headers_reuse_probe_uids_when_uidvalidity_matches(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             headers_by_uid={
                 7: (
@@ -1368,7 +1558,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
@@ -1388,7 +1581,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(result.command_count, 2)
         self.assertEqual(client.search_criteria, [])
 
-    def test_recent_mailbox_headers_reset_min_uid_when_uidvalidity_changes(self) -> None:
+    def test_recent_mailbox_headers_reset_min_uid_when_uidvalidity_changes(
+        self,
+    ) -> None:
         client = _FakeImapClient(
             search_data_by_criterion={"SINCE 01-Jan-2025": b"7"},
             headers_by_uid={
@@ -1404,7 +1599,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"222"])
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1449,7 +1647,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1470,7 +1671,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("uid:FETCH:('7,9'", serialized_commands)
         self.assertIn("uid:FETCH:('9'", serialized_commands)
 
-    def test_recent_mailbox_headers_marks_exhausted_when_fallback_would_exceed_budget(self) -> None:
+    def test_recent_mailbox_headers_marks_exhausted_when_fallback_would_exceed_budget(
+        self,
+    ) -> None:
         client = _PartialBatchRecentHeaderImapClient(
             search_data_by_criterion={"SINCE 01-Jan-2025": b"7 9"},
             headers_by_uid={
@@ -1492,7 +1695,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1515,7 +1721,9 @@ class MailRuntimeTestCase(unittest.TestCase):
 
     def test_professor_history_headers_accept_since_date_for_inbox_search(self) -> None:
         client = _FakeImapClient(
-            search_data_by_criterion={'(FROM "teacher@example.edu" SINCE 01-Jan-2025)': b"4"},
+            search_data_by_criterion={
+                '(FROM "teacher@example.edu" SINCE 01-Jan-2025)': b"4"
+            },
             headers_by_uid={
                 4: (
                     b"From: teacher@example.edu\r\n"
@@ -1529,7 +1737,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client.response = lambda code: ("UIDVALIDITY", [b"888"])
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 1
@@ -1547,7 +1758,9 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         self.assertEqual([message.uid for message in result.messages], [4])
         self.assertEqual(result.messages[0].uidvalidity, 888)
-        self.assertIn('(FROM "teacher@example.edu" SINCE 01-Jan-2025)', client.search_criteria)
+        self.assertIn(
+            '(FROM "teacher@example.edu" SINCE 01-Jan-2025)', client.search_criteria
+        )
 
     def test_professor_history_headers_accept_since_date_for_sent_search(self) -> None:
         combined = (
@@ -1556,7 +1769,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client = _FakeImapClient(search_data_by_criterion={combined: b""})
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             result = asyncio.run(
                 fetch_professor_history_mailbox_message_headers_with_command_count(
                     _build_identity(),
@@ -1582,10 +1798,15 @@ class MailRuntimeTestCase(unittest.TestCase):
         ]
         client = _FakeImapClient(
             search_status_by_criterion={combined: "NO"},
-            search_data_by_criterion={criterion: b"" for criterion in fallback_criteria},
+            search_data_by_criterion={
+                criterion: b"" for criterion in fallback_criteria
+            },
         )
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             result = asyncio.run(
                 fetch_professor_history_mailbox_message_headers_with_command_count(
                     _build_identity(),
@@ -1606,7 +1827,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         )
         client.response = lambda code: ("UIDVALIDITY", [b"777"])
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             result = asyncio.run(
                 search_mailbox_uids_since_date(
                     _build_identity(),
@@ -1621,14 +1845,21 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(result.uids, (7, 9, 11))
         self.assertFalse(any("FETCH" in command for command in client.commands))
 
-    def test_mailbox_history_header_fetch_scans_uid_window_without_search_or_body(self) -> None:
+    def test_mailbox_history_header_fetch_scans_uid_window_without_search_or_body(
+        self,
+    ) -> None:
         client = _RangeHeaderImapClient()
         identity = _build_identity()
         seen: list[str] = []
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
-            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
+            patch(
+                "app.modules.communications.transport.acquire_history_imap_command_slot_sync"
+            ) as acquire_mock,
         ):
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
             result = asyncio.run(
@@ -1651,10 +1882,15 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(result.command_count, 1)
         self.assertEqual(seen, ["FETCH"])
 
-    def test_mailbox_history_header_fetch_raises_when_uid_range_fetch_fails(self) -> None:
+    def test_mailbox_history_header_fetch_raises_when_uid_range_fetch_fails(
+        self,
+    ) -> None:
         client = _FailingRangeHeaderImapClient()
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
                 asyncio.run(
                     fetch_history_mailbox_message_headers_before_uid(
@@ -1665,10 +1901,15 @@ class MailRuntimeTestCase(unittest.TestCase):
                     ),
                 )
 
-    def test_mailbox_history_header_fetch_raises_when_high_water_search_fails(self) -> None:
+    def test_mailbox_history_header_fetch_raises_when_high_water_search_fails(
+        self,
+    ) -> None:
         client = _FailingHighWaterSearchImapClient()
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             with self.assertRaisesRegex(RuntimeError, "Fetch volume limit exceed"):
                 asyncio.run(
                     fetch_history_mailbox_message_headers_before_uid(
@@ -1680,12 +1921,19 @@ class MailRuntimeTestCase(unittest.TestCase):
                     ),
                 )
 
-    def test_mailbox_history_header_fetch_resets_window_when_uidvalidity_changes(self) -> None:
+    def test_mailbox_history_header_fetch_resets_window_when_uidvalidity_changes(
+        self,
+    ) -> None:
         client = _RangeHeaderImapClient()
-        client.response = lambda code: ("UIDNEXT", [b"51"]) if code == "UIDNEXT" else ("UIDVALIDITY", [b"222"])
+        client.response = lambda code: (
+            ("UIDNEXT", [b"51"]) if code == "UIDNEXT" else ("UIDVALIDITY", [b"222"])
+        )
         identity = _build_identity()
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             result = asyncio.run(
                 fetch_history_mailbox_message_headers_before_uid(
                     identity,
@@ -1704,15 +1952,22 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertEqual(result.next_before_uid, 41)
         self.assertEqual(result.scanned_count, 10)
 
-    def test_history_body_fetch_by_uid_uses_history_rate_limiter_per_imap_command(self) -> None:
+    def test_history_body_fetch_by_uid_uses_history_rate_limiter_per_imap_command(
+        self,
+    ) -> None:
         client = _MultipartFallbackImapClient(search_data=b"1")
         identity = _build_identity()
         seen: list[str] = []
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
-            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch(
+                "app.modules.communications.transport.acquire_history_imap_command_slot_sync"
+            ) as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
@@ -1734,18 +1989,30 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _MultipartFallbackImapClient(search_data=b"1")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
-            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
+            patch(
+                "app.modules.communications.transport.acquire_history_imap_command_slot_sync"
+            ) as acquire_mock,
         ):
-            _, messages = asyncio.run(fetch_incremental_inbox_messages(_build_identity(), None))
+            _, messages = asyncio.run(
+                fetch_incremental_inbox_messages(_build_identity(), None)
+            )
 
         self.assertEqual(len(messages), 1)
         acquire_mock.assert_not_called()
 
-    def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(self) -> None:
+    def test_incremental_fetch_decodes_base64_text_part_without_fetching_attachment(
+        self,
+    ) -> None:
         client = _MultipartBase64ImapClient(search_data=b"1")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             _, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1759,10 +2026,15 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("BODY.PEEK[2", serialized_commands)
         self.assertNotIn("RFC822", serialized_commands)
 
-    def test_incremental_fetch_falls_back_to_decoded_body_when_bodystructure_finds_no_text(self) -> None:
+    def test_incremental_fetch_falls_back_to_decoded_body_when_bodystructure_finds_no_text(
+        self,
+    ) -> None:
         client = _MultipartFallbackImapClient(search_data=b"1")
 
-        with patch("app.modules.communications.transport._open_imap_client", return_value=client):
+        with patch(
+            "app.modules.communications.transport._open_imap_client",
+            return_value=client,
+        ):
             _, messages = asyncio.run(
                 fetch_incremental_inbox_messages(_build_identity(), None),
             )
@@ -1775,11 +2047,16 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("ignored attachment", messages[0].body_text)
         self.assertNotIn("RFC822", serialized_commands)
 
-    def test_history_body_fetch_by_uid_falls_back_when_bodystructure_finds_no_text(self) -> None:
+    def test_history_body_fetch_by_uid_falls_back_when_bodystructure_finds_no_text(
+        self,
+    ) -> None:
         client = _MultipartFallbackImapClient(search_data=b"1")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1799,14 +2076,21 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("BODY.PEEK[TEXT]", serialized_commands)
         self.assertNotIn("ignored attachment", messages[0].body_text)
 
-    def test_history_body_fetch_by_uid_decodes_text_part_without_fetching_attachment(self) -> None:
+    def test_history_body_fetch_by_uid_decodes_text_part_without_fetching_attachment(
+        self,
+    ) -> None:
         client = _MultipartBase64ImapClient(search_data=b"1")
         seen: list[str] = []
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
-            patch("app.modules.communications.transport.acquire_history_imap_command_slot_sync") as acquire_mock,
+            patch(
+                "app.modules.communications.transport.acquire_history_imap_command_slot_sync"
+            ) as acquire_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
             acquire_mock.side_effect = lambda _identity, command: seen.append(command)
@@ -1831,7 +2115,10 @@ class MailRuntimeTestCase(unittest.TestCase):
         client = _DuplicateTextPartImapClient(search_data=b"1")
 
         with (
-            patch("app.modules.communications.transport._open_imap_client", return_value=client),
+            patch(
+                "app.modules.communications.transport._open_imap_client",
+                return_value=client,
+            ),
             patch("app.modules.communications.transport.get_settings") as settings_mock,
         ):
             settings_mock.return_value.imap_fetch_batch_size = 20
@@ -1848,7 +2135,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         serialized_commands = " ".join(client.commands)
         self.assertNotIn("BODY.PEEK[2", serialized_commands)
 
-    def test_parse_received_email_strips_quoted_original_message_from_plain_text(self) -> None:
+    def test_parse_received_email_strips_quoted_original_message_from_plain_text(
+        self,
+    ) -> None:
         raw_message = (
             "From: juniexd <juniexd@qq.com>\r\n"
             "To: juniexd <juniexd@163.com>\r\n"
@@ -1869,7 +2158,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("回复的原邮件", received.content)
         self.assertNotIn("尊敬的老师", received.content)
 
-    def test_parse_received_email_strips_quoted_original_message_from_html(self) -> None:
+    def test_parse_received_email_strips_quoted_original_message_from_html(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -1889,7 +2180,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("回复的原邮件", received.content_html or "")
         self.assertNotIn("尊敬的老师", received.content_html or "")
 
-    def test_parse_received_email_ignores_style_when_deriving_text_from_html(self) -> None:
+    def test_parse_received_email_ignores_style_when_deriving_text_from_html(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -1915,7 +2208,7 @@ class MailRuntimeTestCase(unittest.TestCase):
             "Message-ID: <reply-html-meta@example.com>\r\n"
             "Content-Type: text/html; charset=utf-8\r\n"
             "\r\n"
-            "<html><head><meta charset=\"utf-8\"><link href=\"mail.css\">"
+            '<html><head><meta charset="utf-8"><link href="mail.css">'
             "<style>#outlook a { padding:0; }</style></head>"
             "<body><p>欢迎加入课题组</p></body></html>\r\n"
         ).encode("utf-8")
@@ -1952,7 +2245,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("发件人", received.content_html or "")
         self.assertNotIn("尊敬的老师", received.content_html or "")
 
-    def test_parse_received_email_keeps_standalone_sender_label_in_reply_body(self) -> None:
+    def test_parse_received_email_keeps_standalone_sender_label_in_reply_body(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -1971,9 +2266,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertIn("发件人：导师本人", received.content)
         self.assertIn("然后再发我", received.content)
 
-
-
-    def test_parse_received_email_keeps_body_sender_label_before_chinese_quote(self) -> None:
+    def test_parse_received_email_keeps_body_sender_label_before_chinese_quote(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -1992,13 +2287,17 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         received = parse_received_email(raw_message)
 
-        self.assertEqual(received.content, "请在表格里补充发件人：导师本人。\n然后再发我。")
+        self.assertEqual(
+            received.content, "请在表格里补充发件人：导师本人。\n然后再发我。"
+        )
         self.assertIn("发件人：导师本人", received.content_html or "")
         self.assertIn("然后再发我", received.content_html or "")
         self.assertNotIn("student@example.com", received.content)
         self.assertNotIn("尊敬的老师", received.content_html or "")
 
-    def test_parse_received_email_strips_uppercase_chinese_quote_block_from_html(self) -> None:
+    def test_parse_received_email_strips_uppercase_chinese_quote_block_from_html(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -2021,7 +2320,9 @@ class MailRuntimeTestCase(unittest.TestCase):
         self.assertNotIn("student@example.com", received.content)
         self.assertNotIn("尊敬的老师", received.content_html or "")
 
-    def test_parse_received_email_keeps_text_sender_label_before_chinese_quote(self) -> None:
+    def test_parse_received_email_keeps_text_sender_label_before_chinese_quote(
+        self,
+    ) -> None:
         raw_message = (
             "From: teacher@example.com\r\n"
             "To: sender@example.com\r\n"
@@ -2040,9 +2341,12 @@ class MailRuntimeTestCase(unittest.TestCase):
 
         normalized_content = "\n".join(received.content.splitlines())
 
-        self.assertEqual(normalized_content, "请在表格里补充发件人：导师本人。\n然后再发我。")
+        self.assertEqual(
+            normalized_content, "请在表格里补充发件人：导师本人。\n然后再发我。"
+        )
         self.assertNotIn("student@example.com", received.content)
         self.assertNotIn("尊敬的老师", received.content)
+
 
 if __name__ == "__main__":
     unittest.main()

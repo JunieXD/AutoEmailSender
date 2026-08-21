@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from typing import Protocol
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from app.core.time import utc_now
 
@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.crawl_job import CrawlPageFetchState, CrawlPageFetchStatus
 from ..v2.url_utils import is_spa_route_fragment
 
-TRANSIENT_FETCH_RETRY_LIMIT = 2
+# Keep the ledger budget aligned with the crawler's existing connectivity retry
+# budget so it cannot prematurely turn a network outage into a terminal skip.
+TRANSIENT_FETCH_RETRY_LIMIT = 12
 
 _TERMINAL_FAILURE_MARKERS = (
     "anti-bot",
@@ -40,6 +42,8 @@ _POLICY_FAILURE_MARKERS = (
 _TRANSIENT_FAILURE_MARKERS = (
     "err_",
     "connection",
+    "connection closed",
+    "connection aborted",
     "protocol",
     "fetch failed",
     "timed out",
@@ -49,7 +53,13 @@ _TRANSIENT_FAILURE_MARKERS = (
     "returned empty html",
     "empty response",
     "playwright browser fetch failed",
+    "temporary server response",
+    "http 5",
+    "temporary dns",
+    "name resolution",
+    "暂时无法解析",
 )
+_TRANSIENT_HTTP_STATUS_PATTERN = re.compile(r"\b(?:408|425|429|5\d{2})\b")
 
 
 class PageSnapshotLike(Protocol):
@@ -58,6 +68,7 @@ class PageSnapshotLike(Protocol):
     status: str
     error_message: str | None
     suspicious_empty: bool
+    http_status_code: int | None
     page_id: int | None
 
 
@@ -95,7 +106,9 @@ def fetch_url_host(url: str | None) -> str | None:
         return None
 
 
-def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClassification:
+def classify_page_fetch_failure(
+    snapshot: PageSnapshotLike,
+) -> FetchFailureClassification:
     if snapshot.status != "failed":
         raise ValueError("Only failed snapshots can be classified")
     error_message = (snapshot.error_message or "").lower()
@@ -109,20 +122,36 @@ def classify_page_fetch_failure(snapshot: PageSnapshotLike) -> FetchFailureClass
             status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
             reason="anti_bot_or_empty_response",
         )
+    if _is_transient_http_status(getattr(snapshot, "http_status_code", None)):
+        return FetchFailureClassification(
+            status=CrawlPageFetchStatus.TRANSIENT_FAILED.value
+        )
     if any(marker in error_message for marker in _TRANSIENT_FAILURE_MARKERS):
-        return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
+        return FetchFailureClassification(
+            status=CrawlPageFetchStatus.TRANSIENT_FAILED.value
+        )
     if snapshot.suspicious_empty:
         return FetchFailureClassification(
             status=CrawlPageFetchStatus.TERMINAL_FAILED.value,
             reason="anti_bot_or_empty_response",
         )
-    return FetchFailureClassification(status=CrawlPageFetchStatus.TRANSIENT_FAILED.value)
+    return FetchFailureClassification(
+        status=CrawlPageFetchStatus.TRANSIENT_FAILED.value
+    )
 
 
 def _is_retryable_failure_message(message: str | None) -> bool:
     normalized = (message or "").lower()
-    return bool(normalized) and any(
-        marker in normalized for marker in _TRANSIENT_FAILURE_MARKERS
+    return bool(normalized) and (
+        any(marker in normalized for marker in _TRANSIENT_FAILURE_MARKERS)
+        or bool(_TRANSIENT_HTTP_STATUS_PATTERN.search(normalized))
+    )
+
+
+def _is_transient_http_status(status_code: int | None) -> bool:
+    return bool(
+        status_code is not None
+        and (status_code in {408, 425, 429} or 500 <= status_code <= 599)
     )
 
 
@@ -134,7 +163,9 @@ async def get_page_fetch_decision(
 ) -> PageFetchDecision:
     normalized_url = normalize_fetch_url(url)
     if not callable(session_factory):
-        return PageFetchDecision(action="allow_first_fetch", normalized_url=normalized_url)
+        return PageFetchDecision(
+            action="allow_first_fetch", normalized_url=normalized_url
+        )
     async with session_factory() as session:
         state = await session.scalar(
             select(CrawlPageFetchState).where(
@@ -143,11 +174,14 @@ async def get_page_fetch_decision(
             )
         )
         if state is None or not isinstance(state, CrawlPageFetchState):
-            return PageFetchDecision(action="allow_first_fetch", normalized_url=normalized_url)
+            return PageFetchDecision(
+                action="allow_first_fetch", normalized_url=normalized_url
+            )
         if state.status == CrawlPageFetchStatus.TERMINAL_FAILED.value:
             if (
                 _is_retryable_failure_message(state.last_error_message)
-                and int(state.transient_failure_count or 0) < TRANSIENT_FETCH_RETRY_LIMIT
+                and int(state.transient_failure_count or 0)
+                < TRANSIENT_FETCH_RETRY_LIMIT
             ):
                 state.status = CrawlPageFetchStatus.TRANSIENT_FAILED.value
                 state.terminal_reason = None
@@ -188,12 +222,32 @@ async def get_page_fetch_decision(
                 status=state.status,
             )
         if state.status == CrawlPageFetchStatus.CHUNKED.value:
-            return PageFetchDecision(action="claim_chunk", normalized_url=normalized_url, state_id=state.id, status=state.status)
+            return PageFetchDecision(
+                action="claim_chunk",
+                normalized_url=normalized_url,
+                state_id=state.id,
+                status=state.status,
+            )
         if state.status == CrawlPageFetchStatus.PROCESSED.value:
-            return PageFetchDecision(action="skip_processed", normalized_url=normalized_url, state_id=state.id, status=state.status)
+            return PageFetchDecision(
+                action="skip_processed",
+                normalized_url=normalized_url,
+                state_id=state.id,
+                status=state.status,
+            )
         if state.status == CrawlPageFetchStatus.SUCCEEDED.value:
-            return PageFetchDecision(action="reuse_success", normalized_url=normalized_url, state_id=state.id, status=state.status)
-        return PageFetchDecision(action="allow_retry", normalized_url=normalized_url, state_id=state.id, status=state.status)
+            return PageFetchDecision(
+                action="reuse_success",
+                normalized_url=normalized_url,
+                state_id=state.id,
+                status=state.status,
+            )
+        return PageFetchDecision(
+            action="allow_retry",
+            normalized_url=normalized_url,
+            state_id=state.id,
+            status=state.status,
+        )
 
 
 async def should_prefer_browser_for_fetch_domain(
@@ -212,11 +266,15 @@ async def should_prefer_browser_for_fetch_domain(
                     CrawlPageFetchState.job_id == job_id,
                     CrawlPageFetchState.fetch_mode == "browser",
                     CrawlPageFetchState.browser_status == "succeeded",
+                    CrawlPageFetchState.direct_status.in_(("failed", "succeeded")),
                     CrawlPageFetchState.fallback_reason.is_not(None),
                 )
             )
         )
-    return any(fetch_url_host(state.normalized_url or state.original_url) == target_host for state in states)
+    return any(
+        fetch_url_host(state.normalized_url or state.original_url) == target_host
+        for state in states
+    )
 
 
 async def mark_page_fetch_result(
@@ -275,7 +333,9 @@ async def mark_page_fetch_result(
             state.status = classification.status
             state.terminal_reason = classification.reason
             if classification.status == CrawlPageFetchStatus.TRANSIENT_FAILED.value:
-                state.transient_failure_count = int(state.transient_failure_count or 0) + 1
+                state.transient_failure_count = (
+                    int(state.transient_failure_count or 0) + 1
+                )
         await session.commit()
 
 

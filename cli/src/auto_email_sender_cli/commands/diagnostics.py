@@ -78,8 +78,10 @@ def list_diagnostics_logs(
 @diagnostics_app.command("export")
 def export_diagnostics_logs(
     ctx: typer.Context,
-    output: Annotated[Path, typer.Option("--output", "-o", help="导出 JSON 保存位置。")],
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="导出 JSON 保存位置。")
+    ],
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
     level: Annotated[str | None, typer.Option("--level")] = None,
     category: Annotated[str | None, typer.Option("--category")] = None,
     event_name: Annotated[str | None, typer.Option("--event-name")] = None,
@@ -138,7 +140,7 @@ def download_crawler_debug_log(
     ctx: typer.Context,
     job_id: Annotated[int, typer.Argument(min=1, help="抓取任务 ID。")],
     output: Annotated[Path, typer.Option("--output", "-o", help="JSONL 保存位置。")],
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     context = cli_context(ctx)
     command = "diagnostics.crawler-debug"

@@ -24,7 +24,7 @@ export function buildForcedTermination(
   };
 }
 
-export function runDevDesktop(): ChildProcess {
+function runDevDesktop(): ChildProcess {
   const require = createRequire(import.meta.url);
   const electronPath = require("electron") as string;
   const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");

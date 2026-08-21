@@ -66,7 +66,7 @@ if ($sent -eq [IntPtr]::Zero) {
 }
 `;
 
-export const AGENT_INTEGRATION_IDS = [
+const AGENT_INTEGRATION_IDS = [
   "codex",
   "claude_code",
   "cursor",
@@ -318,7 +318,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     const agentIds = new Set(getManagedAgentIds(paths, previousManifest));
     agentIds.add(agent.id);
     try {
-      await writeEnabledManifest(previousManifest, previousManifest.path_managed, [...agentIds]);
+      await writeEnabledManifest(previousManifest.path_managed, [...agentIds]);
     } catch (error) {
       await rollbackManagedPathChanges([replacement], error);
     }
@@ -340,7 +340,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
     await rm(target, { recursive: true, force: true });
     const agentIds = getManagedAgentIds(paths, previousManifest)
       .filter((managedAgentId) => managedAgentId !== agent.id);
-    await writeEnabledManifest(previousManifest, previousManifest.path_managed, agentIds);
+    await writeEnabledManifest(previousManifest.path_managed, agentIds);
     return getStatus();
   };
 
@@ -371,16 +371,16 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       }
     }
 
-    await writeDisabledManifest(manifest, true);
+    await writeDisabledManifest(true);
     return getStatus();
   };
 
   const dismissOnboarding = async (): Promise<AgentSupportStatus> => {
     const current = await readManifest(paths.manifestPath);
     if (current?.enabled) {
-      await writeEnabledManifest(current, current.path_managed, getManagedAgentIds(paths, current));
+      await writeEnabledManifest(current.path_managed, getManagedAgentIds(paths, current));
     } else {
-      await writeDisabledManifest(current, true);
+      await writeDisabledManifest(true);
     }
     return getStatus();
   };
@@ -440,7 +440,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
             processEnvironment,
             broadcastWindowsChange,
           );
-      await writeEnabledManifest(previousManifest, pathManaged, []);
+      await writeEnabledManifest(pathManaged, []);
     } catch (error) {
       await rollbackManagedPathChanges(replacements, error);
     }
@@ -477,7 +477,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
             processEnvironment,
             broadcastWindowsChange,
           );
-      await writeEnabledManifest(previousManifest, pathManaged, agentIds);
+      await writeEnabledManifest(pathManaged, agentIds);
     } catch (error) {
       await rollbackManagedPathChanges(replacements, error);
     }
@@ -486,7 +486,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   }
 
   async function writeEnabledManifest(
-    previousManifest: AgentSupportManifest | null,
     pathManaged: boolean,
     agentIds: AgentIntegrationId[],
   ): Promise<void> {
@@ -516,7 +515,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   }
 
   async function writeDisabledManifest(
-    previousManifest: AgentSupportManifest | null,
     promptDismissed: boolean,
   ): Promise<void> {
     await writeManifest(paths.manifestPath, {
@@ -964,7 +962,7 @@ async function ensureWindowsPath(
   return true;
 }
 
-export function synchronizeWindowsProcessPath(
+function synchronizeWindowsProcessPath(
   environment: NodeJS.ProcessEnv,
   commandDirectory: string,
   enabled: boolean,

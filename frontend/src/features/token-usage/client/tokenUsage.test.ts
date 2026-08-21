@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTokenUsageVisualizationQueryParams,
-  buildTokenUsageChartQueryParams,
   buildTokenUsageRecordQueryParams,
   calculateStackedBarSegments,
   formatTokenCompactValue,
@@ -65,36 +64,6 @@ describe('token usage center helpers', () => {
       page: 3,
       page_size: 5,
       feature_type: 'match_analysis',
-      model_name: 'gpt-4o-mini',
-      start_at: '2026-04-30T02:00:00.000Z',
-      end_at: '2026-04-30T10:00:00.000Z',
-    });
-  });
-
-  it('builds chart query params for presets and custom ranges', () => {
-    expect(
-      buildTokenUsageChartQueryParams({
-        featureType: 'all',
-        modelName: null,
-        preset: 'last_24_hours',
-        startAt: '2026-04-30T02:00:00.000Z',
-        endAt: '2026-04-30T10:00:00.000Z',
-      }),
-    ).toEqual({
-      preset: 'last_24_hours',
-    });
-
-    expect(
-      buildTokenUsageChartQueryParams({
-        featureType: 'crawl',
-        modelName: 'gpt-4o-mini',
-        preset: 'custom',
-        startAt: '2026-04-30T02:00:00.000Z',
-        endAt: '2026-04-30T10:00:00.000Z',
-      }),
-    ).toEqual({
-      preset: 'custom',
-      feature_type: 'crawl',
       model_name: 'gpt-4o-mini',
       start_at: '2026-04-30T02:00:00.000Z',
       end_at: '2026-04-30T10:00:00.000Z',

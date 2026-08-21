@@ -79,7 +79,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
             await session.commit()
             return candidate.id
 
-    async def test_enrichment_same_email_merges_candidates_and_preserves_aliases(self) -> None:
+    async def test_enrichment_same_email_merges_candidates_and_preserves_aliases(
+        self,
+    ) -> None:
         first_id = await self._create_candidate(
             name="张三",
             profile_url="https://example.edu/people/zhang",
@@ -152,7 +154,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row.id for row in canonicalized], [first_id])
         self.assertEqual(missing, [])
 
-    async def test_profile_enrichment_replaces_list_email_and_refreshes_identity_key(self) -> None:
+    async def test_profile_enrichment_replaces_list_email_and_refreshes_identity_key(
+        self,
+    ) -> None:
         candidate_id = await self._create_candidate(
             name="列表页邮箱候选",
             email="list@example.edu",
@@ -257,7 +261,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
             {"profile@example.edu"},
         )
 
-    async def test_profile_enrichment_does_not_replace_manual_or_unknown_email(self) -> None:
+    async def test_profile_enrichment_does_not_replace_manual_or_unknown_email(
+        self,
+    ) -> None:
         manual_id = await self._create_candidate(
             name="手动邮箱候选",
             email="manual@example.edu",
@@ -288,7 +294,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manual.email, "manual@example.edu")
         self.assertEqual(unknown.email, "legacy@example.edu")
 
-    async def test_profile_enrichment_does_not_restore_manually_cleared_email(self) -> None:
+    async def test_profile_enrichment_does_not_restore_manually_cleared_email(
+        self,
+    ) -> None:
         candidate_id = await self._create_candidate(
             name="手动清空邮箱候选",
             profile_url="https://example.edu/people/cleared-email",
@@ -328,7 +336,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(changed)
         self.assertEqual(candidate.email, "list@example.edu")
 
-    async def test_alias_enrichment_updates_canonical_and_manual_values_win(self) -> None:
+    async def test_alias_enrichment_updates_canonical_and_manual_values_win(
+        self,
+    ) -> None:
         first_id = await self._create_candidate(
             name="张三",
             email="zhang@example.edu",
@@ -379,7 +389,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(count, 2)
 
-    async def test_related_internal_and_external_profiles_merge_without_backup_field(self) -> None:
+    async def test_related_internal_and_external_profiles_merge_without_backup_field(
+        self,
+    ) -> None:
         external_url = "https://sites.example.net/view/guo"
         external_id = await self._create_candidate(
             name="郭晓杰",
@@ -441,7 +453,9 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(count, 2)
 
-    async def test_identity_normalization_merges_unicode_email_and_tracking_urls(self) -> None:
+    async def test_identity_normalization_merges_unicode_email_and_tracking_urls(
+        self,
+    ) -> None:
         email_root_id = await self._create_candidate(
             name="邮箱写法一",
             email="USER＠Example．EDU",
@@ -511,10 +525,11 @@ class CrawlCandidateIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(count, 2)
 
-    async def test_concurrent_same_email_registration_keeps_one_canonical_candidate(self) -> None:
+    async def test_concurrent_same_email_registration_keeps_one_canonical_candidate(
+        self,
+    ) -> None:
         candidate_ids = [
-            await self._create_candidate(name=f"并发候选 {index}")
-            for index in range(8)
+            await self._create_candidate(name=f"并发候选 {index}") for index in range(8)
         ]
         ready = asyncio.Event()
         loaded = 0

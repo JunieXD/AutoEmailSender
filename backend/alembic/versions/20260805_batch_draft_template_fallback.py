@@ -37,7 +37,9 @@ def upgrade() -> None:
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         if "draft_generation_source" not in columns:
             batch_op.add_column(
-                sa.Column("draft_generation_source", sa.String(length=32), nullable=True)
+                sa.Column(
+                    "draft_generation_source", sa.String(length=32), nullable=True
+                )
             )
         if "draft_fallback_reason" not in columns:
             batch_op.add_column(

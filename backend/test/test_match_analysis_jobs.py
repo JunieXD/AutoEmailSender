@@ -70,7 +70,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self._run_async(self.engine.dispose())
         self.temp_dir.cleanup()
 
-    def test_create_job_deduplicates_professors_and_skips_missing_evidence(self) -> None:
+    def test_create_job_deduplicates_professors_and_skips_missing_evidence(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
         )
@@ -104,7 +106,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
 
         with (
             patch("app.modules.matching.job_runtime.utc_now", return_value=utc_time),
-            patch("app.modules.matching.job_runtime.local_now", return_value=local_time),
+            patch(
+                "app.modules.matching.job_runtime.local_now", return_value=local_time
+            ),
         ):
             job = self._run_async(
                 create_match_analysis_job(
@@ -188,7 +192,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(job.skipped_count, 1)
         self.assertEqual(counts, {"queued": 1_004, "skipped": 1})
 
-    def test_selection_summary_and_skip_existing_cover_off_page_professors(self) -> None:
+    def test_selection_summary_and_skip_existing_cover_off_page_professors(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(extra_analyzable_professor=True),
         )
@@ -522,7 +528,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
 
         self._run_async(expire_claim())
         self.assertEqual(
-            self._run_async(_recover_expired_match_analysis_items(self.session_factory)),
+            self._run_async(
+                _recover_expired_match_analysis_items(self.session_factory)
+            ),
             1,
         )
         new_claim = self._run_async(
@@ -570,7 +578,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(item.status, MatchAnalysisJobItemStatus.RUNNING.value)
         self.assertEqual(item.claim_id, claim.claim_id)
 
-    def test_terminal_item_update_keeps_job_summary_current_and_idempotent(self) -> None:
+    def test_terminal_item_update_keeps_job_summary_current_and_idempotent(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
         )
@@ -587,7 +597,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         async def mark_running() -> None:
             async with self.session_factory() as session:
                 item = await session.scalar(
-                    select(MatchAnalysisJobItem).where(MatchAnalysisJobItem.job_id == job.id)
+                    select(MatchAnalysisJobItem).where(
+                        MatchAnalysisJobItem.job_id == job.id
+                    )
                 )
                 assert item is not None
                 item.status = MatchAnalysisJobItemStatus.RUNNING.value
@@ -667,11 +679,15 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.failed_count, 0)
         self.assertEqual(stored.skipped_count, 1)
 
-    def test_legacy_queued_item_uses_job_profile_without_mutating_email_task(self) -> None:
+    def test_legacy_queued_item_uses_job_profile_without_mutating_email_task(
+        self,
+    ) -> None:
         identity_id, first_llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(),
         )
-        second_llm_profile_id = self._run_async(self._create_llm_profile(name="备用匹配模型"))
+        second_llm_profile_id = self._run_async(
+            self._create_llm_profile(name="备用匹配模型")
+        )
         existing_task_id = self._run_async(
             self._create_email_task(
                 identity_id=identity_id,
@@ -709,7 +725,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
 
         items = self._run_async(self._get_job_items(job.id))
         task_ids = self._run_async(
-            self._list_email_task_ids(identity_id=identity_id, professor_id=professor_ids[0]),
+            self._list_email_task_ids(
+                identity_id=identity_id, professor_id=professor_ids[0]
+            ),
         )
         task = self._run_async(self._get_email_task(existing_task_id))
         self.assertEqual(processed, 1)
@@ -821,7 +839,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.failed_count, 1)
         self.assertEqual(stored.succeeded_count, 1)
 
-    def test_run_queued_job_finishes_warmup_item_before_starting_remaining_items(self) -> None:
+    def test_run_queued_job_finishes_warmup_item_before_starting_remaining_items(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(extra_analyzable_professor=True),
         )
@@ -873,8 +893,10 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 processed,
             )
 
-        remaining_started_early, remaining_eventually_started, processed = self._run_async(
-            scenario(),
+        remaining_started_early, remaining_eventually_started, processed = (
+            self._run_async(
+                scenario(),
+            )
         )
         self.assertFalse(remaining_started_early)
         self.assertTrue(remaining_eventually_started)
@@ -945,7 +967,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual(stored.total_tokens, 0)
         self.assertEqual(items[0].status, "canceled")
 
-    def test_cancel_requested_job_with_success_and_canceled_items_stays_canceled(self) -> None:
+    def test_cancel_requested_job_with_success_and_canceled_items_stays_canceled(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
             self._seed_create_job_data(extra_analyzable_professor=True),
         )
@@ -1079,7 +1103,11 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 )
             session.add_all(professors)
             await session.commit()
-            return identity.id, llm_profile.id, [professor.id for professor in professors]
+            return (
+                identity.id,
+                llm_profile.id,
+                [professor.id for professor in professors],
+            )
 
     async def _get_job(self, job_id: int) -> MatchAnalysisJob:
         async with self.session_factory() as session:
@@ -1164,7 +1192,9 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
             await session.commit()
             return task.id
 
-    async def _list_email_task_ids(self, *, identity_id: int, professor_id: int) -> list[int]:
+    async def _list_email_task_ids(
+        self, *, identity_id: int, professor_id: int
+    ) -> list[int]:
         async with self.session_factory() as session:
             return list(
                 await session.scalars(
@@ -1264,7 +1294,11 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
                 release_llm_call.set()
             await asyncio.wait_for(worker_task, timeout=1)
 
-        return llm_call_canceled.is_set(), await self._get_job(job.id), await self._get_job_items(job.id)
+        return (
+            llm_call_canceled.is_set(),
+            await self._get_job(job.id),
+            await self._get_job_items(job.id),
+        )
 
     @staticmethod
     def _run_async(awaitable):

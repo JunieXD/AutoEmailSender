@@ -4,7 +4,16 @@ from collections import defaultdict
 
 from app.core.time import utc_now
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +23,6 @@ from app.core.database import get_async_session
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     EmailTask,
-    EmailTaskCancellationReason,
-    EmailTaskStatus,
     Professor,
     ProfessorTag,
     ProfessorTagLink,
@@ -64,7 +71,6 @@ from .management import (
     build_professor_export,
     build_professor_template,
     is_valid_professor_email,
-    normalize_professor_payload,
     parse_professor_import_file,
 )
 from .mutations import (
@@ -99,9 +105,7 @@ async def list_professors(
         .order_by(Professor.created_at.desc(), Professor.id.asc())
     )
     requested_professor_ids = (
-        unique_positive_ids(
-            int(item) for item in ids.split(",") if item.strip()
-        )
+        unique_positive_ids(int(item) for item in ids.split(",") if item.strip())
         if ids
         else []
     )
@@ -157,7 +161,11 @@ async def list_professors(
                     EmailTask.batch_send_canceled_at.is_(None),
                     email_task_is_not_user_removed_expression(),
                 )
-                .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
+                .order_by(
+                    EmailTask.professor_id.asc(),
+                    EmailTask.created_at.desc(),
+                    EmailTask.id.desc(),
+                ),
             )
             for task in task_result.scalars():
                 tasks_by_professor[task.professor_id].append(task)
@@ -183,9 +191,7 @@ async def list_professors(
     for professor in professors:
         contact_status = contact_status_by_professor.get(professor.id)
         match_result = (
-            resolved_matches.get(professor.id)
-            if resolved_matches is not None
-            else None
+            resolved_matches.get(professor.id) if resolved_matches is not None else None
         )
         match_scope = resolved_matches.scope if resolved_matches is not None else None
         items.append(
@@ -225,7 +231,9 @@ async def list_professors(
                 status=contact_status.status if contact_status else "not_contacted",
                 has_active_schedule=professor.id in active_scheduled_professor_ids,
                 last_sent_at=contact_status.last_sent_at if contact_status else None,
-                last_replied_at=contact_status.last_replied_at if contact_status else None,
+                last_replied_at=contact_status.last_replied_at
+                if contact_status
+                else None,
                 personal_note=professor.personal_note,
                 tags=_serialize_professor_tags(professor),
             )
@@ -461,7 +469,9 @@ async def delete_professor_tag(
     if tag is None:
         raise HTTPException(status_code=404, detail="未找到标签")
 
-    await session.execute(delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag_id))
+    await session.execute(
+        delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag_id)
+    )
     await session.delete(tag)
     await session.commit()
     return ProfessorActionResult(
@@ -491,7 +501,9 @@ async def update_professor_tags(
     return _serialize_management_professor(professor)
 
 
-@router.post("", response_model=ProfessorManagementItemRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ProfessorManagementItemRead, status_code=status.HTTP_201_CREATED
+)
 async def create_professor(
     payload: ProfessorUpsertPayload,
     session: AsyncSession = Depends(get_async_session),
@@ -751,7 +763,9 @@ def _apply_archived_filter(statement, archived: str):
         return statement.where(Professor.archived_at.is_not(None))
     if normalized == "all":
         return statement
-    raise HTTPException(status_code=400, detail="archived 参数仅支持 active、archived、all")
+    raise HTTPException(
+        status_code=400, detail="archived 参数仅支持 active、archived、all"
+    )
 
 
 def _ensure_professor_email_valid(email: str) -> None:
@@ -785,7 +799,9 @@ async def _record_professor_log(
     )
 
 
-def _serialize_management_professor(professor: Professor) -> ProfessorManagementItemRead:
+def _serialize_management_professor(
+    professor: Professor,
+) -> ProfessorManagementItemRead:
     return ProfessorManagementItemRead(
         id=professor.id,
         name=professor.name,

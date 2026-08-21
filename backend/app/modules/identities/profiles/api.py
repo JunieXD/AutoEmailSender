@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 
 from app.core.time import utc_now
 
@@ -87,7 +86,9 @@ async def list_identities(
     ]
 
 
-@router.post("", response_model=IdentityProfileRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=IdentityProfileRead, status_code=status.HTTP_201_CREATED
+)
 async def create_identity(
     payload: IdentityProfileCreate,
     session: AsyncSession = Depends(get_async_session),
@@ -182,7 +183,9 @@ async def update_identity(
     else:
         await create_template_from_legacy_identity(session, identity)
     if _imap_cache_signature_from_data(data) != old_imap_signature:
-        await clear_identity_sent_folder_discovery_cache_in_session(session, identity_id)
+        await clear_identity_sent_folder_discovery_cache_in_session(
+            session, identity_id
+        )
     identity.updated_at = utc_now()
 
     try:
@@ -212,7 +215,9 @@ async def update_identity_default_template(
         session,
         identity,
         "identity.default_outreach_template_updated",
-        metadata={"default_outreach_template_id": identity.default_outreach_template_id},
+        metadata={
+            "default_outreach_template_id": identity.default_outreach_template_id
+        },
     )
     await session.commit()
     saved = await _get_identity(session, identity_id)
@@ -243,7 +248,9 @@ async def delete_identity(
 
     source_material_ids = list(
         await session.scalars(
-            select(IdentityMaterial.id).where(IdentityMaterial.identity_id == identity_id),
+            select(IdentityMaterial.id).where(
+                IdentityMaterial.identity_id == identity_id
+            ),
         ),
     )
     await session.execute(
@@ -286,9 +293,7 @@ async def delete_identity(
             metadata={
                 "before_member_ids": list(group_cleanup.previous_member_ids),
                 "after_member_ids": (
-                    []
-                    if group_cleanup.dissolved
-                    else list(group_cleanup.member_ids)
+                    [] if group_cleanup.dissolved else list(group_cleanup.member_ids)
                 ),
                 "removed_identity_id": identity_id,
                 "cleared_match_source": cleared_match_source,
@@ -298,9 +303,7 @@ async def delete_identity(
 
     if was_default:
         remaining = await session.scalar(
-            select(IdentityProfile)
-            .order_by(IdentityProfile.created_at.asc())
-            .limit(1),
+            select(IdentityProfile).order_by(IdentityProfile.created_at.asc()).limit(1),
         )
         if remaining:
             remaining.is_default = True
@@ -463,11 +466,7 @@ async def smtp_test(
         ok=ok,
         message=message,
         host=identity.smtp_host,
-        possible_cause=(
-            explain_smtp_error(message)
-            if not ok
-            else None
-        ),
+        possible_cause=(explain_smtp_error(message) if not ok else None),
     )
 
 
@@ -496,7 +495,9 @@ async def imap_test(
     return ConnectionTestResult(ok=ok, message=message, host=identity.imap_host)
 
 
-@router.post("/{identity_id}/template-import", response_model=IdentityTemplateImportResult)
+@router.post(
+    "/{identity_id}/template-import", response_model=IdentityTemplateImportResult
+)
 async def import_identity_template(
     identity_id: int,
     file: UploadFile = File(...),
@@ -663,9 +664,13 @@ def _normalize_identity_payload(
     email_address = str(data.get("email_address") or "").strip()
     smtp_password = str(data.get("smtp_password") or "")
     imap_host = str(data.get("imap_host") or "").strip()
-    outreach_generation_mode = str(
-        data.get("outreach_generation_mode") or OUTREACH_GENERATION_MODE_LLM,
-    ).strip().lower()
+    outreach_generation_mode = (
+        str(
+            data.get("outreach_generation_mode") or OUTREACH_GENERATION_MODE_LLM,
+        )
+        .strip()
+        .lower()
+    )
 
     if outreach_generation_mode not in {
         OUTREACH_GENERATION_MODE_LLM,

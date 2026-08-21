@@ -50,7 +50,7 @@ async def list_deliveries(
             status=status,
             sort=sort,
             search_fields=(
-                tuple(field.strip() for field in search_fields.split(','))
+                tuple(field.strip() for field in search_fields.split(","))
                 if search_fields is not None
                 else None
             ),

@@ -6,7 +6,18 @@ import json
 import re
 from typing import Any, Iterable, Literal
 
-from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select, text
+from sqlalchemy import (
+    Integer,
+    String,
+    and_,
+    case,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
@@ -113,12 +124,9 @@ async def _ui_handoff_professor_condition(
                 code="UI_HANDOFF_IDENTITY_MISMATCH",
                 message="该导师界面交接属于其他发件身份，请重新发起页面定位。",
             )
-    selected_ids = (
-        select(cast(AgentUiHandoffItem.resource_id, Integer))
-        .where(
-            AgentUiHandoffItem.handoff_id == handoff_id,
-            AgentUiHandoffItem.resource_type == "professor",
-        )
+    selected_ids = select(cast(AgentUiHandoffItem.resource_id, Integer)).where(
+        AgentUiHandoffItem.handoff_id == handoff_id,
+        AgentUiHandoffItem.resource_type == "professor",
     )
     return Professor.id.in_(selected_ids)
 
@@ -250,6 +258,8 @@ def _keyword_condition(
     else:
         for scope in selected_database_scopes:
             conditions.append(_contains(field_by_scope[scope], keyword))
+    if "personalNote" in scopes:
+        conditions.append(_contains(Professor.personal_note, keyword))
     if "tag" in scopes:
         conditions.append(Professor.tags.any(_contains(ProfessorTag.name, keyword)))
     return or_(*conditions) if conditions else literal(False)

@@ -16,10 +16,16 @@ function New-CmdShim {
   param(
     [Parameter(Mandatory = $true)][string]$Directory,
     [Parameter(Mandatory = $true)][string]$Name,
-    [Parameter(Mandatory = $true)][string]$Content
+    [Parameter(Mandatory = $true)][string]$Content,
+    [string]$PosixContent = ""
   )
 
   Set-Content -Encoding UTF8 -Path (Join-Path $Directory "$Name.cmd") -Value $Content
+  if (-not $IsWindows -and $PosixContent) {
+    $posixPath = Join-Path $Directory $Name
+    Set-Content -Encoding UTF8 -Path $posixPath -Value $PosixContent
+    & chmod +x $posixPath
+  }
 }
 
 function Assert-Contains {
@@ -48,10 +54,6 @@ try {
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 "@
 
   New-CmdShim -Directory $tempBin -Name "git" -Content @"
@@ -65,13 +67,25 @@ exit /b 0
 echo fake npm %*
 if "%1"=="test" exit /b 1
 exit /b 0
-"@
+"@ -PosixContent @'
+#!/usr/bin/env bash
+echo fake npm "$@"
+if [[ "${1:-}" == "test" ]]; then exit 1; fi
+exit 0
+'@
+  $uvPosixContent = @'
+#!/usr/bin/env bash
+echo fake uv "$@"
+printf '%s\n' "$*" >> '__UV_CALLS_PATH__'
+exit 0
+'@
+  $uvPosixContent = $uvPosixContent.Replace("__UV_CALLS_PATH__", $uvCallsPath)
   New-CmdShim -Directory $tempBin -Name "uv" -Content @"
 @echo off
 echo fake uv %*
 echo %* >> "$uvCallsPath"
 exit /b 0
-"@
+"@ -PosixContent $uvPosixContent
 
   $releaseRepo = Join-Path $tempRoot "release-repo"
   New-Item -ItemType Directory -Path (Join-Path $releaseRepo "docs\releases") -Force | Out-Null
@@ -99,10 +113,6 @@ Write-Host "fake CLI build -Clean"
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 "@
 
   New-CmdShim -Directory $tempBin -Name "git" -Content @"
@@ -120,20 +130,43 @@ if "%3"=="tag" exit /b 0
 if "%3"=="push" exit /b 0
 if "%3"=="rev-parse" echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & exit /b 0
 exit /b 0
-"@
+"@ -PosixContent @'
+#!/usr/bin/env bash
+if [[ "${3:-}" == "branch" ]]; then echo master; exit 0; fi
+if [[ "${3:-}" == "status" ]]; then
+  if [[ "${PROMOTION_CLEAN:-}" == "1" ]]; then exit 0; fi
+  [[ " $* " == *" --untracked-files=all "* ]] || exit 2
+  echo "?? docs/releases/v9.9.9.md"
+  exit 0
+fi
+if [[ "${3:-}" == "rev-parse" ]]; then echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; exit 0; fi
+exit 0
+'@
   New-CmdShim -Directory $tempBin -Name "gh" -Content @"
 @echo off
 echo %* >> "$ghCallsPath"
+if "%1 %2"=="run view" echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 exit /b 0
-"@
+"@ -PosixContent (@'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> '__GH_CALLS_PATH__'
+if [[ "${1:-} ${2:-}" == "run view" ]]; then
+  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+fi
+exit 0
+'@).Replace("__GH_CALLS_PATH__", $ghCallsPath)
   New-CmdShim -Directory $tempBin -Name "node" -Content @"
 @echo off
 echo fake node %*
 exit /b 0
-"@
+"@ -PosixContent @'
+#!/usr/bin/env bash
+echo fake node "$@"
+exit 0
+'@
 
   $oldPath = $env:PATH
-  $env:PATH = "$tempBin;$oldPath"
+  $env:PATH = "$tempBin$([System.IO.Path]::PathSeparator)$oldPath"
   try {
     $pwshPath = (Get-Command pwsh).Source
     $failureProcess = Start-Process -FilePath $pwshPath -ArgumentList @(
@@ -161,7 +194,11 @@ exit /b 0
 @echo off
 echo fake npm %*
 exit /b 0
-"@
+"@ -PosixContent @'
+#!/usr/bin/env bash
+echo fake npm "$@"
+exit 0
+'@
     if (Test-Path $uvCallsPath) {
       Remove-Item -LiteralPath $uvCallsPath -Force
     }

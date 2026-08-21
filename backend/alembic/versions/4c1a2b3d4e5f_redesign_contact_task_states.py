@@ -45,7 +45,9 @@ def upgrade() -> None:
             ),
         )
         batch_op.add_column(sa.Column("parent_task_id", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("cancellation_reason", sa.String(length=32), nullable=True))
+        batch_op.add_column(
+            sa.Column("cancellation_reason", sa.String(length=32), nullable=True)
+        )
         batch_op.create_foreign_key(
             "fk_email_tasks_parent_task_id_email_tasks",
             "email_tasks",
@@ -123,7 +125,9 @@ def downgrade() -> None:
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         batch_op.drop_constraint("uq_email_tasks_parent_task_id", type_="unique")
-        batch_op.drop_constraint("fk_email_tasks_parent_task_id_email_tasks", type_="foreignkey")
+        batch_op.drop_constraint(
+            "fk_email_tasks_parent_task_id_email_tasks", type_="foreignkey"
+        )
         batch_op.drop_column("cancellation_reason")
         batch_op.drop_column("parent_task_id")
         batch_op.drop_column("source")

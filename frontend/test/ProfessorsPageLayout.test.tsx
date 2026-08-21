@@ -1293,7 +1293,9 @@ describe("ProfessorsPage layout", () => {
       expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
     });
 
-    const searchInput = screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签");
+    const searchInput = screen.getByPlaceholderText(
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签",
+    );
     const toolbar = screen.getByTestId("professor-filter-toolbar");
     const searchScopeButton = within(toolbar).getByRole("button", {
       name: /搜索范围：选择字段：全部字段/,
@@ -1306,6 +1308,9 @@ describe("ProfessorsPage layout", () => {
     expect(searchScopeButton).toHaveClass("border-l");
     expect(searchScopeButton).toHaveTextContent("全部字段");
     expect(searchScopeButton).not.toHaveTextContent("选择字段：");
+    fireEvent.click(searchScopeButton);
+    expect(screen.getByRole("option", { name: "备注" })).toBeInTheDocument();
+    fireEvent.click(searchScopeButton);
     expect(sortControl).toHaveClass("h-12");
     expect(sortButton).not.toHaveClass("ui-select-shell");
     expect(within(toolbar).getByRole("button", { name: "排序" })).toBeInTheDocument();

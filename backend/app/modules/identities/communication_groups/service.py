@@ -245,9 +245,9 @@ def _event_name_for_merge(event_name: str, merged: bool) -> str:
     if not merged:
         return event_name
     if event_name.endswith(".created"):
-        return f"{event_name[:-len('.created')]}.merged"
+        return f"{event_name[: -len('.created')]}.merged"
     if event_name.endswith(".updated"):
-        return f"{event_name[:-len('.updated')]}.merged"
+        return f"{event_name[: -len('.updated')]}.merged"
     return event_name
 
 
@@ -374,7 +374,9 @@ def serialize_communication_group(
     return _serialize_group(group)
 
 
-def _serialize_group(group: IdentityCommunicationGroup) -> IdentityCommunicationGroupRead:
+def _serialize_group(
+    group: IdentityCommunicationGroup,
+) -> IdentityCommunicationGroupRead:
     result = IdentityCommunicationGroupRead(
         id=group.id,
         members=[

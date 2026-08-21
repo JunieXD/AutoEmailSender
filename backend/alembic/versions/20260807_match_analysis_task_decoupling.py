@@ -14,9 +14,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20260807_match_task_decoupling"
-down_revision: Union[str, Sequence[str], None] = (
-    "20260807_email_delivery_management"
-)
+down_revision: Union[str, Sequence[str], None] = "20260807_email_delivery_management"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -52,9 +50,9 @@ def downgrade() -> None:
         sa.column("email_task_id", sa.Integer()),
     )
     detached_run_count = op.get_bind().scalar(
-        sa.select(sa.func.count()).select_from(runs).where(
-            runs.c.email_task_id.is_(None)
-        )
+        sa.select(sa.func.count())
+        .select_from(runs)
+        .where(runs.c.email_task_id.is_(None))
     )
     if detached_run_count:
         raise RuntimeError(

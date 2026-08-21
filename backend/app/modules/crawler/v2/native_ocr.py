@@ -9,7 +9,11 @@ import sys
 import tempfile
 
 from ..pages.tools import CrawlToolContext, PageSnapshot, fetch_binary_resource
-from .profile_fallbacks import EmailEvidence, extract_email_evidence, resolve_profile_image_urls
+from .profile_fallbacks import (
+    EmailEvidence,
+    extract_email_evidence,
+    resolve_profile_image_urls,
+)
 
 
 MAX_OCR_IMAGES_PER_PAGE = 6
@@ -25,7 +29,9 @@ async def extract_ocr_email_evidence(
     attempted_images = 0
     for image_url, context in resolve_profile_image_urls(snapshot):
         try:
-            final_url, content_type, image_bytes = await fetch_binary_resource(ctx, image_url)
+            final_url, content_type, image_bytes = await fetch_binary_resource(
+                ctx, image_url
+            )
         except Exception:
             continue
         if not _looks_like_raster_image(content_type, image_bytes):
@@ -122,7 +128,7 @@ def _jpeg_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
             continue
         if index + 2 > len(image_bytes):
             return None
-        segment_length = int.from_bytes(image_bytes[index:index + 2], "big")
+        segment_length = int.from_bytes(image_bytes[index : index + 2], "big")
         if segment_length < 2 or index + segment_length > len(image_bytes):
             return None
         if marker in {
@@ -140,8 +146,8 @@ def _jpeg_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
             0xCE,
             0xCF,
         }:
-            height = int.from_bytes(image_bytes[index + 3:index + 5], "big")
-            width = int.from_bytes(image_bytes[index + 5:index + 7], "big")
+            height = int.from_bytes(image_bytes[index + 3 : index + 5], "big")
+            width = int.from_bytes(image_bytes[index + 5 : index + 7], "big")
             return width, height
         index += segment_length
     return None
@@ -171,7 +177,9 @@ def _native_ocr_command() -> tuple[str, ...] | None:
     if system == "Windows":
         script = _packaged_resource_path("native/ocr/windows-media-ocr.ps1")
         if script is None:
-            script = _backend_root() / "native" / "ocr" / "windows" / "windows-media-ocr.ps1"
+            script = (
+                _backend_root() / "native" / "ocr" / "windows" / "windows-media-ocr.ps1"
+            )
         if not script.is_file():
             return None
         return (
@@ -205,7 +213,9 @@ def _image_suffix(content_type: str) -> str:
     }.get(content_type, ".img")
 
 
-def _deduplicate_email_evidence(values: list[EmailEvidence]) -> tuple[EmailEvidence, ...]:
+def _deduplicate_email_evidence(
+    values: list[EmailEvidence],
+) -> tuple[EmailEvidence, ...]:
     deduplicated: list[EmailEvidence] = []
     seen: set[str] = set()
     for value in values:

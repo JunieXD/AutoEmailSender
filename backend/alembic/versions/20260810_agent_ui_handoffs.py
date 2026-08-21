@@ -29,7 +29,12 @@ def upgrade() -> None:
         op.create_table(
             "agent_ui_handoffs",
             sa.Column("id", sa.String(length=64), nullable=False),
-            sa.Column("schema_version", sa.Integer(), server_default=sa.text("1"), nullable=False),
+            sa.Column(
+                "schema_version",
+                sa.Integer(),
+                server_default=sa.text("1"),
+                nullable=False,
+            ),
             sa.Column("surface", sa.String(length=80), nullable=False),
             sa.Column("route", sa.String(length=240), nullable=False),
             sa.Column(
@@ -41,12 +46,22 @@ def upgrade() -> None:
             sa.Column("idempotency_key", sa.String(length=160), nullable=True),
             sa.Column("request_fingerprint", sa.String(length=64), nullable=False),
             sa.Column("selection_fingerprint", sa.String(length=64), nullable=True),
-            sa.Column("selection_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column(
+                "selection_count",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
             sa.Column("payload", sa.JSON(), nullable=False),
             sa.Column("result", sa.JSON(), nullable=True),
             sa.Column("failure_message", sa.Text(), nullable=True),
             sa.Column("consumer_id", sa.String(length=120), nullable=True),
-            sa.Column("delivery_attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column(
+                "delivery_attempts",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("claim_expires_at", sa.DateTime(timezone=True), nullable=True),
@@ -124,13 +139,19 @@ def upgrade() -> None:
 def downgrade() -> None:
     tables = _table_names()
     if "agent_ui_handoff_items" in tables:
-        op.drop_index("ix_agent_ui_handoff_items_resource", table_name="agent_ui_handoff_items")
+        op.drop_index(
+            "ix_agent_ui_handoff_items_resource", table_name="agent_ui_handoff_items"
+        )
         op.drop_index(
             op.f("ix_agent_ui_handoff_items_handoff_id"),
             table_name="agent_ui_handoff_items",
         )
         op.drop_table("agent_ui_handoff_items")
     if "agent_ui_handoffs" in tables:
-        op.drop_index("ix_agent_ui_handoffs_consumer_claim", table_name="agent_ui_handoffs")
-        op.drop_index("ix_agent_ui_handoffs_status_expires_at", table_name="agent_ui_handoffs")
+        op.drop_index(
+            "ix_agent_ui_handoffs_consumer_claim", table_name="agent_ui_handoffs"
+        )
+        op.drop_index(
+            "ix_agent_ui_handoffs_status_expires_at", table_name="agent_ui_handoffs"
+        )
         op.drop_table("agent_ui_handoffs")

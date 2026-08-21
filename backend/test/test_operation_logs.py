@@ -244,15 +244,20 @@ class OperationLogTests(unittest.TestCase):
                 return list(
                     (
                         await session.execute(
-                            select(OperationLog.event_name).order_by(OperationLog.event_name),
+                            select(OperationLog.event_name).order_by(
+                                OperationLog.event_name
+                            ),
                         )
                     ).scalars(),
                 )
 
-        self.assertEqual(asyncio.run(scenario()), ["new.event", "old.event", "recent.event"])
+        self.assertEqual(
+            asyncio.run(scenario()), ["new.event", "old.event", "recent.event"]
+        )
 
-
-    def test_cleanup_old_operation_logs_handles_loaded_sqlite_naive_datetimes(self) -> None:
+    def test_cleanup_old_operation_logs_handles_loaded_sqlite_naive_datetimes(
+        self,
+    ) -> None:
         from app.core.database import get_session_factory
         from app.models import OperationLog
         from app.services.operation_logs import cleanup_old_operation_logs
@@ -273,7 +278,9 @@ class OperationLogTests(unittest.TestCase):
             async with get_session_factory()() as session:
                 loaded = (await session.scalars(select(OperationLog))).one()
                 self.assertEqual(loaded.created_at.tzinfo, UTC)
-                deleted = await cleanup_old_operation_logs(session, retention_days=30, now=now)
+                deleted = await cleanup_old_operation_logs(
+                    session, retention_days=30, now=now
+                )
                 await session.commit()
                 return deleted
 
@@ -310,12 +317,15 @@ class OperationLogTests(unittest.TestCase):
                 return list(
                     (
                         await session.execute(
-                            select(OperationLog.event_name).order_by(OperationLog.event_name),
+                            select(OperationLog.event_name).order_by(
+                                OperationLog.event_name
+                            ),
                         )
                     ).scalars(),
                 )
 
         self.assertEqual(asyncio.run(scenario()), ["old.event"])
+
 
 if __name__ == "__main__":
     unittest.main()

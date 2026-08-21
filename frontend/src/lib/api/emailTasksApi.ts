@@ -14,32 +14,14 @@ const buildRuntimeProfileBody = (llmProfileId?: number | null) =>
 export const getEmailTaskThread = (taskId: number) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/thread`);
 
-export const regenerateDraft = (taskId: number, llmProfileId?: number | null) =>
-  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/regenerate-draft`, {
-    method: 'POST',
-    body: buildRuntimeProfileBody(llmProfileId),
-  });
-
 export const calculateMatch = (taskId: number, llmProfileId?: number | null) =>
   apiFetch<MatchCalculationResultDTO>(`/api/email-tasks/${taskId}/calculate-match`, {
     method: 'POST',
     body: buildRuntimeProfileBody(llmProfileId),
   });
 
-export const generateDraft = (taskId: number, llmProfileId?: number | null) =>
-  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/generate-draft`, {
-    method: 'POST',
-    body: buildRuntimeProfileBody(llmProfileId),
-  });
-
 export const rewriteDraft = (taskId: number, payload: EmailTaskRewriteDraftPayloadDTO) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/rewrite-draft`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-
-export const approveDraft = (taskId: number, payload: EmailTaskApprovalPayloadDTO) =>
-  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/approve`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -75,12 +57,6 @@ export const continueManually = (taskId: number) =>
 export const startFollowUp = (taskId: number) =>
   apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/start-follow-up`, {
     method: 'POST',
-  });
-
-export const updateTaskPrimaryMaterial = (taskId: number, primaryMaterialId: number) =>
-  apiFetch<WorkspaceThreadDTO>(`/api/email-tasks/${taskId}/primary-material`, {
-    method: 'POST',
-    body: JSON.stringify({ primary_material_id: primaryMaterialId }),
   });
 
 export const updateTaskOutreachConfig = (

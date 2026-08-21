@@ -39,7 +39,9 @@ def _empty_candidate_wire() -> ProfessorCandidateWirePayload:
 
 
 class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_prompt_contains_university_school_url_and_whole_page_text(self) -> None:
+    async def test_prompt_contains_university_school_url_and_whole_page_text(
+        self,
+    ) -> None:
         prompt = build_v2_profile_extraction_prompt(
             university="示例大学",
             school="计算机学院",
@@ -128,7 +130,9 @@ class CrawlerV2ProfileExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.attempts), 1)
 
     async def test_payload_accepts_no_candidate(self) -> None:
-        payload = V2ProfileExtractionPayload.model_validate({"status": "no_candidate", "candidate": None})
+        payload = V2ProfileExtractionPayload.model_validate(
+            {"status": "no_candidate", "candidate": None}
+        )
 
         self.assertEqual(payload.status, "no_candidate")
         self.assertIsNone(payload.candidate)

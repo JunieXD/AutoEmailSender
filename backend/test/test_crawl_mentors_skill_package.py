@@ -65,9 +65,7 @@ class CrawlMentorsSkillPackageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
-            copied_skill_root = (
-                temporary_root / ".agents" / "skills" / SKILL_NAME
-            )
+            copied_skill_root = temporary_root / ".agents" / "skills" / SKILL_NAME
             copied_skill_root.parent.mkdir(parents=True)
             shutil.copytree(
                 REPOSITORY_ROOT / ".agents" / "skills" / SKILL_NAME,

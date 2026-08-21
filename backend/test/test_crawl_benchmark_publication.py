@@ -61,8 +61,12 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
             records = load_database_records(database_path)
 
         self.assertEqual(len(records), 2)
-        verified = next(record for record in records if record["publicStatus"] == "verified")
-        adapting = next(record for record in records if record["publicStatus"] == "adapting")
+        verified = next(
+            record for record in records if record["publicStatus"] == "verified"
+        )
+        adapting = next(
+            record for record in records if record["publicStatus"] == "adapting"
+        )
 
         self.assertEqual(verified["university"], "南岭大学")
         self.assertEqual(verified["candidateCount"], 2)
@@ -83,7 +87,9 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
         self.assertNotIn("error_message", serialized)
         self.assertNotIn("jobId", serialized)
 
-    def test_same_job_keeps_record_id_when_later_enrichment_updates_counts(self) -> None:
+    def test_same_job_keeps_record_id_when_later_enrichment_updates_counts(
+        self,
+    ) -> None:
         with TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "auto_email_sender.db"
             self._create_database(database_path)
@@ -115,8 +121,12 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
 
             after = load_database_records(database_path)
 
-        before_record = next(record for record in before if record["school"] == "计算机学院")
-        after_record = next(record for record in after if record["school"] == "计算机学院")
+        before_record = next(
+            record for record in before if record["school"] == "计算机学院"
+        )
+        after_record = next(
+            record for record in after if record["school"] == "计算机学院"
+        )
         self.assertEqual(after_record["recordId"], before_record["recordId"])
         self.assertEqual(after_record["emailCount"], 2)
         self.assertEqual(after_record["enrichmentSucceededCount"], 2)
@@ -341,7 +351,14 @@ class CrawlBenchmarkDatabasePublicationTests(unittest.TestCase):
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    (1, 1, "公开汇总前会移除此姓名", "secret@example.edu", "教授", "人工智能"),
+                    (
+                        1,
+                        1,
+                        "公开汇总前会移除此姓名",
+                        "secret@example.edu",
+                        "教授",
+                        "人工智能",
+                    ),
                     (2, 1, "另一姓名", None, "副教授", None),
                 ],
             )

@@ -10,7 +10,13 @@ conversion helpers restore the existing persistence-facing shape afterwards.
 
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import LLMProfile
@@ -31,7 +37,7 @@ CANDIDATE_WIRE_PROMPT_CONTRACT = (
     "field_confidence、evidence_summary。\n"
     "没有证据的字符串字段必须使用空字符串，recent_papers 和 field_confidence 必须使用空数组。\n"
     "confidence 必须是 0 到 1 的数字。field_confidence 必须是数组；每项只能包含 field 和 "
-    "confidence，例如 [{\"field\":\"name\",\"confidence\":0.95}]，只列有明确证据的字段且字段不得重复。\n"
+    'confidence，例如 [{"field":"name","confidence":0.95}]，只列有明确证据的字段且字段不得重复。\n'
     "evidence_summary 必须是简短字符串；没有必要摘要时使用空字符串，不能返回 evidence 对象。"
 )
 
@@ -217,9 +223,7 @@ async def request_crawler_structured_completion(
         "model": llm_profile.model_name,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": (
-            temperature
-            if temperature is not None
-            else DEFAULT_LLM_TEMPERATURE
+            temperature if temperature is not None else DEFAULT_LLM_TEMPERATURE
         ),
     }
     async with session_factory() as session:
@@ -251,11 +255,7 @@ def professor_candidate_wire_to_dict(
     }
     evidence_summary = value.evidence_summary.strip()
     payload["field_confidence"] = field_confidence or None
-    payload["evidence"] = (
-        {"summary": evidence_summary}
-        if evidence_summary
-        else None
-    )
+    payload["evidence"] = {"summary": evidence_summary} if evidence_summary else None
     return payload
 
 

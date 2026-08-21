@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +51,9 @@ async def list_materials(
             await session.scalars(
                 select(IdentityMaterial)
                 .options(selectinload(IdentityMaterial.default_for_identities))
-                .order_by(IdentityMaterial.created_at.desc(), IdentityMaterial.id.desc()),
+                .order_by(
+                    IdentityMaterial.created_at.desc(), IdentityMaterial.id.desc()
+                ),
             )
         ).unique(),
     )
@@ -52,10 +63,15 @@ async def list_materials(
             current_primary_material_id=(
                 material.id
                 if identity_id is not None
-                and any(identity.id == identity_id for identity in material.default_for_identities)
+                and any(
+                    identity.id == identity_id
+                    for identity in material.default_for_identities
+                )
                 else None
             ),
-            default_for_identity_ids=[identity.id for identity in material.default_for_identities],
+            default_for_identity_ids=[
+                identity.id for identity in material.default_for_identities
+            ],
         )
         for material in materials
     ]
@@ -80,6 +96,7 @@ async def upload_global_material(
         material_type=material_type,
         display_name=display_name,
     )
+
 
 @router.post(
     "/identities/{identity_id}/materials",
@@ -135,7 +152,9 @@ async def _upload_material(
     )
 
 
-@router.post("/materials/{material_id}/set-primary", response_model=IdentityMaterialRead)
+@router.post(
+    "/materials/{material_id}/set-primary", response_model=IdentityMaterialRead
+)
 async def set_primary_material(
     material_id: int,
     identity_id: int | None = Query(default=None, ge=1),
@@ -152,7 +171,9 @@ async def set_primary_material(
     except MaterialMutationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
-    target_identity_id = identity_id if identity_id is not None else material.identity_id
+    target_identity_id = (
+        identity_id if identity_id is not None else material.identity_id
+    )
     return serialize_material(
         material,
         primary_material_id,
@@ -239,8 +260,7 @@ async def download_material(
 
 async def _get_material(session: AsyncSession, material_id: int) -> IdentityMaterial:
     material = await session.scalar(
-        select(IdentityMaterial)
-        .where(IdentityMaterial.id == material_id),
+        select(IdentityMaterial).where(IdentityMaterial.id == material_id),
     )
     if not material:
         raise HTTPException(status_code=404, detail="未找到材料")

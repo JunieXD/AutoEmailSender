@@ -137,7 +137,9 @@ class EmailObservation(Base):
     match_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
     delivery_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    normalized_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    normalized_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     folder_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
     folder: Mapped[str | None] = mapped_column(String(255), nullable=True)
     uidvalidity: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -147,14 +149,18 @@ class EmailObservation(Base):
     cc_emails: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     bcc_emails: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     subject: Mapped[str | None] = mapped_column(Text, nullable=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )
     content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     subject_fingerprint: Mapped[str | None] = mapped_column(String(71), nullable=True)
     content_fingerprint: Mapped[str | None] = mapped_column(String(71), nullable=True)
     message_sent_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     headers: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
-    provider_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    provider_payload: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

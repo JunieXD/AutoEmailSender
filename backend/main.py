@@ -176,6 +176,7 @@ def build_startup_error_detail(exc: Exception) -> dict[str, object] | None:
         return exc.to_payload()
     return None
 
+
 async def cleanup_runtime_state() -> None:
     async with get_session_factory()() as session:
         await cleanup_old_operation_logs(session)
@@ -198,7 +199,10 @@ async def run_startup_step_with_database_lock_retry(
             await step()
             return
         except Exception as exc:
-            if not is_sqlite_database_lock_error(exc) or attempt >= STARTUP_DATABASE_LOCK_MAX_ATTEMPTS:
+            if (
+                not is_sqlite_database_lock_error(exc)
+                or attempt >= STARTUP_DATABASE_LOCK_MAX_ATTEMPTS
+            ):
                 raise
             write_startup_diagnostic_log(
                 "启动步骤遇到 SQLite 数据库锁，准备重试",
@@ -230,7 +234,11 @@ def write_startup_diagnostic_log(
             lines.append(f"attempt={attempt}/{max_attempts}")
         if exc is not None:
             lines.append(f"error={type(exc).__name__}: {safe_exception_message(exc)}")
-            lines.append("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip())
+            lines.append(
+                "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                ).rstrip()
+            )
         append_text(log_path, "\n".join(lines) + "\n")
     except Exception:
         logger.exception("写入启动诊断日志失败")
@@ -305,7 +313,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="后端初始化中")
         return {"status": "ready"}
 
-    write_startup_phase_log("main.create_app.ready", detail=f"routers={len(API_ROUTERS)}")
+    write_startup_phase_log(
+        "main.create_app.ready", detail=f"routers={len(API_ROUTERS)}"
+    )
     return app
 
 

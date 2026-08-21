@@ -62,7 +62,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
 
-    def test_professor_sync_version_changes_only_for_email_and_archive_state(self) -> None:
+    def test_professor_sync_version_changes_only_for_email_and_archive_state(
+        self,
+    ) -> None:
         async def scenario() -> tuple[int, int, int, int, int]:
             async with self.session_factory() as session:
                 professor = Professor(
@@ -116,7 +118,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 professor_id = professor.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -186,8 +190,6 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 professor = await session.get(Professor, professor_id)
                 professor.archived_at = None
                 await session.commit()
-                restored_version = professor.communication_sync_version
-
             with patch(
                 "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(minutes=3),
@@ -213,7 +215,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 return (
                     version_after_profile_update,
                     statuses_after_profile_update,
-                    profile_touched + archived_touched + archived_summary.professor_count,
+                    profile_touched
+                    + archived_touched
+                    + archived_summary.professor_count,
                     restored_touched,
                     [
                         (state.historical_scan_status, state.professor_sync_version)
@@ -248,7 +252,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 first_identity_id = first_identity.id
                 second_identity_id = second_identity.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 first_touched = await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=first_identity_id,
@@ -278,7 +284,10 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 return (
                     first_touched,
                     second_touched,
-                    [(state.identity_id, state.folder_role, state.folder) for state in states],
+                    [
+                        (state.identity_id, state.folder_role, state.folder)
+                        for state in states
+                    ],
                 )
 
         self.assertEqual(
@@ -309,7 +318,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -359,10 +370,17 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                     limit=10,
                 )
 
-            return first_available_at, second_available_at, touched_again, len(early_claims) + len(due_claims)
+            return (
+                first_available_at,
+                second_available_at,
+                touched_again,
+                len(early_claims) + len(due_claims),
+            )
 
-        first_available_at, second_available_at, touched_again, total_claims = self._run_async(
-            scenario(),
+        first_available_at, second_available_at, touched_again, total_claims = (
+            self._run_async(
+                scenario(),
+            )
         )
         self.assertEqual(first_available_at, BASE_TIME + timedelta(seconds=10))
         self.assertEqual(second_available_at, first_available_at)
@@ -393,23 +411,39 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.flush()
                 session.add_all(
                     [
-                        self._build_queue_state(active.id, "active@example.edu", version=2),
-                        self._build_queue_state(active.id, "old@example.edu", version=1),
-                        self._build_queue_state(mismatched.id, "mismatch@example.edu", version=1),
-                        self._build_queue_state(archived.id, "archived@example.edu", version=2),
+                        self._build_queue_state(
+                            active.id, "active@example.edu", version=2
+                        ),
+                        self._build_queue_state(
+                            active.id, "old@example.edu", version=1
+                        ),
+                        self._build_queue_state(
+                            mismatched.id, "mismatch@example.edu", version=1
+                        ),
+                        self._build_queue_state(
+                            archived.id, "archived@example.edu", version=2
+                        ),
                     ],
                 )
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
-                summary = await get_recent_v2_due_summary(self.session_factory, identity_id)
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
+                summary = await get_recent_v2_due_summary(
+                    self.session_factory, identity_id
+                )
                 claims = await claim_recent_v2_professor_scans(
                     self.session_factory,
                     identity_id,
                     limit=10,
                 )
-            return [state.professor_email for state in claims], summary.professor_count, summary.inbox_state_count
+            return (
+                [state.professor_email for state in claims],
+                summary.professor_count,
+                summary.inbox_state_count,
+            )
 
         self.assertEqual(
             self._run_async(scenario()),
@@ -444,7 +478,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 legacy_state_id = legacy_state.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 touched = await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -468,7 +504,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
             (RECENT_V2_STRATEGY_VERSION, "pending", None, None, 2),
         )
 
-    def test_replaced_sent_folder_state_is_retired_and_does_not_get_claimed(self) -> None:
+    def test_replaced_sent_folder_state_is_retired_and_does_not_get_claimed(
+        self,
+    ) -> None:
         async def scenario() -> tuple[str, str, list[str]]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
@@ -511,7 +549,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 identity_id = identity.id
                 old_sent_state_id = old_sent_state.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -552,7 +592,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 await session.commit()
                 identity_id = identity.id
 
-            with patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME):
+            with patch(
+                "app.modules.communications.imap.state.utc_now", return_value=BASE_TIME
+            ):
                 await ensure_recent_v2_professor_scan_states(
                     self.session_factory,
                     identity_id=identity_id,
@@ -611,8 +653,10 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                     len(frozen_ids) == completed == 1,
                 )
 
-        first_status, first_batch, late_status, late_batch, counts_match = self._run_async(
-            scenario(),
+        first_status, first_batch, late_status, late_batch, counts_match = (
+            self._run_async(
+                scenario(),
+            )
         )
         self.assertEqual(first_status, "completed")
         self.assertTrue(first_batch.startswith("bulk:"))
@@ -692,23 +736,38 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
             settings = replace(get_settings(), imap_history_queue_settle_seconds=0)
             with (
-                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
-                patch("app.modules.communications.imap.sync.utc_now", return_value=BASE_TIME),
-                patch("app.modules.communications.imap.state.utc_now", return_value=BASE_TIME),
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
+                patch(
+                    "app.modules.communications.imap.sync.utc_now",
+                    return_value=BASE_TIME,
+                ),
+                patch(
+                    "app.modules.communications.imap.state.utc_now",
+                    return_value=BASE_TIME,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
-                    new=AsyncMock(side_effect=AssertionError("resumed bulk batch must not be re-probed")),
+                    new=AsyncMock(
+                        side_effect=AssertionError(
+                            "resumed bulk batch must not be re-probed"
+                        )
+                    ),
                 ) as probe_mock,
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(side_effect=fake_bulk_headers),
                 ) as bulk_mock,
             ):
-                detected = await sync_identity_history_once(self.session_factory, identity_id)
+                detected = await sync_identity_history_once(
+                    self.session_factory, identity_id
+                )
 
             async with self.session_factory() as session:
                 professor_state = await session.scalar(
@@ -730,8 +789,12 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), (0, 1, 50, "completed"))
 
-    def test_identity_scanned_before_professor_still_backfills_sent_and_inbox(self) -> None:
-        async def scenario() -> tuple[int, int, list[tuple[str, str]], list[tuple[str, int | None]]]:
+    def test_identity_scanned_before_professor_still_backfills_sent_and_inbox(
+        self,
+    ) -> None:
+        async def scenario() -> tuple[
+            int, int, list[tuple[str, str]], list[tuple[str, int | None]]
+        ]:
             async with self.session_factory() as session:
                 identity = self._build_identity()
                 session.add(identity)
@@ -750,10 +813,15 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
             settings = replace(get_settings(), imap_history_queue_settle_seconds=0)
             first_targeted_mock = AsyncMock(
-                side_effect=AssertionError("empty professor library must not search IMAP"),
+                side_effect=AssertionError(
+                    "empty professor library must not search IMAP"
+                ),
             )
             with (
-                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -828,18 +896,29 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 return [sent_body] if folder == "Sent" else [inbox_body]
 
             with (
-                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
                 ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.search_mailbox_uids_since_date",
-                    new=AsyncMock(side_effect=AssertionError("small batch must not probe whole Sent")),
+                    new=AsyncMock(
+                        side_effect=AssertionError(
+                            "small batch must not probe whole Sent"
+                        )
+                    ),
                 ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
-                    new=AsyncMock(side_effect=AssertionError("small batch must not scan whole Sent")),
+                    new=AsyncMock(
+                        side_effect=AssertionError(
+                            "small batch must not scan whole Sent"
+                        )
+                    ),
                 ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
@@ -923,7 +1002,10 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
 
             settings = replace(get_settings(), imap_history_queue_settle_seconds=0)
             with (
-                patch("app.modules.communications.imap.sync.get_settings", return_value=settings),
+                patch(
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -939,7 +1021,9 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 ) as probe_mock,
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
-                    new=AsyncMock(side_effect=AssertionError("oversized Sent must not use bulk")),
+                    new=AsyncMock(
+                        side_effect=AssertionError("oversized Sent must not use bulk")
+                    ),
                 ) as bulk_mock,
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
@@ -954,7 +1038,11 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
             ):
                 await sync_identity_history_once(self.session_factory, identity_id)
 
-            return probe_mock.await_count, bulk_mock.await_count, targeted_mock.await_count
+            return (
+                probe_mock.await_count,
+                bulk_mock.await_count,
+                targeted_mock.await_count,
+            )
 
         self.assertEqual(self._run_async(scenario()), (1, 0, 32))
 

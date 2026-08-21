@@ -35,7 +35,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertIn("[李四](https://cs.example.edu/li.htm)", chunks[0].content)
         self.assertNotIn("alert", chunks[0].content)
 
-    def test_link_enriched_text_keeps_small_table_rows_as_lightweight_paragraphs(self) -> None:
+    def test_link_enriched_text_keeps_small_table_rows_as_lightweight_paragraphs(
+        self,
+    ) -> None:
         html = """
         <table>
           <tr class="person"><td><a href="/zhang.htm">张三</a></td><td>zhang@example.edu</td></tr>
@@ -58,7 +60,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertNotIn("AES_BLOCK_BOUNDARY", structured)
         self.assertLessEqual(estimate_tokens(structured), estimate_tokens(flat) + 2)
 
-    def test_link_enriched_text_keeps_description_items_as_record_boundaries(self) -> None:
+    def test_link_enriched_text_keeps_description_items_as_record_boundaries(
+        self,
+    ) -> None:
         html = """
         <dl class="faculty-list">
           <dd><a href="/zhang.htm">张三 教授</a><p>研究方向：数据库</p></dd>
@@ -73,7 +77,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertIn("研究方向：人工智能\n\n[王五 教授]", structured)
         self.assertNotIn("AES_BLOCK_BOUNDARY", structured)
 
-    def test_link_enriched_text_keeps_unlabeled_url_inside_linkless_record(self) -> None:
+    def test_link_enriched_text_keeps_unlabeled_url_inside_linkless_record(
+        self,
+    ) -> None:
         cards = "".join(
             "<div class='grid-item'><div class='person-card'>"
             f"<p>教师{index} 教授</p><p>研究方向：人工智能</p>"
@@ -97,7 +103,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertNotIn("https://cs.example.edu/logo", structured)
         self.assertNotIn("https://cs.example.edu/home", structured)
 
-    def test_link_enriched_text_does_not_add_empty_links_when_record_has_labeled_link(self) -> None:
+    def test_link_enriched_text_does_not_add_empty_links_when_record_has_labeled_link(
+        self,
+    ) -> None:
         html = """
         <dl>
           <dd>
@@ -114,10 +122,14 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertNotIn("无文字链接", structured)
         self.assertNotIn("unrelated.htm", structured)
 
-    def test_recursive_dense_split_prefers_dom_blocks_without_dropping_overlap_fallback(self) -> None:
+    def test_recursive_dense_split_prefers_dom_blocks_without_dropping_overlap_fallback(
+        self,
+    ) -> None:
         rows = "".join(
             "<tr><td><a href='/teacher/{index}.htm'>教师{index}</a></td>"
-            "<td>teacher{index}@example.edu</td><td>人工智能与软件工程</td></tr>".format(index=index)
+            "<td>teacher{index}@example.edu</td><td>人工智能与软件工程</td></tr>".format(
+                index=index
+            )
             for index in range(24)
         )
         parent = build_page_chunks(
@@ -141,7 +153,9 @@ class CrawlerChunkingTests(unittest.TestCase):
             page_fingerprint=parent.page_fingerprint,
             split_depth=1,
             split_reason="candidate_count_exceeded",
-            config=ChunkingConfig(retry_split_target_tokens=100, retry_split_overlap_tokens=15),
+            config=ChunkingConfig(
+                retry_split_target_tokens=100, retry_split_overlap_tokens=15
+            ),
         )
 
         self.assertGreater(len(children), 1)
@@ -149,7 +163,10 @@ class CrawlerChunkingTests(unittest.TestCase):
             link = f"[教师{index}](https://cs.example.edu/teacher/{index}.htm)"
             email = f"teacher{index}@example.edu"
             self.assertTrue(
-                any(link in child.content and email in child.content for child in children),
+                any(
+                    link in child.content and email in child.content
+                    for child in children
+                ),
                 f"row {index} was split across child chunks",
             )
         self.assertTrue(any(child.overlap_prefix for child in children[1:]))
@@ -195,7 +212,8 @@ class CrawlerChunkingTests(unittest.TestCase):
         for index in range(16):
             self.assertTrue(
                 any(
-                    f"[教师{index} 教授](https://cs.example.edu/teacher/{index}.htm)" in child.content
+                    f"[教师{index} 教授](https://cs.example.edu/teacher/{index}.htm)"
+                    in child.content
                     and f"记录标记{index}" in child.content
                     for child in children
                 ),
@@ -217,12 +235,20 @@ class CrawlerChunkingTests(unittest.TestCase):
         )
 
     def test_build_page_chunks_splits_long_text_with_overlap(self) -> None:
-        blocks = "\n".join(f"教师{i} 研究方向 数据库 [详情](https://cs.example.edu/t{i}.htm)" for i in range(80))
+        blocks = "\n".join(
+            f"教师{i} 研究方向 数据库 [详情](https://cs.example.edu/t{i}.htm)"
+            for i in range(80)
+        )
         chunks = build_page_chunks(
             source_url="https://cs.example.edu/faculty/index.htm",
             html=f"<main>{''.join(f'<p>{line}</p>' for line in blocks.splitlines())}</main>",
             text=blocks,
-            config=ChunkingConfig(target_tokens=120, soft_max_tokens=160, hard_max_tokens=220, overlap_tokens=30),
+            config=ChunkingConfig(
+                target_tokens=120,
+                soft_max_tokens=160,
+                hard_max_tokens=220,
+                overlap_tokens=30,
+            ),
         )
         self.assertGreater(len(chunks), 1)
         self.assertFalse(chunks[0].overlap_prefix)
@@ -255,7 +281,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(max(token_sizes) - min(token_sizes), 250)
 
     def test_build_page_chunks_keeps_small_page_single_chunk(self) -> None:
-        blocks = "\n".join(f"教师{i} [详情](https://cs.example.edu/t{i}.htm)" for i in range(20))
+        blocks = "\n".join(
+            f"教师{i} [详情](https://cs.example.edu/t{i}.htm)" for i in range(20)
+        )
         chunks = build_page_chunks(
             source_url="https://cs.example.edu/faculty/index.htm",
             html=f"<main>{''.join(f'<p>{line}</p>' for line in blocks.splitlines())}</main>",
@@ -293,7 +321,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertGreater(len(chunks), 2)
         self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 1300)
 
-    def test_build_page_chunks_drops_overlap_when_near_limit_unit_would_not_fit(self) -> None:
+    def test_build_page_chunks_drops_overlap_when_near_limit_unit_would_not_fit(
+        self,
+    ) -> None:
         small_record = "甲" * 98
         near_limit_record = "乙" * 3186
         html = (
@@ -327,7 +357,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(max(chunk.token_estimate for chunk in chunks), 3200)
         self.assertEqual(sum(chunk.content.count("甲") for chunk in chunks), 6500)
 
-    def test_link_enrichment_falls_back_to_text_when_html_exceeds_safety_limit(self) -> None:
+    def test_link_enrichment_falls_back_to_text_when_html_exceeds_safety_limit(
+        self,
+    ) -> None:
         oversized_html = "<main>" + "甲" * MAX_CRAWL_HTML_CHARS + "</main>"
 
         content = html_to_link_enriched_text(
@@ -338,7 +370,9 @@ class CrawlerChunkingTests(unittest.TestCase):
 
         self.assertEqual(content, "安全回退文本")
 
-    def test_link_enrichment_skips_quadratic_structure_scan_for_complex_html(self) -> None:
+    def test_link_enrichment_skips_quadratic_structure_scan_for_complex_html(
+        self,
+    ) -> None:
         with (
             patch(
                 "app.modules.crawler.pages.chunking.MAX_STRUCTURE_BOUNDARY_HTML_CHARS",
@@ -375,9 +409,10 @@ class CrawlerChunkingTests(unittest.TestCase):
             ),
         )
 
-        combined_lines = [line for chunk in chunks for line in chunk.content.splitlines()]
+        combined_lines = [
+            line for chunk in chunks for line in chunk.content.splitlines()
+        ]
         self.assertEqual(combined_lines, lines)
-
 
     def test_default_recursive_split_config_supports_dense_small_chunks(self) -> None:
         config = ChunkingConfig()
@@ -417,7 +452,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertEqual(minimum_drafts, [])
         self.assertGreaterEqual(len(above_minimum_drafts), 2)
 
-    def test_split_chunk_content_uses_dynamic_fanout_for_too_many_candidates(self) -> None:
+    def test_split_chunk_content_uses_dynamic_fanout_for_too_many_candidates(
+        self,
+    ) -> None:
         from app.modules.crawler.pages.chunking import split_chunk_content
 
         content = "\n".join(
@@ -466,7 +503,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         )
 
         profile_pattern = re.compile(r"https://cs\.example\.edu/teacher/(\d+)\.htm")
-        per_child_counts = [len(set(profile_pattern.findall(draft.content))) for draft in drafts]
+        per_child_counts = [
+            len(set(profile_pattern.findall(draft.content))) for draft in drafts
+        ]
         all_profiles = {
             profile
             for draft in drafts
@@ -474,9 +513,13 @@ class CrawlerChunkingTests(unittest.TestCase):
         }
         self.assertEqual(all_profiles, {str(index) for index in range(16)})
         self.assertLessEqual(max(per_child_counts), 10)
-        self.assertLess(max(draft.token_estimate for draft in drafts), estimate_tokens(content))
+        self.assertLess(
+            max(draft.token_estimate for draft in drafts), estimate_tokens(content)
+        )
 
-    def test_dense_retry_splits_adjacent_generated_links_without_depth_exhaustion(self) -> None:
+    def test_dense_retry_splits_adjacent_generated_links_without_depth_exhaustion(
+        self,
+    ) -> None:
         source_url = "https://example.edu/faculty/list.htm"
         content = "".join(
             f"[教师{index}](https://example.edu/faculty/{index}.htm)"
@@ -513,9 +556,7 @@ class CrawlerChunkingTests(unittest.TestCase):
             pending.extend(children)
 
         represented = {
-            index
-            for chunk in completed
-            for index in pattern.findall(chunk.content)
+            index for chunk in completed for index in pattern.findall(chunk.content)
         }
         self.assertEqual(represented, {str(index) for index in range(86)})
         self.assertLessEqual(
@@ -540,10 +581,7 @@ class CrawlerChunkingTests(unittest.TestCase):
     def test_split_chunk_content_caps_retry_overlap_at_fifteen_tokens(self) -> None:
         from app.modules.crawler.pages.chunking import split_chunk_content
 
-        content = "\n".join(
-            chr(0x4E00 + index) * 5
-            for index in range(50)
-        )
+        content = "\n".join(chr(0x4E00 + index) * 5 for index in range(50))
         drafts = split_chunk_content(
             source_url="https://cs.example.edu/faculty",
             content=content,
@@ -561,10 +599,14 @@ class CrawlerChunkingTests(unittest.TestCase):
             if line not in first_lines:
                 break
             repeated_prefix.append(line)
-        repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        repeated_tokens = (
+            estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        )
         self.assertLessEqual(repeated_tokens, 15)
 
-    def test_split_chunk_content_caps_binary_retry_overlap_when_a_line_exceeds_limit(self) -> None:
+    def test_split_chunk_content_caps_binary_retry_overlap_when_a_line_exceeds_limit(
+        self,
+    ) -> None:
         from app.modules.crawler.pages.chunking import split_chunk_content
 
         content = "\n".join(chr(0x4E00 + index) * 20 for index in range(6))
@@ -585,7 +627,9 @@ class CrawlerChunkingTests(unittest.TestCase):
             if line not in first_lines:
                 break
             repeated_prefix.append(line)
-        repeated_tokens = estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        repeated_tokens = (
+            estimate_tokens("\n".join(repeated_prefix)) if repeated_prefix else 0
+        )
         self.assertLessEqual(repeated_tokens, 15)
 
     def test_replays_candidate_dense_markdown_with_limited_retry_overlap(self) -> None:
@@ -594,7 +638,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         source_url = "https://faculty.hust.edu.cn/teachers/index.htm"
         markdown = "\n".join(
             "[教师{index}](https://faculty.hust.edu.cn/teacher/{index}.htm) "
-            "研究方向：人工智能、计算机视觉与智能系统，本科教学与科研指导。".format(index=index)
+            "研究方向：人工智能、计算机视觉与智能系统，本科教学与科研指导。".format(
+                index=index
+            )
             for index in range(150)
         )
         link_pattern = re.compile(r"\]\((https://faculty\.hust\.edu\.cn/[^)]+)\)")
@@ -642,7 +688,9 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertLessEqual(overlap_15[2], overlap_30[2])
 
     def test_fingerprint_page_is_stable(self) -> None:
-        self.assertEqual(fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四"))
+        self.assertEqual(
+            fingerprint_page("  张三\n李四  "), fingerprint_page("张三 李四")
+        )
 
     def test_estimate_tokens_counts_chinese_and_ascii(self) -> None:
         self.assertGreaterEqual(estimate_tokens("张三教授 email@example.edu"), 6)

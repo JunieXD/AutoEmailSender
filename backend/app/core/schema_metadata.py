@@ -13,6 +13,7 @@ CURRENT_SCHEMA_VERSION = 1
 APP_VERSION_ENV_VAR = "AUTO_EMAIL_SENDER_APP_VERSION"
 DATABASE_REQUIRES_NEWER_APP = "DATABASE_REQUIRES_NEWER_APP"
 
+
 @dataclass(slots=True)
 class DatabaseRequiresNewerAppError(RuntimeError):
     current_app_version: str
@@ -43,8 +44,10 @@ class DatabaseRequiresNewerAppError(RuntimeError):
             ],
         }
 
+
 def get_schema_backup_dir(data_dir: Path) -> Path:
     return data_dir / "backups" / "schema"
+
 
 def get_sqlite_database_path(database_url: str) -> Path | None:
     parsed = urlparse(database_url)
@@ -60,6 +63,7 @@ def get_sqlite_database_path(database_url: str) -> Path | None:
         return None
     return Path(unquote(raw_path))
 
+
 def ensure_app_metadata_table(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
@@ -69,6 +73,7 @@ def ensure_app_metadata_table(connection: sqlite3.Connection) -> None:
         )
         """,
     )
+
 
 def read_app_metadata(connection: sqlite3.Connection) -> dict[str, str]:
     row = connection.execute(
@@ -82,6 +87,7 @@ def read_app_metadata(connection: sqlite3.Connection) -> dict[str, str]:
         return {}
     rows = connection.execute("SELECT key, value FROM app_metadata").fetchall()
     return {str(key): str(value) for key, value in rows}
+
 
 def check_database_compatibility(
     connection: sqlite3.Connection,
@@ -100,6 +106,7 @@ def check_database_compatibility(
             backup_directory=backup_directory or Path("backups") / "schema",
         )
 
+
 def get_current_app_version() -> str:
     env_version = os.environ.get(APP_VERSION_ENV_VAR, "").strip()
     if env_version:
@@ -112,8 +119,10 @@ def get_current_app_version() -> str:
         version = ""
     return version.lstrip("vV") or "0.0.0"
 
+
 def get_minimum_supported_app_version(schema_revision: str) -> str:
     return get_current_app_version()
+
 
 def update_app_metadata(
     connection: sqlite3.Connection,
@@ -126,7 +135,9 @@ def update_app_metadata(
         "schema_version": str(CURRENT_SCHEMA_VERSION),
         "schema_revision": schema_revision,
         "schema_updated_by_app_version": app_version,
-        "minimum_supported_app_version": get_minimum_supported_app_version(schema_revision),
+        "minimum_supported_app_version": get_minimum_supported_app_version(
+            schema_revision
+        ),
         "schema_updated_at": datetime.now(UTC).isoformat(),
     }
     connection.executemany(
@@ -139,6 +150,7 @@ def update_app_metadata(
     )
     connection.commit()
 
+
 def compare_versions(left: str, right: str) -> int:
     left_parts = _parse_version(left)
     right_parts = _parse_version(right)
@@ -150,6 +162,7 @@ def compare_versions(left: str, right: str) -> int:
     if left_parts > right_parts:
         return 1
     return 0
+
 
 def _parse_version(value: str) -> list[int]:
     normalized = value.strip().lstrip("vV").split("-", 1)[0]

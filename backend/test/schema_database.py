@@ -10,7 +10,9 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 from app.models import Base
 
-DEFAULT_TEMPLATE_ROOT = Path(tempfile.gettempdir()) / "auto-email-sender-test-schema-templates"
+DEFAULT_TEMPLATE_ROOT = (
+    Path(tempfile.gettempdir()) / "auto-email-sender-test-schema-templates"
+)
 
 
 def create_schema_sqlite_database(
@@ -37,7 +39,9 @@ def _schema_signature() -> str:
     for table in sorted(Base.metadata.tables.values(), key=lambda item: item.name):
         hasher.update(str(CreateTable(table).compile(dialect=dialect)).encode("utf-8"))
         for index in sorted(table.indexes, key=lambda item: item.name or ""):
-            hasher.update(str(CreateIndex(index).compile(dialect=dialect)).encode("utf-8"))
+            hasher.update(
+                str(CreateIndex(index).compile(dialect=dialect)).encode("utf-8")
+            )
     return hasher.hexdigest()[:16]
 
 

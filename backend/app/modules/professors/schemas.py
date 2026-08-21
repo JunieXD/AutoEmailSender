@@ -34,6 +34,7 @@ ProfessorKeywordSearchScope = Literal[
     "department",
     "title",
     "researchDirection",
+    "personalNote",
     "tag",
 ]
 ProfessorSortDirection = Literal["asc", "desc"]
@@ -85,7 +86,6 @@ class ProfessorTagUsageRead(ApiSchema):
 
 
 class ProfessorRead(ApiSchema):
-
     id: int
     name: str
     email: str | None
@@ -194,6 +194,7 @@ class ProfessorDashboardPageRequest(ProfessorPageRequestBase):
             "department",
             "title",
             "researchDirection",
+            "personalNote",
             "tag",
         ],
     )
@@ -218,6 +219,7 @@ class ProfessorManagementPageRequest(ProfessorPageRequestBase):
             "department",
             "title",
             "researchDirection",
+            "personalNote",
             "tag",
         ],
     )
@@ -258,7 +260,6 @@ class ProfessorImportResult(ApiSchema):
 
 
 class ProfessorManagementItemRead(ApiSchema):
-
     id: int
     name: str
     email: str | None

@@ -160,7 +160,11 @@ def _build_day_schedule(
     values: list[datetime] = []
     for index in range(count):
         base_offset = slot_seconds * (index + 0.5)
-        jitter = random_source.uniform(-jitter_seconds, jitter_seconds) if jitter_seconds > 0 else 0
+        jitter = (
+            random_source.uniform(-jitter_seconds, jitter_seconds)
+            if jitter_seconds > 0
+            else 0
+        )
         scheduled_at = window_start + timedelta(seconds=base_offset + jitter)
         scheduled_at = max(window_start, min(scheduled_at, window_end))
         values.append(scheduled_at)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+
 class CrawlJobApprovalTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -48,12 +49,16 @@ class CrawlJobApprovalTests(unittest.TestCase):
     def setUp(self) -> None:
         asyncio.run(self._clear_database())
 
-    def test_approve_partially_imports_valid_candidates_and_skips_missing_email(self) -> None:
+    def test_approve_partially_imports_valid_candidates_and_skips_missing_email(
+        self,
+    ) -> None:
         job_id, valid_candidate_id, missing_email_candidate_id = asyncio.run(
-            self._create_crawl_candidates([
-                {"name": "有效邮箱导师", "email": "Valid.Teacher@Example.EDU"},
-                {"name": "无邮箱导师", "email": None},
-            ])
+            self._create_crawl_candidates(
+                [
+                    {"name": "有效邮箱导师", "email": "Valid.Teacher@Example.EDU"},
+                    {"name": "无邮箱导师", "email": None},
+                ]
+            )
         )
 
         response = self.client.post(
@@ -80,10 +85,17 @@ class CrawlJobApprovalTests(unittest.TestCase):
         self.assertEqual(snapshot["job_status"], "partially_completed")
         self.assertEqual(snapshot["professor_count"], 1)
         self.assertEqual(snapshot["professor_emails"], ["valid.teacher@example.edu"])
-        self.assertEqual(snapshot["candidates"][valid_candidate_id]["review_status"], "accepted")
+        self.assertEqual(
+            snapshot["candidates"][valid_candidate_id]["review_status"], "accepted"
+        )
         self.assertIsNotNone(snapshot["candidates"][valid_candidate_id]["professor_id"])
-        self.assertEqual(snapshot["candidates"][missing_email_candidate_id]["review_status"], "pending")
-        self.assertIsNone(snapshot["candidates"][missing_email_candidate_id]["professor_id"])
+        self.assertEqual(
+            snapshot["candidates"][missing_email_candidate_id]["review_status"],
+            "pending",
+        )
+        self.assertIsNone(
+            snapshot["candidates"][missing_email_candidate_id]["professor_id"]
+        )
 
     def test_approval_treats_same_email_aliases_as_one_new_professor(self) -> None:
         job_id, first_candidate_id, second_candidate_id = asyncio.run(
@@ -102,7 +114,9 @@ class CrawlJobApprovalTests(unittest.TestCase):
         )
 
         candidates_response = self.client.get(f"/api/crawl-jobs/{job_id}/candidates")
-        self.assertEqual(candidates_response.status_code, 200, msg=candidates_response.text)
+        self.assertEqual(
+            candidates_response.status_code, 200, msg=candidates_response.text
+        )
         self.assertEqual(len(candidates_response.json()), 1)
 
         response = self.client.post(
@@ -167,7 +181,9 @@ class CrawlJobApprovalTests(unittest.TestCase):
             )
         )
 
-    def test_concurrent_jobs_approve_same_email_without_duplicate_professors(self) -> None:
+    def test_concurrent_jobs_approve_same_email_without_duplicate_professors(
+        self,
+    ) -> None:
         jobs_and_candidates = [
             asyncio.run(
                 self._create_crawl_candidates(
@@ -200,7 +216,9 @@ class CrawlJobApprovalTests(unittest.TestCase):
             7,
         )
 
-    async def _create_crawl_candidates(self, candidates: list[dict[str, str | None]]) -> tuple[int, ...]:
+    async def _create_crawl_candidates(
+        self, candidates: list[dict[str, str | None]]
+    ) -> tuple[int, ...]:
         from app.core.database import get_session_factory
         from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus
 
@@ -251,14 +269,20 @@ class CrawlJobApprovalTests(unittest.TestCase):
             candidates = list(
                 (
                     await session.execute(
-                        select(CrawlCandidate).where(CrawlCandidate.id.in_(candidate_ids))
+                        select(CrawlCandidate).where(
+                            CrawlCandidate.id.in_(candidate_ids)
+                        )
                     )
                 ).scalars()
             )
-            professor_count = await session.scalar(select(func.count()).select_from(Professor))
+            professor_count = await session.scalar(
+                select(func.count()).select_from(Professor)
+            )
             professor_emails = list(
                 (
-                    await session.execute(select(Professor.email).order_by(Professor.email.asc()))
+                    await session.execute(
+                        select(Professor.email).order_by(Professor.email.asc())
+                    )
                 ).scalars()
             )
             return {
@@ -277,7 +301,9 @@ class CrawlJobApprovalTests(unittest.TestCase):
     async def _consolidate_candidates(self, *candidate_ids: int) -> None:
         from app.core.database import get_session_factory
         from app.models import CrawlCandidate
-        from app.modules.crawler.candidate_identity import consolidate_candidate_identity
+        from app.modules.crawler.candidate_identity import (
+            consolidate_candidate_identity,
+        )
 
         async with get_session_factory()() as session:
             for candidate_id in candidate_ids:
@@ -326,6 +352,7 @@ class CrawlJobApprovalTests(unittest.TestCase):
 
         async with get_engine().begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+
 
 if __name__ == "__main__":
     unittest.main()

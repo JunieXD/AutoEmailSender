@@ -46,11 +46,13 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.v2.routing.request_crawler_structured_completion",
-            new=AsyncMock(
-                return_value=(completion, payload, "json_schema_strict")
-            ),
+            new=AsyncMock(return_value=(completion, payload, "json_schema_strict")),
         ) as request_mock:
-            result, attempts, returned_adaptation = await _invoke_structured_routing_phase(
+            (
+                result,
+                attempts,
+                returned_adaptation,
+            ) = await _invoke_structured_routing_phase(
                 llm_profile,  # type: ignore[arg-type]
                 session_factory=session_factory,  # type: ignore[arg-type]
                 adaptation=adaptation,
@@ -133,7 +135,9 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    def test_extract_page_route_links_keeps_all_labels_for_same_pagination_url(self) -> None:
+    def test_extract_page_route_links_keeps_all_labels_for_same_pagination_url(
+        self,
+    ) -> None:
         links = extract_page_route_links(
             "https://example.edu/list.htm",
             """
@@ -169,7 +173,9 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controls[1].control_id, "control-2")
         self.assertEqual(controls[1].aria_label, "right icon")
 
-    def test_extract_page_route_controls_exposes_javascript_form_pagination(self) -> None:
+    def test_extract_page_route_controls_exposes_javascript_form_pagination(
+        self,
+    ) -> None:
         html = """
         <a class="filter" href="javascript:;">A</a>
         <a class="Next" href="javascript:document.forms['pager'].page.value=2;document.forms['pager'].submit();">2</a>
@@ -188,7 +194,9 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
             ["https://example.edu/directory/profile.htm"],
         )
 
-    def test_filter_selected_urls_requires_page_evidence_and_same_main_domain(self) -> None:
+    def test_filter_selected_urls_requires_page_evidence_and_same_main_domain(
+        self,
+    ) -> None:
         same_school_sibling = "https://faculty.csu.edu.cn/list?page=2"
         other_school = "https://faculty.other.edu.cn/list?page=2"
         links = [
@@ -326,8 +334,7 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
                 title="人员入口",
                 page_text="人员入口",
                 page_html=(
-                    f'<iframe src="{iframe_url}"></iframe>'
-                    f'<a href="{page2_url}">2</a>'
+                    f'<iframe src="{iframe_url}"></iframe><a href="{page2_url}">2</a>'
                 ),
                 expansion_mode=ENTRY_EXPANSION_MODE,
                 adaptation=adaptation,
@@ -335,7 +342,9 @@ class CrawlerV2RoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(phase_mock.await_count, 2)
         self.assertEqual(result.discovered_urls, [iframe_url])
-        self.assertEqual(result.entry_discovery_reasons[iframe_url], IFRAME_DISCOVERY_REASON)
+        self.assertEqual(
+            result.entry_discovery_reasons[iframe_url], IFRAME_DISCOVERY_REASON
+        )
         self.assertTrue(result.allow_expansion)
         self.assertEqual(result.pagination_urls, [page2_url])
 

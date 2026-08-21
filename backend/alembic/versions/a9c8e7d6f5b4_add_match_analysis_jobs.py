@@ -32,10 +32,18 @@ def upgrade() -> None:
             server_default=sa.text("'queued'"),
             nullable=False,
         ),
-        sa.Column("target_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("succeeded_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("failed_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("skipped_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "target_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
+        sa.Column(
+            "succeeded_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
+        sa.Column(
+            "failed_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
+        sa.Column(
+            "skipped_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.Column(
             "total_prompt_tokens",
             sa.Integer(),
@@ -48,7 +56,9 @@ def upgrade() -> None:
             server_default=sa.text("0"),
             nullable=False,
         ),
-        sa.Column("total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.Column("cancel_requested_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
@@ -96,14 +106,18 @@ def upgrade() -> None:
         sa.Column("match_analysis_run_id", sa.Integer(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("skip_reason", sa.Text(), nullable=True),
-        sa.Column("prompt_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "prompt_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.Column(
             "completion_tokens",
             sa.Integer(),
             server_default=sa.text("0"),
             nullable=False,
         ),
-        sa.Column("total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
@@ -152,19 +166,30 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_match_analysis_job_items_status", table_name="match_analysis_job_items")
-    op.drop_index("ix_match_analysis_job_items_professor_id", table_name="match_analysis_job_items")
+    op.drop_index(
+        "ix_match_analysis_job_items_status", table_name="match_analysis_job_items"
+    )
+    op.drop_index(
+        "ix_match_analysis_job_items_professor_id",
+        table_name="match_analysis_job_items",
+    )
     op.drop_index(
         "ix_match_analysis_job_items_match_analysis_run_id",
         table_name="match_analysis_job_items",
     )
-    op.drop_index("ix_match_analysis_job_items_job_id", table_name="match_analysis_job_items")
+    op.drop_index(
+        "ix_match_analysis_job_items_job_id", table_name="match_analysis_job_items"
+    )
     op.drop_index(
         "ix_match_analysis_job_items_email_task_id",
         table_name="match_analysis_job_items",
     )
     op.drop_table("match_analysis_job_items")
     op.drop_index("ix_match_analysis_jobs_status", table_name="match_analysis_jobs")
-    op.drop_index("ix_match_analysis_jobs_llm_profile_id", table_name="match_analysis_jobs")
-    op.drop_index("ix_match_analysis_jobs_identity_id", table_name="match_analysis_jobs")
+    op.drop_index(
+        "ix_match_analysis_jobs_llm_profile_id", table_name="match_analysis_jobs"
+    )
+    op.drop_index(
+        "ix_match_analysis_jobs_identity_id", table_name="match_analysis_jobs"
+    )
     op.drop_table("match_analysis_jobs")

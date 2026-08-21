@@ -1,7 +1,7 @@
 """track active crawl candidate enrichment operations
 
 Revision ID: 20260817_crawl_enrichment_op
-Revises: 20260811_delivery_reconcile
+Revises: 20260812_merge_beta_master
 Create Date: 2026-08-17 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20260817_crawl_enrichment_op"
-down_revision: str | Sequence[str] | None = "20260811_delivery_reconcile"
+down_revision: str | Sequence[str] | None = "20260812_merge_beta_master"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

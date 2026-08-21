@@ -81,9 +81,7 @@ EMAIL_DOT_PATTERN = re.compile(
     r"(?:[\(\[]\s*dot\s*[\)\]]|(?:(?<=^)|(?<=\s))dot(?=$|\s))",
     re.IGNORECASE,
 )
-EMAIL_CHINESE_DOT_PATTERN = re.compile(
-    r"(?<=[A-Za-z0-9])\s*点\s*(?=[A-Za-z0-9])"
-)
+EMAIL_CHINESE_DOT_PATTERN = re.compile(r"(?<=[A-Za-z0-9])\s*点\s*(?=[A-Za-z0-9])")
 TITLE_SPLIT_PATTERN = re.compile(r"[、，,/／|｜；;\s]+")
 RESEARCH_SPLIT_PATTERN = re.compile(r"[；;|｜\n]+")
 RECENT_PAPERS_SPLIT_PATTERN = re.compile(r"[|；;\n]+")
@@ -215,9 +213,7 @@ def normalize_title(value: str) -> str:
     # pages commonly append qualifications around the title, so requiring an
     # exact whole-cell match would be too brittle.
     for alias in sorted(TITLE_ALIASES, key=len, reverse=True):
-        pattern = re.compile(
-            rf"(?<![a-z]){re.escape(alias.rstrip('.'))}\.?(?![a-z])"
-        )
+        pattern = re.compile(rf"(?<![a-z]){re.escape(alias.rstrip('.'))}\.?(?![a-z])")
         for match in pattern.finditer(folded):
             span = match.span()
             if any(span[0] < end and start < span[1] for start, end in occupied):
@@ -298,7 +294,8 @@ def normalize_url(
         or not parsed.hostname
         or parsed.username
         or parsed.password
-        or port is not None and not 0 < port < 65536
+        or port is not None
+        and not 0 < port < 65536
     ):
         issues.append(ContractIssue(path, "必须是无凭据的绝对 http/https URL"))
         return text
@@ -350,7 +347,17 @@ def canonicalize_record(
         issues.append(ContractIssue(path, f"包含未知字段：{', '.join(extra)}"))
 
     cleaned: dict[str, str] = {}
-    for field in ("name", "email", "title", "university", "school", "department", "profile_url", "source_url", "personal_note"):
+    for field in (
+        "name",
+        "email",
+        "title",
+        "university",
+        "school",
+        "department",
+        "profile_url",
+        "source_url",
+        "personal_note",
+    ):
         if field in {"profile_url", "source_url"}:
             continue
         cleaned[field] = clean_text(
@@ -381,9 +388,7 @@ def canonicalize_record(
         )
     _validate_length(email, field="email", path=f"{path}.email", issues=issues)
     if raw_email and email != raw_email:
-        normalizations.append(
-            {"path": f"{path}.email", "from": raw_email, "to": email}
-        )
+        normalizations.append({"path": f"{path}.email", "from": raw_email, "to": email})
 
     raw_title = cleaned["title"]
     title = normalize_title(raw_title)
@@ -395,9 +400,7 @@ def canonicalize_record(
             )
         )
     elif raw_title and title != raw_title:
-        normalizations.append(
-            {"path": f"{path}.title", "from": raw_title, "to": title}
-        )
+        normalizations.append({"path": f"{path}.title", "from": raw_title, "to": title})
     _validate_length(title, field="title", path=f"{path}.title", issues=issues)
 
     for field in ("university", "school", "department"):

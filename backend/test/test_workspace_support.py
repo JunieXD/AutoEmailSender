@@ -124,7 +124,9 @@ class WorkspaceSupportTest(unittest.TestCase):
                     identity_id=identity.id,
                     llm_profile_id=llm_profile.id,
                 )
-                return [(message.direction, message.subject) for message in thread.messages]
+                return [
+                    (message.direction, message.subject) for message in thread.messages
+                ]
 
         self.assertEqual(
             self._run_async(scenario()),
@@ -188,7 +190,9 @@ class WorkspaceSupportTest(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), ["当前身份收到"])
 
-    def test_failed_send_attempt_stays_uncontacted_and_is_labeled_in_workspace(self) -> None:
+    def test_failed_send_attempt_stays_uncontacted_and_is_labeled_in_workspace(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 now = datetime.now(UTC)
@@ -237,7 +241,9 @@ class WorkspaceSupportTest(unittest.TestCase):
                     item for item in dashboard_items if item.id == professor.id
                 )
                 message = next(
-                    item for item in thread.messages if item.direction == EmailDirection.SENT.value
+                    item
+                    for item in thread.messages
+                    if item.direction == EmailDirection.SENT.value
                 )
                 return dashboard_item, message
 
@@ -248,7 +254,9 @@ class WorkspaceSupportTest(unittest.TestCase):
         self.assertEqual(message.delivery_status, "failed")
         self.assertEqual(message.failure_summary, "SMTP 连接中断")
 
-    def test_workspace_uses_shared_source_result_without_overwriting_task_snapshot(self) -> None:
+    def test_workspace_uses_shared_source_result_without_overwriting_task_snapshot(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 source_identity = self._identity("match-source@example.com")
@@ -345,7 +353,9 @@ class WorkspaceSupportTest(unittest.TestCase):
         ) = self._run_async(scenario())
 
         self.assertEqual(thread.identity.email_address, "match-active@example.com")
-        self.assertEqual(thread.match_source_identity.email_address, "match-source@example.com")
+        self.assertEqual(
+            thread.match_source_identity.email_address, "match-source@example.com"
+        )
         self.assertTrue(thread.match_uses_group_source)
         self.assertEqual(thread.match_source_material_name, "身份 A 默认简历")
         self.assertEqual(thread.current_task.match_score, 96)
@@ -367,7 +377,9 @@ class WorkspaceSupportTest(unittest.TestCase):
         self.assertEqual(task_snapshot_score, 55)
         self.assertEqual(task_snapshot_reason, "身份 B 的历史任务快照")
 
-    def test_workspace_thread_excludes_drafts_not_belonging_to_current_task(self) -> None:
+    def test_workspace_thread_excludes_drafts_not_belonging_to_current_task(
+        self,
+    ) -> None:
         async def scenario() -> list[tuple[str, str | None]]:
             async with self.session_factory() as session:
                 now = datetime.now(UTC)
@@ -447,7 +459,9 @@ class WorkspaceSupportTest(unittest.TestCase):
                     identity_id=identity.id,
                     llm_profile_id=llm_profile.id,
                 )
-                return [(message.direction, message.subject) for message in thread.messages]
+                return [
+                    (message.direction, message.subject) for message in thread.messages
+                ]
 
         self.assertEqual(
             self._run_async(scenario()),
@@ -510,7 +524,9 @@ class WorkspaceSupportTest(unittest.TestCase):
         self.assertEqual(draft.body_text, "保存正文")
         self.assertEqual(draft.body_html, "<p>保存正文</p>")
 
-    def test_workspace_draft_uses_saved_empty_body_before_generated_result(self) -> None:
+    def test_workspace_draft_uses_saved_empty_body_before_generated_result(
+        self,
+    ) -> None:
         draft = _build_workspace_draft(
             task=self._task(
                 generated_subject="AI 主题",

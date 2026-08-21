@@ -83,6 +83,5 @@ def downgrade() -> None:
 
 def _column_names(table_name: str) -> set[str]:
     return {
-        column["name"]
-        for column in sa.inspect(op.get_bind()).get_columns(table_name)
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)
     }

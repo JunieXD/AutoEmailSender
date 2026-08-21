@@ -94,7 +94,9 @@ async def _recover_interrupted_crawl_job(
 
         await consolidate_job_candidates(session, job_id)
         candidate_count = await session.scalar(
-            select(func.count()).select_from(CrawlCandidate).where(
+            select(func.count())
+            .select_from(CrawlCandidate)
+            .where(
                 CrawlCandidate.job_id == job_id,
                 canonical_candidate_clause(),
             )

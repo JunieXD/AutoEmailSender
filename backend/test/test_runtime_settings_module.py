@@ -11,7 +11,9 @@ class RuntimeSettingsModuleBoundaryTests(unittest.TestCase):
         self.assertIs(public.RuntimeSettingsRead, schemas.RuntimeSettingsRead)
         self.assertIs(public.RuntimeSettingsUpdate, schemas.RuntimeSettingsUpdate)
         self.assertIs(public.get_runtime_settings, service.get_runtime_settings)
-        self.assertIs(public.serialize_runtime_settings, service.serialize_runtime_settings)
+        self.assertIs(
+            public.serialize_runtime_settings, service.serialize_runtime_settings
+        )
         self.assertIs(public.update_runtime_settings, service.update_runtime_settings)
 
 

@@ -13,12 +13,20 @@ _CONNECTIVITY_ERROR_MARKERS = (
     "connect error",
     "connection refused",
     "connection reset",
+    "connection closed",
+    "connection aborted",
+    "err_connection",
     "failed to establish a new connection",
     "getaddrinfo failed",
     "name or service not known",
     "network is unreachable",
     "nodename nor servname",
     "temporary failure in name resolution",
+    "name resolution",
+    "temporary server response",
+    "http 5",
+    "dns",
+    "暂时无法解析",
     "timed out",
     "timeout",
     "请求超时",
@@ -38,6 +46,7 @@ _NON_CONNECTIVITY_ERROR_MARKERS = (
     "密钥",
 )
 
+
 class RetryableCrawlerWorkItem(Protocol):
     attempt_count: int | None
     failure_count: int | None
@@ -46,6 +55,7 @@ class RetryableCrawlerWorkItem(Protocol):
     worker_id: str | None
     claimed_at: datetime | None
     lease_expires_at: datetime | None
+
 
 def retry_backoff_seconds(failure_count: int | None) -> int:
     attempt = max(1, int(failure_count or 1))
@@ -59,6 +69,7 @@ def max_attempts_for_crawler_error(message: object) -> int:
     if any(marker in normalized for marker in _CONNECTIVITY_ERROR_MARKERS):
         return MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS
     return MAX_CRAWLER_V2_ATTEMPTS
+
 
 def mark_crawler_v2_failed(
     item: RetryableCrawlerWorkItem,

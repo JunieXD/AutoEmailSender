@@ -79,8 +79,16 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_match_analysis_runs_created_at", table_name="match_analysis_runs")
-    op.drop_index("ix_match_analysis_runs_llm_profile_id", table_name="match_analysis_runs")
-    op.drop_index("ix_match_analysis_runs_identity_id", table_name="match_analysis_runs")
-    op.drop_index("ix_match_analysis_runs_professor_id", table_name="match_analysis_runs")
-    op.drop_index("ix_match_analysis_runs_email_task_id", table_name="match_analysis_runs")
+    op.drop_index(
+        "ix_match_analysis_runs_llm_profile_id", table_name="match_analysis_runs"
+    )
+    op.drop_index(
+        "ix_match_analysis_runs_identity_id", table_name="match_analysis_runs"
+    )
+    op.drop_index(
+        "ix_match_analysis_runs_professor_id", table_name="match_analysis_runs"
+    )
+    op.drop_index(
+        "ix_match_analysis_runs_email_task_id", table_name="match_analysis_runs"
+    )
     op.drop_table("match_analysis_runs")

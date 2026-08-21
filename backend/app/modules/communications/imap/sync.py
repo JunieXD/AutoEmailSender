@@ -1652,7 +1652,8 @@ async def _history_mailbox_header_already_ingested(
                             EmailObservation.identity_id == identity_id,
                             EmailObservation.professor_id.in_(expected_professor_ids),
                             EmailObservation.direction == direction,
-                            EmailObservation.normalized_message_id == normalized_message_id,
+                            EmailObservation.normalized_message_id
+                            == normalized_message_id,
                         ),
                     ),
                 )
@@ -1837,7 +1838,8 @@ async def _history_header_already_ingested(
                     or_(
                         and_(
                             normalized_message_id != "",
-                            EmailObservation.normalized_message_id == normalized_message_id,
+                            EmailObservation.normalized_message_id
+                            == normalized_message_id,
                         ),
                         and_(
                             message.uidvalidity is not None,
@@ -2514,8 +2516,7 @@ async def _process_sent_imap_fetched_messages(
                 )
                 task = (
                     await session.get(EmailTask, result.email_task_id)
-                    if result.email_task_id is not None
-                    and result.email_log is not None
+                    if result.email_task_id is not None and result.email_log is not None
                     else None
                 )
                 if task is not None:
@@ -2529,6 +2530,8 @@ async def _process_sent_imap_fetched_messages(
                 detected += 1
         await commit_imap_identity_sync_session(session)
     return detected
+
+
 def _backfill_existing_reply(
     existing: EmailLog,
     message: ReceivedEmail,
@@ -2705,9 +2708,7 @@ async def _find_reply_target_from_observations(
         return None
     target_log_id = target_log_ids.pop()
     target_log = next(
-        email_log
-        for _, email_log in matched_rows
-        if email_log.id == target_log_id
+        email_log for _, email_log in matched_rows if email_log.id == target_log_id
     )
     if target_log.email_task_id is None:
         return None

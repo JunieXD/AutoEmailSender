@@ -19,7 +19,9 @@ QUALITY_SCRIPTS_ROOT = REPOSITORY_ROOT / "scripts" / "quality"
 
 
 class CliBuildScriptTests(unittest.TestCase):
-    def test_agent_cli_benchmark_measures_cold_commands_and_intent_accuracy(self) -> None:
+    def test_agent_cli_benchmark_measures_cold_commands_and_intent_accuracy(
+        self,
+    ) -> None:
         namespace = runpy.run_path(
             (QUALITY_SCRIPTS_ROOT / "benchmark_agent_cli.py").as_posix(),
         )
@@ -27,7 +29,11 @@ class CliBuildScriptTests(unittest.TestCase):
         intent_cases = dict(namespace["INTENT_CASES"])
 
         def fake_invoke(_executable: Path, arguments: list[str]):
-            query = arguments[arguments.index("--intent") + 1] if "--intent" in arguments else None
+            query = (
+                arguments[arguments.index("--intent") + 1]
+                if "--intent" in arguments
+                else None
+            )
             data = (
                 {"items": [{"command": intent_cases[query]}]}
                 if query is not None
@@ -45,7 +51,9 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertEqual(measurements["capabilities"]["p95_ms"], 12.5)
         self.assertEqual(measurements["describe"]["p95_ms"], 12.5)
         self.assertEqual(measurements["intent_routing"]["accuracy"], 1.0)
-        self.assertTrue(all(item["correct"] for item in measurements["intent_routing"]["cases"]))
+        self.assertTrue(
+            all(item["correct"] for item in measurements["intent_routing"]["cases"])
+        )
 
     def test_agent_cli_benchmark_forces_utf8_for_redirected_json(self) -> None:
         namespace = runpy.run_path(
@@ -90,7 +98,9 @@ class CliBuildScriptTests(unittest.TestCase):
             "导入导师",
         )
 
-    def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(self) -> None:
+    def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(
+        self,
+    ) -> None:
         script = _read_script("build-cli.sh")
 
         self.assertIn("uv run pyinstaller", script)
@@ -112,7 +122,7 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--onedir", script)
         self.assertNotIn("--onefile", script)
         self.assertNotIn("--copy-metadata", script)
-        self.assertIn('dist\\auto-email-sender\\auto-email-sender.exe', script)
+        self.assertIn("dist\\auto-email-sender\\auto-email-sender.exe", script)
         self.assertIn("auto-email-sender.exe", script)
         self.assertIn("generate_cli_build_identity.py", script)
         self.assertIn("--runtime-hook $BuildIdentityHook", script)
@@ -120,8 +130,12 @@ class CliBuildScriptTests(unittest.TestCase):
         self.assertIn("--executable $CliExecutable", script)
         self.assertIn("benchmark_agent_cli.py", script)
 
-    def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+    def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(
+        self,
+    ) -> None:
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         validate_payloads = namespace["validate_payloads"]
         revision = "a" * 40
         version = {
@@ -158,13 +172,17 @@ class CliBuildScriptTests(unittest.TestCase):
             validate_payloads(version, capabilities)
 
     def test_frozen_binary_verifier_requires_complete_onedir_layout(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         validate_bundle_layout = namespace["validate_bundle_layout"]
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             bundle = Path(temporary_directory) / "auto-email-sender"
             bundle.mkdir()
-            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable = bundle / (
+                "auto-email-sender.exe" if os.name == "nt" else "auto-email-sender"
+            )
             executable.write_bytes(b"binary")
             with self.assertRaisesRegex(RuntimeError, "onedir layout"):
                 validate_bundle_layout(executable)
@@ -173,7 +191,9 @@ class CliBuildScriptTests(unittest.TestCase):
             validate_bundle_layout(executable)
 
     def test_frozen_binary_verifier_checks_every_supported_agent_manifest(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         validate_contract = namespace["validate_agent_installation_contract"]
         observed_manifests: list[dict[str, object]] = []
 
@@ -186,8 +206,9 @@ class CliBuildScriptTests(unittest.TestCase):
             self.assertEqual(command, "doctor")
             assert environment_overrides is not None
             manifest = json.loads(
-                Path(environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"])
-                .read_text(encoding="utf-8"),
+                Path(
+                    environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"]
+                ).read_text(encoding="utf-8"),
             )
             observed_manifests.append(manifest)
             details: dict[str, object] = {
@@ -210,7 +231,9 @@ class CliBuildScriptTests(unittest.TestCase):
                 self.assertEqual(target.read_bytes(), _executable.read_bytes())
             elif os.name == "nt":
                 self.assertEqual(target.suffix, ".cmd")
-                self.assertIn(str(_executable.resolve()), target.read_text(encoding="utf-8"))
+                self.assertIn(
+                    str(_executable.resolve()), target.read_text(encoding="utf-8")
+                )
             else:
                 self.assertTrue(target.is_symlink())
                 self.assertEqual(target.resolve(), _executable.resolve())
@@ -230,10 +253,14 @@ class CliBuildScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             bundle = Path(temporary_directory) / "auto-email-sender"
             (bundle / "_internal").mkdir(parents=True)
-            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable = bundle / (
+                "auto-email-sender.exe" if os.name == "nt" else "auto-email-sender"
+            )
             executable.write_bytes(b"binary")
             (bundle / "_internal" / "runtime").write_bytes(b"runtime")
-            with patch.dict(validate_contract.__globals__, {"_run_json": fake_run_json}):
+            with patch.dict(
+                validate_contract.__globals__, {"_run_json": fake_run_json}
+            ):
                 versions = validate_contract(executable)
 
         self.assertEqual(versions, [4, 5])
@@ -246,8 +273,12 @@ class CliBuildScriptTests(unittest.TestCase):
             observed_manifests[1]["cli_sha256"],
         )
 
-    def test_frozen_binary_verifier_rejects_wrong_schema_v5_target_binding(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+    def test_frozen_binary_verifier_rejects_wrong_schema_v5_target_binding(
+        self,
+    ) -> None:
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         validate_check = namespace["_validate_agent_installation_check"]
         expected_binding = "windows_launcher" if os.name == "nt" else "symlink"
         doctor = {
@@ -282,7 +313,9 @@ class CliBuildScriptTests(unittest.TestCase):
             )
 
     def test_frozen_binary_verifier_rejects_stale_cli_manifest_contract(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         validate_contract = namespace["validate_agent_installation_contract"]
 
         def fake_run_json(
@@ -293,8 +326,9 @@ class CliBuildScriptTests(unittest.TestCase):
         ) -> dict[str, object]:
             assert environment_overrides is not None
             manifest = json.loads(
-                Path(environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"])
-                .read_text(encoding="utf-8"),
+                Path(
+                    environment_overrides["AUTO_EMAIL_SENDER_AGENT_MANIFEST_FILE"]
+                ).read_text(encoding="utf-8"),
             )
             schema_version = manifest["schema_version"]
             details: dict[str, object] = {
@@ -331,7 +365,9 @@ class CliBuildScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             bundle = Path(temporary_directory) / "auto-email-sender"
             (bundle / "_internal").mkdir(parents=True)
-            executable = bundle / ("auto-email-sender.exe" if os.name == "nt" else "auto-email-sender")
+            executable = bundle / (
+                "auto-email-sender.exe" if os.name == "nt" else "auto-email-sender"
+            )
             executable.write_bytes(b"binary")
             with (
                 patch.dict(validate_contract.__globals__, {"_run_json": fake_run_json}),
@@ -340,7 +376,9 @@ class CliBuildScriptTests(unittest.TestCase):
                 validate_contract(executable)
 
     def test_frozen_binary_verifier_reports_failed_process_output(self) -> None:
-        namespace = runpy.run_path((BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix())
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
         run_json = namespace["_run_json"]
         completed = subprocess.CompletedProcess(
             args=["auto-email-sender.exe", "--format", "json", "capabilities"],
@@ -349,7 +387,9 @@ class CliBuildScriptTests(unittest.TestCase):
             stderr="real Windows failure\n",
         )
 
-        with patch.object(namespace["subprocess"], "run", return_value=completed) as run_process:
+        with patch.object(
+            namespace["subprocess"], "run", return_value=completed
+        ) as run_process:
             with self.assertRaises(RuntimeError) as raised:
                 run_json(Path("auto-email-sender.exe"), "capabilities")
 
@@ -440,9 +480,7 @@ class CliBuildScriptTests(unittest.TestCase):
 
 
 def _read_script(name: str) -> str:
-    return (
-        BUILD_SCRIPTS_ROOT / name
-    ).read_text(encoding="utf-8")
+    return (BUILD_SCRIPTS_ROOT / name).read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

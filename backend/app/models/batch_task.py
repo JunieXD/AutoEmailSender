@@ -7,7 +7,7 @@ from app.core.time import utc_now
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, text
+from sqlalchemy import ForeignKey, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -75,8 +75,12 @@ class BatchTask(Base):
         Integer,
         nullable=True,
     )
-    outreach_generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outreach_generation_mode: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    outreach_template_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_subject: Mapped[str | None] = mapped_column(Text, nullable=True)

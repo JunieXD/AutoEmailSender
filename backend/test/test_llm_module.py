@@ -13,7 +13,9 @@ class LLMModuleBoundaryTest(unittest.TestCase):
         self.assertIs(public.LLMProfileRead, schemas.LLMProfileRead)
         self.assertIs(public.LLMRuntimeError, runtime.LLMRuntimeError)
         self.assertIs(public.endpoint_candidates, endpoint.endpoint_candidates)
-        self.assertIs(public.ThinkingAdaptationFailed, thinking.ThinkingAdaptationFailed)
+        self.assertIs(
+            public.ThinkingAdaptationFailed, thinking.ThinkingAdaptationFailed
+        )
         self.assertIs(
             public.ensure_structured_output_adaptation,
             structured_output.ensure_structured_output_adaptation,

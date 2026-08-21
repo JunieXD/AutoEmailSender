@@ -31,12 +31,16 @@ class TimeUtilsTest(unittest.TestCase):
     def test_as_utc_aware_treats_naive_as_utc(self) -> None:
         value = datetime(2026, 5, 31, 6, 44, 37)
 
-        self.assertEqual(as_utc_aware(value), datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            as_utc_aware(value), datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
     def test_as_utc_aware_converts_offset_to_utc(self) -> None:
         value = datetime(2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8)))
 
-        self.assertEqual(as_utc_aware(value), datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            as_utc_aware(value), datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
     def test_as_utc_naive_drops_timezone_after_conversion(self) -> None:
         value = datetime(2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8)))
@@ -58,7 +62,9 @@ class TimeUtilsTest(unittest.TestCase):
         )
 
     def test_serialize_api_datetime_uses_z_suffix(self) -> None:
-        value = datetime(2026, 5, 31, 14, 44, 37, 123456, tzinfo=timezone(timedelta(hours=8)))
+        value = datetime(
+            2026, 5, 31, 14, 44, 37, 123456, tzinfo=timezone(timedelta(hours=8))
+        )
 
         self.assertEqual(serialize_api_datetime(value), "2026-05-31T06:44:37Z")
 
@@ -73,17 +79,23 @@ class TimeUtilsTest(unittest.TestCase):
 
         with Session(engine) as session:
             sample = TimeSample(
-                happened_at=datetime(2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8)))
+                happened_at=datetime(
+                    2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8))
+                )
             )
             session.add(sample)
             session.commit()
             sample_id = sample.id
 
         with Session(engine) as session:
-            loaded = session.scalar(select(TimeSample).where(TimeSample.id == sample_id))
+            loaded = session.scalar(
+                select(TimeSample).where(TimeSample.id == sample_id)
+            )
 
         assert loaded is not None
-        self.assertEqual(loaded.happened_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            loaded.happened_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
     def test_utc_datetime_treats_naive_bind_value_as_utc(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:")
@@ -96,10 +108,14 @@ class TimeUtilsTest(unittest.TestCase):
             sample_id = sample.id
 
         with Session(engine) as session:
-            loaded = session.scalar(select(TimeSample).where(TimeSample.id == sample_id))
+            loaded = session.scalar(
+                select(TimeSample).where(TimeSample.id == sample_id)
+            )
 
         assert loaded is not None
-        self.assertEqual(loaded.happened_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            loaded.happened_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
 
 if __name__ == "__main__":

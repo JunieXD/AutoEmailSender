@@ -8,6 +8,7 @@ import {
   updateLLMProfile,
 } from "@/lib/api/llmProfiles";
 import { setPrimaryMaterial } from "@/lib/api/materials";
+import { PROFILE_HELP_LINKS } from "@/lib/helpLinks";
 import type { IdentityDTO, LLMProfileDTO } from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ const mockedRegisterWorkspaceDraftGuard = vi.hoisted(() =>
 const mockedChoose = vi.hoisted(() => vi.fn());
 const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedUpdateOutreachTemplate = vi.hoisted(() => vi.fn());
+const mockedOpenExternalHttpUrl = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/SelectionContext", () => ({
   useSelectionContext: mockedUseSelectionContext,
@@ -52,6 +54,10 @@ vi.mock("@/lib/useConfirmDialog", () => ({
     choose: mockedChoose,
     dialog: null,
   }),
+}));
+
+vi.mock("@/lib/externalUrls", () => ({
+  openExternalHttpUrl: mockedOpenExternalHttpUrl,
 }));
 
 vi.mock("@/components/molecules/EmailTemplateEditor", () => ({
@@ -332,6 +338,92 @@ describe("ProfilePage onboarding", () => {
       .toBeInTheDocument();
     expect(screen.getByText("先给自己发送一封测试邮件。"))
       .toBeInTheDocument();
+  });
+
+  it("opens contextual setup guides from the summary, sections, and difficult fields", async () => {
+    expect(PROFILE_HELP_LINKS).toEqual({
+      firstRun:
+        "https://juniexd.github.io/AutoEmailSender/docs/first-run",
+      mailAuthorization:
+        "https://juniexd.github.io/AutoEmailSender/docs/first-run#mail-authorization-code",
+      llmConfiguration:
+        "https://juniexd.github.io/AutoEmailSender/docs/first-run#llm-configuration",
+    });
+
+    renderPage();
+
+    const fullGuide = await screen.findByRole("link", {
+      name: "查看完整配置教程",
+    });
+    expect(fullGuide).toHaveAttribute("href", PROFILE_HELP_LINKS.firstRun);
+    fireEvent.click(fullGuide);
+    expect(mockedOpenExternalHttpUrl).toHaveBeenLastCalledWith(
+      PROFILE_HELP_LINKS.firstRun,
+    );
+
+    const mailGuide = screen.getByRole("link", { name: "邮箱配置教程" });
+    expect(mailGuide).toHaveAttribute(
+      "href",
+      PROFILE_HELP_LINKS.mailAuthorization,
+    );
+    const mailDescription = screen.getByText("管理发件邮箱与收发设置。");
+    expect(mailGuide.parentElement).toBe(mailDescription.parentElement);
+    expect(mailGuide.parentElement).toHaveClass("gap-x-1", "flex-wrap");
+    expect(mailGuide).toHaveClass("min-h-0", "px-1", "leading-5");
+    fireEvent.click(mailGuide);
+    expect(screen.getByRole("button", { name: /^发件身份/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(mockedOpenExternalHttpUrl).toHaveBeenLastCalledWith(
+      PROFILE_HELP_LINKS.mailAuthorization,
+    );
+
+    openSetupSection("发件身份");
+    const authorizationGuide = screen.getByRole("link", {
+      name: "如何获取授权码",
+    });
+    expect(authorizationGuide).toHaveAttribute(
+      "href",
+      PROFILE_HELP_LINKS.mailAuthorization,
+    );
+    expect(authorizationGuide.parentElement).toHaveClass(
+      "justify-start",
+      "gap-x-1",
+    );
+    expect(authorizationGuide.parentElement).toHaveClass("min-h-[22px]");
+    expect(authorizationGuide).toHaveClass(
+      "min-h-0",
+      "px-1",
+      "py-0",
+      "leading-5",
+    );
+    expect(screen.getByText(/不是邮箱登录密码/)).toBeInTheDocument();
+
+    const modelGuide = screen.getByRole("link", { name: "模型配置教程" });
+    expect(modelGuide).toHaveAttribute(
+      "href",
+      PROFILE_HELP_LINKS.llmConfiguration,
+    );
+    const modelDescription = screen.getByText(
+      "连接并测试用于写信的 AI 模型。",
+    );
+    expect(modelGuide.parentElement).toBe(modelDescription.parentElement);
+    expect(modelGuide).toHaveClass("min-h-0", "px-1", "leading-5");
+    fireEvent.click(modelGuide);
+    expect(screen.getByRole("button", { name: /^模型配置/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    openSetupSection("模型配置");
+    expect(
+      screen.getByRole("link", { name: "查看填写示例" }),
+    ).toHaveAttribute("href", PROFILE_HELP_LINKS.llmConfiguration);
+    expect(
+      screen.getByRole("link", { name: "如何获取 API Key" }),
+    ).toHaveAttribute("href", PROFILE_HELP_LINKS.llmConfiguration);
+    expect(screen.getByLabelText(/API Base URL/)).toBeInTheDocument();
+    expect(screen.getByText(/不是平台官网地址/)).toBeInTheDocument();
   });
 
   it("follows a top-bar identity change in the identity editor", async () => {
@@ -681,6 +773,29 @@ describe("ProfilePage onboarding", () => {
     expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
+  it("toggles every setup card from its description", () => {
+    renderPage();
+
+    const setupCards = [
+      ["发件身份", "管理发件邮箱与收发设置。"],
+      ["材料与模板", "准备匹配材料和发信模板。"],
+      ["模型配置", "连接并测试用于写信的 AI 模型。"],
+      ["测试写信", "先给自己发送一封测试邮件。"],
+    ] as const;
+
+    for (const [title, description] of setupCards) {
+      const toggle = screen.getByRole("button", {
+        name: new RegExp(`^${title}`),
+      });
+
+      fireEvent.click(screen.getByText(description));
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(screen.getByText(description));
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+    }
+  });
+
   it("animates setup section content while opening and closing", async () => {
     renderPage();
 
@@ -852,6 +967,9 @@ describe("ProfilePage onboarding", () => {
     expect(screen.getByText("可能原因")).toBeInTheDocument();
     expect(screen.getByText(/客户端授权码/)).toBeInTheDocument();
     expect(screen.getByText("原始报错")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "按邮箱配置教程逐项检查" }),
+    ).toHaveAttribute("href", PROFILE_HELP_LINKS.mailAuthorization);
     expect(mockedNotifyError).toHaveBeenCalledTimes(1);
     expect(mockedNotifyError.mock.calls[0]?.[0]).toContain("SMTP");
     expect(mockedNotifyError.mock.calls[0]?.[1]).toBe(
@@ -958,7 +1076,7 @@ describe("ProfilePage onboarding", () => {
 
     renderPage();
     openSetupSection("模型配置");
-    fireEvent.change(screen.getByLabelText(/API 地址/), {
+    fireEvent.change(screen.getByLabelText(/API Base URL/), {
       target: { value: testedBaseUrl },
     });
     fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
@@ -1001,12 +1119,15 @@ describe("ProfilePage onboarding", () => {
 
     renderPage();
     openSetupSection("模型配置");
-    fireEvent.change(screen.getByLabelText(/API 地址/), {
+    fireEvent.change(screen.getByLabelText(/API Base URL/), {
       target: { value: "https://invalid.example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "测试模型" }));
 
     expect(await screen.findByText("模型接口返回错误 401")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "查看模型配置排查步骤" }),
+    ).toHaveAttribute("href", PROFILE_HELP_LINKS.llmConfiguration);
     expect(updateLLMProfile).not.toHaveBeenCalled();
   });
 

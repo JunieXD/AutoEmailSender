@@ -29,7 +29,9 @@ def upgrade() -> None:
         return
 
     with op.batch_alter_table("crawl_job_runs", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("app_version", sa.String(length=32), nullable=True))
+        batch_op.add_column(
+            sa.Column("app_version", sa.String(length=32), nullable=True)
+        )
 
 
 def downgrade() -> None:

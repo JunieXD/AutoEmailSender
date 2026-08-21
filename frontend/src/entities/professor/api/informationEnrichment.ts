@@ -4,6 +4,7 @@ import type {
   ProfessorInformationEnrichmentItemDTO,
   ProfessorInformationEnrichmentItemsPageDTO,
   ProfessorInformationEnrichmentJobDTO,
+  ProfessorInformationEnrichmentJobsPageDTO,
   ProfessorInformationEnrichmentItemStatus,
   ProfessorInformationEnrichmentListView,
 } from '../model/types';
@@ -50,6 +51,31 @@ export const listProfessorInformationEnrichmentJobs = (params?: {
     '/api/professor-information-enrichment-jobs',
     undefined,
     { view: params?.view ?? undefined },
+  );
+
+export const listProfessorInformationEnrichmentJobsPage = (params: {
+  offset: number;
+  limit: number;
+  view: ProfessorInformationEnrichmentListView;
+  keyword?: string;
+  status?: string;
+  sortKey?: 'updated' | 'created' | 'progress';
+  sortDirection?: 'asc' | 'desc';
+  unpaged?: boolean;
+}) =>
+  apiFetch<ProfessorInformationEnrichmentJobsPageDTO>(
+    '/api/professor-information-enrichment-jobs/page',
+    undefined,
+    {
+      offset: params.offset,
+      limit: params.limit,
+      view: params.view,
+      keyword: params.keyword,
+      status: params.status,
+      sort_key: params.sortKey,
+      sort_direction: params.sortDirection,
+      unpaged: params.unpaged ? 1 : undefined,
+    },
   );
 
 export const getProfessorInformationEnrichmentJob = (jobId: number) =>

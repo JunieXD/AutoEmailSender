@@ -31,7 +31,9 @@ def upgrade() -> None:
         )
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("draft_generation_previous_status", sa.String(length=32), nullable=True),
+            sa.Column(
+                "draft_generation_previous_status", sa.String(length=32), nullable=True
+            ),
         )
 
 

@@ -36,6 +36,7 @@ desktop/native/sparkle/build/
 desktop/native/sparkle/vendor/
 .superpowers
 .omx
+.work/
 .worktrees/
 .codex/*
 !.codex/skills/

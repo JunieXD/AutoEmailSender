@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from urllib.parse import quote
 
-from app.modules.crawler.v2.profile_url_policy import has_explicit_markdown_link
+from app.modules.crawler.v2.profile_url_policy import (
+    extract_normalized_markdown_links,
+    has_explicit_markdown_link,
+)
 
 
 class CrawlerV2ProfileUrlPolicyTests(unittest.TestCase):
@@ -88,6 +91,32 @@ class CrawlerV2ProfileUrlPolicyTests(unittest.TestCase):
                 "[张成伟](http://122.205.5.5:8081/~zhangcw/)",
                 base_url="https://ei.hust.edu.cn/xygk/szdw/txgcx.htm",
                 target_url="http://122.205.5.5:8081/~zhangcw",
+            )
+        )
+
+    def test_recovers_absolute_profile_url_embedded_in_link_path(self) -> None:
+        content = (
+            "[李清钦](https://webplus.zuel.edu.cn/_web/_customize/folder/react/"
+            "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm)"
+        )
+
+        self.assertEqual(
+            extract_normalized_markdown_links(
+                content,
+                base_url="https://example.edu/faculty/list.htm",
+            ),
+            (
+                (
+                    "李清钦",
+                    "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm",
+                ),
+            ),
+        )
+        self.assertTrue(
+            has_explicit_markdown_link(
+                content,
+                base_url="https://example.edu/faculty/list.htm",
+                target_url="http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm",
             )
         )
 

@@ -49,13 +49,19 @@ SKIP_TAGS = {"head", "link", "meta", "script", "style", "title"}
 TABLE_CELL_TAGS = ("td", "th")
 
 
-def html_to_text(value: str) -> str:
+def html_to_text(value: str, *, include_document_fallback: bool = False) -> str:
+    """Extract readable text from HTML.
+
+    Normal callers keep the historical body-only behavior.  Profile fallback
+    handling can opt into the whole parsed document for malformed pages whose
+    browser-repaired visible content was placed after ``</body>``.
+    """
     text = value.strip()
     if not text:
         return ""
 
     soup = parse_html(text)
-    root = soup.body or soup
+    root = soup if include_document_fallback else (soup.body or soup)
     return _join_blocks(_extract_blocks(root))
 
 

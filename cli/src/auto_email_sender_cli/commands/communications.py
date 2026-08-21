@@ -21,7 +21,9 @@ from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 from auto_email_sender_cli.errors import CliError
 from auto_email_sender_cli.output import emit_error, emit_success
 
-communications_app = typer.Typer(help="读取通信线程、发件和完整回信。", no_args_is_help=True)
+communications_app = typer.Typer(
+    help="读取通信线程、发件和完整回信。", no_args_is_help=True
+)
 threads_app = typer.Typer(help="查询按身份和导师归并的通信线程。", no_args_is_help=True)
 messages_app = typer.Typer(help="查询或导出邮件记录。", no_args_is_help=True)
 communications_app.add_typer(threads_app, name="threads")
@@ -31,7 +33,9 @@ communications_app.add_typer(messages_app, name="messages")
 @communications_app.command("sync")
 def sync_communications(
     ctx: typer.Context,
-    identity_id: Annotated[int, typer.Option("--identity-id", min=1, help="发件身份 ID。")],
+    identity_id: Annotated[
+        int, typer.Option("--identity-id", min=1, help="发件身份 ID。")
+    ],
 ) -> None:
     run_write_command(
         ctx,
@@ -49,11 +53,15 @@ def list_threads(
     ctx: typer.Context,
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
     professor_id: Annotated[int | None, typer.Option("--professor-id", min=1)] = None,
-    sent: Annotated[str | None, typer.Option("--sent", help="true 或 false。") ] = None,
-    replied: Annotated[str | None, typer.Option("--replied", help="true 或 false。") ] = None,
+    sent: Annotated[str | None, typer.Option("--sent", help="true 或 false。")] = None,
+    replied: Annotated[
+        str | None, typer.Option("--replied", help="true 或 false。")
+    ] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:
     run_read_command(
@@ -89,8 +97,12 @@ def list_threads(
 def get_thread(
     ctx: typer.Context,
     thread_id: Annotated[str, typer.Argument(help="通信线程 ID，例如 2:17。")],
-    include_body: Annotated[bool, typer.Option("--include-body", help="包含完整邮件正文。") ] = False,
-    cursor: Annotated[int, typer.Option("--cursor", min=0, help="线程内消息游标。") ] = 0,
+    include_body: Annotated[
+        bool, typer.Option("--include-body", help="包含完整邮件正文。")
+    ] = False,
+    cursor: Annotated[
+        int, typer.Option("--cursor", min=0, help="线程内消息游标。")
+    ] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
 ) -> None:
     run_read_command(
@@ -126,12 +138,16 @@ def list_messages(
     thread_id: Annotated[str | None, typer.Option("--thread-id")] = None,
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
     professor_id: Annotated[int | None, typer.Option("--professor-id", min=1)] = None,
-    direction: Annotated[str | None, typer.Option("--direction", help="sent、received 或 draft。") ] = None,
+    direction: Annotated[
+        str | None, typer.Option("--direction", help="sent、received 或 draft。")
+    ] = None,
     include_body: Annotated[bool, typer.Option("--include-body")] = False,
-    order: Annotated[str, typer.Option("--order", help="asc 或 desc。") ] = "desc",
+    order: Annotated[str, typer.Option("--order", help="asc 或 desc。")] = "desc",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
     all_items: Annotated[bool, typer.Option("--all")] = False,
 ) -> None:
     run_read_command(
@@ -190,7 +206,7 @@ def export_messages(
     direction: Annotated[str | None, typer.Option("--direction")] = None,
     include_body: Annotated[bool, typer.Option("--include-body")] = False,
     order: Annotated[str, typer.Option("--order")] = "asc",
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     context = cli_context(ctx)
     command = "communications.messages.export"

@@ -22,7 +22,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     snapshot_columns = (
         sa.Column("outreach_template_id", sa.Integer(), nullable=True),
-        sa.Column("outreach_template_name_snapshot", sa.String(length=120), nullable=True),
+        sa.Column(
+            "outreach_template_name_snapshot", sa.String(length=120), nullable=True
+        ),
         sa.Column("outreach_template_snapshot_version", sa.Integer(), nullable=True),
         sa.Column("outreach_generation_mode", sa.String(length=20), nullable=True),
         sa.Column("outreach_template_subject", sa.String(length=255), nullable=True),
@@ -93,8 +95,7 @@ def downgrade() -> None:
 
 def _column_names(table_name: str) -> set[str]:
     return {
-        column["name"]
-        for column in sa.inspect(op.get_bind()).get_columns(table_name)
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)
     }
 
 
@@ -323,8 +324,7 @@ def _verify_legacy_batch_rows(
     ).fetchone()
     if unexpected is not None:
         raise RuntimeError(
-            "batch task migration unexpectedly added historical row "
-            f"{unexpected[0]}",
+            f"batch task migration unexpectedly added historical row {unexpected[0]}",
         )
 
 

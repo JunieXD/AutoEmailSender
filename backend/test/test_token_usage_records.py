@@ -297,7 +297,9 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
             identity = (await session.scalars(select(IdentityProfile))).first()
             existing_professor = (await session.scalars(select(Professor))).first()
             if identity is None or existing_professor is None:
-                raise AssertionError("seed_records must run before adding alternate model")
+                raise AssertionError(
+                    "seed_records must run before adding alternate model"
+                )
 
             professor = Professor(
                 name="备用模型导师",
@@ -837,12 +839,15 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
 
         async def run_query():
             async with self.session_factory() as session:
-                with patch(
-                    "app.services.token_usage_records._list_all_candidate_records",
-                    AsyncMock(return_value=[record]),
-                ), patch(
-                    "app.services.token_usage_records.local_now",
-                    return_value=now.astimezone(shanghai),
+                with (
+                    patch(
+                        "app.services.token_usage_records._list_all_candidate_records",
+                        AsyncMock(return_value=[record]),
+                    ),
+                    patch(
+                        "app.services.token_usage_records.local_now",
+                        return_value=now.astimezone(shanghai),
+                    ),
                 ):
                     from app.services.token_usage_records import build_token_usage_chart
 
@@ -855,7 +860,9 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
 
         result = self._run_async(run_query())
 
-        self.assertEqual(result.buckets[-1].bucket_start, datetime(2026, 8, 7, tzinfo=shanghai))
+        self.assertEqual(
+            result.buckets[-1].bucket_start, datetime(2026, 8, 7, tzinfo=shanghai)
+        )
         self.assertEqual(result.buckets[-1].bucket_label, "08-07")
         self.assertEqual(result.buckets[-1].total_tokens, 110)
 
@@ -908,7 +915,6 @@ class TokenUsageRecordsServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(result.buckets), 4)
         self.assertEqual(result.buckets[-1].bucket_label, "04-30")
         self.assertGreater(result.buckets[-1].input_tokens, 0)
-
 
     def test_custom_chart_filters_by_exact_datetime_range(self) -> None:
         self._run_async(self._seed_history_records())

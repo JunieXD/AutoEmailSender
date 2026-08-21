@@ -124,7 +124,11 @@ async def invoke_v2_page_routing_agent(
     entry_reasons: dict[str, str] = {}
     current_adaptation = adaptation
     if expansion_mode == ENTRY_EXPANSION_MODE:
-        entry_payload, entry_attempts, current_adaptation = await _invoke_structured_routing_phase(
+        (
+            entry_payload,
+            entry_attempts,
+            current_adaptation,
+        ) = await _invoke_structured_routing_phase(
             llm_profile,
             session_factory=session_factory,
             adaptation=current_adaptation,
@@ -240,7 +244,9 @@ def extract_page_route_controls(page_html: str) -> list[PageRouteControl]:
         class_tokens = tuple(
             token
             for token in _normalized_class_tokens(tag.get("class"))
-            if not any(marker in token.lower() for marker in _CONTROL_STATE_CLASS_MARKERS)
+            if not any(
+                marker in token.lower() for marker in _CONTROL_STATE_CLASS_MARKERS
+            )
         )
         if tag.has_attr("disabled") or aria_disabled == "true":
             continue
@@ -291,10 +297,7 @@ def build_page_routing_context(
     links: list[PageRouteLink],
     controls: list[PageRouteControl] | None = None,
 ) -> str:
-    link_lines = [
-        f"- [{link.kind}] {link.label} -> {link.url}"
-        for link in links
-    ]
+    link_lines = [f"- [{link.kind}] {link.label} -> {link.url}" for link in links]
     control_lines = [
         (
             f"- [control] {control.control_id} | tag={control.tag} | "
@@ -332,7 +335,7 @@ def build_v2_entry_routing_prompt(
         "不要选择当前页、个人主页、首页或上级目录、下属单位主页、非人员栏目、按表彰或项目选出的少数人、登录区、文件或站外页面。\n"
         "同一学校主域下的兄弟子域只有在链接明确属于目标名单时才可选择。不要试探性扩散。\n"
         "只能逐字返回下方可选择链接中的 URL，不能改写或猜造 URL。\n"
-        "只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{\"discovered_urls\":[]}。\n"
+        '只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{"discovered_urls":[]}。\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"当前 URL：{source_url}\n"
@@ -351,7 +354,7 @@ def build_v2_pagination_routing_prompt(
         "你只判断当前页是否还有同一份人员名单的下一部分。\n"
         "最多选择一个能让同一名单恰好向后推进一页的链接；没有这种链接时，才选择一个作用相同的控件。"
         "不要选择第一页、最后一页、上一页、具体页码跳转、分类或筛选；没有就不扩展。URL 与控件不能同时选择。\n"
-        "只输出 JSON：{\"allow_expansion\":false,\"pagination_urls\":[],\"pagination_control_id\":null}。\n"
+        '只输出 JSON：{"allow_expansion":false,"pagination_urls":[],"pagination_control_id":null}。\n'
         f"当前 URL：{source_url}\n"
         f"{routing_context}"
     )
@@ -374,9 +377,15 @@ def filter_model_selected_route_urls(
             normalized = normalize_url(selected_url, base_url=source_url)
         except (TypeError, ValueError):
             continue
-        if normalized == current_url or normalized in seen or normalized not in available_urls:
+        if (
+            normalized == current_url
+            or normalized in seen
+            or normalized not in available_urls
+        ):
             continue
-        if not is_safe_public_crawl_url(normalized) or not is_same_domain(normalized, start_url):
+        if not is_safe_public_crawl_url(normalized) or not is_same_domain(
+            normalized, start_url
+        ):
             continue
         seen.add(normalized)
         accepted.append(normalized)
@@ -405,7 +414,11 @@ async def _invoke_structured_routing_phase(
     phase: Literal["entry", "pagination"],
     prompt: str,
     result_model: type[V2EntryRoutingPayload] | type[V2PaginationRoutingPayload],
-) -> tuple[V2EntryRoutingPayload | V2PaginationRoutingPayload, list[V2RoutingAttempt], LLMRuntimeAdaptation]:
+) -> tuple[
+    V2EntryRoutingPayload | V2PaginationRoutingPayload,
+    list[V2RoutingAttempt],
+    LLMRuntimeAdaptation,
+]:
     completion, payload, _structured_mode = await request_crawler_structured_completion(
         session_factory,
         llm_profile,
@@ -437,7 +450,9 @@ def _route_link_label(tag: Any, *, kind: Literal["link", "iframe"]) -> str:
             label = " ".join(str(image.get("alt") or "").split())
     if not label:
         label = " ".join(
-            str(tag.get("title") or tag.get("aria-label") or tag.get("name") or "").split()
+            str(
+                tag.get("title") or tag.get("aria-label") or tag.get("name") or ""
+            ).split()
         )
     if not label:
         label = "嵌入页面" if kind == "iframe" else "无文字链接"

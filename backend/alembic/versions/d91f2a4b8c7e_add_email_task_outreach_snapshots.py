@@ -1,4 +1,4 @@
-﻿"""add email task outreach snapshots
+"""add email task outreach snapshots
 
 Revision ID: d91f2a4b8c7e
 Revises: ab12c34d56ef
@@ -20,10 +20,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("outreach_generation_mode", sa.String(length=20), nullable=True))
-        batch_op.add_column(sa.Column("outreach_template_subject", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("outreach_template_body_text", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("outreach_template_body_html", sa.Text(), nullable=True))
+        batch_op.add_column(
+            sa.Column("outreach_generation_mode", sa.String(length=20), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("outreach_template_subject", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("outreach_template_body_text", sa.Text(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("outreach_template_body_html", sa.Text(), nullable=True)
+        )
 
 
 def downgrade() -> None:

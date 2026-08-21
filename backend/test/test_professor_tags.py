@@ -181,7 +181,9 @@ class ProfessorTagsApiTests(unittest.TestCase):
         tags_by_id = {
             professor_id: [
                 tag["id"]
-                for tag in self.client.get(f"/api/professors/{professor_id}").json()["tags"]
+                for tag in self.client.get(f"/api/professors/{professor_id}").json()[
+                    "tags"
+                ]
             ]
             for professor_id in (first["id"], second["id"])
         }
@@ -393,7 +395,9 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual([tag["id"] for tag in refreshed["tags"]], [first_tag_id])
 
     def test_create_duplicate_tag_constraint_returns_conflict(self) -> None:
-        async def miss_preflight_duplicate_check(*args: object, **kwargs: object) -> None:
+        async def miss_preflight_duplicate_check(
+            *args: object, **kwargs: object
+        ) -> None:
             return None
 
         with patch(
@@ -430,7 +434,9 @@ class ProfessorTagsApiTests(unittest.TestCase):
         self.assertEqual(usage_response.status_code, 200, msg=usage_response.text)
         usage = usage_response.json()
         self.assertEqual(usage["tag"]["id"], tag["id"])
-        self.assertEqual([item["name"] for item in usage["professors"]], ["使用标签导师"])
+        self.assertEqual(
+            [item["name"] for item in usage["professors"]], ["使用标签导师"]
+        )
 
     def test_tag_usage_route_is_not_shadowed_by_professor_detail_route(self) -> None:
         tag = self.client.get("/api/professors/tags").json()[0]

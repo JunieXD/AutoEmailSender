@@ -64,7 +64,21 @@ class PageChunkDraft:
 
 class _LinkTextHTMLParser(HTMLParser):
     _SKIPPED_TAGS = {"script", "style", "noscript", "svg"}
-    _BLOCK_TAGS = {"p", "div", "li", "tr", "section", "article", "h1", "h2", "h3", "h4", "td", "th", "main"}
+    _BLOCK_TAGS = {
+        "p",
+        "div",
+        "li",
+        "tr",
+        "section",
+        "article",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "td",
+        "th",
+        "main",
+    }
 
     def __init__(self, base_url: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -92,11 +106,11 @@ class _LinkTextHTMLParser(HTMLParser):
             src = attributes.get("src")
             if src:
                 label = _normalize_space(
-                    attributes.get("title")
-                    or attributes.get("name")
-                    or "嵌入页面"
+                    attributes.get("title") or attributes.get("name") or "嵌入页面"
                 )
-                self.parts.append(f"\n[iframe: {label}]({urljoin(self.base_url, src)})\n")
+                self.parts.append(
+                    f"\n[iframe: {label}]({urljoin(self.base_url, src)})\n"
+                )
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._SKIPPED_TAGS and self.skip_depth:
@@ -137,7 +151,10 @@ def _normalize_lines(value: str) -> str:
 
 
 def _normalize_enriched_text(value: str) -> str:
-    sections = [_normalize_lines(section) for section in value.split(_STRUCTURE_BOUNDARY_SENTINEL)]
+    sections = [
+        _normalize_lines(section)
+        for section in value.split(_STRUCTURE_BOUNDARY_SENTINEL)
+    ]
     return "\n\n".join(section for section in sections if section)
 
 
@@ -223,7 +240,9 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
     candidates: list[tuple[int, Tag]] = []
 
     for tag in soup.find_all("tr"):
-        if _is_eligible_structure_block(tag, max_tokens=max_tokens, max_links=max_links):
+        if _is_eligible_structure_block(
+            tag, max_tokens=max_tokens, max_links=max_links
+        ):
             candidates.append((0, tag))
 
     for tag in soup.find_all(["div", "section", "dl"]):
@@ -235,7 +254,9 @@ def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) 
             candidates.append((1, tag))
 
     for tag in soup.find_all("article"):
-        if _is_eligible_structure_block(tag, max_tokens=max_tokens, max_links=max_links):
+        if _is_eligible_structure_block(
+            tag, max_tokens=max_tokens, max_links=max_links
+        ):
             candidates.append((2, tag))
 
     for tag in soup.find_all(["li", "dd"]):
@@ -275,7 +296,10 @@ def _label_unlabeled_record_links(tag: Tag) -> None:
     ]
     if not navigable_anchors:
         return
-    if any(_normalize_space(anchor.get_text(" ", strip=True)) for anchor in navigable_anchors):
+    if any(
+        _normalize_space(anchor.get_text(" ", strip=True))
+        for anchor in navigable_anchors
+    ):
         return
 
     seen_hrefs: set[str] = set()
@@ -345,7 +369,9 @@ def _is_repeated_card(tag: Tag) -> bool:
 def _tags_overlap(left: Tag, right: Tag) -> bool:
     if left is right:
         return True
-    return any(parent is right for parent in left.parents) or any(parent is left for parent in right.parents)
+    return any(parent is right for parent in left.parents) or any(
+        parent is left for parent in right.parents
+    )
 
 
 def build_page_chunks(
@@ -426,6 +452,7 @@ def build_page_chunks(
         )
     return drafts
 
+
 def _merge_small_tail_chunks(chunks: list[str], config: ChunkingConfig) -> list[str]:
     merged = list(chunks)
     while len(merged) > 1:
@@ -437,6 +464,7 @@ def _merge_small_tail_chunks(chunks: list[str], config: ChunkingConfig) -> list[
             break
         merged[-2:] = [combined]
     return merged
+
 
 def balanced_target_tokens(content: str, config: ChunkingConfig | None = None) -> int:
     selected_config = config or ChunkingConfig()
@@ -467,7 +495,9 @@ def _content_units(content: str, config: ChunkingConfig) -> tuple[list[str], str
         if estimate_tokens(paragraph) <= config.hard_max_tokens:
             units.append(paragraph)
             continue
-        units.extend(_pack_oversized_lines(paragraph.splitlines(), config.hard_max_tokens))
+        units.extend(
+            _pack_oversized_lines(paragraph.splitlines(), config.hard_max_tokens)
+        )
     return units, "\n\n", True
 
 
@@ -525,7 +555,9 @@ def _split_text_to_token_limit(value: str, token_limit: int) -> list[str]:
     return parts
 
 
-def _select_overlap_tail(lines: list[str], overlap_tokens: int, *, strict: bool) -> list[str]:
+def _select_overlap_tail(
+    lines: list[str], overlap_tokens: int, *, strict: bool
+) -> list[str]:
     if overlap_tokens <= 0:
         return []
     if strict:
@@ -607,22 +639,28 @@ def split_chunk_content(
     return drafts
 
 
-
 def _is_candidate_dense_split(split_reason: str | None) -> bool:
     return split_reason in {"too_many_candidates", "candidate_count_exceeded"}
 
 
-def _split_binary_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
+def _split_binary_lines(
+    lines: list[str], content: str, config: ChunkingConfig
+) -> list[list[str]]:
     midpoint = max(1, len(lines) // 2)
     left_lines = lines[:midpoint]
     overlap_tokens = min(
         _dynamic_overlap_tokens(content, config),
         config.retry_split_overlap_tokens,
     )
-    return [left_lines, [*_strict_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]]]
+    return [
+        left_lines,
+        [*_strict_overlap_tail(left_lines, overlap_tokens), *lines[midpoint:]],
+    ]
 
 
-def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: ChunkingConfig) -> list[list[str]]:
+def _split_retry_candidate_dense_lines(
+    lines: list[str], content: str, config: ChunkingConfig
+) -> list[list[str]]:
     content_tokens = estimate_tokens(content)
     target_tokens = max(config.min_split_tokens, config.retry_split_target_tokens)
     lines = _expand_dominant_dense_split_units(
@@ -638,7 +676,10 @@ def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: C
     overlap_tokens = min(config.overlap_tokens, config.retry_split_overlap_tokens)
     groups: list[list[str]] = []
     bounds = [
-        (round(index * len(lines) / part_count), round((index + 1) * len(lines) / part_count))
+        (
+            round(index * len(lines) / part_count),
+            round((index + 1) * len(lines) / part_count),
+        )
         for index in range(part_count)
     ]
     for index, (start, end) in enumerate(bounds):
@@ -646,7 +687,9 @@ def _split_retry_candidate_dense_lines(lines: list[str], content: str, config: C
         if index > 0:
             previous_start, previous_end = bounds[index - 1]
             child_lines = [
-                *_strict_overlap_tail(lines[previous_start:previous_end], overlap_tokens),
+                *_strict_overlap_tail(
+                    lines[previous_start:previous_end], overlap_tokens
+                ),
                 *child_lines,
             ]
         if child_lines:
@@ -686,7 +729,7 @@ def _split_generated_markdown_link_line(line: str) -> list[str]:
     units: list[str] = []
     cursor = 0
     for match in matches:
-        prefix = _normalize_space(line[cursor:match.start()])
+        prefix = _normalize_space(line[cursor : match.start()])
         if prefix:
             units.append(prefix)
         units.append(match.group(0))
@@ -696,6 +739,7 @@ def _split_generated_markdown_link_line(line: str) -> list[str]:
         units.append(suffix)
     return units
 
+
 def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     content_tokens = estimate_tokens(content)
     if content_tokens <= config.min_split_tokens * 2:
@@ -703,6 +747,7 @@ def _dynamic_overlap_tokens(content: str, config: ChunkingConfig) -> int:
     if content_tokens <= config.min_split_tokens * 4:
         return min(config.overlap_tokens, max(0, content_tokens // 6))
     return config.overlap_tokens
+
 
 def _strict_overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
     selected: list[str] = []
@@ -715,6 +760,7 @@ def _strict_overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
         selected.append(line)
     return list(reversed(selected))
 
+
 def _overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
     selected: list[str] = []
     total = 0
@@ -726,6 +772,8 @@ def _overlap_tail(lines: list[str], overlap_tokens: int) -> list[str]:
     return list(reversed(selected))
 
 
-def _build_chunk_id(page_fingerprint: str, index: int, parent_chunk_id: str | None) -> str:
+def _build_chunk_id(
+    page_fingerprint: str, index: int, parent_chunk_id: str | None
+) -> str:
     prefix = parent_chunk_id or page_fingerprint[:16]
     return f"{prefix}.{index + 1}"

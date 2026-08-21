@@ -53,10 +53,6 @@ cat > "$release_repo/docs/releases/v9.9.9.md" <<'NOTES'
 ### 问题修复
 
 ## 安装说明
-
-## 自动更新
-
-## 导师抓取 Skill
 NOTES
 
 new_shim git '#!/usr/bin/env bash
@@ -82,6 +78,9 @@ printf '%s\n' \"\$*\" >> '$uv_calls_path'
 exit 0"
 new_shim gh "#!/usr/bin/env bash
 printf '%s\n' \"\$*\" >> '$gh_calls_path'
+if [[ \"\${1:-} \${2:-}\" == \"run view\" ]]; then
+  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+fi
 exit 0"
 
 old_path="$PATH"

@@ -56,7 +56,9 @@ async def read_outreach_template(
     )
 
 
-@router.post("", response_model=OutreachTemplateRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=OutreachTemplateRead, status_code=status.HTTP_201_CREATED
+)
 async def create_outreach_template(
     payload: OutreachTemplateCreate,
     session: AsyncSession = Depends(get_async_session),
@@ -96,7 +98,9 @@ async def update_outreach_template(
     return serialize_outreach_template(template)
 
 
-@router.post("/{template_id}/duplicate", response_model=OutreachTemplateRead, status_code=201)
+@router.post(
+    "/{template_id}/duplicate", response_model=OutreachTemplateRead, status_code=201
+)
 async def duplicate_outreach_template(
     template_id: int,
     session: AsyncSession = Depends(get_async_session),

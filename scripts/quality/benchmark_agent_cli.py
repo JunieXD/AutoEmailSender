@@ -42,7 +42,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _invoke(executable: Path, arguments: list[str]) -> tuple[float, dict[str, Any], int]:
+def _invoke(
+    executable: Path, arguments: list[str]
+) -> tuple[float, dict[str, Any], int]:
     started = time.perf_counter()
     completed = subprocess.run(
         [executable.as_posix(), *arguments],
@@ -70,7 +72,9 @@ def _percentile(values: list[float], percentile: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, int((len(ordered) * percentile) + 0.999999) - 1))
+    index = max(
+        0, min(len(ordered) - 1, int((len(ordered) * percentile) + 0.999999) - 1)
+    )
     return ordered[index]
 
 
@@ -158,7 +162,8 @@ def run_benchmark(
         )
     measurements["intent_routing"] = {
         **_summary(intent_durations, intent_sizes),
-        "accuracy": sum(bool(item["correct"]) for item in intent_results) / len(intent_results),
+        "accuracy": sum(bool(item["correct"]) for item in intent_results)
+        / len(intent_results),
         "cases": intent_results,
     }
     return {

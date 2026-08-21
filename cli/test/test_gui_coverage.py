@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -82,7 +83,9 @@ def extract_exported_actions_from_file(
             None,
         )
         if reexport_path is None:
-            raise AssertionError(f"无法解析 Frontend re-export: {resolved_path} -> {target}")
+            raise AssertionError(
+                f"无法解析 Frontend re-export: {resolved_path} -> {target}"
+            )
         names.update(
             extract_exported_actions_from_file(reexport_path, visited=seen),
         )
@@ -95,7 +98,9 @@ class GuiCoverageTests(unittest.TestCase):
         self.assertEqual(document.get("schema_version"), 2)
         actions = document.get("actions")
         self.assertIsInstance(actions, list)
-        by_source = {item.get("source"): item for item in actions if isinstance(item, dict)}
+        by_source = {
+            item.get("source"): item for item in actions if isinstance(item, dict)
+        }
         excluded_sources = set(document.get("excluded_sources", []))
         business_sources = {
             path.relative_to(FRONTEND_SRC).as_posix()
@@ -107,7 +112,12 @@ class GuiCoverageTests(unittest.TestCase):
         self.assertEqual(set(by_source), business_sources)
         self.assertEqual(len(by_source), len(actions))
 
-        allowed_statuses = {"available", "ui_only", "planned", "unsupported_on_platform"}
+        allowed_statuses = {
+            "available",
+            "ui_only",
+            "planned",
+            "unsupported_on_platform",
+        }
         for item in actions:
             self.assertIn(item.get("status"), allowed_statuses, item)
             self.assertTrue(item.get("id"), item)
@@ -117,19 +127,22 @@ class GuiCoverageTests(unittest.TestCase):
             classified_actions = item.get("exported_actions")
             self.assertIsInstance(classified_actions, list, item)
             classified_names = {
-                name
-                for name in classified_actions
-                if isinstance(name, str) and name
+                name for name in classified_actions if isinstance(name, str) and name
             }
             self.assertEqual(len(classified_names), len(classified_actions), item)
             excluded_exports = item.get("excluded_exports", {})
             self.assertIsInstance(excluded_exports, dict, item)
             self.assertTrue(
-                all(isinstance(name, str) and isinstance(reason, str) and reason for name, reason in excluded_exports.items()),
+                all(
+                    isinstance(name, str) and isinstance(reason, str) and reason
+                    for name, reason in excluded_exports.items()
+                ),
                 item,
             )
             self.assertFalse(classified_names & set(excluded_exports), item)
-            self.assertEqual(classified_names | set(excluded_exports), exported_names, source)
+            self.assertEqual(
+                classified_names | set(excluded_exports), exported_names, source
+            )
 
             overrides = item.get("action_overrides", {})
             self.assertIsInstance(overrides, dict, item)
@@ -138,7 +151,9 @@ class GuiCoverageTests(unittest.TestCase):
                 override = overrides.get(action_name, {})
                 self.assertIsInstance(override, dict, f"{source}:{action_name}")
                 action_status = override.get("status", item.get("status"))
-                self.assertIn(action_status, allowed_statuses, f"{source}:{action_name}")
+                self.assertIn(
+                    action_status, allowed_statuses, f"{source}:{action_name}"
+                )
                 self.assertTrue(
                     override.get("reason", item.get("reason")),
                     f"{source}:{action_name}",
@@ -150,7 +165,9 @@ class GuiCoverageTests(unittest.TestCase):
                 self.assertIsInstance(action_commands, list, f"{source}:{action_name}")
                 for command in action_commands:
                     capability = get_capability(command)
-                    self.assertIsNotNone(capability, f"{source}:{action_name} -> {command}")
+                    self.assertIsNotNone(
+                        capability, f"{source}:{action_name} -> {command}"
+                    )
                     assert capability is not None
                     if action_status == "available":
                         self.assertIn(
@@ -172,9 +189,16 @@ class GuiCoverageTests(unittest.TestCase):
                         f"{item['id']} -> {command}",
                     )
                     if capability.availability == "ui_only":
-                        self.assertIn(command, ui_only, f"{item['id']} missing ui_only declaration")
+                        self.assertIn(
+                            command,
+                            ui_only,
+                            f"{item['id']} missing ui_only declaration",
+                        )
                 elif item["status"] == "ui_only":
-                    self.assertIn(capability.availability, {"ui_only", "planned", "unsupported_on_platform"})
+                    self.assertIn(
+                        capability.availability,
+                        {"ui_only", "planned", "unsupported_on_platform"},
+                    )
 
     def test_export_scanner_covers_reexports_and_default_named_functions(self) -> None:
         source = """
@@ -188,18 +212,22 @@ class GuiCoverageTests(unittest.TestCase):
         )
 
     def test_export_scanner_follows_entity_star_reexports(self) -> None:
-        self.assertEqual(
-            extract_exported_actions_from_file(
-                FRONTEND_SRC / "entities/community-mentor/index.ts",
-            ),
-            {
-                "downloadCommunitySharePackage",
-                "getCommunityMentorCatalog",
-                "importCommunityMentors",
-                "listCommunityMentors",
-                "previewCommunityMentorImport",
-            },
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "index.ts").write_text(
+                "export * from './communityMentors';\n",
+                encoding="utf-8",
+            )
+            (root / "communityMentors.ts").write_text(
+                "export const listCommunityMentors = () => [];\n"
+                "export type CommunityMentor = { id: string };\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                extract_exported_actions_from_file(root / "index.ts"),
+                {"listCommunityMentors"},
+            )
 
 
 if __name__ == "__main__":

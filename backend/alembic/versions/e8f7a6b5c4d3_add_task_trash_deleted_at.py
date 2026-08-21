@@ -13,8 +13,12 @@ depends_on = None
 def upgrade() -> None:
     for table_name in ("batch_tasks", "crawl_jobs", "match_analysis_jobs"):
         with op.batch_alter_table(table_name, schema=None) as batch_op:
-            batch_op.add_column(sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
-            batch_op.create_index(batch_op.f(f"ix_{table_name}_deleted_at"), ["deleted_at"], unique=False)
+            batch_op.add_column(
+                sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)
+            )
+            batch_op.create_index(
+                batch_op.f(f"ix_{table_name}_deleted_at"), ["deleted_at"], unique=False
+            )
 
 
 def downgrade() -> None:

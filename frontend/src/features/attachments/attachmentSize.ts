@@ -5,7 +5,7 @@ export { formatFileSize } from '@/lib/formatFileSize';
 
 export const RECOMMENDED_ATTACHMENT_TOTAL_BYTES = 1024 * 1024;
 export const LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL = '我已知晓，不再提示';
-export const LARGE_ATTACHMENT_WARNING_SUPPRESSION_KEY =
+const LARGE_ATTACHMENT_WARNING_SUPPRESSION_KEY =
   'large_attachment_warning_suppressed';
 
 export const isLargeAttachmentWarningSuppressed = () => {

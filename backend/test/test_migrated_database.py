@@ -16,7 +16,9 @@ class MigratedDatabaseTests(unittest.TestCase):
             backend_dir = root / "backend"
             versions_dir = backend_dir / "alembic" / "versions"
             versions_dir.mkdir(parents=True)
-            (versions_dir / "001_create_tables.py").write_text("# migration\n", encoding="utf-8")
+            (versions_dir / "001_create_tables.py").write_text(
+                "# migration\n", encoding="utf-8"
+            )
             (backend_dir / "alembic.ini").write_text("[alembic]\n", encoding="utf-8")
 
             created_templates: list[Path] = []
@@ -42,7 +44,9 @@ class MigratedDatabaseTests(unittest.TestCase):
             first_db = root / "first.db"
             second_db = root / "second.db"
 
-            with patch("test.migrated_database.subprocess.run", side_effect=fake_run) as run:
+            with patch(
+                "test.migrated_database.subprocess.run", side_effect=fake_run
+            ) as run:
                 create_migrated_sqlite_database(
                     first_db,
                     backend_dir=backend_dir,
@@ -76,7 +80,6 @@ class MigratedDatabaseTests(unittest.TestCase):
             )
 
 
-
 class SchemaDatabaseTests(unittest.TestCase):
     def test_reuses_schema_template_for_multiple_databases(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -94,15 +97,23 @@ class SchemaDatabaseTests(unittest.TestCase):
                 template_path.write_text("schema", encoding="utf-8")
                 created_templates.append(template_path)
 
-            with patch("test.schema_database._create_template_database", side_effect=fake_create_template):
-                schema_database.create_schema_sqlite_database(first_db, template_root=template_root)
+            with patch(
+                "test.schema_database._create_template_database",
+                side_effect=fake_create_template,
+            ):
+                schema_database.create_schema_sqlite_database(
+                    first_db, template_root=template_root
+                )
                 first_db.write_text("test-local-change", encoding="utf-8")
 
-                schema_database.create_schema_sqlite_database(second_db, template_root=template_root)
+                schema_database.create_schema_sqlite_database(
+                    second_db, template_root=template_root
+                )
 
             self.assertEqual(len(created_templates), 1)
             self.assertEqual(second_db.read_text(encoding="utf-8"), "schema")
             self.assertEqual(first_db.read_text(encoding="utf-8"), "test-local-change")
+
 
 if __name__ == "__main__":
     unittest.main()

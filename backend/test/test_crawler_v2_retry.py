@@ -10,6 +10,7 @@ from app.modules.crawler.v2.retry import (
     retry_backoff_seconds,
 )
 
+
 class FakeWorkItem:
     def __init__(
         self,
@@ -24,6 +25,7 @@ class FakeWorkItem:
         self.worker_id = "w1"
         self.claimed_at = object()
         self.lease_expires_at = None
+
 
 class CrawlerV2RetryTests(unittest.TestCase):
     def test_backoff_uses_exponential_seconds_capped_at_sixty(self) -> None:
@@ -85,6 +87,22 @@ class CrawlerV2RetryTests(unittest.TestCase):
             max_attempts_for_crawler_error("temporary failure in name resolution"),
             MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS,
         )
+        self.assertEqual(
+            max_attempts_for_crawler_error(
+                "Playwright browser fetch failed: net::ERR_CONNECTION_CLOSED"
+            ),
+            MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS,
+        )
+        self.assertEqual(
+            max_attempts_for_crawler_error(
+                "Playwright browser fetch returned temporary HTTP 502"
+            ),
+            MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS,
+        )
+        self.assertEqual(
+            max_attempts_for_crawler_error("页面地址暂时无法解析，稍后将自动重试"),
+            MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS,
+        )
         item = FakeWorkItem(
             attempt_count=30,
             failure_count=MAX_CRAWLER_V2_CONNECTIVITY_ATTEMPTS - 2,
@@ -116,6 +134,7 @@ class CrawlerV2RetryTests(unittest.TestCase):
             ),
             MAX_CRAWLER_V2_ATTEMPTS,
         )
+
 
 if __name__ == "__main__":
     unittest.main()

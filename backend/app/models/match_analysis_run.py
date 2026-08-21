@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -63,8 +63,12 @@ class MatchAnalysisRun(Base):
         index=True,
         nullable=True,
     )
-    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'failed'"))
-    success: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'failed'")
+    )
+    success: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
     match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     fit_points: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

@@ -57,11 +57,15 @@ def downgrade() -> None:
     )
 
     with op.batch_alter_table("identity_profiles", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("resume_file_path", sa.String(length=500), nullable=True))
+        batch_op.add_column(
+            sa.Column("resume_file_path", sa.String(length=500), nullable=True)
+        )
         batch_op.add_column(sa.Column("resume_text", sa.Text(), nullable=True))
 
     with op.batch_alter_table("batch_tasks", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("selected_attachment_ids", sa.JSON(), nullable=True))
+        batch_op.add_column(
+            sa.Column("selected_attachment_ids", sa.JSON(), nullable=True)
+        )
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         batch_op.add_column(sa.Column("selected_attachments", sa.JSON(), nullable=True))

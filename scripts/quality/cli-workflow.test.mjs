@@ -97,3 +97,14 @@ test("release tags gate platform builds on one Ubuntu CLI contract suite", () =>
   assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.ps1 -Clean -SkipSync/);
   assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.sh --clean/);
 });
+
+test("release promotion identifies candidates by workflow path", () => {
+  assert.match(
+    releaseWorkflow,
+    /test "\$\(jq -r \.path <<<"\$candidate"\)" = "\.github\/workflows\/release\.yml"/,
+  );
+  assert.doesNotMatch(
+    releaseWorkflow,
+    /test "\$\(jq -r \.name <<<"\$candidate"\)" = "Release Desktop"/,
+  );
+});

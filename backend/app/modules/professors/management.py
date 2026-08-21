@@ -69,7 +69,9 @@ PROFESSOR_TEMPLATE_EXAMPLE_ROW = [
 
 SUPPORTED_IMPORT_EXTENSIONS = {".csv", ".xlsx"}
 EMAIL_LOCAL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+$")
-EMAIL_DOMAIN_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+EMAIL_DOMAIN_LABEL_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
 EMAIL_FULLWIDTH_TRANSLATION = str.maketrans(
     {
         "＠": "@",
@@ -169,7 +171,6 @@ def _normalize_email_text(value: str) -> str:
     return normalized
 
 
-
 def normalize_professor_title(title: str | None) -> str | None:
     if title is None:
         return None
@@ -267,7 +268,9 @@ def build_professor_template(format_name: str) -> tuple[bytes, str, str]:
     raise ValueError("仅支持 csv 或 xlsx 模板")
 
 
-def build_professor_export(professors: Sequence[Any], format_name: str) -> tuple[bytes, str, str]:
+def build_professor_export(
+    professors: Sequence[Any], format_name: str
+) -> tuple[bytes, str, str]:
     normalized = format_name.lower()
     rows = [_professor_to_export_row(professor) for professor in professors]
     if normalized == "csv":
@@ -393,12 +396,16 @@ def _parse_xlsx_rows(content: bytes) -> list[dict[str, Any]]:
     return _parse_tabular_rows(list(sheet.iter_rows(values_only=True)))
 
 
-def _parse_tabular_rows(rows: list[list[Any] | tuple[Any, ...]]) -> list[dict[str, Any]]:
+def _parse_tabular_rows(
+    rows: list[list[Any] | tuple[Any, ...]],
+) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("导入文件为空")
 
     header_index = _find_header_row_index(rows)
-    header_names = [str(cell).strip() if cell is not None else "" for cell in rows[header_index]]
+    header_names = [
+        str(cell).strip() if cell is not None else "" for cell in rows[header_index]
+    ]
     _validate_columns(header_names)
 
     parsed_rows: list[dict[str, Any]] = []
@@ -430,14 +437,18 @@ def _validate_columns(columns: list[str] | tuple[str, ...] | None) -> None:
 
     normalized = [str(item).strip() for item in columns]
     missing = [
-        column for column in PROFESSOR_LEGACY_TEMPLATE_COLUMNS if column not in normalized
+        column
+        for column in PROFESSOR_LEGACY_TEMPLATE_COLUMNS
+        if column not in normalized
     ]
     if missing:
         raise ValueError(f"导入文件缺少必要列：{', '.join(missing)}")
 
 
 def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
-    raw_values = {key: _clean_cell_value(row.get(key)) for key in PROFESSOR_TEMPLATE_COLUMNS}
+    raw_values = {
+        key: _clean_cell_value(row.get(key)) for key in PROFESSOR_TEMPLATE_COLUMNS
+    }
     has_personal_note_column = "personal_note" in row
     if not any(raw_values.values()):
         return None
@@ -468,7 +479,9 @@ def _normalize_import_row(row: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _should_skip_import_row(row: dict[str, Any]) -> bool:
-    raw_values = {key: _clean_cell_value(row.get(key)) for key in PROFESSOR_TEMPLATE_COLUMNS}
+    raw_values = {
+        key: _clean_cell_value(row.get(key)) for key in PROFESSOR_TEMPLATE_COLUMNS
+    }
     if not any(raw_values.values()):
         return True
     name = raw_values["name"] or ""

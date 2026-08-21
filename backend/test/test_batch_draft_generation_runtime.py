@@ -45,7 +45,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._runtime_adaptation_patch = patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
-            new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
+            new=AsyncMock(
+                return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)
+            ),
         )
         self._runtime_adaptation_patch.start()
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -68,7 +70,11 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_run_queued_batch_drafts_limits_llm_concurrency(self) -> None:
-        self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value]))
+        self._run_async(
+            self._create_batch_with_tasks(
+                [EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value]
+            )
+        )
         max_seen = 0
         active = 0
 
@@ -96,7 +102,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(max_seen, 1)
 
     def test_run_queued_batch_drafts_claims_task_before_generation(self) -> None:
-        self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
+        self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value])
+        )
 
         async def fake_generate(**kwargs):
             await asyncio.sleep(0.05)
@@ -127,7 +135,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(sum(processed_counts), 1)
         mocked_generate.assert_awaited_once()
 
-    def test_run_queued_batch_drafts_finishes_batch_warmup_before_remaining_items(self) -> None:
+    def test_run_queued_batch_drafts_finishes_batch_warmup_before_remaining_items(
+        self,
+    ) -> None:
         self._run_async(
             self._create_batch_with_tasks(
                 [EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value],
@@ -173,19 +183,27 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                 processed,
             )
 
-        remaining_started_early, remaining_eventually_started, processed = self._run_async(
-            scenario(),
+        remaining_started_early, remaining_eventually_started, processed = (
+            self._run_async(
+                scenario(),
+            )
         )
         self.assertFalse(remaining_started_early)
         self.assertTrue(remaining_eventually_started)
         self.assertEqual(processed, 2)
 
     def test_batch_draft_passes_workflow_session_and_runtime_adaptation(self) -> None:
-        self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
-        adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})
+        self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value])
+        )
+        adaptation = llm_runtime.LLMRuntimeAdaptation(
+            "responses", {"enable_thinking": False}
+        )
         workflow_sessions: list[AsyncSession] = []
 
-        async def fake_ensure(session: AsyncSession, _profile: object) -> llm_runtime.LLMRuntimeAdaptation:
+        async def fake_ensure(
+            session: AsyncSession, _profile: object
+        ) -> llm_runtime.LLMRuntimeAdaptation:
             self.assertIsInstance(session, AsyncSession)
             workflow_sessions.append(session)
             return adaptation
@@ -259,10 +277,14 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
 
         self.assertEqual(restored_count, 1)
         self.assertEqual(task.status, EmailTaskStatus.CANCELED.value)
-        self.assertEqual(task.cancellation_reason, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value)
+        self.assertEqual(
+            task.cancellation_reason, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
+        )
         self.assertIsNone(task.draft_generation_previous_status)
 
-    def test_recover_stale_workspace_rewrite_uses_started_at_and_restores_source(self) -> None:
+    def test_recover_stale_workspace_rewrite_uses_started_at_and_restores_source(
+        self,
+    ) -> None:
         task_id = self._run_async(
             self._create_manual_workspace_rewrite_task(
                 started_at=datetime.now(UTC) - timedelta(minutes=6),
@@ -271,7 +293,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             ),
         )
 
-        restored_count = self._run_async(recover_stale_workspace_draft_rewrites(self.session_factory))
+        restored_count = self._run_async(
+            recover_stale_workspace_draft_rewrites(self.session_factory)
+        )
         task = self._run_async(self._get_task(task_id))
 
         self.assertEqual(restored_count, 1)
@@ -291,14 +315,18 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
             ),
         )
 
-        restored_count = self._run_async(recover_stale_workspace_draft_rewrites(self.session_factory))
+        restored_count = self._run_async(
+            recover_stale_workspace_draft_rewrites(self.session_factory)
+        )
         task = self._run_async(self._get_task(task_id))
 
         self.assertEqual(restored_count, 0)
         self.assertEqual(task.status, EmailTaskStatus.GENERATING_DRAFT.value)
         self.assertEqual(task.draft_rewrite_source_body_text, "改写前正文")
 
-    def test_recover_stale_workspace_rewrite_recovers_at_five_minute_cutoff(self) -> None:
+    def test_recover_stale_workspace_rewrite_recovers_at_five_minute_cutoff(
+        self,
+    ) -> None:
         now = datetime.now(UTC)
         task_id = self._run_async(
             self._create_manual_workspace_rewrite_task(
@@ -317,7 +345,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.status, EmailTaskStatus.MATCHED.value)
         self.assertEqual(task.approved_body_text, "改写前正文")
 
-    def test_recover_interrupted_workspace_rewrite_restores_recent_started_at(self) -> None:
+    def test_recover_interrupted_workspace_rewrite_restores_recent_started_at(
+        self,
+    ) -> None:
         task_id = self._run_async(
             self._create_manual_workspace_rewrite_task(
                 started_at=datetime.now(UTC) - timedelta(minutes=1),
@@ -337,7 +367,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.last_error, "AI 改写已中断，请重试")
 
     def test_llm_failure_marks_draft_failed_without_retry(self) -> None:
-        task_ids = self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value]))
+        task_ids = self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value])
+        )
 
         with patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
@@ -357,7 +389,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertIn("LLM", task.last_error or "")
 
     def test_draft_failed_is_not_claimed_again(self) -> None:
-        self._run_async(self._create_batch_with_tasks([EmailTaskStatus.DRAFT_FAILED.value]))
+        self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DRAFT_FAILED.value])
+        )
 
         with patch(
             "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
@@ -401,7 +435,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.draft_generation_source, "llm")
         self.assertIsNone(task.draft_fallback_reason)
 
-    def test_items_missing_primary_material_are_not_claimed_for_generation(self) -> None:
+    def test_items_missing_primary_material_are_not_claimed_for_generation(
+        self,
+    ) -> None:
         task_ids = self._run_async(
             self._create_batch_with_tasks(
                 [EmailTaskStatus.DISCOVERED.value],
@@ -426,7 +462,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
         mocked_generate.assert_not_awaited()
 
-    def test_items_missing_professor_research_direction_use_template_fallback(self) -> None:
+    def test_items_missing_professor_research_direction_use_template_fallback(
+        self,
+    ) -> None:
         task_ids = self._run_async(
             self._create_batch_with_tasks(
                 [EmailTaskStatus.DISCOVERED.value],
@@ -732,9 +770,7 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                     self.session_factory,
                     coordinator=BatchDraftGenerationCoordinator(),
                 )
-                runner = asyncio.create_task(
-                    scheduler.run_until_idle(concurrency=1)
-                )
+                runner = asyncio.create_task(scheduler.run_until_idle(concurrency=1))
                 await asyncio.wait_for(generation_started.wait(), timeout=1)
                 processed = await asyncio.wait_for(
                     runner,
@@ -871,7 +907,9 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
                     assert task is not None
                     task.draft_claim_id = "replacement-claim"
                     task.draft_claimed_at = datetime.now(UTC)
-                    task.draft_lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
+                    task.draft_lease_expires_at = datetime.now(UTC) + timedelta(
+                        minutes=1
+                    )
                     await session.commit()
                 worker.cancel()
                 with self.assertRaises(asyncio.CancelledError):

@@ -143,7 +143,9 @@ class AgentApiClient:
                     data=data,
                     files=files,
                     headers=headers,
-                    timeout=request_timeout if request_timeout is not None else self.timeout,
+                    timeout=request_timeout
+                    if request_timeout is not None
+                    else self.timeout,
                 )
             except httpx.HTTPError as exc:
                 last_network_error = exc
@@ -225,6 +227,7 @@ def _runtime_identity(descriptor: RuntimeDescriptor) -> tuple[str, str, str]:
         descriptor.runtime_id,
     )
 
+
 def _raise_api_error(response: httpx.Response) -> None:
     try:
         payload = response.json()
@@ -290,16 +293,20 @@ def _exit_code_for_api_error(*, status_code: int, code: str) -> int:
         "_CONFIRMATION_REQUIRED",
     ):
         return 6
-    if normalized in {
-        "INVALID_ARGUMENT",
-        "INVALID_AGENT_REQUEST",
-        "INVALID_FILTER",
-        "INVALID_FIELD_SELECTION",
-        "INVALID_GUIDE_TOPIC",
-        "INVALID_IDEMPOTENCY_KEY",
-        "COMMAND_NOT_FOUND",
-        "CAPABILITY_NOT_FOUND",
-    } or status_code == 422:
+    if (
+        normalized
+        in {
+            "INVALID_ARGUMENT",
+            "INVALID_AGENT_REQUEST",
+            "INVALID_FILTER",
+            "INVALID_FIELD_SELECTION",
+            "INVALID_GUIDE_TOPIC",
+            "INVALID_IDEMPOTENCY_KEY",
+            "COMMAND_NOT_FOUND",
+            "CAPABILITY_NOT_FOUND",
+        }
+        or status_code == 422
+    ):
         return 2
     if normalized in {
         "PARTIAL_SUCCESS",
@@ -309,13 +316,17 @@ def _exit_code_for_api_error(*, status_code: int, code: str) -> int:
         return 10
     if status_code == 404:
         return 4
-    if normalized in {
-        "EXTERNAL_EXECUTION_UNKNOWN",
-        "SMTP_ERROR",
-        "IMAP_ERROR",
-        "LLM_ERROR",
-        "CRAWLER_ERROR",
-        "EXTERNAL_SERVICE_ERROR",
-    } or status_code >= 500:
+    if (
+        normalized
+        in {
+            "EXTERNAL_EXECUTION_UNKNOWN",
+            "SMTP_ERROR",
+            "IMAP_ERROR",
+            "LLM_ERROR",
+            "CRAWLER_ERROR",
+            "EXTERNAL_SERVICE_ERROR",
+        }
+        or status_code >= 500
+    ):
         return 9
     return 5

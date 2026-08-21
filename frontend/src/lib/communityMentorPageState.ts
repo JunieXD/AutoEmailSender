@@ -29,6 +29,7 @@ export type CommunityMentorPageSessionSnapshot = {
   recordTitleFilters: string[];
   categoryFilters: CommunityComparisonCategoryDTO[];
   recordPage: number;
+  recordPageSize?: number;
   selectedRecordIds: string[];
   previewPayload: CommunityRecordsDTO | null;
   previewPage: number;

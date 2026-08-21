@@ -46,17 +46,27 @@ def upgrade() -> None:
                 nullable=False,
             ),
         )
-        batch_op.add_column(sa.Column("folder_role", sa.String(length=20), nullable=True))
+        batch_op.add_column(
+            sa.Column("folder_role", sa.String(length=20), nullable=True)
+        )
         batch_op.add_column(sa.Column("folder", sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column("uidvalidity", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("imap_uid", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("normalized_message_id", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("message_fingerprint", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("from_email", sa.String(length=255), nullable=True))
+        batch_op.add_column(
+            sa.Column("normalized_message_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("message_fingerprint", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("from_email", sa.String(length=255), nullable=True)
+        )
         batch_op.add_column(sa.Column("to_emails", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("cc_emails", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("bcc_emails", sa.JSON(), nullable=True))
-        batch_op.add_column(sa.Column("synced_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(
+            sa.Column("synced_at", sa.DateTime(timezone=True), nullable=True)
+        )
 
     op.execute(
         sa.text(
@@ -90,7 +100,14 @@ def upgrade() -> None:
     op.create_index(
         "uq_email_logs_identity_professor_imap_uid",
         "email_logs",
-        ["identity_id", "professor_id", "folder_role", "folder", "uidvalidity", "imap_uid"],
+        [
+            "identity_id",
+            "professor_id",
+            "folder_role",
+            "folder",
+            "uidvalidity",
+            "imap_uid",
+        ],
         unique=True,
         sqlite_where=sa.text(IMAP_UID_INDEX_WHERE),
         postgresql_where=sa.text(IMAP_UID_INDEX_WHERE),
@@ -127,7 +144,9 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("imap_professor_sync_states", schema=None) as batch_op:
-        batch_op.drop_constraint("uq_imap_professor_identity_professor_email_folder", type_="unique")
+        batch_op.drop_constraint(
+            "uq_imap_professor_identity_professor_email_folder", type_="unique"
+        )
         batch_op.add_column(
             sa.Column(
                 "folder_role",
@@ -179,7 +198,9 @@ def downgrade() -> None:
         )
 
     with op.batch_alter_table("imap_mailbox_sync_states", schema=None) as batch_op:
-        batch_op.drop_constraint("uq_imap_mailbox_identity_folder_role_folder", type_="unique")
+        batch_op.drop_constraint(
+            "uq_imap_mailbox_identity_folder_role_folder", type_="unique"
+        )
         batch_op.alter_column(
             "folder",
             existing_type=sa.String(length=255),

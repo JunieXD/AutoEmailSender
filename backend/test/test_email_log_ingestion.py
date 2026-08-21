@@ -102,7 +102,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(merged.provider_payload, {"imap": {"flags": ["\\Seen"]}})
         self.assertEqual(merged.reply_headers, {"in_reply_to": "<parent@example.edu>"})
 
-    def test_merges_legacy_system_log_by_normalized_rfc_message_id_fallback(self) -> None:
+    def test_merges_legacy_system_log_by_normalized_rfc_message_id_fallback(
+        self,
+    ) -> None:
         async def scenario() -> tuple[int, EmailLog]:
             async with self.session_factory() as session:
                 existing = EmailLog(
@@ -117,7 +119,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                     rfc_message_id="<Message.ID@Example.edu>",
                     normalized_message_id=None,
                     ingest_source="system",
-                    provider_payload={"smtp": {"message_id": "<Message.ID@Example.edu>"}},
+                    provider_payload={
+                        "smtp": {"message_id": "<Message.ID@Example.edu>"}
+                    },
                     reply_headers={"references": ["<existing@example.edu>"]},
                     created_at=datetime(2026, 6, 30, 9, 15, tzinfo=UTC),
                 )
@@ -147,7 +151,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                         email_task_id=None,
                         llm_profile_id=None,
                         provider_payload={
-                            "smtp": {"message_id": "<new-should-not-overwrite@example.edu>"},
+                            "smtp": {
+                                "message_id": "<new-should-not-overwrite@example.edu>"
+                            },
                             "imap": {"uid": 456},
                         },
                         reply_headers={
@@ -189,7 +195,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
             },
         )
 
-    def test_creates_external_sent_record_without_task_or_llm_profile_and_normalizes_headers(self) -> None:
+    def test_creates_external_sent_record_without_task_or_llm_profile_and_normalizes_headers(
+        self,
+    ) -> None:
         async def scenario() -> EmailLog:
             async with self.session_factory() as session:
                 created = await upsert_email_log(
@@ -203,7 +211,10 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                         content_html=None,
                         message_id="  <External.ID@Example.EDU>  ",
                         from_email="Student <Student@Example.EDU>",
-                        to_emails=["Teacher <teacher@example.edu>", "Teacher Again <TEACHER@example.edu>"],
+                        to_emails=[
+                            "Teacher <teacher@example.edu>",
+                            "Teacher Again <TEACHER@example.edu>",
+                        ],
                         cc_emails=("Copy <Copy@Example.edu>",),
                         bcc_emails=None,
                         created_at=datetime(2026, 6, 30, 10, 2, 30, tzinfo=UTC),
@@ -261,16 +272,24 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                 }
                 await upsert_email_log(
                     session,
-                    EmailLogIngestRecord(message_id="<first@example.edu>", **base_kwargs),
+                    EmailLogIngestRecord(
+                        message_id="<first@example.edu>", **base_kwargs
+                    ),
                 )
                 await upsert_email_log(
                     session,
-                    EmailLogIngestRecord(message_id="<second@example.edu>", **base_kwargs),
+                    EmailLogIngestRecord(
+                        message_id="<second@example.edu>", **base_kwargs
+                    ),
                 )
                 await session.commit()
                 return list(
                     (
-                        await session.execute(select(EmailLog).order_by(EmailLog.normalized_message_id.asc()))
+                        await session.execute(
+                            select(EmailLog).order_by(
+                                EmailLog.normalized_message_id.asc()
+                            )
+                        )
                     ).scalars(),
                 )
 
@@ -327,7 +346,11 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                 count = await session.scalar(select(func.count()).select_from(EmailLog))
                 assert count is not None
                 saved = list(
-                    (await session.execute(select(EmailLog).order_by(EmailLog.professor_id.asc()))).scalars(),
+                    (
+                        await session.execute(
+                            select(EmailLog).order_by(EmailLog.professor_id.asc())
+                        )
+                    ).scalars(),
                 )
                 return count, [first, second, *saved]
 
@@ -371,7 +394,7 @@ class EmailLogIngestionTestCase(unittest.TestCase):
 
         async def scenario() -> tuple[int, EmailLog]:
             async with self.session_factory() as session:
-                first = await upsert_email_log(session, record)
+                await upsert_email_log(session, record)
                 second = await upsert_email_log(session, record)
                 await session.commit()
                 count = await session.scalar(select(func.count()).select_from(EmailLog))
@@ -385,7 +408,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertIsNotNone(saved.message_fingerprint)
         self.assertTrue(saved.message_fingerprint.startswith("sha256:"))
 
-    def test_html_only_records_with_different_html_have_different_fingerprints(self) -> None:
+    def test_html_only_records_with_different_html_have_different_fingerprints(
+        self,
+    ) -> None:
         async def scenario() -> list[EmailLog]:
             async with self.session_factory() as session:
                 base_kwargs = {
@@ -412,14 +437,24 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                 }
                 await upsert_email_log(
                     session,
-                    EmailLogIngestRecord(content_html="<p>First HTML body</p>", **base_kwargs),
+                    EmailLogIngestRecord(
+                        content_html="<p>First HTML body</p>", **base_kwargs
+                    ),
                 )
                 await upsert_email_log(
                     session,
-                    EmailLogIngestRecord(content_html="<p>Second HTML body</p>", **base_kwargs),
+                    EmailLogIngestRecord(
+                        content_html="<p>Second HTML body</p>", **base_kwargs
+                    ),
                 )
                 await session.commit()
-                return list((await session.execute(select(EmailLog).order_by(EmailLog.id.asc()))).scalars())
+                return list(
+                    (
+                        await session.execute(
+                            select(EmailLog).order_by(EmailLog.id.asc())
+                        )
+                    ).scalars()
+                )
 
         saved = self._run_async(scenario())
 
@@ -428,7 +463,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertIsNotNone(saved[1].message_fingerprint)
         self.assertNotEqual(saved[0].message_fingerprint, saved[1].message_fingerprint)
 
-    def test_html_only_record_with_same_html_still_deduplicates_by_fingerprint(self) -> None:
+    def test_html_only_record_with_same_html_still_deduplicates_by_fingerprint(
+        self,
+    ) -> None:
         record = EmailLogIngestRecord(
             identity_id=1,
             professor_id=2,
@@ -470,7 +507,7 @@ class EmailLogIngestionTestCase(unittest.TestCase):
     def test_deduplicates_by_imap_location_without_message_id(self) -> None:
         async def scenario() -> tuple[int, EmailLog]:
             async with self.session_factory() as session:
-                first = await upsert_email_log(
+                await upsert_email_log(
                     session,
                     EmailLogIngestRecord(
                         identity_id=1,
@@ -535,7 +572,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(saved.content, "filled body")
         self.assertEqual(saved.content_html, "<p>filled body</p>")
 
-    def test_merge_fills_empty_fields_and_metadata_without_overwriting_existing_bodies(self) -> None:
+    def test_merge_fills_empty_fields_and_metadata_without_overwriting_existing_bodies(
+        self,
+    ) -> None:
         async def scenario() -> EmailLog:
             async with self.session_factory() as session:
                 existing = EmailLog(
@@ -583,7 +622,9 @@ class EmailLogIngestionTestCase(unittest.TestCase):
                         imap_uid=456,
                         email_task_id=88,
                         llm_profile_id=9,
-                        provider_payload={"headers": {"Message-ID": "<Filled@example.edu>"}},
+                        provider_payload={
+                            "headers": {"Message-ID": "<Filled@example.edu>"}
+                        },
                         reply_headers={"references": ["<previous@example.edu>"]},
                     ),
                 )
@@ -605,8 +646,12 @@ class EmailLogIngestionTestCase(unittest.TestCase):
         self.assertEqual(merged.cc_emails, ["copy@example.edu"])
         self.assertEqual(merged.bcc_emails, ["hidden@example.edu"])
         self.assertIsNone(merged.message_fingerprint)
-        self.assertEqual(merged.provider_payload, {"headers": {"Message-ID": "<Filled@example.edu>"}})
-        self.assertEqual(merged.reply_headers, {"references": ["<previous@example.edu>"]})
+        self.assertEqual(
+            merged.provider_payload, {"headers": {"Message-ID": "<Filled@example.edu>"}}
+        )
+        self.assertEqual(
+            merged.reply_headers, {"references": ["<previous@example.edu>"]}
+        )
         self.assertIsNotNone(merged.synced_at)
 
 

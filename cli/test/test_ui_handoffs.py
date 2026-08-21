@@ -114,7 +114,9 @@ class UiHandoffCliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, msg=result.output)
         method, path, kwargs = _HandoffClient.calls[0]
-        self.assertEqual((method, path), ("POST", "/api/agent/v1/professors/present-selection"))
+        self.assertEqual(
+            (method, path), ("POST", "/api/agent/v1/professors/present-selection")
+        )
         self.assertEqual(kwargs["idempotency_key"], "agent-filter-selection")
         self.assertEqual(
             kwargs["json_body"],
@@ -135,14 +137,23 @@ class UiHandoffCliTests(unittest.TestCase):
         )
         payload = json.loads(result.output)
         self.assertNotIn("mutation_receipt", payload["data"])
-        actions = {item["action"]: item for item in payload["data"]["available_actions"]}
+        actions = {
+            item["action"]: item for item in payload["data"]["available_actions"]
+        }
         self.assertEqual(actions["wait"]["command"], "ui-handoffs.wait")
         self.assertEqual(actions["cancel"]["arguments"], {"handoff_id": "uih_test"})
 
     def test_professor_selection_validates_modes_and_scoped_all(self) -> None:
         invalid_cases = [
             ["professors", "present-selection", "--all", "--professor-id", "1"],
-            ["professors", "present-selection", "--professor-id", "1", "--surface", "home"],
+            [
+                "professors",
+                "present-selection",
+                "--professor-id",
+                "1",
+                "--surface",
+                "home",
+            ],
             [
                 "professors",
                 "present-selection",
@@ -202,7 +213,10 @@ class UiHandoffCliTests(unittest.TestCase):
         cases = [
             (["tasks", "present", "11"], "/api/agent/v1/tasks/11/present"),
             (["drafts", "present", "12"], "/api/agent/v1/drafts/12/present"),
-            (["crawler", "jobs", "present", "13"], "/api/agent/v1/crawler/jobs/13/present"),
+            (
+                ["crawler", "jobs", "present", "13"],
+                "/api/agent/v1/crawler/jobs/13/present",
+            ),
             (
                 ["communications", "threads", "present", "2:17"],
                 "/api/agent/v1/communications/threads/2:17/present",
@@ -220,11 +234,15 @@ class UiHandoffCliTests(unittest.TestCase):
             ["--format", "json", "ui-handoffs", "get", "uih_test"],
         )
         self.assertEqual(get_result.exit_code, 0, msg=get_result.output)
-        self.assertEqual(_HandoffClient.calls[-1][:2], ("GET", "/api/agent/v1/ui-handoffs/uih_test"))
+        self.assertEqual(
+            _HandoffClient.calls[-1][:2], ("GET", "/api/agent/v1/ui-handoffs/uih_test")
+        )
 
         for command in ("cancel", "retry"):
             _HandoffClient.responses = [
-                _handoff_response(status="canceled" if command == "cancel" else "pending"),
+                _handoff_response(
+                    status="canceled" if command == "cancel" else "pending"
+                ),
             ]
             result = self.runner.invoke(
                 app,

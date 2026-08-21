@@ -9,6 +9,7 @@ from app.models import CrawlJob, CrawlWorkerKind, CrawlWorkerTokenUsage
 from ..jobs.runs import get_or_create_current_crawl_job_run
 from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 
+
 async def record_crawler_v2_token_usage(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -22,7 +23,9 @@ async def record_crawler_v2_token_usage(
     raw_usage: dict[str, Any] | None = None,
     claim: CrawlerV2ClaimFence | None = None,
 ) -> bool:
-    kind = worker_kind.value if isinstance(worker_kind, CrawlWorkerKind) else worker_kind
+    kind = (
+        worker_kind.value if isinstance(worker_kind, CrawlWorkerKind) else worker_kind
+    )
     normalized_input_tokens = max(0, int(input_tokens or 0))
     normalized_output_tokens = max(0, int(output_tokens or 0))
     normalized_cached_tokens = max(0, int(cached_tokens or 0))

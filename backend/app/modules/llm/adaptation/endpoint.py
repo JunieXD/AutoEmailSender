@@ -42,7 +42,9 @@ async def _execute_cache_write_with_lock_retry(
             if not is_sqlite_database_lock_error(exc):
                 raise
             if attempt >= len(_CACHE_WRITE_LOCK_RETRY_DELAYS):
-                raise EndpointAdaptationCacheBusyError(SQLITE_LOCK_USER_MESSAGE) from exc
+                raise EndpointAdaptationCacheBusyError(
+                    SQLITE_LOCK_USER_MESSAGE
+                ) from exc
             await asyncio.sleep(_CACHE_WRITE_LOCK_RETRY_DELAYS[attempt])
 
 
@@ -50,16 +52,22 @@ def _is_chat_completions_envelope(data: object) -> bool:
     if not isinstance(data, Mapping):
         return False
     choices = data.get("choices")
-    return isinstance(choices, list) and bool(choices) and all(
-        isinstance(choice, Mapping) and isinstance(choice.get("message"), Mapping)
-        for choice in choices
+    return (
+        isinstance(choices, list)
+        and bool(choices)
+        and all(
+            isinstance(choice, Mapping) and isinstance(choice.get("message"), Mapping)
+            for choice in choices
+        )
     )
 
 
 def _is_responses_envelope(data: object) -> bool:
     if not isinstance(data, Mapping):
         return False
-    return isinstance(data.get("output"), list) or isinstance(data.get("output_text"), str)
+    return isinstance(data.get("output"), list) or isinstance(
+        data.get("output_text"), str
+    )
 
 
 def classify_response_envelope(
@@ -165,7 +173,7 @@ async def record_endpoint_adaptation(
                 "probed_at": statement.excluded.probed_at,
                 "updated_at": statement.excluded.updated_at,
             },
-        )
+        ),
     )
 
     # Core upserts bypass ORM state synchronization. Keep an already-loaded row
@@ -198,7 +206,7 @@ async def invalidate_endpoint_adaptation(
             LLMEndpointAdaptationCache.model_name == normalized_model_name,
             LLMEndpointAdaptationCache.learned_endpoint_kind == failed_endpoint_kind,
         )
-        .execution_options(synchronize_session="fetch")
+        .execution_options(synchronize_session="fetch"),
     )
     return result.rowcount > 0
 

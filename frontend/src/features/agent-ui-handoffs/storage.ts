@@ -6,7 +6,7 @@ import {
   type ValidatedAgentUiHandoff,
 } from './types';
 
-export const AGENT_UI_HANDOFF_STORAGE_KEY = 'agent_ui_handoffs_v1';
+const AGENT_UI_HANDOFF_STORAGE_KEY = 'agent_ui_handoffs_v1';
 const MAX_ACKNOWLEDGEMENT_RESULT_BYTES = 16_384;
 
 export type StoredAgentUiHandoff = {

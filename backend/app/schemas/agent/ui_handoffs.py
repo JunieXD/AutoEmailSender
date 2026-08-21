@@ -49,7 +49,9 @@ class AgentProfessorPresentSelectionRequest(ApiSchema):
 
 
 class AgentUiHandoffClaimRequest(ApiSchema):
-    consumer_id: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$")
+    consumer_id: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
 
 
 class AgentUiHandoffAcknowledgeRequest(AgentUiHandoffClaimRequest):

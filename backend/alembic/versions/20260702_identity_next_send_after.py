@@ -30,7 +30,9 @@ def upgrade() -> None:
         return
 
     with op.batch_alter_table("identity_profiles", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("next_send_after", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(
+            sa.Column("next_send_after", sa.DateTime(timezone=True), nullable=True)
+        )
 
 
 def downgrade() -> None:

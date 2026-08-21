@@ -49,8 +49,10 @@ assert_contains "$notes" "### 问题修复" "公告模板缺少问题修复分�
 assert_contains "$notes" "Windows：下载 \`AutoEmailSender-Setup-1.0.1.exe\`" "公告模板缺少 Windows 安装说明。"
 assert_contains "$notes" "macOS Apple Silicon：下载 \`AutoEmailSender-1.0.1-arm64.dmg\`" "公告模板缺少 macOS Apple Silicon 安装说明。"
 assert_contains "$notes" "系统设置 > 隐私与安全性" "公告模板缺少 macOS 首次打开说明。"
-assert_contains "$notes" "macOS Apple Silicon：支持自动检查并在应用内安装更新" "公告模板缺少 macOS 自动更新说明。"
-assert_contains "$notes" "导师抓取 Skill 安装与使用教程" "公告模板缺少 Skill 安装教程入口。"
+if [[ "$notes" == *"## 自动更新"* || "$notes" == *"## 导师抓取 Skill"* || "$notes" == *"Intel Mac 暂未提供安装包"* ]]; then
+  printf '%s\n%s\n' "公告模板不应包含自动更新、导师抓取 Skill 或 Intel Mac 提示。" "$notes" >&2
+  exit 1
+fi
 if [[ "$notes" == *"crawl-mentors-to-xlsx-v1.0.1.zip"* ]]; then
   printf '%s\n%s\n' "公告模板不应该包含 Skill ZIP 下载链接。" "$notes" >&2
   exit 1

@@ -201,10 +201,13 @@ if ($PromoteRun) {
     Invoke-ReleasePreflight -ReleaseSha "<release-commit-sha>"
     Write-Host "[dry-run] gh workflow run release.yml --ref master -f release_tag=$ReleaseTag -f release_sha=<release-commit-sha> -f publish=true -f candidate_run_id=$PromoteRun"
   } else {
-    $releaseSha = (git -C $RepoRoot rev-parse HEAD).Trim()
-    Invoke-ReleasePreflight -ReleaseSha $releaseSha
+    Invoke-ReleasePreflight
     Push-Location $RepoRoot
     try {
+      $releaseSha = (gh run view $PromoteRun --json headSha --jq .headSha).Trim()
+      if ($releaseSha -notmatch '^[0-9a-f]{40}$') {
+        throw "候选 run $PromoteRun 没有有效的 head SHA。"
+      }
       gh workflow run release.yml `
         --ref master `
         -f "release_tag=$ReleaseTag" `

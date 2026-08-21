@@ -13,7 +13,9 @@ BACKEND_TEST_FILE = ROOT / "backend" / "test" / "test_agent_api.py"
 
 
 class ConcurrencyCoverageTests(unittest.TestCase):
-    def test_every_key_object_has_revision_reads_writes_and_conflict_evidence(self) -> None:
+    def test_every_key_object_has_revision_reads_writes_and_conflict_evidence(
+        self,
+    ) -> None:
         document = json.loads(COVERAGE_FILE.read_text(encoding="utf-8"))
         objects = document.get("objects")
         self.assertIsInstance(objects, list)
@@ -28,9 +30,14 @@ class ConcurrencyCoverageTests(unittest.TestCase):
                 test_source,
                 f"missing executable conflict evidence: {item['resource']}",
             )
-            for command in [*item.get("read_commands", []), *item.get("write_commands", [])]:
+            for command in [
+                *item.get("read_commands", []),
+                *item.get("write_commands", []),
+            ]:
                 capability = get_capability(command)
-                self.assertIsNotNone(capability, f"unregistered concurrency command: {command}")
+                self.assertIsNotNone(
+                    capability, f"unregistered concurrency command: {command}"
+                )
                 assert capability is not None
                 self.assertEqual(capability.availability, "available")
 

@@ -10,7 +10,12 @@ from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
 )
-from ..pages.tools import PageSnapshot, normalize_navigable_url, normalize_obfuscated_email_tokens
+from app.services.html_text import html_to_text
+from ..pages.tools import (
+    PageSnapshot,
+    normalize_navigable_url,
+    normalize_obfuscated_email_tokens,
+)
 
 
 _EMAIL_CANDIDATE_PATTERN = re.compile(
@@ -80,6 +85,31 @@ def extract_email_evidence(
     return tuple(evidence)
 
 
+def extract_profile_document_email_evidence(
+    snapshot: PageSnapshot,
+) -> tuple[EmailEvidence, ...]:
+    """Find readable email evidence in a browser-repaired profile document.
+
+    Some profile templates put visible contact fields after ``</body>``.  The
+    normal snapshot text intentionally follows the body, so inspect the
+    already-cleaned/bounded HTML only as a late enrichment fallback.  The
+    existing LLM selector still decides whether any discovered address belongs
+    to the current teacher.
+    """
+
+    document_text = html_to_text(
+        snapshot.html or "",
+        include_document_fallback=True,
+    )
+    if not document_text:
+        return ()
+    return extract_email_evidence(
+        document_text,
+        source_url=snapshot.url,
+        source_kind="profile_document",
+    )
+
+
 def extract_profile_link_evidence(
     snapshot: PageSnapshot,
     *,
@@ -133,9 +163,7 @@ def _anchor_label(anchor: Tag) -> str:
     image = anchor.find("img")
     if image is None:
         return ""
-    return " ".join(
-        str(image.get("alt") or image.get("title") or "").split()
-    )[:160]
+    return " ".join(str(image.get("alt") or image.get("title") or "").split())[:160]
 
 
 def _nearest_link_context(anchor: Tag, label: str) -> str:
@@ -154,12 +182,19 @@ def _nearest_link_context(anchor: Tag, label: str) -> str:
     return fallback
 
 
-def resolve_profile_image_urls(snapshot: PageSnapshot, *, max_urls: int = 20) -> tuple[tuple[str, str], ...]:
+def resolve_profile_image_urls(
+    snapshot: PageSnapshot, *, max_urls: int = 20
+) -> tuple[tuple[str, str], ...]:
     soup = BeautifulSoup(snapshot.html or "", "html.parser")
     candidates: list[tuple[int, int, str, str]] = []
     seen: set[str] = set()
     for document_index, image in enumerate(soup.find_all("img")):
-        raw_src = str(image.get("src") or image.get("data-src") or image.get("data-original") or "").strip()
+        raw_src = str(
+            image.get("src")
+            or image.get("data-src")
+            or image.get("data-original")
+            or ""
+        ).strip()
         if not raw_src or raw_src.startswith("data:"):
             continue
         url = urljoin(_document_base_url(image, snapshot.url), raw_src)
@@ -172,7 +207,9 @@ def resolve_profile_image_urls(snapshot: PageSnapshot, *, max_urls: int = 20) ->
         priority = sum(1 for term in _LINK_PRIORITY_TERMS if term in haystack)
         candidates.append((-priority, document_index, url, context))
     candidates.sort(key=lambda item: (item[0], item[1]))
-    return tuple((url, context) for _priority, _index, url, context in candidates[:max_urls])
+    return tuple(
+        (url, context) for _priority, _index, url, context in candidates[:max_urls]
+    )
 
 
 def _image_context(image: Tag) -> str:

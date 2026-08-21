@@ -66,6 +66,7 @@ async def ensure_personal_workspace_task(
         apply_recent_attachment_defaults=True,
     )
 
+
 @router.post("/{professor_id}/refresh-replies", response_model=WorkspaceThreadRead)
 async def refresh_workspace_replies(
     professor_id: int,

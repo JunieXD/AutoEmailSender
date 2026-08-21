@@ -147,7 +147,9 @@ async def mark_crawl_job_run_finished(
     return run
 
 
-def extract_token_usage_from_llm_response(response: object) -> dict[str, int | None] | None:
+def extract_token_usage_from_llm_response(
+    response: object,
+) -> dict[str, int | None] | None:
     metadata = getattr(response, "response_metadata", None)
     usage_metadata = getattr(response, "usage_metadata", None)
     direct_usage = getattr(response, "usage", None)
@@ -170,7 +172,9 @@ def extract_token_usage_from_llm_response(response: object) -> dict[str, int | N
     if not isinstance(raw_usage, dict):
         return None
 
-    input_tokens = _coerce_token_count(raw_usage.get("prompt_tokens", raw_usage.get("input_tokens")))
+    input_tokens = _coerce_token_count(
+        raw_usage.get("prompt_tokens", raw_usage.get("input_tokens"))
+    )
     output_tokens = _coerce_token_count(
         raw_usage.get("completion_tokens", raw_usage.get("output_tokens")),
     )
@@ -240,9 +244,15 @@ def _extract_cached_tokens_from_mapping(value: object) -> int | None:
 
 
 def _settle_active_segment(run: CrawlJobRun, *, now: datetime) -> None:
-    active_started_at = as_utc_aware(run.active_started_at) if isinstance(run.active_started_at, datetime) else None
+    active_started_at = (
+        as_utc_aware(run.active_started_at)
+        if isinstance(run.active_started_at, datetime)
+        else None
+    )
     if active_started_at is None:
         return
     resolved_now = as_utc_aware(now)
-    run.active_seconds += max(0, int((resolved_now - active_started_at).total_seconds()))
+    run.active_seconds += max(
+        0, int((resolved_now - active_started_at).total_seconds())
+    )
     run.active_started_at = None

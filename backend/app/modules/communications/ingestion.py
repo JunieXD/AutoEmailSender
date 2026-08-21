@@ -88,14 +88,14 @@ def normalize_reconciliation_text(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKC", value or "")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join(
-        " ".join(line.split())
-        for line in normalized.split("\n")
-        if line.strip()
+        " ".join(line.split()) for line in normalized.split("\n") if line.strip()
     ).strip()
 
 
 def build_reconciliation_fingerprint(value: str | None) -> str:
-    digest = hashlib.sha256(normalize_reconciliation_text(value).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        normalize_reconciliation_text(value).encode("utf-8")
+    ).hexdigest()
     return f"sha256:{digest}"
 
 
@@ -120,7 +120,9 @@ def build_message_fingerprint(record: EmailLogIngestRecord) -> str:
     content_html = record.content_html or ""
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     content_html_hash = hashlib.sha256(content_html.encode("utf-8")).hexdigest()
-    created_at_minute = as_utc_aware(record.created_at).replace(second=0, microsecond=0).isoformat()
+    created_at_minute = (
+        as_utc_aware(record.created_at).replace(second=0, microsecond=0).isoformat()
+    )
     payload = {
         "identity_id": record.identity_id,
         "professor_id": record.professor_id,
@@ -133,15 +135,21 @@ def build_message_fingerprint(record: EmailLogIngestRecord) -> str:
         "content_html_hash": content_html_hash,
     }
     digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8"),
     ).hexdigest()
     return f"sha256:{digest}"
 
 
-async def upsert_email_log(session: AsyncSession, record: EmailLogIngestRecord) -> EmailLog:
+async def upsert_email_log(
+    session: AsyncSession, record: EmailLogIngestRecord
+) -> EmailLog:
     normalized_message_id = normalize_message_id(record.message_id)
     message_fingerprint = _message_fingerprint_or_none(record, normalized_message_id)
-    existing = await _find_existing(session, record, normalized_message_id, message_fingerprint)
+    existing = await _find_existing(
+        session, record, normalized_message_id, message_fingerprint
+    )
 
     if existing is None:
         email_log = EmailLog(
@@ -237,7 +245,9 @@ async def ensure_delivery_email_log(
     elif dialect_name == "postgresql":
         statement = postgresql_insert(EmailLog.__table__).values(**values)
     else:
-        raise RuntimeError(f"Unsupported email delivery database dialect: {dialect_name}")
+        raise RuntimeError(
+            f"Unsupported email delivery database dialect: {dialect_name}"
+        )
     inserted_id = await session.scalar(
         statement.on_conflict_do_nothing().returning(EmailLog.id),
     )
@@ -254,7 +264,9 @@ async def ensure_delivery_email_log(
             normalize_message_id(record.message_id),
         )
         if email_log is None:
-            raise RuntimeError("Delivery log insert was ignored without a matching canonical log")
+            raise RuntimeError(
+                "Delivery log insert was ignored without a matching canonical log"
+            )
         email_log.delivery_attempt_id = delivery_attempt_id
     _merge_email_log(
         email_log,
@@ -295,7 +307,9 @@ async def ingest_sent_email_observation(
             match_method=existing_observation.match_method,
         )
 
-    delivery_key = normalize_delivery_key(record.delivery_key) or _delivery_key_from_headers(
+    delivery_key = normalize_delivery_key(
+        record.delivery_key
+    ) or _delivery_key_from_headers(
         record.reply_headers,
     )
     normalized_message_id = normalize_message_id(record.message_id)
@@ -619,7 +633,10 @@ async def _find_log_by_observed_message_id(
     if observation is None or observation.email_log_id is None:
         return None
     email_log = await session.get(EmailLog, observation.email_log_id)
-    if email_log is None or email_log.record_state != EmailLogRecordState.CANONICAL.value:
+    if (
+        email_log is None
+        or email_log.record_state != EmailLogRecordState.CANONICAL.value
+    ):
         return None
     return email_log
 
@@ -660,7 +677,8 @@ async def _find_task_by_message_id(
         .where(
             EmailTask.identity_id == record.identity_id,
             EmailTask.professor_id == record.professor_id,
-            func.lower(func.trim(EmailTask.last_rfc_message_id)) == normalized_message_id,
+            func.lower(func.trim(EmailTask.last_rfc_message_id))
+            == normalized_message_id,
         )
         .order_by(EmailTask.updated_at.desc(), EmailTask.id.desc()),
     )
@@ -694,7 +712,8 @@ async def _load_automatic_fold_candidates(
                 EmailDeliveryAttempt.professor_id == record.professor_id,
                 EmailDeliveryAttempt.started_at >= window_start,
                 EmailDeliveryAttempt.started_at <= window_end,
-                EmailDeliveryAttempt.subject_fingerprint == observation.subject_fingerprint,
+                EmailDeliveryAttempt.subject_fingerprint
+                == observation.subject_fingerprint,
                 EmailDeliveryAttempt.status.in_(
                     [
                         EmailDeliveryAttemptStatus.PREPARED.value,
@@ -780,10 +799,10 @@ async def _load_automatic_fold_candidates(
     for email_log in standalone_logs:
         if email_log.id in included_log_ids:
             continue
-        if (
-            build_reconciliation_fingerprint(email_log.subject)
-            != observation.subject_fingerprint
-            or not _log_addresses_match(email_log, record)
+        if build_reconciliation_fingerprint(
+            email_log.subject
+        ) != observation.subject_fingerprint or not _log_addresses_match(
+            email_log, record
         ):
             continue
         body_similarity = _reconciliation_body_similarity(
@@ -926,8 +945,7 @@ def _automatic_fold_observation_rank(
         return None
     time_delta = abs(
         (
-            as_utc_aware(candidate_time)
-            - as_utc_aware(observation.message_sent_at)
+            as_utc_aware(candidate_time) - as_utc_aware(observation.message_sent_at)
         ).total_seconds(),
     )
     if time_delta > AUTOMATIC_FOLD_WINDOW.total_seconds():
@@ -952,7 +970,9 @@ def _reconciliation_body_similarity(left: str | None, right: str | None) -> floa
         and shorter in longer
     ):
         return 0.97
-    return SequenceMatcher(None, normalized_left, normalized_right, autojunk=False).ratio()
+    return SequenceMatcher(
+        None, normalized_left, normalized_right, autojunk=False
+    ).ratio()
 
 
 def _log_addresses_match(email_log: EmailLog, record: EmailLogIngestRecord) -> bool:
@@ -970,7 +990,11 @@ def _log_addresses_match(email_log: EmailLog, record: EmailLogIngestRecord) -> b
             ],
         ),
     )
-    return not record_recipients or not log_recipients or record_recipients == log_recipients
+    return (
+        not record_recipients
+        or not log_recipients
+        or record_recipients == log_recipients
+    )
 
 
 def _observation_group_key(observation: EmailObservation) -> tuple[str, object]:
@@ -1017,7 +1041,9 @@ async def _externalize_observation(
         email_log = legacy_log
     else:
         if observation.professor_id is None:
-            raise RuntimeError("Sent observation cannot become external without a professor")
+            raise RuntimeError(
+                "Sent observation cannot become external without a professor"
+            )
         email_log = await upsert_email_log(
             session,
             EmailLogIngestRecord(
@@ -1142,7 +1168,9 @@ async def _find_existing(
         if by_message_id is not None:
             return by_message_id
 
-        by_rfc_message_id = await _find_by_normalized_rfc_message_id(session, record, normalized_message_id)
+        by_rfc_message_id = await _find_by_normalized_rfc_message_id(
+            session, record, normalized_message_id
+        )
         if by_rfc_message_id is not None:
             return by_rfc_message_id
 
@@ -1231,7 +1259,9 @@ def _fill_attr(existing: EmailLog, attr_name: str, value: object | None) -> None
         setattr(existing, attr_name, value)
 
 
-def _merge_dict_attr(existing: EmailLog, attr_name: str, value: dict[str, Any] | None) -> None:
+def _merge_dict_attr(
+    existing: EmailLog, attr_name: str, value: dict[str, Any] | None
+) -> None:
     if value is None:
         return
 
@@ -1245,7 +1275,9 @@ def _merge_dict_attr(existing: EmailLog, attr_name: str, value: dict[str, Any] |
     setattr(existing, attr_name, merged)
 
 
-def _message_fingerprint_or_none(record: EmailLogIngestRecord, normalized_message_id: str | None) -> str | None:
+def _message_fingerprint_or_none(
+    record: EmailLogIngestRecord, normalized_message_id: str | None
+) -> str | None:
     if normalized_message_id is not None or _has_imap_location(record):
         return None
     return build_message_fingerprint(record)
@@ -1254,7 +1286,12 @@ def _message_fingerprint_or_none(record: EmailLogIngestRecord, normalized_messag
 def _has_imap_location(record: EmailLogIngestRecord) -> bool:
     return all(
         value is not None
-        for value in (record.folder_role, record.folder, record.uidvalidity, record.imap_uid)
+        for value in (
+            record.folder_role,
+            record.folder,
+            record.uidvalidity,
+            record.imap_uid,
+        )
     )
 
 
@@ -1263,6 +1300,8 @@ def _normalized_address_or_none(value: str | None) -> str | None:
     return normalized or None
 
 
-def _normalized_list_or_none(values: list[str] | tuple[str, ...] | None) -> list[str] | None:
+def _normalized_list_or_none(
+    values: list[str] | tuple[str, ...] | None,
+) -> list[str] | None:
     normalized = normalize_email_list(values)
     return normalized or None

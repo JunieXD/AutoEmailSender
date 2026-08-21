@@ -338,10 +338,7 @@ def _drop_plain_column(table_name: str, column_name: str) -> None:
 
 def _verify_legacy_template_backfill(connection: sa.Connection) -> None:
     expected_count = int(
-        connection.scalar(
-            sa.text("SELECT COUNT(*) FROM identity_profiles")
-        )
-        or 0
+        connection.scalar(sa.text("SELECT COUNT(*) FROM identity_profiles")) or 0
     )
     migrated_count = int(
         connection.scalar(
@@ -404,8 +401,7 @@ def _table_names() -> set[str]:
 
 def _column_names(table_name: str) -> set[str]:
     return {
-        column["name"]
-        for column in sa.inspect(op.get_bind()).get_columns(table_name)
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)
     }
 
 

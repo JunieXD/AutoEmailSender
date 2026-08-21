@@ -39,7 +39,9 @@ print(json.dumps({name: name in sys.modules for name in [
         routers = importlib.import_module("app.api.routers")
 
         self.assertGreaterEqual(len(routers.API_ROUTERS), 10)
-        self.assertTrue(all(hasattr(router, "routes") for router in routers.API_ROUTERS))
+        self.assertTrue(
+            all(hasattr(router, "routes") for router in routers.API_ROUTERS)
+        )
 
     def test_runtime_manager_keeps_imap_sync_lazy(self) -> None:
         script = """

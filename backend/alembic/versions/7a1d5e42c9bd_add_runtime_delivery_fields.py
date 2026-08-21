@@ -52,23 +52,35 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("delivery_mode", sa.String(length=20), nullable=True))
+        batch_op.add_column(
+            sa.Column("delivery_mode", sa.String(length=20), nullable=True)
+        )
         batch_op.add_column(sa.Column("fit_points", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("risk_points", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("match_keywords", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("approved_subject", sa.Text(), nullable=True))
         batch_op.add_column(sa.Column("approved_body_text", sa.Text(), nullable=True))
         batch_op.add_column(sa.Column("approved_body_html", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("last_send_attempt_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("last_rfc_message_id", sa.String(length=255), nullable=True))
         batch_op.add_column(
-            sa.Column("retry_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("last_send_attempt_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("last_rfc_message_id", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column(
+                "retry_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+            ),
         )
 
     with op.batch_alter_table("email_logs", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("delivery_mode", sa.String(length=20), nullable=True))
+        batch_op.add_column(
+            sa.Column("delivery_mode", sa.String(length=20), nullable=True)
+        )
         batch_op.add_column(sa.Column("content_html", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("rfc_message_id", sa.String(length=255), nullable=True))
+        batch_op.add_column(
+            sa.Column("rfc_message_id", sa.String(length=255), nullable=True)
+        )
         batch_op.add_column(sa.Column("provider_payload", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("failure_summary", sa.Text(), nullable=True))
         batch_op.add_column(sa.Column("reply_headers", sa.JSON(), nullable=True))

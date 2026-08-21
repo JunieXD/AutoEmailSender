@@ -6,7 +6,15 @@ from app.core.time import utc_now
 
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -28,34 +36,62 @@ class CrawlPageChunkStatus(str, Enum):
 class CrawlPageChunk(Base):
     __tablename__ = "crawl_page_chunks"
     __table_args__ = (
-        UniqueConstraint("job_id", "chunk_id", name="uq_crawl_page_chunks_job_chunk_id"),
+        UniqueConstraint(
+            "job_id", "chunk_id", name="uq_crawl_page_chunks_job_chunk_id"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True)
-    page_id: Mapped[int | None] = mapped_column(ForeignKey("crawl_pages.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("crawl_jobs.id", ondelete="CASCADE"), index=True
+    )
+    page_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crawl_pages.id", ondelete="CASCADE"), index=True
+    )
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     page_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
     chunk_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    parent_chunk_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    parent_chunk_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True, server_default=text("'pending'"))
+    status: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, server_default=text("'pending'")
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    token_estimate: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     text_start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    overlap_prefix: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
-    overlap_suffix: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
-    split_depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    overlap_prefix: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
+    overlap_suffix: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
+    split_depth: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     split_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    failure_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    worker_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True, index=True
+    )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

@@ -1,4 +1,4 @@
-import { ensureWorkspaceTask, getWorkspaceThread } from "@/lib/api/workspacesApi";
+import { ensureWorkspaceTask } from "@/lib/api/workspacesApi";
 import type { WorkspaceTaskSummaryDTO, WorkspaceThreadDTO } from "@/types";
 
 export const shouldBootstrapWorkspaceTask = (
@@ -20,15 +20,3 @@ export const bootstrapWorkspaceThread = async (
   shouldBootstrapWorkspaceTask(thread.current_task)
     ? ensureWorkspaceTask(professorId, identityId, llmProfileId)
     : thread;
-
-export const openWorkspaceThread = async (
-  professorId: number,
-  identityId: number,
-  llmProfileId: number,
-) =>
-  bootstrapWorkspaceThread(
-    await getWorkspaceThread(professorId, identityId, llmProfileId),
-    professorId,
-    identityId,
-    llmProfileId,
-  );

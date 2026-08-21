@@ -39,7 +39,9 @@ from app.modules.llm.runtime import (
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict[str, object] | None = None, text: str = "") -> None:
+    def __init__(
+        self, status_code: int, payload: dict[str, object] | None = None, text: str = ""
+    ) -> None:
         self.status_code = status_code
         self._payload = payload or {}
         self.text = text
@@ -49,7 +51,11 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
-    def __init__(self, responses: list[_FakeResponse], calls: list[tuple[str, dict[str, object] | None]]) -> None:
+    def __init__(
+        self,
+        responses: list[_FakeResponse],
+        calls: list[tuple[str, dict[str, object] | None]],
+    ) -> None:
         self._responses = responses
         self._calls = calls
 
@@ -173,7 +179,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(prompt, "")
 
-    def test_build_draft_rewrite_preferences_prioritizes_custom_content_instruction(self) -> None:
+    def test_build_draft_rewrite_preferences_prioritizes_custom_content_instruction(
+        self,
+    ) -> None:
         prompt = build_draft_rewrite_preferences(
             DraftRewritePreferences(
                 draft_custom_instruction="请少用套话，结尾保持简短。",
@@ -189,7 +197,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("草稿改写偏好", prompt)
         self.assertNotIn("改写强度", prompt)
 
-    def test_build_draft_rewrite_preferences_omits_empty_custom_instruction(self) -> None:
+    def test_build_draft_rewrite_preferences_omits_empty_custom_instruction(
+        self,
+    ) -> None:
         prompt = build_draft_rewrite_preferences(
             DraftRewritePreferences(
                 draft_custom_instruction="   ",
@@ -214,7 +224,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage.total_tokens, 1280)
         self.assertEqual(usage.cached_tokens, 1024)
 
-    def test_build_match_prompt_parts_places_stable_identity_before_professor(self) -> None:
+    def test_build_match_prompt_parts_places_stable_identity_before_professor(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -256,7 +268,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertLess(parts.prompt.index("默认材料"), parts.prompt.index("导师信息"))
-        self.assertLess(parts.prompt.index("用户意向研究方向"), parts.prompt.index("导师信息"))
+        self.assertLess(
+            parts.prompt.index("用户意向研究方向"), parts.prompt.index("导师信息")
+        )
         self.assertIn("信息抽取与智能体", parts.stable_prefix)
         self.assertIn("医学自然语言处理与信息抽取", parts.stable_prefix)
         self.assertIn("相似", parts.stable_prefix)
@@ -264,7 +278,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(parts.prompt_hash), 64)
         self.assertEqual(len(parts.stable_prefix_hash), 64)
 
-    def test_parse_completion_usage_reads_deepseek_prompt_cache_hit_tokens(self) -> None:
+    def test_parse_completion_usage_reads_deepseek_prompt_cache_hit_tokens(
+        self,
+    ) -> None:
         usage = parse_completion_usage(
             {
                 "prompt_tokens": 1200,
@@ -282,7 +298,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage.total_tokens, 1280)
         self.assertEqual(usage.cached_tokens, 960)
 
-    async def test_generate_match_evaluation_uses_temperature_zero_and_prompt_cache_key(self) -> None:
+    async def test_generate_match_evaluation_uses_temperature_zero_and_prompt_cache_key(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -434,7 +452,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
-            result = await generate_draft_content(
+            await generate_draft_content(
                 identity=identity,
                 primary_material=primary_material,
                 llm_profile=profile,
@@ -448,7 +466,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         payload = calls[0][1]
         self.assertEqual(payload["max_tokens"], 4800)
 
-    async def test_generate_draft_content_sends_template_runs_without_full_html(self) -> None:
+    async def test_generate_draft_content_sends_template_runs_without_full_html(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -500,7 +520,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                     '{"segment_id":"seg_1","text":"李老师，您好："},'
                                     '{"segment_id":"seg_2","text":'
                                     '"我近期关注到您在 [[S1]]Information Extraction[[/S1]] 方向的研究。"}'
-                                    ']}'
+                                    "]}"
                                 ),
                             },
                         },
@@ -523,7 +543,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 custom_body="{{name}}老师，您好：\n我对您的 {{research_direction}} 方向很感兴趣。",
                 custom_body_html=(
                     '<p style="font-family:SimSun">{{name}}老师，您好：</p>'
-                    '<p>我对您的 <strong>{{research_direction}}</strong> 方向很感兴趣。</p>'
+                    "<p>我对您的 <strong>{{research_direction}}</strong> 方向很感兴趣。</p>"
                 ),
                 max_tokens=4800,
             )
@@ -538,7 +558,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Information Extraction", result.result.body_html)
         self.assertNotIn("{{research_direction}}", result.result.body_html)
 
-    async def test_generate_draft_content_preserves_empty_blocks_without_replacements(self) -> None:
+    async def test_generate_draft_content_preserves_empty_blocks_without_replacements(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -706,7 +728,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("李老师，您好：", result.result.body_html)
         self.assertIn("Information Extraction", result.result.body_text)
 
-    async def test_generate_draft_content_preserves_table_and_inline_styles(self) -> None:
+    async def test_generate_draft_content_preserves_table_and_inline_styles(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -757,7 +781,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                     '{"replacements":['
                                     '{"segment_id":"seg_2","text":'
                                     '"我对您的 [[S1]]Information Extraction[[/S1]] 方向很感兴趣。"}'
-                                    ']}'
+                                    "]}"
                                 ),
                             },
                         },
@@ -782,8 +806,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     '<table style="border-collapse:collapse"><tbody><tr>'
                     '<td style="border:1px solid #ccc">研究经历</td>'
                     '<td style="font-size:11pt">我做过信息抽取项目。</td>'
-                    '</tr></tbody></table>'
-                    '<p>我对您的 <strong>{{research_direction}}</strong> 方向很感兴趣。</p>'
+                    "</tr></tbody></table>"
+                    "<p>我对您的 <strong>{{research_direction}}</strong> 方向很感兴趣。</p>"
                 ),
             )
 
@@ -804,7 +828,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<strong", result.result.body_html)
         self.assertNotIn("{{research_direction}}", result.result.body_text)
 
-    async def test_generate_draft_content_uses_anchored_rewrite_and_preserves_strong_anchor(self) -> None:
+    async def test_generate_draft_content_uses_anchored_rewrite_and_preserves_strong_anchor(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -884,9 +910,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("rewrite_segments", payload["messages"][1]["content"])
         self.assertIn("以专业第一的成绩获得了推免资格", generated.result.body_text)
         self.assertNotIn("{{name}}", generated.result.body_text)
-        self.assertIn("<strong>以专业第一的成绩获得了推免资格</strong>", generated.result.body_html)
+        self.assertIn(
+            "<strong>以专业第一的成绩获得了推免资格</strong>",
+            generated.result.body_html,
+        )
 
-    async def test_generate_draft_content_personalizes_research_without_internal_tokens(self) -> None:
+    async def test_generate_draft_content_personalizes_research_without_internal_tokens(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -935,8 +966,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 available_materials=[material],
                 custom_subject="申请交流",
                 custom_body_html=(
-                    "<p>我有相关项目经验。</p>"
-                    "<p><strong>期待进一步交流。</strong></p>"
+                    "<p>我有相关项目经验。</p><p><strong>期待进一步交流。</strong></p>"
                 ),
             )
 
@@ -949,7 +979,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("[[F1]]", generated.result.body_html)
         self.assertIn("<strong>", generated.result.body_html)
 
-    async def test_generate_draft_content_does_not_force_research_text_into_user_content(self) -> None:
+    async def test_generate_draft_content_does_not_force_research_text_into_user_content(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -994,12 +1026,18 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 custom_body="正文。",
             )
 
-        prompt_payload = json.loads(request_mock.call_args.args[1]["messages"][1]["content"])
-        self.assertEqual(prompt_payload["input"]["professor"]["research_direction"], "Agent")
+        prompt_payload = json.loads(
+            request_mock.call_args.args[1]["messages"][1]["content"]
+        )
+        self.assertEqual(
+            prompt_payload["input"]["professor"]["research_direction"], "Agent"
+        )
         self.assertEqual(generated.result.body_text, "正文。")
         self.assertNotIn("[[F", generated.result.body_html)
 
-    async def test_generate_draft_content_allows_custom_research_direction_selection(self) -> None:
+    async def test_generate_draft_content_allows_custom_research_direction_selection(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -1054,7 +1092,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
-        prompt_payload = json.loads(request_mock.call_args.args[1]["messages"][1]["content"])
+        prompt_payload = json.loads(
+            request_mock.call_args.args[1]["messages"][1]["content"]
+        )
         self.assertNotIn(
             "research_direction_personalization",
             prompt_payload["response_schema"],
@@ -1068,7 +1108,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             prompt_payload["input"]["professor"]["research_direction"],
             research_direction,
         )
-        self.assertIn(research_direction, prompt_payload["input"]["source_blocks"][0]["text"])
+        self.assertIn(
+            research_direction, prompt_payload["input"]["source_blocks"][0]["text"]
+        )
         self.assertIn("最高优先级", "\n".join(prompt_payload["instructions"]))
         self.assertNotIn("[[F", json.dumps(prompt_payload, ensure_ascii=False))
         self.assertIn("图神经网络、自然语言处理", generated.result.body_text)
@@ -1129,7 +1171,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             api_key="test-key",
             model_name="gpt-test",
         )
-        professor = Professor(name="李老师", research_direction="Information Extraction")
+        professor = Professor(
+            name="李老师", research_direction="Information Extraction"
+        )
 
         estimate = estimate_draft_content_tokens(
             identity=identity,
@@ -1147,7 +1191,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(estimate.estimated_completion_tokens_upper_bound, 4800)
         self.assertLess(estimate.estimated_prompt_tokens, 1500)
 
-    def test_build_match_prompt_keeps_specific_research_direction_without_recent_papers(self) -> None:
+    def test_build_match_prompt_keeps_specific_research_direction_without_recent_papers(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -1190,7 +1236,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("LLM-based biomedical information extraction", parts.prompt)
         self.assertNotIn("近期论文：", parts.prompt)
 
-    def test_build_draft_prompt_keeps_template_default_but_prioritizes_custom_content(self) -> None:
+    def test_build_draft_prompt_keeps_template_default_but_prioritizes_custom_content(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -1266,7 +1314,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("可选材料", payload["input"])
         self.assert_draft_prompt_omits_match_context(prompt)
 
-    def test_build_draft_prompt_places_stable_batch_context_before_professor(self) -> None:
+    def test_build_draft_prompt_places_stable_batch_context_before_professor(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -1322,7 +1372,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("匹配变量", prompt)
         self.assert_draft_prompt_omits_match_context(prompt)
 
-    def test_build_draft_rewrite_prompt_uses_source_blocks_and_style_spans(self) -> None:
+    def test_build_draft_rewrite_prompt_uses_source_blocks_and_style_spans(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.modules.campaigns.templates.rendering import build_template_context
         from app.services.template_draft_rewrite import build_draft_rewrite_document
@@ -1357,8 +1409,8 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         document = build_draft_rewrite_document(
-            '<p><strong>{{name}}</strong>老师，您好，<u>欢迎</u>您。</p>'
-            '<table><tbody><tr><td>原表格</td></tr></tbody></table>',
+            "<p><strong>{{name}}</strong>老师，您好，<u>欢迎</u>您。</p>"
+            "<table><tbody><tr><td>原表格</td></tr></tbody></table>",
             build_template_context(identity, professor),
         )
 
@@ -1378,10 +1430,22 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("task", payload)
         self.assertNotIn("prompt_version", payload)
         self.assertNotIn("subject", payload["response_schema"])
-        self.assertIn("不要返回 subject。", payload["instructions"])
+        instructions_text = "\n".join(payload["instructions"])
+        self.assertIn(
+            "不要输出解释、Markdown、HTML、subject 或完整正文", instructions_text
+        )
+        self.assertIn(
+            "每项必须是仅含字符串 segment_id 和字符串 text 的对象", instructions_text
+        )
+        self.assertIn("禁止其他类型或字段", instructions_text)
+        self.assertIn("禁止字符串、数字、数组或 null", payload["output_reminder"])
         self.assertLess(prompt.index('"instructions"'), prompt.index('"input"'))
         self.assertLess(prompt.index('"response_schema"'), prompt.index('"input"'))
         self.assertLess(prompt.index('"input"'), prompt.rindex('"source_blocks"'))
+        self.assertLess(
+            prompt.rindex('"professor"'), prompt.rindex('"output_reminder"')
+        )
+        self.assertEqual(list(payload)[-1], "output_reminder")
         self.assertEqual(
             payload["input"]["professor"],
             {
@@ -1389,7 +1453,12 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "research_direction": "Information Extraction",
             },
         )
-        self.assertEqual(payload["input"]["student_material_text"], "我做过信息抽取与智能体相关研究。")
+        self.assertEqual(
+            payload["input"]["student_material_text"],
+            "我做过信息抽取与智能体相关研究。",
+        )
+        self.assertNotIn("default_personalization_task", payload["input"])
+        self.assertNotIn('"professor_name"', prompt)
         self.assertNotIn("current_match", payload["input"])
         self.assertNotIn("rewrite_preferences", payload["input"])
         self.assertNotIn("email_address", prompt)
@@ -1404,7 +1473,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["input"]["source_blocks"][0]["locked"])
         self.assertTrue(payload["input"]["source_blocks"][1]["locked"])
 
-    def test_build_draft_rewrite_prompt_places_stable_batch_context_before_professor(self) -> None:
+    def test_build_draft_rewrite_prompt_places_stable_batch_context_before_professor(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
@@ -1453,7 +1524,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(prompt.index("稳定学生材料"), prompt.index("导师变量"))
         self.assertLess(prompt.index("稳定模板正文"), prompt.index("导师变量"))
 
-    def test_build_draft_rewrite_prompt_parts_places_template_blocks_before_dynamic_suffix(self) -> None:
+    def test_build_draft_rewrite_prompt_parts_places_template_blocks_before_dynamic_suffix(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
@@ -1533,9 +1606,12 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("source_blocks", stable_input)
         self.assertNotIn("protected_tokens", stable_input)
         self.assertNotIn("professor", stable_input)
+        self.assertIn("每项必须是", stable_payload["output_reminder"])
         self.assertIn("我做过信息抽取与智能体相关研究。", parts.stable_prefix)
         self.assertNotIn("方向匹配", parts.stable_prefix)
-        self.assertLess(parts.prompt.index("source_blocks"), parts.prompt.index("professor"))
+        self.assertLess(
+            parts.prompt.index("source_blocks"), parts.prompt.index("professor")
+        )
         self.assertNotIn("available_materials", stable_input)
         self.assert_draft_prompt_omits_match_context(parts.prompt)
         self.assert_draft_prompt_omits_match_context(parts.stable_prefix)
@@ -1543,12 +1619,13 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(parts.stable_prefix_hash), 64)
         self.assertEqual(
             parts.prompt_cache_key,
-            f"draft-rewrite:v5:1:12:7:{parts.stable_prefix_hash[:16]}",
+            f"draft-rewrite:v6:1:12:7:{parts.stable_prefix_hash[:16]}",
         )
         self.assertNotIn(":5:", parts.prompt_cache_key or "")
 
-
-    def test_draft_rewrite_prompt_parts_keep_same_stable_prefix_for_different_professors(self) -> None:
+    def test_draft_rewrite_prompt_parts_keep_same_stable_prefix_for_different_professors(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
@@ -1583,7 +1660,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         first = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
-            professor=Professor(name="李老师", email="li@example.edu", research_direction="NLP"),
+            professor=Professor(
+                name="李老师", email="li@example.edu", research_direction="NLP"
+            ),
             available_materials=[primary_material],
             subject_template="申请与{{name}}老师交流",
             source_blocks=second_document.blocks,
@@ -1599,7 +1678,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         second = build_draft_rewrite_prompt_parts(
             identity=identity,
             primary_material=primary_material,
-            professor=Professor(name="王老师", email="wang@example.edu", research_direction="Databases"),
+            professor=Professor(
+                name="王老师", email="wang@example.edu", research_direction="Databases"
+            ),
             available_materials=[primary_material],
             subject_template="申请与{{name}}老师交流",
             source_blocks=document.blocks,
@@ -1666,7 +1747,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             custom_body="老师您好，我是{{sender_name}}。",
             current_match=current_match,
         )
-        rewrite_document = build_draft_rewrite_document("<p>老师您好，我是{{sender_name}}。</p>", {})
+        rewrite_document = build_draft_rewrite_document(
+            "<p>老师您好，我是{{sender_name}}。</p>", {}
+        )
         rewrite_prompt = build_draft_rewrite_prompt(
             identity=identity,
             primary_material=primary_material,
@@ -1682,7 +1765,6 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assert_draft_prompt_omits_match_context(rewrite_prompt)
         self.assertNotIn("不应进入草稿 prompt", draft_prompt)
         self.assertNotIn("不应进入草稿 prompt", rewrite_prompt)
-
 
     def test_draft_rewrite_prompts_preserve_literal_dates_by_default(self) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
@@ -1737,41 +1819,20 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2024 年", prompt_text)
         self.assertIn("2026年5月21日", prompt_text)
         self.assertIn("日期、年份、时间及其格式不应修改", SYSTEM_DRAFT_REWRITE_PROMPT)
-        self.assertIn("必须执行 default_personalization_task", instructions_text)
-        default_task = payload["input"]["default_personalization_task"]
-        self.assertNotIn("professor_direction_options", default_task)
-        self.assertIn("可见、实质的导师方向个性化", default_task["objective"])
-        self.assertIn("不能原样返回", default_task["objective"])
-        self.assertIn("导师称呼沿用 professor.name", default_task["professor_name"])
-        self.assertIn("仅可省略末尾职称括号", default_task["professor_name"])
-        self.assertIn("范围随原信", default_task["scope"])
-        self.assertIn("可概括或结合多个有依据的方向", default_task["scope"])
-        self.assertIn("位置、多少以自然为准", default_task["scope"])
-        self.assertIn("判断学生材料支持的契合点", default_task["planning"])
-        self.assertIn("多个点各放入唯一、最合适的 segment_id", default_task["planning"])
-        self.assertIn("不要输出规划", default_task["planning"])
-        self.assertIn("有直接经历时就地结合", default_task["placement"])
-        self.assertIn("最自然处克制表达一次兴趣或学习意愿", default_task["placement"])
-        self.assertIn("只有短标签或宽泛词时", default_task["sparse_professor_context"])
-        self.assertIn("仅一个 replacement 可新增该标签", default_task["sparse_professor_context"])
-        self.assertIn("其余不提", default_task["sparse_professor_context"])
-        self.assertIn("不扩展子方向、技术问题或应用", default_task["sparse_professor_context"])
-        self.assertIn("宽泛词重合不代表研究任务相关", default_task["fact_boundary"])
-        self.assertIn("不补工具、方法、结果或技术联系", default_task["fact_boundary"])
-        self.assertIn("相通之处", default_task["fact_boundary"])
-        self.assertIn("潜在联系", default_task["fact_boundary"])
-        self.assertIn("source_blocks 已展开 research_direction", default_task["direction_in_source"])
-        self.assertIn("短而自然则保留", default_task["direction_in_source"])
-        self.assertIn("长、多、像清单时", default_task["direction_in_source"])
-        self.assertIn("直接用自然研究重心替换列表文字", default_task["direction_in_source"])
-        self.assertIn("位于 [[S数字]] 内则保留标记", default_task["direction_in_source"])
-        self.assertIn("不要保留整表后只追加说明", default_task["direction_in_source"])
-        self.assertIn("先改列表", default_task["direction_in_source"])
-        self.assertIn("短而自然的不动", default_task["final_check"])
-        self.assertIn("长、多或层级密集且仍像清单时", default_task["final_check"])
-        self.assertIn("改写列表本身，不只在后面追加说明", default_task["final_check"])
-        self.assertIn("删去重复、无依据或无关内容", default_task["final_check"])
-        self.assertIn("确认有实质修改", default_task["final_check"])
+        self.assertNotIn("default_personalization_task", payload["input"])
+        self.assertNotIn('"professor_name"', prompt)
+        self.assertIn("professor.research_direction 存在时", instructions_text)
+        self.assertIn("至少一处实质个性化", instructions_text)
+        self.assertIn(
+            "每项必须是仅含字符串 segment_id 和字符串 text 的对象", instructions_text
+        )
+        self.assertIn("禁止其他类型或字段", instructions_text)
+        self.assertIn("禁止字符串、数字、数组或 null", payload["output_reminder"])
+        self.assertIn("不能使用索引、负数或内部字段名", instructions_text)
+        self.assertEqual(list(payload)[-1], "output_reminder")
+        self.assertIn(
+            "不要输出内部字段名、规划、索引或说明", payload["output_reminder"]
+        )
 
     def test_draft_rewrite_prompts_use_soft_fact_anchors_by_default(self) -> None:
         system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
@@ -1779,20 +1840,31 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("user_custom_instruction", system_prompt)
         self.assertIn("最高优先级的内容要求", system_prompt)
         self.assertIn("未被它覆盖", system_prompt)
-        self.assertIn("必须执行该任务并产生实质修改", system_prompt)
-        self.assertIn("标记内正文可改写", system_prompt)
+        self.assertIn("必须完成至少一处可见、实质的导师方向个性化", system_prompt)
+        self.assertIn("每项必须为 JSON 对象", system_prompt)
+        self.assertIn("禁止字符串、数字、数组或 null", system_prompt)
+        self.assertIn("不能使用索引、负数或内部字段名", system_prompt)
+        self.assertIn("标记内正文可以改写", system_prompt)
         self.assertIn("方向短而自然时沿用", system_prompt)
-        self.assertIn("长、多、像清单时才改写列表本身", system_prompt)
+        self.assertIn("长、多、层级密集或像清单时", system_prompt)
+        self.assertIn("改写列表本身", system_prompt)
+        self.assertIn("先改列表再补充学生联系", system_prompt)
         self.assertIn("上位领域（多个细分方向）", system_prompt)
         self.assertIn("不照搬括号清单", system_prompt)
         self.assertIn("多个有依据的方向均可保留", system_prompt)
-        self.assertIn("有学生经历时就地结合", system_prompt)
-        self.assertIn("无直接依据时在最自然处克制表达兴趣", system_prompt)
-        self.assertIn("每个契合点只表达一次", system_prompt)
-        self.assertIn("学生事实只依据 student_material_text 和 source_blocks", system_prompt)
+        self.assertIn("有直接学生经历时在相关段落就地结合", system_prompt)
+        self.assertIn("最自然处克制表达一次兴趣或学习意愿", system_prompt)
+        self.assertIn("只表达一次", system_prompt)
+        self.assertIn("最多一个 replacement 可以新增该标签", system_prompt)
+        self.assertIn("不扩展子方向、技术问题或应用", system_prompt)
+        self.assertIn(
+            "学生事实只依据 student_material_text 和 source_blocks", system_prompt
+        )
         self.assertIn("导师事实只依据 professor", system_prompt)
         self.assertIn("不补充材料未明说的工具、方法、任务、结果或认知", system_prompt)
         self.assertIn("不因共享“大模型”“人工智能”等宽泛词就建立技术关联", system_prompt)
+        self.assertIn("相通之处", system_prompt)
+        self.assertIn("潜在联系", system_prompt)
         self.assertIn("不要写成长久关注", system_prompt)
         self.assertIn("具体研究计划或应用设想", system_prompt)
         self.assertIn("人物身份、数字结果", system_prompt)
@@ -1803,30 +1875,22 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("默认只改写一个", system_prompt)
         self.assertNotIn("选中方向原文", system_prompt)
 
-    def test_default_personalization_keeps_direction_and_scope_flexible(self) -> None:
-        from app.models import Professor
-        from app.modules.llm.runtime import (
-            _build_draft_rewrite_default_personalization_task,
-        )
+    def test_default_personalization_rules_are_static_and_not_nested_in_input(
+        self,
+    ) -> None:
+        system_prompt = SYSTEM_DRAFT_REWRITE_PROMPT
 
-        task = _build_draft_rewrite_default_personalization_task(
-            Professor(
-                name="李老师",
-                research_direction="机器学习系统，大模型训练与推理；联邦学习、数据中心网络",
-            ),
-        )
+        self.assertIn("范围随原信", system_prompt)
+        self.assertIn("可概括或结合多个有依据的方向", system_prompt)
+        self.assertIn("唯一、最合适的 segment_id", system_prompt)
+        self.assertIn("不输出规划过程", system_prompt)
+        self.assertNotIn("只改写一个", system_prompt)
+        self.assertNotIn("选中方向原文", system_prompt)
+        self.assertNotIn("professor_direction_options", system_prompt)
 
-        self.assertNotIn("professor_direction_options", task)
-        task_text = json.dumps(task, ensure_ascii=False)
-        self.assertIn("范围随原信", task_text)
-        self.assertIn("多个点各放入唯一、最合适的 segment_id", task_text)
-        self.assertIn("可概括或结合多个有依据的方向", task_text)
-        self.assertNotIn("只改写一个", task_text)
-        self.assertNotIn("选中方向原文", task_text)
-        self.assertNotIn("全量或接近全量复述视为未完成任务", task_text)
-
-
-    def test_draft_rewrite_system_prompt_includes_replacements_output_example(self) -> None:
+    def test_draft_rewrite_system_prompt_includes_replacements_output_example(
+        self,
+    ) -> None:
         self.assertIn("输出示例", SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertIn('"replacements"', SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertIn('"segment_id"', SYSTEM_DRAFT_REWRITE_PROMPT)
@@ -1835,7 +1899,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('"runs"', SYSTEM_DRAFT_REWRITE_PROMPT)
         self.assertNotIn('"marks"', SYSTEM_DRAFT_REWRITE_PROMPT)
 
-    def test_build_draft_rewrite_prompt_prioritizes_custom_content_but_keeps_json_contract(self) -> None:
+    def test_build_draft_rewrite_prompt_prioritizes_custom_content_but_keeps_json_contract(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
         from app.services.template_draft_rewrite import build_draft_rewrite_document
 
@@ -1959,7 +2025,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("profile_url", professor_context)
         self.assertNotIn("recent_papers", professor_context)
 
-    async def test_generate_draft_content_uses_block_prompt_and_keeps_table_html(self) -> None:
+    async def test_generate_draft_content_uses_block_prompt_and_keeps_table_html(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -2024,7 +2092,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     '<p style="font-family:SimSun;font-size:12pt">'
                     "{{name}}，您好："
                     "</p>"
-                    '<table><tbody><tr><td>原表格</td></tr></tbody></table>'
+                    "<table><tbody><tr><td>原表格</td></tr></tbody></table>"
                 ),
             )
 
@@ -2037,7 +2105,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("{{name}}", prompt)
         self.assertEqual(
             payload["prompt_cache_key"],
-            f"draft-rewrite:v5:1:12:5:{result.stable_prefix_hash[:16]}",
+            f"draft-rewrite:v6:1:12:5:{result.stable_prefix_hash[:16]}",
         )
         self.assertIsNotNone(result.prompt_hash)
         self.assertIsNotNone(result.stable_prefix_hash)
@@ -2046,7 +2114,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<table", result.result.body_html)
         self.assertNotIn("{{name}}", result.result.body_html)
 
-    async def test_generate_draft_content_skips_llm_when_template_has_no_editable_blocks(self) -> None:
+    async def test_generate_draft_content_skips_llm_when_template_has_no_editable_blocks(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -2114,7 +2184,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(estimate.estimated_total_tokens_upper_bound, 0)
 
-    def test_build_draft_prompt_uses_default_rewrite_constraints_for_non_default_preferences(self) -> None:
+    def test_build_draft_prompt_uses_default_rewrite_constraints_for_non_default_preferences(
+        self,
+    ) -> None:
         from app.models import IdentityMaterial, IdentityProfile, Professor
 
         identity = IdentityProfile(
@@ -2169,7 +2241,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("只做轻微修改", prompt)
         self.assertIn("不要从零重写", prompt)
 
-    def test_system_draft_prompt_requires_research_direction_and_format_preservation(self) -> None:
+    def test_system_draft_prompt_requires_research_direction_and_format_preservation(
+        self,
+    ) -> None:
         from app.modules.llm.runtime import SYSTEM_DRAFT_PROMPT
 
         self.assertIn("导师研究方向", SYSTEM_DRAFT_PROMPT)
@@ -2184,7 +2258,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "https://ark.cn-beijing.volces.com/api/v3",
         )
 
-    async def test_request_completion_endpoint_sends_chat_payload_to_chat_url(self) -> None:
+    async def test_request_completion_endpoint_sends_chat_payload_to_chat_url(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2216,19 +2292,24 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 allow_empty_content=False,
             )
 
-        self.assertEqual(calls, [
-            (
-                "https://api.acme.ai/v1/chat/completions",
-                {
-                    "model": profile.model_name,
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 32,
-                    "thinking": {"type": "disabled"},
-                },
-            ),
-        ])
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "https://api.acme.ai/v1/chat/completions",
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 32,
+                        "thinking": {"type": "disabled"},
+                    },
+                ),
+            ],
+        )
         self.assertEqual(result.endpoint_kind, "chat_completions")
-        self.assertEqual(result.attempted_urls, ["https://api.acme.ai/v1/chat/completions"])
+        self.assertEqual(
+            result.attempted_urls, ["https://api.acme.ai/v1/chat/completions"]
+        )
 
     async def test_request_completion_endpoint_converts_responses_payload(self) -> None:
         profile = LLMProfile(
@@ -2294,7 +2375,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 responses = [_FakeResponse(status_code=status_code, text="unsupported")]
                 with patch(
                     "app.modules.llm.runtime.httpx.AsyncClient",
-                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+                    side_effect=lambda *args, **kwargs: _FakeAsyncClient(
+                        responses, calls
+                    ),
                 ):
                     with self.assertRaises(LLMEndpointProtocolError) as context:
                         await _request_completion_endpoint(
@@ -2309,12 +2392,16 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(error.failed_endpoint_kind, "responses")
                 self.assertIsNone(error.response_envelope)
                 self.assertEqual(error.request_url, "https://api.acme.ai/v1/responses")
-                self.assertEqual(error.attempted_urls, ["https://api.acme.ai/v1/responses"])
+                self.assertEqual(
+                    error.attempted_urls, ["https://api.acme.ai/v1/responses"]
+                )
                 self.assertEqual(error.status_code, status_code)
                 self.assertIsNotNone(error.duration_ms)
                 self.assertEqual(len(calls), 1)
 
-    async def test_request_completion_endpoint_marks_other_endpoint_envelope(self) -> None:
+    async def test_request_completion_endpoint_marks_other_endpoint_envelope(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2369,7 +2456,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.response_envelope, "invalid")
 
-    async def test_request_completion_endpoint_keeps_non_protocol_http_errors_generic(self) -> None:
+    async def test_request_completion_endpoint_keeps_non_protocol_http_errors_generic(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2379,7 +2468,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         for status_code in (101, 302, 401, 403, 429, 500):
             with self.subTest(status_code=status_code):
-                responses = [_FakeResponse(status_code=status_code, text="request failed")]
+                responses = [
+                    _FakeResponse(status_code=status_code, text="request failed")
+                ]
                 with patch(
                     "app.modules.llm.runtime.httpx.AsyncClient",
                     side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, []),
@@ -2394,7 +2485,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                         )
                 self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
 
-    async def test_request_completion_endpoint_keeps_network_http_error_generic(self) -> None:
+    async def test_request_completion_endpoint_keeps_network_http_error_generic(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2409,7 +2502,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(
+                outcomes, calls, kwargs
+            ),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
                 await _request_completion_endpoint(
@@ -2419,10 +2514,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
-        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(
+            context.exception.request_url, "https://api.acme.ai/v1/chat/completions"
+        )
         self.assertEqual(len(calls), 1)
 
-    async def test_request_completion_endpoint_keeps_final_tls_error_generic(self) -> None:
+    async def test_request_completion_endpoint_keeps_final_tls_error_generic(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="deepseek",
             provider="openai",
@@ -2432,14 +2531,20 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         calls: list[dict[str, object]] = []
         outcomes: list[_FakeResponse | BaseException] = [
-            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
-            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"),
+            ssl.SSLError(
+                "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"
+            ),
+            ssl.SSLError(
+                "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac"
+            ),
         ]
 
         with (
             patch(
                 "app.modules.llm.runtime.httpx.AsyncClient",
-                side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+                side_effect=lambda *args, **kwargs: _CapturingAsyncClient(
+                    outcomes, calls, kwargs
+                ),
             ),
             patch("app.modules.llm.runtime._append_llm_runtime_log"),
         ):
@@ -2451,11 +2556,15 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
-        self.assertEqual(context.exception.request_url, "https://api.deepseek.com/chat/completions")
+        self.assertEqual(
+            context.exception.request_url, "https://api.deepseek.com/chat/completions"
+        )
         self.assertEqual(len(calls), 2)
         self.assertIsInstance(calls[1]["client_kwargs"].get("verify"), ssl.SSLContext)
 
-    async def test_request_completion_endpoint_keeps_timeout_error_generic(self) -> None:
+    async def test_request_completion_endpoint_keeps_timeout_error_generic(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -2470,7 +2579,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(outcomes, calls, kwargs),
+            side_effect=lambda *args, **kwargs: _CapturingAsyncClient(
+                outcomes, calls, kwargs
+            ),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
                 await _request_completion_endpoint(
@@ -2480,10 +2591,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
-        self.assertEqual(context.exception.request_url, "https://api.acme.ai/v1/chat/completions")
+        self.assertEqual(
+            context.exception.request_url, "https://api.acme.ai/v1/chat/completions"
+        )
         self.assertEqual(len(calls), 1)
 
-    async def test_request_completion_endpoint_allows_empty_chat_content_with_reasoning(self) -> None:
+    async def test_request_completion_endpoint_allows_empty_chat_content_with_reasoning(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="thinking",
             provider="openai",
@@ -2496,7 +2611,12 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 status_code=200,
                 payload={
                     "choices": [
-                        {"message": {"content": "", "reasoning_content": "internal reasoning"}},
+                        {
+                            "message": {
+                                "content": "",
+                                "reasoning_content": "internal reasoning",
+                            }
+                        },
                     ],
                 },
             ),
@@ -2516,7 +2636,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.content, "")
 
-    async def test_request_completion_endpoint_keeps_none_chat_content_with_reasoning_generic(self) -> None:
+    async def test_request_completion_endpoint_keeps_none_chat_content_with_reasoning_generic(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="thinking",
             provider="openai",
@@ -2529,7 +2651,12 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 status_code=200,
                 payload={
                     "choices": [
-                        {"message": {"content": None, "reasoning_content": "internal reasoning"}},
+                        {
+                            "message": {
+                                "content": None,
+                                "reasoning_content": "internal reasoning",
+                            }
+                        },
                     ],
                 },
             ),
@@ -2617,7 +2744,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(result.endpoint_kind, "responses")
-        self.assertEqual(result.request_url, "https://ark.cn-beijing.volces.com/api/v3/responses")
+        self.assertEqual(
+            result.request_url, "https://ark.cn-beijing.volces.com/api/v3/responses"
+        )
         self.assertEqual(
             result.attempted_urls,
             [
@@ -2631,7 +2760,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.usage.completion_tokens, 7)
         self.assertEqual(result.usage.total_tokens, 19)
 
-    async def test_request_chat_completion_retries_deepseek_bad_record_mac_with_tls12(self) -> None:
+    async def test_request_chat_completion_retries_deepseek_bad_record_mac_with_tls12(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="deepseek",
             provider="openai",
@@ -2641,7 +2772,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         calls: list[dict[str, object]] = []
         outcomes: list[_FakeResponse | BaseException] = [
-            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
+            ssl.SSLError(
+                "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"
+            ),
             _FakeResponse(
                 status_code=200,
                 payload={
@@ -2662,7 +2795,11 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch(
+                "app.modules.llm.runtime._append_llm_runtime_log",
+                side_effect=log_entries.append,
+                create=True,
+            ),
         ):
             result = await request_chat_completion(
                 profile,
@@ -2678,7 +2815,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         retry_verify = calls[1]["client_kwargs"].get("verify")
         self.assertIsInstance(retry_verify, ssl.SSLContext)
         self.assertEqual(retry_verify.maximum_version, ssl.TLSVersion.TLSv1_2)
-        self.assertTrue(any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries))
+        self.assertTrue(
+            any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries)
+        )
         self.assertTrue(any("tls12_retry" in entry for entry in log_entries))
 
     async def test_fetch_llm_profile_models_sends_connection_close_header(self) -> None:
@@ -2706,13 +2845,17 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         def fake_client(*args, **kwargs):
             return _CapturingAsyncClient(outcomes, calls, kwargs)
 
-        with patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client):
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client
+        ):
             result = await fetch_llm_profile_models(profile)
 
         self.assertTrue(result.ok)
         self.assertEqual(calls[0]["headers"]["Connection"], "close")
 
-    async def test_fetch_llm_profile_models_logs_bad_record_mac_without_showing_raw_ssl(self) -> None:
+    async def test_fetch_llm_profile_models_logs_bad_record_mac_without_showing_raw_ssl(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="deepseek",
             provider="openai",
@@ -2722,8 +2865,12 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         calls: list[dict[str, object]] = []
         outcomes: list[_FakeResponse | BaseException] = [
-            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
-            ssl.SSLError("[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"),
+            ssl.SSLError(
+                "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"
+            ),
+            ssl.SSLError(
+                "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2580)"
+            ),
         ]
         log_entries: list[str] = []
 
@@ -2732,7 +2879,11 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch(
+                "app.modules.llm.runtime._append_llm_runtime_log",
+                side_effect=log_entries.append,
+                create=True,
+            ),
         ):
             result = await fetch_llm_profile_models(profile)
 
@@ -2740,10 +2891,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("模型服务 TLS 连接失败", result.message)
         self.assertNotIn("_ssl.c", result.message)
         self.assertEqual(len(calls), 2)
-        self.assertTrue(any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries))
+        self.assertTrue(
+            any("SSLV3_ALERT_BAD_RECORD_MAC" in entry for entry in log_entries)
+        )
         self.assertTrue(any("_ssl.c:2580" in entry for entry in log_entries))
 
-    async def test_llm_http_failure_log_strips_query_and_fragment_from_urls(self) -> None:
+    async def test_llm_http_failure_log_strips_query_and_fragment_from_urls(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="deepseek",
             provider="openai",
@@ -2764,7 +2919,11 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.modules.llm.runtime.httpx.AsyncClient", side_effect=fake_client),
-            patch("app.modules.llm.runtime._append_llm_runtime_log", side_effect=log_entries.append, create=True),
+            patch(
+                "app.modules.llm.runtime._append_llm_runtime_log",
+                side_effect=log_entries.append,
+                create=True,
+            ),
         ):
             result = await fetch_llm_profile_models(profile)
 
@@ -2825,7 +2984,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         assert sent is not None
         self.assertEqual(sent.get("enable_thinking"), False)
 
-    async def test_probe_llm_profile_no_longer_hardcodes_thinking_for_deepseek(self) -> None:
+    async def test_probe_llm_profile_no_longer_hardcodes_thinking_for_deepseek(
+        self,
+    ) -> None:
         # Probe should not unconditionally inject `thinking` for deepseek when no session is provided.
         profile = LLMProfile(
             name="deepseek",
@@ -2886,7 +3047,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         assert sent is not None
         self.assertEqual(sent["max_tokens"], 8)
 
-    async def test_probe_llm_profile_uses_stepfun_budget_for_official_base_urls(self) -> None:
+    async def test_probe_llm_profile_uses_stepfun_budget_for_official_base_urls(
+        self,
+    ) -> None:
         base_urls = (
             "https://api.stepfun.com/v1",
             "https://api.stepfun.com/step_plan/v1/",
@@ -2921,7 +3084,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             assert sent is not None
             self.assertEqual(sent["max_tokens"], 128)
 
-    async def test_probe_llm_profile_reports_stepfun_reasoning_only_response(self) -> None:
+    async def test_probe_llm_profile_reports_stepfun_reasoning_only_response(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="stepfun",
             provider="openai",
@@ -2958,7 +3123,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         assert sent is not None
         self.assertEqual(sent["max_tokens"], 128)
 
-    async def test_probe_llm_profile_uses_provided_runtime_adaptation_with_session(self) -> None:
+    async def test_probe_llm_profile_uses_provided_runtime_adaptation_with_session(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -3028,7 +3195,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status_code, 200)
         self.assertIsNotNone(result.duration_ms)
 
-    async def test_fetch_llm_profile_models_reports_client_initialization_error(self) -> None:
+    async def test_fetch_llm_profile_models_reports_client_initialization_error(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="ark",
             provider="openai",
@@ -3039,15 +3208,21 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+            side_effect=ImportError(
+                "Using SOCKS proxy, but the 'socksio' package is not installed."
+            ),
         ):
             result = await fetch_llm_profile_models(profile)
 
         self.assertFalse(result.ok)
         self.assertIn("模型请求初始化失败", result.message)
         self.assertIn("SOCKS", result.message)
-        self.assertEqual(result.request_url, "https://ark.cn-beijing.volces.com/api/v3/models")
-        self.assertEqual(result.attempted_urls, ["https://ark.cn-beijing.volces.com/api/v3/models"])
+        self.assertEqual(
+            result.request_url, "https://ark.cn-beijing.volces.com/api/v3/models"
+        )
+        self.assertEqual(
+            result.attempted_urls, ["https://ark.cn-beijing.volces.com/api/v3/models"]
+        )
         self.assertEqual(result.endpoint_kind, "models")
         self.assertFalse(result.consumes_tokens)
 
@@ -3062,7 +3237,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+            side_effect=ImportError(
+                "Using SOCKS proxy, but the 'socksio' package is not installed."
+            ),
         ):
             result = await probe_llm_profile(profile)
 
@@ -3117,7 +3294,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("模型服务连接失败", formatted_from_exception)
         self.assertIn("网络", formatted_from_exception)
 
-    async def test_request_chat_completion_wraps_client_initialization_error(self) -> None:
+    async def test_request_chat_completion_wraps_client_initialization_error(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="ark",
             provider="openai",
@@ -3128,7 +3307,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=ImportError("Using SOCKS proxy, but the 'socksio' package is not installed."),
+            side_effect=ImportError(
+                "Using SOCKS proxy, but the 'socksio' package is not installed."
+            ),
         ):
             with self.assertRaises(LLMRuntimeError) as context:
                 await request_chat_completion(
@@ -3152,6 +3333,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ["https://ark.cn-beijing.volces.com/api/v3/chat/completions"],
         )
         self.assertEqual(context.exception.endpoint_kind, "chat_completions")
+
     async def test_request_chat_completion_reports_attempted_urls_on_404(self) -> None:
         profile = LLMProfile(
             name="ark",
@@ -3181,8 +3363,14 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-        self.assertIn("请求 URL: https://ark.cn-beijing.volces.com/api/v3/responses", str(context.exception))
-        self.assertIn("https://ark.cn-beijing.volces.com/api/v3/chat/completions", str(context.exception))
+        self.assertIn(
+            "请求 URL: https://ark.cn-beijing.volces.com/api/v3/responses",
+            str(context.exception),
+        )
+        self.assertIn(
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+            str(context.exception),
+        )
         self.assertEqual(
             context.exception.attempted_urls,
             [
@@ -3191,7 +3379,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_request_chat_completion_merges_extra_body_into_chat_payload(self) -> None:
+    async def test_request_chat_completion_merges_extra_body_into_chat_payload(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -3205,7 +3395,11 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 status_code=200,
                 payload={
                     "choices": [{"message": {"content": "OK"}}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
                 },
             ),
         ]
@@ -3229,7 +3423,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent.get("thinking"), {"type": "disabled"})
         self.assertEqual(sent.get("messages"), [{"role": "user", "content": "ping"}])
 
-    async def test_request_chat_completion_keeps_extra_body_on_responses_fallback(self) -> None:
+    async def test_request_chat_completion_keeps_extra_body_on_responses_fallback(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="responses-only",
             provider="openai",
@@ -3274,7 +3470,9 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(responses_payload.get("reasoning"), {"effort": "off"})
         self.assertEqual(responses_payload.get("reasoning_effort"), "low")
 
-    async def test_request_chat_completion_strips_thinking_keys_when_extra_body_none(self) -> None:
+    async def test_request_chat_completion_strips_thinking_keys_when_extra_body_none(
+        self,
+    ) -> None:
         profile = LLMProfile(
             name="acme",
             provider="openai",
@@ -3342,7 +3540,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             model_name="responses-only-v1",
         )
 
-    async def test_ensure_runtime_adaptation_learns_responses_and_hits_cache(self) -> None:
+    async def test_ensure_runtime_adaptation_learns_responses_and_hits_cache(
+        self,
+    ) -> None:
         from app.modules.llm.runtime import ensure_llm_runtime_adaptation
 
         profile = self._profile()
@@ -3375,7 +3575,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_ensure_runtime_adaptation_reports_chat_and_responses_urls_when_responses_probe_fails(self) -> None:
+    async def test_ensure_runtime_adaptation_reports_chat_and_responses_urls_when_responses_probe_fails(
+        self,
+    ) -> None:
         from app.modules.llm.runtime import ensure_llm_runtime_adaptation
 
         profile = self._profile()
@@ -3402,7 +3604,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_concurrent_uncommitted_sessions_share_one_endpoint_probe(self) -> None:
+    async def test_concurrent_uncommitted_sessions_share_one_endpoint_probe(
+        self,
+    ) -> None:
         from app.models import Base
         from app.modules.llm.adaptation import endpoint as llm_endpoint_adaptation
         from app.modules.llm.runtime import (
@@ -3478,8 +3682,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                         await endpoint_recorded.wait()
                         second = asyncio.create_task(ensure_from_own_session())
                         for _ in range(100):
-                            state = llm_endpoint_adaptation._endpoint_adaptation_locks.get(
-                                ("https://api.example.test/v1", profile.model_name),
+                            state = (
+                                llm_endpoint_adaptation._endpoint_adaptation_locks.get(
+                                    ("https://api.example.test/v1", profile.model_name),
+                                )
                             )
                             if state is not None and state.users == 2:
                                 break
@@ -3487,17 +3693,23 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                         else:
                             self.fail("第二个独立会话未进入 endpoint 协调锁")
                         release_recording.set()
-                        first_adaptation, second_adaptation = await asyncio.gather(first, second)
+                        first_adaptation, second_adaptation = await asyncio.gather(
+                            first, second
+                        )
 
                     self.assertEqual(probe_count, 1)
                     self.assertEqual(first_adaptation.endpoint_kind, "chat_completions")
-                    self.assertEqual(second_adaptation.endpoint_kind, "chat_completions")
+                    self.assertEqual(
+                        second_adaptation.endpoint_kind, "chat_completions"
+                    )
                     self.assertEqual(ensure_thinking.await_count, 2)
                 finally:
                     llm_endpoint_adaptation._endpoint_adaptation_locks.clear()
                     await engine.dispose()
 
-    async def test_protocol_error_invalidates_once_relearns_other_endpoint_and_retries(self) -> None:
+    async def test_protocol_error_invalidates_once_relearns_other_endpoint_and_retries(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import (
             get_cached_endpoint_kind,
             record_endpoint_adaptation,
@@ -3538,7 +3750,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             async with self.session_factory() as session:
                 result = await request_chat_completion(
                     profile,
-                    {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
                     session=session,
                     adaptation=LLMRuntimeAdaptation("chat_completions", None),
                 )
@@ -3573,7 +3788,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_non_protocol_error_keeps_learned_endpoint(self) -> None:
-        from app.modules.llm.adaptation.endpoint import get_cached_endpoint_kind, record_endpoint_adaptation
+        from app.modules.llm.adaptation.endpoint import (
+            get_cached_endpoint_kind,
+            record_endpoint_adaptation,
+        )
         from app.modules.llm.runtime import LLMRuntimeAdaptation
 
         profile = self._profile()
@@ -3588,7 +3806,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.llm.runtime.httpx.AsyncClient",
-            side_effect=lambda *args, **kwargs: _FakeAsyncClient([_FakeResponse(500, text="upstream error")], []),
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(
+                [_FakeResponse(500, text="upstream error")], []
+            ),
         ):
             async with self.session_factory() as session:
                 with self.assertRaises(LLMRuntimeError):
@@ -3607,7 +3827,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                     "chat_completions",
                 )
 
-    async def test_first_adaptation_merges_probe_urls_into_final_non_protocol_error(self) -> None:
+    async def test_first_adaptation_merges_probe_urls_into_final_non_protocol_error(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
         profile = self._profile()
@@ -3623,7 +3845,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         responses = [
             _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
-            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(
+                status_code=200, payload={"output_text": "endpoint probe OK"}
+            ),
             _FakeResponse(status_code=500, text="final responses request failed"),
         ]
         with patch(
@@ -3634,7 +3858,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(LLMRuntimeError) as context:
                     await request_chat_completion(
                         profile,
-                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "ping"}],
+                        },
                         session=session,
                     )
 
@@ -3650,7 +3877,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_protocol_retry_reports_all_attempted_urls_when_responses_probe_fails(self) -> None:
+    async def test_protocol_retry_reports_all_attempted_urls_when_responses_probe_fails(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
 
         profile = self._profile()
@@ -3676,7 +3905,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(LLMRuntimeError) as context:
                     await request_chat_completion(
                         profile,
-                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "ping"}],
+                        },
                         session=session,
                         adaptation=LLMRuntimeAdaptation("chat_completions", None),
                     )
@@ -3693,7 +3925,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(calls), 2)
 
-    async def test_protocol_retry_reports_all_attempted_urls_when_final_responses_request_fails(self) -> None:
+    async def test_protocol_retry_reports_all_attempted_urls_when_final_responses_request_fails(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
         from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
@@ -3716,7 +3950,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         responses = [
             _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
-            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(
+                status_code=200, payload={"output_text": "endpoint probe OK"}
+            ),
             _FakeResponse(status_code=500, text="final responses request failed"),
         ]
         calls: list[tuple[str, dict[str, object] | None]] = []
@@ -3728,7 +3964,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(LLMRuntimeError) as context:
                     await request_chat_completion(
                         profile,
-                        {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                        {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "ping"}],
+                        },
                         session=session,
                         adaptation=LLMRuntimeAdaptation("chat_completions", None),
                     )
@@ -3746,7 +3985,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(calls), 3)
 
-    async def test_protocol_retry_returns_success_when_operation_log_write_fails(self) -> None:
+    async def test_protocol_retry_returns_success_when_operation_log_write_fails(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
         from app.modules.llm.adaptation.thinking import record_thinking_adaptation
 
@@ -3769,7 +4010,9 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         responses = [
             _FakeResponse(status_code=200, payload={"output_text": "wrong shell"}),
-            _FakeResponse(status_code=200, payload={"output_text": "endpoint probe OK"}),
+            _FakeResponse(
+                status_code=200, payload={"output_text": "endpoint probe OK"}
+            ),
             _FakeResponse(status_code=200, payload={"output_text": "recovered"}),
         ]
         with (
@@ -3785,7 +4028,10 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
             async with self.session_factory() as session:
                 result = await request_chat_completion(
                     profile,
-                    {"model": profile.model_name, "messages": [{"role": "user", "content": "ping"}]},
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
                     session=session,
                     adaptation=LLMRuntimeAdaptation("chat_completions", None),
                 )

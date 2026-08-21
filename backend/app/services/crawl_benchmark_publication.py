@@ -13,7 +13,9 @@ from urllib.parse import urlsplit
 
 PUBLICATION_SCHEMA_VERSION = 3
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_TARGET_ALIASES_PATH = REPOSITORY_ROOT / "config" / "crawl-benchmark-aliases.json"
+DEFAULT_TARGET_ALIASES_PATH = (
+    REPOSITORY_ROOT / "config" / "crawl-benchmark-aliases.json"
+)
 PUBLIC_COMPLETE_STATUSES = {"needs_review", "partially_completed", "completed"}
 PUBLIC_ADAPTING_STATUSES = {"failed"}
 PUBLIC_ACTIVE_STATUSES = PUBLIC_COMPLETE_STATUSES | PUBLIC_ADAPTING_STATUSES
@@ -72,7 +74,9 @@ def _load_database_records_from_connection(
         str(row[1])
         for row in connection.execute("PRAGMA table_info(crawl_job_runs)").fetchall()
     }
-    app_version_expression = "run.app_version" if "app_version" in run_columns else "NULL"
+    app_version_expression = (
+        "run.app_version" if "app_version" in run_columns else "NULL"
+    )
     if "crawl_candidate_enrichment_tasks" in table_names:
         enrichment_cte = """,
         enrichment_stats AS (
@@ -97,7 +101,9 @@ def _load_database_records_from_connection(
             COALESCE(enrichment_stats.pending_count, 0) AS enrichment_pending_count,
             COALESCE(enrichment_stats.failed_count, 0) AS enrichment_failed_count,
         """
-        enrichment_join = "LEFT JOIN enrichment_stats ON enrichment_stats.job_id = job.id"
+        enrichment_join = (
+            "LEFT JOIN enrichment_stats ON enrichment_stats.job_id = job.id"
+        )
     else:
         enrichment_cte = ""
         enrichment_columns = """
@@ -189,7 +195,11 @@ def _database_row_to_public_record(row: Mapping[str, Any]) -> dict[str, object] 
 
     university, school = normalize_public_target(row["university"], row["school"])
     start_url = _safe_public_url(row["start_url"])
-    if not (_looks_like_public_label(university) and _looks_like_public_label(school) and start_url):
+    if not (
+        _looks_like_public_label(university)
+        and _looks_like_public_label(school)
+        and start_url
+    ):
         return None
 
     candidate_count = _nonnegative_integer(row["candidate_count"])
@@ -237,7 +247,9 @@ def _database_row_to_public_record(row: Mapping[str, Any]) -> dict[str, object] 
         "candidateCount": candidate_count,
         "emailCount": _bounded_count(row["email_count"], candidate_count),
         "titleCount": _bounded_count(row["title_count"], candidate_count),
-        "researchDirectionCount": _bounded_count(row["research_count"], candidate_count),
+        "researchDirectionCount": _bounded_count(
+            row["research_count"], candidate_count
+        ),
         "enrichmentSelectedCount": enrichment_selected_count,
         "enrichmentSucceededCount": enrichment_succeeded_count,
         "enrichmentPendingCount": enrichment_pending_count,
@@ -306,7 +318,11 @@ def _legacy_row_to_public_record(
         values["school"],
     )
     start_url = _safe_public_url(values["start_url"])
-    if not (_looks_like_public_label(university) and _looks_like_public_label(school) and start_url):
+    if not (
+        _looks_like_public_label(university)
+        and _looks_like_public_label(school)
+        and start_url
+    ):
         return None
 
     candidate_count = _nonnegative_integer(values["candidate_count"])
@@ -335,7 +351,9 @@ def _legacy_row_to_public_record(
         "candidateCount": candidate_count,
         "emailCount": _bounded_count(values["email_count"], candidate_count),
         "titleCount": _bounded_count(values["title_count"], candidate_count),
-        "researchDirectionCount": _bounded_count(values["research_count"], candidate_count),
+        "researchDirectionCount": _bounded_count(
+            values["research_count"], candidate_count
+        ),
         "enrichmentSelectedCount": None,
         "enrichmentSucceededCount": None,
         "enrichmentPendingCount": None,

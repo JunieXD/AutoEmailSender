@@ -148,7 +148,8 @@ def _build_event(
 ) -> CommunicationEvent:
     ordered_logs = sorted(logs, key=lambda log: (log.created_at, log.id))
     successful = any(
-        log.direction != EmailDirection.SENT.value or not (log.failure_summary or "").strip()
+        log.direction != EmailDirection.SENT.value
+        or not (log.failure_summary or "").strip()
         for log in ordered_logs
     )
     candidate_logs = (
@@ -178,8 +179,7 @@ def _build_event(
         log=canonical_log,
         logs=tuple(ordered_logs),
         source_identities=tuple(
-            identities_by_id[identity_id]
-            for identity_id in sorted(identities_by_id)
+            identities_by_id[identity_id] for identity_id in sorted(identities_by_id)
         ),
         created_at=min(log.created_at for log in ordered_logs),
         successful=successful,

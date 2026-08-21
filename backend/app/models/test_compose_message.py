@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import JSON, ForeignKey, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -44,7 +44,9 @@ class TestComposeMessage(Base):
         server_default=text("'sent'"),
     )
     rfc_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    provider_payload: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),

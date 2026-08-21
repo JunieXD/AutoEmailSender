@@ -118,7 +118,10 @@ async def execute_agent_mutation(
                         code="MUTATION_RESULT_UNKNOWN",
                         message="同一操作仍处于结果未知状态；请先读取对应业务对象确认实际结果，不能重复执行。",
                         retryable=False,
-                        details={"request_id": normalized_key, "receipt_id": existing.id},
+                        details={
+                            "request_id": normalized_key,
+                            "receipt_id": existing.id,
+                        },
                     )
                 _set_mutation_receipt(
                     {
@@ -180,8 +183,12 @@ async def execute_agent_factory_mutation(
                     retryable=False,
                     details={"request_id": normalized_key, "receipt_id": existing.id},
                 )
-            _set_mutation_receipt({"id": existing.id, "status": "replayed", "command": existing.command})
-            return _mark_replayed_response(response_type.model_validate(existing.response))
+            _set_mutation_receipt(
+                {"id": existing.id, "status": "replayed", "command": existing.command}
+            )
+            return _mark_replayed_response(
+                response_type.model_validate(existing.response)
+            )
         receipt = AgentMutationReceipt(
             id=new_mutation_receipt_id(),
             command=command,
@@ -219,9 +226,15 @@ async def execute_agent_factory_mutation(
                     retryable=False,
                     details={"request_id": normalized_key, "receipt_id": existing.id},
                 )
-            _set_mutation_receipt({"id": existing.id, "status": "replayed", "command": existing.command})
-            return _mark_replayed_response(response_type.model_validate(existing.response))
-        _set_mutation_receipt({"id": receipt.id, "status": "pending", "command": command})
+            _set_mutation_receipt(
+                {"id": existing.id, "status": "replayed", "command": existing.command}
+            )
+            return _mark_replayed_response(
+                response_type.model_validate(existing.response)
+            )
+        _set_mutation_receipt(
+            {"id": receipt.id, "status": "pending", "command": command}
+        )
 
     try:
         response = await mutation()
@@ -263,7 +276,9 @@ async def execute_agent_factory_mutation(
             )
         stored.response = response.model_dump(mode="json")
         await session.commit()
-        _set_mutation_receipt({"id": stored.id, "status": "applied", "command": command})
+        _set_mutation_receipt(
+            {"id": stored.id, "status": "applied", "command": command}
+        )
     return response
 
 
@@ -296,10 +311,7 @@ def ensure_same_idempotent_request(
     command: str,
     request_fingerprint: str,
 ) -> None:
-    if (
-        receipt.command != command
-        or receipt.request_fingerprint != request_fingerprint
-    ):
+    if receipt.command != command or receipt.request_fingerprint != request_fingerprint:
         raise AgentApiError(
             status_code=409,
             code="IDEMPOTENCY_KEY_REUSED",
@@ -361,5 +373,7 @@ async def _remove_pending_receipt(
         )
         if receipt is None or not _is_pending_response(receipt.response):
             return
-        await session.execute(delete(AgentMutationReceipt).where(AgentMutationReceipt.id == receipt.id))
+        await session.execute(
+            delete(AgentMutationReceipt).where(AgentMutationReceipt.id == receipt.id)
+        )
         await session.commit()

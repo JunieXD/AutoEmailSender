@@ -12,7 +12,9 @@ BACKEND_ERROR_LOG_NAME = "backend-errors.log"
 def _append_backend_error_entry(entry: str) -> None:
     log_dir = get_settings().data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    with (log_dir / BACKEND_ERROR_LOG_NAME).open("a", encoding="utf-8", newline="\n") as file:
+    with (log_dir / BACKEND_ERROR_LOG_NAME).open(
+        "a", encoding="utf-8", newline="\n"
+    ) as file:
         file.write(entry)
 
 
@@ -27,7 +29,9 @@ def write_backend_error_log(
 
     try:
         timestamp = datetime.now(UTC).isoformat()
-        traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        traceback_text = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
         diagnostic_line = sqlite_lock_diagnostic_line(exc)
         diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (
@@ -47,7 +51,9 @@ def write_backend_worker_error_log(
 ) -> None:
     try:
         timestamp = datetime.now(UTC).isoformat()
-        traceback_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        traceback_text = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
         diagnostic_line = sqlite_lock_diagnostic_line(exc)
         diagnostic_text = f"{diagnostic_line}\n" if diagnostic_line else ""
         entry = (

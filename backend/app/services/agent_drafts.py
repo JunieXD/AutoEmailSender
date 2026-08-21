@@ -226,7 +226,9 @@ async def _configure_agent_draft(
         selected_template = (
             await get_outreach_template(session, payload.template_id)
             if payload.template_id is not None
-            else await get_default_outreach_template_for_identity(session, task.identity)
+            else await get_default_outreach_template_for_identity(
+                session, task.identity
+            )
         )
         internal_mode = (
             OUTREACH_GENERATION_MODE_TEMPLATE
@@ -270,11 +272,19 @@ async def _configure_agent_draft(
         task.outreach_template_id = selected_template.id if selected_template else None
         task.outreach_template_snapshot_version = 1
         task.outreach_generation_mode = (
-            "manual" if payload.generation_mode == "manual" else resolved.generation_mode
+            "manual"
+            if payload.generation_mode == "manual"
+            else resolved.generation_mode
         )
-        task.outreach_template_subject = _normalize_nullable_text(resolved.subject_template)
-        task.outreach_template_body_text = _normalize_nullable_text(resolved.body_text_template)
-        task.outreach_template_body_html = _normalize_nullable_text(resolved.body_html_template)
+        task.outreach_template_subject = _normalize_nullable_text(
+            resolved.subject_template
+        )
+        task.outreach_template_body_text = _normalize_nullable_text(
+            resolved.body_text_template
+        )
+        task.outreach_template_body_html = _normalize_nullable_text(
+            resolved.body_html_template
+        )
         task.generated_subject = None
         task.generated_content_text = None
         task.generated_content_html = None
@@ -316,12 +326,17 @@ async def _configure_agent_draft(
 def _ensure_draft_only_state(task: EmailTask) -> None:
     if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
         raise ValueError("草稿正在生成，请等待完成后再修改")
-    if task.status in {
-        EmailTaskStatus.SENDING.value,
-        EmailTaskStatus.SENT.value,
-        EmailTaskStatus.REPLY_DETECTED.value,
-        EmailTaskStatus.CANCELED.value,
-    } or task.sent_at is not None or task.is_replied:
+    if (
+        task.status
+        in {
+            EmailTaskStatus.SENDING.value,
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+            EmailTaskStatus.CANCELED.value,
+        }
+        or task.sent_at is not None
+        or task.is_replied
+    ):
         raise ValueError("当前任务不能作为 draft_only 草稿修改")
 
 
@@ -371,7 +386,9 @@ async def _validate_attachment_material_ids(
         raise ValueError("存在已删除或不存在的随信附件")
 
 
-def _normalize_manual_body(body_text: str, body_html: str | None) -> tuple[str, str | None]:
+def _normalize_manual_body(
+    body_text: str, body_html: str | None
+) -> tuple[str, str | None]:
     normalized_text = body_text.strip()
     normalized_html = (body_html or "").strip()
     if normalized_html:

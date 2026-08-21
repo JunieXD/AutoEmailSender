@@ -8,12 +8,8 @@ Keep these sections and order:
 2. `### 体验优化`
 3. `### 问题修复`
 4. `## 安装说明`
-5. `## 自动更新`
-6. `## 导师抓取 Skill`
 
-Do not add `## 本次更新`, developer-only sections, raw commit lists, or sub-bullets. Keep the public Skill guide link at the bottom:
-
-`https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill`
+Do not add `## 本次更新`, `## 自动更新`, `## 导师抓取 Skill`, developer-only sections, raw commit lists, or sub-bullets.
 
 ## Writing Rules
 
@@ -22,7 +18,6 @@ Do not add `## 本次更新`, developer-only sections, raw commit lists, or sub-
 - Preserve the key action, object, and visible result. Omit field lists, option lists, progress internals, background stages, table names, parameter names, protocols, cache keys, and lock files unless essential for installation, upgrades, or data safety.
 - Prefer concrete results over generic claims such as `更方便`, `提升效率`, or `体验更好`.
 - Translate packaging/signing work into user-visible installation or update effects. Omit development-only, test-only, docs-only, badge, and website-copy changes unless ordinary usage changes.
-- Describe a new or materially changed repository Skill as a separately installed capability and point to the public guide. Never imply the desktop installer contains it.
 
 Use direct product language:
 
@@ -41,13 +36,8 @@ Use exact package names:
 
 - Windows: `AutoEmailSender-Setup-x.y.z.exe`
 - macOS Apple Silicon: `AutoEmailSender-x.y.z-arm64.dmg`
-- standalone Skill asset: `crawl-mentors-to-xlsx-vx.y.z.zip`
 
-Do not put the Skill asset's direct download URL in the announcement; send users to the installation guide.
-
-Explain macOS first-open behavior in plain language: Apple official verification is not complete, so macOS may block first launch; direct users to “系统设置 > 隐私与安全性” and “仍要打开”. State that Intel Mac is unsupported until an Intel or universal build exists. Do not mention ad-hoc signing, Developer ID, notarization, Gatekeeper commands, or require generic GitHub-only downloads.
-
-Under automatic updates, state briefly that Windows and macOS Apple Silicon support in-app updates. Keep the transition note that pre-Sparkle macOS clients must manually install one current DMG first. Do not promise silent installation or automatic download; Sparkle installation remains user-confirmed.
+Explain macOS first-open behavior in plain language: Apple official verification is not complete, so macOS may block first launch; direct users to “系统设置 > 隐私与安全性” and “仍要打开”. Do not add an Intel Mac availability sentence. Do not mention ad-hoc signing, Developer ID, notarization, Gatekeeper commands, or require generic GitHub-only downloads.
 
 ## Tone
 

@@ -201,14 +201,19 @@ async def _calculate_identity_professor_match(
     ensure_material_extracted_text(match_material)
     if not _has_professor_match_evidence(professor):
         raise ValueError("缺少研究方向或近期论文，暂不能分析匹配度")
-    if source_task is not None and not force and source_task.status in {
-        EmailTaskStatus.MATCHED.value,
-        EmailTaskStatus.REVIEW_REQUIRED.value,
-        EmailTaskStatus.APPROVED.value,
-        EmailTaskStatus.SCHEDULED.value,
-        EmailTaskStatus.SENT.value,
-        EmailTaskStatus.REPLY_DETECTED.value,
-    }:
+    if (
+        source_task is not None
+        and not force
+        and source_task.status
+        in {
+            EmailTaskStatus.MATCHED.value,
+            EmailTaskStatus.REVIEW_REQUIRED.value,
+            EmailTaskStatus.APPROVED.value,
+            EmailTaskStatus.SCHEDULED.value,
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+        }
+    ):
         return _match_action_result(
             active_identity_id=active_identity_id,
             professor_id=professor.id,

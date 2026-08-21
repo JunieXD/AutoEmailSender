@@ -116,7 +116,11 @@ def fetch_message_headers_by_uid(client: object, uid: int) -> bytes:
     if status != "OK" or not payload:
         return b""
     for item in payload:
-        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+        if (
+            isinstance(item, tuple)
+            and len(item) >= 2
+            and isinstance(item[1], (bytes, bytearray))
+        ):
             return bytes(item[1])
     return b""
 
@@ -243,7 +247,9 @@ def search_uids_since(client: object, last_seen_uid: int | None) -> list[int]:
     if status != "OK" or not payload:
         return []
     raw = payload[0] if payload else b""
-    return [int(item) for item in raw.split() if item.isdigit() and int(item) >= start_uid]
+    return [
+        int(item) for item in raw.split() if item.isdigit() and int(item) >= start_uid
+    ]
 
 
 def search_uids_since_date(client: object, since_date: date) -> list[int]:
@@ -258,7 +264,9 @@ def search_uids_from_sender(client: object, from_email: str) -> list[int]:
     return _parse_uid_search_payload(status, payload)
 
 
-def search_uids_from_sender_since(client: object, from_email: str, since_date: date) -> list[int]:
+def search_uids_from_sender_since(
+    client: object, from_email: str, since_date: date
+) -> list[int]:
     normalized = parseaddr(from_email)[1] or from_email
     escaped = _escape_imap_search_value(normalized)
     criterion = f'(FROM "{escaped}" SINCE {_format_imap_search_date(since_date)})'
@@ -307,14 +315,16 @@ def search_uids_combined_sent_recipient(
     escaped = _escape_imap_search_value(recipient_email)
     recipient_criterion = f'OR (OR (TO "{escaped}") (CC "{escaped}")) (BCC "{escaped}")'
     criterion = (
-        f'({recipient_criterion})'
+        f"({recipient_criterion})"
         if since_date is None
-        else f'(SINCE {_format_imap_search_date(since_date)} {recipient_criterion})'
+        else f"(SINCE {_format_imap_search_date(since_date)} {recipient_criterion})"
     )
     status, payload = client.uid("SEARCH", None, criterion)
     if status != "OK":
         return ImapSearchResult(ok=False, uids=[])
-    return ImapSearchResult(ok=True, uids=sorted(set(_parse_uid_search_payload(status, payload))))
+    return ImapSearchResult(
+        ok=True, uids=sorted(set(_parse_uid_search_payload(status, payload)))
+    )
 
 
 def _recipient_search_criterion(
@@ -325,7 +335,7 @@ def _recipient_search_criterion(
     field_criterion = f'{field} "{escaped_email}"'
     if since_date is None:
         return f"({field_criterion})"
-    return f'({field_criterion} SINCE {_format_imap_search_date(since_date)})'
+    return f"({field_criterion} SINCE {_format_imap_search_date(since_date)})"
 
 
 def _escape_imap_search_value(value: str) -> str:
@@ -377,10 +387,18 @@ def _split_header_fetch_payload_by_uid_range(
 
 
 def _extract_uid_from_fetch_response(response: object) -> int | None:
-    text = response.decode("utf-8", errors="ignore") if isinstance(response, (bytes, bytearray)) else str(response)
+    text = (
+        response.decode("utf-8", errors="ignore")
+        if isinstance(response, (bytes, bytearray))
+        else str(response)
+    )
     parts = text.replace("(", " ").replace(")", " ").split()
     for index, part in enumerate(parts):
-        if part.upper() == "UID" and index + 1 < len(parts) and parts[index + 1].isdigit():
+        if (
+            part.upper() == "UID"
+            and index + 1 < len(parts)
+            and parts[index + 1].isdigit()
+        ):
             return int(parts[index + 1])
     return None
 
@@ -402,7 +420,11 @@ def _fetch_body_section(client: object, uid: int, section: str) -> bytes:
     if status != "OK" or not payload:
         return b""
     for item in payload:
-        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+        if (
+            isinstance(item, tuple)
+            and len(item) >= 2
+            and isinstance(item[1], (bytes, bytearray))
+        ):
             return bytes(item[1])
     return b""
 
@@ -435,7 +457,11 @@ def _collect_text_body_parts(parsed: Any, prefix: str = "") -> list[TextBodyPart
             part_number += 1
         return parts
 
-    if len(parsed) < 2 or not isinstance(parsed[0], str) or not isinstance(parsed[1], str):
+    if (
+        len(parsed) < 2
+        or not isinstance(parsed[0], str)
+        or not isinstance(parsed[1], str)
+    ):
         return []
     content_type = f"{parsed[0]}/{parsed[1]}".lower()
     if content_type not in {"text/plain", "text/html"}:
