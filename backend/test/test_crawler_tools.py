@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import httpx
 from sqlalchemy import select
@@ -1964,6 +1964,177 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, http_snapshot)
         self.assertEqual(cached, http_snapshot)
         browser.assert_awaited_once()
+
+    async def test_profile_http_400_retries_same_host_https_url(self) -> None:
+        http_url = "http://faculty.example.edu/people/zhang"
+        https_url = "https://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_failure = PageSnapshot(
+            url=http_url,
+            fetch_method="http",
+            status="failed",
+            http_status_code=400,
+            error_message="HTTP request failed: HTTPStatusError: 400 Bad Request",
+        )
+        https_success = PageSnapshot(
+            url=https_url,
+            title="张三",
+            text="张三 邮箱 zhang@example.edu",
+            html="<main>张三 邮箱 zhang@example.edu</main>",
+            fetch_method="http",
+            status="succeeded",
+            http_status_code=200,
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.pages.tools.crawl_page_with_http",
+                new=AsyncMock(side_effect=[http_failure, https_success]),
+            ) as direct_fetch,
+            patch(
+                "app.modules.crawler.pages.tools.browser_investigate",
+                new=AsyncMock(),
+            ) as browser,
+            patch(
+                "app.modules.crawler.pages.tools.mark_page_fetch_result",
+                new=AsyncMock(),
+            ) as mark_result,
+        ):
+            actual = await crawl_page_with_browser_fallback(
+                ctx,
+                http_url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertEqual(actual, https_success)
+        self.assertEqual(
+            direct_fetch.await_args_list,
+            [call(ctx, http_url), call(ctx, https_url)],
+        )
+        browser.assert_not_awaited()
+        self.assertEqual(mark_result.await_count, 2)
+        alias_call = mark_result.await_args_list[-1]
+        self.assertEqual(alias_call.kwargs["original_url"], http_url)
+        self.assertEqual(alias_call.kwargs["snapshot"].url, http_url)
+        self.assertEqual(
+            alias_call.kwargs["fallback_reason"],
+            "same_host_http_profile_upgraded_to_https_after_400",
+        )
+        self.assertIs(ctx.get_cached_page_snapshot(http_url), https_success)
+        self.assertIs(ctx.get_cached_page_snapshot(https_url), https_success)
+
+    async def test_profile_http_400_does_not_upgrade_sibling_host(self) -> None:
+        http_url = "http://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://cs.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_failure = PageSnapshot(
+            url=http_url,
+            fetch_method="http",
+            status="failed",
+            http_status_code=400,
+            error_message="HTTP request failed: HTTPStatusError: 400 Bad Request",
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_failure),
+        ) as direct_fetch:
+            actual = await crawl_page_with_browser_fallback(
+                ctx,
+                http_url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertEqual(actual, http_failure)
+        direct_fetch.assert_awaited_once_with(ctx, http_url)
+
+    async def test_profile_successful_http_url_is_not_upgraded(self) -> None:
+        http_url = "http://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_success = PageSnapshot(
+            url=http_url,
+            title="张三",
+            text="张三 邮箱 zhang@example.edu",
+            html="<main>张三 邮箱 zhang@example.edu</main>",
+            fetch_method="http",
+            status="succeeded",
+            http_status_code=200,
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
+            new=AsyncMock(return_value=http_success),
+        ) as direct_fetch:
+            actual = await crawl_page_with_browser_fallback(
+                ctx,
+                http_url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertEqual(actual, http_success)
+        direct_fetch.assert_awaited_once_with(ctx, http_url)
+
+    async def test_profile_http_400_keeps_failure_when_https_retry_fails(self) -> None:
+        http_url = "http://faculty.example.edu/people/zhang"
+        https_url = "https://faculty.example.edu/people/zhang"
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://faculty.example.edu/directory",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        http_failure = PageSnapshot(
+            url=http_url,
+            fetch_method="http",
+            status="failed",
+            http_status_code=400,
+            error_message="HTTP request failed: HTTPStatusError: 400 Bad Request",
+        )
+        https_failure = PageSnapshot(
+            url=https_url,
+            fetch_method="http",
+            status="failed",
+            http_status_code=404,
+            error_message="HTTP request failed: HTTPStatusError: 404 Not Found",
+        )
+
+        with patch(
+            "app.modules.crawler.pages.tools.crawl_page_with_http",
+            new=AsyncMock(side_effect=[http_failure, https_failure]),
+        ) as direct_fetch:
+            actual = await crawl_page_with_browser_fallback(
+                ctx,
+                http_url,
+                intent="profile",
+                force_fetch=True,
+            )
+
+        self.assertEqual(actual, http_failure)
+        self.assertEqual(
+            direct_fetch.await_args_list,
+            [call(ctx, http_url), call(ctx, https_url)],
+        )
 
     async def test_browser_failure_after_http_redirect_does_not_poison_requested_url(self) -> None:
         request_url = "https://faculty.example.edu/go"

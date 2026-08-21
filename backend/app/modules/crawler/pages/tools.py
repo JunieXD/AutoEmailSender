@@ -701,11 +701,18 @@ class CrawlToolContext:
 
     def remember_page_snapshot(self, snapshot: PageSnapshot) -> None:
         if snapshot.url:
-            normalized = _normalize_page_cache_url(snapshot.url)
-            self.page_snapshot_cache[normalized] = snapshot
-            self.page_snapshot_cache.move_to_end(normalized)
-            while len(self.page_snapshot_cache) > MAX_PAGE_SNAPSHOT_CACHE_ENTRIES:
-                self.page_snapshot_cache.popitem(last=False)
+            self.remember_page_snapshot_for_url(snapshot.url, snapshot)
+
+    def remember_page_snapshot_for_url(
+        self,
+        url: str,
+        snapshot: PageSnapshot,
+    ) -> None:
+        normalized = _normalize_page_cache_url(url)
+        self.page_snapshot_cache[normalized] = snapshot
+        self.page_snapshot_cache.move_to_end(normalized)
+        while len(self.page_snapshot_cache) > MAX_PAGE_SNAPSHOT_CACHE_ENTRIES:
+            self.page_snapshot_cache.popitem(last=False)
 
     def forget_page_snapshot(self, url: str) -> None:
         self.page_snapshot_cache.pop(_normalize_page_cache_url(url), None)
@@ -1515,6 +1522,49 @@ async def crawl_page_with_browser_fallback(
 
     http_snapshot = await crawl_page_with_http(ctx, url)
     await _ensure_crawl_job_can_continue_for_context(ctx)
+    https_upgrade_url = _profile_https_upgrade_url(
+        start_url=ctx.start_url,
+        requested_url=absolute_url,
+        intent=intent,
+        failed_snapshot=http_snapshot,
+    )
+    if https_upgrade_url is not None:
+        upgraded_snapshot = await crawl_page_with_browser_fallback(
+            ctx,
+            https_upgrade_url,
+            intent=intent,
+            force_fetch=True,
+        )
+        await _ensure_crawl_job_can_continue_for_context(ctx)
+        if upgraded_snapshot.status == "succeeded":
+            processed_snapshot = _apply_runtime_url_denylist_after_fetch(
+                ctx,
+                requested_url=absolute_url,
+                snapshot=upgraded_snapshot,
+            )
+            if processed_snapshot.status == "succeeded":
+                await mark_page_fetch_result(
+                    ctx.session_factory,
+                    job_id=ctx.job_id,
+                    original_url=absolute_url,
+                    snapshot=processed_snapshot.model_copy(update={"url": absolute_url}),
+                    fetch_mode=(
+                        "browser"
+                        if processed_snapshot.fetch_method == "browser"
+                        else "direct"
+                    ),
+                    direct_status=http_snapshot.status,
+                    fallback_reason="same_host_http_profile_upgraded_to_https_after_400",
+                    browser_status=(
+                        processed_snapshot.status
+                        if processed_snapshot.fetch_method == "browser"
+                        else None
+                    ),
+                )
+                ctx.forget_page_snapshot(absolute_url)
+                ctx.remember_page_snapshot(processed_snapshot)
+                ctx.remember_page_snapshot_for_url(absolute_url, processed_snapshot)
+                return processed_snapshot
     if _should_use_browser_fallback(http_snapshot):
         if _is_http_blocked_snapshot(http_snapshot):
             ctx.mark_http_blocked(http_snapshot.url or absolute_url)
@@ -1925,6 +1975,34 @@ def _http_compatibility_url(url: str) -> str | None:
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         return None
     return parsed._replace(scheme="http").geturl()
+
+
+def _profile_https_upgrade_url(
+    *,
+    start_url: str,
+    requested_url: str,
+    intent: CrawlPageIntent,
+    failed_snapshot: PageSnapshot,
+) -> str | None:
+    if (
+        intent != "profile"
+        or failed_snapshot.status != "failed"
+        or failed_snapshot.http_status_code != 400
+    ):
+        return None
+    start = urlparse(start_url)
+    requested = urlparse(requested_url)
+    if (
+        start.scheme.lower() != "https"
+        or requested.scheme.lower() != "http"
+        or not start.hostname
+        or not requested.hostname
+        or start.hostname.lower() != requested.hostname.lower()
+        or start.port is not None
+        or requested.port is not None
+    ):
+        return None
+    return requested._replace(scheme="https").geturl()
 
 
 def _should_try_http_compatibility_fallback(
