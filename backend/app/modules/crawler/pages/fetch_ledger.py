@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Protocol
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from app.core.time import utc_now
 

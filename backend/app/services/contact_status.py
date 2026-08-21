@@ -14,7 +14,6 @@ from app.models import (
     EmailLog,
     EmailLogRecordState,
     EmailTask,
-    EmailTaskCancellationReason,
     EmailTaskStatus,
 )
 from app.modules.campaigns.public import email_task_is_not_user_removed_expression

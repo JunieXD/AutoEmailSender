@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import (
     BatchTask,

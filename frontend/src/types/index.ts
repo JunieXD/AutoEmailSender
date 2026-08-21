@@ -2,65 +2,6 @@ export type OutreachGenerationMode = 'llm' | 'template';
 export type DraftGenerationSource = 'llm' | 'template' | 'template_fallback';
 export type DraftFallbackReason = 'missing_research_direction';
 
-export type MentorStatus = '未发送' | '已读' | '待审核' | '已回复' | '婉拒';
-
-export interface Mentor {
-  id: string;
-  name: string;
-  title: string;
-  university: string;
-  school: string;
-  research: string[];
-  matchScore: number;
-  sentCount: number;
-  status: MentorStatus;
-}
-
-export interface SmtpConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  fromEmail: string;
-  fromName: string;
-  useTLS: boolean;
-}
-
-export interface ImapConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  useSSL: boolean;
-}
-
-export interface ResumeFile {
-  name: string;
-  size: number;
-  url: string;
-}
-
-export interface Profile {
-  id: string;
-  name: string;
-  title: string;
-  direction: string;
-  avatar?: string;
-  smtp: SmtpConfig;
-  imap?: ImapConfig;
-  resumes: ResumeFile[];
-  isDefault: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface LLMConfig {
-  openaiApiKey?: string;
-  deepseekApiKey?: string;
-  model: 'openai' | 'deepseek';
-  updatedAt?: string;
-}
-
 export type IdentityMaterialType = 'resume' | 'transcript' | 'publication' | 'portfolio' | 'other';
 
 export interface IdentityMaterialDTO {
@@ -1318,10 +1259,4 @@ export const MATERIAL_TYPE_LABELS: Record<IdentityMaterialType, string> = {
   publication: '论文',
   portfolio: '作品集',
   other: '其他',
-};
-
-export const WORKSPACE_DIRECTION_LABELS: Record<WorkspaceMessageDTO['direction'], string> = {
-  draft: '草稿',
-  sent: '已发送',
-  received: '已收到',
 };

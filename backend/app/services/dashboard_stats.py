@@ -5,15 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
-from sqlalchemy import and_, case, func, literal, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import lazyload, load_only, selectinload
+from sqlalchemy.orm import load_only
 
 from app.core.time import as_utc_aware, local_now, utc_now
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     EmailDirection,
-    EmailLog,
     EmailTask,
     EmailTaskStatus,
     IdentityProfile,
@@ -52,11 +51,9 @@ from app.schemas.dashboard import (
     DashboardSchoolFilterRead,
     DashboardSchoolFilterSchoolRead,
 )
-from app.services.contact_status import build_contact_status_by_professor
 from app.services.match_results import (
     MatchResultView,
     ResolvedMatchResults,
-    load_resolved_match_results,
     match_result_is_stale,
     resolve_identity_match_scope,
 )

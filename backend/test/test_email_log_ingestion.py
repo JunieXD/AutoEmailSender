@@ -371,7 +371,7 @@ class EmailLogIngestionTestCase(unittest.TestCase):
 
         async def scenario() -> tuple[int, EmailLog]:
             async with self.session_factory() as session:
-                first = await upsert_email_log(session, record)
+                await upsert_email_log(session, record)
                 second = await upsert_email_log(session, record)
                 await session.commit()
                 count = await session.scalar(select(func.count()).select_from(EmailLog))
@@ -470,7 +470,7 @@ class EmailLogIngestionTestCase(unittest.TestCase):
     def test_deduplicates_by_imap_location_without_message_id(self) -> None:
         async def scenario() -> tuple[int, EmailLog]:
             async with self.session_factory() as session:
-                first = await upsert_email_log(
+                await upsert_email_log(
                     session,
                     EmailLogIngestRecord(
                         identity_id=1,

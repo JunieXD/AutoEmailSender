@@ -823,7 +823,7 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=fake_targeted_headers),
-                ) as targeted_fetch_mock,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_history_mailbox_message_headers_before_uid",
                     new=AsyncMock(side_effect=AssertionError("legacy mailbox range scan must not run")),

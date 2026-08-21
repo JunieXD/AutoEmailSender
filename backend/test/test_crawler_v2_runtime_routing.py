@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.modules.crawler.api import create_crawl_job
-from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask, LLMProfile
+from app.models import Base, CrawlJob, CrawlJobStatus, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageTask
 from app.modules.crawler.schemas import CrawlJobCreatePayload
 from app.modules.crawler.v2.models import CrawlerV2ClaimedWork, CrawlerV2WorkKind
 from app.services.runtime_manager import RuntimeManager
@@ -121,7 +121,6 @@ class CrawlerV2RuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         def build_idle_loop(*args: object, **kwargs: object):
             _ = kwargs
-            worker = args[2]
             return idle_loop()
 
         async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:

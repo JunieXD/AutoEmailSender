@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageFetchState
 from app.modules.crawler.pages.tools import (
     CrawlJobCanceled,
-    CrawlJobPaused,
     CrawlToolContext,
     CandidateEnrichmentPayload,
     PageSnapshot,

@@ -85,8 +85,6 @@ def merge_extra_body(
     return merged
 
 
-from datetime import UTC, datetime
-
 from sqlalchemy import JSON, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -300,8 +298,6 @@ async def probe_and_learn_extra_body(
 
     payload = _build_probe_payload(profile)
     attempts: list[dict[str, object] | None] = [None, *THINKING_DISABLE_CANDIDATES]
-    last_error: LLMRuntimeError | None = None
-
     for index, candidate in enumerate(attempts):
         try:
             completion = await _request_completion_endpoint(
@@ -311,7 +307,6 @@ async def probe_and_learn_extra_body(
                 extra_body=candidate,
             )
         except LLMRuntimeError as exc:
-            last_error = exc
             # 两种"思考模式信号"会触发候选切换：
             #   1. HTTP 400 + 协议错关键词（典型：reasoning_content must be passed back）
             #   2. HTTP 200 但 content 为空——思考模型把回答塞进 reasoning_content，

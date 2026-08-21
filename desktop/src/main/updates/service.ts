@@ -176,7 +176,7 @@ export async function retryUpdateCheckOnce<T>(
   }
 }
 
-export function buildProgressStatus(progress: {
+function buildProgressStatus(progress: {
   percent: number;
   transferred: number;
   total: number;
@@ -240,7 +240,7 @@ async function clearStaleUpdateCache(nextVersion: string): Promise<void> {
   await fs.writeFile(path.join(getUpdateCacheRoot(), "latest-version.txt"), nextVersion, "utf8");
 }
 
-async function startUpdateDownload(getWindow: () => BrowserWindow | null, mode: UpdateDownloadMode): Promise<UpdateStatus> {
+async function startUpdateDownload(mode: UpdateDownloadMode): Promise<UpdateStatus> {
   const autoUpdater = getAutoUpdater();
   currentDownloadToken?.cancel();
   currentDownloadToken = new builderUtilRuntime.CancellationToken();
@@ -296,14 +296,14 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
     if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
-    return startUpdateDownload(getWindow, options?.mode ?? "differential");
+    return startUpdateDownload(options?.mode ?? "differential");
   });
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.updateSwitchToFullDownload, async () => {
     if (!isAutomaticUpdateActionSupported()) {
       return currentStatus;
     }
-    return startUpdateDownload(getWindow, "full");
+    return startUpdateDownload("full");
   });
 
   ipcMain.handle(DESKTOP_IPC_CHANNELS.updateQuitAndInstall, () => {

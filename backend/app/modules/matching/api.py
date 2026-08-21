@@ -16,7 +16,6 @@ from app.models import (
 from .schemas import (
     CreateMatchAnalysisJobRequest,
     MatchAnalysisJobActionResponse,
-    MatchAnalysisJobItemRead,
     MatchAnalysisJobItemsPageRead,
     MatchAnalysisJobRead,
     MatchAnalysisSelectionSummaryRead,

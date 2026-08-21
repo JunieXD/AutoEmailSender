@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.time import utc_now

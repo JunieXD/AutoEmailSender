@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from app.core.query_chunks import chunked_values
 from app.core.time import utc_now
 
@@ -47,7 +45,6 @@ from app.modules.campaigns.public import (
     TEST_RECIPIENT_NAME,
     build_outreach_template_snapshot_config,
     build_test_compose_send_template_context,
-    build_test_compose_template_context,
     get_identity_sender_name,
     get_outreach_template_defaults_validation_error,
     render_template_with_context,

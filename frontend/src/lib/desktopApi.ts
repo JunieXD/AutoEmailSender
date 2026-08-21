@@ -55,10 +55,6 @@ export async function installDownloadedDesktopUpdate(): Promise<void> {
   await api.quitAndInstall();
 }
 
-export async function quitAndInstallDesktopUpdate(): Promise<void> {
-  await installDownloadedDesktopUpdate();
-}
-
 export function onDesktopUpdateStatus(callback: (status: DesktopUpdateStatus) => void) {
   const api = window.autoEmailSender;
   if (!api) {

@@ -78,7 +78,7 @@ export async function prepareDevelopmentCli(
   return { state: "built", executablePath };
 }
 
-export function isSupportedDevelopmentCliTarget(
+function isSupportedDevelopmentCliTarget(
   platform: NodeJS.Platform,
   arch: string,
 ): boolean {

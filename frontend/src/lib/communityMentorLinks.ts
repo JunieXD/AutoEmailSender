@@ -8,7 +8,7 @@ export const COMMUNITY_CONTRIBUTION_URL =
   `${COMMUNITY_REPOSITORY_URL}/issues/new?template=contribute-mentor.yml`;
 export const COMMUNITY_BATCH_CONTRIBUTION_URL =
   `${COMMUNITY_REPOSITORY_URL}/issues/new?template=batch-contribution.yml`;
-export const COMMUNITY_REPORT_URL =
+const COMMUNITY_REPORT_URL =
   `${COMMUNITY_REPOSITORY_URL}/issues/new?template=report-error.yml`;
 export const COMMUNITY_CONTRIBUTION_SAFE_URL_LENGTH = 7_500;
 

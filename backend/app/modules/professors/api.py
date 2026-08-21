@@ -14,8 +14,6 @@ from app.core.database import get_async_session
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     EmailTask,
-    EmailTaskCancellationReason,
-    EmailTaskStatus,
     Professor,
     ProfessorTag,
     ProfessorTagLink,
@@ -64,7 +62,6 @@ from .management import (
     build_professor_export,
     build_professor_template,
     is_valid_professor_email,
-    normalize_professor_payload,
     parse_professor_import_file,
 )
 from .mutations import (

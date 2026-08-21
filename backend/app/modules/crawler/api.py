@@ -4,8 +4,6 @@ from app.core.time import utc_now
 
 # -*- coding: utf-8 -*-
 
-from datetime import UTC, datetime
-
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -60,7 +58,6 @@ from .candidate_identity import (
     candidate_identity_values,
     canonical_candidate_clause,
     canonicalize_candidate_ids,
-    consolidate_candidate_identity,
     mark_candidate_fields_manual,
     rebuild_candidate_identity_keys,
 )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -188,18 +189,22 @@ class GuiCoverageTests(unittest.TestCase):
         )
 
     def test_export_scanner_follows_entity_star_reexports(self) -> None:
-        self.assertEqual(
-            extract_exported_actions_from_file(
-                FRONTEND_SRC / "entities/community-mentor/index.ts",
-            ),
-            {
-                "downloadCommunitySharePackage",
-                "getCommunityMentorCatalog",
-                "importCommunityMentors",
-                "listCommunityMentors",
-                "previewCommunityMentorImport",
-            },
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "index.ts").write_text(
+                "export * from './communityMentors';\n",
+                encoding="utf-8",
+            )
+            (root / "communityMentors.ts").write_text(
+                "export const listCommunityMentors = () => [];\n"
+                "export type CommunityMentor = { id: string };\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                extract_exported_actions_from_file(root / "index.ts"),
+                {"listCommunityMentors"},
+            )
 
 
 if __name__ == "__main__":

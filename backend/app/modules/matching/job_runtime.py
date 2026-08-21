@@ -1237,7 +1237,7 @@ async def _mark_item_canceled(
         if item is None:
             return
         now = utc_now()
-        transition = await session.execute(
+        await session.execute(
             update(MatchAnalysisJobItem)
             .where(
                 MatchAnalysisJobItem.id == claim.item_id,

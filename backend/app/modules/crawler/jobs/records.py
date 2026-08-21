@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +62,6 @@ from ..candidate_identity import (
     candidate_identity_values,
     canonical_candidate_clause,
     canonicalize_candidate_ids,
-    consolidate_candidate_identity,
     mark_candidate_fields_manual,
     rebuild_candidate_identity_keys,
     resolve_canonical_candidate,

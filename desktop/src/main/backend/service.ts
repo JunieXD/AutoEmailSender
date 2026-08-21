@@ -78,7 +78,7 @@ export function buildBackendEnv(input: BackendEnvInput): NodeJS.ProcessEnv {
   };
 }
 
-export async function findAvailablePort(startPort = 48120): Promise<number> {
+async function findAvailablePort(startPort = 48120): Promise<number> {
   for (let port = startPort; port < startPort + 100; port += 1) {
     if (await canListen(port)) {
       return port;

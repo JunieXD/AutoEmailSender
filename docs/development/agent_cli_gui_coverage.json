@@ -154,14 +154,6 @@
       "reason": "抓取、候选审核、补全、暂停/恢复和重试都能通过长任务和计划协议观察。"
     },
     {
-      "id": "create-task",
-      "source": "lib/api/createTask.ts",
-      "exported_actions": ["createTask"],
-      "status": "planned",
-      "required_capabilities": [],
-      "reason": "当前前端仍是本地演示 stub（文件内明确标注 TODO），接入真实后端前不把它误报为 CLI 已覆盖。"
-    },
-    {
       "id": "dashboard",
       "source": "lib/api/dashboardApi.ts",
       "exported_actions": ["getDashboardOverview"],
@@ -215,27 +207,16 @@
       "source": "lib/api/emailTasksApi.ts",
       "exported_actions": [
         "getEmailTaskThread",
-        "regenerateDraft",
         "calculateMatch",
-        "generateDraft",
         "rewriteDraft",
-        "approveDraft",
         "saveDraft",
         "approveAndSend",
         "approveAndSchedule",
         "cancelScheduledTask",
         "continueManually",
         "startFollowUp",
-        "updateTaskPrimaryMaterial",
         "updateTaskOutreachConfig"
       ],
-      "action_overrides": {
-        "approveDraft": {
-          "status": "available",
-          "required_capabilities": ["drafts.approve"],
-          "reason": "CLI 可提交最终正文并只批准草稿，不会发送、排程或创建发送计划。"
-        }
-      },
       "status": "available",
       "required_capabilities": [
         "drafts.get",
@@ -299,21 +280,6 @@
       "reason": "身份非秘密设置和连接测试可由 CLI 处理；credentials 在能力注册中保持 ui_only，凭据仍只能在 GUI 录入。"
     },
     {
-      "id": "llm-config",
-      "source": "lib/api/llmConfig.ts",
-      "exported_actions": [
-        "loadLLMConfig",
-        "saveLLMConfig",
-        "getLLMConfig",
-        "updateLLMConfig",
-        "testOpenAIConnection",
-        "testDeepseekConnection"
-      ],
-      "status": "ui_only",
-      "required_capabilities": ["llm-profiles.write"],
-      "reason": "该旧配置模块直接接收 API Key；为防止秘密进入命令历史和 Agent 上下文，保留 GUI 安全录入。"
-    },
-    {
       "id": "llm-profiles",
       "source": "lib/api/llmProfiles.ts",
       "exported_actions": [
@@ -322,8 +288,6 @@
         "updateLLMProfile",
         "deleteLLMProfile",
         "setDefaultLLMProfile",
-        "fetchLLMProfileModels",
-        "testLLMProfile",
         "fetchLLMProfileModelsPreview",
         "testLLMProfilePreview"
       ],
@@ -431,8 +395,7 @@
         "updateOutreachTemplate",
         "duplicateOutreachTemplate",
         "setGlobalDefaultOutreachTemplate",
-        "archiveOutreachTemplate",
-        "restoreOutreachTemplate"
+        "archiveOutreachTemplate"
       ],
       "status": "available",
       "required_capabilities": [
@@ -501,23 +464,11 @@
         "bulkArchiveProfessors",
         "bulkUpdateProfessorTags",
         "restoreProfessor",
-        "importSampleProfessors",
-        "triggerCrawler",
         "importProfessorsFromFile",
         "downloadProfessorTemplate",
         "downloadProfessorExport"
       ],
       "action_overrides": {
-        "importSampleProfessors": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "样例数据注入是 GUI 辅助动作，CLI 尚未发布。"
-        },
-        "triggerCrawler": {
-          "status": "planned",
-          "required_capabilities": [],
-          "reason": "旧的一键抓取入口没有稳定输入合同；Agent 应使用 crawler.jobs.create。"
-        },
         "downloadProfessorTemplate": {
           "status": "available",
           "required_capabilities": ["professors.download-template"],
@@ -549,23 +500,6 @@
         "professors.community.export-package"
       ],
       "reason": "导师档案、标签、导入导出和审核所需的字段编辑均有 Agent 能力；批量高影响动作使用计划。"
-    },
-    {
-      "id": "profiles-legacy",
-      "source": "lib/api/profiles.ts",
-      "exported_actions": [
-        "loadProfiles",
-        "saveProfiles",
-        "getProfiles",
-        "getProfile",
-        "createProfile",
-        "updateProfile",
-        "deleteProfile",
-        "setDefaultProfile"
-      ],
-      "status": "ui_only",
-      "required_capabilities": [],
-      "reason": "该模块使用 localStorage 的旧演示数据，不属于桌面端真实业务数据，不能伪装成 CLI 可操作资源。"
     },
     {
       "id": "runtime-settings",
@@ -606,7 +540,6 @@
       "source": "lib/api/tokenUsage.ts",
       "exported_actions": [
         "listTokenUsageRecords",
-        "getTokenUsageChart",
         "getTokenUsageVisualization"
       ],
       "status": "available",

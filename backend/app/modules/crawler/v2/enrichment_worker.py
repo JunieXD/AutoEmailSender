@@ -75,7 +75,6 @@ from app.modules.crawler.candidate_identity import (
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
-    normalize_recent_papers,
 )
 from .native_ocr import extract_ocr_email_evidence
 from .profile_fallbacks import (

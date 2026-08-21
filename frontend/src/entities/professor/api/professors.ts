@@ -8,7 +8,6 @@ import type {
   ProfessorDTO,
   ProfessorDashboardItemDTO,
   ProfessorImportFileResultDTO,
-  ProfessorImportResultDTO,
   ProfessorManagementItemDTO,
   ProfessorDashboardPageRequestDTO,
   ProfessorManagementPageRequestDTO,
@@ -140,16 +139,6 @@ export const bulkUpdateProfessorTags = (payload: ProfessorBulkTagsPayloadDTO) =>
 
 export const restoreProfessor = (professorId: number) =>
   apiFetch<ProfessorActionResultDTO>(`/api/professors/${professorId}/restore`, {
-    method: 'POST',
-  });
-
-export const importSampleProfessors = () =>
-  apiFetch<ProfessorImportResultDTO>('/api/professors/import-sample', {
-    method: 'POST',
-  });
-
-export const triggerCrawler = () =>
-  apiFetch<{ status: string; message: string }>('/api/professors/trigger-crawler', {
     method: 'POST',
   });
 

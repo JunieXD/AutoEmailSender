@@ -40,7 +40,6 @@ from .schemas import (
     CommunityMentorRecord,
     CommunityRecordsRead,
     CommunityRelocationRecord,
-    CommunityRevocationRecord,
     CommunityRevocationsDocument,
     CommunityShardDocument,
 )

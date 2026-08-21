@@ -6,12 +6,9 @@ from typing import Any
 
 from app.core.time import as_utc_aware, utc_now
 
-from sqlalchemy import select
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import (
-    CrawlCandidate,
     CrawlJob,
     CrawlWorkerKind,
     CrawlPageChunk,

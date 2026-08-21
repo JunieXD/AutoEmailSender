@@ -9,7 +9,7 @@ import socket
 import smtplib
 import time
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from email import policy
 from email.header import decode_header, make_header
 from email.message import EmailMessage

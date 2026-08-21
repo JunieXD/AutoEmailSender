@@ -186,8 +186,6 @@ class ImapRecentV2QueueTestCase(unittest.TestCase):
                 professor = await session.get(Professor, professor_id)
                 professor.archived_at = None
                 await session.commit()
-                restored_version = professor.communication_sync_version
-
             with patch(
                 "app.modules.communications.imap.state.utc_now",
                 return_value=BASE_TIME + timedelta(minutes=3),

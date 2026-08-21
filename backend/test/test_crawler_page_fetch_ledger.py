@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import unittest
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

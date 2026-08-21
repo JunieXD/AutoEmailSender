@@ -434,7 +434,7 @@ class LLMRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "app.modules.llm.runtime.httpx.AsyncClient",
             side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
         ):
-            result = await generate_draft_content(
+            await generate_draft_content(
                 identity=identity,
                 primary_material=primary_material,
                 llm_profile=profile,

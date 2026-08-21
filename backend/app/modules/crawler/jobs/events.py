@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from app.core.time import as_utc_aware
 

@@ -1289,7 +1289,6 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_enrichment_adapter_passes_runtime_adaptation_to_structured_request(self) -> None:
         candidate_id, _ = await self._seed_task(profile_url="https://example.edu/zhang.html")
-        payload = CandidateEnrichmentPayload(email="zhang@example.edu", department="计算机系", research_direction="AI", recent_papers=[], confidence=0.8, field_confidence={})
         adaptation = LLMRuntimeAdaptation("responses", {"enable_thinking": False})
 
         with patch("app.modules.crawler.v2.enrichment_worker.fetch_profile_text", new=AsyncMock(return_value="张三 邮箱 zhang@example.edu")), \

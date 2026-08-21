@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from app.core.time import utc_now
 

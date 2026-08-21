@@ -4,7 +4,6 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-import json
 import os
 from pathlib import Path
 import sqlite3

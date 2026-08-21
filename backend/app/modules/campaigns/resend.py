@@ -12,7 +12,6 @@ from app.models import (
     EmailTaskCancellationReason,
     EmailTaskStatus,
     IdentityMaterial,
-    IdentityProfile,
 )
 from app.modules.identities.public import material_can_be_primary
 from app.services.rich_text import normalize_email_html

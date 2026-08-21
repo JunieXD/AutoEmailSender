@@ -9,7 +9,6 @@ const srcRoot = path.resolve(process.cwd(), "src");
 
 const reviewedLegacyViolations = new Set([
   "context/NotificationContext.tsx -> components/organisms/NotificationViewport.tsx",
-  "lib/api/createTask.ts -> features/create-task/types.ts",
   "lib/api/tokenUsage.ts -> features/token-usage/client/tokenUsage.ts",
   "lib/useConfirmDialog.tsx -> components/atoms/ConfirmDialog.tsx",
 ]);

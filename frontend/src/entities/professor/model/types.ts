@@ -161,12 +161,6 @@ export interface ProfessorTagUsageDTO {
   professors: ProfessorTagUsageProfessorDTO[];
 }
 
-export interface ProfessorImportResultDTO {
-  inserted_count: number;
-  total_count: number;
-  message: string;
-}
-
 export interface ProfessorManagementItemDTO {
   id: number;
   name: string;
