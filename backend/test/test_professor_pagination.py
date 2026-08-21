@@ -115,6 +115,119 @@ class ProfessorPaginationTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_sqlite_server_default_datetime_cursor_progresses_across_pages(
+        self,
+    ) -> None:
+        async def run() -> None:
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        Professor(
+                            name=f"导入导师{i}",
+                            email=f"imported-{i}@example.edu",
+                        )
+                        for i in range(250)
+                    ],
+                )
+                await session.commit()
+
+                for sort_key in ("latest", "updatedAtDesc"):
+                    with self.subTest(sort_key=sort_key):
+                        management_page_21 = await list_management_professor_page(
+                            session,
+                            ProfessorManagementPageRequest(
+                                page=21,
+                                page_size=10,
+                                sort_key=sort_key,
+                            ),
+                        )
+                        management_page_22 = await list_management_professor_page(
+                            session,
+                            ProfessorManagementPageRequest(
+                                page=22,
+                                page_size=10,
+                                cursor=management_page_21.next_cursor,
+                                sort_key=sort_key,
+                            ),
+                        )
+                        management_offset_page_22 = (
+                            await list_management_professor_page(
+                                session,
+                                ProfessorManagementPageRequest(
+                                    page=22,
+                                    page_size=10,
+                                    sort_key=sort_key,
+                                ),
+                            )
+                        )
+
+                        first_ids = [item.id for item in management_page_21.items]
+                        cursor_ids = [item.id for item in management_page_22.items]
+                        offset_ids = [
+                            item.id for item in management_offset_page_22.items
+                        ]
+                        self.assertEqual(cursor_ids, offset_ids)
+                        self.assertTrue(set(first_ids).isdisjoint(cursor_ids))
+
+        asyncio.run(run())
+
+    def test_dashboard_server_default_datetime_cursor_progresses_across_pages(
+        self,
+    ) -> None:
+        async def run() -> None:
+            identity_id, _ = await self._seed_dashboard_data()
+            async with self.session_factory() as session:
+                session.add_all(
+                    [
+                        Professor(
+                            name=f"首页导入导师{i}",
+                            email=f"dashboard-imported-{i}@example.edu",
+                        )
+                        for i in range(246)
+                    ],
+                )
+                await session.commit()
+                for sort_key in ("latest", "lastSentAt", "lastRepliedAt"):
+                    with self.subTest(sort_key=sort_key):
+                        page_number = 21 if sort_key == "latest" else 1
+                        page_size = 10 if sort_key == "latest" else 1
+                        first = await list_dashboard_professor_page(
+                            session,
+                            ProfessorDashboardPageRequest(
+                                identity_id=identity_id,
+                                page=page_number,
+                                page_size=page_size,
+                                sort_key=sort_key,
+                            ),
+                        )
+                        by_cursor = await list_dashboard_professor_page(
+                            session,
+                            ProfessorDashboardPageRequest(
+                                identity_id=identity_id,
+                                page=page_number + 1,
+                                page_size=page_size,
+                                cursor=first.next_cursor,
+                                sort_key=sort_key,
+                            ),
+                        )
+                        by_offset = await list_dashboard_professor_page(
+                            session,
+                            ProfessorDashboardPageRequest(
+                                identity_id=identity_id,
+                                page=page_number + 1,
+                                page_size=page_size,
+                                sort_key=sort_key,
+                            ),
+                        )
+
+                        first_ids = [item.id for item in first.items]
+                        cursor_ids = [item.id for item in by_cursor.items]
+                        offset_ids = [item.id for item in by_offset.items]
+                        self.assertEqual(cursor_ids, offset_ids)
+                        self.assertTrue(set(first_ids).isdisjoint(cursor_ids))
+
+        asyncio.run(run())
+
     def test_cursor_rejects_changed_sort_contract(self) -> None:
         async def run() -> None:
             await self._seed_management_professors()

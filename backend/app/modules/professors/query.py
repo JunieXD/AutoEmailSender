@@ -38,7 +38,7 @@ from app.models import (
     ProfessorTagLink,
 )
 from app.core.agent_api_errors import AgentApiError
-from app.core.time import as_utc_aware, utc_now
+from app.core.time import as_utc_aware, as_utc_naive, utc_now
 from app.modules.campaigns.public import email_task_is_not_user_removed_expression
 from app.modules.identities.public import resolve_identity_communication_scope
 from app.services.contact_status import build_contact_status_by_professor
@@ -509,6 +509,7 @@ def _keyset_condition(
     professor_id: int,
     direction: Literal["asc", "desc"],
     nulls_last: bool,
+    sqlite_datetime: bool = False,
 ) -> ColumnElement[bool]:
     id_comparison = (
         Professor.id > professor_id
@@ -517,10 +518,29 @@ def _keyset_condition(
     )
     if value is None:
         return and_(primary.is_(None), id_comparison)
-    value_comparison = primary > value if direction == "asc" else primary < value
+    comparison_primary: ColumnElement[Any] = primary
+    comparison_value: Any = value
+    if sqlite_datetime and isinstance(value, datetime):
+        # SQLite stores DateTime values as text. Server defaults omit microseconds,
+        # while SQLAlchemy binds cursor datetimes with them, so compare the same
+        # canonical text representation on both sides of the keyset condition.
+        text_primary = cast(primary, String)
+        comparison_primary = case(
+            (func.length(text_primary) == 19, text_primary + literal(".000000")),
+            else_=text_primary,
+        )
+        comparison_value = as_utc_naive(value).isoformat(
+            sep=" ",
+            timespec="microseconds",
+        )
+    value_comparison = (
+        comparison_primary > comparison_value
+        if direction == "asc"
+        else comparison_primary < comparison_value
+    )
     conditions: list[ColumnElement[bool]] = [
         value_comparison,
-        and_(primary == value, id_comparison),
+        and_(comparison_primary == comparison_value, id_comparison),
     ]
     if nulls_last:
         conditions.append(primary.is_(None))
@@ -585,6 +605,11 @@ async def list_management_professor_page(
     total_pages = max(1, (total_count + request.page_size - 1) // request.page_size)
     safe_page = min(request.page, total_pages)
     primary_sort, nulls_last = _management_sort_expression(request)
+    sqlite_datetime_cursor = (
+        request.sort_key in {"latest", "updatedAtDesc"}
+        and session.bind is not None
+        and session.bind.dialect.name == "sqlite"
+    )
     statement = (
         select(Professor, primary_sort.label("_sort_value"))
         .options(selectinload(Professor.tags))
@@ -620,6 +645,7 @@ async def list_management_professor_page(
                     professor_id=cursor_id,
                     direction=request.sort_direction,
                     nulls_last=nulls_last,
+                    sqlite_datetime=sqlite_datetime_cursor,
                 ),
             )
     if request.sort_key == "universityAsc":
@@ -1109,6 +1135,11 @@ async def list_dashboard_professor_page(
         request,
         expressions,
     )
+    sqlite_datetime_cursor = (
+        datetime_cursor
+        and session.bind is not None
+        and session.bind.dialect.name == "sqlite"
+    )
     statement = select(
         Professor,
         primary_sort.label("_sort_value"),
@@ -1131,6 +1162,7 @@ async def list_dashboard_professor_page(
                 professor_id=cursor_id,
                 direction=request.sort_direction,
                 nulls_last=nulls_last,
+                sqlite_datetime=sqlite_datetime_cursor,
             ),
         )
     statement = statement.order_by(
