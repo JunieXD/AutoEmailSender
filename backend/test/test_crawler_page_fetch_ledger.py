@@ -22,7 +22,9 @@ from app.modules.crawler.pages.tools import PageSnapshot
 
 
 @asynccontextmanager
-async def _create_test_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+async def _create_test_session_factory() -> AsyncIterator[
+    async_sessionmaker[AsyncSession]
+]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     try:
         async with engine.begin() as connection:
@@ -35,7 +37,9 @@ async def _create_test_session_factory() -> AsyncIterator[async_sessionmaker[Asy
 
 
 class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
-    def test_normalize_fetch_url_lowercases_scheme_host_and_removes_fragment(self) -> None:
+    def test_normalize_fetch_url_lowercases_scheme_host_and_removes_fragment(
+        self,
+    ) -> None:
         self.assertEqual(
             normalize_fetch_url("HTTPS://CS.EXAMPLE.EDU/faculty?page=1#section"),
             "https://cs.example.edu/faculty?page=1",
@@ -158,11 +162,17 @@ class CrawlerPageFetchLedgerPureTests(unittest.TestCase):
 
 
 class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
-    def test_old_terminal_network_failure_is_allowed_a_bounded_recovery_retry(self) -> None:
+    def test_old_terminal_network_failure_is_allowed_a_bounded_recovery_retry(
+        self,
+    ) -> None:
         async def run() -> tuple[str, str | None]:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(
@@ -192,7 +202,11 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
         async def run() -> str:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(
@@ -222,7 +236,11 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
         async def run() -> str:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(
@@ -237,7 +255,9 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                     await session.commit()
                     job_id = job.id
 
-                decision = await get_page_fetch_decision(session_factory, job_id=job_id, url="https://cs.example.edu/faculty")
+                decision = await get_page_fetch_decision(
+                    session_factory, job_id=job_id, url="https://cs.example.edu/faculty"
+                )
                 return decision.action
 
         self.assertEqual(asyncio.run(run()), "allow_retry")
@@ -246,7 +266,11 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
         async def run() -> tuple[str, str]:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(
@@ -262,16 +286,24 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                     await session.commit()
                     job_id = job.id
 
-                decision = await get_page_fetch_decision(session_factory, job_id=job_id, url="https://cs.example.edu/faculty")
+                decision = await get_page_fetch_decision(
+                    session_factory, job_id=job_id, url="https://cs.example.edu/faculty"
+                )
                 return decision.action, decision.terminal_reason or ""
 
-        self.assertEqual(asyncio.run(run()), ("skip_terminal_failed", "transient_retry_exhausted"))
+        self.assertEqual(
+            asyncio.run(run()), ("skip_terminal_failed", "transient_retry_exhausted")
+        )
 
     def test_mark_page_fetch_result_records_terminal_failure(self) -> None:
         async def run() -> tuple[str, str | None]:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.commit()
                     job_id = job.id
@@ -297,7 +329,9 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
                     state = await session.get(CrawlPageFetchState, 1)
                     return state.status, state.terminal_reason
 
-        self.assertEqual(asyncio.run(run()), ("terminal_failed", "anti_bot_or_empty_response"))
+        self.assertEqual(
+            asyncio.run(run()), ("terminal_failed", "anti_bot_or_empty_response")
+        )
 
     def test_mark_page_fetch_result_handles_null_transient_counter(self) -> None:
         async def run() -> tuple[str, int | None]:
@@ -353,7 +387,11 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
         async def run() -> bool:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(
@@ -383,7 +421,11 @@ class CrawlerPageFetchLedgerDatabaseTests(unittest.TestCase):
         async def run() -> bool:
             async with _create_test_session_factory() as session_factory:
                 async with session_factory() as session:
-                    job = CrawlJob(university="示例大学", school="计算机学院", start_url="https://cs.example.edu/faculty")
+                    job = CrawlJob(
+                        university="示例大学",
+                        school="计算机学院",
+                        start_url="https://cs.example.edu/faculty",
+                    )
                     session.add(job)
                     await session.flush()
                     session.add(

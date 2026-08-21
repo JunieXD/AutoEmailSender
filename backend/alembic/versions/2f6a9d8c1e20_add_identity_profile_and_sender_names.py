@@ -21,8 +21,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table("identity_profiles") as batch_op:
-        batch_op.add_column(sa.Column("profile_name", sa.String(length=100), nullable=True))
-        batch_op.add_column(sa.Column("sender_name", sa.String(length=100), nullable=True))
+        batch_op.add_column(
+            sa.Column("profile_name", sa.String(length=100), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("sender_name", sa.String(length=100), nullable=True)
+        )
 
     op.execute(
         """
@@ -33,8 +37,12 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("identity_profiles") as batch_op:
-        batch_op.alter_column("profile_name", existing_type=sa.String(length=100), nullable=False)
-        batch_op.alter_column("sender_name", existing_type=sa.String(length=100), nullable=False)
+        batch_op.alter_column(
+            "profile_name", existing_type=sa.String(length=100), nullable=False
+        )
+        batch_op.alter_column(
+            "sender_name", existing_type=sa.String(length=100), nullable=False
+        )
 
 
 def downgrade() -> None:

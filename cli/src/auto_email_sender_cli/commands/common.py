@@ -186,7 +186,9 @@ def validate_context_options(
             code="IF_REVISION_REQUIRES_WRITE",
             message="--if-revision 只能用于支持版本保护的写入命令。",
             exit_code=2,
-            details={"hint": "先读取对象的 revision，再在写入命令上使用 --if-revision。"},
+            details={
+                "hint": "先读取对象的 revision，再在写入命令上使用 --if-revision。"
+            },
         )
     if context.filter_expression and not supports_filter:
         raise CliError(
@@ -207,8 +209,7 @@ def validate_context_options(
             exit_code=2,
         )
     if len(context.expand) > MAX_EXPANDED_PATHS or any(
-        len(selector) > MAX_EXPAND_SELECTOR_CHARS
-        for selector in context.expand
+        len(selector) > MAX_EXPAND_SELECTOR_CHARS for selector in context.expand
     ):
         raise CliError(
             code="INVALID_EXPANSION",
@@ -288,7 +289,9 @@ def run_read_command(
                 context.filter_expression,
                 command=command,
             )
-            request_params = _merge_server_filter_params(request_params, pushed_filter_params)
+            request_params = _merge_server_filter_params(
+                request_params, pushed_filter_params
+            )
         client = AgentApiClient(timeout=timeout)
         # A structured filter is evaluated locally after the complete
         # collection has been read, but only paged collection commands can be
@@ -347,7 +350,9 @@ def run_read_command(
         )
         data = normalize_collection_response(data, command=command)
         if not streamed_filter:
-            data = apply_structured_filter(data, context.filter_expression, command=command)
+            data = apply_structured_filter(
+                data, context.filter_expression, command=command
+            )
         data = _annotate_filter_execution(
             data,
             expression=context.filter_expression,
@@ -474,7 +479,9 @@ def fetch_all_pages(
 ) -> dict[str, object]:
     request_params = _without_none(params)
     page_mode = "page" in request_params or "page_size" in request_params
-    offset_mode = "offset" in request_params and not page_mode and "cursor" not in request_params
+    offset_mode = (
+        "offset" in request_params and not page_mode and "cursor" not in request_params
+    )
     # All current Agent collection endpoints expose an integer cursor, but it
     # is still a cursor contract rather than an offset contract. Preserve a
     # caller-provided starting cursor (especially ``--all --cursor N``) and
@@ -491,11 +498,7 @@ def fetch_all_pages(
     if not page_mode and not offset_mode:
         request_params["limit"] = 500
     items: list[object] = []
-    cursor: str | None = (
-        str(initial_cursor)
-        if initial_cursor is not None
-        else None
-    )
+    cursor: str | None = str(initial_cursor) if initial_cursor is not None else None
     page = int(request_params.get("page", 1) or 1)
     offset = int(request_params.get("offset", 0) or 0)
     seen_cursors: set[str] = set()
@@ -530,7 +533,9 @@ def fetch_all_pages(
             request_params["cursor"] = cursor
         if cursor is not None:
             seen_cursors.add(cursor)
-        payload = normalize_collection_response(client.request("GET", path, params=request_params))
+        payload = normalize_collection_response(
+            client.request("GET", path, params=request_params)
+        )
         if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
             raise CliError(
                 code="INVALID_API_RESPONSE",
@@ -549,16 +554,19 @@ def fetch_all_pages(
         encoded_item_sizes: list[int] | None = None
         if page_consumer is None or max_scanned_bytes is not None:
             encoded_item_sizes = [
-                len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                len(
+                    json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
+                )
                 for item in payload["items"]
             ]
         scanned_item_count += len(payload["items"])
         if encoded_item_sizes is not None:
             scanned_bytes += sum(encoded_item_sizes)
         if (
-            (max_scanned_items is not None and scanned_item_count > max_scanned_items)
-            or (max_scanned_bytes is not None and scanned_bytes > max_scanned_bytes)
-        ):
+            max_scanned_items is not None and scanned_item_count > max_scanned_items
+        ) or (max_scanned_bytes is not None and scanned_bytes > max_scanned_bytes):
             raise CliError(
                 code="FILTER_SCAN_LIMIT_EXCEEDED",
                 message="本地筛选扫描量超过安全上限，已停止继续读取。",
@@ -573,7 +581,11 @@ def fetch_all_pages(
             )
         if page_consumer is not None:
             consumed = page_consumer(payload)
-            if not isinstance(consumed, int) or isinstance(consumed, bool) or consumed < 0:
+            if (
+                not isinstance(consumed, int)
+                or isinstance(consumed, bool)
+                or consumed < 0
+            ):
                 raise CliError(
                     code="INVALID_PAGE_CONSUMER",
                     message="分页消费器返回了无效的条目计数。",
@@ -582,11 +594,12 @@ def fetch_all_pages(
             consumed_item_count += consumed
         else:
             assert encoded_item_sizes is not None
-            for item, item_bytes in zip(payload["items"], encoded_item_sizes, strict=True):
+            for item, item_bytes in zip(
+                payload["items"], encoded_item_sizes, strict=True
+            ):
                 accumulated_bytes += item_bytes
-                if (
-                    (max_items is not None and len(items) + 1 > max_items)
-                    or (max_bytes is not None and accumulated_bytes > max_bytes)
+                if (max_items is not None and len(items) + 1 > max_items) or (
+                    max_bytes is not None and accumulated_bytes > max_bytes
                 ):
                     raise CliError(
                         code="RESULT_TOO_LARGE",
@@ -717,7 +730,9 @@ def fetch_filtered_pages(
             )
         for item in page_items:
             filtered_bytes += len(
-                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                ),
             )
             if len(filtered_items) + 1 > max_items or filtered_bytes > max_bytes:
                 raise CliError(
@@ -888,7 +903,11 @@ def apply_structured_filter(
             message="--filter 必须是非空 JSON 对象。",
             exit_code=2,
         )
-    collection_key = "items" if isinstance(data, dict) and isinstance(data.get("items"), list) else None
+    collection_key = (
+        "items"
+        if isinstance(data, dict) and isinstance(data.get("items"), list)
+        else None
+    )
     if collection_key is None:
         raise CliError(
             code="FILTER_NOT_SUPPORTED",
@@ -905,8 +924,14 @@ def apply_structured_filter(
         )
     filters: list[tuple[str, str, object]] = []
     for field, condition in parsed.items():
-        if not isinstance(field, str) or not field or not field.replace("_", "").isalnum():
-            raise CliError(code="INVALID_FILTER", message="筛选字段名无效。", exit_code=2)
+        if (
+            not isinstance(field, str)
+            or not field
+            or not field.replace("_", "").isalnum()
+        ):
+            raise CliError(
+                code="INVALID_FILTER", message="筛选字段名无效。", exit_code=2
+            )
         if field not in declared_fields:
             raise CliError(
                 code="INVALID_FILTER",
@@ -916,7 +941,11 @@ def apply_structured_filter(
             )
         if isinstance(condition, dict):
             if len(condition) != 1:
-                raise CliError(code="INVALID_FILTER", message=f"字段 {field} 只能指定一个运算符。", exit_code=2)
+                raise CliError(
+                    code="INVALID_FILTER",
+                    message=f"字段 {field} 只能指定一个运算符。",
+                    exit_code=2,
+                )
             operator, expected = next(iter(condition.items()))
         else:
             operator, expected = "eq", condition
@@ -954,7 +983,10 @@ def apply_structured_filter(
                     exit_code=2,
                     details={"allowed_fields": sorted(allowed_fields)},
                 )
-            if not isinstance(expected, str) or expected.strip().lower() not in _UNICODE_SCRIPTS:
+            if (
+                not isinstance(expected, str)
+                or expected.strip().lower() not in _UNICODE_SCRIPTS
+            ):
                 raise CliError(
                     code="INVALID_FILTER",
                     message=(
@@ -970,10 +1002,18 @@ def apply_structured_filter(
     def matches(item: object) -> bool:
         if not isinstance(item, dict):
             return False
-        return all(_matches_filter(item.get(field), operator, expected) for field, operator, expected in filters)
+        return all(
+            _matches_filter(item.get(field), operator, expected)
+            for field, operator, expected in filters
+        )
 
     filtered = [item for item in data[collection_key] if matches(item)]
-    result = {**data, collection_key: filtered, "filter": parsed, "filtered_count": len(filtered)}
+    result = {
+        **data,
+        collection_key: filtered,
+        "filter": parsed,
+        "filtered_count": len(filtered),
+    }
     if isinstance(result.get("records"), list):
         result["records"] = filtered
     if command == "usage.records":
@@ -982,11 +1022,14 @@ def apply_structured_filter(
         # summary cannot be mistaken for the filtered result.
         result["summary"] = {
             field: sum(
-                int(item.get(field) or 0)
-                for item in filtered
-                if isinstance(item, dict)
+                int(item.get(field) or 0) for item in filtered if isinstance(item, dict)
             )
-            for field in ("input_tokens", "output_tokens", "cached_tokens", "total_tokens")
+            for field in (
+                "input_tokens",
+                "output_tokens",
+                "cached_tokens",
+                "total_tokens",
+            )
         }
         result["summary"]["record_count"] = len(filtered)
     # Filtering is complete locally, so a cursor must not suggest another page.
@@ -1046,7 +1089,9 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
         else:
             operator = "eq"
             expected = condition
-        parameter = _SERVER_OPERATOR_FILTER_PARAMETERS.get((command, field, str(operator)))
+        parameter = _SERVER_OPERATOR_FILTER_PARAMETERS.get(
+            (command, field, str(operator))
+        )
         if parameter is None:
             parameter = mapping.get(field)
             allowed_operator = (
@@ -1059,7 +1104,10 @@ def server_filter_params(expression: str | None, *, command: str) -> dict[str, o
         if expected is None or isinstance(expected, dict | list):
             continue
         if operator == "contains_script":
-            if not isinstance(expected, str) or expected.strip().lower() not in _UNICODE_SCRIPTS:
+            if (
+                not isinstance(expected, str)
+                or expected.strip().lower() not in _UNICODE_SCRIPTS
+            ):
                 continue
             expected = expected.strip().lower()
         if not _server_filter_value_is_safe(command, field, expected):
@@ -1288,8 +1336,14 @@ def project_fields(data: Any, fields: str | None, *, command: str | None = None)
             message="--fields 只支持逗号分隔的字段名，不支持表达式。",
             exit_code=2,
         )
-    collection_key = "items" if isinstance(data, dict) and isinstance(data.get("items"), list) else (
-        "records" if isinstance(data, dict) and isinstance(data.get("records"), list) else None
+    collection_key = (
+        "items"
+        if isinstance(data, dict) and isinstance(data.get("items"), list)
+        else (
+            "records"
+            if isinstance(data, dict) and isinstance(data.get("records"), list)
+            else None
+        )
     )
     if collection_key is None:
         raise CliError(
@@ -1330,7 +1384,11 @@ def project_fields(data: Any, fields: str | None, *, command: str | None = None)
             if metadata_field in item and metadata_field not in projected:
                 projected[metadata_field] = item[metadata_field]
         projected_items.append(projected)
-    result = {**data, collection_key: projected_items, "selected_fields": list(selected)}
+    result = {
+        **data,
+        collection_key: projected_items,
+        "selected_fields": list(selected),
+    }
     # Keep legacy aliases consistent when a page-shaped endpoint was normalized
     # from ``records`` to the common ``items`` view.
     if collection_key == "items" and isinstance(result.get("records"), list):
@@ -1517,7 +1575,9 @@ def _augment_state_value(value: Any, *, command: str) -> Any:
         return [_augment_state_value(item, command=command) for item in value]
     if not isinstance(value, dict):
         return value
-    result = {key: _augment_state_value(item, command=command) for key, item in value.items()}
+    result = {
+        key: _augment_state_value(item, command=command) for key, item in value.items()
+    }
     if isinstance(result.get("status"), str):
         result = _augment_state_item(result, command=command)
     elif _supports_present_in_app(command, result):
@@ -1528,7 +1588,9 @@ def _augment_state_value(value: Any, *, command: str) -> Any:
         )
         result["available_actions"] = action_links
         result["blocked_actions"] = blocked_actions
-        result["blocked_reason"] = None if action_links else "当前结果无法定位到桌面页面"
+        result["blocked_reason"] = (
+            None if action_links else "当前结果无法定位到桌面页面"
+        )
     return result
 
 
@@ -1545,8 +1607,7 @@ def add_revisions(data: Any, *, include_collection: bool = True) -> Any:
                 for item in result["items"]
             ]
     elif "revision" not in result and any(
-        key in result
-        for key in ("id", "task_id", "job_id", "plan_id", "handoff_id")
+        key in result for key in ("id", "task_id", "job_id", "plan_id", "handoff_id")
     ):
         result = _with_revision(result)
     return result
@@ -1556,9 +1617,7 @@ def _collection_revisions_requested(context: CliContext, fields: str | None) -> 
     if context.include_revisions:
         return True
     return "revision" in {
-        field.strip()
-        for field in (fields or "").split(",")
-        if field.strip()
+        field.strip() for field in (fields or "").split(",") if field.strip()
     }
 
 
@@ -1570,8 +1629,13 @@ def _with_revision(value: dict[str, object]) -> dict[str, object]:
         for key, item in value.items()
         if key not in {"revision", "updated_at", "created_at"}
     }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
-    return {**value, "revision": hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]}
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")
+    )
+    return {
+        **value,
+        "revision": hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20],
+    }
 
 
 def _augment_state_item(item: dict[str, object], *, command: str) -> dict[str, object]:
@@ -1746,7 +1810,9 @@ def _state_actions_for_item(
     }
 
 
-def _draft_state_actions(status: str, item: dict[str, object]) -> tuple[list[str], dict[str, str]]:
+def _draft_state_actions(
+    status: str, item: dict[str, object]
+) -> tuple[list[str], dict[str, str]]:
     if status == "generating_draft":
         return ["read", "wait"], {
             "save": "草稿正在生成，不能同时保存",
@@ -1792,7 +1858,14 @@ def _plan_state_actions(status: str) -> tuple[list[str], dict[str, str]]:
         return ["read", "execute", "cancel"], {
             "retry": "计划尚未进入可重试终态",
         }
-    if status in {"executed", "completed", "canceled", "cancelled", "expired", "failed"}:
+    if status in {
+        "executed",
+        "completed",
+        "canceled",
+        "cancelled",
+        "expired",
+        "failed",
+    }:
         return ["read"], {
             "execute": "计划已进入终态，不能再次执行",
             "cancel": "计划已进入终态，不能取消",
@@ -1819,7 +1892,11 @@ def annotate_collection_limit(
         limit = len(data["items"])
     else:
         requested = (params or {}).get("limit", (params or {}).get("page_size"))
-        limit = requested if isinstance(requested, int) and not isinstance(requested, bool) else len(data["items"])
+        limit = (
+            requested
+            if isinstance(requested, int) and not isinstance(requested, bool)
+            else len(data["items"])
+        )
     return {**data, "limit": limit}
 
 
@@ -1830,18 +1907,16 @@ def _display_value(value: object) -> str:
         return "是" if value else "否"
     if isinstance(value, list):
         return ", ".join(
-            str(item.get("name", item.get("id", item))) if isinstance(item, dict) else str(item)
+            str(item.get("name", item.get("id", item)))
+            if isinstance(item, dict)
+            else str(item)
             for item in value
         )
     return str(value)
 
 
 def _without_none(params: dict[str, object] | None) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in (params or {}).items()
-        if value is not None
-    }
+    return {key: value for key, value in (params or {}).items() if value is not None}
 
 
 def _cap_request_page_size(
@@ -1882,11 +1957,16 @@ def add_mutation_receipt(
         return data
     if isinstance(data.get("mutation_receipt"), dict):
         return data
-    changed_fields = sorted(
-        str(key)
-        for key in json_body
-        if isinstance(json_body, dict) and key not in {"request_id", "idempotency_key"}
-    ) if isinstance(json_body, dict) else []
+    changed_fields = (
+        sorted(
+            str(key)
+            for key in json_body
+            if isinstance(json_body, dict)
+            and key not in {"request_id", "idempotency_key"}
+        )
+        if isinstance(json_body, dict)
+        else []
+    )
     resource = command.rsplit(".", 1)[0]
     identifier = _first_receipt_identifier(data)
     changed_resources = [
@@ -2008,7 +2088,9 @@ def stream_collection_pages_to_file(
                 transformed = augment_state_metadata(
                     add_revisions(
                         transformed,
-                        include_collection=_collection_revisions_requested(context, fields),
+                        include_collection=_collection_revisions_requested(
+                            context, fields
+                        ),
                     ),
                     command=command,
                 )
@@ -2031,10 +2113,18 @@ def stream_collection_pages_to_file(
                     summary = transformed.get("summary")
                     if isinstance(summary, dict):
                         for key, value in summary.items():
-                            if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool):
-                                filtered_summary[key] = filtered_summary.get(key, 0) + value
+                            if (
+                                isinstance(key, str)
+                                and isinstance(value, int)
+                                and not isinstance(value, bool)
+                            ):
+                                filtered_summary[key] = (
+                                    filtered_summary.get(key, 0) + value
+                                )
                 for item in page_items:
-                    output.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+                    output.write(
+                        json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+                    )
                     output.write("\n")
                 item_count += len(page_items)
                 return len(page_items)

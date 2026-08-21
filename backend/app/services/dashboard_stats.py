@@ -124,11 +124,14 @@ async def build_dashboard_overview(
         school=school,
     )
 
-    task_status_counts, task_total_count, funnel, status_distribution = (
-        await _load_dashboard_task_metrics(
-            session,
-            identity_id=identity_id,
-        )
+    (
+        task_status_counts,
+        task_total_count,
+        funnel,
+        status_distribution,
+    ) = await _load_dashboard_task_metrics(
+        session,
+        identity_id=identity_id,
     )
     fallback_tasks = list(
         await session.scalars(
@@ -220,8 +223,7 @@ def _mentor_database_conditions(
         )
     if normalized_school is not None:
         conditions.append(
-            _sql_professor_label(Professor.school, "学院未填写")
-            == normalized_school,
+            _sql_professor_label(Professor.school, "学院未填写") == normalized_school,
         )
     return conditions
 
@@ -345,59 +347,71 @@ async def _build_mentor_section_from_database(
         root_latest_task.c.updated_at,
         Professor.updated_at,
     )
-    high_score_statement = _join_dashboard_summaries(
-        select(
-            Professor.id.label("professor_id"),
-            Professor.name,
-            Professor.university,
-            Professor.school,
-            Professor.department,
-            match_score.label("match_score"),
-            status.label("status"),
-            action_updated_at.label("action_updated_at"),
-        ).select_from(Professor),
-        expressions["joins"],
-    ).outerjoin(
-        root_latest_task,
-        root_latest_task.c.professor_id == Professor.id,
-    ).where(
-        *conditions,
-        high_score_uncontacted_condition,
-    ).order_by(
-        match_score.desc(),
-        action_updated_at.desc(),
-        Professor.name.asc(),
-    ).limit(8)
+    high_score_statement = (
+        _join_dashboard_summaries(
+            select(
+                Professor.id.label("professor_id"),
+                Professor.name,
+                Professor.university,
+                Professor.school,
+                Professor.department,
+                match_score.label("match_score"),
+                status.label("status"),
+                action_updated_at.label("action_updated_at"),
+            ).select_from(Professor),
+            expressions["joins"],
+        )
+        .outerjoin(
+            root_latest_task,
+            root_latest_task.c.professor_id == Professor.id,
+        )
+        .where(
+            *conditions,
+            high_score_uncontacted_condition,
+        )
+        .order_by(
+            match_score.desc(),
+            action_updated_at.desc(),
+            Professor.name.asc(),
+        )
+        .limit(8)
+    )
     high_score_rows = (await session.execute(high_score_statement)).mappings().all()
 
-    incomplete_statement = _join_dashboard_summaries(
-        select(
-            Professor.id.label("professor_id"),
-            Professor.name,
-            Professor.email,
-            Professor.university,
-            Professor.school,
-            Professor.department,
-            Professor.research_direction,
-            Professor.recent_papers,
-            Professor.profile_url,
-            match_score.label("match_score"),
-            status.label("status"),
-            action_updated_at.label("action_updated_at"),
-            missing_count.label("missing_count"),
-        ).select_from(Professor),
-        expressions["joins"],
-    ).outerjoin(
-        root_latest_task,
-        root_latest_task.c.professor_id == Professor.id,
-    ).where(
-        *conditions,
-        missing_count > 0,
-    ).order_by(
-        missing_count.desc(),
-        Professor.updated_at.desc(),
-        Professor.name.asc(),
-    ).limit(8)
+    incomplete_statement = (
+        _join_dashboard_summaries(
+            select(
+                Professor.id.label("professor_id"),
+                Professor.name,
+                Professor.email,
+                Professor.university,
+                Professor.school,
+                Professor.department,
+                Professor.research_direction,
+                Professor.recent_papers,
+                Professor.profile_url,
+                match_score.label("match_score"),
+                status.label("status"),
+                action_updated_at.label("action_updated_at"),
+                missing_count.label("missing_count"),
+            ).select_from(Professor),
+            expressions["joins"],
+        )
+        .outerjoin(
+            root_latest_task,
+            root_latest_task.c.professor_id == Professor.id,
+        )
+        .where(
+            *conditions,
+            missing_count > 0,
+        )
+        .order_by(
+            missing_count.desc(),
+            Professor.updated_at.desc(),
+            Professor.name.asc(),
+        )
+        .limit(8)
+    )
     incomplete_rows = (await session.execute(incomplete_statement)).mappings().all()
 
     university_label = _sql_professor_label(Professor.university, "学校未填写")
@@ -431,7 +445,9 @@ async def _build_mentor_section_from_database(
             count=sum(count for _, count in schools),
             schools=[
                 DashboardSchoolFilterSchoolRead(school_name=school_name, count=count)
-                for school_name, count in sorted(schools, key=lambda item: (-item[1], item[0]))
+                for school_name, count in sorted(
+                    schools, key=lambda item: (-item[1], item[0])
+                )
             ],
         )
         for university_name, schools in schools_by_university.items()
@@ -563,7 +579,9 @@ async def _build_mentor_section_from_database(
                 department=row["department"],
                 match_score=int(row["match_score"]),
                 status=str(row["status"]),
-                status_label=PROFESSOR_STATUS_LABELS.get(str(row["status"]), str(row["status"])),
+                status_label=PROFESSOR_STATUS_LABELS.get(
+                    str(row["status"]), str(row["status"])
+                ),
                 reason=_build_mentor_follow_up_reason(status=str(row["status"])),
                 updated_at=row["action_updated_at"],
             )
@@ -577,12 +595,12 @@ async def _build_mentor_section_from_database(
                 school=row["school"],
                 department=row["department"],
                 match_score=(
-                    int(row["match_score"])
-                    if row["match_score"] is not None
-                    else None
+                    int(row["match_score"]) if row["match_score"] is not None else None
                 ),
                 status=str(row["status"]),
-                status_label=PROFESSOR_STATUS_LABELS.get(str(row["status"]), str(row["status"])),
+                status_label=PROFESSOR_STATUS_LABELS.get(
+                    str(row["status"]), str(row["status"])
+                ),
                 reason="资料待补全",
                 updated_at=row["action_updated_at"],
                 missing_fields=_build_missing_fields_from_values(
@@ -788,32 +806,38 @@ async def _build_email_follow_ups_from_database(
         (status == "not_contacted", 4),
         else_=5,
     )
-    statement = _join_dashboard_summaries(
-        select(
-            Professor.id.label("professor_id"),
-            Professor.name,
-            Professor.university,
-            Professor.school,
-            Professor.department,
-            root_latest_task.c.task_id,
-            match_score.label("match_score"),
-            status.label("status"),
-            updated_at.label("action_updated_at"),
-        ).select_from(Professor),
-        expressions["joins"],
-    ).join(
-        root_latest_task,
-        root_latest_task.c.professor_id == Professor.id,
-    ).where(
-        Professor.archived_at.is_(None),
-        match_score >= threshold,
-        status != "replied",
-    ).order_by(
-        priority.asc(),
-        match_score.desc(),
-        updated_at.desc(),
-        Professor.name.asc(),
-    ).limit(8)
+    statement = (
+        _join_dashboard_summaries(
+            select(
+                Professor.id.label("professor_id"),
+                Professor.name,
+                Professor.university,
+                Professor.school,
+                Professor.department,
+                root_latest_task.c.task_id,
+                match_score.label("match_score"),
+                status.label("status"),
+                updated_at.label("action_updated_at"),
+            ).select_from(Professor),
+            expressions["joins"],
+        )
+        .join(
+            root_latest_task,
+            root_latest_task.c.professor_id == Professor.id,
+        )
+        .where(
+            Professor.archived_at.is_(None),
+            match_score >= threshold,
+            status != "replied",
+        )
+        .order_by(
+            priority.asc(),
+            match_score.desc(),
+            updated_at.desc(),
+            Professor.name.asc(),
+        )
+        .limit(8)
+    )
     rows = (await session.execute(statement)).mappings().all()
     return [
         DashboardEmailFollowUpRead(
@@ -850,7 +874,11 @@ def _build_mentor_section(
 ) -> DashboardMentorSectionRead:
     filtered_professor_ids = {professor.id for professor in filtered_professors}
     total_professors = len(filtered_professors)
-    matched_professors = sum(1 for professor in filtered_professors if professor.id in latest_match_score_by_professor)
+    matched_professors = sum(
+        1
+        for professor in filtered_professors
+        if professor.id in latest_match_score_by_professor
+    )
     high_match_professors = sum(
         1
         for professor in filtered_professors
@@ -872,7 +900,8 @@ def _build_mentor_section(
         for professor in filtered_professors
         if latest_match_score_by_professor.get(professor.id) is not None
         and latest_match_score_by_professor[professor.id] >= threshold
-        and professor_status_by_id.get(professor.id) in {"not_contacted", "preparing", "ready_to_send"}
+        and professor_status_by_id.get(professor.id)
+        in {"not_contacted", "preparing", "ready_to_send"}
     ]
     high_score_uncontacted.sort(
         key=lambda item: (
@@ -907,7 +936,9 @@ def _build_mentor_section(
         summary=DashboardMentorSummaryRead(
             total_professors=total_professors,
             matched_professors=matched_professors,
-            matched_rate=(matched_professors / total_professors) if total_professors else 0.0,
+            matched_rate=(matched_professors / total_professors)
+            if total_professors
+            else 0.0,
             high_match_professors=high_match_professors,
             high_score_uncontacted_count=len(
                 [
@@ -915,7 +946,8 @@ def _build_mentor_section(
                     for professor_id in filtered_professor_ids
                     if latest_match_score_by_professor.get(professor_id) is not None
                     and latest_match_score_by_professor[professor_id] >= threshold
-                    and professor_status_by_id.get(professor_id) in {"not_contacted", "preparing", "ready_to_send"}
+                    and professor_status_by_id.get(professor_id)
+                    in {"not_contacted", "preparing", "ready_to_send"}
                 ]
             ),
             high_score_threshold=threshold,
@@ -932,12 +964,11 @@ def _build_mentor_section(
             ),
             source_material_name=(
                 resolved_matches.scope.source_identity.current_primary_material.display_name
-                if resolved_matches.scope.source_identity.current_primary_material is not None
+                if resolved_matches.scope.source_identity.current_primary_material
+                is not None
                 else None
             ),
-            uses_group_match_source=(
-                resolved_matches.scope.uses_group_match_source
-            ),
+            uses_group_match_source=(resolved_matches.scope.uses_group_match_source),
             stale_result_count=sum(
                 1
                 for result in resolved_matches.by_professor_id.values()
@@ -952,7 +983,9 @@ def _build_mentor_section(
             latest_match_score_by_professor=latest_match_score_by_professor,
         ),
         profile_completeness=_build_profile_completeness(filtered_professors),
-        profile_completeness_distribution=_build_profile_completeness_distribution(filtered_professors),
+        profile_completeness_distribution=_build_profile_completeness_distribution(
+            filtered_professors
+        ),
         school_distribution=_build_school_distribution(professors),
         school_filters=_build_school_filters(professors),
         active_filter=DashboardMentorFilterRead(
@@ -1061,9 +1094,15 @@ def _professor_matches_school_filters(
         return False
     normalized_university = _normalize_filter_value(university)
     normalized_school = _normalize_filter_value(school)
-    if normalized_university is not None and _normalize_school_label(professor.university) != normalized_university:
+    if (
+        normalized_university is not None
+        and _normalize_school_label(professor.university) != normalized_university
+    ):
         return False
-    if normalized_school is not None and _normalize_college_label(professor.school) != normalized_school:
+    if (
+        normalized_school is not None
+        and _normalize_college_label(professor.school) != normalized_school
+    ):
         return False
     return True
 
@@ -1155,12 +1194,15 @@ async def _build_email_section(
         for task in tasks
         if task.id in sent_log_task_ids
         or task.sent_at is not None
-        or task.status in {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
+        or task.status
+        in {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}
     ]
     all_replied_tasks = [
         task
         for task in tasks
-        if task.id in received_log_task_ids or task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value
+        if task.id in received_log_task_ids
+        or task.is_replied
+        or task.status == EmailTaskStatus.REPLY_DETECTED.value
     ]
 
     all_sent_events: list[EmailTrendEvent] = []
@@ -1180,22 +1222,22 @@ async def _build_email_section(
             if event_log.email_task_id is not None
         }
         seen_sent_log_task_ids.update(event_task_ids)
-        if (
-            _professor_matches_school_filters(
-                professor_by_id[log.professor_id],
-                university=email_university,
-                school=email_school,
-            )
-            and any(
-                event_log.identity_id == identity_id
-                and not (event_log.failure_summary or "").strip()
-                for event_log in event.logs
-            )
+        if _professor_matches_school_filters(
+            professor_by_id[log.professor_id],
+            university=email_university,
+            school=email_school,
+        ) and any(
+            event_log.identity_id == identity_id
+            and not (event_log.failure_summary or "").strip()
+            for event_log in event.logs
         ):
             active_sent_count += 1
 
     for task in all_sent_tasks:
-        if task.id in seen_sent_log_task_ids or task.professor_id not in active_professor_ids:
+        if (
+            task.id in seen_sent_log_task_ids
+            or task.professor_id not in active_professor_ids
+        ):
             continue
         source_time = task.sent_at or task.updated_at
         if not _datetime_in_range(source_time, start_at=start_at, end_at=end_at):
@@ -1264,9 +1306,7 @@ async def _build_email_section(
         school=email_school,
     )
     sent_professor_rate = (
-        sent_professor_count / total_professor_count
-        if total_professor_count
-        else 0.0
+        sent_professor_count / total_professor_count if total_professor_count else 0.0
     )
     contacted_professor_count = len(contacted_professor_ids)
     replied_count = len(replied_professor_ids)
@@ -1274,7 +1314,11 @@ async def _build_email_section(
         EmailTaskStatus.SEND_FAILED.value,
         0,
     )
-    reply_rate = (replied_count / contacted_professor_count) if contacted_professor_count else 0.0
+    reply_rate = (
+        (replied_count / contacted_professor_count)
+        if contacted_professor_count
+        else 0.0
+    )
     send_failed_rate = (
         send_failed_count / max(active_sent_count + send_failed_count, 1)
         if task_total_count
@@ -1334,7 +1378,9 @@ def _build_match_score_distribution(
     professors: list[Professor],
     latest_match_score_by_professor: dict[int, int],
 ) -> list[DashboardMentorMatchBucketRead]:
-    buckets = Counter({"unmatched": 0, "0_59": 0, "60_69": 0, "70_79": 0, "80_89": 0, "90_100": 0})
+    buckets = Counter(
+        {"unmatched": 0, "0_59": 0, "60_69": 0, "70_79": 0, "80_89": 0, "90_100": 0}
+    )
     for professor in professors:
         score = latest_match_score_by_professor.get(professor.id)
         if score is None:
@@ -1351,41 +1397,69 @@ def _build_match_score_distribution(
             buckets["90_100"] += 1
 
     return [
-        DashboardMentorMatchBucketRead(bucket="unmatched", label="未分析", count=buckets["unmatched"]),
-        DashboardMentorMatchBucketRead(bucket="0_59", label="0-59", count=buckets["0_59"]),
-        DashboardMentorMatchBucketRead(bucket="60_69", label="60-69", count=buckets["60_69"]),
-        DashboardMentorMatchBucketRead(bucket="70_79", label="70-79", count=buckets["70_79"]),
-        DashboardMentorMatchBucketRead(bucket="80_89", label="80-89", count=buckets["80_89"]),
-        DashboardMentorMatchBucketRead(bucket="90_100", label="90-100", count=buckets["90_100"]),
+        DashboardMentorMatchBucketRead(
+            bucket="unmatched", label="未分析", count=buckets["unmatched"]
+        ),
+        DashboardMentorMatchBucketRead(
+            bucket="0_59", label="0-59", count=buckets["0_59"]
+        ),
+        DashboardMentorMatchBucketRead(
+            bucket="60_69", label="60-69", count=buckets["60_69"]
+        ),
+        DashboardMentorMatchBucketRead(
+            bucket="70_79", label="70-79", count=buckets["70_79"]
+        ),
+        DashboardMentorMatchBucketRead(
+            bucket="80_89", label="80-89", count=buckets["80_89"]
+        ),
+        DashboardMentorMatchBucketRead(
+            bucket="90_100", label="90-100", count=buckets["90_100"]
+        ),
     ]
 
 
-def _build_profile_completeness(professors: list[Professor]) -> list[DashboardProfileCompletenessRead]:
+def _build_profile_completeness(
+    professors: list[Professor],
+) -> list[DashboardProfileCompletenessRead]:
     total = len(professors)
     email_count = sum(1 for professor in professors if _has_text(professor.email))
-    research_direction_count = sum(1 for professor in professors if _has_text(professor.research_direction))
+    research_direction_count = sum(
+        1 for professor in professors if _has_text(professor.research_direction)
+    )
     recent_papers_count = sum(
         1
         for professor in professors
-        if isinstance(professor.recent_papers, list) and any(_has_text(item) for item in professor.recent_papers)
+        if isinstance(professor.recent_papers, list)
+        and any(_has_text(item) for item in professor.recent_papers)
     )
-    profile_url_count = sum(1 for professor in professors if _has_text(professor.profile_url))
+    profile_url_count = sum(
+        1 for professor in professors if _has_text(professor.profile_url)
+    )
     complete_count = sum(
         1
         for professor in professors
         if _has_text(professor.email)
         and _has_text(professor.research_direction)
         and (
-            (isinstance(professor.recent_papers, list) and any(_has_text(item) for item in professor.recent_papers))
+            (
+                isinstance(professor.recent_papers, list)
+                and any(_has_text(item) for item in professor.recent_papers)
+            )
             or _has_text(professor.profile_url)
         )
     )
 
     return [
         _profile_completeness_item("email", "有邮箱", email_count, total),
-        _profile_completeness_item("research_direction", "有研究方向", research_direction_count, total),
-        _profile_completeness_item("recent_papers", "有近期论文", recent_papers_count, total),
-        _profile_completeness_item("profile_url", "有主页链接", profile_url_count, total),
+        _profile_completeness_item(
+            "research_direction", "有研究方向", research_direction_count, total
+        ),
+        _profile_completeness_item(
+            "recent_papers", "有近期论文", recent_papers_count, total
+        ),
+        _profile_completeness_item(
+            "profile_url", "有主页链接", profile_url_count, total
+        ),
         _profile_completeness_item("complete", "完整资料", complete_count, total),
     ]
 
@@ -1450,7 +1524,9 @@ def _profile_completeness_item(
     )
 
 
-def _build_school_distribution(professors: list[Professor]) -> list[DashboardSchoolDistributionRead]:
+def _build_school_distribution(
+    professors: list[Professor],
+) -> list[DashboardSchoolDistributionRead]:
     school_counter: Counter[str] = Counter()
     for professor in professors:
         school_name = _normalize_school_label(professor.university)
@@ -1463,7 +1539,9 @@ def _build_school_distribution(professors: list[Professor]) -> list[DashboardSch
     ]
 
 
-def _build_school_filters(professors: list[Professor]) -> list[DashboardSchoolFilterRead]:
+def _build_school_filters(
+    professors: list[Professor],
+) -> list[DashboardSchoolFilterRead]:
     by_university: dict[str, Counter[str]] = defaultdict(Counter)
     for professor in professors:
         university = _normalize_school_label(professor.university)
@@ -1474,7 +1552,9 @@ def _build_school_filters(professors: list[Professor]) -> list[DashboardSchoolFi
     for university, schools in by_university.items():
         school_items = [
             DashboardSchoolFilterSchoolRead(school_name=school_name, count=count)
-            for school_name, count in sorted(schools.items(), key=lambda item: (-item[1], item[0]))
+            for school_name, count in sorted(
+                schools.items(), key=lambda item: (-item[1], item[0])
+            )
         ]
         filters.append(
             DashboardSchoolFilterRead(
@@ -1505,15 +1585,15 @@ def _serialize_professor_action_item(
         university=professor.university,
         school=professor.school,
         department=professor.department,
-        match_score=(
-            match_result.match_score if match_result is not None else None
-        ),
+        match_score=(match_result.match_score if match_result is not None else None),
         status=status,
         status_label=PROFESSOR_STATUS_LABELS.get(status, status),
         updated_at=(
             match_result.updated_at
             if match_result is not None
-            else task.updated_at if task is not None else professor.updated_at
+            else task.updated_at
+            if task is not None
+            else professor.updated_at
         ),
         reason=reason,
         missing_fields=missing_fields,
@@ -1526,7 +1606,10 @@ def _build_missing_fields(professor: Professor) -> list[str]:
         missing_fields.append("邮箱")
     if not _has_text(professor.research_direction):
         missing_fields.append("研究方向")
-    if not (isinstance(professor.recent_papers, list) and any(_has_text(item) for item in professor.recent_papers)):
+    if not (
+        isinstance(professor.recent_papers, list)
+        and any(_has_text(item) for item in professor.recent_papers)
+    ):
         missing_fields.append("近期论文")
     if not _has_text(professor.profile_url):
         missing_fields.append("主页链接")
@@ -1568,7 +1651,9 @@ async def _build_outreach_coverage_from_database(
                     .where(Professor.archived_at.is_(None))
                     .group_by(university_label, school_label),
                 )
-            ).mappings().all()
+            )
+            .mappings()
+            .all()
         ]
 
     university_totals: Counter[str] = Counter()
@@ -1731,7 +1816,9 @@ def _build_outreach_coverage_item(
     )
 
 
-def _outreach_coverage_sort_key(item: DashboardOutreachCoverageItemRead) -> tuple[float, int, int, str, str]:
+def _outreach_coverage_sort_key(
+    item: DashboardOutreachCoverageItemRead,
+) -> tuple[float, int, int, str, str]:
     return (
         item.sent_professor_rate,
         -item.unsent_professor_count,
@@ -1783,7 +1870,9 @@ def _build_reply_wait(
                 _successful_sent_event_timestamp(event),
             )
         elif event.log.direction == EmailDirection.RECEIVED.value:
-            received_at_by_professor[professor_id].append(_as_utc_datetime(event.created_at))
+            received_at_by_professor[professor_id].append(
+                _as_utc_datetime(event.created_at)
+            )
 
     # Legacy task rows can contain an exact send timestamp even when their send log is unavailable.
     for task in tasks:
@@ -1812,7 +1901,9 @@ def _build_reply_wait(
 
     wait_hours.sort()
     sample_count = len(wait_hours)
-    counts: Counter[str] = Counter(_reply_wait_bucket_key(value) for value in wait_hours)
+    counts: Counter[str] = Counter(
+        _reply_wait_bucket_key(value) for value in wait_hours
+    )
     distribution = [
         DashboardReplyWaitBucketRead(
             key=key,
@@ -1890,7 +1981,9 @@ def _build_email_trend(
     current = start_day
     while current <= current_day:
         key = current.date().isoformat()
-        buckets[key] = DashboardEmailTrendBucketRead(date=key, label=current.strftime("%m/%d"))
+        buckets[key] = DashboardEmailTrendBucketRead(
+            date=key, label=current.strftime("%m/%d")
+        )
         current += timedelta(days=1)
 
     for _, _, event_time in sent_events:
@@ -1905,7 +1998,11 @@ def _build_email_trend(
             replied_professors_by_bucket[key].add(professor_id)
 
     for task in replied_fallback_tasks:
-        key = _floor_day(task.updated_at, local_timezone=local_timezone).date().isoformat()
+        key = (
+            _floor_day(task.updated_at, local_timezone=local_timezone)
+            .date()
+            .isoformat()
+        )
         if key in buckets:
             replied_professors_by_bucket[key].add(task.professor_id)
 
@@ -1977,23 +2074,42 @@ def _build_email_funnel(tasks: list[EmailTask]) -> list[DashboardEmailFunnelBuck
             EmailTaskStatus.REPLY_DETECTED.value,
         }:
             counts["scheduled"] += 1
-        if task.status in {EmailTaskStatus.SENT.value, EmailTaskStatus.REPLY_DETECTED.value}:
+        if task.status in {
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+        }:
             counts["sent"] += 1
         if task.status == EmailTaskStatus.REPLY_DETECTED.value or task.is_replied:
             counts["replied"] += 1
 
     return [
-        DashboardEmailFunnelBucketRead(key="matched", label="已匹配", count=counts["matched"]),
-        DashboardEmailFunnelBucketRead(key="generating_draft", label="草稿生成中", count=counts["generating_draft"]),
-        DashboardEmailFunnelBucketRead(key="review_required", label="待审核", count=counts["review_required"]),
-        DashboardEmailFunnelBucketRead(key="approved", label="已批准", count=counts["approved"]),
-        DashboardEmailFunnelBucketRead(key="scheduled", label="已排程", count=counts["scheduled"]),
-        DashboardEmailFunnelBucketRead(key="sent", label="已发送", count=counts["sent"]),
-        DashboardEmailFunnelBucketRead(key="replied", label="已回复", count=counts["replied"]),
+        DashboardEmailFunnelBucketRead(
+            key="matched", label="已匹配", count=counts["matched"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="generating_draft", label="草稿生成中", count=counts["generating_draft"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="review_required", label="待审核", count=counts["review_required"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="approved", label="已批准", count=counts["approved"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="scheduled", label="已排程", count=counts["scheduled"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="sent", label="已发送", count=counts["sent"]
+        ),
+        DashboardEmailFunnelBucketRead(
+            key="replied", label="已回复", count=counts["replied"]
+        ),
     ]
 
 
-def _build_email_status_distribution(tasks: list[EmailTask]) -> list[DashboardEmailStatusBucketRead]:
+def _build_email_status_distribution(
+    tasks: list[EmailTask],
+) -> list[DashboardEmailStatusBucketRead]:
     counter = Counter(task.status for task in tasks)
     ordered_statuses = [
         EmailTaskStatus.MATCHED.value,
@@ -2126,7 +2242,9 @@ def _as_utc_datetime(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: datetime | None) -> bool:
+def _datetime_in_range(
+    value: datetime, *, start_at: datetime | None, end_at: datetime | None
+) -> bool:
     value = _as_utc_datetime(value)
     if start_at is not None and value < start_at:
         return False
@@ -2138,7 +2256,9 @@ def _datetime_in_range(value: datetime, *, start_at: datetime | None, end_at: da
 def _floor_day(value: datetime, *, local_timezone: tzinfo) -> datetime:
     if value.tzinfo is None:
         value = as_utc_aware(value)
-    return value.astimezone(local_timezone).replace(hour=0, minute=0, second=0, microsecond=0)
+    return value.astimezone(local_timezone).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
 
 
 def _local_timezone() -> tzinfo:

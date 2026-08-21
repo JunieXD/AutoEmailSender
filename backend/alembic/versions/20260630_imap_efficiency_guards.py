@@ -21,18 +21,42 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table("imap_mailbox_sync_states", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("discovered_sent_folder", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("sent_folder_discovered_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(
-            sa.Column("sent_folder_discovery_failed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("discovered_sent_folder", sa.String(length=255), nullable=True)
         )
-        batch_op.add_column(sa.Column("sent_folder_discovery_error", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("throttle_paused_until", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(
+            sa.Column(
+                "sent_folder_discovered_at", sa.DateTime(timezone=True), nullable=True
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "sent_folder_discovery_failed_at",
+                sa.DateTime(timezone=True),
+                nullable=True,
+            ),
+        )
+        batch_op.add_column(
+            sa.Column("sent_folder_discovery_error", sa.Text(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column(
+                "throttle_paused_until", sa.DateTime(timezone=True), nullable=True
+            )
+        )
         batch_op.add_column(sa.Column("throttle_reason", sa.Text(), nullable=True))
         batch_op.add_column(
-            sa.Column("last_professor_state_ensure_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column(
+                "last_professor_state_ensure_at",
+                sa.DateTime(timezone=True),
+                nullable=True,
+            ),
         )
-        batch_op.add_column(sa.Column("professor_state_fingerprint", sa.String(length=255), nullable=True))
+        batch_op.add_column(
+            sa.Column(
+                "professor_state_fingerprint", sa.String(length=255), nullable=True
+            )
+        )
 
     op.create_index(
         "ix_imap_professor_sync_identity_status_updated",

@@ -60,7 +60,9 @@ def normalize_profile_url(url: str, *, base_url: str | None = None) -> str:
     path = parsed.path or "/"
     if path != "/":
         path = path.rstrip("/") or "/"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment)
+    )
 
 
 def _extract_embedded_url_parameters(link_url: str) -> tuple[str, ...]:

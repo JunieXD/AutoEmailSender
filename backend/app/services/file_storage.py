@@ -117,7 +117,9 @@ def _extract_docx_text(path: Path) -> str | None:
             for row in table.rows
             for cell in row.cells
         ]
-        content = "\n".join(item for item in [*paragraphs, *table_cells] if item).strip()
+        content = "\n".join(
+            item for item in [*paragraphs, *table_cells] if item
+        ).strip()
         return content or None
     except Exception:
         logger.exception("材料 DOCX 提取失败: %s", path.as_posix())
@@ -138,7 +140,9 @@ def _extract_pdf_text(path: Path) -> str | None:
         from pypdf import PdfReader
 
         reader = PdfReader(path)
-        content = "\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+        content = "\n".join(
+            (page.extract_text() or "").strip() for page in reader.pages
+        ).strip()
         return content or None
     except Exception:
         logger.exception("材料 PDF pypdf 提取失败: %s", path.as_posix())

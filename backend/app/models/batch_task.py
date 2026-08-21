@@ -75,8 +75,12 @@ class BatchTask(Base):
         Integer,
         nullable=True,
     )
-    outreach_generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outreach_generation_mode: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    outreach_template_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_subject: Mapped[str | None] = mapped_column(Text, nullable=True)

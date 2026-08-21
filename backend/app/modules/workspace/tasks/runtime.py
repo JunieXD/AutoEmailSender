@@ -441,10 +441,7 @@ async def generate_task_draft(
         await session.refresh(task)
         if (
             task.status != EmailTaskStatus.GENERATING_DRAFT.value
-            or (
-                draft_claim_id is not None
-                and task.draft_claim_id != draft_claim_id
-            )
+            or (draft_claim_id is not None and task.draft_claim_id != draft_claim_id)
             or task.cancellation_reason
             == EmailTaskCancellationReason.USER_REMOVED.value
         ):
@@ -1056,17 +1053,19 @@ async def approve_generated_batch_drafts(
             tasks.extend(
                 (
                     await session.execute(
-                    select(EmailTask)
-                    .options(selectinload(EmailTask.batch_task))
-                    .where(
-                        EmailTask.id.in_(item_id_chunk),
-                        EmailTask.batch_task_id == batch_task_id,
-                        EmailTask.source == EmailTaskSource.BATCH.value,
+                        select(EmailTask)
+                        .options(selectinload(EmailTask.batch_task))
+                        .where(
+                            EmailTask.id.in_(item_id_chunk),
+                            EmailTask.batch_task_id == batch_task_id,
+                            EmailTask.source == EmailTaskSource.BATCH.value,
+                        )
+                        .order_by(EmailTask.id.asc())
+                        .with_for_update(),
                     )
-                    .order_by(EmailTask.id.asc())
-                    .with_for_update(),
-                    )
-                ).scalars().unique(),
+                )
+                .scalars()
+                .unique(),
             )
         tasks.sort(key=lambda task: task.id)
         if len(tasks) != len(item_ids):

@@ -33,8 +33,7 @@ def email_task_is_not_user_removed_expression() -> ColumnElement[bool]:
     return or_(
         EmailTask.status != EmailTaskStatus.CANCELED.value,
         EmailTask.cancellation_reason.is_(None),
-        EmailTask.cancellation_reason
-        != EmailTaskCancellationReason.USER_REMOVED.value,
+        EmailTask.cancellation_reason != EmailTaskCancellationReason.USER_REMOVED.value,
     )
 
 
@@ -73,7 +72,8 @@ def should_mark_batch_task_completed(
     resolved_now = now or utc_now()
     return (
         task.target_count > 0
-        and count_completed_batch_task_items(task, now=resolved_now) >= task.target_count
+        and count_completed_batch_task_items(task, now=resolved_now)
+        >= task.target_count
         and task.status not in BATCH_TASK_COMPLETION_EXCLUDED_STATUSES
     )
 

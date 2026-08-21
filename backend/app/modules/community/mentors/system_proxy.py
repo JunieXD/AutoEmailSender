@@ -33,7 +33,9 @@ def _read_platform_proxy_settings(hostname: str) -> tuple[Mapping[str, str], boo
         bypass_reader = getattr(urllib_request, "proxy_bypass_registry", None)
         try:
             proxies = proxy_reader() if callable(proxy_reader) else {}
-            bypassed = bool(bypass_reader(hostname)) if callable(bypass_reader) else False
+            bypassed = (
+                bool(bypass_reader(hostname)) if callable(bypass_reader) else False
+            )
         except (OSError, TypeError, ValueError):
             return {}, False
         return proxies, bypassed

@@ -49,7 +49,9 @@ async def create_outreach_template_record(
             is_default=False,
         )
     except ValueError as exc:
-        raise OutreachTemplateMutationError(400, "TEMPLATE_INVALID_INPUT", str(exc)) from exc
+        raise OutreachTemplateMutationError(
+            400, "TEMPLATE_INVALID_INPUT", str(exc)
+        ) from exc
     session.add(template)
     await session.flush()
     if requested_default:
@@ -68,7 +70,9 @@ async def update_outreach_template_record(
     event_name: str,
     actor: str,
 ) -> OutreachTemplate:
-    template = await get_outreach_template_or_raise(session, template_id, include_archived=True)
+    template = await get_outreach_template_or_raise(
+        session, template_id, include_archived=True
+    )
     fields = payload.model_fields_set
     try:
         if "name" in fields:
@@ -84,7 +88,9 @@ async def update_outreach_template_record(
         if "body_html" in fields:
             template.body_html = normalize_nullable_template_text(payload.body_html)
     except ValueError as exc:
-        raise OutreachTemplateMutationError(400, "TEMPLATE_INVALID_INPUT", str(exc)) from exc
+        raise OutreachTemplateMutationError(
+            400, "TEMPLATE_INVALID_INPUT", str(exc)
+        ) from exc
 
     if "is_default" in fields and payload.is_default is not None:
         if payload.is_default:
@@ -111,7 +117,9 @@ async def duplicate_outreach_template_record(
     event_name: str,
     actor: str,
 ) -> OutreachTemplate:
-    source = await get_outreach_template_or_raise(session, template_id, include_archived=True)
+    source = await get_outreach_template_or_raise(
+        session, template_id, include_archived=True
+    )
     suffix = "（副本）"
     duplicate = OutreachTemplate(
         name=f"{source.name[: 120 - len(suffix)]}{suffix}",
@@ -150,7 +158,9 @@ async def archive_outreach_template_record(
     event_name: str,
     actor: str,
 ) -> OutreachTemplate:
-    template = await get_outreach_template_or_raise(session, template_id, include_archived=True)
+    template = await get_outreach_template_or_raise(
+        session, template_id, include_archived=True
+    )
     if template.archived_at is None:
         template.archived_at = utc_now()
         template.is_default = False
@@ -166,7 +176,9 @@ async def restore_outreach_template_record(
     event_name: str,
     actor: str,
 ) -> OutreachTemplate:
-    template = await get_outreach_template_or_raise(session, template_id, include_archived=True)
+    template = await get_outreach_template_or_raise(
+        session, template_id, include_archived=True
+    )
     template.archived_at = None
     template.updated_at = utc_now()
     await record_outreach_template_event(session, template, event_name, actor=actor)
@@ -186,7 +198,9 @@ async def get_outreach_template_or_raise(
             include_archived=include_archived,
         )
     except ValueError as exc:
-        raise OutreachTemplateMutationError(404, "TEMPLATE_NOT_FOUND", str(exc)) from exc
+        raise OutreachTemplateMutationError(
+            404, "TEMPLATE_NOT_FOUND", str(exc)
+        ) from exc
 
 
 async def record_outreach_template_event(

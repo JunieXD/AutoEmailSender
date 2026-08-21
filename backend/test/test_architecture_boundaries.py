@@ -56,7 +56,9 @@ def _internal_imports(path: Path) -> set[str]:
     imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            imports.update(alias.name for alias in node.names if alias.name.startswith("app"))
+            imports.update(
+                alias.name for alias in node.names if alias.name.startswith("app")
+            )
         elif isinstance(node, ast.ImportFrom):
             target = _resolve_import_from(path, node)
             if target.startswith("app"):
@@ -102,7 +104,9 @@ def _module_boundary_violations() -> set[str]:
             elif len(target_parts) >= 3 and target_parts[:2] == ["app", "modules"]:
                 target_domain = target_parts[2]
                 target_public = f"app.modules.{target_domain}.public"
-                if target_domain != source_domain and not target.startswith(target_public):
+                if target_domain != source_domain and not target.startswith(
+                    target_public
+                ):
                     reason = "cross-domain imports must use the target public facade"
             if reason:
                 relative_source = source.relative_to(BACKEND_ROOT).as_posix()
@@ -127,7 +131,9 @@ def _legacy_module_reexport_shims() -> set[str]:
                 if isinstance(node, ast.ImportFrom) and node.module == "__future__":
                     continue
                 if isinstance(node, ast.ImportFrom):
-                    imports_domain_module |= (node.module or "").startswith("app.modules")
+                    imports_domain_module |= (node.module or "").startswith(
+                        "app.modules"
+                    )
                     continue
                 if isinstance(node, ast.Import):
                     imports_domain_module |= any(
@@ -135,7 +141,9 @@ def _legacy_module_reexport_shims() -> set[str]:
                     )
                     continue
                 if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    targets = (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
                     if all(
                         isinstance(target, ast.Name) and target.id == "__all__"
                         for target in targets

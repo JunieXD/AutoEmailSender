@@ -21,7 +21,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     with op.batch_alter_table("identity_profiles", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("is_default", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+            sa.Column(
+                "is_default", sa.Boolean(), server_default=sa.text("0"), nullable=False
+            ),
         )
         batch_op.add_column(
             sa.Column(
@@ -50,7 +52,9 @@ def upgrade() -> None:
             ),
         )
         batch_op.add_column(
-            sa.Column("is_default", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+            sa.Column(
+                "is_default", sa.Boolean(), server_default=sa.text("0"), nullable=False
+            ),
         )
         batch_op.add_column(
             sa.Column(

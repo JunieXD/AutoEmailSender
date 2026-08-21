@@ -13,14 +13,18 @@ class UTCDateTime(TypeDecorator[datetime]):
     impl = DateTime
     cache_ok = True
 
-    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+    def process_bind_param(
+        self, value: datetime | None, dialect: Dialect
+    ) -> datetime | None:
         if value is None:
             return None
         if dialect.name == "sqlite":
             return as_utc_naive(value)
         return as_utc_aware(value)
 
-    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+    def process_result_value(
+        self, value: datetime | None, dialect: Dialect
+    ) -> datetime | None:
         if value is None:
             return None
         return as_utc_aware(value)

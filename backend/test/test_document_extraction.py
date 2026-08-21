@@ -50,12 +50,17 @@ class DocumentExtractionGoldenTests(unittest.TestCase):
     }
 
     def test_matches_markitdown_0_1_5_golden_outputs(self) -> None:
-        for file_name, (expected_type, expected_digest) in self.EXPECTED_DOCUMENTS.items():
+        for file_name, (
+            expected_type,
+            expected_digest,
+        ) in self.EXPECTED_DOCUMENTS.items():
             with self.subTest(file_name=file_name):
                 path = FIXTURE_DIR / file_name
 
                 self.assertEqual(detect_document_type(path), expected_type)
-                self.assertEqual(_normalized_digest(extract_document(path)), expected_digest)
+                self.assertEqual(
+                    _normalized_digest(extract_document(path)), expected_digest
+                )
 
     def test_rejects_encrypted_damaged_and_disguised_non_documents(self) -> None:
         for file_name, expected_type in self.REJECTED_DOCUMENTS.items():
@@ -67,14 +72,18 @@ class DocumentExtractionGoldenTests(unittest.TestCase):
                     extract_document(path)
 
     def test_pdf_table_structure_survives_file_storage_integration(self) -> None:
-        text = extract_text_from_document((FIXTURE_DIR / "borderless_form_resume.pdf").as_posix())
+        text = extract_text_from_document(
+            (FIXTURE_DIR / "borderless_form_resume.pdf").as_posix()
+        )
 
         self.assertIn("FORM-TABLE-SENTINEL", text or "")
         self.assertIn("| 时间", text or "")
         self.assertIn("| ----", text or "")
 
     def test_docx_formulas_survive_file_storage_integration(self) -> None:
-        text = extract_text_from_document((FIXTURE_DIR / "equation_resume.docx").as_posix())
+        text = extract_text_from_document(
+            (FIXTURE_DIR / "equation_resume.docx").as_posix()
+        )
 
         self.assertIn("$x+1=2$", text or "")
         self.assertIn("$$E=mc\\^2$$", text or "")

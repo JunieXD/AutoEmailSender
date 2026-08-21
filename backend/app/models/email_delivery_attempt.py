@@ -76,4 +76,3 @@ class EmailDeliveryAttempt(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-

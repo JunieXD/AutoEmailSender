@@ -10,7 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from auto_email_sender_cli.errors import RuntimeProtocolMismatchError, RuntimeUnavailableError
+from auto_email_sender_cli.errors import (
+    RuntimeProtocolMismatchError,
+    RuntimeUnavailableError,
+)
 from auto_email_sender_cli.runtime import (
     RuntimeDescriptor,
     RuntimeProbe,
@@ -25,7 +28,9 @@ from auto_email_sender_cli.version import get_build_identity, get_cli_version
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_runtime_http_client_bypasses_environment_proxies_for_local_urls(self) -> None:
+    def test_runtime_http_client_bypasses_environment_proxies_for_local_urls(
+        self,
+    ) -> None:
         local_urls: tuple[str | None, ...] = (
             None,
             "http://127.0.0.1:48120",
@@ -48,7 +53,9 @@ class RuntimeTests(unittest.TestCase):
 
             constructor.assert_called_once_with(timeout=1.5, trust_env=False)
 
-    def test_runtime_http_client_preserves_proxies_for_explicit_remote_development_url(self) -> None:
+    def test_runtime_http_client_preserves_proxies_for_explicit_remote_development_url(
+        self,
+    ) -> None:
         with patch("auto_email_sender_cli.runtime.httpx.Client") as constructor:
             create_runtime_http_client(
                 base_url="https://development.example.test:8443",
@@ -73,7 +80,9 @@ class RuntimeTests(unittest.TestCase):
 
         constructor.assert_called_once_with(timeout=2.5, trust_env=True)
 
-    def test_runtime_http_client_ignores_incomplete_remote_environment_override(self) -> None:
+    def test_runtime_http_client_ignores_incomplete_remote_environment_override(
+        self,
+    ) -> None:
         with (
             patch.dict(
                 os.environ,
@@ -109,7 +118,9 @@ class RuntimeTests(unittest.TestCase):
         windows_probe.assert_called_once_with(12345)
         destructive_probe.assert_not_called()
 
-    def test_build_identity_ignores_blank_explicit_revision_and_uses_embedded(self) -> None:
+    def test_build_identity_ignores_blank_explicit_revision_and_uses_embedded(
+        self,
+    ) -> None:
         with patch.dict(
             os.environ,
             {
@@ -124,7 +135,9 @@ class RuntimeTests(unittest.TestCase):
                 {"revision": "abc123", "kind": "embedded", "dirty": False},
             )
 
-    def test_build_identity_falls_back_to_development_when_all_revisions_are_blank(self) -> None:
+    def test_build_identity_falls_back_to_development_when_all_revisions_are_blank(
+        self,
+    ) -> None:
         with patch.dict(
             os.environ,
             {
@@ -164,7 +177,9 @@ class RuntimeTests(unittest.TestCase):
 
     def test_runtime_file_uses_electron_user_data_directory_on_windows(self) -> None:
         with (
-            patch.dict(os.environ, {"APPDATA": "C:/Users/Alice/AppData/Roaming"}, clear=True),
+            patch.dict(
+                os.environ, {"APPDATA": "C:/Users/Alice/AppData/Roaming"}, clear=True
+            ),
             patch("auto_email_sender_cli.runtime.sys.platform", "win32"),
         ):
             self.assertEqual(
@@ -196,8 +211,14 @@ class RuntimeTests(unittest.TestCase):
                         "runtime_id": "runtime-test",
                         "base_url": "http://127.0.0.1:48120",
                         "access_token": "token",
-                        "desktop": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:00Z"},
-                        "backend": {"pid": os.getpid(), "started_at": "2026-08-03T00:00:01Z"},
+                        "desktop": {
+                            "pid": os.getpid(),
+                            "started_at": "2026-08-03T00:00:00Z",
+                        },
+                        "backend": {
+                            "pid": os.getpid(),
+                            "started_at": "2026-08-03T00:00:01Z",
+                        },
                         "published_at": "2026-08-03T00:00:01Z",
                     },
                 ),
@@ -255,7 +276,9 @@ class RuntimeTests(unittest.TestCase):
 
                     self.assertIn("运行信息无效", raised.exception.message)
 
-    def test_explicit_remote_environment_runtime_remains_available_for_development(self) -> None:
+    def test_explicit_remote_environment_runtime_remains_available_for_development(
+        self,
+    ) -> None:
         with patch.dict(
             os.environ,
             {
@@ -314,7 +337,9 @@ class RuntimeTests(unittest.TestCase):
                             load_runtime_descriptor()
                     self.assertIn("运行信息无效", raised.exception.message)
 
-    def test_missing_runtime_descriptor_tells_user_to_open_the_desktop_app(self) -> None:
+    def test_missing_runtime_descriptor_tells_user_to_open_the_desktop_app(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "missing.json"
             with patch.dict(
@@ -343,8 +368,12 @@ class RuntimeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch.dict(os.environ, {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()}),
-                patch("auto_email_sender_cli.runtime.process_is_running") as process_probe,
+                patch.dict(
+                    os.environ, {"AUTO_EMAIL_SENDER_RUNTIME_FILE": path.as_posix()}
+                ),
+                patch(
+                    "auto_email_sender_cli.runtime.process_is_running"
+                ) as process_probe,
                 self.assertRaises(RuntimeProtocolMismatchError),
             ):
                 load_runtime_descriptor()
@@ -368,7 +397,9 @@ class RuntimeTests(unittest.TestCase):
         http_client = Mock()
         http_client.get.return_value = response
         with (
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch(
+                "auto_email_sender_cli.runtime.process_is_running", return_value=True
+            ),
         ):
             probe = probe_runtime_descriptor(descriptor, http_client=http_client)
 
@@ -389,7 +420,9 @@ class RuntimeTests(unittest.TestCase):
         http_client = Mock()
         http_client.get.return_value = response
         with (
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch(
+                "auto_email_sender_cli.runtime.process_is_running", return_value=True
+            ),
             patch(
                 "auto_email_sender_cli.runtime.create_runtime_http_client",
                 return_value=http_client,
@@ -422,7 +455,9 @@ class RuntimeTests(unittest.TestCase):
         http_client = Mock()
         http_client.get.return_value = response
         with (
-            patch("auto_email_sender_cli.runtime.process_is_running", return_value=True),
+            patch(
+                "auto_email_sender_cli.runtime.process_is_running", return_value=True
+            ),
         ):
             probe = probe_runtime_descriptor(descriptor, http_client=http_client)
 
@@ -452,7 +487,9 @@ class RuntimeTests(unittest.TestCase):
             ),
             patch(
                 "auto_email_sender_cli.runtime.probe_runtime_descriptor",
-                return_value=_probe(desktop_process_running=False, backend_process_running=False),
+                return_value=_probe(
+                    desktop_process_running=False, backend_process_running=False
+                ),
             ),
         ):
             with self.assertRaises(RuntimeUnavailableError) as raised:
@@ -476,7 +513,9 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertEqual(resolved, descriptor)
 
-    def test_running_desktop_with_old_protocol_is_rejected_before_any_command_runs(self) -> None:
+    def test_running_desktop_with_old_protocol_is_rejected_before_any_command_runs(
+        self,
+    ) -> None:
         descriptor = _descriptor(protocol_version="1")
         with (
             patch(

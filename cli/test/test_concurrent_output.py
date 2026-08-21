@@ -15,9 +15,7 @@ class ConcurrentOutputTests(unittest.TestCase):
         env = os.environ.copy()
         existing_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = os.pathsep.join(
-            value
-            for value in (str(cli_root / "src"), existing_pythonpath)
-            if value
+            value for value in (str(cli_root / "src"), existing_pythonpath) if value
         )
 
         def run_command(_: int) -> subprocess.CompletedProcess[str]:

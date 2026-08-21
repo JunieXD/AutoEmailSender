@@ -39,7 +39,9 @@ def build_crawl_job_events(
             "job_id": job_id,
             "event_type": "job_status",
             "message": STATUS_MESSAGES.get(status, "任务状态已更新"),
-            "created_at": _to_event_time(_get_attr(job, "updated_at") or _get_attr(job, "created_at")),
+            "created_at": _to_event_time(
+                _get_attr(job, "updated_at") or _get_attr(job, "created_at")
+            ),
             "raw": {
                 "status": status,
                 "error_message": _get_attr(job, "error_message"),
@@ -47,7 +49,9 @@ def build_crawl_job_events(
         },
     )
 
-    for index, trace_event in enumerate(_iter_agent_trace(_get_attr(job, "agent_trace"))):
+    for index, trace_event in enumerate(
+        _iter_agent_trace(_get_attr(job, "agent_trace"))
+    ):
         normalized = normalize_agent_trace_event(trace_event)
         if not _should_include_agent_trace_event(normalized):
             continue
@@ -80,9 +84,13 @@ def build_crawl_job_events(
             },
         )
 
-    for batch_index, candidate_batch in enumerate(_group_candidates_by_created_at(candidates)):
+    for batch_index, candidate_batch in enumerate(
+        _group_candidates_by_created_at(candidates)
+    ):
         candidate_ids = [_get_attr(candidate, "id") for candidate in candidate_batch]
-        names = [_get_attr(candidate, "name") or "未知导师" for candidate in candidate_batch]
+        names = [
+            _get_attr(candidate, "name") or "未知导师" for candidate in candidate_batch
+        ]
         first_candidate = candidate_batch[0]
         first_candidate_id = candidate_ids[0] if candidate_ids else None
         events.append(
@@ -114,7 +122,6 @@ def build_crawl_job_events(
     return sorted(events, key=lambda event: str(event.get("created_at") or ""))
 
 
-
 def _group_candidates_by_created_at(candidates: list[Any]) -> list[list[Any]]:
     groups: list[list[Any]] = []
     group_by_time: dict[str, list[Any]] = {}
@@ -126,6 +133,7 @@ def _group_candidates_by_created_at(candidates: list[Any]) -> list[list[Any]]:
         group_by_time[key].append(candidate)
     return groups
 
+
 def normalize_agent_trace_event(event: dict[str, object]) -> dict[str, object]:
     raw = event if isinstance(event, dict) else {}
     event_type = _trace_event_type(raw)
@@ -134,7 +142,9 @@ def normalize_agent_trace_event(event: dict[str, object]) -> dict[str, object]:
         "id": raw.get("id") or raw.get("event_id") or "",
         "event_type": event_type,
         "message": summarize_agent_trace_event(raw),
-        "created_at": _to_event_time(raw.get("created_at") or raw.get("timestamp") or raw.get("time")),
+        "created_at": _to_event_time(
+            raw.get("created_at") or raw.get("timestamp") or raw.get("time")
+        ),
         "raw": raw,
     }
 
@@ -150,7 +160,11 @@ def summarize_agent_trace_event(event: dict[str, object]) -> str:
             return raw_summary
 
     message = event.get("message")
-    if isinstance(message, str) and message.strip() and message.strip() not in GENERIC_AGENT_MESSAGES:
+    if (
+        isinstance(message, str)
+        and message.strip()
+        and message.strip() not in GENERIC_AGENT_MESSAGES
+    ):
         return message.strip()
 
     summary = event.get("summary")
@@ -177,7 +191,9 @@ def _should_include_agent_trace_event(event: dict[str, object]) -> bool:
     normalized_message = message.strip()
     if not normalized_message:
         return False
-    if normalized_message in GENERIC_AGENT_MESSAGES or normalized_message.startswith("Agent 事件："):
+    if normalized_message in GENERIC_AGENT_MESSAGES or normalized_message.startswith(
+        "Agent 事件："
+    ):
         return False
     return True
 

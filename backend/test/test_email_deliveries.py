@@ -102,7 +102,10 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
 
             attention_tasks: list[EmailTask] = []
             for index, status in enumerate(
-                [EmailTaskStatus.SEND_FAILED.value, EmailTaskStatus.SCHEDULE_MISSED.value],
+                [
+                    EmailTaskStatus.SEND_FAILED.value,
+                    EmailTaskStatus.SCHEDULE_MISSED.value,
+                ],
             ):
                 professor = Professor(
                     name=f"需处理导师 {index}",

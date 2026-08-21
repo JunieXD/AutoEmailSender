@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import unittest
 
-from app.modules.crawler.v2.url_utils import is_same_domain, normalize_url, task_dedupe_key
+from app.modules.crawler.v2.url_utils import (
+    is_same_domain,
+    normalize_url,
+    task_dedupe_key,
+)
 
 
 class CrawlerV2UrlUtilsTests(unittest.TestCase):
-    def test_normalize_url_removes_fragments_default_ports_and_tracking_query(self) -> None:
+    def test_normalize_url_removes_fragments_default_ports_and_tracking_query(
+        self,
+    ) -> None:
         self.assertEqual(
             normalize_url("HTTPS://Example.edu:443/faculty/?utm_source=x&b=2#team"),
             "https://example.edu/faculty/?b=2",
@@ -14,7 +20,10 @@ class CrawlerV2UrlUtilsTests(unittest.TestCase):
 
     def test_normalize_url_resolves_relative_links(self) -> None:
         self.assertEqual(
-            normalize_url("../profile/zhang.html", base_url="https://cs.example.edu/people/list/index.html"),
+            normalize_url(
+                "../profile/zhang.html",
+                base_url="https://cs.example.edu/people/list/index.html",
+            ),
             "https://cs.example.edu/people/profile/zhang.html",
         )
 
@@ -34,11 +43,19 @@ class CrawlerV2UrlUtilsTests(unittest.TestCase):
         )
 
     def test_same_domain_allows_subdomain_relationship(self) -> None:
-        self.assertTrue(is_same_domain("https://cs.example.edu/a", "https://example.edu/b"))
-        self.assertTrue(is_same_domain("https://example.edu/a", "https://cs.example.edu/b"))
-        self.assertFalse(is_same_domain("https://evil-example.edu/a", "https://example.edu/b"))
+        self.assertTrue(
+            is_same_domain("https://cs.example.edu/a", "https://example.edu/b")
+        )
+        self.assertTrue(
+            is_same_domain("https://example.edu/a", "https://cs.example.edu/b")
+        )
+        self.assertFalse(
+            is_same_domain("https://evil-example.edu/a", "https://example.edu/b")
+        )
 
-    def test_same_domain_uses_public_suffix_for_sibling_university_subdomains(self) -> None:
+    def test_same_domain_uses_public_suffix_for_sibling_university_subdomains(
+        self,
+    ) -> None:
         self.assertTrue(
             is_same_domain(
                 "https://faculty.csu.edu.cn/teacher/a",

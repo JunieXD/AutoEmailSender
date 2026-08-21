@@ -66,7 +66,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
         os.environ.pop("AUTO_EMAIL_SENDER_DATA_DIR", None)
         self.temp_dir.cleanup()
 
-    def test_professor_selection_is_frozen_private_and_queryable_after_ack(self) -> None:
+    def test_professor_selection_is_frozen_private_and_queryable_after_ack(
+        self,
+    ) -> None:
         selected_id = self._create_professor(
             name="José",
             email="jose-ui-handoff@example.edu",
@@ -125,7 +127,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
         )
         self.assertEqual(page.status_code, 200, msg=page.text)
         self.assertEqual([item["id"] for item in page.json()["items"]], [selected_id])
-        self.assertNotIn(created_later_id, [item["id"] for item in page.json()["items"]])
+        self.assertNotIn(
+            created_later_id, [item["id"] for item in page.json()["items"]]
+        )
 
         acknowledged = self._acknowledge(
             handoff["handoff_id"],
@@ -264,7 +268,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
             "HOME_SELECTION_ARCHIVED_UNSUPPORTED",
         )
         self.assertEqual(missing_identity.status_code, 404, msg=missing_identity.text)
-        self.assertEqual(management_identity.status_code, 422, msg=management_identity.text)
+        self.assertEqual(
+            management_identity.status_code, 422, msg=management_identity.text
+        )
         self.assertEqual(valid_home.status_code, 201, msg=valid_home.text)
         self.assertEqual(valid_home.json()["surface"], "professors.home")
 
@@ -416,7 +422,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
         )
         self.assertEqual(awaiting.status_code, 200, msg=awaiting.text)
         self.assertEqual(awaiting.json()["status"], "awaiting_user")
-        self.assertEqual(awaiting.json()["available_actions"], ["read", "retry", "cancel"])
+        self.assertEqual(
+            awaiting.json()["available_actions"], ["read", "retry", "cancel"]
+        )
 
         retried = self.client.post(
             f"/api/agent/v1/ui-handoffs/{created['handoff_id']}/retry",
@@ -445,7 +453,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
             f"/api/agent/v1/ui-handoffs/{created['handoff_id']}/retry",
             headers=self._agent_headers(),
         )
-        self.assertEqual(retried_after_failure.status_code, 200, msg=retried_after_failure.text)
+        self.assertEqual(
+            retried_after_failure.status_code, 200, msg=retried_after_failure.text
+        )
         lease_claim = self._claim("desktop:lease-one")
         self.assertEqual(lease_claim.status_code, 200, msg=lease_claim.text)
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -522,7 +532,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
             return response.status_code, response.json() if response.content else None
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(claim, ["desktop:concurrent-a", "desktop:concurrent-b"]))
+            results = list(
+                executor.map(claim, ["desktop:concurrent-a", "desktop:concurrent-b"])
+            )
 
         self.assertEqual(sorted(status for status, _ in results), [200, 204])
         winner = next(body for status, body in results if status == 200)
@@ -571,7 +583,9 @@ class AgentUiHandoffApiTests(unittest.TestCase):
         winner = next(body for status_code, body in results if status_code == 200)
         self.assertEqual(winner["status"], final_status)
 
-    def test_expired_cancel_retry_and_acknowledgement_persist_expired_state(self) -> None:
+    def test_expired_cancel_retry_and_acknowledgement_persist_expired_state(
+        self,
+    ) -> None:
         professor_id = self._create_professor(
             email="expired-actions-ui-handoff@example.edu",
         )
@@ -723,12 +737,20 @@ class AgentUiHandoffApiTests(unittest.TestCase):
             (
                 f"/api/agent/v1/tasks/{task_id}/present",
                 "tasks.center",
-                {"task_id": task_id, "identity_id": identity_id, "professor_id": professor_id},
+                {
+                    "task_id": task_id,
+                    "identity_id": identity_id,
+                    "professor_id": professor_id,
+                },
             ),
             (
                 f"/api/agent/v1/drafts/{task_id}/present",
                 "draft.workspace",
-                {"task_id": task_id, "identity_id": identity_id, "professor_id": professor_id},
+                {
+                    "task_id": task_id,
+                    "identity_id": identity_id,
+                    "professor_id": professor_id,
+                },
             ),
             (
                 f"/api/agent/v1/crawler/jobs/{job_id}/present",

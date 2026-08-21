@@ -86,7 +86,6 @@ class ProfessorTagUsageRead(ApiSchema):
 
 
 class ProfessorRead(ApiSchema):
-
     id: int
     name: str
     email: str | None
@@ -261,7 +260,6 @@ class ProfessorImportResult(ApiSchema):
 
 
 class ProfessorManagementItemRead(ApiSchema):
-
     id: int
     name: str
     email: str | None

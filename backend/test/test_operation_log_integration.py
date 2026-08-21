@@ -60,7 +60,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         asyncio.run(self._clear_database())
 
-    def test_create_crawl_job_records_operation_log_with_response_request_id(self) -> None:
+    def test_create_crawl_job_records_operation_log_with_response_request_id(
+        self,
+    ) -> None:
         response = self.client.post(
             "/api/crawl-jobs",
             headers={"X-Request-ID": "oplog.crawl-1"},
@@ -90,7 +92,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
         identity_id = self._create_identity("batch-sender@example.com")
         llm_profile_id = self._create_llm_profile("批量任务模型")
         first_professor_id = self._create_professor("一号导师", "batch-one@example.edu")
-        second_professor_id = self._create_professor("二号导师", "batch-two@example.edu")
+        second_professor_id = self._create_professor(
+            "二号导师", "batch-two@example.edu"
+        )
 
         response = self.client.post(
             "/api/batch-tasks",
@@ -111,7 +115,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
-        logs = self._list_logs("batch_task.created", entity_id=str(response.json()["id"]))
+        logs = self._list_logs(
+            "batch_task.created", entity_id=str(response.json()["id"])
+        )
 
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0]["category"], "email")
@@ -133,7 +139,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(archive_response.status_code, 200, msg=archive_response.text)
         create_logs = self._list_logs("professor.created", entity_id=str(professor_id))
-        archive_logs = self._list_logs("professor.archived", entity_id=str(professor_id))
+        archive_logs = self._list_logs(
+            "professor.archived", entity_id=str(professor_id)
+        )
         self.assertEqual(len(create_logs), 1)
         self.assertEqual(len(archive_logs), 1)
         self.assertEqual(create_logs[0]["category"], "user_action")
@@ -159,19 +167,24 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertNotIn("smtp_password", metadata)
         self.assertNotIn("smtp-secret", str(metadata))
 
-    def test_llm_profile_test_records_failed_result_without_sensitive_fields(self) -> None:
+    def test_llm_profile_test_records_failed_result_without_sensitive_fields(
+        self,
+    ) -> None:
         llm_profile_id = self._create_llm_profile(
             "测试模型",
             api_key="sk-sensitive-test-key",
             api_base_url="https://api.example.com/v1?api_key=secret#x",
         )
 
-        with patch(
-            "app.modules.llm.api.probe_llm_profile",
-            AsyncMock(return_value=self._build_probe_result()),
-        ), patch(
-            "app.modules.llm.api.ensure_llm_runtime_adaptation",
-            AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+        with (
+            patch(
+                "app.modules.llm.api.probe_llm_profile",
+                AsyncMock(return_value=self._build_probe_result()),
+            ),
+            patch(
+                "app.modules.llm.api.ensure_llm_runtime_adaptation",
+                AsyncMock(return_value=LLMRuntimeAdaptation("chat_completions", None)),
+            ),
         ):
             response = self.client.post(f"/api/llm-profiles/{llm_profile_id}/test")
 
@@ -203,7 +216,11 @@ class OperationLogIntegrationTests(unittest.TestCase):
                     (api_base_url, model_name, learned_endpoint_kind)
                 VALUES (?, ?, ?)
                 """,
-                ("https://llm-user:llm-password@switch.example.com/v1", "gpt-4o-mini", "chat_completions"),
+                (
+                    "https://llm-user:llm-password@switch.example.com/v1",
+                    "gpt-4o-mini",
+                    "chat_completions",
+                ),
             )
             connection.execute(
                 """
@@ -211,7 +228,12 @@ class OperationLogIntegrationTests(unittest.TestCase):
                     (api_base_url, model_name, endpoint_kind, learned_extra_body)
                 VALUES (?, ?, ?, ?)
                 """,
-                ("https://llm-user:llm-password@switch.example.com/v1", "gpt-4o-mini", "chat_completions", None),
+                (
+                    "https://llm-user:llm-password@switch.example.com/v1",
+                    "gpt-4o-mini",
+                    "chat_completions",
+                    None,
+                ),
             )
             connection.commit()
 
@@ -220,7 +242,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
             text = "response body that must not appear in operation logs"
 
             def json(self) -> dict[str, object]:
-                return {"output_text": "response body that must not appear in operation logs"}
+                return {
+                    "output_text": "response body that must not appear in operation logs"
+                }
 
         class FakeAsyncClient:
             def __init__(self, *args: object, **kwargs: object) -> None:
@@ -252,13 +276,17 @@ class OperationLogIntegrationTests(unittest.TestCase):
             ],
         )
 
-        logs = self._list_logs("llm.endpoint_protocol_switched", entity_id=str(llm_profile_id))
+        logs = self._list_logs(
+            "llm.endpoint_protocol_switched", entity_id=str(llm_profile_id)
+        )
         self.assertEqual(len(logs), 1)
         metadata = logs[0]["metadata"]
         self.assertEqual(metadata["old_endpoint_kind"], "chat_completions")
         self.assertEqual(metadata["new_endpoint_kind"], "responses")
         self.assertEqual(metadata["endpoint_kind"], "responses")
-        self.assertEqual(metadata["request_url"], "https://switch.example.com/v1/responses")
+        self.assertEqual(
+            metadata["request_url"], "https://switch.example.com/v1/responses"
+        )
         self.assertEqual(
             metadata["attempted_urls"],
             [
@@ -271,19 +299,25 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertNotIn("sk-endpoint-switch-secret", str(metadata))
         self.assertNotIn("llm-user", str(metadata))
         self.assertNotIn("llm-password", str(metadata))
-        self.assertNotIn("response body that must not appear in operation logs", str(metadata))
+        self.assertNotIn(
+            "response body that must not appear in operation logs", str(metadata)
+        )
 
         request_logs_response = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"request_id": response.headers["X-Request-ID"]},
         )
-        self.assertEqual(request_logs_response.status_code, 200, msg=request_logs_response.text)
+        self.assertEqual(
+            request_logs_response.status_code, 200, msg=request_logs_response.text
+        )
         request_logs = request_logs_response.json()["items"]
         self.assertGreaterEqual(len(request_logs), 2)
         self.assertTrue(all("llm-user" not in str(log) for log in request_logs))
         self.assertTrue(all("llm-password" not in str(log) for log in request_logs))
 
-    def test_llm_profile_models_fetch_records_result_without_sensitive_urls(self) -> None:
+    def test_llm_profile_models_fetch_records_result_without_sensitive_urls(
+        self,
+    ) -> None:
         llm_profile_id = self._create_llm_profile(
             "模型列表配置",
             api_base_url="https://api.example.com/v1?api_key=secret#x",
@@ -296,7 +330,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
             response = self.client.get(f"/api/llm-profiles/{llm_profile_id}/models")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        logs = self._list_logs("llm_profile.models_fetched", entity_id=str(llm_profile_id))
+        logs = self._list_logs(
+            "llm_profile.models_fetched", entity_id=str(llm_profile_id)
+        )
 
         self.assertEqual(len(logs), 1)
         metadata = logs[0]["metadata"]
@@ -321,10 +357,14 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertEqual(upload_response.status_code, 201, msg=upload_response.text)
         material_id = upload_response.json()["id"]
 
-        set_primary_response = self.client.post(f"/api/materials/{material_id}/set-primary")
+        set_primary_response = self.client.post(
+            f"/api/materials/{material_id}/set-primary"
+        )
         delete_response = self.client.delete(f"/api/materials/{material_id}")
 
-        self.assertEqual(set_primary_response.status_code, 200, msg=set_primary_response.text)
+        self.assertEqual(
+            set_primary_response.status_code, 200, msg=set_primary_response.text
+        )
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
         for event_name in (
             "identity_material.uploaded",
@@ -337,7 +377,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
             self.assertEqual(logs[0]["metadata"]["identity_id"], identity_id)
 
     def test_workspace_and_email_task_actions_record_operation_logs(self) -> None:
-        identity_id = self._create_identity("workspace-log@example.com", outreach_generation_mode="template")
+        identity_id = self._create_identity(
+            "workspace-log@example.com", outreach_generation_mode="template"
+        )
         llm_profile_id = self._create_llm_profile("工作区日志模型")
         professor_id = self._create_professor("工作区导师", "workspace-log@example.edu")
 
@@ -359,7 +401,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
                 "scheduled_at": "2026-05-05T10:00:00Z",
             },
         )
-        cancel_response = self.client.post(f"/api/email-tasks/{task_id}/cancel-schedule")
+        cancel_response = self.client.post(
+            f"/api/email-tasks/{task_id}/cancel-schedule"
+        )
         with patch(
             "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
             AsyncMock(return_value=self._build_send_result()),
@@ -378,17 +422,40 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertEqual(schedule_response.status_code, 200, msg=schedule_response.text)
         self.assertEqual(cancel_response.status_code, 200, msg=cancel_response.text)
         self.assertEqual(send_response.status_code, 200, msg=send_response.text)
-        self.assertEqual(len(self._list_logs("email_task.created", entity_id=str(task_id))), 1)
-        self.assertEqual(len(self._list_logs("email_task.draft_generated", entity_id=str(task_id))), 1)
-        self.assertEqual(len(self._list_logs("email_task.approved_and_scheduled", entity_id=str(task_id))), 1)
-        self.assertEqual(len(self._list_logs("email_task.schedule_canceled", entity_id=str(task_id))), 1)
-        self.assertEqual(len(self._list_logs("email_task.sent", entity_id=str(task_id))), 1)
+        self.assertEqual(
+            len(self._list_logs("email_task.created", entity_id=str(task_id))), 1
+        )
+        self.assertEqual(
+            len(self._list_logs("email_task.draft_generated", entity_id=str(task_id))),
+            1,
+        )
+        self.assertEqual(
+            len(
+                self._list_logs(
+                    "email_task.approved_and_scheduled", entity_id=str(task_id)
+                )
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(
+                self._list_logs("email_task.schedule_canceled", entity_id=str(task_id))
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(self._list_logs("email_task.sent", entity_id=str(task_id))), 1
+        )
 
     def test_test_compose_actions_record_operation_logs(self) -> None:
-        identity_id = self._create_identity("test-compose-log@example.com", outreach_generation_mode="template")
+        identity_id = self._create_identity(
+            "test-compose-log@example.com", outreach_generation_mode="template"
+        )
         llm_profile_id = self._create_llm_profile("测试写信日志模型")
 
-        draft_response = self.client.post(f"/api/test-compose/{identity_id}/{llm_profile_id}/generate-draft")
+        draft_response = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_profile_id}/generate-draft"
+        )
         save_response = self.client.post(
             f"/api/test-compose/{identity_id}/{llm_profile_id}/draft",
             json={
@@ -415,9 +482,23 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertEqual(draft_response.status_code, 200, msg=draft_response.text)
         self.assertEqual(save_response.status_code, 200, msg=save_response.text)
         self.assertEqual(send_response.status_code, 200, msg=send_response.text)
-        self.assertEqual(len(self._list_logs("test_compose.draft_generated", entity_id=str(identity_id))), 1)
-        self.assertEqual(len(self._list_logs("test_compose.draft_saved", entity_id=str(identity_id))), 1)
-        self.assertEqual(len(self._list_logs("test_compose.sent", entity_id=str(identity_id))), 1)
+        self.assertEqual(
+            len(
+                self._list_logs(
+                    "test_compose.draft_generated", entity_id=str(identity_id)
+                )
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(
+                self._list_logs("test_compose.draft_saved", entity_id=str(identity_id))
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(self._list_logs("test_compose.sent", entity_id=str(identity_id))), 1
+        )
 
     def test_settings_and_misc_actions_record_operation_logs(self) -> None:
         sample_response = self.client.post("/api/professors/import-sample")
@@ -444,7 +525,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         return response.json()["items"]
 
-    def _create_identity(self, email: str, *, outreach_generation_mode: str = "llm") -> int:
+    def _create_identity(
+        self, email: str, *, outreach_generation_mode: str = "llm"
+    ) -> int:
         response = self.client.post(
             "/api/identities",
             json={
@@ -500,7 +583,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
         return response.json()["id"]
 
     def _create_professor(self, name: str, email: str) -> int:
-        response = self.client.post("/api/professors", json=self._professor_payload(name, email))
+        response = self.client.post(
+            "/api/professors", json=self._professor_payload(name, email)
+        )
         self.assertEqual(response.status_code, 201, msg=response.text)
         return response.json()["id"]
 
@@ -508,7 +593,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
     def _build_send_result():
         from app.modules.communications.transport import SendMailResult
 
-        return SendMailResult(message_id="<operation-log-test@example.com>", provider_payload={})
+        return SendMailResult(
+            message_id="<operation-log-test@example.com>", provider_payload={}
+        )
 
     @staticmethod
     def _professor_payload(name: str, email: str) -> dict[str, object]:
@@ -534,7 +621,9 @@ class OperationLogIntegrationTests(unittest.TestCase):
             message="认证失败",
             resolved_base_url="https://api.example.com/v1?token=secret#frag",
             request_url="https://api.example.com/v1/chat/completions?api_key=secret#frag",
-            attempted_urls=["https://api.example.com/v1/chat/completions?api_key=secret#frag"],
+            attempted_urls=[
+                "https://api.example.com/v1/chat/completions?api_key=secret#frag"
+            ],
             endpoint_kind="chat",
             status_code=401,
             duration_ms=12,

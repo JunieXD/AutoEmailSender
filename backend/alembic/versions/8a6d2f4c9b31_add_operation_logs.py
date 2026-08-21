@@ -26,20 +26,57 @@ def upgrade() -> None:
         sa.Column("request_id", sa.String(length=128), nullable=True),
         sa.Column("category", sa.String(length=50), nullable=False),
         sa.Column("event_name", sa.String(length=120), nullable=False),
-        sa.Column("level", sa.String(length=20), server_default=sa.text("'info'"), nullable=False),
+        sa.Column(
+            "level",
+            sa.String(length=20),
+            server_default=sa.text("'info'"),
+            nullable=False,
+        ),
         sa.Column("message", sa.Text(), nullable=True),
         sa.Column("entity_type", sa.String(length=80), nullable=True),
         sa.Column("entity_id", sa.String(length=80), nullable=True),
         sa.Column("metadata", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_operation_logs")),
     )
-    op.create_index(op.f("ix_operation_logs_request_id"), "operation_logs", ["request_id"], unique=False)
-    op.create_index(op.f("ix_operation_logs_category"), "operation_logs", ["category"], unique=False)
-    op.create_index(op.f("ix_operation_logs_event_name"), "operation_logs", ["event_name"], unique=False)
-    op.create_index(op.f("ix_operation_logs_entity_type"), "operation_logs", ["entity_type"], unique=False)
-    op.create_index(op.f("ix_operation_logs_entity_id"), "operation_logs", ["entity_id"], unique=False)
-    op.create_index(op.f("ix_operation_logs_created_at"), "operation_logs", ["created_at"], unique=False)
+    op.create_index(
+        op.f("ix_operation_logs_request_id"),
+        "operation_logs",
+        ["request_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_operation_logs_category"), "operation_logs", ["category"], unique=False
+    )
+    op.create_index(
+        op.f("ix_operation_logs_event_name"),
+        "operation_logs",
+        ["event_name"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_operation_logs_entity_type"),
+        "operation_logs",
+        ["entity_type"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_operation_logs_entity_id"),
+        "operation_logs",
+        ["entity_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_operation_logs_created_at"),
+        "operation_logs",
+        ["created_at"],
+        unique=False,
+    )
 
 
 def downgrade() -> None:

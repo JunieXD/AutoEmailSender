@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import CrawlCandidate, CrawlCandidateIdentityKey
 from app.modules.crawler.pages.domain_policy import is_same_registrable_domain
-from app.modules.crawler.v2.url_utils import normalize_url, recover_embedded_absolute_url
+from app.modules.crawler.v2.url_utils import (
+    normalize_url,
+    recover_embedded_absolute_url,
+)
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
@@ -240,7 +243,10 @@ async def find_canonical_candidate_for_identity(
             )
         )
         for candidate in candidates:
-            if normalize_candidate_profile_url(candidate.profile_url) == normalized_profile_url:
+            if (
+                normalize_candidate_profile_url(candidate.profile_url)
+                == normalized_profile_url
+            ):
                 return candidate
     return None
 
@@ -287,7 +293,9 @@ def _field_source_entry(payload: dict[str, Any], field_name: str) -> dict[str, o
     }
 
 
-def _stored_field_source(candidate: CrawlCandidate, field_name: str) -> dict[str, object]:
+def _stored_field_source(
+    candidate: CrawlCandidate, field_name: str
+) -> dict[str, object]:
     field_sources = candidate.field_sources
     if isinstance(field_sources, dict):
         stored = field_sources.get(field_name)
@@ -313,8 +321,12 @@ def _should_replace_field(
         return True
     old_kind = old_source.get("source_kind")
     new_kind = new_source.get("source_kind")
-    old_priority = _SOURCE_PRIORITY.get(str(old_kind) if old_kind is not None else None, 1)
-    new_priority = _SOURCE_PRIORITY.get(str(new_kind) if new_kind is not None else None, 1)
+    old_priority = _SOURCE_PRIORITY.get(
+        str(old_kind) if old_kind is not None else None, 1
+    )
+    new_priority = _SOURCE_PRIORITY.get(
+        str(new_kind) if new_kind is not None else None, 1
+    )
     if old_kind == "manual" and new_kind != "manual":
         return False
     if new_priority > old_priority:
@@ -325,8 +337,12 @@ def _should_replace_field(
         return old_boundary_risk and not new_boundary_risk
     old_confidence = old_source.get("confidence")
     new_confidence = new_source.get("confidence")
-    old_score = float(old_confidence) if isinstance(old_confidence, (int, float)) else 0.0
-    new_score = float(new_confidence) if isinstance(new_confidence, (int, float)) else 0.0
+    old_score = (
+        float(old_confidence) if isinstance(old_confidence, (int, float)) else 0.0
+    )
+    new_score = (
+        float(new_confidence) if isinstance(new_confidence, (int, float)) else 0.0
+    )
     return new_score > old_score + 0.2
 
 
@@ -337,7 +353,9 @@ def merge_candidate_payload(
     merged_candidate_id: int | None = None,
 ) -> bool:
     changed = False
-    field_sources = dict(existing.field_sources) if isinstance(existing.field_sources, dict) else {}
+    field_sources = (
+        dict(existing.field_sources) if isinstance(existing.field_sources, dict) else {}
+    )
     conflicts = dict(existing.conflicts) if isinstance(existing.conflicts, dict) else {}
     merge_event: dict[str, object] = {
         "merged_at": datetime.now(timezone.utc).isoformat(),
@@ -400,7 +418,9 @@ def merge_candidate_payload(
         changed = True
 
     if payload.get("field_confidence"):
-        merged_confidence = _merge_json_dict(existing.field_confidence, payload["field_confidence"])
+        merged_confidence = _merge_json_dict(
+            existing.field_confidence, payload["field_confidence"]
+        )
         if merged_confidence != (existing.field_confidence or {}):
             existing.field_confidence = merged_confidence  # type: ignore[assignment]
             changed = True
@@ -436,7 +456,8 @@ def merge_candidate_payload(
         if isinstance(item, dict)
     }
     should_record_identity_merge = (
-        merged_candidate_id is not None and merged_candidate_id not in recorded_merge_ids
+        merged_candidate_id is not None
+        and merged_candidate_id not in recorded_merge_ids
     )
     if (
         merge_event["updated_fields"]
@@ -468,7 +489,11 @@ def apply_candidate_enrichment_values(
     updates: dict[str, Any],
 ) -> bool:
     changed = False
-    field_sources = dict(candidate.field_sources) if isinstance(candidate.field_sources, dict) else {}
+    field_sources = (
+        dict(candidate.field_sources)
+        if isinstance(candidate.field_sources, dict)
+        else {}
+    )
     enrichment_source = {
         "source_kind": "profile_page",
         "source_chunk_id": None,
@@ -507,7 +532,8 @@ def apply_candidate_enrichment_values(
     if (
         recent_papers
         and not normalize_recent_papers(candidate.recent_papers)
-        and _stored_field_source(candidate, "recent_papers").get("source_kind") != "manual"
+        and _stored_field_source(candidate, "recent_papers").get("source_kind")
+        != "manual"
     ):
         candidate.recent_papers = recent_papers
         field_sources["recent_papers"] = enrichment_source
@@ -523,7 +549,11 @@ def mark_candidate_fields_manual(
     candidate: CrawlCandidate,
     field_names: Iterable[str],
 ) -> None:
-    field_sources = dict(candidate.field_sources) if isinstance(candidate.field_sources, dict) else {}
+    field_sources = (
+        dict(candidate.field_sources)
+        if isinstance(candidate.field_sources, dict)
+        else {}
+    )
     for field_name in field_names:
         field_sources[field_name] = {
             "source_kind": "manual",
@@ -790,7 +820,9 @@ async def canonicalize_candidate_ids(
             ),
         )
     rows_by_id = {candidate.id: candidate for candidate in rows}
-    missing_ids = [candidate_id for candidate_id in requested_ids if candidate_id not in rows_by_id]
+    missing_ids = [
+        candidate_id for candidate_id in requested_ids if candidate_id not in rows_by_id
+    ]
     canonical_by_id: dict[int, CrawlCandidate] = {}
     for candidate_id in requested_ids:
         candidate = rows_by_id.get(candidate_id)

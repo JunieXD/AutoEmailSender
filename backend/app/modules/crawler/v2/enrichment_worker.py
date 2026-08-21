@@ -60,7 +60,10 @@ from ..llm.structured_output import (
     ProfileLinkSelectionWirePayload,
     request_crawler_structured_completion,
 )
-from app.services.operation_logs import record_operation_log, sanitize_user_visible_error
+from app.services.operation_logs import (
+    record_operation_log,
+    sanitize_user_visible_error,
+)
 from app.modules.professors.public import (
     MISSING_PROFILE_URL_SKIP_REASON,
     NO_NEW_INFORMATION_SKIP_REASON,
@@ -238,10 +241,7 @@ def _compact_enrichment_page_text(
             selected_indexes.add(index)
         if "@" in line:
             selected_indexes.add(index)
-        if (
-            label in _COMPACT_ENRICHMENT_FIELD_LABELS
-            and label not in selected_labels
-        ):
+        if label in _COMPACT_ENRICHMENT_FIELD_LABELS and label not in selected_labels:
             selected_labels.add(label)
             selected_indexes.add(index)
             field_value = field_parts[1].strip() if len(field_parts) > 1 else ""
@@ -323,7 +323,9 @@ async def run_crawler_v2_enrichment_worker_once(
         model_name = None
         if job is not None:
             profile = await _resolve_llm_profile(session, job)
-            model_name = getattr(profile, "model_name", None) if profile is not None else None
+            model_name = (
+                getattr(profile, "model_name", None) if profile is not None else None
+            )
         job_id = task.job_id
         candidate_id = candidate.id
         enrichment_started_at = task.started_at
@@ -362,7 +364,9 @@ async def run_crawler_v2_enrichment_worker_once(
         else:
             payload = enrichment_result
             usage = None
-        if not await _enrichment_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
+        if not await _enrichment_task_can_commit(
+            session_factory, task_id=task_id, worker_id=worker_id
+        ):
             await _discard_cached_profile_text_if_terminal(
                 session_factory,
                 task_id=task_id,
@@ -378,7 +382,9 @@ async def run_crawler_v2_enrichment_worker_once(
             payload={
                 "candidate_id": candidate.id,
                 "profile_url": candidate.profile_url,
-                "raw_payload": payload.model_dump() if hasattr(payload, "model_dump") else payload,
+                "raw_payload": payload.model_dump()
+                if hasattr(payload, "model_dump")
+                else payload,
                 "raw_model_text": raw_model_text,
                 "token_usage": dict(usage) if usage is not None else None,
             },
@@ -454,7 +460,9 @@ async def run_crawler_v2_enrichment_worker_once(
                 )
                 candidate.profile_url = None
                 evidence = dict(candidate.evidence or {})
-                evidence["profile_url_removed_reason"] = "confirmed_profile_page_mismatch"
+                evidence["profile_url_removed_reason"] = (
+                    "confirmed_profile_page_mismatch"
+                )
                 evidence["removed_profile_url"] = removed_profile_url
                 candidate.evidence = evidence
                 corrected_profile_fields.append("profile_url")
@@ -482,7 +490,10 @@ async def run_crawler_v2_enrichment_worker_once(
                 candidate = await consolidate_candidate_identity(session, candidate)
             enriched_fields: list[str] = []
             skip_reason = None
-            if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+            if (
+                job is not None
+                and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value
+            ):
                 enriched_fields, skip_reason = await apply_enrichment_to_professor(
                     session,
                     task=task,
@@ -522,7 +533,9 @@ async def run_crawler_v2_enrichment_worker_once(
             task.enriched_fields = enriched_fields
             task.finished_at = utc_now()
             if skip_reason is None:
-                await _append_enrichment_success_event(session, task=task, candidate=candidate)
+                await _append_enrichment_success_event(
+                    session, task=task, candidate=candidate
+                )
             else:
                 await _append_enrichment_unchanged_event(
                     session,
@@ -543,8 +556,16 @@ async def run_crawler_v2_enrichment_worker_once(
         terminal_cache_identity: tuple[int, int] | None = None
         async with session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
-            candidate = await session.get(CrawlCandidate, task.candidate_id) if task is not None else None
-            if task is not None and _enrichment_task_owned_by_worker(task, worker_id) and await ensure_job_active(session, task.job_id):
+            candidate = (
+                await session.get(CrawlCandidate, task.candidate_id)
+                if task is not None
+                else None
+            )
+            if (
+                task is not None
+                and _enrichment_task_owned_by_worker(task, worker_id)
+                and await ensure_job_active(session, task.job_id)
+            ):
                 job = await session.get(CrawlJob, task.job_id)
                 error_message = (
                     sanitize_user_visible_error(exc)
@@ -569,7 +590,10 @@ async def run_crawler_v2_enrichment_worker_once(
                         else None
                     ),
                 )
-                if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value:
+                if (
+                    task.status
+                    == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
+                ):
                     task.finished_at = utc_now()
                     terminal_cache_identity = (task.job_id, task.candidate_id)
                 await _append_enrichment_failure_event(
@@ -578,7 +602,10 @@ async def run_crawler_v2_enrichment_worker_once(
                     candidate=candidate,
                     error_message=error_message,
                 )
-                if job is not None and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+                if (
+                    job is not None
+                    and job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value
+                ):
                     append_crawler_v2_debug_event(
                         task.job_id,
                         worker_kind="enrichment",
@@ -598,12 +625,15 @@ async def run_crawler_v2_enrichment_worker_once(
                         event_name="professor_information_enrichment.item_failed",
                         level=(
                             "error"
-                            if task.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
+                            if task.status
+                            == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
                             else "warning"
                         ),
                         message=error_message,
                         entity_type="professor",
-                        entity_id=str(task.professor_id) if task.professor_id is not None else None,
+                        entity_id=str(task.professor_id)
+                        if task.professor_id is not None
+                        else None,
                         metadata={
                             "job_id": task.job_id,
                             "task_id": task.id,
@@ -634,8 +664,11 @@ async def enrich_candidate_once(
     *,
     candidate_id: int,
 ) -> CandidateEnrichmentPayload:
-    result = await enrich_candidate_once_with_usage(session_factory, candidate_id=candidate_id)
+    result = await enrich_candidate_once_with_usage(
+        session_factory, candidate_id=candidate_id
+    )
     return result[0]
+
 
 async def _enrichment_task_can_commit(
     session_factory: async_sessionmaker[AsyncSession],
@@ -650,12 +683,18 @@ async def _enrichment_task_can_commit(
         return await ensure_job_active(session, task.job_id)
 
 
-def _enrichment_task_owned_by_worker(task: CrawlCandidateEnrichmentTask, worker_id: str) -> bool:
-    if task.status != CrawlCandidateEnrichmentTaskStatus.PROCESSING.value or task.worker_id != worker_id:
+def _enrichment_task_owned_by_worker(
+    task: CrawlCandidateEnrichmentTask, worker_id: str
+) -> bool:
+    if (
+        task.status != CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
+        or task.worker_id != worker_id
+    ):
         return False
     if task.lease_expires_at is None:
         return True
     return as_utc_aware(task.lease_expires_at) > utc_now()
+
 
 async def enrich_candidate_once_with_usage(
     session_factory: async_sessionmaker[AsyncSession],
@@ -761,6 +800,7 @@ async def _resolve_profile_crawl_root(
         "跨主域导师主页未在来源列表原文中出现，已拒绝补全"
     )
 
+
 async def enrich_candidate_profile_with_llm_with_usage(
     ctx: CrawlToolContext,
     llm_profile: LLMProfile,
@@ -776,7 +816,11 @@ async def enrich_candidate_profile_with_llm_with_usage(
         else page_text
     )
     prompt = build_candidate_enrichment_prompt(candidate, llm_page_text)
-    completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
+    (
+        completion,
+        wire_payload,
+        _structured_mode,
+    ) = await request_crawler_structured_completion(
         ctx.session_factory,
         llm_profile,
         ctx.llm_adaptation,
@@ -930,7 +974,11 @@ async def _select_email_from_evidence(
         '只输出 JSON，例如 {"email":"zhang@example.edu"}；不确定时输出 {"email":""}。'
     )
     try:
-        completion, selection, _structured_mode = await request_crawler_structured_completion(
+        (
+            completion,
+            selection,
+            _structured_mode,
+        ) = await request_crawler_structured_completion(
             ctx.session_factory,
             llm_profile,
             ctx.llm_adaptation,
@@ -969,7 +1017,11 @@ async def _select_profile_links(
         '只输出 JSON，例如 {"link_ids":[2]}；没有合适链接时输出 {"link_ids":[]}。'
     )
     try:
-        completion, selection, _structured_mode = await request_crawler_structured_completion(
+        (
+            completion,
+            selection,
+            _structured_mode,
+        ) = await request_crawler_structured_completion(
             ctx.session_factory,
             llm_profile,
             ctx.llm_adaptation,
@@ -1001,7 +1053,9 @@ def _guard_page_relation(
     candidate_name: str,
     page_text: str,
 ) -> str:
-    if relation != "mismatched" or not _page_mentions_candidate_name(candidate_name, page_text):
+    if relation != "mismatched" or not _page_mentions_candidate_name(
+        candidate_name, page_text
+    ):
         return relation
     return "uncertain"
 
@@ -1042,7 +1096,10 @@ def _profile_link_evidence_dict(value: ProfileLinkEvidence) -> dict[str, str | i
 def _is_known_listing_url(ctx: CrawlToolContext, url: str) -> bool:
     normalized_url = normalize_profile_url(url, base_url=ctx.start_url)
     normalized_start_url = normalize_profile_url(ctx.start_url, base_url=ctx.start_url)
-    return normalized_url == normalized_start_url or normalized_url in ctx.known_listing_urls
+    return (
+        normalized_url == normalized_start_url
+        or normalized_url in ctx.known_listing_urls
+    )
 
 
 def _profile_child_snapshot_cache_key(
@@ -1110,7 +1167,9 @@ def _finish_profile_child_snapshot_fetch(
         task.exception()
 
 
-def _deduplicate_email_evidence(values: Iterable[EmailEvidence]) -> tuple[EmailEvidence, ...]:
+def _deduplicate_email_evidence(
+    values: Iterable[EmailEvidence],
+) -> tuple[EmailEvidence, ...]:
     deduplicated: list[EmailEvidence] = []
     seen: set[str] = set()
     for value in values:
@@ -1196,7 +1255,12 @@ async def get_or_fetch_profile_text(
         profile_url,
         base_url=ctx.start_url,
     )
-    base_cache_key = (id(ctx.session_factory), ctx.job_id, candidate_id, normalized_profile_url)
+    base_cache_key = (
+        id(ctx.session_factory),
+        ctx.job_id,
+        candidate_id,
+        normalized_profile_url,
+    )
     cache_key = (
         (*base_cache_key, as_utc_aware(fresh_after).isoformat())
         if fresh_after is not None
@@ -1331,7 +1395,9 @@ async def _append_enrichment_failure_event(
     job = await session.get(CrawlJob, task.job_id)
     if job is None:
         return
-    candidate_name = candidate.name if candidate is not None and candidate.name else "未知导师"
+    candidate_name = (
+        candidate.name if candidate is not None and candidate.name else "未知导师"
+    )
     trace = list(job.agent_trace or [])
     trace.append(
         {
@@ -1364,7 +1430,9 @@ async def _append_enrichment_success_event(
     trace = [
         item
         for item in list(job.agent_trace or [])
-        if not _is_previous_failed_enrichment_event(item, task=task, candidate_name=candidate_name)
+        if not _is_previous_failed_enrichment_event(
+            item, task=task, candidate_name=candidate_name
+        )
     ]
     trace.append(
         {
@@ -1430,7 +1498,9 @@ def _is_previous_failed_enrichment_event(
     return event.get("message") == f"候选导师详情补全失败：{candidate_name}"
 
 
-async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
+async def _resolve_llm_profile(
+    session: AsyncSession, job: CrawlJob
+) -> LLMProfile | None:
     return await resolve_crawl_job_runtime_profile(session, job)  # type: ignore[return-value]
 
 

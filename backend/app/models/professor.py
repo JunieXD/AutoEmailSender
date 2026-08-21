@@ -5,7 +5,18 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, inspect, text
+from sqlalchemy import (
+    JSON,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    inspect,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -126,10 +137,13 @@ def _bump_communication_sync_version_for_address_changes(
         or state.attrs.archived_at.history.has_changes()
     ):
         return
-    professor.communication_sync_version = max(
-        1,
-        professor.communication_sync_version or 1,
-    ) + 1
+    professor.communication_sync_version = (
+        max(
+            1,
+            professor.communication_sync_version or 1,
+        )
+        + 1
+    )
 
 
 class ProfessorTagLink(Base):

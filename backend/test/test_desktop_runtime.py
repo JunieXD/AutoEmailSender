@@ -74,7 +74,9 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json(), {"status": "ok"})
 
-    def test_health_endpoint_is_available_before_runtime_initialization_finishes(self) -> None:
+    def test_health_endpoint_is_available_before_runtime_initialization_finishes(
+        self,
+    ) -> None:
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "1"
 
         from app.core.config import get_settings
@@ -157,7 +159,9 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(data["message"], "系统已准备就绪")
         self.assertIsNone(data["error"])
 
-    def test_runtime_initialization_recovers_interrupted_crawl_jobs_before_ready(self) -> None:
+    def test_runtime_initialization_recovers_interrupted_crawl_jobs_before_ready(
+        self,
+    ) -> None:
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
 
         from app.core.config import get_settings
@@ -167,7 +171,9 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         with (
             patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
-            patch.object(main_module, "cleanup_old_operation_logs", new_callable=AsyncMock),
+            patch.object(
+                main_module, "cleanup_old_operation_logs", new_callable=AsyncMock
+            ),
             patch.object(
                 main_module,
                 "recover_interrupted_crawl_jobs",
@@ -196,7 +202,9 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(response.json()["state"], "ready")
         recover_interrupted.assert_awaited_once()
 
-    def test_runtime_initialization_recovers_interrupted_match_analysis_runs_before_ready(self) -> None:
+    def test_runtime_initialization_recovers_interrupted_match_analysis_runs_before_ready(
+        self,
+    ) -> None:
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
 
         from app.core.config import get_settings
@@ -206,7 +214,9 @@ class DesktopRuntimeTests(unittest.TestCase):
 
         with (
             patch.object(main_module, "ensure_database_schema", new_callable=AsyncMock),
-            patch.object(main_module, "cleanup_old_operation_logs", new_callable=AsyncMock),
+            patch.object(
+                main_module, "cleanup_old_operation_logs", new_callable=AsyncMock
+            ),
             patch.object(
                 main_module,
                 "recover_interrupted_crawl_jobs",
@@ -288,7 +298,10 @@ class DesktopRuntimeTests(unittest.TestCase):
         self.assertEqual(data["error_detail"]["minimum_supported_app_version"], "2.4.0")
         self.assertEqual(data["error_detail"]["backup_directory"], str(backup_dir))
         self.assertEqual(ready_response.status_code, 500)
-        self.assertEqual(ready_response.json()["detail"]["code"], "DATABASE_REQUIRES_NEWER_APP")
+        self.assertEqual(
+            ready_response.json()["detail"]["code"], "DATABASE_REQUIRES_NEWER_APP"
+        )
+
     def test_desktop_data_dir_controls_default_storage_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir) / "AutoEmailSender"
@@ -330,7 +343,9 @@ class DesktopRuntimeTests(unittest.TestCase):
     def test_desktop_entry_parses_document_self_check_fixture_dir(self) -> None:
         from desktop_entry import parse_desktop_args
 
-        fixture_dir = Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        fixture_dir = (
+            Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        )
         args = parse_desktop_args(["--document-self-check", fixture_dir.as_posix()])
 
         self.assertEqual(args.document_self_check, fixture_dir)
@@ -345,12 +360,16 @@ class DesktopRuntimeTests(unittest.TestCase):
     def test_packaged_document_self_check_extracts_high_risk_fixtures(self) -> None:
         from desktop_entry import run_packaged_document_self_check
 
-        fixture_dir = Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        fixture_dir = (
+            Path(__file__).resolve().parent / "fixtures" / "document_extraction"
+        )
         result = run_packaged_document_self_check(fixture_dir)
 
         self.assertEqual(result, 0)
 
-    def test_packaged_runtime_self_check_covers_high_risk_dynamic_dependencies(self) -> None:
+    def test_packaged_runtime_self_check_covers_high_risk_dynamic_dependencies(
+        self,
+    ) -> None:
         from desktop_entry import PACKAGED_RUNTIME_SELF_CHECK_MODULES
 
         for module_name in [

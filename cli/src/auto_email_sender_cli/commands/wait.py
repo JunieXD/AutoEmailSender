@@ -211,7 +211,9 @@ def wait_for_resource(
         timed_out_ids = [
             item_id
             for item_id in resource_id
-            if not _wait_condition_met(_status(latest_by_id.get(item_id)), normalized_until)
+            if not _wait_condition_met(
+                _status(latest_by_id.get(item_id)), normalized_until
+            )
             and item_id not in permanent_query_failure_ids
         ]
         if len(resource_id) == 1:
@@ -232,7 +234,9 @@ def wait_for_resource(
                 "poll_rounds": poll_rounds,
                 "elapsed_seconds": elapsed_seconds,
                 "result": latest,
-                "available_actions": _available_actions(resource, item_id, status_value),
+                "available_actions": _available_actions(
+                    resource, item_id, status_value
+                ),
             }
         else:
             resources = [
@@ -253,7 +257,8 @@ def wait_for_resource(
                 "failed_ids": [
                     int(item["id"])
                     for item in resources
-                    if item["status"] in {"failed", "send_failed", "draft_failed", "partial_failed"}
+                    if item["status"]
+                    in {"failed", "send_failed", "draft_failed", "partial_failed"}
                 ],
                 "attention_required_ids": [
                     int(item["id"])

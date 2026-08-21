@@ -27,8 +27,7 @@ STARTED_GENERATION_WHERE = (
     "status = 'generating_draft' AND draft_generation_started_at IS NOT NULL"
 )
 BATCH_SENT_WHERE = (
-    "batch_task_id IS NOT NULL "
-    "AND (status = 'sent' OR status = 'reply_detected')"
+    "batch_task_id IS NOT NULL AND (status = 'sent' OR status = 'reply_detected')"
 )
 
 

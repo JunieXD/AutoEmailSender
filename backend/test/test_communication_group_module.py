@@ -33,7 +33,9 @@ class CommunicationGroupModuleBoundaryTests(unittest.TestCase):
             aggregate.IdentityCommunicationGroupMemberRead,
             IdentityCommunicationGroupMemberRead,
         )
-        self.assertIs(aggregate.IdentityCommunicationGroupRead, IdentityCommunicationGroupRead)
+        self.assertIs(
+            aggregate.IdentityCommunicationGroupRead, IdentityCommunicationGroupRead
+        )
         self.assertIs(
             aggregate.IdentityCommunicationGroupWrite,
             IdentityCommunicationGroupWrite,

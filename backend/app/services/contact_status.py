@@ -58,21 +58,25 @@ async def build_contact_status_by_professor(
         dict.fromkeys(communication_identity_ids or (identity_id,)),
     )
     if len(resolved_identity_ids) == 1:
-        successful_sent_log = (
-            (EmailLog.direction == EmailDirection.SENT.value)
-            & (func.trim(func.coalesce(EmailLog.failure_summary, "")) == "")
+        successful_sent_log = (EmailLog.direction == EmailDirection.SENT.value) & (
+            func.trim(func.coalesce(EmailLog.failure_summary, "")) == ""
         )
         for professor_id_chunk in chunked_values(unique_professor_ids):
             log_rows = await session.execute(
                 select(
                     EmailLog.professor_id,
-                    func.sum(case((successful_sent_log, 1), else_=0)).label("sent_count"),
+                    func.sum(case((successful_sent_log, 1), else_=0)).label(
+                        "sent_count"
+                    ),
                     func.max(
                         case((successful_sent_log, EmailLog.created_at), else_=None),
                     ).label("last_sent_at"),
                     func.max(
                         case(
-                            (EmailLog.direction == EmailDirection.RECEIVED.value, EmailLog.created_at),
+                            (
+                                EmailLog.direction == EmailDirection.RECEIVED.value,
+                                EmailLog.created_at,
+                            ),
                             else_=None,
                         ),
                     ).label("last_replied_at"),
@@ -80,15 +84,21 @@ async def build_contact_status_by_professor(
                 .where(
                     EmailLog.identity_id == resolved_identity_ids[0],
                     EmailLog.professor_id.in_(professor_id_chunk),
-                    EmailLog.direction.in_([EmailDirection.SENT.value, EmailDirection.RECEIVED.value]),
+                    EmailLog.direction.in_(
+                        [EmailDirection.SENT.value, EmailDirection.RECEIVED.value]
+                    ),
                     EmailLog.record_state == EmailLogRecordState.CANONICAL.value,
                 )
                 .group_by(EmailLog.professor_id),
             )
             for professor_id, sent_count, last_sent_at, last_replied_at in log_rows:
                 sent_count_by_professor[professor_id] = int(sent_count or 0)
-                _keep_latest_timestamp(last_sent_at_by_professor, professor_id, last_sent_at)
-                _keep_latest_timestamp(last_replied_at_by_professor, professor_id, last_replied_at)
+                _keep_latest_timestamp(
+                    last_sent_at_by_professor, professor_id, last_sent_at
+                )
+                _keep_latest_timestamp(
+                    last_replied_at_by_professor, professor_id, last_replied_at
+                )
     else:
         communication_events = await load_communication_events(
             session,
@@ -121,12 +131,15 @@ async def build_contact_status_by_professor(
         tasks = resolved_tasks_by_professor.get(professor_id, [])
         for task in tasks:
             if professor_id not in professors_with_sent_logs:
-                _keep_latest_timestamp(last_sent_at_by_professor, professor_id, task.sent_at)
-            if (
-                professor_id not in professors_with_reply_logs
-                and (task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value)
+                _keep_latest_timestamp(
+                    last_sent_at_by_professor, professor_id, task.sent_at
+                )
+            if professor_id not in professors_with_reply_logs and (
+                task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value
             ):
-                _keep_latest_timestamp(last_replied_at_by_professor, professor_id, task.updated_at)
+                _keep_latest_timestamp(
+                    last_replied_at_by_professor, professor_id, task.updated_at
+                )
 
         statuses[professor_id] = ProfessorContactStatus(
             professor_id=professor_id,
@@ -148,9 +161,14 @@ def resolve_professor_contact_status(
     sent_count: int = 0,
     has_reply: bool = False,
 ) -> str:
-    if has_reply or any(task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value for task in tasks):
+    if has_reply or any(
+        task.is_replied or task.status == EmailTaskStatus.REPLY_DETECTED.value
+        for task in tasks
+    ):
         return "replied"
-    if sent_count > 0 or any(task.status == EmailTaskStatus.SENT.value or task.sent_at for task in tasks):
+    if sent_count > 0 or any(
+        task.status == EmailTaskStatus.SENT.value or task.sent_at for task in tasks
+    ):
         return "contacted"
     if not tasks:
         return "not_contacted"
@@ -203,7 +221,11 @@ async def _load_tasks_by_professor(
                 EmailTask.batch_send_canceled_at.is_(None),
                 email_task_is_not_user_removed_expression(),
             )
-            .order_by(EmailTask.professor_id.asc(), EmailTask.created_at.desc(), EmailTask.id.desc()),
+            .order_by(
+                EmailTask.professor_id.asc(),
+                EmailTask.created_at.desc(),
+                EmailTask.id.desc(),
+            ),
         )
         for task in rows:
             tasks_by_professor[task.professor_id].append(task)

@@ -111,11 +111,11 @@ def build_command_contract(
         ),
         "errors": [item.to_dict() for item in spec.errors] if spec is not None else [],
         "next_actions": (
-            [item.to_dict() for item in spec.next_actions]
-            if spec is not None
-            else []
+            [item.to_dict() for item in spec.next_actions] if spec is not None else []
         ),
-        "idempotency": spec.idempotency.to_dict() if spec is not None else _fallback_idempotency(),
+        "idempotency": spec.idempotency.to_dict()
+        if spec is not None
+        else _fallback_idempotency(),
         "lifecycle": (
             {
                 "introduced_in": spec.introduced_in,
@@ -136,9 +136,7 @@ def command_contract_revision(contract: dict[str, object]) -> str:
     """Hash the complete machine contract, excluding its self-reference."""
 
     snapshot = {
-        key: value
-        for key, value in contract.items()
-        if key in _CONTRACT_REVISION_KEYS
+        key: value for key, value in contract.items() if key in _CONTRACT_REVISION_KEYS
     }
     encoded = json.dumps(
         snapshot,
@@ -412,7 +410,9 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
     # mutation contracts expose it directly on their data object.
     if is_business_result(command) and not supports_list:
         output_fields = output_fields | RESULT_PROTOCOL_FIELDS
-    if command not in _REVISION_EXCLUDED_COMMANDS and (supports_list or _has_revision_output(output_fields)):
+    if command not in _REVISION_EXCLUDED_COMMANDS and (
+        supports_list or _has_revision_output(output_fields)
+    ):
         # Collection revisions are available on demand, while detail reads
         # expose the token by default on identified objects.
         output_fields = output_fields | {"revision"}
@@ -423,7 +423,11 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
     ):
         # ``augment_state_metadata`` adds these fields to every identified
         # stateful object, including collection items and nested task items.
-        output_fields = output_fields | {"available_actions", "blocked_actions", "blocked_reason"}
+        output_fields = output_fields | {
+            "available_actions",
+            "blocked_actions",
+            "blocked_reason",
+        }
     item_schema = _object_schema(output_fields, command=command)
     data_schema: dict[str, object]
     if supports_list:
@@ -515,12 +519,24 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                         "action": {"type": "string"},
                         "command": {"type": "string"},
                         "arguments": {"type": "object"},
-                        "risk_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
+                        "risk_level": {
+                            "type": "string",
+                            "enum": ["L0", "L1", "L2", "L3"],
+                        },
                         "confirmation_required_before_invocation": {"type": "boolean"},
                         "produces_confirmation_plan": {"type": "boolean"},
-                        "plan_role": {"type": "string", "enum": ["none", "producer", "consumer", "delegated"]},
-                        "required_input": {"type": "array", "items": {"type": "string"}},
-                        "execution_mode": {"type": "string", "enum": ["invoke", "poll"]},
+                        "plan_role": {
+                            "type": "string",
+                            "enum": ["none", "producer", "consumer", "delegated"],
+                        },
+                        "required_input": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "execution_mode": {
+                            "type": "string",
+                            "enum": ["invoke", "poll"],
+                        },
                     },
                 },
             },
@@ -532,7 +548,15 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
         "result_protocol": {
             "version": "2",
             "default_projection": "summary",
-            "fields": ["projection", "limit", "continuation", "truncated", "omitted_paths", "omitted_paths_total", "recovery_action"],
+            "fields": [
+                "projection",
+                "limit",
+                "continuation",
+                "truncated",
+                "omitted_paths",
+                "omitted_paths_total",
+                "recovery_action",
+            ],
             "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，recovery_action 仅在可结构化恢复完整结果时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
             "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据；所有视图仍受 --max-output-bytes 约束。",
@@ -552,7 +576,10 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                 "type": "object",
                 "properties": {
                     "request_id": {"type": "string"},
-                    "status": {"type": "string", "enum": ["pending", "applied", "replayed"]},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "applied", "replayed"],
+                    },
                     "changed_resources": {"type": "array"},
                     "warnings": {"type": "array"},
                     "audit_reference": {"type": ["string", "null"]},
@@ -623,83 +650,318 @@ _REVISION_EXCLUDED_COMMANDS = frozenset(
 _SPECIAL_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
     "ui-handoffs": frozenset(
         {
-            "handoff_id", "schema_version", "surface", "route", "status",
-            "selection_count", "selection_fingerprint", "ui_effects", "result",
-            "failure_message", "delivery_attempts", "expires_at", "claimed_at",
-            "awaiting_user_at", "applied_at", "failed_at", "canceled_at",
-            "created_at", "updated_at", "idempotent_replay", "available_actions",
+            "handoff_id",
+            "schema_version",
+            "surface",
+            "route",
+            "status",
+            "selection_count",
+            "selection_fingerprint",
+            "ui_effects",
+            "result",
+            "failure_message",
+            "delivery_attempts",
+            "expires_at",
+            "claimed_at",
+            "awaiting_user_at",
+            "applied_at",
+            "failed_at",
+            "canceled_at",
+            "created_at",
+            "updated_at",
+            "idempotent_replay",
+            "available_actions",
         },
     ),
     "drafts": frozenset(
         {
-            "task_id", "revision", "source", "batch_task_id", "parent_task_id",
-            "identity_id", "professor_id", "professor_name", "professor_email",
-            "llm_profile_id", "status", "generation_mode", "template_id",
-            "reference_material_id", "attachment_material_ids", "generated_subject",
-            "generated_body_text", "generated_body_html", "approved_subject",
-            "approved_body_text", "approved_body_html", "approved_at", "scheduled_at",
-            "sent_at", "last_error", "created_at", "updated_at",
+            "task_id",
+            "revision",
+            "source",
+            "batch_task_id",
+            "parent_task_id",
+            "identity_id",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "llm_profile_id",
+            "status",
+            "generation_mode",
+            "template_id",
+            "reference_material_id",
+            "attachment_material_ids",
+            "generated_subject",
+            "generated_body_text",
+            "generated_body_html",
+            "approved_subject",
+            "approved_body_text",
+            "approved_body_html",
+            "approved_at",
+            "scheduled_at",
+            "sent_at",
+            "last_error",
+            "created_at",
+            "updated_at",
         },
     ),
     "workspaces": frozenset(
         {
-            "professor", "identity", "llm_profile", "material_options", "current_task",
-            "messages", "communication_scope", "sync_warnings", "match_source_identity",
-            "match_source_material_id", "match_source_material_name", "match_result_id",
-            "match_analyzed_at", "match_uses_group_source", "match_is_stale",
+            "professor",
+            "identity",
+            "llm_profile",
+            "material_options",
+            "current_task",
+            "messages",
+            "communication_scope",
+            "sync_warnings",
+            "match_source_identity",
+            "match_source_material_id",
+            "match_source_material_name",
+            "match_result_id",
+            "match_analyzed_at",
+            "match_uses_group_source",
+            "match_is_stale",
         },
     ),
     "tasks": frozenset(
         {
-            "task_id", "run_id", "thread", "usage", "status", "can_continue_manually",
-            "can_write_follow_up", "outreach_generation_mode", "generated_subject",
-            "generated_content_text", "generated_content_html", "approved_subject",
-            "approved_body_text", "approved_body_html", "primary_material_id",
-            "selected_material_ids", "match_score", "match_reason", "fit_points",
-            "risk_points", "match_keywords", "last_error",
+            "task_id",
+            "run_id",
+            "thread",
+            "usage",
+            "status",
+            "can_continue_manually",
+            "can_write_follow_up",
+            "outreach_generation_mode",
+            "generated_subject",
+            "generated_content_text",
+            "generated_content_html",
+            "approved_subject",
+            "approved_body_text",
+            "approved_body_html",
+            "primary_material_id",
+            "selected_material_ids",
+            "match_score",
+            "match_reason",
+            "fit_points",
+            "risk_points",
+            "match_keywords",
+            "last_error",
         },
     ),
     "plans": frozenset(
         {
-            "plan_id", "action", "status", "task_id", "content_fingerprint", "expires_at",
-            "confirmed_at", "executed_at", "canceled_at", "summary", "warnings", "result",
-            "effects", "idempotent_replay", "confirmation_message",
+            "plan_id",
+            "action",
+            "status",
+            "task_id",
+            "content_fingerprint",
+            "expires_at",
+            "confirmed_at",
+            "executed_at",
+            "canceled_at",
+            "summary",
+            "warnings",
+            "result",
+            "effects",
+            "idempotent_replay",
+            "confirmation_message",
         },
     ),
     "campaigns": frozenset(
         {
-            "id", "name", "status", "identity", "llm_profile", "generation_mode", "template",
-            "reference_material", "attachment_material_ids", "schedule_type", "window_start_time",
-            "window_end_time", "emails_per_window", "scheduled_dates", "target_count",
-            "pending_generation_count", "generating_draft_count", "draft_failed_count",
-            "review_required_count", "approved_count", "scheduled_count", "sending_count",
-            "sent_count", "failed_count", "canceled_count", "canceled_send_count",
-            "can_start_draft_generation", "created_at", "updated_at",
+            "id",
+            "name",
+            "status",
+            "identity",
+            "llm_profile",
+            "generation_mode",
+            "template",
+            "reference_material",
+            "attachment_material_ids",
+            "schedule_type",
+            "window_start_time",
+            "window_end_time",
+            "emails_per_window",
+            "scheduled_dates",
+            "target_count",
+            "pending_generation_count",
+            "generating_draft_count",
+            "draft_failed_count",
+            "review_required_count",
+            "approved_count",
+            "scheduled_count",
+            "sending_count",
+            "sent_count",
+            "failed_count",
+            "canceled_count",
+            "canceled_send_count",
+            "can_start_draft_generation",
+            "created_at",
+            "updated_at",
         },
     ),
-    "communication-groups": frozenset({"id", "revision", "members", "match_source_identity_id", "created_at", "updated_at"}),
+    "communication-groups": frozenset(
+        {
+            "id",
+            "revision",
+            "members",
+            "match_source_identity_id",
+            "created_at",
+            "updated_at",
+        }
+    ),
     "test-email": frozenset(
         {
-            "completed", "identity", "llm_profile", "material_options", "draft", "history",
-            "id", "recipient_email", "subject", "content", "content_html", "status",
-            "rfc_message_id", "failure_summary", "created_at", "outreach_template_id",
+            "completed",
+            "identity",
+            "llm_profile",
+            "material_options",
+            "draft",
+            "history",
+            "id",
+            "recipient_email",
+            "subject",
+            "content",
+            "content_html",
+            "status",
+            "rfc_message_id",
+            "failure_summary",
+            "created_at",
+            "outreach_template_id",
             "selected_material_ids",
         },
     ),
-    "communications.sync": frozenset({"identity_id", "detected_count", "warnings", "status"}),
-    "dashboard.overview": frozenset({"mentor", "email", "professor_count", "email_count", "sent_count", "reply_count", "needs_attention_count", "by_status", "by_identity"}),
+    "communications.sync": frozenset(
+        {"identity_id", "detected_count", "warnings", "status"}
+    ),
+    "dashboard.overview": frozenset(
+        {
+            "mentor",
+            "email",
+            "professor_count",
+            "email_count",
+            "sent_count",
+            "reply_count",
+            "needs_attention_count",
+            "by_status",
+            "by_identity",
+        }
+    ),
     "settings": frozenset({"revision", "updated_at", "settings"}),
 }
 
 
 _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
-    "version": frozenset({"cli_version", "protocol_version", "schema_version", "contract_version", "catalog_version", "build_revision", "build_kind", "build_dirty"}),
-    "status": frozenset({"state", "desktop_process_running", "backend_process_running", "backend_reachable", "runtime_matches", "backend_ready", "app_version", "protocol_version", "protocol_compatible", "runtime_file", "message"}),
-    "guide": frozenset({"version", "topic", "title", "deprecated", "rules", "replacement"}),
-    "capabilities": frozenset({"catalog_version", "catalog_revision", "build", "scope", "scope_revision", "view", "items", "summary", "cache", "next"}),
-    "describe": frozenset({"command", "kind", "summary", "usage", "example", "parameters", "children", "input_file_examples", "risk", "preconditions", "next_steps", "suggestions", "unavailability", "unchanged", "cache", "contract_version", "contract_revision", "resource", "operation", "input", "output", "effects", "trust", "state_transitions", "errors", "next_actions", "idempotency", "lifecycle", "details_available", "details"}),
+    "version": frozenset(
+        {
+            "cli_version",
+            "protocol_version",
+            "schema_version",
+            "contract_version",
+            "catalog_version",
+            "build_revision",
+            "build_kind",
+            "build_dirty",
+        }
+    ),
+    "status": frozenset(
+        {
+            "state",
+            "desktop_process_running",
+            "backend_process_running",
+            "backend_reachable",
+            "runtime_matches",
+            "backend_ready",
+            "app_version",
+            "protocol_version",
+            "protocol_compatible",
+            "runtime_file",
+            "message",
+        }
+    ),
+    "guide": frozenset(
+        {"version", "topic", "title", "deprecated", "rules", "replacement"}
+    ),
+    "capabilities": frozenset(
+        {
+            "catalog_version",
+            "catalog_revision",
+            "build",
+            "scope",
+            "scope_revision",
+            "view",
+            "items",
+            "summary",
+            "cache",
+            "next",
+        }
+    ),
+    "describe": frozenset(
+        {
+            "command",
+            "kind",
+            "summary",
+            "usage",
+            "example",
+            "parameters",
+            "children",
+            "input_file_examples",
+            "risk",
+            "preconditions",
+            "next_steps",
+            "suggestions",
+            "unavailability",
+            "unchanged",
+            "cache",
+            "contract_version",
+            "contract_revision",
+            "resource",
+            "operation",
+            "input",
+            "output",
+            "effects",
+            "trust",
+            "state_transitions",
+            "errors",
+            "next_actions",
+            "idempotency",
+            "lifecycle",
+            "details_available",
+            "details",
+        }
+    ),
     "doctor": frozenset({"healthy", "checks", "recommended_action", "repair_command"}),
-    "wait": frozenset({"resource", "id", "ids", "status", "state_category", "settled", "terminal", "condition_met", "timed_out", "until", "poll_count", "poll_rounds", "elapsed_seconds", "result", "available_actions", "total_count", "settled_count", "terminal_count", "by_status", "failed_ids", "attention_required_ids", "query_failed_ids", "query_failures", "timed_out_ids", "resources", "action_groups"}),
+    "wait": frozenset(
+        {
+            "resource",
+            "id",
+            "ids",
+            "status",
+            "state_category",
+            "settled",
+            "terminal",
+            "condition_met",
+            "timed_out",
+            "until",
+            "poll_count",
+            "poll_rounds",
+            "elapsed_seconds",
+            "result",
+            "available_actions",
+            "total_count",
+            "settled_count",
+            "terminal_count",
+            "by_status",
+            "failed_ids",
+            "attention_required_ids",
+            "query_failed_ids",
+            "query_failures",
+            "timed_out_ids",
+            "resources",
+            "action_groups",
+        }
+    ),
     "ui-handoffs.wait": _SPECIAL_OUTPUT_FIELDS["ui-handoffs"]
     | frozenset(
         {
@@ -714,47 +976,274 @@ _COMMAND_OUTPUT_FIELDS: dict[str, frozenset[str]] = {
         },
     ),
     "professors.tags.usage": frozenset({"tag", "professors"}),
-    "communications.threads.get": frozenset({"id", "identity_id", "identity_name", "identity_email_address", "professor_id", "professor_name", "professor_email", "sent_count", "received_count", "has_sent", "has_reply", "last_message_at", "messages", "messages_next_cursor", "messages_has_more"}),
-    "communications.sync": frozenset({"identity_id", "detected_count", "completed_at", "message"}),
+    "communications.threads.get": frozenset(
+        {
+            "id",
+            "identity_id",
+            "identity_name",
+            "identity_email_address",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "sent_count",
+            "received_count",
+            "has_sent",
+            "has_reply",
+            "last_message_at",
+            "messages",
+            "messages_next_cursor",
+            "messages_has_more",
+        }
+    ),
+    "communications.sync": frozenset(
+        {"identity_id", "detected_count", "completed_at", "message"}
+    ),
     "identities.test-smtp": frozenset({"ok", "message", "host", "possible_cause"}),
     "identities.test-imap": frozenset({"ok", "message", "host", "possible_cause"}),
-    "llm-profiles.models": frozenset({"profile_id", "ok", "message", "resolved_base_url", "request_url", "attempted_urls", "endpoint_kind", "status_code", "duration_ms", "consumes_tokens", "models", "selected_model_available", "trust_level"}),
-    "llm-profiles.test": frozenset({"profile_id", "ok", "message", "resolved_base_url", "request_url", "attempted_urls", "endpoint_kind", "status_code", "duration_ms", "consumes_tokens", "prompt_tokens", "completion_tokens", "total_tokens", "trust_level"}),
+    "llm-profiles.models": frozenset(
+        {
+            "profile_id",
+            "ok",
+            "message",
+            "resolved_base_url",
+            "request_url",
+            "attempted_urls",
+            "endpoint_kind",
+            "status_code",
+            "duration_ms",
+            "consumes_tokens",
+            "models",
+            "selected_model_available",
+            "trust_level",
+        }
+    ),
+    "llm-profiles.test": frozenset(
+        {
+            "profile_id",
+            "ok",
+            "message",
+            "resolved_base_url",
+            "request_url",
+            "attempted_urls",
+            "endpoint_kind",
+            "status_code",
+            "duration_ms",
+            "consumes_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "trust_level",
+        }
+    ),
     "communication-groups.delete": frozenset({"ok", "group_id"}),
-    "usage.chart": frozenset({"preset", "granularity", "range_start", "range_end", "buckets"}),
-    "usage.visualization": frozenset({"preset", "summary", "chart", "feature_distribution", "model_ranking", "recent_records"}),
+    "usage.chart": frozenset(
+        {"preset", "granularity", "range_start", "range_end", "buckets"}
+    ),
+    "usage.visualization": frozenset(
+        {
+            "preset",
+            "summary",
+            "chart",
+            "feature_distribution",
+            "model_ranking",
+            "recent_records",
+        }
+    ),
     "test-email.status": frozenset({"completed"}),
-    "test-email.get": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
-    "test-email.generate": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
-    "test-email.save": frozenset({"identity", "llm_profile", "material_options", "draft", "history"}),
-    "crawler.jobs.enrich": frozenset({"phase", "selected_count", "enriched_count", "unchanged_count", "failed_count", "skipped_count", "message", "selection", "submission", "skips", "observation"}),
-    "crawler.jobs.create-many": frozenset({"phase", "requested_count", "created_count", "failed_count", "created_job_ids", "failures"}),
-    "crawler.jobs.enrich-many": frozenset({"phase", "requested_count", "accepted_count", "failed_count", "queued_count", "skipped_count", "items", "failures"}),
+    "test-email.get": frozenset(
+        {"identity", "llm_profile", "material_options", "draft", "history"}
+    ),
+    "test-email.generate": frozenset(
+        {"identity", "llm_profile", "material_options", "draft", "history"}
+    ),
+    "test-email.save": frozenset(
+        {"identity", "llm_profile", "material_options", "draft", "history"}
+    ),
+    "crawler.jobs.enrich": frozenset(
+        {
+            "phase",
+            "selected_count",
+            "enriched_count",
+            "unchanged_count",
+            "failed_count",
+            "skipped_count",
+            "message",
+            "selection",
+            "submission",
+            "skips",
+            "observation",
+        }
+    ),
+    "crawler.jobs.create-many": frozenset(
+        {
+            "phase",
+            "requested_count",
+            "created_count",
+            "failed_count",
+            "created_job_ids",
+            "failures",
+        }
+    ),
+    "crawler.jobs.enrich-many": frozenset(
+        {
+            "phase",
+            "requested_count",
+            "accepted_count",
+            "failed_count",
+            "queued_count",
+            "skipped_count",
+            "items",
+            "failures",
+        }
+    ),
     "matching.jobs.cancel": frozenset({"ok", "job"}),
     "matching.jobs.delete": frozenset({"ok", "job"}),
     "matching.jobs.restore": frozenset({"ok", "job"}),
     "enrichment.jobs.cancel": frozenset({"ok", "job"}),
     "enrichment.jobs.delete": frozenset({"ok", "job"}),
     "enrichment.jobs.restore": frozenset({"ok", "job"}),
-    "templates.import-file": frozenset({"subject", "body_text", "body_html", "format_name", "trust_level"}),
-    "crawler.candidates.update": frozenset({"id", "revision", "job_id", "professor_id", "name", "email", "title", "university", "school", "department", "research_direction", "recent_papers", "profile_url", "source_url", "confidence", "field_confidence", "evidence", "review_status", "created_at", "updated_at", "trust_level"}),
+    "templates.import-file": frozenset(
+        {"subject", "body_text", "body_html", "format_name", "trust_level"}
+    ),
+    "crawler.candidates.update": frozenset(
+        {
+            "id",
+            "revision",
+            "job_id",
+            "professor_id",
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "recent_papers",
+            "profile_url",
+            "source_url",
+            "confidence",
+            "field_confidence",
+            "evidence",
+            "review_status",
+            "created_at",
+            "updated_at",
+            "trust_level",
+        }
+    ),
     "professors.export": frozenset({"output", "format", "size_bytes"}),
     "professors.download-template": frozenset({"output", "format", "size_bytes"}),
-    "professors.community.export-package": frozenset({"output", "professor_ids", "size_bytes"}),
-    "professors.community.catalog": frozenset({"schema_version", "dataset_version", "generated_at", "record_count", "universities", "source", "stale", "warning", "verified_at", "lifecycle_warnings"}),
-    "professors.community.records": frozenset({"dataset_version", "source", "stale", "warning", "records", "lifecycle_warnings", "record", "comparison_token", "category", "local_professor_id", "local_professor_name", "local_archived", "linked", "identity_conflict", "match_reason", "import_blocked", "import_blocked_reason", "fields"}),
-    "professors.community.preview": frozenset({"dataset_version", "source", "stale", "warning", "records", "lifecycle_warnings", "record", "comparison_token", "category", "local_professor_id", "local_professor_name", "local_archived", "linked", "identity_conflict", "match_reason", "import_blocked", "import_blocked_reason", "fields"}),
-    "communications.messages.export": frozenset({"output", "record_count", "format", "body_included"}),
+    "professors.community.export-package": frozenset(
+        {"output", "professor_ids", "size_bytes"}
+    ),
+    "professors.community.catalog": frozenset(
+        {
+            "schema_version",
+            "dataset_version",
+            "generated_at",
+            "record_count",
+            "universities",
+            "source",
+            "stale",
+            "warning",
+            "verified_at",
+            "lifecycle_warnings",
+        }
+    ),
+    "professors.community.records": frozenset(
+        {
+            "dataset_version",
+            "source",
+            "stale",
+            "warning",
+            "records",
+            "lifecycle_warnings",
+            "record",
+            "comparison_token",
+            "category",
+            "local_professor_id",
+            "local_professor_name",
+            "local_archived",
+            "linked",
+            "identity_conflict",
+            "match_reason",
+            "import_blocked",
+            "import_blocked_reason",
+            "fields",
+        }
+    ),
+    "professors.community.preview": frozenset(
+        {
+            "dataset_version",
+            "source",
+            "stale",
+            "warning",
+            "records",
+            "lifecycle_warnings",
+            "record",
+            "comparison_token",
+            "category",
+            "local_professor_id",
+            "local_professor_name",
+            "local_archived",
+            "linked",
+            "identity_conflict",
+            "match_reason",
+            "import_blocked",
+            "import_blocked_reason",
+            "fields",
+        }
+    ),
+    "communications.messages.export": frozenset(
+        {"output", "record_count", "format", "body_included"}
+    ),
     "materials.download": frozenset({"material_id", "output", "size_bytes"}),
     "diagnostics.export": frozenset({"output", "total"}),
     "diagnostics.crawler-debug": frozenset({"job_id", "output", "size_bytes"}),
-    "campaigns.get": frozenset({"id", "name", "status", "identity", "llm_profile", "generation_mode", "template", "reference_material", "attachment_material_ids", "schedule_type", "window_start_time", "window_end_time", "emails_per_window", "scheduled_dates", "target_count", "pending_generation_count", "generating_draft_count", "draft_failed_count", "review_required_count", "approved_count", "scheduled_count", "sending_count", "sent_count", "failed_count", "canceled_count", "canceled_send_count", "can_start_draft_generation", "created_at", "updated_at"}),
-    "campaigns.resend-context": frozenset({"task", "defaults", "items", "summary", "warnings"}),
+    "campaigns.get": frozenset(
+        {
+            "id",
+            "name",
+            "status",
+            "identity",
+            "llm_profile",
+            "generation_mode",
+            "template",
+            "reference_material",
+            "attachment_material_ids",
+            "schedule_type",
+            "window_start_time",
+            "window_end_time",
+            "emails_per_window",
+            "scheduled_dates",
+            "target_count",
+            "pending_generation_count",
+            "generating_draft_count",
+            "draft_failed_count",
+            "review_required_count",
+            "approved_count",
+            "scheduled_count",
+            "sending_count",
+            "sent_count",
+            "failed_count",
+            "canceled_count",
+            "canceled_send_count",
+            "can_start_draft_generation",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "campaigns.resend-context": frozenset(
+        {"task", "defaults", "items", "summary", "warnings"}
+    ),
     "campaigns.item-thread": _SPECIAL_OUTPUT_FIELDS["workspaces"],
     "campaigns.approve-item-draft": _SPECIAL_OUTPUT_FIELDS["workspaces"],
-    "campaigns.approve-drafts": frozenset({"approved_count", "campaign", "mutation_receipt"}),
+    "campaigns.approve-drafts": frozenset(
+        {"approved_count", "campaign", "mutation_receipt"}
+    ),
     "drafts.approve": _SPECIAL_OUTPUT_FIELDS["workspaces"],
-    "deliveries.reschedule": frozenset({"ok", "task_id", "message", "mutation_receipt"}),
+    "deliveries.reschedule": frozenset(
+        {"ok", "task_id", "message", "mutation_receipt"}
+    ),
 }
 
 _PLAN_OUTPUT_COMMANDS = frozenset(
@@ -821,7 +1310,9 @@ def _object_schema(
     resolved = fields or _GENERIC_OUTPUT_FIELDS
     return {
         "type": "object",
-        "properties": {field: _field_schema(field, command=command) for field in sorted(resolved)},
+        "properties": {
+            field: _field_schema(field, command=command) for field in sorted(resolved)
+        },
         "additionalProperties": True,
     }
 
@@ -850,15 +1341,110 @@ def _field_schema(field: str, *, command: str | None = None) -> dict[str, object
         return {"type": ["string", "null"]}
     if command == "dashboard.overview" and normalized in {"mentor", "email"}:
         return {"type": ["object", "null"]}
-    if normalized in {"id", "task_id", "job_id", "plan_id", "professor_id", "identity_id", "llm_profile_id", "template_id", "material_id", "thread_id", "email_task_id", "campaign_id"} or normalized.endswith("_id"):
+    if normalized in {
+        "id",
+        "task_id",
+        "job_id",
+        "plan_id",
+        "professor_id",
+        "identity_id",
+        "llm_profile_id",
+        "template_id",
+        "material_id",
+        "thread_id",
+        "email_task_id",
+        "campaign_id",
+    } or normalized.endswith("_id"):
         return {"type": ["integer", "string", "null"]}
-    if normalized.endswith(("_count", "_tokens", "size_bytes", "_ms")) or normalized in {"count", "record_count", "target_count", "total", "status_code", "duration_ms", "offset", "limit", "page", "page_size", "total_pages", "total_records", "poll_count", "poll_rounds", "delivery_attempts"}:
+    if normalized.endswith(
+        ("_count", "_tokens", "size_bytes", "_ms")
+    ) or normalized in {
+        "count",
+        "record_count",
+        "target_count",
+        "total",
+        "status_code",
+        "duration_ms",
+        "offset",
+        "limit",
+        "page",
+        "page_size",
+        "total_pages",
+        "total_records",
+        "poll_count",
+        "poll_rounds",
+        "delivery_attempts",
+    }:
         return {"type": ["integer", "null"]}
-    if normalized.endswith("_seconds") or normalized in {"match_score", "score", "temperature", "confidence"}:
+    if normalized.endswith("_seconds") or normalized in {
+        "match_score",
+        "score",
+        "temperature",
+        "confidence",
+    }:
         return {"type": ["number", "null"]}
-    if normalized.startswith(("is_", "has_", "can_")) or normalized.endswith(("_configured", "_running", "_ready", "_compatible")) or normalized in {"archived", "body_included", "completed", "settled", "terminal", "condition_met", "timed_out", "ok", "healthy", "running", "ready", "consumes_tokens", "selected_model_available", "linked", "identity_conflict", "import_blocked", "stale", "default_selected", "selectable", "sendable", "editable", "deprecated", "idempotent_replay"}:
+    if (
+        normalized.startswith(("is_", "has_", "can_"))
+        or normalized.endswith(("_configured", "_running", "_ready", "_compatible"))
+        or normalized
+        in {
+            "archived",
+            "body_included",
+            "completed",
+            "settled",
+            "terminal",
+            "condition_met",
+            "timed_out",
+            "ok",
+            "healthy",
+            "running",
+            "ready",
+            "consumes_tokens",
+            "selected_model_available",
+            "linked",
+            "identity_conflict",
+            "import_blocked",
+            "stale",
+            "default_selected",
+            "selectable",
+            "sendable",
+            "editable",
+            "deprecated",
+            "idempotent_replay",
+        }
+    ):
         return {"type": "boolean"}
-    if normalized in {"professor", "identity", "llm_profile", "llm_context", "current_task", "draft", "thread", "usage", "summary", "result", "settings", "by_status", "by_identity", "tag", "job", "template", "reference_material", "defaults", "task", "chart", "metadata", "raw", "field_confidence", "evidence", "filters", "next", "replacement", "details_available", "details"}:
+    if normalized in {
+        "professor",
+        "identity",
+        "llm_profile",
+        "llm_context",
+        "current_task",
+        "draft",
+        "thread",
+        "usage",
+        "summary",
+        "result",
+        "settings",
+        "by_status",
+        "by_identity",
+        "tag",
+        "job",
+        "template",
+        "reference_material",
+        "defaults",
+        "task",
+        "chart",
+        "metadata",
+        "raw",
+        "field_confidence",
+        "evidence",
+        "filters",
+        "next",
+        "replacement",
+        "details_available",
+        "details",
+    }:
         return {"type": ["object", "null"]}
     if normalized in {
         "tags",
@@ -916,7 +1502,15 @@ def validate_command_contract(contract: dict[str, object]) -> list[str]:
             errors.append(f"missing:{key}")
     if contract.get("contract_version") != CONTRACT_VERSION:
         errors.append("invalid:contract_version")
-    for key in ("input", "output", "effects", "preconditions", "trust", "idempotency", "lifecycle"):
+    for key in (
+        "input",
+        "output",
+        "effects",
+        "preconditions",
+        "trust",
+        "idempotency",
+        "lifecycle",
+    ):
         if not isinstance(contract.get(key), dict):
             errors.append(f"invalid:{key}")
     for key in ("state_transitions", "errors", "next_actions"):
@@ -930,7 +1524,10 @@ def validate_command_contract(contract: dict[str, object]) -> list[str]:
         properties = schema.get("properties") if isinstance(schema, dict) else None
         if isinstance(properties, dict):
             for name, property_schema in properties.items():
-                if not isinstance(property_schema, dict) or "type" not in property_schema:
+                if (
+                    not isinstance(property_schema, dict)
+                    or "type" not in property_schema
+                ):
                     errors.append(f"invalid:input.schema.properties.{name}")
     output_contract = contract.get("output")
     if isinstance(output_contract, dict):
@@ -940,7 +1537,9 @@ def validate_command_contract(contract: dict[str, object]) -> list[str]:
         properties = schema.get("properties") if isinstance(schema, dict) else None
         if not isinstance(properties, dict) or "data" not in properties:
             errors.append("invalid:output.schema.properties.data")
-        elif not isinstance(properties["data"], dict) or "type" not in properties["data"]:
+        elif (
+            not isinstance(properties["data"], dict) or "type" not in properties["data"]
+        ):
             errors.append("invalid:output.schema.properties.data.type")
     revision = contract.get("contract_revision")
     if not isinstance(revision, str) or len(revision) != 16:

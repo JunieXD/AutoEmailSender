@@ -7,7 +7,11 @@ from .email_tasks import (
     load_email_task,
     record_email_task_log,
 )
-from .events import CommunicationEvent, collapse_communication_logs, load_communication_events
+from .events import (
+    CommunicationEvent,
+    collapse_communication_logs,
+    load_communication_events,
+)
 from .imap.errors import is_account_level_throttle_error, is_provider_throttle_error
 from .imap.fetcher import ImapFetchedMessage
 from .imap.state import (

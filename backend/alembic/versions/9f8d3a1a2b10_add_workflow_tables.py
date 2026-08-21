@@ -43,7 +43,9 @@ def upgrade() -> None:
         sa.Column("email_subject", sa.Text(), nullable=True),
         sa.Column("email_body", sa.Text(), nullable=True),
         sa.Column("selected_attachment_ids", sa.JSON(), nullable=True),
-        sa.Column("target_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "target_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["identity_id"],
             ["identity_profiles.id"],
@@ -56,12 +58,21 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_batch_tasks")),
     )
-    op.create_index(op.f("ix_batch_tasks_identity_id"), "batch_tasks", ["identity_id"], unique=False)
-    op.create_index(op.f("ix_batch_tasks_llm_profile_id"), "batch_tasks", ["llm_profile_id"], unique=False)
+    op.create_index(
+        op.f("ix_batch_tasks_identity_id"), "batch_tasks", ["identity_id"], unique=False
+    )
+    op.create_index(
+        op.f("ix_batch_tasks_llm_profile_id"),
+        "batch_tasks",
+        ["llm_profile_id"],
+        unique=False,
+    )
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         batch_op.add_column(sa.Column("batch_task_id", sa.Integer(), nullable=True))
-        batch_op.create_index(op.f("ix_email_tasks_batch_task_id"), ["batch_task_id"], unique=False)
+        batch_op.create_index(
+            op.f("ix_email_tasks_batch_task_id"), ["batch_task_id"], unique=False
+        )
         batch_op.create_foreign_key(
             op.f("fk_email_tasks_batch_task_id_batch_tasks"),
             "batch_tasks",
@@ -101,10 +112,24 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_email_logs")),
     )
-    op.create_index(op.f("ix_email_logs_email_task_id"), "email_logs", ["email_task_id"], unique=False)
-    op.create_index(op.f("ix_email_logs_identity_id"), "email_logs", ["identity_id"], unique=False)
-    op.create_index(op.f("ix_email_logs_llm_profile_id"), "email_logs", ["llm_profile_id"], unique=False)
-    op.create_index(op.f("ix_email_logs_professor_id"), "email_logs", ["professor_id"], unique=False)
+    op.create_index(
+        op.f("ix_email_logs_email_task_id"),
+        "email_logs",
+        ["email_task_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_email_logs_identity_id"), "email_logs", ["identity_id"], unique=False
+    )
+    op.create_index(
+        op.f("ix_email_logs_llm_profile_id"),
+        "email_logs",
+        ["llm_profile_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_email_logs_professor_id"), "email_logs", ["professor_id"], unique=False
+    )
 
 
 def downgrade() -> None:
@@ -115,7 +140,9 @@ def downgrade() -> None:
     op.drop_table("email_logs")
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
-        batch_op.drop_constraint(op.f("fk_email_tasks_batch_task_id_batch_tasks"), type_="foreignkey")
+        batch_op.drop_constraint(
+            op.f("fk_email_tasks_batch_task_id_batch_tasks"), type_="foreignkey"
+        )
         batch_op.drop_index(op.f("ix_email_tasks_batch_task_id"))
         batch_op.drop_column("batch_task_id")
 

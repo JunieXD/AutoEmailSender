@@ -79,7 +79,11 @@ async def create_professor_selection_ui_handoff(
             return _serialize_handoff(existing, idempotent_replay=True)
 
         try:
-            selected_ids, matched_count, excluded_count = await resolve_professor_selection(
+            (
+                selected_ids,
+                matched_count,
+                excluded_count,
+            ) = await resolve_professor_selection(
                 session,
                 request.selection,
             )
@@ -98,7 +102,11 @@ async def create_professor_selection_ui_handoff(
 
         _ensure_selection_size(selected_ids)
         professors_by_id = await _load_professors_by_id(session, selected_ids)
-        missing_ids = [professor_id for professor_id in selected_ids if professor_id not in professors_by_id]
+        missing_ids = [
+            professor_id
+            for professor_id in selected_ids
+            if professor_id not in professors_by_id
+        ]
         if missing_ids:
             raise AgentApiError(
                 status_code=404,
@@ -106,7 +114,9 @@ async def create_professor_selection_ui_handoff(
                 message=f"未找到导师：{missing_ids[0]}",
             )
         archived_count = sum(
-            1 for professor_id in selected_ids if professors_by_id[professor_id].archived_at is not None
+            1
+            for professor_id in selected_ids
+            if professors_by_id[professor_id].archived_at is not None
         )
         if request.surface == "professors.home" and archived_count:
             raise AgentApiError(
@@ -234,7 +244,9 @@ async def _create_email_task_handoff(
             "identity_id": task.identity_id,
             "ui_effects": ["focus_window", "navigate", "focus_resource"],
         }
-        route = "/tasks" if surface == "tasks.center" else f"/workspace/{task.professor_id}"
+        route = (
+            "/tasks" if surface == "tasks.center" else f"/workspace/{task.professor_id}"
+        )
         return await _insert_handoff(
             session,
             surface=surface,
@@ -560,7 +572,10 @@ async def acknowledge_ui_handoff(
         if _expire_if_needed(handoff):
             await session.commit()
             raise _expired_handoff_error()
-        if handoff.status == request.status and handoff.consumer_id == request.consumer_id:
+        if (
+            handoff.status == request.status
+            and handoff.consumer_id == request.consumer_id
+        ):
             return _serialize_handoff(handoff)
         if handoff.status not in {UI_HANDOFF_CLAIMED, UI_HANDOFF_AWAITING_USER}:
             raise AgentApiError(
@@ -791,7 +806,9 @@ def _serialize_handoff(
         status=handoff.status,
         selection_count=handoff.selection_count,
         selection_fingerprint=handoff.selection_fingerprint,
-        ui_effects=[str(item) for item in ui_effects] if isinstance(ui_effects, list) else [],
+        ui_effects=[str(item) for item in ui_effects]
+        if isinstance(ui_effects, list)
+        else [],
         result=handoff.result,
         failure_message=handoff.failure_message,
         delivery_attempts=handoff.delivery_attempts,

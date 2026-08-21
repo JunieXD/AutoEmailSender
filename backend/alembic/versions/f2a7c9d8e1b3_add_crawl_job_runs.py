@@ -49,7 +49,9 @@ def _index_exists(connection: sa.engine.Connection, index_name: str) -> bool:
     )
 
 
-def _column_exists(connection: sa.engine.Connection, table_name: str, column_name: str) -> bool:
+def _column_exists(
+    connection: sa.engine.Connection, table_name: str, column_name: str
+) -> bool:
     rows = connection.execute(sa.text(f"PRAGMA table_info({table_name})")).mappings()
     return any(row["name"] == column_name for row in rows)
 
@@ -67,10 +69,30 @@ def upgrade() -> None:
             sa.Column("active_started_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("paused_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("active_seconds", sa.Integer(), server_default=sa.text("0"), nullable=False),
-            sa.Column("input_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
-            sa.Column("output_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
-            sa.Column("total_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column(
+                "active_seconds",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
+            sa.Column(
+                "input_tokens",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
+            sa.Column(
+                "output_tokens",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
+            sa.Column(
+                "total_tokens",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            ),
             sa.Column("error_message", sa.Text(), nullable=True),
             sa.Column(
                 "created_at",
@@ -91,16 +113,24 @@ def upgrade() -> None:
                 ondelete="CASCADE",
             ),
             sa.PrimaryKeyConstraint("id", name=op.f("pk_crawl_job_runs")),
-            sa.UniqueConstraint("job_id", "attempt_number", name=op.f("uq_crawl_job_runs_job_attempt")),
+            sa.UniqueConstraint(
+                "job_id", "attempt_number", name=op.f("uq_crawl_job_runs_job_attempt")
+            ),
         )
     if not _index_exists(connection, op.f("ix_crawl_job_runs_job_id")):
-        op.create_index(op.f("ix_crawl_job_runs_job_id"), "crawl_job_runs", ["job_id"], unique=False)
+        op.create_index(
+            op.f("ix_crawl_job_runs_job_id"), "crawl_job_runs", ["job_id"], unique=False
+        )
     if not _index_exists(connection, op.f("ix_crawl_job_runs_status")):
-        op.create_index(op.f("ix_crawl_job_runs_status"), "crawl_job_runs", ["status"], unique=False)
+        op.create_index(
+            op.f("ix_crawl_job_runs_status"), "crawl_job_runs", ["status"], unique=False
+        )
 
     if not _column_exists(connection, "crawl_jobs", "current_run_id"):
         with op.batch_alter_table("crawl_jobs") as batch_op:
-            batch_op.add_column(sa.Column("current_run_id", sa.Integer(), nullable=True))
+            batch_op.add_column(
+                sa.Column("current_run_id", sa.Integer(), nullable=True)
+            )
             batch_op.create_foreign_key(
                 batch_op.f("fk_crawl_jobs_current_run_id_crawl_job_runs"),
                 "crawl_job_runs",
@@ -133,7 +163,9 @@ def upgrade() -> None:
             run_id = existing_run_id
             if job["current_run_id"] is None:
                 connection.execute(
-                    sa.text("UPDATE crawl_jobs SET current_run_id = :run_id WHERE id = :job_id"),
+                    sa.text(
+                        "UPDATE crawl_jobs SET current_run_id = :run_id WHERE id = :job_id"
+                    ),
                     {"run_id": run_id, "job_id": job["id"]},
                 )
             continue
@@ -168,7 +200,9 @@ def upgrade() -> None:
         )
         run_id = result.lastrowid
         connection.execute(
-            sa.text("UPDATE crawl_jobs SET current_run_id = :run_id WHERE id = :job_id"),
+            sa.text(
+                "UPDATE crawl_jobs SET current_run_id = :run_id WHERE id = :job_id"
+            ),
             {"run_id": run_id, "job_id": job["id"]},
         )
 

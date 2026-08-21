@@ -333,7 +333,9 @@ class EndpointAdaptationCacheTests(unittest.IsolatedAsyncioTestCase):
                 await holder.close()
                 await engine.dispose()
 
-    async def test_locked_cache_write_returns_friendly_error_after_retries(self) -> None:
+    async def test_locked_cache_write_returns_friendly_error_after_retries(
+        self,
+    ) -> None:
         from unittest.mock import AsyncMock, patch
 
         from app.modules.llm.adaptation.endpoint import (
@@ -399,13 +401,17 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def hold_first() -> None:
-            async with endpoint_adaptation_lock("https://api.example.test/v1", "model-a"):
+            async with endpoint_adaptation_lock(
+                "https://api.example.test/v1", "model-a"
+            ):
                 first_entered.set()
                 await release.wait()
 
         async def enter_second() -> None:
             await first_entered.wait()
-            async with endpoint_adaptation_lock("https://api.example.test/v1", "model-b"):
+            async with endpoint_adaptation_lock(
+                "https://api.example.test/v1", "model-b"
+            ):
                 second_entered.set()
 
         first_task = asyncio.create_task(hold_first())
@@ -425,7 +431,9 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(key, _endpoint_adaptation_locks)
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
-    async def test_registry_entry_survives_holder_exit_until_waiter_leaves(self) -> None:
+    async def test_registry_entry_survives_holder_exit_until_waiter_leaves(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
@@ -470,7 +478,9 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         await waiter_task
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
-    async def test_cancelled_waiter_decrements_users_and_cleans_up_registry(self) -> None:
+    async def test_cancelled_waiter_decrements_users_and_cleans_up_registry(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,
@@ -511,7 +521,9 @@ class EndpointAdaptationLockTests(unittest.IsolatedAsyncioTestCase):
         await holder_task
         self.assertNotIn(key, _endpoint_adaptation_locks)
 
-    async def test_cancelled_holder_releases_lock_and_allows_reacquisition(self) -> None:
+    async def test_cancelled_holder_releases_lock_and_allows_reacquisition(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.endpoint import (
             _endpoint_adaptation_locks,
             endpoint_adaptation_lock,

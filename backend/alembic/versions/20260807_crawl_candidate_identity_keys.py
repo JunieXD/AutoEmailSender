@@ -26,8 +26,12 @@ depends_on: Union[str, Sequence[str], None] = None
 _EMAIL_LOCAL = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$")
 _EMAIL_DOMAIN_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
-_AT = re.compile(r"(?:[\(\[]\s*at\s*[\)\]]|(?:(?<=^)|(?<=\s))at(?=$|\s))", re.IGNORECASE)
-_DOT = re.compile(r"(?:[\(\[]\s*dot\s*[\)\]]|(?:(?<=^)|(?<=\s))dot(?=$|\s))", re.IGNORECASE)
+_AT = re.compile(
+    r"(?:[\(\[]\s*at\s*[\)\]]|(?:(?<=^)|(?<=\s))at(?=$|\s))", re.IGNORECASE
+)
+_DOT = re.compile(
+    r"(?:[\(\[]\s*dot\s*[\)\]]|(?:(?<=^)|(?<=\s))dot(?=$|\s))", re.IGNORECASE
+)
 _TRACKING_QUERY_KEYS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid"}
 
 
@@ -60,9 +64,16 @@ def _normalize_email(value: object) -> str | None:
     if value is None:
         return None
     normalized = unescape(str(value)).strip().lower()
-    normalized = normalized.translate(str.maketrans({"＠": "@", "﹫": "@", "．": ".", "。": ".", "｡": "."}))
+    normalized = normalized.translate(
+        str.maketrans({"＠": "@", "﹫": "@", "．": ".", "。": ".", "｡": "."})
+    )
     normalized = _INVISIBLE.sub("", normalized)
-    normalized = re.sub(r"\s*(?:（at）|【at】|\[at\]|\(at\)|＠)\s*", "@", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"\s*(?:（at）|【at】|\[at\]|\(at\)|＠)\s*",
+        "@",
+        normalized,
+        flags=re.IGNORECASE,
+    )
     normalized = _AT.sub("@", normalized)
     normalized = _DOT.sub(".", normalized)
     normalized = re.sub(r"(?<=[A-Za-z0-9])\s*点\s*(?=[A-Za-z0-9])", ".", normalized)
@@ -99,15 +110,26 @@ def _normalize_profile_url(value: object) -> str | None:
     except ValueError:
         return None
     netloc = hostname
-    if port is not None and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+    if port is not None and not (
+        (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    ):
         netloc = f"{hostname}:{port}"
     query_items = [
         (key, item)
         for key, item in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() not in _TRACKING_QUERY_KEYS and not key.lower().startswith("utm_")
+        if key.lower() not in _TRACKING_QUERY_KEYS
+        and not key.lower().startswith("utm_")
     ]
     fragment = parsed.fragment if parsed.fragment.startswith(("/", "!/")) else ""
-    return urlunsplit((scheme, netloc, parsed.path or "", urlencode(sorted(query_items), doseq=True), fragment))
+    return urlunsplit(
+        (
+            scheme,
+            netloc,
+            parsed.path or "",
+            urlencode(sorted(query_items), doseq=True),
+            fragment,
+        )
+    )
 
 
 def _candidate_rank(row: dict[str, object]) -> tuple[int, int, int, int]:
@@ -194,9 +216,7 @@ def _merge_component_values(
     merge_history = _json_value(canonical.get("merge_history"), [])
     history = list(merge_history) if isinstance(merge_history, list) else []
     alias_ids = sorted(
-        int(row["id"])
-        for row in component
-        if int(row["id"]) != int(canonical["id"])
+        int(row["id"]) for row in component if int(row["id"]) != int(canonical["id"])
     )
     if alias_ids:
         if not any(

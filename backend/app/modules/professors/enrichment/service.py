@@ -185,7 +185,9 @@ async def create_professor_information_enrichment_job_record(
             fallback="",
             multiple="多个学院",
         ),
-        start_url=valid_urls[0] if valid_urls else "https://example.invalid/information-enrichment",
+        start_url=valid_urls[0]
+        if valid_urls
+        else "https://example.invalid/information-enrichment",
         start_urls=valid_urls,
         entry_type="profile",
         job_kind=CrawlJobKind.PROFESSOR_ENRICHMENT.value,
@@ -496,9 +498,7 @@ async def _serialize_professor_information_enrichment_jobs(
             )
         )
     ).all()
-    counts_by_job: dict[int, Counter[str]] = {
-        job_id: Counter() for job_id in job_ids
-    }
+    counts_by_job: dict[int, Counter[str]] = {job_id: Counter() for job_id in job_ids}
     skip_counts_by_job: dict[int, Counter[str]] = {
         job_id: Counter() for job_id in job_ids
     }
@@ -526,13 +526,17 @@ async def _serialize_professor_information_enrichment_jobs(
     ]
     latest_errors_by_job: dict[int, str] = {}
     if failed_job_ids:
-        row_number = func.row_number().over(
-            partition_by=CrawlCandidateEnrichmentTask.job_id,
-            order_by=(
-                CrawlCandidateEnrichmentTask.updated_at.desc(),
-                CrawlCandidateEnrichmentTask.id.desc(),
-            ),
-        ).label("row_number")
+        row_number = (
+            func.row_number()
+            .over(
+                partition_by=CrawlCandidateEnrichmentTask.job_id,
+                order_by=(
+                    CrawlCandidateEnrichmentTask.updated_at.desc(),
+                    CrawlCandidateEnrichmentTask.id.desc(),
+                ),
+            )
+            .label("row_number")
+        )
         ranked_errors = (
             select(
                 CrawlCandidateEnrichmentTask.job_id.label("job_id"),
@@ -577,9 +581,10 @@ def _build_professor_information_enrichment_job_read(
     skip_reason_definitions: dict[str, InformationEnrichmentSkipReason],
     latest_task_error: str | None,
 ) -> ProfessorInformationEnrichmentJobRead:
-    queued_count = counts[CrawlCandidateEnrichmentTaskStatus.PENDING.value] + counts[
-        CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
-    ]
+    queued_count = (
+        counts[CrawlCandidateEnrichmentTaskStatus.PENDING.value]
+        + counts[CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value]
+    )
     running_count = counts[CrawlCandidateEnrichmentTaskStatus.PROCESSING.value]
     succeeded_count = counts[CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value]
     failed_count = counts[CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value]
@@ -794,14 +799,18 @@ def _serialize_professor_information_enrichment_item(
         professor_university=(
             professor.university if professor is not None else candidate.university
         ),
-        professor_school=(professor.school if professor is not None else candidate.school),
+        professor_school=(
+            professor.school if professor is not None else candidate.school
+        ),
         professor_department=(
             professor.department if professor is not None else candidate.department
         ),
         profile_url=candidate.profile_url,
         status=_public_item_status(task.status),
         enriched_fields=list(task.enriched_fields or []),
-        error_message=sanitize_user_visible_error(task.last_error) if task.last_error else None,
+        error_message=sanitize_user_visible_error(task.last_error)
+        if task.last_error
+        else None,
         skip_reason=task.skip_reason,
         input_tokens=usage["input"],
         output_tokens=usage["output"],
@@ -814,7 +823,9 @@ def _serialize_professor_information_enrichment_item(
         updated_at=task.updated_at,
         skip_reason_code=skip_reason.code if skip_reason is not None else None,
         skip_recoverable=skip_reason.recoverable if skip_reason is not None else None,
-        suggested_action=skip_reason.suggested_action if skip_reason is not None else None,
+        suggested_action=skip_reason.suggested_action
+        if skip_reason is not None
+        else None,
     )
 
 
@@ -869,7 +880,9 @@ async def retry_failed_professor_information_enrichment_job(
     job_id: int,
 ) -> int:
     async with session_factory() as session:
-        job = await retry_failed_professor_information_enrichment_job_record(session, job_id)
+        job = await retry_failed_professor_information_enrichment_job_record(
+            session, job_id
+        )
         await session.commit()
         return job.id
 
@@ -1009,7 +1022,9 @@ async def finalize_professor_information_enrichment_job(
 ) -> None:
     resolved_now = now or utc_now()
     rows = await session.execute(
-        select(CrawlCandidateEnrichmentTask.status, CrawlCandidateEnrichmentTask.last_error).where(
+        select(
+            CrawlCandidateEnrichmentTask.status, CrawlCandidateEnrichmentTask.last_error
+        ).where(
             CrawlCandidateEnrichmentTask.job_id == job.id,
         )
     )
@@ -1033,7 +1048,9 @@ async def finalize_professor_information_enrichment_job(
     errors = [error for _status, error in task_rows if error]
     error_message = sanitize_user_visible_error(errors[-1]) if errors else None
     job.status = final_status
-    job.error_message = error_message if final_status == CrawlJobStatus.FAILED.value else None
+    job.error_message = (
+        error_message if final_status == CrawlJobStatus.FAILED.value else None
+    )
     job.updated_at = resolved_now
     trace = list(job.agent_trace or [])
     trace.append(
@@ -1086,7 +1103,9 @@ async def apply_enrichment_to_professor(
     candidate: CrawlCandidate,
 ) -> tuple[list[str], str | None]:
     professor_id = task.professor_id or candidate.professor_id
-    professor = await session.get(Professor, professor_id) if professor_id is not None else None
+    professor = (
+        await session.get(Professor, professor_id) if professor_id is not None else None
+    )
     if professor is None:
         raise ValueError("关联导师不存在")
     if professor.archived_at is not None:
@@ -1162,7 +1181,9 @@ async def _get_information_enrichment_job(
     )
 
 
-async def _active_professor_ids(session: AsyncSession, professor_ids: list[int]) -> set[int]:
+async def _active_professor_ids(
+    session: AsyncSession, professor_ids: list[int]
+) -> set[int]:
     active_professor_ids: set[int] = set()
     for professor_id_chunk in chunked_values(unique_positive_ids(professor_ids)):
         active_professor_ids.update(
@@ -1258,7 +1279,9 @@ def _summarize_location(
     fallback: str,
     multiple: str,
 ) -> str:
-    unique = list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
+    unique = list(
+        dict.fromkeys(value.strip() for value in values if value and value.strip())
+    )
     if not unique:
         return fallback
     if len(unique) == 1:

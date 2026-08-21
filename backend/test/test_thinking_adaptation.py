@@ -500,7 +500,9 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(hit)
         self.assertIsNone(value)
 
-    def test_stepfun_probe_payload_uses_larger_budget_only_for_official_base_urls(self) -> None:
+    def test_stepfun_probe_payload_uses_larger_budget_only_for_official_base_urls(
+        self,
+    ) -> None:
         from app.models import LLMProfile
         from app.modules.llm.adaptation.thinking import _build_probe_payload
 
@@ -705,7 +707,9 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
                 await session.commit()
 
         self.assertIsNone(result)
-        self.assertEqual([url for url, _ in calls], ["https://api.acme.ai/v1/responses"])
+        self.assertEqual(
+            [url for url, _ in calls], ["https://api.acme.ai/v1/responses"]
+        )
         async with self.session_factory() as session:
             hit, cached = await get_cached_extra_body(
                 session,
@@ -726,9 +730,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         )
 
         calls: list[tuple[str, dict[str, object] | None]] = []
-        protocol_body = (
-            '{"error":{"message":"reasoning_content must be passed back"}}'
-        )
+        protocol_body = '{"error":{"message":"reasoning_content must be passed back"}}'
         responses = [
             _FakeResponse(status_code=400, text=protocol_body),  # 不带 extra_body
             _FakeResponse(status_code=400, text=protocol_body),  # 候选 1
@@ -763,9 +765,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         )
 
         calls: list[tuple[str, dict[str, object] | None]] = []
-        protocol_body = (
-            '{"error":{"message":"reasoning_content must be passed back"}}'
-        )
+        protocol_body = '{"error":{"message":"reasoning_content must be passed back"}}'
         responses = [
             _FakeResponse(status_code=400, text=protocol_body)
             for _ in range(len(THINKING_DISABLE_CANDIDATES) + 1)
@@ -810,7 +810,9 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(calls), 1)
 
-    async def test_thinking_model_with_empty_content_triggers_candidate_switch(self) -> None:
+    async def test_thinking_model_with_empty_content_triggers_candidate_switch(
+        self,
+    ) -> None:
         # 思考模型在第 1 次调用时返回 HTTP 200，但 content 为空（思考内容塞进了 reasoning_content）
         # → request_chat_completion 抛 LLMRuntimeError("模型返回了空内容", status_code=200)
         # → probe_and_learn_extra_body 应识别为思考模式信号，切候选 1 重试
@@ -1036,20 +1038,24 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertTrue(
-                (await get_cached_extra_body(
-                    session,
-                    api_base_url="https://api.acme.ai/v1",
-                    model_name="acme-think-v1",
-                    endpoint_kind="chat_completions",
-                ))[0]
+                (
+                    await get_cached_extra_body(
+                        session,
+                        api_base_url="https://api.acme.ai/v1",
+                        model_name="acme-think-v1",
+                        endpoint_kind="chat_completions",
+                    )
+                )[0]
             )
             self.assertFalse(
-                (await get_cached_extra_body(
-                    session,
-                    api_base_url="https://api.acme.ai/v1",
-                    model_name="acme-think-v1",
-                    endpoint_kind="responses",
-                ))[0]
+                (
+                    await get_cached_extra_body(
+                        session,
+                        api_base_url="https://api.acme.ai/v1",
+                        model_name="acme-think-v1",
+                        endpoint_kind="responses",
+                    )
+                )[0]
             )
 
     async def test_invalidate_matches_cached_json_null(self) -> None:
@@ -1076,14 +1082,18 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertFalse(
-                (await get_cached_extra_body(
-                    session,
-                    api_base_url="https://api.null.ai/v1",
-                    model_name="null-think-v1",
-                ))[0]
+                (
+                    await get_cached_extra_body(
+                        session,
+                        api_base_url="https://api.null.ai/v1",
+                        model_name="null-think-v1",
+                    )
+                )[0]
             )
 
-    async def test_invalidate_keeps_value_refreshed_between_check_and_delete(self) -> None:
+    async def test_invalidate_keeps_value_refreshed_between_check_and_delete(
+        self,
+    ) -> None:
         from unittest.mock import patch
 
         from app.modules.llm.adaptation.thinking import (
@@ -1124,7 +1134,9 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                         await refresh_session.commit()
                 return await original_execute(statement, *args, **kwargs)
 
-            with patch.object(stale_session, "execute", side_effect=refresh_before_delete):
+            with patch.object(
+                stale_session, "execute", side_effect=refresh_before_delete
+            ):
                 self.assertFalse(
                     await invalidate_thinking_adaptation(
                         stale_session,
@@ -1153,5 +1165,7 @@ class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
                     expected_extra_body=refreshed_value,
                 )
             )
+
+
 if __name__ == "__main__":
     unittest.main()

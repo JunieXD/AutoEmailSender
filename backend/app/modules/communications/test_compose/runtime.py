@@ -35,7 +35,10 @@ import app.modules.llm.public as llm_runtime
 from .. import transport as mail_runtime
 from ..transport import MailAttachment
 from app.services.operation_logs import record_operation_log
-from app.services.material_catalog import get_global_materials_by_id, list_global_materials
+from app.services.material_catalog import (
+    get_global_materials_by_id,
+    list_global_materials,
+)
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -63,11 +66,15 @@ async def build_test_compose_thread(
     identity = await _get_identity(session, identity_id)
     materials = await list_global_materials(session)
     llm_profile = await _get_llm_profile(session, llm_profile_id)
-    compose_session = await _get_or_create_test_compose_session(session, identity_id, llm_profile_id, identity)
+    compose_session = await _get_or_create_test_compose_session(
+        session, identity_id, llm_profile_id, identity
+    )
     if _synchronize_selected_material_ids(compose_session, materials):
         await session.commit()
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
+    return _serialize_test_compose_thread(
+        identity, llm_profile, compose_session, history, materials
+    )
 
 
 async def get_test_compose_status(
@@ -161,14 +168,18 @@ async def generate_test_compose_draft(
     template_subject = (outreach_config.subject_template or "").strip() or None
     template_body = (outreach_config.body_text_template or "").strip() or None
     template_body_html = (outreach_config.body_html_template or "").strip() or None
-    detail = get_outreach_template_defaults_validation_error(template_subject, template_body)
+    detail = get_outreach_template_defaults_validation_error(
+        template_subject, template_body
+    )
     if detail:
         raise ValueError(detail)
 
     if outreach_config.generation_mode == OUTREACH_GENERATION_MODE_TEMPLATE:
         compose_session.subject = template_subject
         compose_session.body_text = template_body or ""
-        compose_session.body_html = (outreach_config.body_html_template or "").strip() or None
+        compose_session.body_html = (
+            outreach_config.body_html_template or ""
+        ).strip() or None
     else:
         primary_material = identity.current_primary_material
         if primary_material is None:
@@ -176,7 +187,9 @@ async def generate_test_compose_draft(
         ensure_material_extracted_text(primary_material)
         pseudo_professor = _build_self_recipient_professor(identity)
         runtime_settings = await get_runtime_settings(session)
-        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, llm_profile)
+        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+            session, llm_profile
+        )
         rewrite_preferences = llm_runtime.DraftRewritePreferences(
             draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
             draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -222,7 +235,9 @@ async def generate_test_compose_draft(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
+    return _serialize_test_compose_thread(
+        identity, llm_profile, compose_session, history, materials
+    )
 
 
 async def send_test_compose_message(
@@ -285,7 +300,9 @@ async def send_test_compose_message(
     compose_session.selected_material_ids = selected_material_ids
     compose_session.updated_at = utc_now()
 
-    attachments = await _resolve_selected_materials(session, identity_id, selected_material_ids)
+    attachments = await _resolve_selected_materials(
+        session, identity_id, selected_material_ids
+    )
 
     try:
         result = await mail_runtime.send_email_to_recipient(
@@ -323,7 +340,9 @@ async def send_test_compose_message(
         )
 
     session.add(message)
-    default_event_name = "test_compose.sent" if message.status == "sent" else "test_compose.send_failed"
+    default_event_name = (
+        "test_compose.sent" if message.status == "sent" else "test_compose.send_failed"
+    )
     message_event_name = (
         f"{event_name}.sent"
         if event_name is not None and message.status == "sent"
@@ -350,7 +369,9 @@ async def send_test_compose_message(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
+    return _serialize_test_compose_thread(
+        identity, llm_profile, compose_session, history, materials
+    )
 
 
 async def prepare_test_compose_send_snapshot(
@@ -373,11 +394,7 @@ async def prepare_test_compose_send_snapshot(
         compose_session=compose_session,
         payload=payload,
     )
-    if not (
-        identity.smtp_host
-        and identity.smtp_username
-        and identity.smtp_password
-    ):
+    if not (identity.smtp_host and identity.smtp_username and identity.smtp_password):
         raise ValueError("发件身份尚未配置 SMTP")
 
     context = build_test_compose_send_template_context(identity)
@@ -415,7 +432,9 @@ async def prepare_test_compose_send_snapshot(
                 "sender_name": get_identity_sender_name(identity),
             },
             "llm_profile": {"id": llm_profile.id},
-            "template_id": selected_template.id if selected_template is not None else None,
+            "template_id": selected_template.id
+            if selected_template is not None
+            else None,
             "materials": [
                 {
                     "id": material_id,
@@ -513,7 +532,9 @@ async def save_test_compose_draft(
         await session.flush()
 
     history = await _list_test_compose_messages(session, compose_session.id)
-    return _serialize_test_compose_thread(identity, llm_profile, compose_session, history, materials)
+    return _serialize_test_compose_thread(
+        identity, llm_profile, compose_session, history, materials
+    )
 
 
 async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProfile:
@@ -598,7 +619,9 @@ async def _list_test_compose_messages(
             await session.execute(
                 select(TestComposeMessage)
                 .where(TestComposeMessage.session_id == session_id)
-                .order_by(TestComposeMessage.created_at.desc(), TestComposeMessage.id.desc()),
+                .order_by(
+                    TestComposeMessage.created_at.desc(), TestComposeMessage.id.desc()
+                ),
             )
         ).scalars()
     )
@@ -790,7 +813,9 @@ def _synchronize_selected_material_ids(
     current_material_ids = {material.id for material in materials}
     existing_ids = compose_session.selected_material_ids or []
     filtered_ids = [
-        material_id for material_id in existing_ids if material_id in current_material_ids
+        material_id
+        for material_id in existing_ids
+        if material_id in current_material_ids
     ]
     if filtered_ids == existing_ids:
         return False

@@ -84,8 +84,4 @@ def _extract_terms(content: str | None) -> set[str]:
         return set()
 
     raw_terms = re.split(r"[\s,，。；;、/|()（）:：]+", content.lower())
-    return {
-        term.strip()
-        for term in raw_terms
-        if len(term.strip()) >= 2
-    }
+    return {term.strip() for term in raw_terms if len(term.strip()) >= 2}

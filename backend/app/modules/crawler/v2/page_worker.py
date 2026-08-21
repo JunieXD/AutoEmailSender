@@ -8,7 +8,16 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import CrawlJob, CrawlPage, CrawlPageFetchState, CrawlPageFetchStatus, CrawlPageTask, CrawlPageTaskStatus, CrawlWorkerKind, LLMProfile
+from app.models import (
+    CrawlJob,
+    CrawlPage,
+    CrawlPageFetchState,
+    CrawlPageFetchStatus,
+    CrawlPageTask,
+    CrawlPageTaskStatus,
+    CrawlWorkerKind,
+    LLMProfile,
+)
 from ..pages.chunking import ChunkingConfig, build_page_chunks
 from ..jobs.llm_context import resolve_crawl_job_runtime_profile
 from ..pages.chunk_runtime import create_chunks_for_page
@@ -41,7 +50,10 @@ from .scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON, ensure_job_active
 from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 from .models import CrawlerV2WorkKind
 from .url_utils import has_spa_route_fragment
-from app.modules.llm.public import ensure_llm_runtime_adaptation, format_llm_runtime_error_for_user
+from app.modules.llm.public import (
+    ensure_llm_runtime_adaptation,
+    format_llm_runtime_error_for_user,
+)
 
 
 MAX_PAGE_TASKS_PER_JOB = 5000
@@ -58,6 +70,7 @@ def _child_expansion_mode(*, discovery_reason: str, parent_depth: int) -> str:
     ):
         return ENTRY_EXPANSION_MODE
     return PAGINATION_EXPANSION_MODE
+
 
 async def run_crawler_v2_page_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
@@ -113,7 +126,9 @@ async def run_crawler_v2_page_worker_once(
         elif has_spa_route_fragment(target_url):
             direct_status = "skipped_for_spa_route"
             fallback_reason = "spa_route_requires_browser"
-            browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
+            browser_snapshot = await fetch_page_browser(
+                ctx, target_url, intent=fetch_intent
+            )
             browser_status = browser_snapshot.status
             snapshot = browser_snapshot
             fetch_mode = "browser"
@@ -163,9 +178,14 @@ async def run_crawler_v2_page_worker_once(
             browser_status = None
             if _should_use_browser_fallback(direct_snapshot):
                 fallback_reason = _fallback_reason(direct_snapshot)
-                browser_snapshot = await fetch_page_browser(ctx, target_url, intent=fetch_intent)
+                browser_snapshot = await fetch_page_browser(
+                    ctx, target_url, intent=fetch_intent
+                )
                 browser_status = browser_snapshot.status
-                if browser_snapshot.status == "succeeded" or direct_snapshot.status != "succeeded":
+                if (
+                    browser_snapshot.status == "succeeded"
+                    or direct_snapshot.status != "succeeded"
+                ):
                     snapshot = browser_snapshot
                     fetch_mode = "browser"
         async with session_factory() as session:
@@ -305,13 +325,18 @@ async def run_crawler_v2_page_worker_once(
                             "raw_model_text": attempt.raw_model_text,
                             "raw_payload": attempt.raw_payload,
                             "error": attempt.error,
-                            "token_usage": dict(attempt.usage) if attempt.usage is not None else None,
+                            "token_usage": dict(attempt.usage)
+                            if attempt.usage is not None
+                            else None,
                         },
                     )
                 interactive_snapshots: tuple[PageSnapshot, ...] = ()
                 interactive_stopped_reason: str | None = None
                 interactive_pagination_failed = False
-                if routing_failure is None and routing_result.pagination_control is not None:
+                if (
+                    routing_failure is None
+                    and routing_result.pagination_control is not None
+                ):
                     control = routing_result.pagination_control
                     try:
                         interactive_result = await expand_browser_pagination(
@@ -326,15 +351,16 @@ async def run_crawler_v2_page_worker_once(
                             intent=fetch_intent,
                         )
                     except Exception as interactive_exc:
-                        routing_failure = format_llm_runtime_error_for_user(interactive_exc)
+                        routing_failure = format_llm_runtime_error_for_user(
+                            interactive_exc
+                        )
                     else:
                         interactive_snapshots = interactive_result.snapshots
                         interactive_stopped_reason = interactive_result.stopped_reason
                         if interactive_result.status != "succeeded":
                             interactive_pagination_failed = True
                             routing_failure = (
-                                interactive_result.error_message
-                                or "交互式分页执行失败"
+                                interactive_result.error_message or "交互式分页执行失败"
                             )
                     append_crawler_v2_debug_event(
                         job.id,
@@ -371,8 +397,7 @@ async def run_crawler_v2_page_worker_once(
                         snapshot=interactive_snapshot,
                     )
                 if routing_failure is None or (
-                    interactive_pagination_failed
-                    and routing_result.discovered_urls
+                    interactive_pagination_failed and routing_result.discovered_urls
                 ):
                     expansion_result = await _complete_list_page_routing(
                         session_factory,
@@ -460,7 +485,10 @@ def _should_use_browser_fallback(snapshot: PageSnapshot) -> bool:
     if not text and len(html) < 80:
         return True
     lowered = f"{text}\n{html}".lower()
-    return any(marker in lowered for marker in ("captcha", "403 forbidden", "access denied", "enable javascript"))
+    return any(
+        marker in lowered
+        for marker in ("captcha", "403 forbidden", "access denied", "enable javascript")
+    )
 
 
 def _fallback_reason(snapshot: PageSnapshot) -> str:
@@ -476,10 +504,16 @@ def _lease_valid(lease_expires_at: datetime | None) -> bool:
 
 
 def _page_task_owned_by_worker(task: CrawlPageTask, worker_id: str) -> bool:
-    return task.status == CrawlPageTaskStatus.PROCESSING.value and task.worker_id == worker_id and _lease_valid(task.lease_expires_at)
+    return (
+        task.status == CrawlPageTaskStatus.PROCESSING.value
+        and task.worker_id == worker_id
+        and _lease_valid(task.lease_expires_at)
+    )
 
 
-async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask) -> bool:
+async def _skip_page_task_from_ledger(
+    session: AsyncSession, task: CrawlPageTask
+) -> bool:
     state = await session.scalar(
         select(CrawlPageFetchState).where(
             CrawlPageFetchState.job_id == task.job_id,
@@ -505,12 +539,15 @@ async def _skip_page_task_from_ledger(session: AsyncSession, task: CrawlPageTask
                 f"{state.last_error_message or '网络访问失败'}"
             )
         else:
-            task.last_error = state.last_error_message or "页面此前已终止失败，跳过重复抓取"
+            task.last_error = (
+                state.last_error_message or "页面此前已终止失败，跳过重复抓取"
+            )
         task.worker_id = None
         task.claimed_at = None
         task.lease_expires_at = None
         return True
     return False
+
 
 def _mark_page_failed(task: CrawlPageTask, message: str) -> None:
     mark_crawler_v2_failed(
@@ -568,10 +605,16 @@ async def _record_page_and_state(
             job_id=task.job_id,
             normalized_url=task.normalized_url,
             original_url=task.original_url,
-            status=CrawlPageFetchStatus.SUCCEEDED.value if snapshot.status == "succeeded" else CrawlPageFetchStatus.TRANSIENT_FAILED.value,
+            status=CrawlPageFetchStatus.SUCCEEDED.value
+            if snapshot.status == "succeeded"
+            else CrawlPageFetchStatus.TRANSIENT_FAILED.value,
         )
         session.add(state)
-    state.status = CrawlPageFetchStatus.SUCCEEDED.value if snapshot.status == "succeeded" else CrawlPageFetchStatus.TRANSIENT_FAILED.value
+    state.status = (
+        CrawlPageFetchStatus.SUCCEEDED.value
+        if snapshot.status == "succeeded"
+        else CrawlPageFetchStatus.TRANSIENT_FAILED.value
+    )
     state.last_fetch_method = snapshot.fetch_method
     state.fetch_mode = fetch_mode
     state.direct_status = direct_status
@@ -609,17 +652,21 @@ async def _complete_list_page_routing(
 
         proposals: list[tuple[str, str]] = []
         proposals.extend(
-            (url, routing_result.entry_discovery_reasons.get(url, ENTRY_DISCOVERY_REASON))
+            (
+                url,
+                routing_result.entry_discovery_reasons.get(url, ENTRY_DISCOVERY_REASON),
+            )
             for url in routing_result.discovered_urls
         )
         proposals.extend(
-            (url, PAGINATION_DISCOVERY_REASON)
-            for url in routing_result.pagination_urls
+            (url, PAGINATION_DISCOVERY_REASON) for url in routing_result.pagination_urls
         )
 
         task_count = int(
             await session.scalar(
-                select(func.count()).select_from(CrawlPageTask).where(
+                select(func.count())
+                .select_from(CrawlPageTask)
+                .where(
                     CrawlPageTask.job_id == task.job_id,
                 )
             )
@@ -772,7 +819,12 @@ async def _extract_profile_for_page_snapshot(
         worker_kind="page",
         event_name="profile_extract_requested",
         work_item_id=task_id,
-        payload={"source_url": source_url, "page_id": page_id, "title": snapshot.title, "page_text_length": len(snapshot.text or "")},
+        payload={
+            "source_url": source_url,
+            "page_id": page_id,
+            "title": snapshot.title,
+            "page_text_length": len(snapshot.text or ""),
+        },
     )
     result = await invoke_v2_profile_extraction_agent(
         llm_profile,
@@ -797,12 +849,16 @@ async def _extract_profile_for_page_snapshot(
                 "raw_model_text": attempt.raw_model_text,
                 "raw_payload": attempt.raw_payload,
                 "error": attempt.error,
-                "token_usage": dict(attempt.usage) if attempt.usage is not None else None,
+                "token_usage": dict(attempt.usage)
+                if attempt.usage is not None
+                else None,
                 "page_text_hash": result.page_text_hash,
                 "page_text_length": result.page_text_length,
             },
         )
-    if not await _page_task_can_commit(session_factory, task_id=task_id, worker_id=worker_id):
+    if not await _page_task_can_commit(
+        session_factory, task_id=task_id, worker_id=worker_id
+    ):
         append_crawler_v2_debug_event(
             job_id,
             worker_kind="page",
@@ -853,7 +909,9 @@ async def _page_task_can_commit(
         return await ensure_job_active(session, task.job_id)
 
 
-async def _resolve_llm_profile(session: AsyncSession, job: CrawlJob) -> LLMProfile | None:
+async def _resolve_llm_profile(
+    session: AsyncSession, job: CrawlJob
+) -> LLMProfile | None:
     return await resolve_crawl_job_runtime_profile(session, job)  # type: ignore[return-value]
 
 
@@ -884,9 +942,15 @@ async def _complete_profile_page_extraction(
             return
         if not await ensure_job_active(session, task.job_id):
             return
-        candidate_payload = payload.get("candidate") if isinstance(payload, dict) else None
+        candidate_payload = (
+            payload.get("candidate") if isinstance(payload, dict) else None
+        )
         status = str(payload.get("status") or "") if isinstance(payload, dict) else ""
-        if status != "candidate" or not isinstance(candidate_payload, dict) or not str(candidate_payload.get("name") or "").strip():
+        if (
+            status != "candidate"
+            or not isinstance(candidate_payload, dict)
+            or not str(candidate_payload.get("name") or "").strip()
+        ):
             task.status = CrawlPageTaskStatus.FAILED_TERMINAL.value
             task.last_error = "详情页未识别到导师候选"
             task.worker_id = None
@@ -907,7 +971,9 @@ async def _complete_profile_page_extraction(
         candidate_data["profile_url"] = source_url
         candidate_data["source_url"] = source_url
         candidate_data["source_kind"] = "profile_page"
-        candidate_data["boundary_risk"] = bool(candidate_data.get("boundary_risk") or False)
+        candidate_data["boundary_risk"] = bool(
+            candidate_data.get("boundary_risk") or False
+        )
         job_id = task.job_id
 
     ctx = CrawlToolContext(
@@ -953,8 +1019,15 @@ async def _complete_profile_page_extraction(
         worker_kind="page",
         event_name="profile_extract_completed",
         work_item_id=task_id,
-        payload={"source_url": source_url, "raw_payload": payload, "save_result": {key: value for key, value in save_result.items() if key != "saved"}},
+        payload={
+            "source_url": source_url,
+            "raw_payload": payload,
+            "save_result": {
+                key: value for key, value in save_result.items() if key != "saved"
+            },
+        },
     )
+
 
 async def _create_chunks_for_page_snapshot(
     session_factory: async_sessionmaker[AsyncSession],

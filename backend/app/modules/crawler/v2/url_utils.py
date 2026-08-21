@@ -60,7 +60,9 @@ def normalize_url(url: str, *, base_url: str | None = None) -> str:
     hostname = (parsed.hostname or "").lower()
     port = parsed.port
     netloc = hostname
-    if port is not None and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+    if port is not None and not (
+        (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    ):
         netloc = f"{hostname}:{port}"
 
     path = parsed.path or ""
@@ -92,4 +94,6 @@ def task_dedupe_key(job_id: int, url: str, *, base_url: str | None = None) -> st
 
 def _is_tracking_query_key(key: str) -> bool:
     lowered = key.lower()
-    return lowered in _TRACKING_QUERY_KEYS or any(lowered.startswith(prefix) for prefix in _TRACKING_QUERY_PREFIXES)
+    return lowered in _TRACKING_QUERY_KEYS or any(
+        lowered.startswith(prefix) for prefix in _TRACKING_QUERY_PREFIXES
+    )

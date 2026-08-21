@@ -376,7 +376,11 @@ async def create_professor_bulk_archive_change_plan(
                 await _expire_if_needed(session, existing)
                 return _serialize_change_plan(existing, idempotent_replay=True)
         try:
-            professor_ids, matched_count, excluded_count = await resolve_professor_selection(
+            (
+                professor_ids,
+                matched_count,
+                excluded_count,
+            ) = await resolve_professor_selection(
                 session,
                 selection,
             )
@@ -393,7 +397,9 @@ async def create_professor_bulk_archive_change_plan(
             )
         except ProfessorMutationError as exc:
             raise _professor_error(exc) from exc
-        snapshot["bulk_archive_fingerprint"] = _bulk_archive_snapshot_fingerprint(snapshot)
+        snapshot["bulk_archive_fingerprint"] = _bulk_archive_snapshot_fingerprint(
+            snapshot
+        )
         summary = snapshot.get("summary")
         if isinstance(summary, dict):
             summary["snapshot_stage"] = "preflight"
@@ -486,7 +492,9 @@ async def create_professor_import_change_plan(
             parsed,
             filename=filename,
         )
-        snapshot["import_fingerprint"] = _professor_import_snapshot_fingerprint(snapshot)
+        snapshot["import_fingerprint"] = _professor_import_snapshot_fingerprint(
+            snapshot
+        )
         now = utc_now()
         plan = AgentChangePlan(
             id=_new_change_plan_id(),
@@ -557,8 +565,10 @@ async def create_community_mentor_import_change_plan(
             )
         except CommunityDataError as exc:
             raise _community_import_error(exc) from exc
-        snapshot["community_import_fingerprint"] = _community_import_snapshot_fingerprint(
-            snapshot,
+        snapshot["community_import_fingerprint"] = (
+            _community_import_snapshot_fingerprint(
+                snapshot,
+            )
         )
         return await _create_change_plan(
             session,
@@ -606,7 +616,9 @@ async def create_test_email_send_change_plan(
             )
         except ValueError as exc:
             raise _test_email_error(exc) from exc
-        snapshot["test_email_send_fingerprint"] = _test_email_send_snapshot_fingerprint(snapshot)
+        snapshot["test_email_send_fingerprint"] = _test_email_send_snapshot_fingerprint(
+            snapshot
+        )
         warnings = snapshot.setdefault("warnings", [])
         if isinstance(warnings, list):
             warnings.append(
@@ -656,7 +668,10 @@ async def create_crawl_candidate_approval_change_plan(
 
         await _load_approvable_crawl_job(session, job_id)
         try:
-            candidates, excluded_count = await resolve_faculty_crawl_candidate_selection(
+            (
+                candidates,
+                excluded_count,
+            ) = await resolve_faculty_crawl_candidate_selection(
                 session,
                 job_id=job_id,
                 selection=selection,
@@ -686,7 +701,9 @@ async def create_crawl_candidate_approval_change_plan(
             "excluded_count": excluded_count,
             "frozen_ids_hash": fingerprint(frozen_candidate_ids),
         }
-        snapshot["approval_fingerprint"] = _crawl_candidate_approval_snapshot_fingerprint(snapshot)
+        snapshot["approval_fingerprint"] = (
+            _crawl_candidate_approval_snapshot_fingerprint(snapshot)
+        )
         now = utc_now()
         plan = AgentChangePlan(
             id=_new_change_plan_id(),
@@ -1091,7 +1108,9 @@ async def execute_change_plan(
         plan.status = CHANGE_PLAN_EXECUTING
         plan.confirmed_at = now
         plan.execution_started_at = now
-        await _record_change_plan_event(session, plan, "agent_cli.change_plan_confirmed")
+        await _record_change_plan_event(
+            session, plan, "agent_cli.change_plan_confirmed"
+        )
 
         if plan.action == TEMPLATE_ARCHIVE_ACTION:
             result = await _execute_template_archive(session, plan)
@@ -1132,7 +1151,9 @@ async def execute_change_plan(
         elif plan.action == CAMPAIGN_RESUME_ACTION:
             result = await execute_campaign_resume_snapshot(session, plan.snapshot)
         elif plan.action == CAMPAIGN_RESTORE_SEND_ACTION:
-            result = await execute_campaign_restore_send_snapshot(session, plan.snapshot)
+            result = await execute_campaign_restore_send_snapshot(
+                session, plan.snapshot
+            )
         else:
             raise AgentApiError(
                 status_code=500,
@@ -1193,10 +1214,7 @@ async def _execute_template_archive(
         template,
         current_default_identity_count,
     )
-    if (
-        template.archived_at is not None
-        or expected_fingerprint != current_fingerprint
-    ):
+    if template.archived_at is not None or expected_fingerprint != current_fingerprint:
         raise AgentApiError(
             status_code=409,
             code="PLAN_STALE",
@@ -1297,11 +1315,16 @@ async def _execute_professor_bulk_archive(
     snapshot = plan.snapshot
     request_data = snapshot.get("request")
     expected_fingerprint = snapshot.get("bulk_archive_fingerprint")
-    professor_ids = request_data.get("professor_ids") if isinstance(request_data, dict) else None
+    professor_ids = (
+        request_data.get("professor_ids") if isinstance(request_data, dict) else None
+    )
     if (
         not isinstance(expected_fingerprint, str)
         or not isinstance(professor_ids, list)
-        or any(not isinstance(professor_id, int) or isinstance(professor_id, bool) for professor_id in professor_ids)
+        or any(
+            not isinstance(professor_id, int) or isinstance(professor_id, bool)
+            for professor_id in professor_ids
+        )
     ):
         raise _invalid_change_plan_snapshot_error()
     try:
@@ -1333,7 +1356,11 @@ async def _execute_professor_tag_delete(
     request_data = snapshot.get("request")
     expected_fingerprint = snapshot.get("tag_delete_fingerprint")
     tag_id = request_data.get("tag_id") if isinstance(request_data, dict) else None
-    if not isinstance(expected_fingerprint, str) or not isinstance(tag_id, int) or isinstance(tag_id, bool):
+    if (
+        not isinstance(expected_fingerprint, str)
+        or not isinstance(tag_id, int)
+        or isinstance(tag_id, bool)
+    ):
         raise _invalid_change_plan_snapshot_error()
     try:
         current_snapshot = await prepare_professor_tag_delete_snapshot(session, tag_id)
@@ -1462,8 +1489,7 @@ async def _prepare_community_mentor_import_snapshot(
             code="COMMUNITY_DATA_SELECTION_INVALID",
         )
     selected_records = [
-        records_by_id[item.community_record_id]
-        for item in payload.items
+        records_by_id[item.community_record_id] for item in payload.items
     ]
     lifecycle_warnings = await sync_community_link_lifecycle(
         session,
@@ -1472,8 +1498,7 @@ async def _prepare_community_mentor_import_snapshot(
     comparisons = await build_community_comparisons(session, selected_records)
     comparisons_by_id = {comparison.record.id: comparison for comparison in comparisons}
     selected_comparisons = [
-        comparisons_by_id[item.community_record_id]
-        for item in payload.items
+        comparisons_by_id[item.community_record_id] for item in payload.items
     ]
 
     summary_items: list[dict[str, object]] = []
@@ -1495,7 +1520,9 @@ async def _prepare_community_mentor_import_snapshot(
     for item, comparison in zip(payload.items, selected_comparisons, strict=True):
         _validate_community_import_item(item, comparison)
         selected_choices = {
-            field.field: str(item.field_choices.get(field.field, field.suggested_choice))
+            field.field: str(
+                item.field_choices.get(field.field, field.suggested_choice)
+            )
             for field in comparison.fields
         }
         will_update = comparison.local_professor_id is not None and any(
@@ -1568,8 +1595,7 @@ async def _prepare_community_mentor_import_snapshot(
                 "linked_count": linked_count,
                 "items": summary_items,
                 "lifecycle_warnings": [
-                    warning.model_dump(mode="json")
-                    for warning in lifecycle_warnings
+                    warning.model_dump(mode="json") for warning in lifecycle_warnings
                 ],
             },
             "warnings": warnings,
@@ -1587,7 +1613,10 @@ def _validate_community_import_item(
             f"导师 {comparison.record.name} 的本地信息在预览后发生了变化；请重新预览后再导入",
             code="COMMUNITY_DATA_PREVIEW_STALE",
         )
-    if comparison.category == "retired_or_revoked" or comparison.record.status != "active":
+    if (
+        comparison.category == "retired_or_revoked"
+        or comparison.record.status != "active"
+    ):
         raise CommunityDataError(
             f"导师 {comparison.record.name} 已退休、离职或撤销，不能作为新数据导入",
             code="COMMUNITY_DATA_LIFECYCLE_BLOCKED",
@@ -1639,7 +1668,9 @@ async def _execute_test_email_send(
     expected_fingerprint = snapshot.get("test_email_send_fingerprint")
     if not isinstance(expected_fingerprint, str):
         raise _invalid_change_plan_snapshot_error()
-    identity_id, llm_profile_id, payload = _test_email_send_request_from_snapshot(snapshot)
+    identity_id, llm_profile_id, payload = _test_email_send_request_from_snapshot(
+        snapshot
+    )
     try:
         current_snapshot = await prepare_test_compose_send_snapshot(
             session,
@@ -1729,7 +1760,9 @@ async def _execute_crawl_candidate_approval(
         )
     except AgentApiError as exc:
         raise _crawl_candidate_approval_plan_stale_error() from exc
-    if expected_fingerprint != _crawl_candidate_approval_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _crawl_candidate_approval_snapshot_fingerprint(
+        current_snapshot
+    ):
         raise _crawl_candidate_approval_plan_stale_error()
 
     job = await session.scalar(
@@ -1786,7 +1819,8 @@ async def _execute_crawl_candidate_approval(
             .where(
                 CrawlCandidate.job_id == job_id,
                 canonical_candidate_clause(),
-                CrawlCandidate.review_status == CrawlCandidateReviewStatus.PENDING.value,
+                CrawlCandidate.review_status
+                == CrawlCandidateReviewStatus.PENDING.value,
             ),
         )
         job.status = (
@@ -1831,7 +1865,9 @@ async def _execute_crawl_job_retry(
         raise _invalid_change_plan_snapshot_error()
     job_id, payload = _crawl_job_retry_request_from_snapshot(snapshot)
     try:
-        current_snapshot = await _prepare_crawl_job_retry_snapshot(session, job_id, payload)
+        current_snapshot = await _prepare_crawl_job_retry_snapshot(
+            session, job_id, payload
+        )
     except AgentApiError as exc:
         raise _crawl_job_retry_plan_stale_error() from exc
     if expected_fingerprint != _crawl_job_retry_snapshot_fingerprint(current_snapshot):
@@ -1979,7 +2015,9 @@ async def _crawl_job_retry_record_counts(
         "page_count": await count_for(CrawlPage),
         "page_chunk_count": await count_for(CrawlPageChunk),
         "page_task_count": await count_for(CrawlPageTask),
-        "candidate_enrichment_task_count": await count_for(CrawlCandidateEnrichmentTask),
+        "candidate_enrichment_task_count": await count_for(
+            CrawlCandidateEnrichmentTask
+        ),
         "token_usage_count": await count_for(CrawlWorkerTokenUsage),
     }
 
@@ -2070,7 +2108,9 @@ async def _prepare_crawl_candidate_approval_snapshot(
                     select(Professor).where(Professor.email.in_(email_chunk)),
                 ),
             )
-        professors_by_email = {professor.email: professor for professor in professors if professor.email}
+        professors_by_email = {
+            professor.email: professor for professor in professors if professor.email
+        }
 
     planned_professors: dict[str, dict[str, object]] = {
         email: _crawl_candidate_approval_professor_values(professor)
@@ -2097,7 +2137,9 @@ async def _prepare_crawl_candidate_approval_snapshot(
             candidate_summaries.append(candidate_summary)
             continue
 
-        target_values = _crawl_candidate_approval_target_values(candidate, normalized_email)
+        target_values = _crawl_candidate_approval_target_values(
+            candidate, normalized_email
+        )
         previous_values = planned_professors.get(normalized_email)
         candidate_summary["target_email"] = normalized_email
         candidate_summary["next_professor"] = target_values
@@ -2691,7 +2733,11 @@ def _community_import_plan_stale_error() -> AgentApiError:
 def _test_email_error(error: ValueError) -> AgentApiError:
     message = str(error)
     return AgentApiError(
-        status_code=404 if "未找到" in message else 409 if "尚未配置 SMTP" in message else 400,
+        status_code=404
+        if "未找到" in message
+        else 409
+        if "尚未配置 SMTP" in message
+        else 400,
         code=(
             "TEST_EMAIL_RESOURCE_NOT_FOUND"
             if "未找到" in message
@@ -2759,11 +2805,15 @@ def _change_plan_confirmation_message(action: str) -> str:
     if action == MATERIAL_DELETE_ACTION:
         return "尚未删除材料。请把以上影响范围和警告展示给用户，得到明确确认后再执行。"
     if action == PROFESSOR_BULK_TAGS_ACTION:
-        return "尚未修改导师标签。请把以上影响范围和警告展示给用户，得到明确确认后再执行。"
+        return (
+            "尚未修改导师标签。请把以上影响范围和警告展示给用户，得到明确确认后再执行。"
+        )
     if action == PROFESSOR_BULK_ARCHIVE_ACTION:
         return "尚未批量归档导师。请把以上导师、数量和警告展示给用户，得到明确确认后再执行。"
     if action == PROFESSOR_TAG_DELETE_ACTION:
-        return "尚未删除标签。请把标签关联的导师和警告展示给用户，得到明确确认后再执行。"
+        return (
+            "尚未删除标签。请把标签关联的导师和警告展示给用户，得到明确确认后再执行。"
+        )
     if action == PROFESSOR_IMPORT_ACTION:
         return "尚未导入导师。请把以上新增、更新和标签影响展示给用户，得到明确确认后再执行。"
     if action == COMMUNITY_MENTOR_IMPORT_ACTION:

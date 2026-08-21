@@ -13,7 +13,9 @@ class CampaignsModuleBoundaryTest(unittest.TestCase):
             public.batch_item_uses_llm_generation,
             item_actions.batch_item_uses_llm_generation,
         )
-        self.assertIs(public.sync_batch_task_completion, status.sync_batch_task_completion)
+        self.assertIs(
+            public.sync_batch_task_completion, status.sync_batch_task_completion
+        )
         self.assertIs(
             public.get_default_outreach_template_for_identity,
             library.get_default_outreach_template_for_identity,

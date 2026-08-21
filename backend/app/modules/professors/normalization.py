@@ -21,7 +21,9 @@ def normalize_research_direction(value: Any) -> str | None:
     return stripped or None
 
 
-def normalize_recent_papers(value: Any, *, max_items: int = RECENT_PAPERS_MAX_ITEMS) -> list[str]:
+def normalize_recent_papers(
+    value: Any, *, max_items: int = RECENT_PAPERS_MAX_ITEMS
+) -> list[str]:
     if max_items <= 0:
         return []
 

@@ -117,7 +117,9 @@ class AgentApiTests(unittest.TestCase):
             "auto-email-sender --format json capabilities",
         )
 
-    def test_runtime_handshake_is_authenticated_and_identifies_the_processes(self) -> None:
+    def test_runtime_handshake_is_authenticated_and_identifies_the_processes(
+        self,
+    ) -> None:
         with patch.dict(
             os.environ,
             {
@@ -174,7 +176,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertNotIn("access-control-allow-origin", response.headers)
 
-    def test_development_compatibility_mode_is_open_when_both_tokens_are_absent(self) -> None:
+    def test_development_compatibility_mode_is_open_when_both_tokens_are_absent(
+        self,
+    ) -> None:
         from main import create_app
 
         old_ui = os.environ.pop("AUTO_EMAIL_SENDER_UI_TOKEN", None)
@@ -189,7 +193,9 @@ class AgentApiTests(unittest.TestCase):
             if old_agent is not None:
                 os.environ["AUTO_EMAIL_SENDER_AGENT_TOKEN"] = old_agent
 
-    def test_agent_views_return_full_mail_bodies_without_secrets_or_internal_fields(self) -> None:
+    def test_agent_views_return_full_mail_bodies_without_secrets_or_internal_fields(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor()
@@ -255,7 +261,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(draft["reference_material_id"], material_id)
         self.assertEqual(draft["attachment_material_ids"], [material_id])
 
-    def test_agent_workspace_keeps_mail_content_untrusted_and_refreshes_replies_safely(self) -> None:
+    def test_agent_workspace_keeps_mail_content_untrusted_and_refreshes_replies_safely(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(email="workspace-agent@example.edu")
@@ -271,7 +279,10 @@ class AgentApiTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_logs SET reply_headers = ? WHERE id = ?",
-                (json.dumps({"authorization": "Bearer workspace-header-secret"}), received_message_id),
+                (
+                    json.dumps({"authorization": "Bearer workspace-header-secret"}),
+                    received_message_id,
+                ),
             )
             connection.commit()
 
@@ -467,7 +478,9 @@ class AgentApiTests(unittest.TestCase):
 
         self.assertEqual(canceled_schedule.status_code, 200, msg=canceled_schedule.text)
         self.assertEqual(cancel_replay.status_code, 200, msg=cancel_replay.text)
-        self.assertEqual(canceled_schedule.json()["current_task"]["status"], "review_required")
+        self.assertEqual(
+            canceled_schedule.json()["current_task"]["status"], "review_required"
+        )
         self.assertIsNone(canceled_schedule.json()["current_task"]["scheduled_at"])
 
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -545,7 +558,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(follow_up_count, 1)
         self.assertEqual(continued_count, 1)
 
-    def test_agent_task_match_calculation_returns_safe_workspace_and_usage(self) -> None:
+    def test_agent_task_match_calculation_returns_safe_workspace_and_usage(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(email="task-match@example.edu")
@@ -603,7 +618,9 @@ class AgentApiTests(unittest.TestCase):
             "untrusted_external_content",
         )
 
-    def test_agent_diagnostics_are_filterable_and_redact_existing_log_secrets(self) -> None:
+    def test_agent_diagnostics_are_filterable_and_redact_existing_log_secrets(
+        self,
+    ) -> None:
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
@@ -660,7 +677,9 @@ class AgentApiTests(unittest.TestCase):
             self.assertNotIn(secret, serialized)
         self.assertIn("[REDACTED]", serialized)
 
-    def test_agent_can_safely_manage_default_llm_profile_and_test_saved_connection(self) -> None:
+    def test_agent_can_safely_manage_default_llm_profile_and_test_saved_connection(
+        self,
+    ) -> None:
         from app.modules.llm.runtime import LLMModelCatalogResult, LLMProbeResult
 
         first_profile_id = self._create_llm_profile()
@@ -746,13 +765,16 @@ class AgentApiTests(unittest.TestCase):
             **self._agent_headers(),
             "Idempotency-Key": "agent-llm-test",
         }
-        with patch(
-            "app.api.agent_v1.router.ensure_llm_runtime_adaptation",
-            new=AsyncMock(return_value=SimpleNamespace()),
-        ), patch(
-            "app.api.agent_v1.router.probe_llm_profile",
-            new=AsyncMock(return_value=probe_result),
-        ) as probe_mock:
+        with (
+            patch(
+                "app.api.agent_v1.router.ensure_llm_runtime_adaptation",
+                new=AsyncMock(return_value=SimpleNamespace()),
+            ),
+            patch(
+                "app.api.agent_v1.router.probe_llm_profile",
+                new=AsyncMock(return_value=probe_result),
+            ) as probe_mock,
+        ):
             tested = self.client.post(
                 f"/api/agent/v1/llm-profiles/{second_profile_id}/test",
                 headers=test_headers,
@@ -792,7 +814,9 @@ class AgentApiTests(unittest.TestCase):
         ):
             self.assertNotIn(secret, serialized)
 
-    def test_agent_can_update_safe_identity_settings_without_exposing_credentials(self) -> None:
+    def test_agent_can_update_safe_identity_settings_without_exposing_credentials(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             original_credentials = connection.execute(
@@ -848,7 +872,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(updated.json()["daily_send_limit"], 12)
         self.assertNotIn("smtp-secret-value", updated.text)
         self.assertEqual(rejected_secret.status_code, 422, msg=rejected_secret.text)
-        self.assertEqual(rejected_secret.json()["error"]["code"], "INVALID_AGENT_REQUEST")
+        self.assertEqual(
+            rejected_secret.json()["error"]["code"], "INVALID_AGENT_REQUEST"
+        )
         self.assertNotIn("never-echo-this-password", rejected_secret.text)
         self.assertEqual(rejected_interval.status_code, 422, msg=rejected_interval.text)
         self.assertEqual(
@@ -902,7 +928,9 @@ class AgentApiTests(unittest.TestCase):
             },
         )
 
-    def test_agent_can_update_safe_llm_profile_settings_without_exposing_api_key(self) -> None:
+    def test_agent_can_update_safe_llm_profile_settings_without_exposing_api_key(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile()
         request_body = {
             "name": "Agent 安全模型设置",
@@ -939,7 +967,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(updated.json()["max_tokens"], 3072)
         self.assertNotIn("llm-secret-value", updated.text)
         self.assertEqual(rejected_secret.status_code, 422, msg=rejected_secret.text)
-        self.assertEqual(rejected_secret.json()["error"]["code"], "INVALID_AGENT_REQUEST")
+        self.assertEqual(
+            rejected_secret.json()["error"]["code"], "INVALID_AGENT_REQUEST"
+        )
         self.assertNotIn("never-echo-this-api-key", rejected_secret.text)
 
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -1000,7 +1030,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(len(second_page["items"]), 1)
         self.assertIn("tags", detail)
 
-    def test_agent_collection_filter_and_field_pushdown_are_additive_and_bounded(self) -> None:
+    def test_agent_collection_filter_and_field_pushdown_are_additive_and_bounded(
+        self,
+    ) -> None:
         selected_id = self._create_professor(email="selected@example.edu")
         self._create_professor(email="other@example.edu")
 
@@ -1027,7 +1059,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(malformed.status_code, 422)
         self.assertEqual(malformed.json()["error"]["code"], "INVALID_FIELD_SELECTION")
 
-    def test_agent_professor_name_script_filter_supports_unicode_latin_names(self) -> None:
+    def test_agent_professor_name_script_filter_supports_unicode_latin_names(
+        self,
+    ) -> None:
         self._create_professor(name="李雷", email="han-name@example.edu")
         jose_id = self._create_professor(name="José", email="jose@example.edu")
         mixed_id = self._create_professor(name="李 Ada", email="mixed@example.edu")
@@ -1046,7 +1080,9 @@ class AgentApiTests(unittest.TestCase):
             ],
         )
 
-    def test_agent_safe_identity_and_model_filters_match_serialized_dto_fields(self) -> None:
+    def test_agent_safe_identity_and_model_filters_match_serialized_dto_fields(
+        self,
+    ) -> None:
         identity_id = self._create_identity(email="pushdown-identity@example.edu")
         profile_id = self._create_llm_profile(name="Pushdown model")
 
@@ -1088,7 +1124,9 @@ class AgentApiTests(unittest.TestCase):
             },
         ).json()
         self.assertEqual(len(profiles["items"]), 1)
-        self.assertEqual(set(profiles["items"][0]), {"id", "name", "provider", "model_name"})
+        self.assertEqual(
+            set(profiles["items"][0]), {"id", "name", "provider", "model_name"}
+        )
         self.assertEqual(profiles["items"][0]["id"], profile_id)
 
         usage = self._agent_get(
@@ -1130,8 +1168,14 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(xlsx_response.status_code, 200, msg=xlsx_response.text)
         self.assertIn("姓名", csv_response.content.decode("utf-8-sig"))
         self.assertTrue(xlsx_response.content.startswith(b"PK"))
-        self.assertIn("professors_import_template.csv", csv_response.headers["content-disposition"])
-        self.assertIn("professors_import_template.xlsx", xlsx_response.headers["content-disposition"])
+        self.assertIn(
+            "professors_import_template.csv",
+            csv_response.headers["content-disposition"],
+        )
+        self.assertIn(
+            "professors_import_template.xlsx",
+            xlsx_response.headers["content-disposition"],
+        )
 
     def test_agent_can_manage_professors_with_idempotent_safe_writes(self) -> None:
         tag_response = self.client.post(
@@ -1189,7 +1233,10 @@ class AgentApiTests(unittest.TestCase):
 
         updated = self.client.put(
             f"/api/agent/v1/professors/{professor_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-professor-update"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-professor-update",
+            },
             json={"research_direction": "具身智能"},
         )
         self.assertEqual(updated.status_code, 200, msg=updated.text)
@@ -1209,7 +1256,9 @@ class AgentApiTests(unittest.TestCase):
             },
             json={"research_direction": "新的方向"},
         )
-        self.assertEqual(reused_with_revision.status_code, 409, msg=reused_with_revision.text)
+        self.assertEqual(
+            reused_with_revision.status_code, 409, msg=reused_with_revision.text
+        )
         self.assertEqual(
             reused_with_revision.json()["error"]["code"],
             "IDEMPOTENCY_KEY_REUSED",
@@ -1217,7 +1266,10 @@ class AgentApiTests(unittest.TestCase):
 
         tags_cleared = self.client.put(
             f"/api/agent/v1/professors/{professor_id}/tags",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-professor-tags"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-professor-tags",
+            },
             json={"tag_ids": []},
         )
         self.assertEqual(tags_cleared.status_code, 200, msg=tags_cleared.text)
@@ -1225,11 +1277,17 @@ class AgentApiTests(unittest.TestCase):
 
         archived = self.client.post(
             f"/api/agent/v1/professors/{professor_id}/archive",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-professor-archive"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-professor-archive",
+            },
         )
         restored = self.client.post(
             f"/api/agent/v1/professors/{professor_id}/restore",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-professor-restore"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-professor-restore",
+            },
         )
         self.assertEqual(archived.status_code, 200, msg=archived.text)
         self.assertIsNotNone(archived.json()["archived_at"])
@@ -1276,7 +1334,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(
-            self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()["personal_note"],
+            self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()[
+                "personal_note"
+            ],
             "先由另一个调用方修改",
         )
 
@@ -1365,7 +1425,9 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
         self.assertEqual(
             missing_confirmation.json()["error"]["code"],
             "PLAN_CONFIRMATION_REQUIRED",
@@ -1463,8 +1525,12 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(tag.status_code, 201, msg=tag.text)
         tag_id = tag.json()["id"]
-        first_professor_id = self._create_professor(email="tag-delete-first@example.edu")
-        second_professor_id = self._create_professor(email="tag-delete-second@example.edu")
+        first_professor_id = self._create_professor(
+            email="tag-delete-first@example.edu"
+        )
+        second_professor_id = self._create_professor(
+            email="tag-delete-second@example.edu"
+        )
         for professor_id in (first_professor_id, second_professor_id):
             assigned = self.client.patch(
                 f"/api/professors/{professor_id}/tags",
@@ -1538,7 +1604,10 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_professor_tag_delete_plan_rejects_changed_usage(self) -> None:
         tag = self.client.post(
             "/api/agent/v1/professor-tags",
-            headers={**self._agent_headers(), "Idempotency-Key": "tag-delete-stale-create"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "tag-delete-stale-create",
+            },
             json={
                 "name": "即将变化",
                 "text_color": "#111827",
@@ -1548,7 +1617,10 @@ class AgentApiTests(unittest.TestCase):
         professor_id = self._create_professor(email="tag-delete-stale@example.edu")
         prepared = self.client.post(
             f"/api/agent/v1/professor-tags/{tag['id']}/prepare-delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "tag-delete-stale-plan"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "tag-delete-stale-plan",
+            },
         )
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
         assigned = self.client.patch(
@@ -1566,9 +1638,15 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "PLAN_STALE")
 
-    def test_agent_can_prepare_and_execute_bulk_professor_archive_change_plan(self) -> None:
-        first_professor_id = self._create_professor(email="archive-plan-first@example.edu")
-        second_professor_id = self._create_professor(email="archive-plan-second@example.edu")
+    def test_agent_can_prepare_and_execute_bulk_professor_archive_change_plan(
+        self,
+    ) -> None:
+        first_professor_id = self._create_professor(
+            email="archive-plan-first@example.edu"
+        )
+        second_professor_id = self._create_professor(
+            email="archive-plan-second@example.edu"
+        )
         archived = self.client.post(
             f"/api/professors/{second_professor_id}/archive",
             headers=self._ui_headers(),
@@ -1604,7 +1682,10 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(executed.json()["result"]["outcome"], "professors_archived")
         self.assertEqual(executed.json()["result"]["affected_count"], 1)
         self.assertEqual(
-            [item["id"] for item in executed.json()["result"]["post_state"]["professors"]],
+            [
+                item["id"]
+                for item in executed.json()["result"]["post_state"]["professors"]
+            ],
             [first_professor_id, second_professor_id],
         )
         self.assertTrue(
@@ -1619,14 +1700,23 @@ class AgentApiTests(unittest.TestCase):
             ).json()
             self.assertIsNotNone(professor["archived_at"])
 
-    def test_bulk_professor_archive_filter_selection_is_frozen_before_confirmation(self) -> None:
-        selected_id = self._create_professor(name="José", email="selection-jose@example.edu")
-        excluded_id = self._create_professor(name="李 Ada", email="selection-ada@example.edu")
+    def test_bulk_professor_archive_filter_selection_is_frozen_before_confirmation(
+        self,
+    ) -> None:
+        selected_id = self._create_professor(
+            name="José", email="selection-jose@example.edu"
+        )
+        excluded_id = self._create_professor(
+            name="李 Ada", email="selection-ada@example.edu"
+        )
         han_id = self._create_professor(name="李雷", email="selection-han@example.edu")
 
         prepared = self.client.post(
             "/api/agent/v1/professors/prepare-bulk-archive",
-            headers={**self._agent_headers(), "Idempotency-Key": "bulk-archive-selection"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "bulk-archive-selection",
+            },
             json={
                 "selection": {
                     "mode": "filter",
@@ -1665,7 +1755,9 @@ class AgentApiTests(unittest.TestCase):
             json={"confirm": True, "confirmed_fingerprint": "wrong-fingerprint"},
         )
         self.assertEqual(mismatched.status_code, 409, msg=mismatched.text)
-        self.assertEqual(mismatched.json()["error"]["code"], "PLAN_CONFIRMATION_MISMATCH")
+        self.assertEqual(
+            mismatched.json()["error"]["code"], "PLAN_CONFIRMATION_MISMATCH"
+        )
         executed = self.client.post(
             f"/api/agent/v1/plans/{plan['plan_id']}/execute",
             headers=self._agent_headers(),
@@ -1680,11 +1772,15 @@ class AgentApiTests(unittest.TestCase):
         archived = self._agent_get(f"/api/agent/v1/professors/{selected_id}").json()
         self.assertIsNotNone(archived["archived_at"])
         for professor_id in (excluded_id, han_id, created_after_plan_id):
-            professor = self._agent_get(f"/api/agent/v1/professors/{professor_id}").json()
+            professor = self._agent_get(
+                f"/api/agent/v1/professors/{professor_id}"
+            ).json()
             self.assertIsNone(professor["archived_at"])
 
     def test_agent_can_prepare_and_execute_professor_import_plan(self) -> None:
-        existing_professor_id = self._create_professor(email="import-existing@example.edu")
+        existing_professor_id = self._create_professor(
+            email="import-existing@example.edu"
+        )
         content = (
             "name,email,title,university,school,department,research_direction,"
             "recent_papers,profile_url,source_url,tags,personal_note\n"
@@ -1760,7 +1856,10 @@ class AgentApiTests(unittest.TestCase):
         ).encode("utf-8-sig")
         prepared = self.client.post(
             "/api/agent/v1/professors/prepare-import",
-            headers={**self._agent_headers(), "Idempotency-Key": "professor-import-stale"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "professor-import-stale",
+            },
             files={"file": ("stale.csv", io.BytesIO(content), "text/csv")},
         )
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
@@ -1819,7 +1918,10 @@ class AgentApiTests(unittest.TestCase):
 
         updated = self.client.put(
             f"/api/agent/v1/templates/{template_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-template-update"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-template-update",
+            },
             json={"body_text": "更新后的正文。"},
         )
         self.assertEqual(updated.status_code, 200, msg=updated.text)
@@ -1828,7 +1930,10 @@ class AgentApiTests(unittest.TestCase):
 
         duplicate = self.client.post(
             f"/api/agent/v1/templates/{template_id}/duplicate",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-template-duplicate"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-template-duplicate",
+            },
         )
         self.assertEqual(duplicate.status_code, 201, msg=duplicate.text)
         self.assertEqual(duplicate.json()["name"], "首次联系（副本）")
@@ -1836,7 +1941,10 @@ class AgentApiTests(unittest.TestCase):
 
         default_set = self.client.post(
             f"/api/agent/v1/templates/{template_id}/default",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-template-default"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-template-default",
+            },
         )
         self.assertEqual(default_set.status_code, 200, msg=default_set.text)
         self.assertTrue(default_set.json()["is_default"])
@@ -1861,7 +1969,10 @@ class AgentApiTests(unittest.TestCase):
         self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
         changed = self.client.put(
             f"/api/agent/v1/templates/{template_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "template-revision-change"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "template-revision-change",
+            },
             json={"body_text": "先修改模板"},
         )
         self.assertEqual(changed.status_code, 200, msg=changed.text)
@@ -1877,7 +1988,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(
-            self._agent_get(f"/api/agent/v1/templates/{template_id}").json()["body_text"],
+            self._agent_get(f"/api/agent/v1/templates/{template_id}").json()[
+                "body_text"
+            ],
             "先修改模板",
         )
 
@@ -1888,7 +2001,9 @@ class AgentApiTests(unittest.TestCase):
             files={
                 "file": (
                     "follow-up.md",
-                    io.BytesIO(b"# \xe8\xbf\xbd\xe9\x97\xae\n\n\xe8\x80\x81\xe5\xb8\x88\xe6\x82\xa8\xe5\xa5\xbd\xef\xbc\x8c\xe6\x83\xb3\xe5\x90\x91\xe6\x82\xa8\xe8\xbf\xbd\xe9\x97\xae\xe7\x9b\xae\xe5\x89\x8d\xe7\x9a\x84\xe5\x90\x8d\xe9\xa2\x9d\xe6\x83\x85\xe5\x86\xb5\xe3\x80\x82"),
+                    io.BytesIO(
+                        b"# \xe8\xbf\xbd\xe9\x97\xae\n\n\xe8\x80\x81\xe5\xb8\x88\xe6\x82\xa8\xe5\xa5\xbd\xef\xbc\x8c\xe6\x83\xb3\xe5\x90\x91\xe6\x82\xa8\xe8\xbf\xbd\xe9\x97\xae\xe7\x9b\xae\xe5\x89\x8d\xe7\x9a\x84\xe5\x90\x8d\xe9\xa2\x9d\xe6\x83\x85\xe5\x86\xb5\xe3\x80\x82"
+                    ),
                     "text/markdown",
                 ),
             },
@@ -1920,13 +2035,17 @@ class AgentApiTests(unittest.TestCase):
             "/api/agent/v1/materials",
             headers=upload_headers,
             data=upload_data,
-            files={"file": ("resume.txt", io.BytesIO(b"candidate resume"), "text/plain")},
+            files={
+                "file": ("resume.txt", io.BytesIO(b"candidate resume"), "text/plain")
+            },
         )
         replayed = self.client.post(
             "/api/agent/v1/materials",
             headers=upload_headers,
             data=upload_data,
-            files={"file": ("resume.txt", io.BytesIO(b"candidate resume"), "text/plain")},
+            files={
+                "file": ("resume.txt", io.BytesIO(b"candidate resume"), "text/plain")
+            },
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         self.assertEqual(replayed.status_code, 201, msg=replayed.text)
@@ -1937,7 +2056,10 @@ class AgentApiTests(unittest.TestCase):
 
         second = self.client.post(
             "/api/agent/v1/materials",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-material-upload-second"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-material-upload-second",
+            },
             data={
                 "identity_id": str(identity_id),
                 "material_type": "other",
@@ -1978,9 +2100,15 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(material_count, 2)
         self.assertEqual(current_primary_material_id, second_material_id)
 
-    def test_agent_material_catalog_is_global_with_explicit_default_context(self) -> None:
-        source_identity_id = self._create_identity(email="agent-material-source@example.com")
-        target_identity_id = self._create_identity(email="agent-material-target@example.com")
+    def test_agent_material_catalog_is_global_with_explicit_default_context(
+        self,
+    ) -> None:
+        source_identity_id = self._create_identity(
+            email="agent-material-source@example.com"
+        )
+        target_identity_id = self._create_identity(
+            email="agent-material-target@example.com"
+        )
         created = self.client.post(
             "/api/agent/v1/materials",
             headers={
@@ -2003,7 +2131,9 @@ class AgentApiTests(unittest.TestCase):
         material_id = created.json()["id"]
         self.assertEqual(created.json()["source_identity_id"], source_identity_id)
         self.assertEqual(created.json()["identity_id"], source_identity_id)
-        self.assertEqual(created.json()["default_for_identity_ids"], [source_identity_id])
+        self.assertEqual(
+            created.json()["default_for_identity_ids"], [source_identity_id]
+        )
 
         replacement = self.client.post(
             "/api/agent/v1/materials",
@@ -2033,7 +2163,9 @@ class AgentApiTests(unittest.TestCase):
             },
             params={"identity_id": source_identity_id},
         )
-        self.assertEqual(set_source_default.status_code, 200, msg=set_source_default.text)
+        self.assertEqual(
+            set_source_default.status_code, 200, msg=set_source_default.text
+        )
 
         target_catalog = self._agent_get(
             "/api/agent/v1/materials",
@@ -2052,7 +2184,9 @@ class AgentApiTests(unittest.TestCase):
                 "material_id": material_id,
             },
         )
-        self.assertEqual(legacy_source_catalog.status_code, 200, msg=legacy_source_catalog.text)
+        self.assertEqual(
+            legacy_source_catalog.status_code, 200, msg=legacy_source_catalog.text
+        )
         self.assertEqual(
             [item["id"] for item in legacy_source_catalog.json()["items"]],
             [material_id],
@@ -2077,7 +2211,9 @@ class AgentApiTests(unittest.TestCase):
             },
             params={"identity_id": target_identity_id},
         )
-        self.assertEqual(set_target_default.status_code, 200, msg=set_target_default.text)
+        self.assertEqual(
+            set_target_default.status_code, 200, msg=set_target_default.text
+        )
         self.assertTrue(set_target_default.json()["is_primary"])
         self.assertEqual(
             set_target_default.json()["default_for_identity_ids"],
@@ -2250,7 +2386,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(unavailable.status_code, 409, msg=unavailable.text)
         self.assertEqual(unavailable.json()["error"]["code"], "IMAP_NOT_CONFIGURED")
 
-    def test_agent_draft_generation_replays_without_creating_a_second_draft(self) -> None:
+    def test_agent_draft_generation_replays_without_creating_a_second_draft(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(email="draft-idempotency@example.edu")
@@ -2270,7 +2408,9 @@ class AgentApiTests(unittest.TestCase):
             "Idempotency-Key": "agent-draft-generate-once",
         }
         first = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
-        replayed = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+        replayed = self.client.post(
+            "/api/agent/v1/drafts", headers=headers, json=payload
+        )
 
         self.assertEqual(first.status_code, 201, msg=first.text)
         self.assertEqual(replayed.status_code, 201, msg=replayed.text)
@@ -2295,7 +2435,9 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_external_draft_failure_is_unknown_and_never_retried(self) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
-        professor_id = self._create_professor(email="draft-external-unknown@example.edu")
+        professor_id = self._create_professor(
+            email="draft-external-unknown@example.edu"
+        )
         material_id = self._upload_material(identity_id)
         template_id = self._create_template()
         payload = {
@@ -2315,8 +2457,12 @@ class AgentApiTests(unittest.TestCase):
             "app.services.agent_drafts.regenerate_task_draft",
             new=AsyncMock(side_effect=RuntimeError("provider connection lost")),
         ) as regenerate:
-            first = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
-            replayed = self.client.post("/api/agent/v1/drafts", headers=headers, json=payload)
+            first = self.client.post(
+                "/api/agent/v1/drafts", headers=headers, json=payload
+            )
+            replayed = self.client.post(
+                "/api/agent/v1/drafts", headers=headers, json=payload
+            )
 
         self.assertEqual(first.status_code, 502, msg=first.text)
         self.assertEqual(first.json()["error"]["code"], "EXTERNAL_EXECUTION_UNKNOWN")
@@ -2325,7 +2471,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(replayed.json()["error"]["code"], "MUTATION_RESULT_UNKNOWN")
         regenerate.assert_awaited_once()
 
-    def test_non_external_factory_failure_releases_idempotency_reservation(self) -> None:
+    def test_non_external_factory_failure_releases_idempotency_reservation(
+        self,
+    ) -> None:
         from app.core.agent_api_errors import AgentApiError
 
         key = "agent-plan-cancel-non-external-failure"
@@ -2400,7 +2548,10 @@ class AgentApiTests(unittest.TestCase):
 
         canceled = self.client.post(
             f"/api/agent/v1/matching/jobs/{job_id}/cancel",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-matching-cancel"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-matching-cancel",
+            },
         )
         self.assertEqual(canceled.status_code, 200, msg=canceled.text)
         self.assertTrue(canceled.json()["ok"])
@@ -2408,7 +2559,10 @@ class AgentApiTests(unittest.TestCase):
 
         retried = self.client.post(
             f"/api/agent/v1/matching/jobs/{job_id}/retry-failed",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-matching-retry"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-matching-retry",
+            },
         )
         self.assertEqual(retried.status_code, 201, msg=retried.text)
         self.assertNotEqual(retried.json()["id"], job_id)
@@ -2416,7 +2570,10 @@ class AgentApiTests(unittest.TestCase):
 
         deleted = self.client.post(
             f"/api/agent/v1/matching/jobs/{job_id}/delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-matching-delete"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-matching-delete",
+            },
         )
         self.assertEqual(deleted.status_code, 200, msg=deleted.text)
         self.assertTrue(deleted.json()["ok"])
@@ -2429,7 +2586,10 @@ class AgentApiTests(unittest.TestCase):
 
         restored = self.client.post(
             f"/api/agent/v1/matching/jobs/{job_id}/restore",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-matching-restore"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-matching-restore",
+            },
         )
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
@@ -2455,7 +2615,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(create_log_count, 1)
         self.assertEqual(retry_log_count, 1)
 
-    def test_agent_can_manage_professor_information_enrichment_jobs_idempotently(self) -> None:
+    def test_agent_can_manage_professor_information_enrichment_jobs_idempotently(
+        self,
+    ) -> None:
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(
             email="enrichment-agent@example.edu",
@@ -2516,7 +2678,10 @@ class AgentApiTests(unittest.TestCase):
 
         canceled = self.client.post(
             f"/api/agent/v1/enrichment/jobs/{job_id}/cancel",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-enrichment-cancel"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-enrichment-cancel",
+            },
         )
         self.assertEqual(canceled.status_code, 200, msg=canceled.text)
         self.assertTrue(canceled.json()["ok"])
@@ -2524,7 +2689,10 @@ class AgentApiTests(unittest.TestCase):
 
         retried = self.client.post(
             f"/api/agent/v1/enrichment/jobs/{job_id}/retry-failed",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-enrichment-retry"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-enrichment-retry",
+            },
         )
         self.assertEqual(retried.status_code, 201, msg=retried.text)
         self.assertNotEqual(retried.json()["id"], job_id)
@@ -2532,7 +2700,10 @@ class AgentApiTests(unittest.TestCase):
 
         deleted = self.client.post(
             f"/api/agent/v1/enrichment/jobs/{job_id}/delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-enrichment-delete"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-enrichment-delete",
+            },
         )
         self.assertEqual(deleted.status_code, 200, msg=deleted.text)
         self.assertTrue(deleted.json()["ok"])
@@ -2545,7 +2716,10 @@ class AgentApiTests(unittest.TestCase):
 
         restored = self.client.post(
             f"/api/agent/v1/enrichment/jobs/{job_id}/restore",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-enrichment-restore"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-enrichment-restore",
+            },
         )
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
@@ -2597,7 +2771,9 @@ class AgentApiTests(unittest.TestCase):
                 params={"cursor": 1, "limit": 2},
             )
         finally:
-            event.remove(engine.sync_engine, "before_cursor_execute", count_task_selects)
+            event.remove(
+                engine.sync_engine, "before_cursor_execute", count_task_selects
+            )
 
         page = response.json()
         self.assertEqual(
@@ -2701,7 +2877,10 @@ class AgentApiTests(unittest.TestCase):
 
         updated = self.client.patch(
             f"/api/agent/v1/crawler/candidates/{candidate_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-candidate"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-candidate",
+            },
             json={"title": "副教授", "review_status": "accepted"},
         )
         self.assertEqual(updated.status_code, 200, msg=updated.text)
@@ -2718,28 +2897,40 @@ class AgentApiTests(unittest.TestCase):
 
         resumed = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/resume",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-resume"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-resume",
+            },
         )
         self.assertEqual(resumed.status_code, 200, msg=resumed.text)
         self.assertEqual(resumed.json()["status"], "queued")
 
         canceled = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/cancel",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-cancel"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-cancel",
+            },
         )
         self.assertEqual(canceled.status_code, 200, msg=canceled.text)
         self.assertEqual(canceled.json()["status"], "canceled")
 
         review = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/resume-review",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-review"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-review",
+            },
         )
         self.assertEqual(review.status_code, 200, msg=review.text)
         self.assertEqual(review.json()["status"], "needs_review")
 
         deleted = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-delete"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-delete",
+            },
         )
         self.assertEqual(deleted.status_code, 200, msg=deleted.text)
         self.assertIsNotNone(deleted.json()["deleted_at"])
@@ -2751,7 +2942,10 @@ class AgentApiTests(unittest.TestCase):
 
         restored = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/restore",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-crawler-restore"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-crawler-restore",
+            },
         )
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["deleted_at"])
@@ -2770,10 +2964,15 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(job_count, 1)
         self.assertEqual(create_log_count, 1)
 
-    def test_agent_revision_precondition_rejects_stale_crawl_candidate_update(self) -> None:
+    def test_agent_revision_precondition_rejects_stale_crawl_candidate_update(
+        self,
+    ) -> None:
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-candidate-revision-job"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-candidate-revision-job",
+            },
             json={
                 "university": "版本大学",
                 "school": "版本学院",
@@ -2794,11 +2993,16 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
             connection.commit()
 
-        original = self._agent_get(f"/api/agent/v1/crawler/jobs/{job_id}/candidates").json()["items"][0]
+        original = self._agent_get(
+            f"/api/agent/v1/crawler/jobs/{job_id}/candidates"
+        ).json()["items"][0]
         self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
         changed = self.client.patch(
             f"/api/agent/v1/crawler/candidates/{candidate_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-candidate-revision-change"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-candidate-revision-change",
+            },
             json={"title": "已被其他调用方修改"},
         )
         self.assertEqual(changed.status_code, 200, msg=changed.text)
@@ -2815,11 +3019,19 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
-        self.assertEqual(stale.json()["error"]["details"]["resource"], "crawler.candidates")
-        self.assertEqual(stale.json()["error"]["details"]["latest"]["title"], "已被其他调用方修改")
+        self.assertEqual(
+            stale.json()["error"]["details"]["resource"], "crawler.candidates"
+        )
+        self.assertEqual(
+            stale.json()["error"]["details"]["latest"]["title"], "已被其他调用方修改"
+        )
 
-    def test_agent_can_prepare_and_execute_crawl_candidate_approval_change_plan(self) -> None:
-        existing_professor_id = self._create_professor(email="existing-crawl@example.edu")
+    def test_agent_can_prepare_and_execute_crawl_candidate_approval_change_plan(
+        self,
+    ) -> None:
+        existing_professor_id = self._create_professor(
+            email="existing-crawl@example.edu"
+        )
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
             headers={**self._agent_headers(), "Idempotency-Key": "crawl-approval-job"},
@@ -2878,7 +3090,11 @@ class AgentApiTests(unittest.TestCase):
             connection.commit()
 
         request_body = {
-            "candidate_ids": [invalid_candidate_id, existing_candidate_id, new_candidate_id],
+            "candidate_ids": [
+                invalid_candidate_id,
+                existing_candidate_id,
+                new_candidate_id,
+            ],
         }
         headers = {**self._agent_headers(), "Idempotency-Key": "crawl-approval-plan"}
         prepared = self.client.post(
@@ -2929,7 +3145,9 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
         self.assertEqual(
             missing_confirmation.json()["error"]["code"],
             "PLAN_CONFIRMATION_REQUIRED",
@@ -2946,7 +3164,9 @@ class AgentApiTests(unittest.TestCase):
             json={"confirm": True},
         )
         self.assertEqual(executed.status_code, 200, msg=executed.text)
-        self.assertEqual(executed.json()["result"]["outcome"], "crawl_candidates_approved")
+        self.assertEqual(
+            executed.json()["result"]["outcome"], "crawl_candidates_approved"
+        )
         self.assertEqual(executed.json()["result"]["inserted_count"], 1)
         self.assertEqual(executed.json()["result"]["updated_count"], 1)
         self.assertEqual(executed.json()["result"]["skipped_count"], 1)
@@ -2988,7 +3208,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(job_status, "partially_completed")
         self.assertEqual(approval_log_count, 1)
 
-    def test_agent_crawl_candidate_approval_plan_rejects_changed_candidate_or_professor(self) -> None:
+    def test_agent_crawl_candidate_approval_plan_rejects_changed_candidate_or_professor(
+        self,
+    ) -> None:
         existing_professor_id = self._create_professor(email="stale-crawl@example.edu")
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
@@ -3018,13 +3240,19 @@ class AgentApiTests(unittest.TestCase):
 
         first_plan = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/prepare-approve",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-stale-professor"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-stale-professor",
+            },
             json={"candidate_ids": [candidate_id]},
         )
         self.assertEqual(first_plan.status_code, 201, msg=first_plan.text)
         changed_professor = self.client.put(
             f"/api/agent/v1/professors/{existing_professor_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-stale-professor-update"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-stale-professor-update",
+            },
             json={"name": "计划外修改"},
         )
         self.assertEqual(changed_professor.status_code, 200, msg=changed_professor.text)
@@ -3038,13 +3266,19 @@ class AgentApiTests(unittest.TestCase):
 
         second_plan = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/prepare-approve",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-stale-candidate"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-stale-candidate",
+            },
             json={"candidate_ids": [candidate_id]},
         )
         self.assertEqual(second_plan.status_code, 201, msg=second_plan.text)
         changed_candidate = self.client.patch(
             f"/api/agent/v1/crawler/candidates/{candidate_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-stale-candidate-update"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-stale-candidate-update",
+            },
             json={"title": "教授"},
         )
         self.assertEqual(changed_candidate.status_code, 200, msg=changed_candidate.text)
@@ -3105,7 +3339,10 @@ class AgentApiTests(unittest.TestCase):
 
         prepared = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/prepare-approve",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-filtered-approval"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-filtered-approval",
+            },
             json={
                 "selection": {
                     "mode": "filter",
@@ -3162,7 +3399,12 @@ class AgentApiTests(unittest.TestCase):
             statuses = dict(
                 connection.execute(
                     "SELECT id, review_status FROM crawl_candidates WHERE id IN (?, ?, ?, ?)",
-                    (selected_id, excluded_id, changed_to_match_id, added_after_plan_id),
+                    (
+                        selected_id,
+                        excluded_id,
+                        changed_to_match_id,
+                        added_after_plan_id,
+                    ),
                 ).fetchall(),
             )
         self.assertEqual(imported_emails, {"frozen@example.edu"})
@@ -3262,7 +3504,9 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
 
         executed = self.client.post(
             f"/api/agent/v1/plans/{plan['plan_id']}/execute",
@@ -3317,7 +3561,10 @@ class AgentApiTests(unittest.TestCase):
         self._create_llm_profile()
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-retry-stale-job"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-retry-stale-job",
+            },
             json={
                 "university": "示例大学",
                 "school": "计算机学院",
@@ -3343,7 +3590,10 @@ class AgentApiTests(unittest.TestCase):
 
         prepared = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/prepare-retry",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-retry-stale-plan"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-retry-stale-plan",
+            },
             json={"clear_existing_data": True},
         )
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
@@ -3376,7 +3626,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(candidate_count, 2)
         self.assertEqual(status_value, "failed")
 
-    def test_agent_can_queue_crawl_candidate_enrichment_without_sending_email(self) -> None:
+    def test_agent_can_queue_crawl_candidate_enrichment_without_sending_email(
+        self,
+    ) -> None:
         llm_profile_id = self._create_llm_profile()
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
@@ -3420,12 +3672,18 @@ class AgentApiTests(unittest.TestCase):
         queued = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
             headers=headers,
-            json={"candidate_ids": [candidate_id, skipped_candidate_id], "llm_profile_id": llm_profile_id},
+            json={
+                "candidate_ids": [candidate_id, skipped_candidate_id],
+                "llm_profile_id": llm_profile_id,
+            },
         )
         replayed = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
             headers=headers,
-            json={"candidate_ids": [candidate_id, skipped_candidate_id], "llm_profile_id": llm_profile_id},
+            json={
+                "candidate_ids": [candidate_id, skipped_candidate_id],
+                "llm_profile_id": llm_profile_id,
+            },
         )
         self.assertEqual(queued.status_code, 201, msg=queued.text)
         self.assertEqual(replayed.status_code, 201, msg=replayed.text)
@@ -3443,7 +3701,9 @@ class AgentApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(queued.json()["submission"]["queued_count"], 1)
-        self.assertEqual(queued.json()["skips"]["by_reason"][0]["code"], "MISSING_PROFILE_URL")
+        self.assertEqual(
+            queued.json()["skips"]["by_reason"][0]["code"], "MISSING_PROFILE_URL"
+        )
         self.assertEqual(queued.json()["observation"]["status"], "running")
         self.assertEqual(queued.json(), replayed.json())
 
@@ -3552,7 +3812,10 @@ class AgentApiTests(unittest.TestCase):
 
         response = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
-            headers={**self._agent_headers(), "Idempotency-Key": "fresh-enrich-request"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "fresh-enrich-request",
+            },
             json={"candidate_ids": [candidate_id], "llm_profile_id": llm_profile_id},
         )
 
@@ -3577,7 +3840,10 @@ class AgentApiTests(unittest.TestCase):
         llm_profile_id = self._create_llm_profile()
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-all-job"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-all-job",
+            },
             json={
                 "university": "示例大学",
                 "school": "计算机学院",
@@ -3588,13 +3854,20 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201, msg=created.text)
         job_id = created.json()["id"]
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
-            connection.execute("UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?", (job_id,))
+            connection.execute(
+                "UPDATE crawl_jobs SET status = 'needs_review' WHERE id = ?", (job_id,)
+            )
             eligible_id = connection.execute(
                 """
                 INSERT INTO crawl_candidates (job_id, name, email, profile_url, review_status)
                 VALUES (?, ?, ?, ?, 'pending') RETURNING id
                 """,
-                (job_id, "待补全候选", "all-eligible@example.edu", "https://example.edu/all-eligible"),
+                (
+                    job_id,
+                    "待补全候选",
+                    "all-eligible@example.edu",
+                    "https://example.edu/all-eligible",
+                ),
             ).fetchone()[0]
             connection.execute(
                 """
@@ -3608,13 +3881,21 @@ class AgentApiTests(unittest.TestCase):
                 INSERT INTO crawl_candidates (job_id, name, email, profile_url, review_status)
                 VALUES (?, ?, ?, ?, 'rejected') RETURNING id
                 """,
-                (job_id, "排除候选", "all-excluded@example.edu", "https://example.edu/all-excluded"),
+                (
+                    job_id,
+                    "排除候选",
+                    "all-excluded@example.edu",
+                    "https://example.edu/all-excluded",
+                ),
             ).fetchone()[0]
             connection.commit()
 
         response = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-all-request"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-all-request",
+            },
             json={
                 "selection": {
                     "mode": "all",
@@ -3653,7 +3934,10 @@ class AgentApiTests(unittest.TestCase):
             connection.commit()
         filtered = self.client.post(
             f"/api/agent/v1/crawler/jobs/{job_id}/enrich",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-filter-request"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-filter-request",
+            },
             json={
                 "selection": {
                     "mode": "filter",
@@ -3672,10 +3956,15 @@ class AgentApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(filtered_candidate_id, excluded_id)
 
-    def test_agent_enrichment_noop_does_not_require_or_change_model_context(self) -> None:
+    def test_agent_enrichment_noop_does_not_require_or_change_model_context(
+        self,
+    ) -> None:
         created = self.client.post(
             "/api/agent/v1/crawler/jobs",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-noop-job"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-noop-job",
+            },
             json={
                 "university": "示例大学",
                 "school": "计算机学院",
@@ -3783,13 +4072,17 @@ class AgentApiTests(unittest.TestCase):
                 },
             )
         finally:
-            event.remove(engine.sync_engine, "before_cursor_execute", count_task_selects)
+            event.remove(
+                engine.sync_engine, "before_cursor_execute", count_task_selects
+            )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
         self.assertEqual(response.json()["submission"]["queued_count"], 5)
         self.assertEqual(len(task_selects), 1)
 
-    def test_agent_crawler_job_list_filters_requested_and_effective_models(self) -> None:
+    def test_agent_crawler_job_list_filters_requested_and_effective_models(
+        self,
+    ) -> None:
         llm_profile_id = self._create_llm_profile()
         created_ids: list[int] = []
         for index in range(2):
@@ -3915,7 +4208,10 @@ class AgentApiTests(unittest.TestCase):
         llm_profile_id = self._create_llm_profile()
         enriched = self.client.post(
             "/api/agent/v1/crawler/jobs/enrich-many",
-            headers={**self._agent_headers(), "Idempotency-Key": "crawl-enrich-many-request"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "crawl-enrich-many-request",
+            },
             json={
                 "items": [
                     {
@@ -3955,7 +4251,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(queued_candidate_id, candidate_id)
         self.assertEqual(second_job_status, "queued")
 
-    def test_agent_can_manage_communication_groups_without_implicit_merges(self) -> None:
+    def test_agent_can_manage_communication_groups_without_implicit_merges(
+        self,
+    ) -> None:
         first_identity_id = self._create_identity()
         second_identity_id = self._create_identity(email="second-sender@example.com")
         third_identity_id = self._create_identity(email="third-sender@example.com")
@@ -3991,9 +4289,16 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual([group["id"] for group in groups["items"]], [group_id])
         updated = self.client.put(
             f"/api/agent/v1/communication-groups/{group_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-communication-group-update"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-communication-group-update",
+            },
             json={
-                "identity_ids": [first_identity_id, second_identity_id, third_identity_id],
+                "identity_ids": [
+                    first_identity_id,
+                    second_identity_id,
+                    third_identity_id,
+                ],
                 "confirm_merge_existing_groups": False,
             },
         )
@@ -4020,7 +4325,10 @@ class AgentApiTests(unittest.TestCase):
 
         deleted = self.client.post(
             f"/api/agent/v1/communication-groups/{group_id}/delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-communication-group-delete"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-communication-group-delete",
+            },
         )
         self.assertEqual(deleted.status_code, 200, msg=deleted.text)
         self.assertEqual(deleted.json(), {"ok": True, "group_id": group_id})
@@ -4032,9 +4340,7 @@ class AgentApiTests(unittest.TestCase):
     def test_agent_can_read_and_update_runtime_settings_idempotently(self) -> None:
         initial = self._agent_get("/api/agent/v1/settings").json()
         request_body = {
-            key: value
-            for key, value in initial.items()
-            if key != "updated_at"
+            key: value for key, value in initial.items() if key != "updated_at"
         }
         request_body["crawler_worker_count"] = 2
         headers = {
@@ -4066,7 +4372,10 @@ class AgentApiTests(unittest.TestCase):
 
         defaulted = self.client.post(
             f"/api/agent/v1/identities/{second_identity_id}/default",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-identity-default"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-identity-default",
+            },
         )
         self.assertEqual(defaulted.status_code, 200, msg=defaulted.text)
         self.assertTrue(defaulted.json()["is_default"])
@@ -4074,7 +4383,10 @@ class AgentApiTests(unittest.TestCase):
 
         selected_template = self.client.post(
             f"/api/agent/v1/identities/{second_identity_id}/default-template",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-identity-template"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-identity-template",
+            },
             json={"template_id": template_id},
         )
         self.assertEqual(selected_template.status_code, 200, msg=selected_template.text)
@@ -4095,11 +4407,17 @@ class AgentApiTests(unittest.TestCase):
         ):
             smtp = self.client.post(
                 f"/api/agent/v1/identities/{second_identity_id}/smtp-test",
-                headers={**self._agent_headers(), "Idempotency-Key": "agent-identity-smtp"},
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-identity-smtp",
+                },
             )
             imap = self.client.post(
                 f"/api/agent/v1/identities/{second_identity_id}/imap-test",
-                headers={**self._agent_headers(), "Idempotency-Key": "agent-identity-imap"},
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-identity-imap",
+                },
             )
 
         self.assertEqual(smtp.status_code, 200, msg=smtp.text)
@@ -4140,7 +4458,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(visualization.status_code, 200, msg=visualization.text)
         self.assertEqual(visualization.json()["summary"]["record_count"], 0)
 
-    def test_material_delete_change_plan_requires_confirmation_and_executes_once(self) -> None:
+    def test_material_delete_change_plan_requires_confirmation_and_executes_once(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         material_id = self._upload_material(identity_id)
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -4178,7 +4498,9 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
         self.assertEqual(
             missing_confirmation.json()["error"]["code"],
             "PLAN_CONFIRMATION_REQUIRED",
@@ -4217,14 +4539,19 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(delete_log_count, 1)
         self.assertFalse(Path(material_file_path).exists())
 
-    def test_material_delete_change_plan_rejects_stale_or_blocked_references(self) -> None:
+    def test_material_delete_change_plan_rejects_stale_or_blocked_references(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(email="material-plan-stale@example.edu")
         material_id = self._upload_material(identity_id)
         created = self.client.post(
             f"/api/agent/v1/materials/{material_id}/prepare-delete",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-material-stale-plan"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-material-stale-plan",
+            },
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         plan_id = created.json()["plan_id"]
@@ -4259,7 +4586,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 400, msg=blocked.text)
         self.assertEqual(blocked.json()["error"]["code"], "MATERIAL_DELETION_BLOCKED")
 
-    def test_template_archive_change_plan_requires_confirmation_and_executes_once(self) -> None:
+    def test_template_archive_change_plan_requires_confirmation_and_executes_once(
+        self,
+    ) -> None:
         template_id = self._create_template()
         create_headers = {
             **self._agent_headers(),
@@ -4290,7 +4619,9 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
         self.assertEqual(
             missing_confirmation.json()["error"]["code"],
             "PLAN_CONFIRMATION_REQUIRED",
@@ -4331,14 +4662,20 @@ class AgentApiTests(unittest.TestCase):
         template_id = self._create_template()
         created = self.client.post(
             f"/api/agent/v1/templates/{template_id}/prepare-archive",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-template-stale-plan"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-template-stale-plan",
+            },
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         plan_id = created.json()["plan_id"]
 
         changed = self.client.put(
             f"/api/agent/v1/templates/{template_id}",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-template-change"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-template-change",
+            },
             json={"body_text": "归档前发生了修改。"},
         )
         self.assertEqual(changed.status_code, 200, msg=changed.text)
@@ -4384,7 +4721,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(stale.json()["error"]["details"]["resource"], "identities")
 
-    def test_agent_revision_precondition_rejects_stale_llm_profile_settings(self) -> None:
+    def test_agent_revision_precondition_rejects_stale_llm_profile_settings(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile()
         original = self._agent_get(f"/api/agent/v1/llm-profiles/{profile_id}").json()
         self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
@@ -4407,10 +4746,18 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(stale.json()["error"]["details"]["resource"], "llm-profiles")
 
-    def test_agent_revision_precondition_rejects_stale_communication_group_update(self) -> None:
-        first_identity_id = self._create_identity(email="group-revision-first@example.com")
-        second_identity_id = self._create_identity(email="group-revision-second@example.com")
-        third_identity_id = self._create_identity(email="group-revision-third@example.com")
+    def test_agent_revision_precondition_rejects_stale_communication_group_update(
+        self,
+    ) -> None:
+        first_identity_id = self._create_identity(
+            email="group-revision-first@example.com"
+        )
+        second_identity_id = self._create_identity(
+            email="group-revision-second@example.com"
+        )
+        third_identity_id = self._create_identity(
+            email="group-revision-third@example.com"
+        )
         created = self.client.post(
             "/api/agent/v1/communication-groups",
             headers=self._agent_headers(),
@@ -4418,13 +4765,19 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 201, msg=created.text)
         group_id = created.json()["id"]
-        original = self._agent_get(f"/api/agent/v1/communication-groups/{group_id}").json()
+        original = self._agent_get(
+            f"/api/agent/v1/communication-groups/{group_id}"
+        ).json()
         self.assertRegex(original["revision"], r"^[0-9a-f]{20}$")
         changed = self.client.put(
             f"/api/agent/v1/communication-groups/{group_id}",
             headers=self._agent_headers(),
             json={
-                "identity_ids": [first_identity_id, second_identity_id, third_identity_id],
+                "identity_ids": [
+                    first_identity_id,
+                    second_identity_id,
+                    third_identity_id,
+                ],
                 "confirm_merge_existing_groups": False,
             },
         )
@@ -4443,7 +4796,9 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
-        self.assertEqual(stale.json()["error"]["details"]["resource"], "communication-groups")
+        self.assertEqual(
+            stale.json()["error"]["details"]["resource"], "communication-groups"
+        )
 
     def test_agent_revision_precondition_rejects_stale_runtime_settings(self) -> None:
         original = self._agent_get("/api/agent/v1/settings").json()
@@ -4453,7 +4808,10 @@ class AgentApiTests(unittest.TestCase):
             for key, value in original.items()
             if key not in {"revision", "updated_at"}
         }
-        changed_payload = {**payload, "crawler_worker_count": payload["crawler_worker_count"] + 1}
+        changed_payload = {
+            **payload,
+            "crawler_worker_count": payload["crawler_worker_count"] + 1,
+        }
         changed = self.client.patch(
             "/api/agent/v1/settings",
             headers=self._agent_headers(),
@@ -4473,7 +4831,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(stale.json()["error"]["details"]["resource"], "settings")
 
-    def test_template_draft_is_draft_only_and_keeps_reference_separate_from_attachments(self) -> None:
+    def test_template_draft_is_draft_only_and_keeps_reference_separate_from_attachments(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor()
@@ -4584,7 +4944,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(cleared.status_code, 200, msg=cleared.text)
         self.assertEqual(cleared.json()["attachment_material_ids"], [])
 
-    def test_agent_approval_attachment_updates_preserve_and_explicitly_clear(self) -> None:
+    def test_agent_approval_attachment_updates_preserve_and_explicitly_clear(
+        self,
+    ) -> None:
         preserved_draft = self._create_template_draft()
         preserved_ids = preserved_draft["attachment_material_ids"]
         approved = self.client.post(
@@ -4626,7 +4988,9 @@ class AgentApiTests(unittest.TestCase):
             campaign_draft["attachment_material_ids"],
         )
 
-    def test_agent_attachment_schemas_reject_duplicate_and_nonpositive_ids(self) -> None:
+    def test_agent_attachment_schemas_reject_duplicate_and_nonpositive_ids(
+        self,
+    ) -> None:
         cases = [
             (
                 "POST",
@@ -4719,7 +5083,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "REVISION_CONFLICT")
 
-    def test_send_plan_requires_confirmation_detects_stale_content_and_expires(self) -> None:
+    def test_send_plan_requires_confirmation_detects_stale_content_and_expires(
+        self,
+    ) -> None:
         draft = self._create_template_draft()
         task_id = draft["task_id"]
         create_plan = self.client.post(
@@ -4837,7 +5203,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertIn(plan["warnings"][0], plan["confirmation_message"])
         self.assertNotIn("云盘", plan["confirmation_message"])
 
-    def test_confirmed_send_plan_executes_once_and_replays_original_result(self) -> None:
+    def test_confirmed_send_plan_executes_once_and_replays_original_result(
+        self,
+    ) -> None:
         draft = self._create_template_draft()
         task_id = draft["task_id"]
         plan_response = self.client.post(
@@ -4883,11 +5251,15 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(second.json()["result"], first.json()["result"])
         self.assertEqual(send_mock.await_count, 1)
 
-    def test_agent_campaign_creates_paused_template_drafts_then_requires_send_plan(self) -> None:
+    def test_agent_campaign_creates_paused_template_drafts_then_requires_send_plan(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         first_professor_id = self._create_professor(email="campaign-first@example.edu")
-        second_professor_id = self._create_professor(email="campaign-second@example.edu")
+        second_professor_id = self._create_professor(
+            email="campaign-second@example.edu"
+        )
         material_id = self._upload_material(identity_id)
         template_id = self._create_template()
 
@@ -4984,7 +5356,9 @@ class AgentApiTests(unittest.TestCase):
             json={"confirm": True},
         )
         self.assertEqual(sent.status_code, 200, msg=sent.text)
-        self.assertEqual(sent.json()["result"]["outcome"], "campaign_queued_for_dispatch")
+        self.assertEqual(
+            sent.json()["result"]["outcome"], "campaign_queued_for_dispatch"
+        )
         after_send = self._agent_get(f"/api/agent/v1/campaigns/{campaign_id}").json()
         self.assertEqual(after_send["status"], "running")
         self.assertEqual(after_send["approved_count"], 2)
@@ -5117,7 +5491,9 @@ class AgentApiTests(unittest.TestCase):
             "CAMPAIGN_RESEND_CONTEXT_UNAVAILABLE",
         )
 
-    def test_agent_can_start_ai_campaign_drafts_without_authorizing_delivery(self) -> None:
+    def test_agent_can_start_ai_campaign_drafts_without_authorizing_delivery(
+        self,
+    ) -> None:
         identity_id = self._create_identity()
         llm_profile_id = self._create_llm_profile()
         professor_id = self._create_professor(email="campaign-ai@example.edu")
@@ -5165,7 +5541,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(started.json()["approved_count"], 0)
         self.assertEqual(started.json()["scheduled_count"], 0)
 
-    def test_agent_campaign_stop_archive_and_restore_follow_desktop_lifecycle(self) -> None:
+    def test_agent_campaign_stop_archive_and_restore_follow_desktop_lifecycle(
+        self,
+    ) -> None:
         campaign_id, item_id = self._create_template_campaign()
 
         with patch(
@@ -5235,14 +5613,18 @@ class AgentApiTests(unittest.TestCase):
             "/api/agent/v1/campaigns",
             params={"limit": 1},
         ).json()
-        self.assertEqual([item["id"] for item in first_page["items"]], [second_campaign_id])
+        self.assertEqual(
+            [item["id"] for item in first_page["items"]], [second_campaign_id]
+        )
         self.assertTrue(first_page["has_more"])
         self.assertEqual(first_page["next_cursor"], "1")
         second_page = self._agent_get(
             "/api/agent/v1/campaigns",
             params={"limit": 1, "cursor": first_page["next_cursor"]},
         ).json()
-        self.assertEqual([item["id"] for item in second_page["items"]], [first_campaign_id])
+        self.assertEqual(
+            [item["id"] for item in second_page["items"]], [first_campaign_id]
+        )
         self.assertFalse(second_page["has_more"])
         self.assertIsNone(second_page["next_cursor"])
 
@@ -5252,7 +5634,10 @@ class AgentApiTests(unittest.TestCase):
         ).json()
         self.assertEqual([item["id"] for item in stopped["items"]], [first_campaign_id])
         detail = self._agent_get(f"/api/agent/v1/campaigns/{first_campaign_id}").json()
-        self.assertEqual(stopped["items"][0]["review_required_count"], detail["review_required_count"])
+        self.assertEqual(
+            stopped["items"][0]["review_required_count"],
+            detail["review_required_count"],
+        )
         self.assertEqual(
             stopped["items"][0]["can_start_draft_generation"],
             detail["can_start_draft_generation"],
@@ -5265,7 +5650,9 @@ class AgentApiTests(unittest.TestCase):
         )
         self.assertEqual(invalid.status_code, 422, msg=invalid.text)
 
-    def test_agent_campaign_pause_resets_running_draft_and_remove_hides_item(self) -> None:
+    def test_agent_campaign_pause_resets_running_draft_and_remove_hides_item(
+        self,
+    ) -> None:
         campaign_id, item_id = self._create_template_campaign()
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
@@ -5328,7 +5715,9 @@ class AgentApiTests(unittest.TestCase):
         ).json()["items"]
         self.assertEqual(items, [])
 
-    def test_agent_campaign_can_cancel_future_scheduled_item_without_reauthorizing_it(self) -> None:
+    def test_agent_campaign_can_cancel_future_scheduled_item_without_reauthorizing_it(
+        self,
+    ) -> None:
         campaign_id, item_id = self._create_template_campaign()
         scheduled_at = datetime.now(UTC) + timedelta(days=1)
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -5371,7 +5760,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertIsNotNone(item["send_canceled_at"])
         self.assertFalse(item["can_cancel_send"])
 
-    def test_agent_campaign_restore_future_scheduled_item_requires_l3_plan(self) -> None:
+    def test_agent_campaign_restore_future_scheduled_item_requires_l3_plan(
+        self,
+    ) -> None:
         campaign_id, item_id = self._create_template_campaign()
         scheduled_at = datetime.now(UTC) + timedelta(days=1)
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
@@ -5738,7 +6129,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, msg=stale.text)
         self.assertEqual(stale.json()["error"]["code"], "DELIVERY_RESCHEDULE_REJECTED")
         self.assertEqual(too_soon.status_code, 422, msg=too_soon.text)
-        self.assertEqual(too_soon.json()["error"]["code"], "DELIVERY_RESCHEDULE_REJECTED")
+        self.assertEqual(
+            too_soon.json()["error"]["code"], "DELIVERY_RESCHEDULE_REJECTED"
+        )
 
     def _create_template_draft(self) -> dict[str, object]:
         identity_id = self._create_identity()
@@ -5761,10 +6154,16 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, msg=response.text)
         return response.json()
 
-    def _create_template_campaign(self, *, key_suffix: str = "helper") -> tuple[int, int]:
-        identity_id = self._create_identity(email=f"campaign-sender-{key_suffix}@example.com")
+    def _create_template_campaign(
+        self, *, key_suffix: str = "helper"
+    ) -> tuple[int, int]:
+        identity_id = self._create_identity(
+            email=f"campaign-sender-{key_suffix}@example.com"
+        )
         llm_profile_id = self._create_llm_profile(name=f"Agent 活动模型 {key_suffix}")
-        professor_id = self._create_professor(email=f"campaign-{key_suffix}@example.edu")
+        professor_id = self._create_professor(
+            email=f"campaign-{key_suffix}@example.edu"
+        )
         material_id = self._upload_material(identity_id)
         template_id = self._create_template()
         prepared = self.client.post(
@@ -5821,7 +6220,10 @@ class AgentApiTests(unittest.TestCase):
 
         prepared = self.client.post(
             f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/prepare-send",
-            headers={**self._agent_headers(), "Idempotency-Key": "agent-test-email-send"},
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "agent-test-email-send",
+            },
             json={
                 "subject": "测试 {{sender_name}}",
                 "body_text": "这是测试正文。",
@@ -5841,8 +6243,12 @@ class AgentApiTests(unittest.TestCase):
             headers=self._agent_headers(),
             json={"confirm": False},
         )
-        self.assertEqual(missing_confirmation.status_code, 409, msg=missing_confirmation.text)
-        self.assertEqual(missing_confirmation.json()["error"]["code"], "PLAN_CONFIRMATION_REQUIRED")
+        self.assertEqual(
+            missing_confirmation.status_code, 409, msg=missing_confirmation.text
+        )
+        self.assertEqual(
+            missing_confirmation.json()["error"]["code"], "PLAN_CONFIRMATION_REQUIRED"
+        )
 
         send_result = SimpleNamespace(
             message_id="<agent-test-email@example.com>",
@@ -5860,7 +6266,9 @@ class AgentApiTests(unittest.TestCase):
 
         self.assertEqual(executed.status_code, 200, msg=executed.text)
         self.assertEqual(executed.json()["result"]["outcome"], "sent")
-        self.assertEqual(executed.json()["result"]["recipient_email"], "self-test@example.com")
+        self.assertEqual(
+            executed.json()["result"]["recipient_email"], "self-test@example.com"
+        )
         mocked_send.assert_awaited_once()
 
         status_response = self._agent_get(
@@ -5900,7 +6308,9 @@ class AgentApiTests(unittest.TestCase):
 
         self.assertEqual(initial.status_code, 200, msg=initial.text)
         self.assertEqual(preserved.status_code, 200, msg=preserved.text)
-        self.assertEqual(preserved.json()["draft"]["selected_material_ids"], [material_id])
+        self.assertEqual(
+            preserved.json()["draft"]["selected_material_ids"], [material_id]
+        )
         self.assertEqual(preserved.json()["draft"]["outreach_template_id"], template_id)
         self.assertEqual(prepared.status_code, 201, msg=prepared.text)
         plan = prepared.json()
@@ -5949,7 +6359,9 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(cleared_plan.json()["summary"]["attachments"], [])
         self.assertEqual(cleared_plan.json()["summary"]["template"]["id"], template_id)
 
-    def test_agent_test_email_plan_resolves_defaults_without_creating_a_session(self) -> None:
+    def test_agent_test_email_plan_resolves_defaults_without_creating_a_session(
+        self,
+    ) -> None:
         identity_id = self._create_identity(email="new-test-session@example.com")
         llm_profile_id = self._create_llm_profile()
         template_id = self._create_template()

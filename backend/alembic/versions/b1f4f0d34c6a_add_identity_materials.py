@@ -33,7 +33,9 @@ def upgrade() -> None:
         sa.Column("original_filename", sa.String(length=255), nullable=False),
         sa.Column("file_path", sa.String(length=500), nullable=False),
         sa.Column("mime_type", sa.String(length=255), nullable=True),
-        sa.Column("size_bytes", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "size_bytes", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
         sa.Column("sha256", sa.String(length=64), nullable=False),
         sa.Column("extracted_text", sa.Text(), nullable=True),
         sa.Column(
@@ -59,7 +61,9 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("identity_profiles", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("current_primary_material_id", sa.Integer(), nullable=True))
+        batch_op.add_column(
+            sa.Column("current_primary_material_id", sa.Integer(), nullable=True)
+        )
         batch_op.create_index(
             batch_op.f("ix_identity_profiles_current_primary_material_id"),
             ["current_primary_material_id"],
@@ -73,8 +77,12 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("batch_tasks", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("primary_material_id", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("selected_material_ids", sa.JSON(), nullable=True))
+        batch_op.add_column(
+            sa.Column("primary_material_id", sa.Integer(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("selected_material_ids", sa.JSON(), nullable=True)
+        )
         batch_op.create_index(
             batch_op.f("ix_batch_tasks_primary_material_id"),
             ["primary_material_id"],
@@ -88,8 +96,12 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("primary_material_id", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("selected_material_ids", sa.JSON(), nullable=True))
+        batch_op.add_column(
+            sa.Column("primary_material_id", sa.Integer(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("selected_material_ids", sa.JSON(), nullable=True)
+        )
         batch_op.create_index(
             batch_op.f("ix_email_tasks_primary_material_id"),
             ["primary_material_id"],
@@ -107,13 +119,17 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
-        batch_op.drop_constraint("fk_email_tasks_primary_material_id_identity_materials", type_="foreignkey")
+        batch_op.drop_constraint(
+            "fk_email_tasks_primary_material_id_identity_materials", type_="foreignkey"
+        )
         batch_op.drop_index(batch_op.f("ix_email_tasks_primary_material_id"))
         batch_op.drop_column("selected_material_ids")
         batch_op.drop_column("primary_material_id")
 
     with op.batch_alter_table("batch_tasks", schema=None) as batch_op:
-        batch_op.drop_constraint("fk_batch_tasks_primary_material_id_identity_materials", type_="foreignkey")
+        batch_op.drop_constraint(
+            "fk_batch_tasks_primary_material_id_identity_materials", type_="foreignkey"
+        )
         batch_op.drop_index(batch_op.f("ix_batch_tasks_primary_material_id"))
         batch_op.drop_column("selected_material_ids")
         batch_op.drop_column("primary_material_id")
@@ -123,10 +139,14 @@ def downgrade() -> None:
             "fk_identity_profiles_current_primary_material_id_identity_materials",
             type_="foreignkey",
         )
-        batch_op.drop_index(batch_op.f("ix_identity_profiles_current_primary_material_id"))
+        batch_op.drop_index(
+            batch_op.f("ix_identity_profiles_current_primary_material_id")
+        )
         batch_op.drop_column("current_primary_material_id")
 
-    op.drop_index(op.f("ix_identity_materials_identity_id"), table_name="identity_materials")
+    op.drop_index(
+        op.f("ix_identity_materials_identity_id"), table_name="identity_materials"
+    )
     op.drop_table("identity_materials")
 
 
@@ -135,11 +155,17 @@ def _backfill_identity_materials() -> None:
 
     connection = op.get_bind()
     metadata = sa.MetaData()
-    identity_profiles = sa.Table("identity_profiles", metadata, autoload_with=connection)
-    attachment_assets = sa.Table("attachment_assets", metadata, autoload_with=connection)
+    identity_profiles = sa.Table(
+        "identity_profiles", metadata, autoload_with=connection
+    )
+    attachment_assets = sa.Table(
+        "attachment_assets", metadata, autoload_with=connection
+    )
     batch_tasks = sa.Table("batch_tasks", metadata, autoload_with=connection)
     email_tasks = sa.Table("email_tasks", metadata, autoload_with=connection)
-    identity_materials = sa.Table("identity_materials", metadata, autoload_with=connection)
+    identity_materials = sa.Table(
+        "identity_materials", metadata, autoload_with=connection
+    )
 
     primary_material_by_identity: dict[int, int] = {}
     attachment_material_map: dict[int, int] = {}
@@ -185,7 +211,9 @@ def _backfill_identity_materials() -> None:
         ),
     ).mappings()
     for row in attachment_rows:
-        original_filename = row["file_name"] or Path(row["file_path"]).name or "material"
+        original_filename = (
+            row["file_name"] or Path(row["file_path"]).name or "material"
+        )
         material_id = _insert_material(
             connection,
             identity_materials,
@@ -221,7 +249,9 @@ def _backfill_identity_materials() -> None:
             batch_tasks.update()
             .where(batch_tasks.c.id == row["id"])
             .values(
-                primary_material_id=primary_material_by_identity.get(row["identity_id"]),
+                primary_material_id=primary_material_by_identity.get(
+                    row["identity_id"]
+                ),
                 selected_material_ids=_map_material_ids(
                     row["selected_attachment_ids"],
                     attachment_material_map,
@@ -242,7 +272,9 @@ def _backfill_identity_materials() -> None:
             email_tasks.update()
             .where(email_tasks.c.id == row["id"])
             .values(
-                primary_material_id=primary_material_by_identity.get(row["identity_id"]),
+                primary_material_id=primary_material_by_identity.get(
+                    row["identity_id"]
+                ),
                 selected_material_ids=_map_material_ids(
                     row["selected_attachments"],
                     attachment_material_map,

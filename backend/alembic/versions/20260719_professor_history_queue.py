@@ -41,8 +41,14 @@ def upgrade() -> None:
 
     professor_state_columns = _column_names("imap_professor_sync_states")
     additions = (
-        ("history_start_date", sa.Column("history_start_date", sa.Date(), nullable=True)),
-        ("trigger_reason", sa.Column("trigger_reason", sa.String(length=64), nullable=True)),
+        (
+            "history_start_date",
+            sa.Column("history_start_date", sa.Date(), nullable=True),
+        ),
+        (
+            "trigger_reason",
+            sa.Column("trigger_reason", sa.String(length=64), nullable=True),
+        ),
         ("batch_id", sa.Column("batch_id", sa.String(length=64), nullable=True)),
         ("available_at", sa.Column("available_at", sa.DateTime(), nullable=True)),
         (

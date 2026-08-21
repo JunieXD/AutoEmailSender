@@ -18,20 +18,28 @@ class CrawlJobMetrics:
     duration_seconds: int = 0
 
 
-def build_crawl_job_metrics(job: Any, *, now: datetime | None = None) -> CrawlJobMetrics:
+def build_crawl_job_metrics(
+    job: Any, *, now: datetime | None = None
+) -> CrawlJobMetrics:
     current_run = getattr(job, "current_run", None)
     if current_run is None:
         return CrawlJobMetrics()
     return _build_current_run_metrics(current_run, now=now)
 
 
-def _build_current_run_metrics(current_run: Any, *, now: datetime | None) -> CrawlJobMetrics:
+def _build_current_run_metrics(
+    current_run: Any, *, now: datetime | None
+) -> CrawlJobMetrics:
     duration_seconds = int(getattr(current_run, "active_seconds", 0) or 0)
-    active_started_at = _ensure_datetime(getattr(current_run, "active_started_at", None))
+    active_started_at = _ensure_datetime(
+        getattr(current_run, "active_started_at", None)
+    )
     run_status = getattr(current_run, "status", None)
     if run_status == CrawlJobStatus.RUNNING.value and active_started_at is not None:
         resolved_now = _ensure_datetime(now) or utc_now()
-        duration_seconds += max(0, int((resolved_now - active_started_at).total_seconds()))
+        duration_seconds += max(
+            0, int((resolved_now - active_started_at).total_seconds())
+        )
 
     return CrawlJobMetrics(
         input_tokens=int(getattr(current_run, "input_tokens", 0) or 0),

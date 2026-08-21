@@ -57,12 +57,18 @@ def list_professors(
             help="按姓名、邮箱、学校、方向或备注搜索；--search 含义更明确。",
         ),
     ] = None,
-    archived: Annotated[str, typer.Option("--archived", help="active、archived 或 all。") ]="active",
+    archived: Annotated[
+        str, typer.Option("--archived", help="active、archived 或 all。")
+    ] = "active",
     tag_id: Annotated[int | None, typer.Option("--tag-id", min=1)] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。") ] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -79,7 +85,12 @@ def list_professors(
         fields=fields,
         human_formatter=lambda data: format_page(
             data,
-            columns=(("id", "ID"), ("name", "姓名"), ("email", "邮箱"), ("university", "学校")),
+            columns=(
+                ("id", "ID"),
+                ("name", "姓名"),
+                ("email", "邮箱"),
+                ("university", "学校"),
+            ),
         ),
     )
 
@@ -144,8 +155,8 @@ def _download_professor_file(
 def export_professors(
     ctx: typer.Context,
     output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。")],
-    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。")] = "xlsx",
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     _download_professor_file(
         ctx,
@@ -165,8 +176,8 @@ def download_professor_template(
         Path,
         typer.Option("--output", "-o", help="空白导入模板保存位置。"),
     ],
-    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。") ] = "xlsx",
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    format: Annotated[str, typer.Option("--format", help="xlsx 或 csv。")] = "xlsx",
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     _download_professor_file(
         ctx,
@@ -195,7 +206,9 @@ def prepare_professor_import(
             supports_filter=False,
             supports_output_file=False,
         )
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        mime_type = (
+            mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        )
         with file_path.open("rb") as import_file:
             request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             context.request_id = request_id
@@ -239,7 +252,9 @@ def prepare_professor_import(
 @community_app.command("catalog")
 def get_community_catalog(
     ctx: typer.Context,
-    refresh: Annotated[bool, typer.Option("--refresh", help="从社区数据源刷新目录。") ] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="从社区数据源刷新目录。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -255,12 +270,16 @@ def get_community_catalog(
 @community_app.command("records")
 def list_community_records(
     ctx: typer.Context,
-    dataset_version: Annotated[str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")],
+    dataset_version: Annotated[
+        str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")
+    ],
     unit_paths: Annotated[
         list[str],
         typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
     ] = [],
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -278,12 +297,16 @@ def list_community_records(
 @community_app.command("preview")
 def preview_community_import(
     ctx: typer.Context,
-    dataset_version: Annotated[str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")],
+    dataset_version: Annotated[
+        str, typer.Option("--dataset-version", help="catalog 返回的数据版本。")
+    ],
     unit_paths: Annotated[
         list[str],
         typer.Option("--unit-path", help="重复指定 catalog 中的学院分片路径。"),
     ] = [],
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
     record_ids: Annotated[
         list[str],
         typer.Option("--record-id", help="重复指定要比对的社区导师 ID。"),
@@ -363,8 +386,10 @@ def export_community_share_package(
         list[int],
         typer.Option("--professor-id", min=1, help="重复指定要导出的本地导师 ID。"),
     ] = [],
-    output: Annotated[Path, typer.Option("--output", "-o", help="导出文件保存位置。") ] = Path("community-share.xlsx"),
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="导出文件保存位置。")
+    ] = Path("community-share.xlsx"),
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     context = cli_context(ctx)
     command = "professors.community.export-package"
@@ -387,7 +412,11 @@ def export_community_share_package(
         client = AgentApiClient(timeout=90.0)
         content = client.download_bytes(
             "/api/agent/v1/community-mentors/share-package",
-            params={"professor_ids": ",".join(str(professor_id) for professor_id in professor_ids)},
+            params={
+                "professor_ids": ",".join(
+                    str(professor_id) for professor_id in professor_ids
+                )
+            },
         )
         try:
             with destination.open("wb" if force else "xb") as file:
@@ -444,7 +473,9 @@ def create_professor(
     university: Annotated[str | None, typer.Option("--university")] = None,
     school: Annotated[str | None, typer.Option("--school")] = None,
     department: Annotated[str | None, typer.Option("--department")] = None,
-    research_direction: Annotated[str | None, typer.Option("--research-direction")] = None,
+    research_direction: Annotated[
+        str | None, typer.Option("--research-direction")
+    ] = None,
     recent_papers: Annotated[list[str], typer.Option("--recent-paper")] = [],
     profile_url: Annotated[str | None, typer.Option("--profile-url")] = None,
     source_url: Annotated[str | None, typer.Option("--source-url")] = None,
@@ -483,7 +514,9 @@ def update_professor(
     university: Annotated[str | None, typer.Option("--university")] = None,
     school: Annotated[str | None, typer.Option("--school")] = None,
     department: Annotated[str | None, typer.Option("--department")] = None,
-    research_direction: Annotated[str | None, typer.Option("--research-direction")] = None,
+    research_direction: Annotated[
+        str | None, typer.Option("--research-direction")
+    ] = None,
     recent_papers: Annotated[list[str] | None, typer.Option("--recent-paper")] = None,
     clear_recent_papers: Annotated[bool, typer.Option("--clear-recent-papers")] = False,
     profile_url: Annotated[str | None, typer.Option("--profile-url")] = None,
@@ -550,7 +583,7 @@ def prepare_bulk_professor_archive(
             "--selection-filter",
             help=(
                 "按结构化 JSON 条件选择导师；例如 "
-                "{\"name\":{\"contains_script\":\"latin\"}}。"
+                '{"name":{"contains_script":"latin"}}。'
                 "服务端会把匹配到的 ID 冻结进确认计划。"
             ),
         ),
@@ -565,11 +598,17 @@ def prepare_bulk_professor_archive(
     ] = [],
 ) -> None:
     if archived not in {"active", "archived", "all"}:
-        raise typer.BadParameter("--archived 仅支持 active、archived 或 all。", param_hint="--archived")
+        raise typer.BadParameter(
+            "--archived 仅支持 active、archived 或 all。", param_hint="--archived"
+        )
     if len(set(professor_ids)) != len(professor_ids):
-        raise typer.BadParameter("--professor-id 不能包含重复 ID。", param_hint="--professor-id")
+        raise typer.BadParameter(
+            "--professor-id 不能包含重复 ID。", param_hint="--professor-id"
+        )
     if len(set(exclude_ids)) != len(exclude_ids):
-        raise typer.BadParameter("--exclude-id 不能包含重复 ID。", param_hint="--exclude-id")
+        raise typer.BadParameter(
+            "--exclude-id 不能包含重复 ID。", param_hint="--exclude-id"
+        )
     if professor_ids and selection_filter is not None:
         raise typer.BadParameter(
             "--professor-id 与 --selection-filter 不能同时使用。",
@@ -646,7 +685,7 @@ def present_professor_selection(
             "--selection-filter",
             help=(
                 "按结构化 JSON 条件冻结选择；例如 "
-                "{\"name\":{\"contains_script\":\"latin\"}}。"
+                '{"name":{"contains_script":"latin"}}。'
             ),
         ),
     ] = None,
@@ -660,7 +699,9 @@ def present_professor_selection(
     ] = [],
     archived: Annotated[
         str,
-        typer.Option("--archived", help="筛选或 --all 的范围：active、archived 或 all。"),
+        typer.Option(
+            "--archived", help="筛选或 --all 的范围：active、archived 或 all。"
+        ),
     ] = "active",
     surface: Annotated[
         ProfessorUiSurface,
@@ -685,9 +726,13 @@ def present_professor_selection(
             param_hint="--archived",
         )
     if len(set(professor_ids)) != len(professor_ids):
-        raise typer.BadParameter("--professor-id 不能包含重复 ID。", param_hint="--professor-id")
+        raise typer.BadParameter(
+            "--professor-id 不能包含重复 ID。", param_hint="--professor-id"
+        )
     if len(set(exclude_ids)) != len(exclude_ids):
-        raise typer.BadParameter("--exclude-id 不能包含重复 ID。", param_hint="--exclude-id")
+        raise typer.BadParameter(
+            "--exclude-id 不能包含重复 ID。", param_hint="--exclude-id"
+        )
     selection_inputs = sum(
         (bool(professor_ids), selection_filter is not None, all_professors),
     )
@@ -697,7 +742,9 @@ def present_professor_selection(
             param_hint="--professor-id",
         )
     if surface is ProfessorUiSurface.HOME and identity_id is None:
-        raise typer.BadParameter("--surface home 必须提供 --identity-id。", param_hint="--identity-id")
+        raise typer.BadParameter(
+            "--surface home 必须提供 --identity-id。", param_hint="--identity-id"
+        )
     if surface is ProfessorUiSurface.MANAGEMENT and identity_id is not None:
         raise typer.BadParameter(
             "--surface management 不能提供 --identity-id。",
@@ -790,7 +837,9 @@ def list_professor_tags(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -885,7 +934,9 @@ def prepare_bulk_professor_tags(
     ] = "add",
     tag_ids: Annotated[
         list[int],
-        typer.Option("--tag-id", min=1, help="重复指定目标标签；replace 可不提供以清空。"),
+        typer.Option(
+            "--tag-id", min=1, help="重复指定目标标签；replace 可不提供以清空。"
+        ),
     ] = [],
 ) -> None:
     run_write_command(

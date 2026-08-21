@@ -55,7 +55,9 @@ class IdentityProfile(Base):
         nullable=False,
         server_default=text("'llm'"),
     )
-    outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outreach_template_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_outreach_template_id: Mapped[int | None] = mapped_column(
@@ -124,11 +126,13 @@ class IdentityProfile(Base):
         back_populates="identity",
         cascade="all, delete-orphan",
     )
-    professor_match_results: Mapped[list["IdentityProfessorMatchResult"]] = relationship(
-        back_populates="identity",
-        cascade="all, delete-orphan",
-        foreign_keys="IdentityProfessorMatchResult.identity_id",
-        passive_deletes=True,
+    professor_match_results: Mapped[list["IdentityProfessorMatchResult"]] = (
+        relationship(
+            back_populates="identity",
+            cascade="all, delete-orphan",
+            foreign_keys="IdentityProfessorMatchResult.identity_id",
+            passive_deletes=True,
+        )
     )
     batch_tasks: Mapped[list["BatchTask"]] = relationship(
         back_populates="identity",

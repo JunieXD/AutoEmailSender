@@ -122,7 +122,9 @@ class ProfessorScheduleStatusTests(unittest.TestCase):
 
         self.assertEqual(active_ids, set(ids_by_name.values()))
 
-    def test_active_schedule_excludes_incomplete_terminal_paused_and_other_identity_tasks(self) -> None:
+    def test_active_schedule_excludes_incomplete_terminal_paused_and_other_identity_tasks(
+        self,
+    ) -> None:
         async def scenario() -> tuple[set[int], dict[str, int]]:
             async with self.session_factory() as session:
                 identity = self._build_identity("current")

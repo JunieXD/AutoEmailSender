@@ -64,13 +64,17 @@ async def create_single_professor_information_enrichment(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="该导师已有信息补全正在进行") from exc
+        raise HTTPException(
+            status_code=409, detail="该导师已有信息补全正在进行"
+        ) from exc
     except ValueError as exc:
         detail = str(exc)
         status_code_value = 404 if detail == "导师不存在" else 422
         raise HTTPException(status_code=status_code_value, detail=detail) from exc
     result = await get_professor_information_enrichment_job(session, job_id)
-    if result is None:  # pragma: no cover - committed job cannot disappear in normal execution
+    if (
+        result is None
+    ):  # pragma: no cover - committed job cannot disappear in normal execution
         raise HTTPException(status_code=404, detail="信息补全任务不存在")
     return result
 
@@ -115,18 +119,20 @@ async def list_information_enrichment_jobs_page(
     unpaged: bool = Query(default=False),
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorInformationEnrichmentJobsPageRead:
-    jobs, total_count, current_total_count = (
-        await list_professor_information_enrichment_jobs_page(
-            session,
-            view=view,
-            offset=offset,
-            limit=limit,
-            keyword=keyword,
-            status=status_filter,
-            sort_key=sort_key,
-            sort_direction=sort_direction,
-            unpaged=unpaged,
-        )
+    (
+        jobs,
+        total_count,
+        current_total_count,
+    ) = await list_professor_information_enrichment_jobs_page(
+        session,
+        view=view,
+        offset=offset,
+        limit=limit,
+        keyword=keyword,
+        status=status_filter,
+        sort_key=sort_key,
+        sort_direction=sort_direction,
+        unpaged=unpaged,
     )
     return ProfessorInformationEnrichmentJobsPageRead(
         items=jobs,
@@ -153,7 +159,9 @@ async def create_batch_information_enrichment_job(
             name=payload.name,
         )
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="部分导师已有信息补全正在进行，请重试") from exc
+        raise HTTPException(
+            status_code=409, detail="部分导师已有信息补全正在进行，请重试"
+        ) from exc
     except ValueError as exc:
         detail = str(exc)
         status_code_value = 404 if detail == "导师不存在" else 422

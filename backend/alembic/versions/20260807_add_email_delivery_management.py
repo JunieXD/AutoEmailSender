@@ -28,8 +28,7 @@ def _email_task_columns() -> set[str]:
 
 def _email_task_indexes() -> set[str]:
     return {
-        index["name"]
-        for index in sa.inspect(op.get_bind()).get_indexes("email_tasks")
+        index["name"] for index in sa.inspect(op.get_bind()).get_indexes("email_tasks")
     }
 
 
@@ -75,12 +74,10 @@ def upgrade() -> None:
             ["scheduled_at", "id"],
             unique=False,
             sqlite_where=sa.text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
             postgresql_where=sa.text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
         )
     if "ix_email_tasks_delivery_attention_updated" not in indexes:
@@ -90,12 +87,10 @@ def upgrade() -> None:
             ["updated_at", "id"],
             unique=False,
             sqlite_where=sa.text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
             postgresql_where=sa.text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
         )
 

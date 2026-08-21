@@ -15,7 +15,9 @@ from app.core.agent_api_errors import (
 
 
 class AgentApiErrorTests(unittest.TestCase):
-    def test_agent_http_exception_handler_returns_the_common_error_envelope(self) -> None:
+    def test_agent_http_exception_handler_returns_the_common_error_envelope(
+        self,
+    ) -> None:
         request = Request(
             {
                 "type": "http",

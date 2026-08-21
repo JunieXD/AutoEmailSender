@@ -22,7 +22,9 @@ from app.modules.professors.public import (
 
 
 class ProfessorManagementServiceTests(unittest.TestCase):
-    def test_email_validation_accepts_common_addresses_and_rejects_invalid_values(self) -> None:
+    def test_email_validation_accepts_common_addresses_and_rejects_invalid_values(
+        self,
+    ) -> None:
         valid_values = [
             "zhang@example.edu",
             "li.wei+lab@cs.example.edu",
@@ -45,10 +47,16 @@ class ProfessorManagementServiceTests(unittest.TestCase):
                 self.assertFalse(is_valid_professor_email(value))
 
     def test_normalize_professor_email_collapses_obfuscated_domain_dots(self) -> None:
-        self.assertEqual(normalize_professor_email("wjchen@sei.ecnu...cn"), "wjchen@sei.ecnu.cn")
-        self.assertEqual(normalize_professor_email(" WJCHEN@SEI.ECNU...CN "), "wjchen@sei.ecnu.cn")
+        self.assertEqual(
+            normalize_professor_email("wjchen@sei.ecnu...cn"), "wjchen@sei.ecnu.cn"
+        )
+        self.assertEqual(
+            normalize_professor_email(" WJCHEN@SEI.ECNU...CN "), "wjchen@sei.ecnu.cn"
+        )
 
-    def test_normalize_professor_email_handles_simple_obfuscation_characters(self) -> None:
+    def test_normalize_professor_email_handles_simple_obfuscation_characters(
+        self,
+    ) -> None:
         cases = {
             "wjchen&#64;sei.ecnu.edu.cn": "wjchen@sei.ecnu.edu.cn",
             "wjchen＠sei．ecnu．edu．cn": "wjchen@sei.ecnu.edu.cn",
@@ -109,7 +117,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
 
         self.assertIsNone(normalized["personal_note"])
 
-    def test_professor_payload_rejects_blank_name_or_email_before_service_validation(self) -> None:
+    def test_professor_payload_rejects_blank_name_or_email_before_service_validation(
+        self,
+    ) -> None:
         for field_name, payload in [
             ("name", {"name": " ", "email": "zhang@example.edu"}),
             ("email", {"name": "张明远", "email": " "}),
@@ -118,7 +128,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     ProfessorUpsertPayload(**payload)
 
-    def test_parse_csv_import_skips_help_and_example_rows_counts_failures_and_deduplicates_by_email(self) -> None:
+    def test_parse_csv_import_skips_help_and_example_rows_counts_failures_and_deduplicates_by_email(
+        self,
+    ) -> None:
         csv_content = "\ufeff# 导师导入模板\n".encode("utf-8")
         csv_content += (
             ",".join(PROFESSOR_TEMPLATE_COLUMNS)
@@ -166,7 +178,16 @@ class ProfessorManagementServiceTests(unittest.TestCase):
 
         self.assertEqual(
             parsed.data["zhang@example.edu"]["recent_papers"],
-            ["Paper1", "Paper2", "Paper3", "Paper4", "Paper5", "Paper6", "Paper7", "Paper8"],
+            [
+                "Paper1",
+                "Paper2",
+                "Paper3",
+                "Paper4",
+                "Paper5",
+                "Paper6",
+                "Paper7",
+                "Paper8",
+            ],
         )
 
     def test_parse_csv_import_reads_tags_from_supported_separators(self) -> None:
@@ -278,7 +299,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(parsed.failed_count, 1)
         self.assertEqual(parsed.data, {})
 
-    def test_parse_xlsx_import_finds_header_after_help_rows_and_reads_sparse_rows(self) -> None:
+    def test_parse_xlsx_import_finds_header_after_help_rows_and_reads_sparse_rows(
+        self,
+    ) -> None:
         workbook = Workbook()
         sheet = workbook.active
         sheet.append(["# 帮助说明"])
@@ -294,12 +317,16 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(parsed.data["li@example.edu"]["university"], "示例大学")
         self.assertEqual(parsed.data["li@example.edu"]["recent_papers"], [])
 
-    def test_parse_import_rejects_unsupported_extension_missing_columns_bad_encoding_and_corrupt_xlsx(self) -> None:
+    def test_parse_import_rejects_unsupported_extension_missing_columns_bad_encoding_and_corrupt_xlsx(
+        self,
+    ) -> None:
         with self.assertRaisesRegex(ValueError, "仅支持导入 csv 或 xlsx 文件"):
             parse_professor_import_file("professors.txt", b"name,email\n")
 
         with self.assertRaisesRegex(ValueError, "导入文件缺少必要列"):
-            parse_professor_import_file("professors.csv", b"name,email\nzhang,zhang@example.edu\n")
+            parse_professor_import_file(
+                "professors.csv", b"name,email\nzhang,zhang@example.edu\n"
+            )
 
         with self.assertRaisesRegex(ValueError, "CSV 文件请使用 UTF-8 编码"):
             parse_professor_import_file("professors.csv", b"\xff\xfe\x00")
@@ -307,7 +334,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "XLSX 文件无法读取"):
             parse_professor_import_file("professors.xlsx", b"not an xlsx file")
 
-    def test_build_professor_template_supports_csv_and_xlsx_and_rejects_unknown_format(self) -> None:
+    def test_build_professor_template_supports_csv_and_xlsx_and_rejects_unknown_format(
+        self,
+    ) -> None:
         csv_content, csv_media_type, csv_filename = build_professor_template("csv")
         xlsx_content, xlsx_media_type, xlsx_filename = build_professor_template("xlsx")
 
@@ -325,7 +354,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         )
         self.assertEqual(xlsx_filename, "professors_import_template.xlsx")
         self.assertGreater(len(xlsx_content), 100)
-        workbook = load_workbook(io.BytesIO(xlsx_content), read_only=True, data_only=True)
+        workbook = load_workbook(
+            io.BytesIO(xlsx_content), read_only=True, data_only=True
+        )
         rows = list(workbook.active.iter_rows(values_only=True))
         self.assertIn("tags", rows[-2])
         self.assertIn("personal_note", rows[-2])
@@ -363,7 +394,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         parsed = parse_professor_import_file(filename, content)
         self.assertEqual(parsed.failed_count, 0)
         self.assertEqual(parsed.data["li@example.edu"]["name"], "李伟")
-        self.assertEqual(parsed.data["li@example.edu"]["recent_papers"], ["Paper A", "Paper B"])
+        self.assertEqual(
+            parsed.data["li@example.edu"]["recent_papers"], ["Paper A", "Paper B"]
+        )
         self.assertEqual(parsed.data["li@example.edu"]["personal_note"], "导出备注")
 
     def test_build_professor_export_xlsx_can_be_imported_without_changes(self) -> None:
@@ -398,7 +431,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
 
         parsed = parse_professor_import_file(filename, content)
         self.assertEqual(parsed.failed_count, 0)
-        self.assertEqual(parsed.data["wang@example.edu"]["source_url"], "https://example.edu/faculty")
+        self.assertEqual(
+            parsed.data["wang@example.edu"]["source_url"], "https://example.edu/faculty"
+        )
         self.assertEqual(parsed.data["wang@example.edu"]["personal_note"], "XLSX 备注")
 
     def test_build_professor_export_empty_file_and_unknown_format(self) -> None:
@@ -441,7 +476,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(csv_rows[1][11], "'=private note")
 
         xlsx_content, _, _ = build_professor_export([professor], "xlsx")
-        workbook = load_workbook(io.BytesIO(xlsx_content), read_only=True, data_only=True)
+        workbook = load_workbook(
+            io.BytesIO(xlsx_content), read_only=True, data_only=True
+        )
         rows = list(workbook.active.iter_rows(values_only=True))
         self.assertEqual(rows[1][0], "'=cmd|' /C calc'!A0")
         self.assertEqual(rows[1][2], "'+教授")
@@ -451,7 +488,9 @@ class ProfessorManagementServiceTests(unittest.TestCase):
         self.assertEqual(rows[1][7], "'=Paper A|'+Paper B|Normal Paper")
         self.assertEqual(rows[1][11], "'=private note")
 
-    def test_build_professor_export_includes_tags_column_for_round_trip_import(self) -> None:
+    def test_build_professor_export_includes_tags_column_for_round_trip_import(
+        self,
+    ) -> None:
         tag = type(
             "Tag",
             (),

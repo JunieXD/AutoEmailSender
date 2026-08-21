@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.core.time import utc_now
 
+
 def write_startup_phase_log(phase: str, *, detail: str | None = None) -> None:
     data_dir = os.environ.get("AUTO_EMAIL_SENDER_DATA_DIR")
     if not data_dir:
@@ -24,5 +25,3 @@ def write_startup_phase_log(phase: str, *, detail: str | None = None) -> None:
 
 def _format_detail(detail: str | None) -> str:
     return "" if detail is None else f" detail={detail}"
-
-

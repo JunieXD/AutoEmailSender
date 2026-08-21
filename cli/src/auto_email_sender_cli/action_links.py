@@ -172,7 +172,12 @@ def _present_in_app_target(
     if source.startswith("communications.threads."):
         thread_id = _string_identifier(item.get("thread_id") or item.get("id"))
         if thread_id is not None:
-            return "communications.threads.present", {"thread_id": thread_id}, [], "invoke"
+            return (
+                "communications.threads.present",
+                {"thread_id": thread_id},
+                [],
+                "invoke",
+            )
         return None
     if source.startswith("crawler.jobs."):
         job_id = _job_identifier(
@@ -182,12 +187,17 @@ def _present_in_app_target(
         if job_id is not None:
             return "crawler.jobs.present", {"job_id": job_id}, [], "invoke"
         return None
-    task_id = _positive_integer(item.get("task_id")) or _positive_integer(item.get("id"))
+    task_id = _positive_integer(item.get("task_id")) or _positive_integer(
+        item.get("id")
+    )
     if task_id is None:
         return None
     if source.startswith("tasks."):
         return "tasks.present", {"task_id": task_id}, [], "invoke"
-    if source.startswith(("drafts.", "workspaces.")) or source == "campaigns.item-thread":
+    if (
+        source.startswith(("drafts.", "workspaces."))
+        or source == "campaigns.item-thread"
+    ):
         return "drafts.present", {"task_id": task_id}, [], "invoke"
     return None
 
@@ -276,7 +286,12 @@ def _crawler_target(
     if action == "read":
         return "crawler.jobs.get", arguments, [], "invoke"
     if action == "wait":
-        return "wait", {"resource": "crawler.jobs", "resource_id": [job_id]}, [], "invoke"
+        return (
+            "wait",
+            {"resource": "crawler.jobs", "resource_id": [job_id]},
+            [],
+            "invoke",
+        )
     if action in {"cancel", "pause", "resume", "resume-review", "archive", "restore"}:
         command = {
             "archive": "crawler.jobs.delete",
@@ -315,7 +330,12 @@ def _campaign_target(
             )
         return "campaigns.get", campaign_arguments, [], "invoke"
     if action == "wait":
-        return "wait", {"resource": "campaigns", "resource_id": [campaign_id]}, [], "invoke"
+        return (
+            "wait",
+            {"resource": "campaigns", "resource_id": [campaign_id]},
+            [],
+            "invoke",
+        )
     if action == "start-drafts":
         if item_id is not None:
             return None
@@ -376,7 +396,9 @@ def _delivery_target(
     action: str,
     item: Mapping[str, object],
 ) -> tuple[str, dict[str, object], list[str], str] | None:
-    task_id = _positive_integer(item.get("task_id")) or _positive_integer(item.get("id"))
+    task_id = _positive_integer(item.get("task_id")) or _positive_integer(
+        item.get("id")
+    )
     if task_id is None:
         return None
     if action == "reschedule":

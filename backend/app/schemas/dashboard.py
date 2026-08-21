@@ -57,7 +57,9 @@ class DashboardMentorMatchBucketRead(ApiSchema):
 
 
 class DashboardProfileCompletenessRead(ApiSchema):
-    key: Literal["email", "research_direction", "recent_papers", "profile_url", "complete"]
+    key: Literal[
+        "email", "research_direction", "recent_papers", "profile_url", "complete"
+    ]
     label: str
     count: int = 0
     total: int = 0
@@ -120,14 +122,28 @@ class DashboardMentorActionItemRead(ApiSchema):
 class DashboardMentorSectionRead(ApiSchema):
     summary: DashboardMentorSummaryRead
     match_context: DashboardMatchContextRead
-    match_score_distribution: list[DashboardMentorMatchBucketRead] = Field(default_factory=list)
-    profile_completeness: list[DashboardProfileCompletenessRead] = Field(default_factory=list)
-    profile_completeness_distribution: list[DashboardProfileCompletenessBucketRead] = Field(default_factory=list)
-    school_distribution: list[DashboardSchoolDistributionRead] = Field(default_factory=list)
+    match_score_distribution: list[DashboardMentorMatchBucketRead] = Field(
+        default_factory=list
+    )
+    profile_completeness: list[DashboardProfileCompletenessRead] = Field(
+        default_factory=list
+    )
+    profile_completeness_distribution: list[DashboardProfileCompletenessBucketRead] = (
+        Field(default_factory=list)
+    )
+    school_distribution: list[DashboardSchoolDistributionRead] = Field(
+        default_factory=list
+    )
     school_filters: list[DashboardSchoolFilterRead] = Field(default_factory=list)
-    active_filter: DashboardMentorFilterRead = Field(default_factory=DashboardMentorFilterRead)
-    high_score_uncontacted: list[DashboardMentorActionItemRead] = Field(default_factory=list)
-    incomplete_professors: list[DashboardMentorActionItemRead] = Field(default_factory=list)
+    active_filter: DashboardMentorFilterRead = Field(
+        default_factory=DashboardMentorFilterRead
+    )
+    high_score_uncontacted: list[DashboardMentorActionItemRead] = Field(
+        default_factory=list
+    )
+    incomplete_professors: list[DashboardMentorActionItemRead] = Field(
+        default_factory=list
+    )
 
 
 class DashboardEmailSummaryRead(ApiSchema):
@@ -213,10 +229,14 @@ class DashboardEmailFollowUpRead(ApiSchema):
 class DashboardEmailSectionRead(ApiSchema):
     summary: DashboardEmailSummaryRead
     trend_30_days: list[DashboardEmailTrendBucketRead] = Field(default_factory=list)
-    outreach_coverage: DashboardOutreachCoverageRead = Field(default_factory=DashboardOutreachCoverageRead)
+    outreach_coverage: DashboardOutreachCoverageRead = Field(
+        default_factory=DashboardOutreachCoverageRead
+    )
     reply_wait: DashboardReplyWaitRead = Field(default_factory=DashboardReplyWaitRead)
     funnel: list[DashboardEmailFunnelBucketRead] = Field(default_factory=list)
-    status_distribution: list[DashboardEmailStatusBucketRead] = Field(default_factory=list)
+    status_distribution: list[DashboardEmailStatusBucketRead] = Field(
+        default_factory=list
+    )
     follow_ups: list[DashboardEmailFollowUpRead] = Field(default_factory=list)
 
 

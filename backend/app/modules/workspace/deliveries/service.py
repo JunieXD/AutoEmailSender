@@ -116,7 +116,8 @@ def _history_condition():
         EmailTask.batch_send_canceled_at.is_not(None),
         and_(
             EmailTask.status == EmailTaskStatus.CANCELED.value,
-            EmailTask.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.USER_REMOVED.value,
         ),
     )
 
@@ -141,13 +142,17 @@ def _status_condition(status: str):
                     EmailTask.scheduled_at.is_not(None),
                 ),
             ),
-            or_(BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value),
+            or_(
+                BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value
+            ),
         )
     if status == "send_asap":
         return and_(
             EmailTask.status == EmailTaskStatus.APPROVED.value,
             EmailTask.scheduled_at.is_(None),
-            or_(BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value),
+            or_(
+                BatchTask.id.is_(None), BatchTask.status != BatchTaskStatus.PAUSED.value
+            ),
         )
     if status == "batch_paused":
         return and_(
@@ -225,10 +230,14 @@ def _base_filter_conditions(
         pattern = f"%{_escape_like(normalized_query)}%"
         field_conditions = []
         if "recipient_name" in search_fields:
-            field_conditions.append(func.lower(Professor.name).like(pattern, escape="\\"))
+            field_conditions.append(
+                func.lower(Professor.name).like(pattern, escape="\\")
+            )
         if "recipient_email" in search_fields:
             field_conditions.append(
-                func.lower(func.coalesce(Professor.email, "")).like(pattern, escape="\\"),
+                func.lower(func.coalesce(Professor.email, "")).like(
+                    pattern, escape="\\"
+                ),
             )
         if "subject" in search_fields:
             field_conditions.extend(
@@ -245,7 +254,9 @@ def _base_filter_conditions(
             )
         if "batch_name" in search_fields:
             field_conditions.append(
-                func.lower(func.coalesce(BatchTask.name, "")).like(pattern, escape="\\"),
+                func.lower(func.coalesce(BatchTask.name, "")).like(
+                    pattern, escape="\\"
+                ),
             )
         conditions.append(or_(*field_conditions))
     return conditions
@@ -260,7 +271,9 @@ def _joined_from(
     if join_professor:
         statement = statement.join(Professor, Professor.id == EmailTask.professor_id)
     if join_batch:
-        statement = statement.outerjoin(BatchTask, BatchTask.id == EmailTask.batch_task_id)
+        statement = statement.outerjoin(
+            BatchTask, BatchTask.id == EmailTask.batch_task_id
+        )
     return statement
 
 
@@ -411,14 +424,13 @@ async def list_email_deliveries(
             )
         ).all()
         material_sizes.update(
-            {
-                material_id: max(0, size_bytes)
-                for material_id, size_bytes in rows
-            },
+            {material_id: max(0, size_bytes) for material_id, size_bytes in rows},
         )
 
     return EmailDeliveryListRead(
-        items=[_serialize_delivery(task, material_sizes=material_sizes) for task in tasks],
+        items=[
+            _serialize_delivery(task, material_sizes=material_sizes) for task in tasks
+        ],
         counts=counts,
         page=safe_page,
         page_size=page_size,
@@ -443,10 +455,14 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
     if task.status == EmailTaskStatus.SCHEDULE_MISSED.value:
         return "schedule_missed", "错过计划", "应用未在计划时间运行，请重新决定发送时间"
     if task.status == EmailTaskStatus.CANCELED.value:
-        if task.cancellation_reason in {
-            EmailTaskCancellationReason.BATCH_STOPPED.value,
-            EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
-        } and (task.last_error or "").strip():
+        if (
+            task.cancellation_reason
+            in {
+                EmailTaskCancellationReason.BATCH_STOPPED.value,
+                EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+            }
+            and (task.last_error or "").strip()
+        ):
             return (
                 "draft_failed",
                 "草稿生成失败",
@@ -467,7 +483,10 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
                 "批量任务已终止",
                 "所属批量任务已终止，因此这封邮件未发送",
             )
-    if task.batch_task is not None and task.batch_task.status == BatchTaskStatus.PAUSED.value:
+    if (
+        task.batch_task is not None
+        and task.batch_task.status == BatchTaskStatus.PAUSED.value
+    ):
         return "batch_paused", "批次已暂停", "恢复所属批次后继续执行"
     if task.status == EmailTaskStatus.APPROVED.value:
         if task.scheduled_at is not None:
@@ -514,7 +533,9 @@ def _serialize_delivery(
         identity_id=task.identity_id,
         identity_name=task.identity.profile_name,
         sender_email=task.identity.email_address,
-        subject=task.approved_subject or task.generated_subject or task.outreach_template_subject,
+        subject=task.approved_subject
+        or task.generated_subject
+        or task.outreach_template_subject,
         attachment_count=len(selected_material_ids),
         attachment_size_bytes=sum(
             material_sizes.get(material_id, 0) for material_id in selected_material_ids
@@ -590,7 +611,9 @@ async def reschedule_email_delivery(
     next_scheduled_at = scheduled_at.astimezone(UTC)
     now = utc_now()
     if next_scheduled_at < now + MINIMUM_RESCHEDULE_DELAY:
-        raise HTTPException(status_code=422, detail="新的发送时间必须晚于当前时间至少 1 分钟")
+        raise HTTPException(
+            status_code=422, detail="新的发送时间必须晚于当前时间至少 1 分钟"
+        )
 
     if task.scheduled_at is not None:
         task.last_scheduled_at = task.scheduled_at
@@ -656,7 +679,9 @@ async def send_email_delivery_now(
             EmailTaskStatus.SCHEDULE_MISSED.value,
             EmailTaskStatus.SEND_FAILED.value,
         }:
-            raise HTTPException(status_code=409, detail="邮件已进入其他状态，不能立即发送")
+            raise HTTPException(
+                status_code=409, detail="邮件已进入其他状态，不能立即发送"
+            )
         task.last_scheduled_at = task.scheduled_at or task.last_scheduled_at
         task.scheduled_at = None
         task.schedule_canceled_at = None

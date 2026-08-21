@@ -9,7 +9,9 @@ from app.modules.matching.public import build_draft_email, estimate_match_score
 
 
 class MatchingServiceTests(unittest.TestCase):
-    def test_estimate_match_score_is_deterministic_and_reports_overlapping_terms(self) -> None:
+    def test_estimate_match_score_is_deterministic_and_reports_overlapping_terms(
+        self,
+    ) -> None:
         identity = IdentityProfile(
             name="王同学",
             email_address="sender@example.com",
@@ -46,7 +48,9 @@ class MatchingServiceTests(unittest.TestCase):
         self.assertIn("检测到关键词重合", first_reason)
         self.assertIn("large", first_reason)
 
-    def test_estimate_match_score_uses_conservative_reason_when_no_terms_overlap(self) -> None:
+    def test_estimate_match_score_uses_conservative_reason_when_no_terms_overlap(
+        self,
+    ) -> None:
         identity = IdentityProfile(
             name="王同学",
             email_address="sender@example.com",
@@ -67,7 +71,9 @@ class MatchingServiceTests(unittest.TestCase):
         self.assertLessEqual(score, 69)
         self.assertEqual(reason, "未检测到明显关键词重合，按基础画像给出保守匹配分数")
 
-    def test_build_draft_email_uses_custom_subject_and_body_without_overwriting_body(self) -> None:
+    def test_build_draft_email_uses_custom_subject_and_body_without_overwriting_body(
+        self,
+    ) -> None:
         identity = IdentityProfile(
             name="王同学",
             email_address="sender@example.com",

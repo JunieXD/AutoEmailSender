@@ -153,11 +153,21 @@ def get_settings() -> Settings:
             "IMAP_SENT_FOLDER_FAILURE_TTL_SECONDS",
             3600,
         ),
-        imap_throttle_backoff_seconds=_get_int_env("IMAP_THROTTLE_BACKOFF_SECONDS", 86400),
-        imap_ensure_state_ttl_seconds=_get_int_env("IMAP_ENSURE_STATE_TTL_SECONDS", 300),
-        match_analysis_job_worker_count=_get_int_env("MATCH_ANALYSIS_JOB_WORKER_COUNT", 1),
-        match_analysis_job_interval_seconds=_get_int_env("MATCH_ANALYSIS_JOB_INTERVAL_SECONDS", 10),
-        match_analysis_job_item_concurrency=_get_int_env("MATCH_ANALYSIS_JOB_ITEM_CONCURRENCY", 5),
+        imap_throttle_backoff_seconds=_get_int_env(
+            "IMAP_THROTTLE_BACKOFF_SECONDS", 86400
+        ),
+        imap_ensure_state_ttl_seconds=_get_int_env(
+            "IMAP_ENSURE_STATE_TTL_SECONDS", 300
+        ),
+        match_analysis_job_worker_count=_get_int_env(
+            "MATCH_ANALYSIS_JOB_WORKER_COUNT", 1
+        ),
+        match_analysis_job_interval_seconds=_get_int_env(
+            "MATCH_ANALYSIS_JOB_INTERVAL_SECONDS", 10
+        ),
+        match_analysis_job_item_concurrency=_get_int_env(
+            "MATCH_ANALYSIS_JOB_ITEM_CONCURRENCY", 5
+        ),
         crawler_worker_count=_get_int_env("CRAWLER_WORKER_COUNT", 1),
         crawler_profile_enrichment_concurrency=_get_int_env(
             "CRAWLER_PROFILE_ENRICHMENT_CONCURRENCY",

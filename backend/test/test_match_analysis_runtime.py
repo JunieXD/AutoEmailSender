@@ -61,7 +61,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.email_task_id = self._run_async(self._create_email_task())
         self.runtime_adaptation_patcher = patch(
             "app.modules.matching.task_analysis.llm_runtime.ensure_llm_runtime_adaptation",
-            new=AsyncMock(return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)),
+            new=AsyncMock(
+                return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None)
+            ),
         )
         self.runtime_adaptation_patcher.start()
 
@@ -188,7 +190,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(canonical_results[0].match_reason, "研究方向接近")
         self.assertEqual(canonical_results[0].latest_analysis_run_id, runs[0].id)
 
-    def test_recalculation_overwrites_one_canonical_identity_professor_result(self) -> None:
+    def test_recalculation_overwrites_one_canonical_identity_professor_result(
+        self,
+    ) -> None:
         generations = [
             llm_runtime.GeneratedMatchEvaluation(
                 result=llm_runtime.MatchEvaluationResult(
@@ -386,7 +390,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(result.risk_points, ())
         self.assertEqual(result.match_keywords, ("当前关键词",))
 
-    def test_shared_group_analysis_uses_source_identity_and_stores_result_under_source(self) -> None:
+    def test_shared_group_analysis_uses_source_identity_and_stores_result_under_source(
+        self,
+    ) -> None:
         (
             source_identity_id,
             active_identity_id,
@@ -450,7 +456,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             ),
         )
 
-    def test_deleting_shared_match_source_removes_canonical_result_and_runs(self) -> None:
+    def test_deleting_shared_match_source_removes_canonical_result_and_runs(
+        self,
+    ) -> None:
         source_identity_id, active_identity_id, _ = self._run_async(
             self._configure_shared_match_source(),
         )
@@ -495,7 +503,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(state["task_match_source_identity_id"], source_identity_id)
         self.assertIsNone(state["resolved_match_reason"])
 
-    def test_deleting_active_identity_cleans_shared_task_references_with_foreign_keys(self) -> None:
+    def test_deleting_active_identity_cleans_shared_task_references_with_foreign_keys(
+        self,
+    ) -> None:
         source_identity_id, active_identity_id, _ = self._run_async(
             self._configure_shared_match_source(),
         )
@@ -629,8 +639,12 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertTrue(deletion_state["is_stale"])
         self.assertEqual(deletion_state["match_score"], 88)
 
-    def test_calculate_match_passes_workflow_session_and_runtime_adaptation(self) -> None:
-        adaptation = llm_runtime.LLMRuntimeAdaptation("responses", {"enable_thinking": False})
+    def test_calculate_match_passes_workflow_session_and_runtime_adaptation(
+        self,
+    ) -> None:
+        adaptation = llm_runtime.LLMRuntimeAdaptation(
+            "responses", {"enable_thinking": False}
+        )
         workflow_sessions: list[AsyncSession] = []
         generation = llm_runtime.GeneratedMatchEvaluation(
             result=llm_runtime.MatchEvaluationResult(
@@ -643,12 +657,16 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             usage=None,
         )
 
-        async def fake_ensure(session: AsyncSession, _profile: object) -> llm_runtime.LLMRuntimeAdaptation:
+        async def fake_ensure(
+            session: AsyncSession, _profile: object
+        ) -> llm_runtime.LLMRuntimeAdaptation:
             self.assertIsInstance(session, AsyncSession)
             workflow_sessions.append(session)
             return adaptation
 
-        async def fake_generate(**kwargs: object) -> llm_runtime.GeneratedMatchEvaluation:
+        async def fake_generate(
+            **kwargs: object,
+        ) -> llm_runtime.GeneratedMatchEvaluation:
             self.assertEqual(len(workflow_sessions), 1)
             self.assertIs(kwargs["session"], workflow_sessions[0])
             self.assertIs(kwargs["adaptation"], adaptation)
@@ -664,7 +682,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 new=AsyncMock(side_effect=fake_generate),
             ) as generate_mock,
         ):
-            result = self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+            result = self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id)
+            )
 
         self.assertIsNotNone(result.run_id)
         adaptation_mock.assert_awaited_once()
@@ -730,7 +750,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         runs = self._run_async(self._list_runs())
         self.assertEqual(runs[0].primary_material_id, current_material_id)
 
-    def test_calculate_match_injects_intended_research_direction_from_runtime_settings(self) -> None:
+    def test_calculate_match_injects_intended_research_direction_from_runtime_settings(
+        self,
+    ) -> None:
         self._run_async(self._set_intended_research_direction("医学自然语言处理"))
         generation = llm_runtime.GeneratedMatchEvaluation(
             result=llm_runtime.MatchEvaluationResult(
@@ -747,14 +769,18 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
             new=AsyncMock(return_value=generation),
         ) as mocked_generate:
-            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id)
+            )
 
         self.assertEqual(
             mocked_generate.await_args.kwargs["intended_research_direction"],
             "医学自然语言处理",
         )
 
-    def test_calculate_match_rejects_when_identity_has_no_default_material(self) -> None:
+    def test_calculate_match_rejects_when_identity_has_no_default_material(
+        self,
+    ) -> None:
         self._run_async(self._clear_identity_primary_material())
 
         with (
@@ -764,7 +790,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             ) as mocked_generate,
             self.assertRaisesRegex(ValueError, "请到个人页设置默认材料"),
         ):
-            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id)
+            )
 
         mocked_generate.assert_not_awaited()
         runs = self._run_async(self._list_runs())
@@ -805,13 +833,21 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
     def test_calculate_match_rejects_when_another_run_is_running(self) -> None:
         self._run_async(self._insert_running_run())
 
-        with self.assertRaisesRegex(MatchAnalysisAlreadyRunningError, "该任务正在分析中"):
-            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+        with self.assertRaisesRegex(
+            MatchAnalysisAlreadyRunningError, "该任务正在分析中"
+        ):
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id)
+            )
 
-    def test_recover_interrupted_match_analysis_runs_marks_running_run_failed(self) -> None:
+    def test_recover_interrupted_match_analysis_runs_marks_running_run_failed(
+        self,
+    ) -> None:
         self._run_async(self._insert_running_run())
 
-        recovered = self._run_async(recover_interrupted_match_analysis_runs(self.session_factory))
+        recovered = self._run_async(
+            recover_interrupted_match_analysis_runs(self.session_factory)
+        )
 
         self.assertEqual(recovered, 1)
         runs = self._run_async(self._list_runs())
@@ -819,10 +855,14 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(runs[0].status, "failed")
         self.assertFalse(runs[0].success)
         self.assertEqual(runs[0].error_kind, "interrupted")
-        self.assertEqual(runs[0].error_message, task_runtime.INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR)
+        self.assertEqual(
+            runs[0].error_message, task_runtime.INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR
+        )
         self.assertIsNotNone(runs[0].finished_at)
 
-    def test_calculate_match_rejects_when_primary_material_has_no_extracted_text(self) -> None:
+    def test_calculate_match_rejects_when_primary_material_has_no_extracted_text(
+        self,
+    ) -> None:
         self._run_async(self._clear_primary_material_text())
 
         with (
@@ -836,7 +876,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             ) as mocked_generate,
             self.assertRaisesRegex(ValueError, "默认材料无法提取文本"),
         ):
-            self._run_async(calculate_task_match_once(self.session_factory, self.email_task_id))
+            self._run_async(
+                calculate_task_match_once(self.session_factory, self.email_task_id)
+            )
 
         mocked_generate.assert_not_awaited()
         runs = self._run_async(self._list_runs())
@@ -906,7 +948,9 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 source_identity.current_primary_material_id,
             )
 
-    async def _load_shared_match_state(self, active_identity_id: int) -> dict[str, object]:
+    async def _load_shared_match_state(
+        self, active_identity_id: int
+    ) -> dict[str, object]:
         async with self.session_factory() as session:
             task = await session.get(EmailTask, self.email_task_id)
             assert task is not None

@@ -44,7 +44,9 @@ class TestComposeMessage(Base):
         server_default=text("'sent'"),
     )
     rfc_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    provider_payload: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),

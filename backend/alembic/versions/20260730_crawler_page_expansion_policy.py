@@ -22,7 +22,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     if "parent_url" not in _column_names():
         with op.batch_alter_table("crawl_page_tasks") as batch_op:
-            batch_op.add_column(sa.Column("parent_url", sa.String(length=1000), nullable=True))
+            batch_op.add_column(
+                sa.Column("parent_url", sa.String(length=1000), nullable=True)
+            )
     if "discovery_reason" not in _column_names():
         with op.batch_alter_table("crawl_page_tasks") as batch_op:
             batch_op.add_column(
@@ -45,7 +47,9 @@ def upgrade() -> None:
             )
     if "allow_expansion" not in _column_names():
         with op.batch_alter_table("crawl_page_tasks") as batch_op:
-            batch_op.add_column(sa.Column("allow_expansion", sa.Boolean(), nullable=True))
+            batch_op.add_column(
+                sa.Column("allow_expansion", sa.Boolean(), nullable=True)
+            )
 
 
 def downgrade() -> None:

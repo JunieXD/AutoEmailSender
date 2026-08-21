@@ -35,8 +35,14 @@ RESEND_CONTENT_REWRITE_SOURCE = "rewrite_source"
 RESEND_CONTENT_REGENERATE = "regenerate"
 
 REASON_LABELS: dict[tuple[str, str | None], str] = {
-    (EmailTaskStatus.CANCELED.value, EmailTaskCancellationReason.SCHEDULE_EXPIRED.value): "发送窗口已过期",
-    (EmailTaskStatus.CANCELED.value, EmailTaskCancellationReason.BATCH_STOPPED.value): "任务中止后未发送",
+    (
+        EmailTaskStatus.CANCELED.value,
+        EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
+    ): "发送窗口已过期",
+    (
+        EmailTaskStatus.CANCELED.value,
+        EmailTaskCancellationReason.BATCH_STOPPED.value,
+    ): "任务中止后未发送",
     (EmailTaskStatus.SEND_FAILED.value, None): "发送失败",
     (EmailTaskStatus.DRAFT_FAILED.value, None): "草稿生成失败",
     (EmailTaskStatus.REVIEW_REQUIRED.value, None): "待审核未发送",
@@ -136,9 +142,13 @@ def reused_content_requires_review(email_task: EmailTask) -> bool:
 def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
     professor = email_task.professor
     if professor is None:
-        return ResendItemDecision(False, False, "导师不存在", "导师已不存在，未带入新任务")
+        return ResendItemDecision(
+            False, False, "导师不存在", "导师已不存在，未带入新任务"
+        )
     if professor.archived_at is not None:
-        return ResendItemDecision(False, False, "导师已归档", "导师已归档，未带入新任务")
+        return ResendItemDecision(
+            False, False, "导师已归档", "导师已归档，未带入新任务"
+        )
     if email_task.batch_send_canceled_at is not None:
         return ResendItemDecision(
             False,
@@ -147,12 +157,17 @@ def decide_resend_item(email_task: EmailTask) -> ResendItemDecision:
             "已在原任务中主动取消发送，未带入新任务",
         )
     if email_task.status in SUCCESS_STATUSES:
-        return ResendItemDecision(False, False, "已成功触达", "已成功触达，未带入新任务")
+        return ResendItemDecision(
+            False, False, "已成功触达", "已成功触达，未带入新任务"
+        )
     if (
         email_task.status == EmailTaskStatus.CANCELED.value
-        and email_task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value
+        and email_task.cancellation_reason
+        == EmailTaskCancellationReason.USER_REMOVED.value
     ):
-        return ResendItemDecision(False, False, "用户已移除", "已从原任务单独移除，未带入新任务")
+        return ResendItemDecision(
+            False, False, "用户已移除", "已从原任务单独移除，未带入新任务"
+        )
     if email_task.status in EXCLUDED_RUNNING_STATUSES:
         return ResendItemDecision(False, False, "发送中", "正在发送的邮件未带入新任务")
     reason_label = REASON_LABELS.get(
@@ -177,7 +192,11 @@ def filter_available_material_defaults(
             next_primary_id = primary_material_id
         else:
             warnings.append("部分原材料已不存在或不再支持分析，未带入新任务")
-    next_selected_ids = [material_id for material_id in (selected_material_ids or []) if material_id in material_by_id]
+    next_selected_ids = [
+        material_id
+        for material_id in (selected_material_ids or [])
+        if material_id in material_by_id
+    ]
     if selected_material_ids and len(next_selected_ids) != len(selected_material_ids):
         warnings.append("部分原随信附件已不存在，未带入新任务")
     return next_primary_id, next_selected_ids, list(dict.fromkeys(warnings))
@@ -191,7 +210,9 @@ async def build_batch_task_resend_context(
         select(BatchTask)
         .options(
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
-            selectinload(BatchTask.email_tasks).selectinload(EmailTask.outreach_template),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.outreach_template
+            ),
             selectinload(BatchTask.identity),
         )
         .where(BatchTask.id == task_id)
@@ -202,18 +223,24 @@ async def build_batch_task_resend_context(
     if task.identity is None:
         raise BatchTaskResendContextError(400, "原任务身份已不存在，无法直接重新发起。")
 
-    primary_material_id, selected_material_ids, warnings = filter_available_material_defaults(
-        materials=await list_global_materials(session),
-        primary_material_id=task.primary_material_id,
-        selected_material_ids=task.selected_material_ids,
+    primary_material_id, selected_material_ids, warnings = (
+        filter_available_material_defaults(
+            materials=await list_global_materials(session),
+            primary_material_id=task.primary_material_id,
+            selected_material_ids=task.selected_material_ids,
+        )
     )
-    sorted_email_tasks = sorted(task.email_tasks, key=lambda item: (item.created_at, item.id))
+    sorted_email_tasks = sorted(
+        task.email_tasks, key=lambda item: (item.created_at, item.id)
+    )
     snapshot_task = sorted_email_tasks[0] if sorted_email_tasks else None
     has_batch_outreach_snapshot = task.outreach_template_snapshot_version is not None
     outreach_template_id = (
         task.outreach_template_id
         if has_batch_outreach_snapshot
-        else snapshot_task.outreach_template_id if snapshot_task else None
+        else snapshot_task.outreach_template_id
+        if snapshot_task
+        else None
     )
     outreach_template_name_snapshot = (
         task.outreach_template_name_snapshot

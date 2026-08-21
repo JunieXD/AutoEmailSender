@@ -119,7 +119,10 @@ def _resolve_target(app: typer.Typer, requested_command: str) -> tuple[str, Comm
                 code="INVOKE_COMMAND_NOT_FOUND",
                 message=f"没有找到可调用命令：{requested_command}",
                 exit_code=4,
-                details={"command": requested_command, "normalized_command": normalized},
+                details={
+                    "command": requested_command,
+                    "normalized_command": normalized,
+                },
             )
         command = child
     if isinstance(command, TyperGroup):

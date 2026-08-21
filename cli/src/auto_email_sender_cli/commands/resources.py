@@ -34,7 +34,9 @@ def list_templates(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -88,7 +90,9 @@ def import_template_file(
             supports_filter=False,
             supports_output_file=False,
         )
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        mime_type = (
+            mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        )
         with file_path.open("rb") as template_file:
             request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             context.request_id = request_id
@@ -266,7 +270,9 @@ def list_materials(
     ] = None,
     source_identity_id: Annotated[
         int | None,
-        typer.Option("--source-identity-id", min=1, help="仅查看由该身份历史上传的材料。"),
+        typer.Option(
+            "--source-identity-id", min=1, help="仅查看由该身份历史上传的材料。"
+        ),
     ] = None,
     target_identity_id: Annotated[
         int | None,
@@ -280,7 +286,9 @@ def list_materials(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -323,7 +331,9 @@ def get_material(
             help="按该身份判断材料是否为默认。",
         ),
     ] = None,
-    include_text: Annotated[bool, typer.Option("--include-text", help="包含已提取的材料文本。") ] = False,
+    include_text: Annotated[
+        bool, typer.Option("--include-text", help="包含已提取的材料文本。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -363,7 +373,9 @@ def upload_material(
             supports_filter=False,
             supports_output_file=False,
         )
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        mime_type = (
+            mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        )
         with file_path.open("rb") as uploaded_file:
             request_id = context.request_id or f"cli_{secrets.token_urlsafe(24)}"
             context.request_id = request_id
@@ -406,10 +418,14 @@ def upload_material(
             message=f"无法读取材料文件：{exc}",
             exit_code=2,
         )
-        emit_error(context, command="materials.upload", error=error, guide_topic="materials")
+        emit_error(
+            context, command="materials.upload", error=error, guide_topic="materials"
+        )
         raise typer.Exit(error.exit_code) from exc
     except CliError as error:
-        emit_error(context, command="materials.upload", error=error, guide_topic="materials")
+        emit_error(
+            context, command="materials.upload", error=error, guide_topic="materials"
+        )
         raise typer.Exit(error.exit_code) from error
 
 
@@ -441,7 +457,7 @@ def download_material(
     ctx: typer.Context,
     material_id: Annotated[int, typer.Argument(min=1, help="材料 ID。")],
     output: Annotated[Path, typer.Option("--output", "-o", help="下载保存位置。")],
-    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。") ] = False,
+    force: Annotated[bool, typer.Option("--force", help="覆盖已有文件。")] = False,
 ) -> None:
     context = cli_context(ctx)
     command = "materials.download"
@@ -454,7 +470,9 @@ def download_material(
         destination = output.expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=360.0)
-        content = client.download_bytes(f"/api/agent/v1/materials/{material_id}/download")
+        content = client.download_bytes(
+            f"/api/agent/v1/materials/{material_id}/download"
+        )
         try:
             with destination.open("wb" if force else "xb") as file:
                 file.write(content)
@@ -508,7 +526,9 @@ def list_identities(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -559,12 +579,16 @@ def update_identity_settings(
         int | None,
         typer.Option("--match-threshold", min=0, max=100),
     ] = None,
-    clear_match_threshold: Annotated[bool, typer.Option("--clear-match-threshold")] = False,
+    clear_match_threshold: Annotated[
+        bool, typer.Option("--clear-match-threshold")
+    ] = False,
     daily_send_limit: Annotated[
         int | None,
         typer.Option("--daily-send-limit", min=0),
     ] = None,
-    clear_daily_send_limit: Annotated[bool, typer.Option("--clear-daily-send-limit")] = False,
+    clear_daily_send_limit: Annotated[
+        bool, typer.Option("--clear-daily-send-limit")
+    ] = False,
     send_interval_min: Annotated[
         int | None,
         typer.Option("--send-interval-min", min=0),
@@ -697,7 +721,9 @@ def list_llm_profiles(
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
     all_items: Annotated[bool, typer.Option("--all")] = False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -752,7 +778,9 @@ def update_llm_profile_settings(
         for key, value in {"name": name, "model_name": model_name}.items()
         if value is not None
     }
-    _add_clearable_settings_field(payload, "temperature", temperature, clear_temperature)
+    _add_clearable_settings_field(
+        payload, "temperature", temperature, clear_temperature
+    )
     _add_clearable_settings_field(payload, "max_tokens", max_tokens, clear_max_tokens)
     if not payload:
         raise typer.BadParameter("请至少提供一个需要修改的模型设置字段。")

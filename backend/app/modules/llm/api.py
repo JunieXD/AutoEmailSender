@@ -36,7 +36,9 @@ async def list_llm_profiles(
     session: AsyncSession = Depends(get_async_session),
 ) -> list[LLMProfile]:
     result = await session.execute(
-        select(LLMProfile).order_by(LLMProfile.is_default.desc(), LLMProfile.created_at.desc()),
+        select(LLMProfile).order_by(
+            LLMProfile.is_default.desc(), LLMProfile.created_at.desc()
+        ),
     )
     return list(result.scalars())
 
@@ -197,7 +199,9 @@ async def fetch_models_for_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": _strip_url_query_and_fragment(result.resolved_base_url),
+            "resolved_base_url": _strip_url_query_and_fragment(
+                result.resolved_base_url
+            ),
             "request_url": _strip_url_query_and_fragment(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "model_count": len(result.models),
@@ -247,7 +251,9 @@ async def test_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": _strip_url_query_and_fragment(result.resolved_base_url),
+            "resolved_base_url": _strip_url_query_and_fragment(
+                result.resolved_base_url
+            ),
             "request_url": _strip_url_query_and_fragment(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "consumes_tokens": result.consumes_tokens,

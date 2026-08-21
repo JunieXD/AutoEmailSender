@@ -7,7 +7,17 @@ from app.core.time import utc_now
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -59,7 +69,9 @@ class EmailTask(Base):
             "professor_id",
             "identity_id",
             unique=True,
-            sqlite_where=text("source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"),
+            sqlite_where=text(
+                "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
+            ),
         ),
         Index(
             "ix_email_tasks_identity_professor_created_id",
@@ -95,12 +107,10 @@ class EmailTask(Base):
             "ix_email_tasks_unstarted_generation_recovery",
             "updated_at",
             sqlite_where=text(
-                "status = 'generating_draft' "
-                "AND draft_generation_started_at IS NULL"
+                "status = 'generating_draft' AND draft_generation_started_at IS NULL"
             ),
             postgresql_where=text(
-                "status = 'generating_draft' "
-                "AND draft_generation_started_at IS NULL"
+                "status = 'generating_draft' AND draft_generation_started_at IS NULL"
             ),
         ),
         Index(
@@ -119,12 +129,10 @@ class EmailTask(Base):
             "ix_email_tasks_batch_draft_lease_recovery",
             "draft_lease_expires_at",
             sqlite_where=text(
-                "status = 'generating_draft' "
-                "AND draft_claim_id IS NOT NULL"
+                "status = 'generating_draft' AND draft_claim_id IS NOT NULL"
             ),
             postgresql_where=text(
-                "status = 'generating_draft' "
-                "AND draft_claim_id IS NOT NULL"
+                "status = 'generating_draft' AND draft_claim_id IS NOT NULL"
             ),
         ),
         Index(
@@ -151,12 +159,10 @@ class EmailTask(Base):
             "scheduled_at",
             "id",
             sqlite_where=text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
             postgresql_where=text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
         ),
         Index(
@@ -164,12 +170,10 @@ class EmailTask(Base):
             "updated_at",
             "id",
             sqlite_where=text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
             postgresql_where=text(
-                "schedule_canceled_at IS NULL "
-                "AND batch_send_canceled_at IS NULL"
+                "schedule_canceled_at IS NULL AND batch_send_canceled_at IS NULL"
             ),
         ),
     )
@@ -219,7 +223,9 @@ class EmailTask(Base):
         UTCDateTime(),
         nullable=True,
     )
-    draft_generation_previous_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    draft_generation_previous_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
     draft_generation_started_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
@@ -233,10 +239,18 @@ class EmailTask(Base):
         UTCDateTime(),
         nullable=True,
     )
-    draft_rewrite_source_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
-    draft_rewrite_source_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    draft_rewrite_source_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
-    draft_rewrite_source_selected_material_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    draft_rewrite_source_subject: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    draft_rewrite_source_body_text: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    draft_rewrite_source_body_html: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    draft_rewrite_source_selected_material_ids: Mapped[list[int] | None] = (
+        mapped_column(JSON, nullable=True)
+    )
     # Historical compatibility snapshot. The canonical current result lives in
     # identity_professor_match_results and is resolved by identity + professor.
     # This plain integer intentionally preserves provenance even if the source
@@ -250,10 +264,16 @@ class EmailTask(Base):
     generated_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
-    draft_generation_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    draft_generation_source: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
     draft_fallback_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    outreach_generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    outreach_template_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outreach_generation_mode: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    outreach_template_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     outreach_template_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     outreach_template_snapshot_version: Mapped[int | None] = mapped_column(

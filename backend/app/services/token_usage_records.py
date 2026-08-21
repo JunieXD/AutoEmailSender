@@ -530,6 +530,7 @@ def _crawl_job_title_context(job: CrawlJob) -> str | None:
         return " · ".join(location_parts)
     return job.start_url
 
+
 def _match_run_to_record(run: MatchAnalysisRun) -> TokenUsageRecordRead:
     professor_name = run.professor.name if run.professor else "未关联导师"
     return TokenUsageRecordRead(
@@ -563,6 +564,7 @@ def _match_job_to_record(job: MatchAnalysisJob) -> TokenUsageRecordRead:
         created_at=job.created_at,
         status=_map_match_job_status(job.status),
     )
+
 
 def _map_match_job_status(status: str) -> str:
     if status in {
@@ -689,7 +691,6 @@ def _resolve_chart_range(
     )
 
 
-
 def _resolve_chart_filter_range(
     *,
     preset: TokenUsageChartPreset,
@@ -703,7 +704,10 @@ def _resolve_chart_filter_range(
         if start_at is None or end_at is None:
             raise ValueError("自定义趋势图需要开始时间和结束时间")
         return as_utc_aware(start_at), as_utc_aware(end_at)
-    return range_start, range_end + _bucket_duration(granularity) - timedelta(microseconds=1)
+    return range_start, range_end + _bucket_duration(granularity) - timedelta(
+        microseconds=1
+    )
+
 
 def _aggregate_chart_buckets(
     records: list[TokenUsageRecordRead],
@@ -790,17 +794,20 @@ def _floor_hour(value: datetime) -> datetime:
 
 
 def _floor_day(value: datetime, *, local_timezone: tzinfo) -> datetime:
-    return as_utc_aware(value).astimezone(local_timezone).replace(
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0,
+    return (
+        as_utc_aware(value)
+        .astimezone(local_timezone)
+        .replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
     )
 
 
 def _local_timezone() -> tzinfo:
     return local_now().tzinfo or UTC
-
 
 
 def _build_summary(records: list[TokenUsageRecordRead]) -> TokenUsageSummaryRead:

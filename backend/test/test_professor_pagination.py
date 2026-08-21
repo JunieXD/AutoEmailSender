@@ -268,9 +268,7 @@ class ProfessorPaginationTests(unittest.TestCase):
                 await search("机器学习", ["researchDirection"]), ["王短词"]
             )
             self.assertEqual(await search("机器学习", ["name"]), [])
-            self.assertEqual(
-                await search("仅备注可见词", ["personalNote"]), ["王短词"]
-            )
+            self.assertEqual(await search("仅备注可见词", ["personalNote"]), ["王短词"])
             self.assertEqual(await search("仅备注可见词", ["name"]), [])
             self.assertEqual(
                 await search("仅备注可见词", ["name", "personalNote"]),

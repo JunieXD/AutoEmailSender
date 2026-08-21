@@ -242,7 +242,9 @@ _LLM_TLS_ERROR_MARKERS = (
     "sslv3_alert_bad_record_mac",
 )
 
-_LLM_TLS_CONNECTION_ERROR_MESSAGE = "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。"
+_LLM_TLS_CONNECTION_ERROR_MESSAGE = (
+    "模型服务 TLS 连接失败，请检查系统代理、网络或稍后重试。"
+)
 _LLM_RUNTIME_LOG_NAME = "llm-runtime.log"
 _LOG_URL_PATTERN = re.compile(r"https?://[^\s'\"<>]+")
 
@@ -275,7 +277,9 @@ def _append_llm_runtime_log(entry: str) -> None:
     try:
         log_dir = get_settings().data_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / _LLM_RUNTIME_LOG_NAME).open("a", encoding="utf-8", newline="\n") as file:
+        with (log_dir / _LLM_RUNTIME_LOG_NAME).open(
+            "a", encoding="utf-8", newline="\n"
+        ) as file:
             file.write(entry)
     except Exception:
         return
@@ -352,7 +356,9 @@ def _log_llm_http_exception(
         "event": "llm_http_request_failed",
         "provider": profile.provider,
         "model_name": profile.model_name,
-        "api_base_url": _strip_url_query_and_fragment(resolve_base_url(profile.api_base_url)),
+        "api_base_url": _strip_url_query_and_fragment(
+            resolve_base_url(profile.api_base_url)
+        ),
         "request_url": _strip_url_query_and_fragment(request_url),
         "endpoint_kind": endpoint_kind,
         "tls_mode": tls_mode,
@@ -360,7 +366,9 @@ def _log_llm_http_exception(
         "retry_reason": retry_reason,
         "error_chain": _exception_chain_details(exc),
     }
-    _append_llm_runtime_log(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+    _append_llm_runtime_log(
+        json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n"
+    )
 
 
 def _endpoint_protocol_switch_reason(error: "LLMEndpointProtocolError") -> str | int:
@@ -400,7 +408,9 @@ async def _record_endpoint_protocol_switch(
                 "event": "llm_endpoint_protocol_switched",
                 "provider": profile.provider,
                 "model_name": profile.model_name,
-                "api_base_url": _strip_url_query_and_fragment(resolve_base_url(profile.api_base_url)),
+                "api_base_url": _strip_url_query_and_fragment(
+                    resolve_base_url(profile.api_base_url)
+                ),
                 **metadata,
             },
             ensure_ascii=False,
@@ -432,8 +442,14 @@ def _build_tls12_context() -> ssl.SSLContext:
     return context
 
 
-def _should_retry_with_tls12(profile: LLMProfile, exc: BaseException, tls_mode: str) -> bool:
-    return tls_mode != "tls12" and is_deepseek_profile(profile) and _is_tls_bad_record_mac_error(exc)
+def _should_retry_with_tls12(
+    profile: LLMProfile, exc: BaseException, tls_mode: str
+) -> bool:
+    return (
+        tls_mode != "tls12"
+        and is_deepseek_profile(profile)
+        and _is_tls_bad_record_mac_error(exc)
+    )
 
 
 async def _send_llm_http_request(
@@ -552,7 +568,9 @@ class LLMRuntimeAdaptation:
 
     endpoint_kind: Literal["chat_completions", "responses"]
     thinking_extra_body: dict[str, object] | None
-    endpoint_attempted_urls: tuple[str, ...] = field(default_factory=tuple, compare=False)
+    endpoint_attempted_urls: tuple[str, ...] = field(
+        default_factory=tuple, compare=False
+    )
 
 
 @dataclass(slots=True)
@@ -841,7 +859,9 @@ async def generate_draft_content(
     if template_html:
         template_context = build_template_context(identity, professor)
         rewrite_document = build_draft_rewrite_document(template_html, template_context)
-        rendered_subject = render_draft_template_text(custom_subject, template_context).strip()
+        rendered_subject = render_draft_template_text(
+            custom_subject, template_context
+        ).strip()
         editable_blocks = [
             block
             for block in rewrite_document.blocks
@@ -880,12 +900,18 @@ async def generate_draft_content(
                     "content": prompt_parts.prompt,
                 },
             ],
-            "temperature": llm_profile.temperature if llm_profile.temperature is not None else DEFAULT_LLM_TEMPERATURE,
+            "temperature": llm_profile.temperature
+            if llm_profile.temperature is not None
+            else DEFAULT_LLM_TEMPERATURE,
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         }
         if prompt_parts.prompt_cache_key is not None:
             payload["prompt_cache_key"] = prompt_parts.prompt_cache_key
-        completion, rewrite_result, _structured_mode = await request_structured_completion(
+        (
+            completion,
+            rewrite_result,
+            _structured_mode,
+        ) = await request_structured_completion(
             llm_profile,
             payload,
             DraftRewriteResult,
@@ -947,7 +973,9 @@ async def generate_draft_content(
                     "content": prompt,
                 },
             ],
-            "temperature": llm_profile.temperature if llm_profile.temperature is not None else DEFAULT_LLM_TEMPERATURE,
+            "temperature": llm_profile.temperature
+            if llm_profile.temperature is not None
+            else DEFAULT_LLM_TEMPERATURE,
             "max_tokens": max_tokens or DEFAULT_LLM_MAX_TOKENS,
         },
         DraftGenerationWireResult,
@@ -957,6 +985,7 @@ async def generate_draft_content(
     )
     result = _draft_generation_wire_to_result(wire_result)
     return GeneratedDraftContent(result=result, usage=completion.usage)
+
 
 def estimate_draft_content_tokens(
     *,
@@ -1087,7 +1116,9 @@ async def probe_llm_profile(
         duration_ms=completion.duration_ms,
         consumes_tokens=True,
         prompt_tokens=completion.usage.prompt_tokens if completion.usage else None,
-        completion_tokens=completion.usage.completion_tokens if completion.usage else None,
+        completion_tokens=completion.usage.completion_tokens
+        if completion.usage
+        else None,
         total_tokens=completion.usage.total_tokens if completion.usage else None,
         response_preview=preview or None,
     )
@@ -1178,7 +1209,9 @@ async def fetch_llm_profile_models(profile: LLMProfile) -> LLMModelCatalogResult
             consumes_tokens=False,
         )
 
-    selected_model_available = profile.model_name in models if profile.model_name else None
+    selected_model_available = (
+        profile.model_name in models if profile.model_name else None
+    )
     message = f"已获取 {len(models)} 个模型"
     if profile.model_name:
         if selected_model_available:
@@ -1381,7 +1414,9 @@ async def ensure_llm_runtime_adaptation(
     )
     endpoint_attempted_urls: list[str] = []
     if endpoint_kind is None:
-        async with endpoint_adaptation_lock(api_base_url, profile.model_name) as coordination:
+        async with endpoint_adaptation_lock(
+            api_base_url, profile.model_name
+        ) as coordination:
             endpoint_kind = await get_cached_endpoint_kind(
                 session,
                 api_base_url=api_base_url,
@@ -1399,7 +1434,9 @@ async def ensure_llm_runtime_adaptation(
                             "model": profile.model_name,
                             "messages": [{"role": "user", "content": "只回复 OK"}],
                             "temperature": 0,
-                            "max_tokens": probe_max_tokens_for_profile(profile, fallback=8),
+                            "max_tokens": probe_max_tokens_for_profile(
+                                profile, fallback=8
+                            ),
                         }
                         last_protocol_error: LLMEndpointProtocolError | None = None
                         for candidate in endpoint_candidates(failed_endpoint_kind):
@@ -1480,7 +1517,9 @@ async def request_chat_completion(
     adaptation: LLMRuntimeAdaptation | None = None,
 ) -> ChatCompletionResult:
     if session is not None:
-        active_adaptation = adaptation or await ensure_llm_runtime_adaptation(session, profile)
+        active_adaptation = adaptation or await ensure_llm_runtime_adaptation(
+            session, profile
+        )
         try:
             completion = await _request_completion_endpoint(
                 profile,
@@ -1599,7 +1638,10 @@ async def request_chat_completion(
             allow_empty_content=allow_empty_content,
         )
     except LLMRuntimeError as responses_error:
-        responses_error.attempted_urls = [*chat_error.attempted_urls, *responses_error.attempted_urls]
+        responses_error.attempted_urls = [
+            *chat_error.attempted_urls,
+            *responses_error.attempted_urls,
+        ]
         responses_error.args = (f"{responses_error}；此前已尝试：{chat_error}",)
         raise
 
@@ -1699,7 +1741,11 @@ async def request_structured_completion(
             raw_content=completion.content,
         ) from error
     except (json.JSONDecodeError, ValidationError) as error:
-        if session is not None and mode == "json_schema_strict" and active_adaptation is not None:
+        if (
+            session is not None
+            and mode == "json_schema_strict"
+            and active_adaptation is not None
+        ):
             from .adaptation.structured_output import (
                 invalidate_structured_output_adaptation,
             )
@@ -1753,7 +1799,9 @@ def build_match_prompt_parts(
     # Only the selected primary material is evidence for matching. Catalog
     # metadata is intentionally excluded so library growth cannot inflate prompts.
     del available_materials
-    primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
+    primary_material_text = (
+        primary_material.extracted_text if primary_material else ""
+    ) or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
 
@@ -1866,7 +1914,9 @@ def _build_base_generation_prompt(
     intended_research_direction: str | None,
     extra_requirements: str,
 ) -> str:
-    primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
+    primary_material_text = (
+        primary_material.extracted_text if primary_material else ""
+    ) or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
     # Draft generation uses the selected primary material text. Attachment and
@@ -1916,6 +1966,7 @@ def _build_base_generation_prompt(
     payload["input"]["导师信息"] = _build_draft_rewrite_professor_context(professor)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
+
 def build_draft_rewrite_prompt(
     *,
     identity: IdentityProfile,
@@ -1956,7 +2007,9 @@ def build_draft_rewrite_prompt_parts(
 ) -> DraftRewritePromptParts:
     # Deprecated compatibility parameter: draft rewrite prompts must ignore match results.
     _ = current_match, subject_template
-    primary_material_text = (primary_material.extracted_text if primary_material else "") or ""
+    primary_material_text = (
+        primary_material.extracted_text if primary_material else ""
+    ) or ""
     if len(primary_material_text) > 5000:
         primary_material_text = f"{primary_material_text[:5000]}\n...(已截断)"
     del available_materials
@@ -2011,12 +2064,10 @@ def build_draft_rewrite_prompt_parts(
     stable_prefix_hash = _hash_prompt(stable_prefix)
 
     prompt_input["source_blocks"] = [
-        _serialize_draft_source_block(block)
-        for block in source_blocks
+        _serialize_draft_source_block(block) for block in source_blocks
     ]
     prompt_input["protected_tokens"] = [
-        {"token": token.token, "value": token.value}
-        for token in protected_tokens
+        {"token": token.token, "value": token.value} for token in protected_tokens
     ]
     prompt_input["professor"] = _build_draft_rewrite_professor_context(professor)
 
@@ -2067,6 +2118,7 @@ def build_draft_rewrite_preferences(preferences: DraftRewritePreferences | None)
     preferences = preferences or DraftRewritePreferences()
     return _build_draft_custom_instruction_block(preferences.draft_custom_instruction)
 
+
 def _build_draft_custom_instruction_block(value: str | None) -> str:
     instruction = (value or "").strip()
     if not instruction:
@@ -2082,6 +2134,7 @@ def _build_draft_custom_instruction_block(value: str | None) -> str:
         """
     ).strip()
 
+
 def _serialize_draft_custom_instruction(value: str | None) -> dict[str, str]:
     instruction = (value or "").strip()
     if not instruction:
@@ -2094,6 +2147,7 @@ def _serialize_draft_custom_instruction(value: str | None) -> dict[str, str]:
         ),
         "content": instruction,
     }
+
 
 def build_draft_rewrite_constraints(preferences: DraftRewritePreferences | None) -> str:
     _ = preferences
@@ -2136,11 +2190,13 @@ def _format_nullable(value: object) -> str:
         return value.strip() or "未知"
     return str(value)
 
+
 def _non_empty_text(value: object | None) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
+
 
 def _build_professor_prompt_context(professor: Professor) -> dict[str, object]:
     context: dict[str, object] = {}
@@ -2168,6 +2224,7 @@ def _build_professor_prompt_context(professor: Professor) -> dict[str, object]:
 
     return context
 
+
 def _build_draft_rewrite_professor_context(
     professor: Professor,
 ) -> dict[str, object]:
@@ -2192,7 +2249,9 @@ def _build_draft_rewrite_professor_context(
     return context
 
 
-def _serialize_draft_rewrite_preferences(preferences: DraftRewritePreferences) -> dict[str, str]:
+def _serialize_draft_rewrite_preferences(
+    preferences: DraftRewritePreferences,
+) -> dict[str, str]:
     _ = preferences
     return {}
 
@@ -2219,7 +2278,9 @@ def _format_professor_info_block(professor: Professor) -> str:
     recent_papers = context.get("recent_papers")
     if isinstance(recent_papers, list) and recent_papers:
         lines.append("- 近期论文：")
-        lines.extend(f"  - {paper}" for paper in recent_papers if isinstance(paper, str))
+        lines.extend(
+            f"  - {paper}" for paper in recent_papers if isinstance(paper, str)
+        )
 
     if len(lines) == 1:
         lines.append("- 无可用导师信息")
@@ -2243,8 +2304,11 @@ def _build_match_prompt_cache_key(
     if not _is_official_openai_profile(llm_profile):
         return None
     material_id = primary_material.id if primary_material is not None else "none"
-    direction_hash = hashlib.sha256((intended_research_direction or "").encode("utf-8")).hexdigest()[:12]
+    direction_hash = hashlib.sha256(
+        (intended_research_direction or "").encode("utf-8")
+    ).hexdigest()[:12]
     return f"match:v2:{identity.id}:{material_id}:{llm_profile.id}:{direction_hash}"
+
 
 def _build_draft_rewrite_prompt_cache_key(
     *,
@@ -2291,6 +2355,7 @@ def parse_structured_result(
     if result_model is DraftGenerationResult:
         return _normalize_draft_generation_result(result)
     return result
+
 
 def resolve_base_url(api_base_url: str | None) -> str:
     return (api_base_url or DEFAULT_BASE_URL).strip().rstrip("/")
@@ -2356,9 +2421,7 @@ def _validate_strict_json_schema_contract(
         if not isinstance(properties, dict):
             raise ValueError(f"严格 JSON Schema 的对象缺少 properties: {path}")
         if schema.get("additionalProperties") is not False:
-            raise ValueError(
-                f"严格 JSON Schema 的对象必须禁止额外字段: {path}"
-            )
+            raise ValueError(f"严格 JSON Schema 的对象必须禁止额外字段: {path}")
         required = schema.get("required")
         if not isinstance(required, list) or set(required) != set(properties):
             raise ValueError(
@@ -2417,9 +2480,7 @@ def build_chat_completions_payload(payload: dict[str, object]) -> dict[str, obje
         request_payload["response_format"] = {
             "type": "json_schema",
             "json_schema": {
-                key: value
-                for key, value in output_format.items()
-                if key != "type"
+                key: value for key, value in output_format.items() if key != "type"
             },
         }
     else:
@@ -2646,7 +2707,9 @@ def parse_completion_usage(raw_usage: object) -> ChatCompletionUsage | None:
     )
 
 
-def _normalize_match_evaluation_result(result: MatchEvaluationResult) -> MatchEvaluationResult:
+def _normalize_match_evaluation_result(
+    result: MatchEvaluationResult,
+) -> MatchEvaluationResult:
     result.match_reason = _normalize_text_field(result.match_reason, "match_reason")
     result.fit_points = _normalize_string_list(result.fit_points, 5)
     result.risk_points = _normalize_string_list(result.risk_points, 5)
@@ -2674,10 +2737,7 @@ def _draft_generation_wire_to_result(
         blocks.append(
             {
                 "type": block.type,
-                "items": [
-                    _draft_body_item_to_nodes(item)
-                    for item in block.items
-                ],
+                "items": [_draft_body_item_to_nodes(item) for item in block.items],
             }
         )
 
@@ -2711,7 +2771,9 @@ def _draft_body_item_to_nodes(item: DraftBodyItemWire) -> list[dict[str, object]
     return nodes
 
 
-def _normalize_draft_generation_result(result: DraftGenerationResult) -> DraftGenerationResult:
+def _normalize_draft_generation_result(
+    result: DraftGenerationResult,
+) -> DraftGenerationResult:
     result.subject = _normalize_text_field(result.subject, "subject")
     if result.rich_body is not None:
         rendered = render_rich_text_document(result.rich_body)

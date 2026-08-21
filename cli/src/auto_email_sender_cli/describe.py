@@ -86,7 +86,9 @@ JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
 }
 
 
-def describe_command(app: typer.Typer, requested_command: str) -> CommandDescription | None:
+def describe_command(
+    app: typer.Typer, requested_command: str
+) -> CommandDescription | None:
     normalized = normalize_capability_command(requested_command)
     capability = get_capability(normalized)
     if capability is not None and capability.availability != "available":
@@ -106,7 +108,9 @@ def describe_commands(
         normalized = normalize_capability_command(requested_command)
         capability = get_capability(normalized)
         if capability is not None and capability.availability != "available":
-            descriptions[requested_command] = _describe_unavailable_capability(capability)
+            descriptions[requested_command] = _describe_unavailable_capability(
+                capability
+            )
             continue
         if root is None:
             root = _click_root(app)
@@ -204,8 +208,7 @@ def _describe_unavailable_capability(capability: Capability) -> CommandDescripti
         "instruction": capability.manual_action,
     }
     next_steps = [
-        capability.manual_action
-        or "请在 Auto Email Sender 桌面端完成该操作。",
+        capability.manual_action or "请在 Auto Email Sender 桌面端完成该操作。",
     ]
     description: CommandDescription = {
         "command": capability.command,
@@ -280,7 +283,11 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     if not isinstance(output_contract, dict):
         output_contract = {}
     known_fields = output_contract.get("known_fields")
-    fields = [field for field in known_fields if isinstance(field, str)] if isinstance(known_fields, list) else []
+    fields = (
+        [field for field in known_fields if isinstance(field, str)]
+        if isinstance(known_fields, list)
+        else []
+    )
 
     input_summary: dict[str, object] = {
         "required": required_parameters,
@@ -385,7 +392,11 @@ def _bound_compact_description(summary: dict[str, object]) -> dict[str, object]:
 def _compact_size(value: object) -> int:
     import json
 
-    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"))
+    return len(
+        json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), default=str
+        ).encode("utf-8")
+    )
 
 
 def description_sections(
@@ -424,7 +435,9 @@ def description_sections(
 def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
     type_info = parameter.get("type")
     result: dict[str, object] = {
-        "type": type_info.get("kind", "string") if isinstance(type_info, dict) else "string",
+        "type": type_info.get("kind", "string")
+        if isinstance(type_info, dict)
+        else "string",
     }
     if parameter.get("kind") == "option":
         result["flags"] = parameter.get("flags", [])
@@ -476,7 +489,10 @@ def _compact_risk(value: object, effects: object) -> dict[str, object]:
             ("downstream_mutates", downstream_data.get("mutates")),
             ("downstream_external_action", downstream_data.get("external_services")),
             ("downstream_cost_may_apply", downstream_data.get("cost_may_apply")),
-            ("confirmation_required", value.get("confirmation_required_before_invocation")),
+            (
+                "confirmation_required",
+                value.get("confirmation_required_before_invocation"),
+            ),
             ("produces_confirmation_plan", value.get("produces_confirmation_plan")),
             ("delegated_effects", value.get("delegated_effects")),
             ("requires_target_contract", value.get("requires_target_contract")),
@@ -583,7 +599,11 @@ def _compact_errors(value: object) -> list[dict[str, object]]:
         if not isinstance(code, str) or code in seen or code in generic_errors:
             continue
         seen.add(code)
-        result.append({"code": code, "retryable": True} if error.get("retryable") else {"code": code})
+        result.append(
+            {"code": code, "retryable": True}
+            if error.get("retryable")
+            else {"code": code}
+        )
     return result
 
 
@@ -593,13 +613,16 @@ def _compact_next_commands(value: object) -> list[str]:
     return [
         command
         for action in value
-        if isinstance(action, dict) and isinstance((command := action.get("command")), str)
+        if isinstance(action, dict)
+        and isinstance((command := action.get("command")), str)
     ]
 
 
 def _describe_parameter(parameter: Any) -> dict[str, object]:
     option = parameter if isinstance(parameter, TyperOption) else None
-    names = list(option.opts) + list(option.secondary_opts) if option else [parameter.name]
+    names = (
+        list(option.opts) + list(option.secondary_opts) if option else [parameter.name]
+    )
     default = parameter.default
     return {
         "name": parameter.name,
@@ -664,10 +687,14 @@ def _summary(command: Command, capability: Capability | None, is_group: bool) ->
         return capability.summary
     if command.help:
         return command.help.strip()
-    return "命令组。使用 describe 查看其中的具体命令。" if is_group else "命令操作说明。"
+    return (
+        "命令组。使用 describe 查看其中的具体命令。" if is_group else "命令操作说明。"
+    )
 
 
-def _build_usage(command_path: list[str], parameters: Iterable[dict[str, object]], is_group: bool) -> str:
+def _build_usage(
+    command_path: list[str], parameters: Iterable[dict[str, object]], is_group: bool
+) -> str:
     parts = ["auto-email-sender", *command_path]
     if is_group:
         parts.append("<subcommand>")
@@ -680,7 +707,9 @@ def _build_usage(command_path: list[str], parameters: Iterable[dict[str, object]
     return " ".join(parts)
 
 
-def _build_example(command_path: list[str], parameters: Iterable[dict[str, object]]) -> str:
+def _build_example(
+    command_path: list[str], parameters: Iterable[dict[str, object]]
+) -> str:
     parts = ["auto-email-sender", "--format", "json", *command_path]
     for parameter in parameters:
         if not parameter["required"]:
@@ -742,7 +771,9 @@ def _describe_risk(capability: Capability | None) -> dict[str, object]:
         "unavailable_reason": capability.unavailable_reason,
         "risk_mode": spec.effects.risk_mode if spec is not None else "static",
         "plan_role": spec.effects.plan_role if spec is not None else "none",
-        "delegated_effects": spec.effects.delegated_effects if spec is not None else False,
+        "delegated_effects": spec.effects.delegated_effects
+        if spec is not None
+        else False,
         "requires_target_contract": (
             spec.effects.requires_target_contract if spec is not None else False
         ),

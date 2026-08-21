@@ -56,7 +56,9 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
         sections = fetch_text_part_sections_by_uid(client, 1)
 
         self.assertEqual([section.section for section in sections], ["1", "2"])
-        self.assertEqual([section.content_type for section in sections], ["text/plain", "text/html"])
+        self.assertEqual(
+            [section.content_type for section in sections], ["text/plain", "text/html"]
+        )
 
     def test_search_incremental_uses_next_uid(self) -> None:
         client = FakeImapClient(search_payload=b"11 12")
@@ -107,7 +109,9 @@ class ImapMessageFetcherTestCase(unittest.TestCase):
     def test_search_from_sender_since_combines_sender_and_date(self) -> None:
         client = FakeImapClient(search_payload=b"8 9")
 
-        result = search_uids_from_sender_since(client, "Prof <prof@example.edu>", date(2025, 1, 1))
+        result = search_uids_from_sender_since(
+            client, "Prof <prof@example.edu>", date(2025, 1, 1)
+        )
 
         self.assertEqual(result, [8, 9])
         serialized = " ".join(str(item) for item in client.commands)

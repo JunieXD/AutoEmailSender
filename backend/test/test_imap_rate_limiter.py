@@ -62,7 +62,9 @@ class HistoryImapRateLimiterTest(unittest.TestCase):
             rate_per_minute=0,
             burst=1,
             monotonic=time.monotonic,
-            sleep=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not sleep")),
+            sleep=lambda _seconds: (_ for _ in ()).throw(
+                AssertionError("should not sleep")
+            ),
         )
 
         limiter.acquire("account@example.com")

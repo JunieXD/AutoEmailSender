@@ -54,7 +54,10 @@ async def get_test_compose_thread(
     )
 
 
-@router.post("/{identity_id}/{llm_profile_id}/generate-draft", response_model=TestComposeThreadRead)
+@router.post(
+    "/{identity_id}/{llm_profile_id}/generate-draft",
+    response_model=TestComposeThreadRead,
+)
 async def generate_test_compose(
     identity_id: int,
     llm_profile_id: int,
@@ -78,15 +81,16 @@ async def generate_test_compose(
             template_content_explicit=(
                 payload is not None
                 and bool(
-                    {"subject", "body_text", "body_html"}
-                    & payload.model_fields_set
+                    {"subject", "body_text", "body_html"} & payload.model_fields_set
                 )
             ),
         ),
     )
 
 
-@router.post("/{identity_id}/{llm_profile_id}/draft", response_model=TestComposeThreadRead)
+@router.post(
+    "/{identity_id}/{llm_profile_id}/draft", response_model=TestComposeThreadRead
+)
 async def update_test_compose_draft(
     identity_id: int,
     llm_profile_id: int,
@@ -104,7 +108,9 @@ async def update_test_compose_draft(
     )
 
 
-@router.post("/{identity_id}/{llm_profile_id}/send", response_model=TestComposeThreadRead)
+@router.post(
+    "/{identity_id}/{llm_profile_id}/send", response_model=TestComposeThreadRead
+)
 async def send_test_compose(
     identity_id: int,
     llm_profile_id: int,

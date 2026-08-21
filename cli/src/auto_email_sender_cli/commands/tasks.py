@@ -119,7 +119,11 @@ def set_task_outreach_config(
             clear_body_text,
             "--clear-body-text",
         ),
-        "outreach_template_body_html": (body_html, clear_body_html, "--clear-body-html"),
+        "outreach_template_body_html": (
+            body_html,
+            clear_body_html,
+            "--clear-body-html",
+        ),
     }
     payload: dict[str, object] = {"outreach_generation_mode": generation_mode}
     if template_id is not None:
@@ -150,7 +154,9 @@ def set_task_outreach_config(
 def calculate_task_match(
     ctx: typer.Context,
     task_id: Annotated[int, typer.Argument(min=1)],
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,

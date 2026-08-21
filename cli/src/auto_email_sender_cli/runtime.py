@@ -31,9 +31,13 @@ class RuntimeProcessDescriptor:
         pid = value.get("pid")
         started_at = value.get("started_at")
         if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-            raise ValueError(f"runtime descriptor field {field}.pid must be a positive integer")
+            raise ValueError(
+                f"runtime descriptor field {field}.pid must be a positive integer"
+            )
         if not isinstance(started_at, str) or not started_at.strip():
-            raise ValueError(f"runtime descriptor field {field}.started_at must be a non-empty string")
+            raise ValueError(
+                f"runtime descriptor field {field}.started_at must be a non-empty string"
+            )
         return cls(pid=pid, started_at=started_at.strip())
 
 
@@ -64,11 +68,17 @@ class RuntimeDescriptor:
         for field in string_fields:
             raw = value.get(field)
             if not isinstance(raw, str) or not raw.strip():
-                raise ValueError(f"runtime descriptor field {field} must be a non-empty string")
+                raise ValueError(
+                    f"runtime descriptor field {field} must be a non-empty string"
+                )
             strings[field] = raw.strip()
         return cls(
-            desktop=RuntimeProcessDescriptor.from_mapping(value.get("desktop"), field="desktop"),
-            backend=RuntimeProcessDescriptor.from_mapping(value.get("backend"), field="backend"),
+            desktop=RuntimeProcessDescriptor.from_mapping(
+                value.get("desktop"), field="desktop"
+            ),
+            backend=RuntimeProcessDescriptor.from_mapping(
+                value.get("backend"), field="backend"
+            ),
             **strings,
         )
 
@@ -158,7 +168,12 @@ def get_runtime_file_path() -> Path:
         return Path(data_dir).expanduser().resolve() / "agent" / "runtime.json"
 
     if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support" / "auto-email-sender-desktop"
+        base = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "auto-email-sender-desktop"
+        )
     elif sys.platform == "win32":
         app_data = os.getenv("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
@@ -181,8 +196,12 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
         backend_pid = _positive_env_pid("AUTO_EMAIL_SENDER_BACKEND_PID", os.getpid())
         return RuntimeDescriptor.from_mapping(
             {
-                "protocol_version": os.getenv("AUTO_EMAIL_SENDER_PROTOCOL_VERSION", PROTOCOL_VERSION),
-                "app_version": os.getenv("AUTO_EMAIL_SENDER_APP_VERSION", "development"),
+                "protocol_version": os.getenv(
+                    "AUTO_EMAIL_SENDER_PROTOCOL_VERSION", PROTOCOL_VERSION
+                ),
+                "app_version": os.getenv(
+                    "AUTO_EMAIL_SENDER_APP_VERSION", "development"
+                ),
                 "runtime_id": os.getenv("AUTO_EMAIL_SENDER_RUNTIME_ID", "environment"),
                 "base_url": base_url,
                 "access_token": token,
@@ -219,7 +238,9 @@ def load_runtime_descriptor() -> RuntimeDescriptor:
     except RuntimeProtocolMismatchError:
         raise
     except (json.JSONDecodeError, ValueError) as exc:
-        raise RuntimeUnavailableError("本地运行信息无效，请在个人中心修复命令行支持。") from exc
+        raise RuntimeUnavailableError(
+            "本地运行信息无效，请在个人中心修复命令行支持。"
+        ) from exc
 
 
 def process_is_running(pid: int) -> bool:
@@ -368,12 +389,19 @@ def ensure_runtime_descriptor(
 
 
 def _environment_runtime_configured() -> bool:
-    return bool(os.getenv("AUTO_EMAIL_SENDER_BASE_URL") and os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN"))
+    return bool(
+        os.getenv("AUTO_EMAIL_SENDER_BASE_URL")
+        and os.getenv("AUTO_EMAIL_SENDER_AGENT_TOKEN")
+    )
 
 
-def ensure_runtime_protocol_compatible(descriptor: RuntimeDescriptor) -> RuntimeDescriptor:
+def ensure_runtime_protocol_compatible(
+    descriptor: RuntimeDescriptor,
+) -> RuntimeDescriptor:
     if descriptor.protocol_version != PROTOCOL_VERSION:
-        raise RuntimeProtocolMismatchError(expected=PROTOCOL_VERSION, actual=descriptor.protocol_version)
+        raise RuntimeProtocolMismatchError(
+            expected=PROTOCOL_VERSION, actual=descriptor.protocol_version
+        )
     return descriptor
 
 

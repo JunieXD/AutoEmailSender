@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.base import ApiSchema
 
+
 class CreateBatchTaskRequest(BaseModel):
     identity_id: int
     llm_profile_id: int
@@ -113,11 +114,13 @@ class BatchTaskBulkApproveDraftsResponse(ApiSchema):
     approved_count: int
     task: BatchTaskCardRead
 
+
 class BatchTaskResendContextTaskRead(ApiSchema):
     id: int
     name: str
     identity_id: int
     schedule_type: str
+
 
 class BatchTaskResendDefaultsRead(ApiSchema):
     identity_id: int
@@ -129,6 +132,7 @@ class BatchTaskResendDefaultsRead(ApiSchema):
     outreach_template_body_html: str | None
     primary_material_id: int | None
     selected_material_ids: list[int]
+
 
 class BatchTaskResendItemRead(ApiSchema):
     email_task_id: int
@@ -145,10 +149,12 @@ class BatchTaskResendItemRead(ApiSchema):
     content_requires_review: bool
     updated_at: datetime
 
+
 class BatchTaskResendSummaryRead(ApiSchema):
     candidate_count: int
     default_selected_count: int
     unavailable_count: int
+
 
 class BatchTaskResendContextRead(ApiSchema):
     task: BatchTaskResendContextTaskRead

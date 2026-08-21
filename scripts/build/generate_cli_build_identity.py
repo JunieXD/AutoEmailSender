@@ -30,7 +30,16 @@ def main() -> None:
         f"os.environ['AUTO_EMAIL_SENDER_EMBEDDED_CLI_VERSION'] = {json.dumps(version)}\n",
         encoding="utf-8",
     )
-    print(json.dumps({"revision": revision, "dirty": dirty, "version": version, "output": output.as_posix()}))
+    print(
+        json.dumps(
+            {
+                "revision": revision,
+                "dirty": dirty,
+                "version": version,
+                "output": output.as_posix(),
+            }
+        )
+    )
 
 
 def _cli_version(repo_root: Path) -> str:
@@ -53,7 +62,9 @@ def _revision(repo_root: Path) -> str:
         text=True,
     )
     revision = result.stdout.strip().lower()
-    if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
+    if len(revision) != 40 or any(
+        character not in "0123456789abcdef" for character in revision
+    ):
         raise RuntimeError("git returned an invalid build revision")
     return revision
 

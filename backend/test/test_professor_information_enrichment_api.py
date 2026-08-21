@@ -30,7 +30,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
 
         profile_text_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / "professor_information_enrichment_api.db"
+        self.db_path = (
+            Path(self.temp_dir.name) / "professor_information_enrichment_api.db"
+        )
         os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{self.db_path.as_posix()}"
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
         create_migrated_sqlite_database(self.db_path)
@@ -61,7 +63,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
         self.temp_dir.cleanup()
 
-    def test_single_job_is_hidden_from_task_lists_and_reports_active_state(self) -> None:
+    def test_single_job_is_hidden_from_task_lists_and_reports_active_state(
+        self,
+    ) -> None:
         professor_id = self._create_professor(
             name="单次补全导师",
             email="single@example.edu",
@@ -108,7 +112,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         )
         self.assertEqual(candidate_update.status_code, 404, msg=candidate_update.text)
 
-    def test_task_center_information_enrichment_page_reports_complete_counts(self) -> None:
+    def test_task_center_information_enrichment_page_reports_complete_counts(
+        self,
+    ) -> None:
         async def seed_jobs() -> None:
             from app.core.database import get_session_factory
 
@@ -231,7 +237,9 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(trash.json()["current_total_count"], 2)
         self.assertEqual(trash.json()["items"][0]["id"], job_ids[2])
 
-    def test_batch_job_retains_conflicts_as_skipped_and_supports_trash_actions(self) -> None:
+    def test_batch_job_retains_conflicts_as_skipped_and_supports_trash_actions(
+        self,
+    ) -> None:
         professor_id = self._create_professor(
             name="批量补全导师",
             email="batch@example.edu",

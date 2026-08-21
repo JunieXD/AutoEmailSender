@@ -98,7 +98,9 @@ class AgentPrepareSendRequest(ApiSchema):
 
 class AgentPlanExecuteRequest(ApiSchema):
     confirm: bool = False
-    confirmed_fingerprint: str | None = Field(default=None, min_length=1, max_length=128)
+    confirmed_fingerprint: str | None = Field(
+        default=None, min_length=1, max_length=128
+    )
 
 
 class AgentPlanEffectsRead(ApiSchema):

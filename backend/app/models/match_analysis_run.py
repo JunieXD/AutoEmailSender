@@ -63,8 +63,12 @@ class MatchAnalysisRun(Base):
         index=True,
         nullable=True,
     )
-    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'failed'"))
-    success: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'failed'")
+    )
+    success: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
     match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     fit_points: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

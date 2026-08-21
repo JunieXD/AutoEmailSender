@@ -97,7 +97,6 @@ class CrawlJobCreatePayload(BaseModel):
 
 
 class CrawlJobRead(ApiSchema):
-
     id: int
     university: str
     school: str
@@ -175,7 +174,6 @@ class CrawlJobEventRead(ApiSchema):
 
 
 class CrawlPageRead(ApiSchema):
-
     id: int
     job_id: int
     url: str
@@ -190,7 +188,6 @@ class CrawlPageRead(ApiSchema):
 
 
 class CrawlCandidateRead(ApiSchema):
-
     id: int
     job_id: int
     professor_id: int | None

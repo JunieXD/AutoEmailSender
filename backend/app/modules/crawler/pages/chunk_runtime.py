@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import CrawlPageChunk, CrawlPageChunkStatus
 
 from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
-from .chunking import ChunkingConfig, PageChunkDraft, estimate_tokens, split_chunk_content
+from .chunking import (
+    ChunkingConfig,
+    PageChunkDraft,
+    estimate_tokens,
+    split_chunk_content,
+)
 
 
 async def create_chunks_for_page(

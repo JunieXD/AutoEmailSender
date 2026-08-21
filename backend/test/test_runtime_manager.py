@@ -26,7 +26,6 @@ from app.services.runtime_manager import (
 )
 
 
-
 class TaskRuntimeTimeHandlingTests(unittest.TestCase):
     def test_has_future_scheduled_at_treats_naive_sqlite_timestamp_as_utc(self) -> None:
         shanghai = timezone(timedelta(hours=8))
@@ -41,6 +40,8 @@ class TaskRuntimeTimeHandlingTests(unittest.TestCase):
                 local_timezone=shanghai,
             )
         )
+
+
 class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_creates_fixed_crawler_work_item_pool(self) -> None:
         session = object()
@@ -57,7 +58,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = args, kwargs
             return idle_loop()
 
-        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+        async def fake_load_worker_runtime_settings(
+            session_arg: object,
+        ) -> SimpleNamespace:
             self.assertIs(session_arg, session)
             return SimpleNamespace(
                 crawler_worker_count=2,
@@ -77,14 +80,17 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                     "match_analysis_job_interval_seconds": 10,
                 },
             )()
-            with patch(
-                "app.services.runtime_manager._load_worker_runtime_settings",
-                new=fake_load_worker_runtime_settings,
-            ), patch.object(
-                manager,
-                "_loop",
-                new=Mock(side_effect=build_idle_loop),
-            ) as mocked_loop:
+            with (
+                patch(
+                    "app.services.runtime_manager._load_worker_runtime_settings",
+                    new=fake_load_worker_runtime_settings,
+                ),
+                patch.object(
+                    manager,
+                    "_loop",
+                    new=Mock(side_effect=build_idle_loop),
+                ) as mocked_loop,
+            ):
                 await manager.start()
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
@@ -92,9 +98,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         for index in range(1, CRAWLER_WORK_ITEM_WORKER_COUNT + 1):
             self.assertEqual(worker_names.count(f"crawler-worker-{index}"), 1)
             self.assertEqual(
-                worker_calls[f"crawler-worker-{index}"].kwargs[
-                    "initial_delay_seconds"
-                ],
+                worker_calls[f"crawler-worker-{index}"].kwargs["initial_delay_seconds"],
                 CRAWLER_WORKER_INITIAL_DELAY_SECONDS
                 + (index - 1) * CRAWLER_WORKER_INITIAL_DELAY_STEP_SECONDS,
             )
@@ -111,9 +115,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS,
         )
         self.assertEqual(
-            worker_calls["imap-incremental-poller"].kwargs[
-                "initial_delay_seconds"
-            ],
+            worker_calls["imap-incremental-poller"].kwargs["initial_delay_seconds"],
             IMAP_INCREMENTAL_INITIAL_DELAY_SECONDS,
         )
         self.assertEqual(
@@ -123,7 +125,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.stop()
 
-    async def test_start_uses_runtime_settings_for_worker_counts_and_match_interval(self) -> None:
+    async def test_start_uses_runtime_settings_for_worker_counts_and_match_interval(
+        self,
+    ) -> None:
         session = object()
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
@@ -138,7 +142,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = args, kwargs
             return idle_loop()
 
-        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+        async def fake_load_worker_runtime_settings(
+            session_arg: object,
+        ) -> SimpleNamespace:
             self.assertIs(session_arg, session)
             return SimpleNamespace(
                 crawler_worker_count=3,
@@ -158,14 +164,17 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                     "match_analysis_job_interval_seconds": 10,
                 },
             )()
-            with patch(
-                "app.services.runtime_manager._load_worker_runtime_settings",
-                new=fake_load_worker_runtime_settings,
-            ), patch.object(
-                manager,
-                "_loop",
-                new=Mock(side_effect=build_idle_loop),
-            ) as mocked_loop:
+            with (
+                patch(
+                    "app.services.runtime_manager._load_worker_runtime_settings",
+                    new=fake_load_worker_runtime_settings,
+                ),
+                patch.object(
+                    manager,
+                    "_loop",
+                    new=Mock(side_effect=build_idle_loop),
+                ) as mocked_loop,
+            ):
                 await manager.start()
 
         worker_calls = {call.args[0]: call.args for call in mocked_loop.call_args_list}
@@ -177,7 +186,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.stop()
 
-    async def test_start_falls_back_to_environment_worker_settings_when_runtime_settings_fail(self) -> None:
+    async def test_start_falls_back_to_environment_worker_settings_when_runtime_settings_fail(
+        self,
+    ) -> None:
         session = object()
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
@@ -192,7 +203,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = args, kwargs
             return idle_loop()
 
-        async def fail_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+        async def fail_load_worker_runtime_settings(
+            session_arg: object,
+        ) -> SimpleNamespace:
             self.assertIs(session_arg, session)
             raise RuntimeError("database unavailable")
 
@@ -208,16 +221,20 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                     "match_analysis_job_interval_seconds": 11,
                 },
             )()
-            with patch(
-                "app.services.runtime_manager._load_worker_runtime_settings",
-                new=fail_load_worker_runtime_settings,
-            ), patch.object(
-                manager,
-                "_loop",
-                new=Mock(side_effect=build_idle_loop),
-            ) as mocked_loop, patch(
-                "app.services.runtime_manager.logger.exception",
-            ) as mocked_log_exception:
+            with (
+                patch(
+                    "app.services.runtime_manager._load_worker_runtime_settings",
+                    new=fail_load_worker_runtime_settings,
+                ),
+                patch.object(
+                    manager,
+                    "_loop",
+                    new=Mock(side_effect=build_idle_loop),
+                ) as mocked_loop,
+                patch(
+                    "app.services.runtime_manager.logger.exception",
+                ) as mocked_log_exception,
+            ):
                 await manager.start()
 
         worker_calls = {call.args[0]: call.args for call in mocked_loop.call_args_list}
@@ -230,7 +247,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.stop()
 
-    async def test_worker_startup_settings_use_environment_when_app_settings_row_is_missing(self) -> None:
+    async def test_worker_startup_settings_use_environment_when_app_settings_row_is_missing(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "runtime-manager.db"
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -354,7 +373,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
             with patch.dict("os.environ", {"AUTO_EMAIL_SENDER_DATA_DIR": temp_dir}):
                 get_settings.cache_clear()
-                with patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
+                with patch(
+                    "app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for
+                ):
                     await manager._loop("crawler-worker-1", 10, failing_worker)
 
                 log_path = Path(temp_dir) / "logs" / "backend-errors.log"
@@ -364,6 +385,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("RuntimeError: crawler worker boom", log_text)
 
             get_settings.cache_clear()
+
     async def test_loop_waits_random_jitter_after_processing_crawler_work(self) -> None:
         session_factory = Mock()
         manager = RuntimeManager(session_factory)
@@ -381,8 +403,15 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             manager._stopped.set()
             return await awaitable
 
-        with patch("app.services.runtime_manager.random.uniform", return_value=7.5) as mocked_uniform, patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for):
-            await manager._loop("crawler-worker-1", 10, worker, processed_jitter_seconds=(2, 10))
+        with (
+            patch(
+                "app.services.runtime_manager.random.uniform", return_value=7.5
+            ) as mocked_uniform,
+            patch("app.services.runtime_manager.asyncio.wait_for", new=fake_wait_for),
+        ):
+            await manager._loop(
+                "crawler-worker-1", 10, worker, processed_jitter_seconds=(2, 10)
+            )
 
         self.assertEqual(worker_calls, 1)
         mocked_uniform.assert_called_once_with(2, 10)
@@ -403,7 +432,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = args, kwargs
             return idle_loop()
 
-        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+        async def fake_load_worker_runtime_settings(
+            session_arg: object,
+        ) -> SimpleNamespace:
             self.assertIs(session_arg, session)
             return SimpleNamespace(
                 crawler_worker_count=1,
@@ -423,24 +454,33 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                     "match_analysis_job_interval_seconds": 10,
                 },
             )()
-            with patch(
-                "app.services.runtime_manager._load_worker_runtime_settings",
-                new=fake_load_worker_runtime_settings,
-            ), patch.object(
-                manager,
-                "_loop",
-                new=Mock(side_effect=build_idle_loop),
-            ) as mocked_loop:
+            with (
+                patch(
+                    "app.services.runtime_manager._load_worker_runtime_settings",
+                    new=fake_load_worker_runtime_settings,
+                ),
+                patch.object(
+                    manager,
+                    "_loop",
+                    new=Mock(side_effect=build_idle_loop),
+                ) as mocked_loop,
+            ):
                 await manager.start()
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
         self.assertEqual(worker_calls["crawler-worker-1"].args[1], 5)
-        self.assertEqual(worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 5))
-        self.assertEqual(worker_calls["dispatcher"].kwargs["processed_jitter_seconds"], (5, 5))
+        self.assertEqual(
+            worker_calls["crawler-worker-1"].kwargs["processed_jitter_seconds"], (2, 5)
+        )
+        self.assertEqual(
+            worker_calls["dispatcher"].kwargs["processed_jitter_seconds"], (5, 5)
+        )
 
         await manager.stop()
 
-    async def test_start_configures_separate_imap_pollers_to_wait_after_processing(self) -> None:
+    async def test_start_configures_separate_imap_pollers_to_wait_after_processing(
+        self,
+    ) -> None:
         session = object()
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
@@ -455,7 +495,9 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = args, kwargs
             return idle_loop()
 
-        async def fake_load_worker_runtime_settings(session_arg: object) -> SimpleNamespace:
+        async def fake_load_worker_runtime_settings(
+            session_arg: object,
+        ) -> SimpleNamespace:
             self.assertIs(session_arg, session)
             return SimpleNamespace(
                 crawler_worker_count=1,
@@ -475,26 +517,36 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                     "match_analysis_job_interval_seconds": 10,
                 },
             )()
-            with patch(
-                "app.services.runtime_manager._load_worker_runtime_settings",
-                new=fake_load_worker_runtime_settings,
-            ), patch.object(
-                manager,
-                "_loop",
-                new=Mock(side_effect=build_idle_loop),
-            ) as mocked_loop:
+            with (
+                patch(
+                    "app.services.runtime_manager._load_worker_runtime_settings",
+                    new=fake_load_worker_runtime_settings,
+                ),
+                patch.object(
+                    manager,
+                    "_loop",
+                    new=Mock(side_effect=build_idle_loop),
+                ) as mocked_loop,
+            ):
                 await manager.start()
 
         worker_calls = {call.args[0]: call for call in mocked_loop.call_args_list}
-        self.assertTrue(worker_calls["imap-incremental-poller"].kwargs["wait_after_processed"])
-        self.assertTrue(worker_calls["imap-history-poller"].kwargs["wait_after_processed"])
+        self.assertTrue(
+            worker_calls["imap-incremental-poller"].kwargs["wait_after_processed"]
+        )
+        self.assertTrue(
+            worker_calls["imap-history-poller"].kwargs["wait_after_processed"]
+        )
         self.assertNotEqual(
             worker_calls["imap-incremental-poller"].args[2],
             worker_calls["imap-history-poller"].args[2],
         )
 
         await manager.stop()
-    async def test_worker_startup_settings_only_contains_restart_bound_values(self) -> None:
+
+    async def test_worker_startup_settings_only_contains_restart_bound_values(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "runtime-manager-defaults.db"
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -519,6 +571,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(hasattr(resolved, "crawler_worker_count"))
         self.assertEqual(resolved.match_analysis_job_worker_count, 1)
+
     async def test_match_analysis_worker_uses_runtime_item_concurrency(self) -> None:
         session = object()
         session_context = MagicMock()
@@ -530,13 +583,16 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
             _ = session
             return SimpleNamespace(match_analysis_job_item_concurrency=7)
 
-        with patch(
-            "app.services.runtime_manager.get_runtime_settings",
-            new=fake_get_runtime_settings,
-        ), patch(
-            "app.services.runtime_manager.run_queued_match_analysis_jobs_once",
-            new=AsyncMock(return_value=1),
-        ) as mocked_run:
+        with (
+            patch(
+                "app.services.runtime_manager.get_runtime_settings",
+                new=fake_get_runtime_settings,
+            ),
+            patch(
+                "app.services.runtime_manager.run_queued_match_analysis_jobs_once",
+                new=AsyncMock(return_value=1),
+            ) as mocked_run,
+        ):
             processed = await _run_match_analysis_worker_once(session_factory)
 
         self.assertEqual(processed, 1)

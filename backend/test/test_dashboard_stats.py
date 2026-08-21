@@ -315,7 +315,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.summary.high_match_professors, 4)
         self.assertEqual(result.mentor.summary.high_score_uncontacted_count, 2)
         self.assertEqual(result.mentor.summary.high_score_threshold, 85)
-        distribution = {item.bucket: item.count for item in result.mentor.match_score_distribution}
+        distribution = {
+            item.bucket: item.count for item in result.mentor.match_score_distribution
+        }
         self.assertEqual(distribution["unmatched"], 1)
         self.assertEqual(distribution["70_79"], 1)
         self.assertEqual(distribution["80_89"], 3)
@@ -325,16 +327,27 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(completeness["complete"].count, 3)
         self.assertEqual(result.mentor.school_distribution[0].school_name, "示例大学")
         self.assertEqual(result.mentor.school_distribution[0].count, 3)
-        filter_by_university = {item.university: item for item in result.mentor.school_filters}
+        filter_by_university = {
+            item.university: item for item in result.mentor.school_filters
+        }
         self.assertIn("示例大学", filter_by_university)
         self.assertEqual(filter_by_university["示例大学"].count, 3)
         self.assertEqual(
-            {item.school_name: item.count for item in filter_by_university["示例大学"].schools},
+            {
+                item.school_name: item.count
+                for item in filter_by_university["示例大学"].schools
+            },
             {"计算机学院": 2, "医学院": 1},
         )
-        self.assertIn("张老师", {item.name for item in result.mentor.high_score_uncontacted})
-        self.assertIn("孙老师", {item.name for item in result.mentor.high_score_uncontacted})
-        incomplete_by_name = {item.name: item for item in result.mentor.incomplete_professors}
+        self.assertIn(
+            "张老师", {item.name for item in result.mentor.high_score_uncontacted}
+        )
+        self.assertIn(
+            "孙老师", {item.name for item in result.mentor.high_score_uncontacted}
+        )
+        incomplete_by_name = {
+            item.name: item for item in result.mentor.incomplete_professors
+        }
         self.assertIn("邮箱", incomplete_by_name["赵老师"].missing_fields)
 
         self.assertEqual(result.email.summary.sent_count, 3)
@@ -353,7 +366,9 @@ class DashboardStatsTests(unittest.TestCase):
         }
         self.assertEqual(university_coverage["示例大学"].sent_professor_count, 1)
         self.assertEqual(university_coverage["示例大学"].total_professor_count, 3)
-        self.assertAlmostEqual(university_coverage["示例大学"].sent_professor_rate, 1 / 3)
+        self.assertAlmostEqual(
+            university_coverage["示例大学"].sent_professor_rate, 1 / 3
+        )
         self.assertEqual(university_coverage["示例大学"].contacted_professor_count, 1)
         self.assertEqual(university_coverage["示例大学"].replied_professor_count, 0)
         self.assertEqual(university_coverage["示例大学"].reply_rate, 0.0)
@@ -379,12 +394,13 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.reply_wait.median_hours, 48.0)
         self.assertEqual(result.email.reply_wait.p75_hours, 48.0)
         reply_wait_distribution = {
-            item.key: item
-            for item in result.email.reply_wait.distribution
+            item.key: item for item in result.email.reply_wait.distribution
         }
         self.assertEqual(reply_wait_distribution["1_3_days"].count, 1)
         self.assertEqual(reply_wait_distribution["1_3_days"].rate, 1.0)
-        status_distribution = {item.status: item.count for item in result.email.status_distribution}
+        status_distribution = {
+            item.status: item.count for item in result.email.status_distribution
+        }
         self.assertEqual(status_distribution["send_failed"], 1)
         self.assertEqual(status_distribution["review_required"], 1)
         self.assertEqual(status_distribution["scheduled"], 1)
@@ -423,7 +439,9 @@ class DashboardStatsTests(unittest.TestCase):
         async def seed_failed_log() -> None:
             async with self.session_factory() as session:
                 task = await session.scalar(
-                    select(EmailTask).where(EmailTask.status == EmailTaskStatus.SEND_FAILED.value)
+                    select(EmailTask).where(
+                        EmailTask.status == EmailTaskStatus.SEND_FAILED.value
+                    )
                 )
                 assert task is not None
                 session.add(
@@ -459,7 +477,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.send_failed_count, 1)
         self.assertEqual(result.email.summary.send_failed_rate, 0.25)
 
-    def test_dashboard_service_counts_workspace_visible_sent_logs_without_task_binding(self) -> None:
+    def test_dashboard_service_counts_workspace_visible_sent_logs_without_task_binding(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def seed_unbound_workspace_logs() -> None:
@@ -512,13 +532,19 @@ class DashboardStatsTests(unittest.TestCase):
         result = self._run_async(run_query())
 
         self.assertEqual(result.mentor.summary.high_score_uncontacted_count, 1)
-        self.assertNotIn("张老师", {item.name for item in result.mentor.high_score_uncontacted})
-        self.assertIn("孙老师", {item.name for item in result.mentor.high_score_uncontacted})
+        self.assertNotIn(
+            "张老师", {item.name for item in result.mentor.high_score_uncontacted}
+        )
+        self.assertIn(
+            "孙老师", {item.name for item in result.mentor.high_score_uncontacted}
+        )
         self.assertEqual(result.email.summary.sent_count, 4)
         self.assertEqual(result.email.summary.sent_professor_count, 3)
         self.assertEqual(result.email.summary.contacted_professor_count, 3)
 
-    def test_dashboard_service_counts_received_log_without_task_as_contacted_and_replied(self) -> None:
+    def test_dashboard_service_counts_received_log_without_task_as_contacted_and_replied(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         reply_time = datetime.now(UTC) - timedelta(hours=3)
 
@@ -582,7 +608,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(university_coverage["第四大学"].reply_rate, 1.0)
         self.assertEqual(result.email.reply_wait.sample_count, 0)
         self.assertIsNone(result.email.reply_wait.median_hours)
-        self.assertTrue(all(item.count == 0 for item in result.email.reply_wait.distribution))
+        self.assertTrue(
+            all(item.count == 0 for item in result.email.reply_wait.distribution)
+        )
         trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
         self.assertEqual(trend_by_date[reply_date].replied_count, 1)
         self.assertEqual(
@@ -591,7 +619,9 @@ class DashboardStatsTests(unittest.TestCase):
             msg=f"sanity: received-only professor {professor_id} participates in mentor universe",
         )
 
-    def test_dashboard_service_counts_multiple_unbound_received_logs_once_per_professor(self) -> None:
+    def test_dashboard_service_counts_multiple_unbound_received_logs_once_per_professor(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         reply_day = (datetime.now(UTC) - timedelta(days=1)).replace(
             hour=12,
@@ -661,7 +691,9 @@ class DashboardStatsTests(unittest.TestCase):
         trend_by_date = {bucket.date: bucket for bucket in result.email.trend_30_days}
         self.assertEqual(trend_by_date[reply_date].replied_count, 1)
 
-    def test_dashboard_service_counts_unbound_sent_log_in_summary_and_trend(self) -> None:
+    def test_dashboard_service_counts_unbound_sent_log_in_summary_and_trend(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         sent_time = datetime.now(UTC) - timedelta(hours=5)
 
@@ -719,7 +751,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(trend_by_date[sent_date].sent_count, 1)
 
     def test_dashboard_service_is_identity_scoped_not_llm_scoped(self) -> None:
-        identity_id, _, alternate_llm_profile_id = self._run_async(self._seed_dashboard_data())
+        identity_id, _, alternate_llm_profile_id = self._run_async(
+            self._seed_dashboard_data()
+        )
 
         async def run_query():
             async with self.session_factory() as session:
@@ -734,7 +768,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.summary.matched_professors, 6)
         self.assertEqual(result.email.summary.sent_count, 3)
 
-    def test_dashboard_service_filters_mentor_analysis_by_university_and_school(self) -> None:
+    def test_dashboard_service_filters_mentor_analysis_by_university_and_school(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
@@ -753,17 +789,24 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.summary.matched_professors, 2)
         self.assertEqual(result.mentor.summary.high_match_professors, 2)
 
-        distribution = {item.bucket: item.count for item in result.mentor.match_score_distribution}
+        distribution = {
+            item.bucket: item.count for item in result.mentor.match_score_distribution
+        }
         self.assertEqual(distribution["unmatched"], 0)
         self.assertEqual(distribution["80_89"], 1)
         self.assertEqual(distribution["90_100"], 1)
 
-        profile_distribution = {item.key: item.count for item in result.mentor.profile_completeness_distribution}
+        profile_distribution = {
+            item.key: item.count
+            for item in result.mentor.profile_completeness_distribution
+        }
         self.assertEqual(sum(profile_distribution.values()), 2)
         self.assertEqual(profile_distribution["complete"], 1)
         self.assertEqual(profile_distribution["missing_recent_papers"], 1)
 
-        school_distribution = {item.school_name: item.count for item in result.mentor.school_distribution}
+        school_distribution = {
+            item.school_name: item.count for item in result.mentor.school_distribution
+        }
         self.assertEqual(school_distribution["示例大学"], 3)
         self.assertEqual(school_distribution["第二大学"], 2)
         self.assertEqual(school_distribution["学校未填写"], 1)
@@ -771,7 +814,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.mentor.active_filter.university, "示例大学")
         self.assertEqual(result.mentor.active_filter.school, "计算机学院")
 
-    def test_dashboard_service_filters_email_metrics_by_university_and_school(self) -> None:
+    def test_dashboard_service_filters_email_metrics_by_university_and_school(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
@@ -795,7 +840,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         self.assertEqual(result.email.summary.reply_rate, 0.0)
-        self.assertTrue(all(item.failed_count == 0 for item in result.email.trend_30_days))
+        self.assertTrue(
+            all(item.failed_count == 0 for item in result.email.trend_30_days)
+        )
 
     def test_dashboard_service_filters_email_metrics_by_sent_date_range(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
@@ -828,7 +875,9 @@ class DashboardStatsTests(unittest.TestCase):
         }
         self.assertEqual(coverage_by_university["示例大学"].sent_professor_count, 0)
         self.assertEqual(coverage_by_university["第二大学"].sent_professor_count, 1)
-        self.assertEqual(coverage_by_university["第二大学"].contacted_professor_count, 1)
+        self.assertEqual(
+            coverage_by_university["第二大学"].contacted_professor_count, 1
+        )
         self.assertEqual(coverage_by_university["第二大学"].replied_professor_count, 0)
         self.assertEqual(coverage_by_university["第二大学"].reply_rate, 0.0)
 
@@ -927,7 +976,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.reply_wait.sample_count, 1)
         self.assertEqual(result.email.reply_wait.median_hours, 48.0)
 
-    def test_dashboard_service_uses_first_successful_send_after_failed_copy(self) -> None:
+    def test_dashboard_service_uses_first_successful_send_after_failed_copy(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
         now = datetime.now(UTC)
         anchor = now.replace(hour=12, minute=0, second=0, microsecond=0)
@@ -1009,7 +1060,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.reply_wait.sample_count, 1)
         self.assertEqual(result.email.reply_wait.median_hours, 1.0)
 
-    def test_dashboard_service_returns_zero_sent_professor_rate_for_empty_email_scope(self) -> None:
+    def test_dashboard_service_returns_zero_sent_professor_rate_for_empty_email_scope(
+        self,
+    ) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
 
         async def run_query():
@@ -1030,7 +1083,6 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertGreater(len(result.email.outreach_coverage.schools), 0)
         self.assertEqual(result.email.reply_wait.sample_count, 0)
         self.assertIsNone(result.email.reply_wait.median_hours)
-
 
     def test_dashboard_service_excludes_replies_outside_date_range(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
@@ -1054,7 +1106,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(result.email.summary.contacted_professor_count, 1)
         self.assertEqual(result.email.summary.replied_count, 0)
         self.assertEqual(result.email.summary.reply_rate, 0.0)
-        self.assertTrue(all(item.replied_count == 0 for item in result.email.trend_30_days))
+        self.assertTrue(
+            all(item.replied_count == 0 for item in result.email.trend_30_days)
+        )
 
     def test_dashboard_endpoint_returns_overview(self) -> None:
         identity_id, llm_profile_id, _ = self._run_async(self._seed_dashboard_data())
@@ -1083,7 +1137,9 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(payload["email"]["summary"]["sent_count"], 3)
         self.assertEqual(payload["email"]["summary"]["sent_professor_count"], 2)
         self.assertEqual(payload["email"]["summary"]["total_professor_count"], 7)
-        self.assertAlmostEqual(payload["email"]["summary"]["sent_professor_rate"], 2 / 7)
+        self.assertAlmostEqual(
+            payload["email"]["summary"]["sent_professor_rate"], 2 / 7
+        )
         self.assertEqual(payload["email"]["reply_wait"]["sample_count"], 1)
         coverage_by_university = {
             item["university"]: item
@@ -1091,8 +1147,12 @@ class DashboardStatsTests(unittest.TestCase):
         }
         self.assertEqual(coverage_by_university["示例大学"]["sent_professor_count"], 1)
         self.assertEqual(coverage_by_university["示例大学"]["total_professor_count"], 3)
-        self.assertEqual(coverage_by_university["示例大学"]["contacted_professor_count"], 1)
-        self.assertEqual(coverage_by_university["示例大学"]["replied_professor_count"], 0)
+        self.assertEqual(
+            coverage_by_university["示例大学"]["contacted_professor_count"], 1
+        )
+        self.assertEqual(
+            coverage_by_university["示例大学"]["replied_professor_count"], 0
+        )
         self.assertEqual(coverage_by_university["第二大学"]["reply_rate"], 1.0)
         self.assertEqual(payload["email"]["follow_ups"][0]["task_id"], 4)
 

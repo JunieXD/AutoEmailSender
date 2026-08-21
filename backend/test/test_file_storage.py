@@ -51,7 +51,9 @@ if loaded:
     def test_extract_pdf_text_falls_back_when_structured_converter_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "resume.pdf"
-            path.write_bytes(_build_minimal_pdf("PDF fallback sentinel information extraction"))
+            path.write_bytes(
+                _build_minimal_pdf("PDF fallback sentinel information extraction")
+            )
 
             with patch(
                 "app.services.file_storage._extract_text_with_structured_converter",
@@ -60,6 +62,7 @@ if loaded:
                 text = extract_text_from_document(path.as_posix())
 
         self.assertIn("PDF fallback sentinel", text or "")
+
 
 def _build_minimal_pdf(text: str) -> bytes:
     escaped_text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
@@ -70,7 +73,13 @@ def _build_minimal_pdf(text: str) -> bytes:
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
     stream = f"BT /F1 18 Tf 72 720 Td ({escaped_text}) Tj ET".encode("ascii")
-    objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+    objects.append(
+        b"<< /Length "
+        + str(len(stream)).encode("ascii")
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream"
+    )
 
     content = bytearray(b"%PDF-1.4\n")
     offsets = [0]

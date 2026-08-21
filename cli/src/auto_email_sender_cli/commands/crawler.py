@@ -30,8 +30,12 @@ def list_faculty_crawl_jobs(
     view: Annotated[str, typer.Option("--view", help="current 或 trash。")] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -59,13 +63,19 @@ def create_faculty_crawl_job(
     ctx: typer.Context,
     university: Annotated[str, typer.Option("--university", help="学校名称。")],
     school: Annotated[str, typer.Option("--school", help="学院、系所或实验室名称。")],
-    start_url: Annotated[str, typer.Option("--start-url", help="首个公开教师目录或个人主页 URL。")],
+    start_url: Annotated[
+        str, typer.Option("--start-url", help="首个公开教师目录或个人主页 URL。")
+    ],
     additional_start_urls: Annotated[
         list[str],
         typer.Option("--additional-start-url", help="可重复指定的其他公开入口 URL。"),
     ] = [],
-    entry_type: Annotated[str, typer.Option("--entry-type", help="list 或 profile。")] = "list",
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    entry_type: Annotated[
+        str, typer.Option("--entry-type", help="list 或 profile。")
+    ] = "list",
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -141,8 +151,12 @@ def list_faculty_crawl_pages(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -171,8 +185,12 @@ def list_faculty_crawl_job_events(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -199,8 +217,12 @@ def list_faculty_crawl_candidates(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -239,8 +261,12 @@ def update_faculty_crawl_candidate(
     clear_school: Annotated[bool, typer.Option("--clear-school")] = False,
     department: Annotated[str | None, typer.Option("--department")] = None,
     clear_department: Annotated[bool, typer.Option("--clear-department")] = False,
-    research_direction: Annotated[str | None, typer.Option("--research-direction")] = None,
-    clear_research_direction: Annotated[bool, typer.Option("--clear-research-direction")] = False,
+    research_direction: Annotated[
+        str | None, typer.Option("--research-direction")
+    ] = None,
+    clear_research_direction: Annotated[
+        bool, typer.Option("--clear-research-direction")
+    ] = False,
     recent_papers: Annotated[list[str] | None, typer.Option("--recent-paper")] = None,
     clear_recent_papers: Annotated[bool, typer.Option("--clear-recent-papers")] = False,
     profile_url: Annotated[str | None, typer.Option("--profile-url")] = None,
@@ -381,7 +407,9 @@ def prepare_faculty_crawl_job_retry(
             help="保留已抓取的页面和候选；默认会在重试前清空它们。",
         ),
     ] = False,
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -422,7 +450,9 @@ def enrich_faculty_crawl_candidates(
         list[int],
         typer.Option("--exclude-candidate-id", min=1, help="从选择结果中排除候选 ID。"),
     ] = [],
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     normalized_mode = selection_mode.strip().lower()
     if normalized_mode not in {"ids", "all", "filter"}:
@@ -486,7 +516,9 @@ def enrich_many_faculty_crawl_jobs(
             help="filter 模式下可重复指定 pending、accepted、rejected 或 merged。",
         ),
     ] = [],
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     normalized_mode = selection_mode.strip().lower()
     if normalized_mode not in {"all", "filter"}:
@@ -543,13 +575,19 @@ def _read_batch_items(items_file: Path) -> list[dict[str, object]]:
         ) from exc
     if isinstance(payload, dict):
         payload = payload.get("items")
-    if not isinstance(payload, list) or not payload or not all(isinstance(item, dict) for item in payload):
+    if (
+        not isinstance(payload, list)
+        or not payload
+        or not all(isinstance(item, dict) for item in payload)
+    ):
         raise typer.BadParameter(
             "--items-file 必须包含非空任务对象数组或 {items: [...]}。",
             param_hint="--items-file",
         )
     if len(payload) > 100:
-        raise typer.BadParameter("一次最多提交 100 个抓取任务。", param_hint="--items-file")
+        raise typer.BadParameter(
+            "一次最多提交 100 个抓取任务。", param_hint="--items-file"
+        )
     return payload
 
 
@@ -571,13 +609,17 @@ def pause_faculty_crawl_job(
 def resume_faculty_crawl_job(
     ctx: typer.Context,
     job_id: Annotated[int, typer.Argument(min=1)],
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,
         command="crawler.jobs.resume",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/resume",
-        json_body={"llm_profile_id": llm_profile_id} if llm_profile_id is not None else None,
+        json_body={"llm_profile_id": llm_profile_id}
+        if llm_profile_id is not None
+        else None,
         guide_topic="crawler",
         human_formatter=format_detail,
     )

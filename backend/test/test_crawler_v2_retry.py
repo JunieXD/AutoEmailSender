@@ -10,6 +10,7 @@ from app.modules.crawler.v2.retry import (
     retry_backoff_seconds,
 )
 
+
 class FakeWorkItem:
     def __init__(
         self,
@@ -24,6 +25,7 @@ class FakeWorkItem:
         self.worker_id = "w1"
         self.claimed_at = object()
         self.lease_expires_at = None
+
 
 class CrawlerV2RetryTests(unittest.TestCase):
     def test_backoff_uses_exponential_seconds_capped_at_sixty(self) -> None:
@@ -132,6 +134,7 @@ class CrawlerV2RetryTests(unittest.TestCase):
             ),
             MAX_CRAWLER_V2_ATTEMPTS,
         )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -152,7 +152,9 @@ async def draft_preview(
         rich_body=generation.result.rich_body,
         usage=TokenUsageRead(
             prompt_tokens=generation.usage.prompt_tokens if generation.usage else None,
-            completion_tokens=generation.usage.completion_tokens if generation.usage else None,
+            completion_tokens=generation.usage.completion_tokens
+            if generation.usage
+            else None,
             total_tokens=generation.usage.total_tokens if generation.usage else None,
             cached_tokens=generation.usage.cached_tokens if generation.usage else None,
         )

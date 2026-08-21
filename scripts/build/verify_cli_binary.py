@@ -69,7 +69,9 @@ def validate_payloads(
     if not revision or revision == "development":
         raise RuntimeError("frozen CLI is missing an embedded build revision")
     if build_kind != "embedded":
-        raise RuntimeError(f"unexpected frozen CLI build kind: {build_kind or '<empty>'}")
+        raise RuntimeError(
+            f"unexpected frozen CLI build kind: {build_kind or '<empty>'}"
+        )
     for key in (
         "cli_version",
         "protocol_version",
@@ -89,9 +91,13 @@ def validate_payloads(
 
     capability_build = _object(capability_data.get("build"), "capabilities.data.build")
     if capability_build.get("revision") != revision:
-        raise RuntimeError("capability catalog was generated from a different build revision")
+        raise RuntimeError(
+            "capability catalog was generated from a different build revision"
+        )
     if capability_build.get("kind") != build_kind:
-        raise RuntimeError("capability catalog was generated from a different build kind")
+        raise RuntimeError(
+            "capability catalog was generated from a different build kind"
+        )
     if not str(capability_data.get("scope_revision") or "").strip():
         raise RuntimeError("capability catalog is missing scope_revision")
 
@@ -107,7 +113,9 @@ def validate_agent_installation_contract(
             "agent manifest contract",
         )
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"cannot read Agent manifest contract: {contract_path}") from exc
+        raise RuntimeError(
+            f"cannot read Agent manifest contract: {contract_path}"
+        ) from exc
 
     current_version = _positive_integer(
         contract.get("x-current-version"),
@@ -115,15 +123,21 @@ def validate_agent_installation_contract(
     )
     raw_supported_versions = contract.get("x-supported-versions")
     if not isinstance(raw_supported_versions, list) or not raw_supported_versions:
-        raise RuntimeError("agent manifest x-supported-versions must be a non-empty array")
+        raise RuntimeError(
+            "agent manifest x-supported-versions must be a non-empty array"
+        )
     supported_versions = [
         _positive_integer(value, "agent manifest supported version")
         for value in raw_supported_versions
     ]
     if current_version not in supported_versions:
-        raise RuntimeError("current Agent manifest version is not declared as supported")
+        raise RuntimeError(
+            "current Agent manifest version is not declared as supported"
+        )
 
-    with tempfile.TemporaryDirectory(prefix="auto-email-sender-cli-contract-") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="auto-email-sender-cli-contract-"
+    ) as temp_dir:
         verification_root = Path(temp_dir)
         for schema_version in supported_versions:
             expected_hash = _expected_cli_hash(executable, schema_version)
@@ -207,7 +221,9 @@ def _validate_agent_installation_check(
             f"frozen CLI reported the wrong installation fingerprint for schema {schema_version}",
         )
     if schema_version == 5 and details.get("hash_kind") != "canonical_directory_v1":
-        raise RuntimeError("frozen CLI does not implement the schema 5 directory fingerprint contract")
+        raise RuntimeError(
+            "frozen CLI does not implement the schema 5 directory fingerprint contract"
+        )
     if expected_binding is not None:
         checks = details.get("checks")
         if not isinstance(checks, list):

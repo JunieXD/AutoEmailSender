@@ -44,7 +44,9 @@ class HistoryImapRateLimiter:
                     bucket = _Bucket(tokens=float(self.burst), updated_at=now)
                     self._buckets[key] = bucket
                 elapsed = max(0.0, now - bucket.updated_at)
-                bucket.tokens = min(float(self.burst), bucket.tokens + elapsed * refill_per_second)
+                bucket.tokens = min(
+                    float(self.burst), bucket.tokens + elapsed * refill_per_second
+                )
                 bucket.updated_at = now
                 if bucket.tokens >= 1:
                     bucket.tokens -= 1

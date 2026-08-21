@@ -16,7 +16,9 @@ from app.modules.identities.communication_groups.api import (
     update_communication_group,
 )
 from app.models import IdentityCommunicationGroup, IdentityProfile, OperationLog
-from app.modules.identities.communication_groups.schemas import IdentityCommunicationGroupWrite
+from app.modules.identities.communication_groups.schemas import (
+    IdentityCommunicationGroupWrite,
+)
 from app.modules.identities.communication_groups.scope import (
     cleanup_communication_group_after_identity_delete,
     resolve_identity_communication_scope,
@@ -102,7 +104,9 @@ class IdentityCommunicationGroupTests(unittest.TestCase):
         self.assertEqual([group.id for group in listed], [created.id])
         self.assertEqual([member.id for member in updated.members], [2, 3])
         self.assertEqual(len(identities), 3)
-        self.assertTrue(all(identity.communication_group_id is None for identity in identities))
+        self.assertTrue(
+            all(identity.communication_group_id is None for identity in identities)
+        )
         self.assertEqual(groups, [])
         self.assertEqual(
             [log.event_name for log in logs],
@@ -215,7 +219,9 @@ class IdentityCommunicationGroupTests(unittest.TestCase):
         self.assertEqual([error.status_code for error in errors], [422, 422])
         self.assertEqual(errors[1].detail["identity_ids"], [999])
 
-    def test_match_source_can_be_switched_cleared_and_is_cleared_when_removed(self) -> None:
+    def test_match_source_can_be_switched_cleared_and_is_cleared_when_removed(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 identities = [
@@ -364,16 +370,25 @@ class IdentityCommunicationGroupTests(unittest.TestCase):
 
                 await session.delete(identities[1])
                 await session.flush()
-                second_cleanup = await cleanup_communication_group_after_identity_delete(
-                    session,
-                    group_id=group.id,
-                    removed_identity_id=identities[1].id,
+                second_cleanup = (
+                    await cleanup_communication_group_after_identity_delete(
+                        session,
+                        group_id=group.id,
+                        removed_identity_id=identities[1].id,
+                    )
                 )
                 await session.commit()
 
                 remaining_a = await session.get(IdentityProfile, identities[0].id)
                 saved_group = await session.get(IdentityCommunicationGroup, group.id)
-                return scope_b.identity_ids, scope_d.identity_ids, first_cleanup, second_cleanup, remaining_a, saved_group
+                return (
+                    scope_b.identity_ids,
+                    scope_d.identity_ids,
+                    first_cleanup,
+                    second_cleanup,
+                    remaining_a,
+                    saved_group,
+                )
 
         scope_b, scope_d, first_cleanup, second_cleanup, remaining_a, saved_group = (
             self._run_async(scenario())

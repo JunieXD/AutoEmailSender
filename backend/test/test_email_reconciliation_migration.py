@@ -20,7 +20,9 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         gc.collect()
         self.temp_dir.cleanup()
 
-    def test_upgrade_quarantines_candidates_and_downgrade_preserves_every_row(self) -> None:
+    def test_upgrade_quarantines_candidates_and_downgrade_preserves_every_row(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "legacy-email-history.db"
         create_migrated_sqlite_database(
             database_path,
@@ -320,7 +322,9 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
             ).fetchone()[0]
             email_log_columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(email_logs)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(email_logs)"
+                ).fetchall()
             }
             reconciliation_tables = {
                 row[0]

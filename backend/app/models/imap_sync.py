@@ -6,7 +6,16 @@ from app.core.time import utc_now
 
 from enum import Enum
 
-from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -34,9 +43,7 @@ class ImapFolderRole(str, Enum):
 
 class ImapIdentitySyncLease(Base):
     __tablename__ = "imap_identity_sync_leases"
-    __table_args__ = (
-        Index("ix_imap_identity_sync_lease_expires", "lease_expires_at"),
-    )
+    __table_args__ = (Index("ix_imap_identity_sync_lease_expires", "lease_expires_at"),)
 
     identity_id: Mapped[int] = mapped_column(
         ForeignKey("identity_profiles.id", ondelete="CASCADE"),
@@ -102,7 +109,9 @@ class ImapMailboxSyncState(Base):
         nullable=True,
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    discovered_sent_folder: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    discovered_sent_folder: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     sent_folder_discovered_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(),
         nullable=True,
@@ -121,7 +130,9 @@ class ImapMailboxSyncState(Base):
         UTCDateTime(),
         nullable=True,
     )
-    professor_state_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    professor_state_fingerprint: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     history_scan_status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -216,7 +227,9 @@ class ImapProfessorSyncState(Base):
         index=True,
         nullable=False,
     )
-    professor_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    professor_email: Mapped[str] = mapped_column(
+        String(255), nullable=False, index=True
+    )
     folder_role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

@@ -28,9 +28,15 @@ def upgrade() -> None:
                 nullable=False,
             ),
         )
-        batch_op.add_column(sa.Column("outreach_template_subject", sa.String(length=255), nullable=True))
-        batch_op.add_column(sa.Column("outreach_template_body_text", sa.Text(), nullable=True))
-        batch_op.add_column(sa.Column("outreach_template_body_html", sa.Text(), nullable=True))
+        batch_op.add_column(
+            sa.Column("outreach_template_subject", sa.String(length=255), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("outreach_template_body_text", sa.Text(), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("outreach_template_body_html", sa.Text(), nullable=True)
+        )
 
 
 def downgrade() -> None:

@@ -6,6 +6,7 @@ from pydantic import Field
 
 from app.schemas.base import ApiSchema
 
+
 class OperationLogRead(ApiSchema):
     id: int
     request_id: str | None

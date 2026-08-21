@@ -46,7 +46,9 @@ async def resolve_crawl_job_runtime_profile(
     job: CrawlJob,
 ) -> CrawlLLMRuntimeProfile | None:
     run = await get_or_create_current_crawl_job_run(session, job)
-    snapshot = run.llm_runtime_snapshot if isinstance(run.llm_runtime_snapshot, dict) else None
+    snapshot = (
+        run.llm_runtime_snapshot if isinstance(run.llm_runtime_snapshot, dict) else None
+    )
     snapshot_profile_id = snapshot.get("profile_id") if snapshot is not None else None
     profile: LLMProfile | None = None
     if isinstance(snapshot_profile_id, int):
@@ -63,10 +65,14 @@ async def resolve_crawl_job_runtime_profile(
     if profile is None:
         return None
     if snapshot is None or snapshot.get("profile_id") != profile.id:
-        source: LLMProfileSource = "job" if job.llm_profile_id is not None else "global_default"
+        source: LLMProfileSource = (
+            "job" if job.llm_profile_id is not None else "global_default"
+        )
         if job.llm_profile_id is None:
             job.llm_profile_id = profile.id
-        snapshot = await snapshot_crawl_job_llm_profile(session, job, profile, source=source)
+        snapshot = await snapshot_crawl_job_llm_profile(
+            session, job, profile, source=source
+        )
     return _runtime_profile(profile, snapshot)
 
 
@@ -122,7 +128,9 @@ def _runtime_profile(
         api_base_url=_optional_string(snapshot.get("api_base_url")),
         api_key=profile.api_key,
         model_name=str(snapshot.get("model_name") or profile.model_name),
-        matcher_prompt_template=_optional_string(snapshot.get("matcher_prompt_template")),
+        matcher_prompt_template=_optional_string(
+            snapshot.get("matcher_prompt_template")
+        ),
         writer_prompt_template=_optional_string(snapshot.get("writer_prompt_template")),
         temperature=_optional_float(snapshot.get("temperature")),
         max_tokens=_optional_int(snapshot.get("max_tokens")),

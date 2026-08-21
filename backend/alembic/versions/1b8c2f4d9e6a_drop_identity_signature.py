@@ -21,7 +21,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    existing_columns = {column["name"] for column in inspector.get_columns("identity_profiles")}
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("identity_profiles")
+    }
     if "signature" not in existing_columns:
         return
 

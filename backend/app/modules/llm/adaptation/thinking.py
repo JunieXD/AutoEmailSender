@@ -238,7 +238,10 @@ def _is_better_thinking_disable_result(
         if baseline_reasoning is None:
             return candidate_reasoning == 0 and (
                 candidate_completion is not None
-                and (baseline_completion is None or candidate_completion < baseline_completion)
+                and (
+                    baseline_completion is None
+                    or candidate_completion < baseline_completion
+                )
             )
         if candidate_reasoning != baseline_reasoning:
             return candidate_reasoning < baseline_reasoning
@@ -315,10 +318,7 @@ async def probe_and_learn_extra_body(
                 exc.status_code == 400
                 and is_thinking_mode_protocol_error(exc.status_code or 0, str(exc))
             )
-            is_empty_content_200 = (
-                exc.status_code == 200
-                and "空内容" in str(exc)
-            )
+            is_empty_content_200 = exc.status_code == 200 and "空内容" in str(exc)
             if not (is_protocol_400 or is_empty_content_200):
                 raise
             if index == len(attempts) - 1:
@@ -431,6 +431,7 @@ async def resolve_thinking_extra_body(profile: LLMProfile) -> dict[str, object] 
             return await ensure_thinking_adaptation(session, profile)
     except Exception:
         return None
+
 
 __all__ = [
     "EndpointKind",

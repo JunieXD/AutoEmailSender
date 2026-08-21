@@ -246,30 +246,44 @@ def explain_smtp_error(raw_error: object) -> str:
     if _contains_any(normalized, _ACCOUNT_MARKERS):
         return "发件账号可能已停用、冻结、锁定，或没有 SMTP 发信权限。请登录邮箱网页检查账号状态。"
 
-    if "too many recipients" in normalized or "recipient limit" in normalized or _has_status_code(
-        normalized,
-        "4.5.3",
-        "5.5.3",
+    if (
+        "too many recipients" in normalized
+        or "recipient limit" in normalized
+        or _has_status_code(
+            normalized,
+            "4.5.3",
+            "5.5.3",
+        )
     ):
         return "单封邮件的收件人数可能超过服务商限制。请减少收件人数量后重试。"
 
-    if _contains_any(normalized, _MAILBOX_FULL_MARKERS) or _has_status_code(normalized, "5.2.2"):
+    if _contains_any(normalized, _MAILBOX_FULL_MARKERS) or _has_status_code(
+        normalized, "5.2.2"
+    ):
         return "收件人的邮箱可能已满或超过存储配额，需等待对方清理邮箱后再发送。"
 
-    if _contains_any(normalized, _MESSAGE_SIZE_MARKERS) or _has_status_code(normalized, "5.3.4"):
+    if _contains_any(normalized, _MESSAGE_SIZE_MARKERS) or _has_status_code(
+        normalized, "5.3.4"
+    ):
         return "邮件正文或附件可能超过服务商允许的大小。请缩小附件或邮件内容后重试。"
 
-    if _contains_any(normalized, _RECIPIENT_MARKERS) or _has_status_code(normalized, "5.1.1"):
+    if _contains_any(normalized, _RECIPIENT_MARKERS) or _has_status_code(
+        normalized, "5.1.1"
+    ):
         return "收件地址可能不存在、格式不正确，或已被对方邮件服务器停用或拒收。"
 
-    if _contains_any(normalized, _POLICY_MARKERS) or _has_status_code(normalized, "5.7.1"):
+    if _contains_any(normalized, _POLICY_MARKERS) or _has_status_code(
+        normalized, "5.7.1"
+    ):
         return (
             "邮件可能被邮箱服务商的反垃圾或安全策略拦截。"
             "请检查主题、正文、链接、附件、发件人一致性及近期发送行为。"
         )
 
     if _contains_any(normalized, _NETWORK_MARKERS):
-        return "连接 SMTP 服务器可能超时或中断。请检查网络、服务器地址和端口，或稍后重试。"
+        return (
+            "连接 SMTP 服务器可能超时或中断。请检查网络、服务器地址和端口，或稍后重试。"
+        )
 
     if _has_status_code(normalized, "421", "450", "451", "452") or re.search(
         r"(?<!\d)4\.[0-9]\.[0-9](?!\d)",
@@ -288,4 +302,6 @@ def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
 
 
 def _has_status_code(text: str, *codes: str) -> bool:
-    return any(re.search(rf"(?<![\d.]){re.escape(code)}(?![\d.])", text) for code in codes)
+    return any(
+        re.search(rf"(?<![\d.]){re.escape(code)}(?![\d.])", text) for code in codes
+    )

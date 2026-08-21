@@ -31,6 +31,7 @@ from .job_runtime import (
     serialize_match_analysis_job_item,
     summarize_match_analysis_selection,
 )
+
 router = APIRouter(prefix="/api/match-analysis-jobs", tags=["match-analysis-jobs"])
 
 
@@ -57,7 +58,9 @@ async def list_match_analysis_jobs(
     return [serialize_match_analysis_job(job) for job in jobs]
 
 
-@router.post("", response_model=MatchAnalysisJobRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=MatchAnalysisJobRead, status_code=status.HTTP_201_CREATED
+)
 async def create_job(payload: CreateMatchAnalysisJobRequest) -> MatchAnalysisJobRead:
     try:
         job = await create_match_analysis_job(
@@ -110,7 +113,9 @@ async def list_match_analysis_job_items(
     status_filter: str | None = Query(default=None, alias="status"),
     session: AsyncSession = Depends(get_async_session),
 ) -> MatchAnalysisJobItemsPageRead:
-    job_exists = await session.scalar(select(MatchAnalysisJob.id).where(MatchAnalysisJob.id == job_id))
+    job_exists = await session.scalar(
+        select(MatchAnalysisJob.id).where(MatchAnalysisJob.id == job_id)
+    )
     if job_exists is None:
         raise HTTPException(status_code=404, detail="匹配分析任务不存在")
     filters = [MatchAnalysisJobItem.job_id == job_id]
@@ -166,10 +171,16 @@ async def cancel_match_analysis_job(job_id: int) -> MatchAnalysisJobActionRespon
         detail = str(exc)
         status_code = 404 if "不存在" in detail else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
-    return MatchAnalysisJobActionResponse(ok=True, job=serialize_match_analysis_job(job))
+    return MatchAnalysisJobActionResponse(
+        ok=True, job=serialize_match_analysis_job(job)
+    )
 
 
-@router.post("/{job_id}/retry-failed", response_model=MatchAnalysisJobRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{job_id}/retry-failed",
+    response_model=MatchAnalysisJobRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def retry_failed_match_analysis_job_api(job_id: int) -> MatchAnalysisJobRead:
     try:
         job = await retry_failed_match_analysis_job(get_session_factory(), job_id)
@@ -193,7 +204,9 @@ async def delete_match_analysis_job(
         raise HTTPException(status_code=status_code, detail=detail) from exc
     await session.commit()
     await session.refresh(job)
-    return MatchAnalysisJobActionResponse(ok=True, job=serialize_match_analysis_job(job))
+    return MatchAnalysisJobActionResponse(
+        ok=True, job=serialize_match_analysis_job(job)
+    )
 
 
 @router.post("/{job_id}/restore", response_model=MatchAnalysisJobActionResponse)
@@ -209,4 +222,6 @@ async def restore_match_analysis_job(
         raise HTTPException(status_code=status_code, detail=detail) from exc
     await session.commit()
     await session.refresh(job)
-    return MatchAnalysisJobActionResponse(ok=True, job=serialize_match_analysis_job(job))
+    return MatchAnalysisJobActionResponse(
+        ok=True, job=serialize_match_analysis_job(job)
+    )

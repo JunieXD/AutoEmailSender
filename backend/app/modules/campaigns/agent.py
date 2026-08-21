@@ -666,7 +666,9 @@ async def execute_campaign_restore_send_snapshot(
         item_id,
     )
     current_snapshot = _build_campaign_restore_send_snapshot(context)
-    if expected_fingerprint != _campaign_restore_send_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _campaign_restore_send_snapshot_fingerprint(
+        current_snapshot
+    ):
         raise _campaign_restore_send_plan_stale_error(campaign_id, item_id)
 
     now = utc_now()
@@ -728,13 +730,19 @@ async def execute_campaign_create_snapshot(
         scheduled_dates=context.scheduled_dates or None,
         status=BatchTaskStatus.PAUSED.value,
         primary_material_id=(
-            context.primary_material.id if context.primary_material is not None else None
+            context.primary_material.id
+            if context.primary_material is not None
+            else None
         ),
         outreach_template_id=(
-            context.selected_template.id if context.selected_template is not None else None
+            context.selected_template.id
+            if context.selected_template is not None
+            else None
         ),
         outreach_template_name_snapshot=(
-            context.selected_template.name if context.selected_template is not None else None
+            context.selected_template.name
+            if context.selected_template is not None
+            else None
         ),
         outreach_template_snapshot_version=1,
         outreach_generation_mode=context.outreach_config.generation_mode,
@@ -747,9 +755,12 @@ async def execute_campaign_create_snapshot(
         outreach_template_body_html=_normalize_nullable_text(
             context.outreach_config.body_html_template,
         ),
-        email_subject=_normalize_nullable_text(context.outreach_config.subject_template),
+        email_subject=_normalize_nullable_text(
+            context.outreach_config.subject_template
+        ),
         email_body=_normalize_nullable_text(context.outreach_config.body_text_template),
-        selected_material_ids=[material.id for material in context.attachment_materials] or None,
+        selected_material_ids=[material.id for material in context.attachment_materials]
+        or None,
         target_count=len(context.professors),
     )
     session.add(batch_task)
@@ -815,7 +826,9 @@ async def execute_campaign_create_snapshot(
                 generated_content_html=generated_body_html,
                 draft_generation_source=draft_generation_source,
                 draft_fallback_reason=draft_fallback_reason,
-                selected_material_ids=[material.id for material in context.attachment_materials]
+                selected_material_ids=[
+                    material.id for material in context.attachment_materials
+                ]
                 or None,
             ),
         )
@@ -832,7 +845,9 @@ async def execute_campaign_create_snapshot(
             "target_count": batch_task.target_count,
             "identity_id": batch_task.identity_id,
             "llm_profile_id": batch_task.llm_profile_id,
-            "generation_mode": _agent_generation_mode(batch_task.outreach_generation_mode),
+            "generation_mode": _agent_generation_mode(
+                batch_task.outreach_generation_mode
+            ),
             "status": batch_task.status,
             "never_sends": True,
         },
@@ -860,7 +875,9 @@ async def execute_campaign_send_snapshot(
     session: AsyncSession,
     snapshot: dict[str, object],
 ) -> dict[str, object]:
-    campaign_id, payload, scheduled_at_values = _campaign_send_request_from_snapshot(snapshot)
+    campaign_id, payload, scheduled_at_values = _campaign_send_request_from_snapshot(
+        snapshot
+    )
     expected_fingerprint = snapshot.get("campaign_send_fingerprint")
     if not isinstance(expected_fingerprint, str):
         raise _invalid_campaign_snapshot_error()
@@ -1012,7 +1029,9 @@ async def _resolve_campaign_create_context(
     selected_template = None
     if payload.template_id is not None:
         try:
-            selected_template = await get_outreach_template(session, payload.template_id)
+            selected_template = await get_outreach_template(
+                session, payload.template_id
+            )
         except ValueError as exc:
             raise AgentApiError(
                 status_code=422,
@@ -1020,7 +1039,9 @@ async def _resolve_campaign_create_context(
                 message=str(exc),
             ) from exc
     else:
-        selected_template = await get_default_outreach_template_for_identity(session, identity)
+        selected_template = await get_default_outreach_template_for_identity(
+            session, identity
+        )
     internal_generation_mode = (
         OUTREACH_GENERATION_MODE_TEMPLATE
         if payload.generation_mode == "template"
@@ -1083,7 +1104,11 @@ def _validate_campaign_schedule(payload: AgentCampaignCreateRequest) -> list[str
             code="CAMPAIGN_SCHEDULE_INVALID",
             message=str(exc),
         ) from exc
-    if not scheduled_dates or not payload.window_start_time or not payload.window_end_time:
+    if (
+        not scheduled_dates
+        or not payload.window_start_time
+        or not payload.window_end_time
+    ):
         raise AgentApiError(
             status_code=422,
             code="CAMPAIGN_SCHEDULE_INVALID",
@@ -1109,7 +1134,9 @@ def _validate_campaign_schedule(payload: AgentCampaignCreateRequest) -> list[str
     return scheduled_dates
 
 
-def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str, object]:
+def _build_campaign_create_snapshot(
+    context: CampaignCreateContext,
+) -> dict[str, object]:
     payload = context.payload
     fallback_count = sum(
         1
@@ -1126,7 +1153,9 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
         "professors": [_professor_state(professor) for professor in context.professors],
         "template": _template_state(context.selected_template),
         "reference_material": _material_state(context.primary_material),
-        "attachments": [_material_state(material) for material in context.attachment_materials],
+        "attachments": [
+            _material_state(material) for material in context.attachment_materials
+        ],
         "outreach_config": _outreach_config_state(context.outreach_config),
         "schedule": _schedule_state(
             schedule_type=payload.schedule_type,
@@ -1153,7 +1182,9 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
         "template_fallback_count": fallback_count,
         "template": _named_template(context.selected_template),
         "reference_material": _named_material(context.primary_material),
-        "attachments": [_named_material(material) for material in context.attachment_materials],
+        "attachments": [
+            _named_material(material) for material in context.attachment_materials
+        ],
     }
     warnings = ["确认后只会创建暂停的草稿活动，不会发送或排程任何邮件。"]
     if payload.generation_mode == "ai_rewrite":
@@ -1165,7 +1196,9 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
                 f"其中 {fallback_count} 位导师缺少研究方向；这些邮件会直接使用模板生成到待审核状态，不会调用模型。",
             )
     else:
-        warnings.append("固定模板草稿会生成到待审核状态；发送前仍需单独创建并确认批量发送计划。")
+        warnings.append(
+            "固定模板草稿会生成到待审核状态；发送前仍需单独创建并确认批量发送计划。"
+        )
     snapshot = {
         "snapshot_version": CAMPAIGN_CREATE_SNAPSHOT_VERSION,
         "request": payload.model_dump(mode="json"),
@@ -1173,7 +1206,9 @@ def _build_campaign_create_snapshot(context: CampaignCreateContext) -> dict[str,
         "summary": summary,
         "warnings": warnings,
     }
-    snapshot["campaign_create_fingerprint"] = _campaign_create_snapshot_fingerprint(snapshot)
+    snapshot["campaign_create_fingerprint"] = _campaign_create_snapshot_fingerprint(
+        snapshot
+    )
     return snapshot
 
 
@@ -1311,7 +1346,11 @@ async def _resolve_campaign_restore_send_context(
             status_code=409,
             code="CAMPAIGN_ITEM_SEND_NOT_RESTORABLE",
             message="活动项当前状态不能恢复发送。",
-            details={"campaign_id": campaign.id, "item_id": item.id, "status": item.status},
+            details={
+                "campaign_id": campaign.id,
+                "item_id": item.id,
+                "status": item.status,
+            },
         )
     material_by_id = {
         material.id: material for material in await list_global_materials(session)
@@ -1410,7 +1449,10 @@ def _current_campaign_delivery_draft_or_raise(
             status_code=409,
             code="CAMPAIGN_ATTACHMENT_MATERIAL_STALE",
             message=f"活动项 {task.id} 包含已删除或不存在的附件。",
-            details={"item_id": task.id, "attachment_material_ids": missing_attachment_ids},
+            details={
+                "item_id": task.id,
+                "attachment_material_ids": missing_attachment_ids,
+            },
         )
     return FinalCampaignDraft(
         task=task,
@@ -1418,7 +1460,9 @@ def _current_campaign_delivery_draft_or_raise(
         body_text=rendered.text,
         body_html=rendered.html,
         attachment_material_ids=attachment_material_ids,
-        attachment_materials=[material_by_id[material_id] for material_id in attachment_material_ids],
+        attachment_materials=[
+            material_by_id[material_id] for material_id in attachment_material_ids
+        ],
     )
 
 
@@ -1474,7 +1518,9 @@ def _resolve_campaign_send_schedule(
     ):
         raise _invalid_campaign_snapshot_error()
     now = utc_now()
-    if any(as_utc_aware(value) <= now for value in scheduled_at_values if value is not None):
+    if any(
+        as_utc_aware(value) <= now for value in scheduled_at_values if value is not None
+    ):
         raise AgentApiError(
             status_code=409,
             code="PLAN_STALE",
@@ -1531,7 +1577,9 @@ def _build_campaign_send_snapshot(
             "执行后无法通过同一计划再次创建重复发送。",
         ],
     }
-    snapshot["campaign_send_fingerprint"] = _campaign_send_snapshot_fingerprint(snapshot)
+    snapshot["campaign_send_fingerprint"] = _campaign_send_snapshot_fingerprint(
+        snapshot
+    )
     return snapshot
 
 
@@ -1597,7 +1645,11 @@ def _campaign_resume_request_from_snapshot(snapshot: dict[str, object]) -> int:
     if not isinstance(request, dict):
         raise _invalid_campaign_snapshot_error()
     campaign_id = request.get("campaign_id")
-    if not isinstance(campaign_id, int) or isinstance(campaign_id, bool) or campaign_id < 1:
+    if (
+        not isinstance(campaign_id, int)
+        or isinstance(campaign_id, bool)
+        or campaign_id < 1
+    ):
         raise _invalid_campaign_snapshot_error()
     return campaign_id
 
@@ -1678,7 +1730,11 @@ def _campaign_send_request_from_snapshot(
         raise _invalid_campaign_snapshot_error()
     campaign_id = request.get("campaign_id")
     item_ids = request.get("item_ids")
-    if not isinstance(campaign_id, int) or isinstance(campaign_id, bool) or campaign_id < 1:
+    if (
+        not isinstance(campaign_id, int)
+        or isinstance(campaign_id, bool)
+        or campaign_id < 1
+    ):
         raise _invalid_campaign_snapshot_error()
     try:
         payload = AgentCampaignSendRequest.model_validate({"item_ids": item_ids})
@@ -1722,7 +1778,9 @@ def _campaign_send_item_state(final_draft: FinalCampaignDraft) -> dict[str, obje
         "task": {
             "id": task.id,
             "status": task.status,
-            "batch_send_canceled_at": _serialize_optional_datetime(task.batch_send_canceled_at),
+            "batch_send_canceled_at": _serialize_optional_datetime(
+                task.batch_send_canceled_at
+            ),
             "updated_at": _serialize_optional_datetime(task.updated_at),
             "generation_mode": _agent_generation_mode(task.outreach_generation_mode),
             "template_id": task.outreach_template_id,
@@ -1736,8 +1794,7 @@ def _campaign_send_item_state(final_draft: FinalCampaignDraft) -> dict[str, obje
         "template": _template_state(task.outreach_template),
         "reference_material": _material_state(task.primary_material),
         "attachments": [
-            _material_state(material)
-            for material in final_draft.attachment_materials
+            _material_state(material) for material in final_draft.attachment_materials
         ],
     }
 
@@ -1798,8 +1855,7 @@ async def _campaign_task_summaries(
     visible = or_(
         EmailTask.status != EmailTaskStatus.CANCELED.value,
         EmailTask.cancellation_reason.is_(None),
-        EmailTask.cancellation_reason
-        != EmailTaskCancellationReason.USER_REMOVED.value,
+        EmailTask.cancellation_reason != EmailTaskCancellationReason.USER_REMOVED.value,
     )
     active = and_(visible, EmailTask.batch_send_canceled_at.is_(None))
     statuses = [status.value for status in EmailTaskStatus]
@@ -1818,50 +1874,62 @@ async def _campaign_task_summaries(
             (
                 await session.execute(
                     select(
-            EmailTask.batch_task_id,
-            *status_columns,
-            func.sum(
-                case(
-                    (
-                        and_(visible, EmailTask.batch_send_canceled_at.is_not(None)),
-                        1,
-                    ),
-                    else_=0,
-                ),
-            ).label("canceled_send_count"),
-            func.max(
-                case(
-                    (
-                        and_(active, EmailTask.status.in_(CAMPAIGN_DISPATCHABLE_STATUSES)),
-                        1,
-                    ),
-                    else_=0,
-                ),
-            ).label("has_dispatchable"),
-            func.max(
-                case(
-                    (
-                        and_(
-                            active,
-                            or_(
-                                EmailTask.outreach_generation_mode.is_(None),
-                                func.lower(EmailTask.outreach_generation_mode)
-                                != OUTREACH_GENERATION_MODE_TEMPLATE,
+                        EmailTask.batch_task_id,
+                        *status_columns,
+                        func.sum(
+                            case(
+                                (
+                                    and_(
+                                        visible,
+                                        EmailTask.batch_send_canceled_at.is_not(None),
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
                             ),
-                            EmailTask.status.in_(
-                                {
-                                    EmailTaskStatus.DISCOVERED.value,
-                                    EmailTaskStatus.MATCHED.value,
-                                    EmailTaskStatus.DRAFT_FAILED.value,
-                                },
+                        ).label("canceled_send_count"),
+                        func.max(
+                            case(
+                                (
+                                    and_(
+                                        active,
+                                        EmailTask.status.in_(
+                                            CAMPAIGN_DISPATCHABLE_STATUSES
+                                        ),
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
                             ),
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                ),
-            ).label("has_ai_pending"),
-        )
+                        ).label("has_dispatchable"),
+                        func.max(
+                            case(
+                                (
+                                    and_(
+                                        active,
+                                        or_(
+                                            EmailTask.outreach_generation_mode.is_(
+                                                None
+                                            ),
+                                            func.lower(
+                                                EmailTask.outreach_generation_mode
+                                            )
+                                            != OUTREACH_GENERATION_MODE_TEMPLATE,
+                                        ),
+                                        EmailTask.status.in_(
+                                            {
+                                                EmailTaskStatus.DISCOVERED.value,
+                                                EmailTaskStatus.MATCHED.value,
+                                                EmailTaskStatus.DRAFT_FAILED.value,
+                                            },
+                                        ),
+                                    ),
+                                    1,
+                                ),
+                                else_=0,
+                            ),
+                        ).label("has_ai_pending"),
+                    )
                     .where(EmailTask.batch_task_id.in_(campaign_id_chunk))
                     .group_by(EmailTask.batch_task_id),
                 )
@@ -1905,8 +1973,12 @@ async def _load_campaign_for_send_or_raise(
         .options(
             selectinload(BatchTask.identity),
             selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
-            selectinload(BatchTask.email_tasks).selectinload(EmailTask.primary_material),
-            selectinload(BatchTask.email_tasks).selectinload(EmailTask.outreach_template),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.primary_material
+            ),
+            selectinload(BatchTask.email_tasks).selectinload(
+                EmailTask.outreach_template
+            ),
         )
         .where(BatchTask.id == campaign_id),
     )
@@ -2069,7 +2141,9 @@ def _serialize_campaign(
     visible_tasks: list[EmailTask] | None = None
     if task_summary is None:
         visible_tasks = [
-            task for task in campaign.email_tasks if not _is_user_removed_campaign_item(task)
+            task
+            for task in campaign.email_tasks
+            if not _is_user_removed_campaign_item(task)
         ]
         active_tasks = [
             task for task in visible_tasks if task.batch_send_canceled_at is None
@@ -2090,7 +2164,9 @@ def _serialize_campaign(
         )
     identity = campaign.identity
     llm_profile = campaign.llm_profile
-    if identity is None or llm_profile is None:  # pragma: no cover - database foreign keys
+    if (
+        identity is None or llm_profile is None
+    ):  # pragma: no cover - database foreign keys
         raise AgentApiError(
             status_code=500,
             code="CAMPAIGN_RELATION_MISSING",
@@ -2104,7 +2180,10 @@ def _serialize_campaign(
         llm_profile={"id": llm_profile.id, "name": llm_profile.name},
         generation_mode=_agent_generation_mode(campaign.outreach_generation_mode),
         template=(
-            {"id": campaign.outreach_template_id, "name": campaign.outreach_template_name_snapshot}
+            {
+                "id": campaign.outreach_template_id,
+                "name": campaign.outreach_template_name_snapshot,
+            }
             if campaign.outreach_template_id is not None
             and campaign.outreach_template_name_snapshot is not None
             else None
@@ -2120,7 +2199,8 @@ def _serialize_campaign(
         scheduled_dates=list(campaign.scheduled_dates or []),
         target_count=campaign.target_count,
         pending_generation_count=(
-            counts[EmailTaskStatus.DISCOVERED.value] + counts[EmailTaskStatus.MATCHED.value]
+            counts[EmailTaskStatus.DISCOVERED.value]
+            + counts[EmailTaskStatus.MATCHED.value]
         ),
         generating_draft_count=counts[EmailTaskStatus.GENERATING_DRAFT.value],
         draft_failed_count=counts[EmailTaskStatus.DRAFT_FAILED.value],
@@ -2129,7 +2209,8 @@ def _serialize_campaign(
         scheduled_count=counts[EmailTaskStatus.SCHEDULED.value],
         sending_count=counts[EmailTaskStatus.SENDING.value],
         sent_count=(
-            counts[EmailTaskStatus.SENT.value] + counts[EmailTaskStatus.REPLY_DETECTED.value]
+            counts[EmailTaskStatus.SENT.value]
+            + counts[EmailTaskStatus.REPLY_DETECTED.value]
         ),
         failed_count=counts[EmailTaskStatus.SEND_FAILED.value],
         canceled_count=counts[EmailTaskStatus.CANCELED.value],
@@ -2161,7 +2242,9 @@ def _serialize_campaign_item(
         (task.approved_body_text or task.generated_content_text or "").strip()
         or (task.approved_body_html or task.generated_content_html or "").strip()
     )
-    if task.professor is None or task.batch_task_id is None:  # pragma: no cover - database foreign keys
+    if (
+        task.professor is None or task.batch_task_id is None
+    ):  # pragma: no cover - database foreign keys
         raise AgentApiError(
             status_code=500,
             code="CAMPAIGN_RELATION_MISSING",
@@ -2226,7 +2309,10 @@ def _serialize_campaign_item(
 
 
 def _campaign_can_start_draft_generation(campaign: BatchTask) -> bool:
-    if campaign.status not in CAMPAIGN_ALLOWED_ACTIVE_STATUSES or campaign.deleted_at is not None:
+    if (
+        campaign.status not in CAMPAIGN_ALLOWED_ACTIVE_STATUSES
+        or campaign.deleted_at is not None
+    ):
         return False
     if any(
         task.status in CAMPAIGN_DISPATCHABLE_STATUSES
@@ -2248,7 +2334,9 @@ def _campaign_can_start_draft_generation(campaign: BatchTask) -> bool:
 
 
 def _task_uses_ai_rewrite(task: EmailTask) -> bool:
-    return (task.outreach_generation_mode or "").strip().lower() != OUTREACH_GENERATION_MODE_TEMPLATE
+    return (
+        task.outreach_generation_mode or ""
+    ).strip().lower() != OUTREACH_GENERATION_MODE_TEMPLATE
 
 
 def _agent_generation_mode(value: str | None) -> str:
@@ -2483,7 +2571,9 @@ def _campaign_restore_send_plan_stale_error(
         status_code=409,
         code="PLAN_STALE",
         message="活动项的发送状态、草稿、附件或原定时间已发生变化，请重新生成恢复发送计划。",
-        details={"changed_fields": ["campaign", "item", "draft", "attachments", "schedule"]},
+        details={
+            "changed_fields": ["campaign", "item", "draft", "attachments", "schedule"]
+        },
         suggested_command=(
             "auto-email-sender campaigns prepare-restore-item-send "
             f"{campaign_id} {item_id}"

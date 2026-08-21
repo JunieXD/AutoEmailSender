@@ -92,13 +92,18 @@ class ConcurrencyGuardTests(unittest.TestCase):
                 return_exceptions=True,
             )
 
-        with patch(
-            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
-            new=AsyncMock(side_effect=delayed_generate),
-        ) as mocked_generate, patch(
-            "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
-            new=AsyncMock(
-                return_value=llm_runtime.LLMRuntimeAdaptation("chat_completions", None),
+        with (
+            patch(
+                "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+                new=AsyncMock(side_effect=delayed_generate),
+            ) as mocked_generate,
+            patch(
+                "app.modules.workspace.tasks.runtime.llm_runtime.ensure_llm_runtime_adaptation",
+                new=AsyncMock(
+                    return_value=llm_runtime.LLMRuntimeAdaptation(
+                        "chat_completions", None
+                    ),
+                ),
             ),
         ):
             results = self._run_async(run_twice())
@@ -109,7 +114,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             EmailTaskStatus.REVIEW_REQUIRED.value,
         )
         self.assertEqual(
-            self._run_async(self._count_email_logs(task_id, EmailDirection.DRAFT.value)),
+            self._run_async(
+                self._count_email_logs(task_id, EmailDirection.DRAFT.value)
+            ),
             1,
         )
         self.assertEqual(
@@ -464,7 +471,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             async with self.session_factory() as session:
                 state = await session.get(ImapMailboxSyncState, state_id)
                 assert state is not None
-                state.history_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                state.history_lease_expires_at = datetime.now(UTC) - timedelta(
+                    seconds=1
+                )
                 await session.commit()
             [new_claim] = await claim_next_mailbox_history_scans(
                 self.session_factory,
@@ -528,7 +537,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             async with self.session_factory() as session:
                 state = await session.get(ImapProfessorSyncState, state_id)
                 assert state is not None
-                state.history_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                state.history_lease_expires_at = datetime.now(UTC) - timedelta(
+                    seconds=1
+                )
                 await session.commit()
             [new_claim] = await claim_next_professor_scans(
                 self.session_factory,
@@ -585,7 +596,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
         self.assertEqual(self._run_async(scenario()), (10, 2))
 
     def test_ensure_workspace_task_is_idempotent_under_concurrent_calls(self) -> None:
-        identity_id, llm_profile_id, professor_id = self._run_async(self._create_workspace_context())
+        identity_id, llm_profile_id, professor_id = self._run_async(
+            self._create_workspace_context()
+        )
 
         async def create_task() -> int:
             async with self.session_factory() as session:
@@ -604,11 +617,15 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         self.assertEqual(results[0], results[1])
         self.assertEqual(
-            self._run_async(self._count_workspace_tasks(identity_id, llm_profile_id, professor_id)),
+            self._run_async(
+                self._count_workspace_tasks(identity_id, llm_profile_id, professor_id)
+            ),
             1,
         )
 
-    def test_continue_task_manually_recovers_when_child_is_created_concurrently(self) -> None:
+    def test_continue_task_manually_recovers_when_child_is_created_concurrently(
+        self,
+    ) -> None:
         task_id, identity_id, llm_profile_id, professor_id = self._run_async(
             self._create_continue_context(),
         )
@@ -622,7 +639,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             async with self.session_factory() as competing_session:
                 parent_task = await competing_session.get(EmailTask, task_id)
                 assert parent_task is not None
-                competing_child = _create_manual_child_task(parent_task, reuse_existing_draft=True)
+                competing_child = _create_manual_child_task(
+                    parent_task, reuse_existing_draft=True
+                )
                 competing_session.add(competing_child)
                 await competing_session.commit()
 
@@ -630,7 +649,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             "app.modules.workspace.tasks.runtime._ensure_no_manual_child_exists",
             new=AsyncMock(side_effect=create_competing_child),
         ):
-            result = self._run_async(continue_task_manually(self.session_factory, task_id))
+            result = self._run_async(
+                continue_task_manually(self.session_factory, task_id)
+            )
 
         self.assertEqual(result, (professor_id, identity_id, llm_profile_id))
         self.assertEqual(self._run_async(self._count_manual_children(task_id)), 1)
@@ -695,7 +716,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
                 sync_identity_incremental_poll_once(self.session_factory, identity_id),
             )
             await started.wait()
-            full_result = await sync_identity_imap_once(self.session_factory, identity_id)
+            full_result = await sync_identity_imap_once(
+                self.session_factory, identity_id
+            )
             release.set()
             incremental_result = await incremental_task
             return incremental_result, full_result, full_sync_mock.await_count
@@ -730,7 +753,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
                 sync_identity_history_poll_once(self.session_factory, identity_id),
             )
             await started.wait()
-            full_result = await sync_identity_imap_once(self.session_factory, identity_id)
+            full_result = await sync_identity_imap_once(
+                self.session_factory, identity_id
+            )
             release.set()
             history_result = await history_task
             return history_result, full_result, full_sync_mock.await_count
@@ -761,7 +786,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             return 1
 
         async def scenario() -> tuple[int, int, int, int, int]:
-            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            full_task = asyncio.create_task(
+                sync_identity_imap_once(self.session_factory, identity_id)
+            )
             await started.wait()
             incremental_result = await sync_identity_incremental_poll_once(
                 self.session_factory,
@@ -815,7 +842,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
                 sync_identity_incremental_poll_once(self.session_factory, identity_id),
             )
             await incremental_started.wait()
-            history_result = await sync_identity_history_poll_once(self.session_factory, identity_id)
+            history_result = await sync_identity_history_poll_once(
+                self.session_factory, identity_id
+            )
             release_incremental.set()
             incremental_result = await incremental_task
             return incremental_result, history_result, history_mock.await_count
@@ -834,7 +863,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
 
         self.assertEqual(result, (1, 0, 0))
 
-    def test_workspace_professor_sync_skips_while_full_imap_sync_is_running(self) -> None:
+    def test_workspace_professor_sync_skips_while_full_imap_sync_is_running(
+        self,
+    ) -> None:
         identity_id, _, professor_id = self._run_async(self._create_reply_context())
 
         started = asyncio.Event()
@@ -846,7 +877,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             return 1
 
         async def scenario() -> tuple[int, int, int]:
-            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            full_task = asyncio.create_task(
+                sync_identity_imap_once(self.session_factory, identity_id)
+            )
             await started.wait()
             workspace_result = await sync_workspace_professor_replies(
                 self.session_factory,
@@ -883,7 +916,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             return 1
 
         async def scenario() -> tuple[int, int, int]:
-            full_task = asyncio.create_task(sync_identity_imap_once(self.session_factory, identity_id))
+            full_task = asyncio.create_task(
+                sync_identity_imap_once(self.session_factory, identity_id)
+            )
             await started.wait()
             repair_result = await repair_identity_replies(
                 self.session_factory,
@@ -1171,11 +1206,15 @@ class ConcurrencyGuardTests(unittest.TestCase):
             await session.commit()
             return task.id, identity.id, llm_profile.id, professor.id
 
-    async def _count_workspace_tasks(self, identity_id: int, llm_profile_id: int, professor_id: int) -> int:
+    async def _count_workspace_tasks(
+        self, identity_id: int, llm_profile_id: int, professor_id: int
+    ) -> int:
         async with self.session_factory() as session:
             return int(
                 await session.scalar(
-                    select(func.count()).select_from(EmailTask).where(
+                    select(func.count())
+                    .select_from(EmailTask)
+                    .where(
                         EmailTask.identity_id == identity_id,
                         EmailTask.llm_profile_id == llm_profile_id,
                         EmailTask.professor_id == professor_id,
@@ -1191,7 +1230,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
         async with self.session_factory() as session:
             return int(
                 await session.scalar(
-                    select(func.count()).select_from(EmailTask).where(
+                    select(func.count())
+                    .select_from(EmailTask)
+                    .where(
                         EmailTask.parent_task_id == parent_task_id,
                     ),
                 )
@@ -1202,7 +1243,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
         async with self.session_factory() as session:
             return int(
                 await session.scalar(
-                    select(func.count()).select_from(EmailLog).where(EmailLog.rfc_message_id == message_id),
+                    select(func.count())
+                    .select_from(EmailLog)
+                    .where(EmailLog.rfc_message_id == message_id),
                 )
                 or 0
             )
@@ -1211,7 +1254,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
         async with self.session_factory() as session:
             return int(
                 await session.scalar(
-                    select(func.count()).select_from(EmailLog).where(
+                    select(func.count())
+                    .select_from(EmailLog)
+                    .where(
                         EmailLog.email_task_id == task_id,
                         EmailLog.direction == direction,
                     ),
@@ -1225,7 +1270,9 @@ class ConcurrencyGuardTests(unittest.TestCase):
             assert task is not None
             return task.status
 
-    async def _get_task_status_by_professor(self, professor_id: int, identity_id: int) -> str:
+    async def _get_task_status_by_professor(
+        self, professor_id: int, identity_id: int
+    ) -> str:
         async with self.session_factory() as session:
             task = await session.scalar(
                 select(EmailTask).where(

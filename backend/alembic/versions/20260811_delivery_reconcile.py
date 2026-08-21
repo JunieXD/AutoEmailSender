@@ -56,9 +56,7 @@ def _normalize_text(value: object | None) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or ""))
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
     return "\n".join(
-        " ".join(line.split())
-        for line in normalized.split("\n")
-        if line.strip()
+        " ".join(line.split()) for line in normalized.split("\n") if line.strip()
     ).strip()
 
 
@@ -184,9 +182,13 @@ def _add_email_log_reconciliation_columns() -> None:
     needs_merged_into = "merged_into_id" not in columns
     with op.batch_alter_table("email_logs") as batch_op:
         if needs_delivery_attempt:
-            batch_op.add_column(sa.Column("delivery_attempt_id", sa.String(length=36), nullable=True))
+            batch_op.add_column(
+                sa.Column("delivery_attempt_id", sa.String(length=36), nullable=True)
+            )
         if needs_merged_into:
-            batch_op.add_column(sa.Column("merged_into_id", sa.Integer(), nullable=True))
+            batch_op.add_column(
+                sa.Column("merged_into_id", sa.Integer(), nullable=True)
+            )
         if "record_state" not in columns:
             batch_op.add_column(
                 sa.Column(
@@ -325,7 +327,9 @@ def _create_email_observations_table() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name="pk_email_observations"),
     )
-    op.create_index("ix_email_observations_email_log_id", "email_observations", ["email_log_id"])
+    op.create_index(
+        "ix_email_observations_email_log_id", "email_observations", ["email_log_id"]
+    )
     op.create_index(
         "ix_email_observations_candidate_email_log_id",
         "email_observations",
@@ -336,12 +340,23 @@ def _create_email_observations_table() -> None:
         "email_observations",
         ["delivery_attempt_id"],
     )
-    op.create_index("ix_email_observations_identity_id", "email_observations", ["identity_id"])
-    op.create_index("ix_email_observations_professor_id", "email_observations", ["professor_id"])
+    op.create_index(
+        "ix_email_observations_identity_id", "email_observations", ["identity_id"]
+    )
+    op.create_index(
+        "ix_email_observations_professor_id", "email_observations", ["professor_id"]
+    )
     op.create_index(
         "uq_email_observations_imap_location",
         "email_observations",
-        ["identity_id", "professor_id", "folder_role", "folder", "uidvalidity", "imap_uid"],
+        [
+            "identity_id",
+            "professor_id",
+            "folder_role",
+            "folder",
+            "uidvalidity",
+            "imap_uid",
+        ],
         unique=True,
         sqlite_where=sa.text(
             "professor_id IS NOT NULL AND folder_role IS NOT NULL AND folder IS NOT NULL "
@@ -414,7 +429,9 @@ def _legacy_attempt_id(email_log_id: int) -> str:
     )
 
 
-def _backfill_delivery_attempts(bind: sa.engine.Connection, metadata: sa.MetaData) -> int:
+def _backfill_delivery_attempts(
+    bind: sa.engine.Connection, metadata: sa.MetaData
+) -> int:
     email_logs = metadata.tables["email_logs"]
     email_tasks = metadata.tables["email_tasks"]
     professors = metadata.tables["professors"]
@@ -458,7 +475,9 @@ def _backfill_delivery_attempts(bind: sa.engine.Connection, metadata: sa.MetaDat
                     subject_fingerprint=_fingerprint(row["subject"]),
                     content_fingerprint=_fingerprint(row["content"]),
                     app_message_id=row["rfc_message_id"],
-                    normalized_app_message_id=_normalize_message_id(row["rfc_message_id"]),
+                    normalized_app_message_id=_normalize_message_id(
+                        row["rfc_message_id"]
+                    ),
                     status="failed" if failure_summary else "accepted",
                     started_at=row["created_at"],
                     completed_at=row["created_at"],
@@ -508,27 +527,35 @@ def _body_similarity(left: object | None, right: object | None) -> float:
         and shorter in longer
     ):
         return 0.97
-    return SequenceMatcher(None, normalized_left, normalized_right, autojunk=False).ratio()
+    return SequenceMatcher(
+        None, normalized_left, normalized_right, autojunk=False
+    ).ratio()
 
 
 def _select_one_to_one_legacy_matches(
     system_rows: list[sa.RowMapping],
     imap_groups: dict[tuple[object, ...], list[sa.RowMapping]],
 ) -> dict[tuple[object, ...], sa.RowMapping]:
-    systems_by_signature: dict[tuple[object, ...], list[sa.RowMapping]] = defaultdict(list)
+    systems_by_signature: dict[tuple[object, ...], list[sa.RowMapping]] = defaultdict(
+        list
+    )
     for system_row in system_rows:
         systems_by_signature[_candidate_signature(system_row)].append(system_row)
 
-    edges: list[
-        tuple[float, float, int, str, tuple[object, ...], sa.RowMapping]
-    ] = []
+    edges: list[tuple[float, float, int, str, tuple[object, ...], sa.RowMapping]] = []
     for group_key, rows in imap_groups.items():
         representative = min(rows, key=lambda row: (row["created_at"], row["id"]))
-        for system_row in systems_by_signature.get(_candidate_signature(representative), []):
-            delta = _time_delta_seconds(system_row["created_at"], representative["created_at"])
+        for system_row in systems_by_signature.get(
+            _candidate_signature(representative), []
+        ):
+            delta = _time_delta_seconds(
+                system_row["created_at"], representative["created_at"]
+            )
             if delta > LEGACY_MATCH_MAX_SECONDS:
                 continue
-            similarity = _body_similarity(system_row["content"], representative["content"])
+            similarity = _body_similarity(
+                system_row["content"], representative["content"]
+            )
             if similarity < LEGACY_BODY_SIMILARITY:
                 continue
             edges.append(
@@ -699,7 +726,9 @@ def _record_migration_summary(
 def _backfill_and_reconcile() -> None:
     bind = op.get_bind()
     available_tables = _table_names()
-    metadata = _migration_metadata(include_app_metadata="app_metadata" in available_tables)
+    metadata = _migration_metadata(
+        include_app_metadata="app_metadata" in available_tables
+    )
     attempt_count = _backfill_delivery_attempts(bind, metadata)
     (
         observation_count,

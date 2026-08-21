@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from app.models import CrawlCandidate, CrawlJob, CrawlJobStatus, CrawlPage, CrawlPageStatus
+from app.models import (
+    CrawlCandidate,
+    CrawlJob,
+    CrawlJobStatus,
+    CrawlPage,
+    CrawlPageStatus,
+)
 from app.modules.crawler.jobs.events import (
     build_crawl_job_events,
     normalize_agent_trace_event,
@@ -24,16 +30,38 @@ class CrawlJobEventsTests(unittest.TestCase):
         )
         batch_time = datetime(2026, 4, 26, 10, 4, tzinfo=UTC)
         candidates = [
-            CrawlCandidate(id=21, job_id=2, name="张教授", created_at=batch_time, updated_at=batch_time),
-            CrawlCandidate(id=22, job_id=2, name="李教授", created_at=batch_time, updated_at=batch_time),
-            CrawlCandidate(id=23, job_id=2, name="王教授", created_at=batch_time, updated_at=batch_time),
+            CrawlCandidate(
+                id=21,
+                job_id=2,
+                name="张教授",
+                created_at=batch_time,
+                updated_at=batch_time,
+            ),
+            CrawlCandidate(
+                id=22,
+                job_id=2,
+                name="李教授",
+                created_at=batch_time,
+                updated_at=batch_time,
+            ),
+            CrawlCandidate(
+                id=23,
+                job_id=2,
+                name="王教授",
+                created_at=batch_time,
+                updated_at=batch_time,
+            ),
         ]
 
         events = build_crawl_job_events(job, pages=[], candidates=candidates)
 
-        candidate_events = [event for event in events if event["event_type"] == "candidate"]
+        candidate_events = [
+            event for event in events if event["event_type"] == "candidate"
+        ]
         self.assertEqual(len(candidate_events), 1)
-        self.assertEqual(candidate_events[0]["message"], "发现候选导师：张教授、李教授、王教授")
+        self.assertEqual(
+            candidate_events[0]["message"], "发现候选导师：张教授、李教授、王教授"
+        )
         self.assertEqual(candidate_events[0]["raw"]["candidate_ids"], [21, 22, 23])
 
     def test_build_events_includes_status_trace_page_and_candidate(self) -> None:
@@ -153,9 +181,13 @@ class CrawlJobEventsTests(unittest.TestCase):
         self.assertEqual(events[0]["created_at"], "2026-04-26T08:34:00+00:00")
 
     def test_non_dict_and_empty_trace_do_not_raise(self) -> None:
-        self.assertEqual(normalize_agent_trace_event({})["message"], "Agent 更新了执行状态")
+        self.assertEqual(
+            normalize_agent_trace_event({})["message"], "Agent 更新了执行状态"
+        )
         self.assertEqual(summarize_agent_trace_event({}), "Agent 更新了执行状态")
-        self.assertEqual(summarize_agent_trace_event("not a dict"), "Agent 更新了执行状态")
+        self.assertEqual(
+            summarize_agent_trace_event("not a dict"), "Agent 更新了执行状态"
+        )
 
         job = CrawlJob(
             id=2,

@@ -152,7 +152,9 @@ class CrawlJobsApiTests(unittest.TestCase):
                     "llm_profile_id": None,
                 },
             )
-        except Exception as exc:  # pragma: no cover - keeps the red test as an assertion failure.
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - keeps the red test as an assertion failure.
             self.fail(f"create crawl job raised {exc!r}")
 
         self.assertEqual(response.status_code, 201, msg=response.text)
@@ -427,7 +429,9 @@ class CrawlJobsApiTests(unittest.TestCase):
     def test_create_crawl_job_allows_domain_without_dns_resolution(self) -> None:
         with patch(
             "app.modules.crawler.pages.tools.socket.getaddrinfo",
-            side_effect=AssertionError("Creating a crawl job should not resolve domain names"),
+            side_effect=AssertionError(
+                "Creating a crawl job should not resolve domain names"
+            ),
         ):
             response = self.client.post(
                 "/api/crawl-jobs",
@@ -440,7 +444,9 @@ class CrawlJobsApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 201, msg=response.text)
-        self.assertEqual(response.json()["start_url"], "https://cai.jxufe.edu.cn/lists/26.html")
+        self.assertEqual(
+            response.json()["start_url"], "https://cai.jxufe.edu.cn/lists/26.html"
+        )
 
     def test_create_crawl_job_creates_initial_run(self) -> None:
         response = self.client.post(
@@ -506,7 +512,10 @@ class CrawlJobsApiTests(unittest.TestCase):
         candidates_response = self.client.get(f"/api/crawl-jobs/{job['id']}/candidates")
         self.assertEqual(candidates_response.status_code, 200)
         candidates = candidates_response.json()
-        self.assertEqual([item["name"] for item in candidates], ["高分导师", "低分导师", "无邮箱导师"])
+        self.assertEqual(
+            [item["name"] for item in candidates],
+            ["高分导师", "低分导师", "无邮箱导师"],
+        )
         self.assertEqual(candidates[1]["recent_papers"], [])
 
         patch_response = self.client.patch(
@@ -544,7 +553,9 @@ class CrawlJobsApiTests(unittest.TestCase):
                 "review_status": "pending",
             },
         )
-        self.assertEqual(no_email_patch_response.status_code, 200, msg=no_email_patch_response.text)
+        self.assertEqual(
+            no_email_patch_response.status_code, 200, msg=no_email_patch_response.text
+        )
         self.assertEqual(no_email_patch_response.json()["name"], "无邮箱导师更新")
 
         approve_response = self.client.post(
@@ -559,11 +570,15 @@ class CrawlJobsApiTests(unittest.TestCase):
         completed_response = self.client.get(f"/api/crawl-jobs/{job['id']}")
         self.assertEqual(completed_response.json()["status"], "completed")
 
-        cancel_completed_response = self.client.post(f"/api/crawl-jobs/{job['id']}/cancel")
+        cancel_completed_response = self.client.post(
+            f"/api/crawl-jobs/{job['id']}/cancel"
+        )
         self.assertEqual(cancel_completed_response.status_code, 200)
         self.assertEqual(cancel_completed_response.json()["status"], "completed")
 
-    def test_crawl_job_pages_and_count_deduplicate_fetch_attempts_by_normalized_url(self) -> None:
+    def test_crawl_job_pages_and_count_deduplicate_fetch_attempts_by_normalized_url(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -720,23 +735,31 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["status"], "paused")
-        self.assertEqual(self._list_v2_work_statuses(job_id), {
-            "page_tasks": ["pending"],
-            "chunks": ["pending"],
-            "enrichment_tasks": ["pending"],
-        })
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id),
+            {
+                "page_tasks": ["pending"],
+                "chunks": ["pending"],
+                "enrichment_tasks": ["pending"],
+            },
+        )
 
         resume_response = self.client.post(f"/api/crawl-jobs/{job_id}/resume")
 
         self.assertEqual(resume_response.status_code, 200, msg=resume_response.text)
         self.assertEqual(resume_response.json()["status"], "queued")
-        self.assertEqual(self._list_v2_work_statuses(job_id), {
-            "page_tasks": ["pending"],
-            "chunks": ["pending"],
-            "enrichment_tasks": ["pending"],
-        })
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id),
+            {
+                "page_tasks": ["pending"],
+                "chunks": ["pending"],
+                "enrichment_tasks": ["pending"],
+            },
+        )
 
-    def test_cancel_releases_processing_v2_work_so_workers_cannot_commit_late(self) -> None:
+    def test_cancel_releases_processing_v2_work_so_workers_cannot_commit_late(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -754,13 +777,18 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["status"], "canceled")
-        self.assertEqual(self._list_v2_work_statuses(job_id), {
-            "page_tasks": ["pending"],
-            "chunks": ["pending"],
-            "enrichment_tasks": ["pending"],
-        })
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id),
+            {
+                "page_tasks": ["pending"],
+                "chunks": ["pending"],
+                "enrichment_tasks": ["pending"],
+            },
+        )
 
-    def test_resume_review_freezes_unfinished_discovery_work_before_enrichment(self) -> None:
+    def test_resume_review_freezes_unfinished_discovery_work_before_enrichment(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -785,14 +813,23 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         self.assertEqual(review_response.status_code, 200, msg=review_response.text)
         self.assertEqual(enrich_response.status_code, 200, msg=enrich_response.text)
-        self.assertEqual(self._list_v2_work_statuses(job_id), {
-            "page_tasks": ["failed_terminal"],
-            "chunks": ["failed_terminal"],
-            "enrichment_tasks": ["pending"],
-        })
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id),
+            {
+                "page_tasks": ["failed_terminal"],
+                "chunks": ["failed_terminal"],
+                "enrichment_tasks": ["pending"],
+            },
+        )
 
     def test_pause_rejects_terminal_or_review_jobs(self) -> None:
-        for job_status in ("needs_review", "partially_completed", "completed", "failed", "canceled"):
+        for job_status in (
+            "needs_review",
+            "partially_completed",
+            "completed",
+            "failed",
+            "canceled",
+        ):
             with self.subTest(status=job_status):
                 create_response = self.client.post(
                     "/api/crawl-jobs",
@@ -803,7 +840,9 @@ class CrawlJobsApiTests(unittest.TestCase):
                         "llm_profile_id": None,
                     },
                 )
-                self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+                self.assertEqual(
+                    create_response.status_code, 201, msg=create_response.text
+                )
                 job_id = create_response.json()["id"]
                 self._set_job_status(job_id, job_status)
 
@@ -850,6 +889,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200, msg=response.text)
+
     def test_resume_refreshes_job_llm_profile_before_queueing(self) -> None:
         old_profile_id = self._create_llm_profile("旧模型", "old-model")
         new_profile_id = self._create_llm_profile("新模型", "new-model")
@@ -904,6 +944,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(logs[0]["metadata"]["new_llm_profile_id"], new_profile_id)
         self.assertEqual(logs[0]["metadata"]["new_model_name"], "new-model")
         self.assertEqual(logs[0]["metadata"]["trigger"], "resume")
+
     def test_paused_crawl_job_can_be_canceled(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -954,7 +995,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         logs = self._list_operation_logs("crawl_job.llm_profile_refreshed", str(job_id))
         self.assertEqual(logs[-1]["metadata"]["trigger"], "retry")
 
-    def test_enrich_selected_candidates_returns_skip_summary_when_all_lack_profile_url(self) -> None:
+    def test_enrich_selected_candidates_returns_skip_summary_when_all_lack_profile_url(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile("默认模型", "deepseek")
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -983,6 +1026,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["failed_count"], 0)
         self.assertIsNone(body["operation_id"])
         self.assertIn("跳过 1 位缺少详情页 URL", body["message"])
+
     def test_enrich_selected_candidates_enqueues_database_tasks(self) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
@@ -997,7 +1041,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
         self._set_job_status(job_id, "needs_review")
-        self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
+        self._seed_candidate(
+            job_id, name="王老师", profile_url="https://example.edu/wang"
+        )
         candidate_id = self._latest_candidate_id(job_id)
         self._seed_candidate(job_id, name="李老师", profile_url="")
         missing_profile_candidate_id = self._latest_candidate_id(job_id)
@@ -1019,7 +1065,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         operation_id = body["operation_id"]
         self.assertEqual(str(UUID(operation_id)), operation_id)
         self.assertIn("已加入补全队列", body["message"])
-        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running")
+        self.assertEqual(
+            self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running"
+        )
         statuses = self._list_v2_work_statuses(job_id)
         self.assertEqual(statuses["enrichment_tasks"], ["pending"])
         import sqlite3
@@ -1050,7 +1098,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
         self._set_job_status(job_id, "needs_review")
-        self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
+        self._seed_candidate(
+            job_id, name="王老师", profile_url="https://example.edu/wang"
+        )
         candidate_id = self._latest_candidate_id(job_id)
 
         enrich_response = self.client.post(
@@ -1081,7 +1131,9 @@ class CrawlJobsApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertIsNone(active_operation_id)
 
-    def test_v2_enrich_requeues_succeeded_task_when_candidate_has_missing_fields(self) -> None:
+    def test_v2_enrich_requeues_succeeded_task_when_candidate_has_missing_fields(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -1106,7 +1158,9 @@ class CrawlJobsApiTests(unittest.TestCase):
             profile_url="https://example.edu/liudexi",
         )
         candidate_id = self._latest_candidate_id(job_id)
-        self._seed_enrichment_task(candidate_id, status="succeeded", last_error="Connection error.")
+        self._seed_enrichment_task(
+            candidate_id, status="succeeded", last_error="Connection error."
+        )
 
         response = self.client.post(
             f"/api/crawl-jobs/{job_id}/enrich",
@@ -1118,7 +1172,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["selected_count"], 1)
         self.assertEqual(body["unchanged_count"], 0)
         self.assertIn("入队 1 位", body["message"])
-        self.assertEqual(self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["pending"])
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["pending"]
+        )
 
     def test_v2_enrich_resets_previous_task_attempt_state(self) -> None:
         from app.modules.crawler.v2.profile_text_cache import profile_text_cache
@@ -1136,9 +1192,13 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
         self._set_job_status(job_id, "needs_review")
-        self._seed_candidate(job_id, name="重新补全导师", profile_url="https://example.edu/retry")
+        self._seed_candidate(
+            job_id, name="重新补全导师", profile_url="https://example.edu/retry"
+        )
         candidate_id = self._latest_candidate_id(job_id)
-        self._seed_enrichment_task(candidate_id, status="failed_terminal", last_error="旧失败")
+        self._seed_enrichment_task(
+            candidate_id, status="failed_terminal", last_error="旧失败"
+        )
         cache_key = (999, job_id, candidate_id, "https://example.edu/retry")
         profile_text_cache.put(cache_key, "旧轮次正文 old@example.edu")
 
@@ -1181,7 +1241,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertNotIn(cache_key, profile_text_cache)
 
-    def test_v2_enrich_skips_succeeded_task_only_when_candidate_is_complete(self) -> None:
+    def test_v2_enrich_skips_succeeded_task_only_when_candidate_is_complete(
+        self,
+    ) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -1218,7 +1280,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["selected_count"], 1)
         self.assertEqual(body["unchanged_count"], 1)
         self.assertIn("已补全跳过 1 位", body["message"])
-        self.assertEqual(self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["succeeded"])
+        self.assertEqual(
+            self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["succeeded"]
+        )
 
     def test_enrich_refreshes_job_llm_profile_before_running(self) -> None:
         old_profile_id = self._create_llm_profile("旧模型", "old-model")
@@ -1235,7 +1299,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
         self._set_job_status(job_id, "needs_review")
-        self._seed_candidate(job_id, name="王老师", profile_url="https://example.edu/wang")
+        self._seed_candidate(
+            job_id, name="王老师", profile_url="https://example.edu/wang"
+        )
         candidate_id = self._latest_candidate_id(job_id)
 
         response = self.client.post(
@@ -1271,6 +1337,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"], "模型配置不存在")
         self.assertEqual(self._get_job_llm_profile_id(job_id), profile_id)
+
     def test_retry_crawl_job_creates_new_run(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -1305,7 +1372,6 @@ class CrawlJobsApiTests(unittest.TestCase):
             [("https://example.edu/faculty", "pending")],
         )
 
-
     def test_retry_v2_crawl_job_reseeds_pending_page_tasks(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
@@ -1313,7 +1379,10 @@ class CrawlJobsApiTests(unittest.TestCase):
                 "university": "示例大学",
                 "school": "计算机学院",
                 "start_url": "https://example.edu/faculty",
-                "start_urls": ["https://example.edu/faculty", "https://example.edu/faculty?page=2"],
+                "start_urls": [
+                    "https://example.edu/faculty",
+                    "https://example.edu/faculty?page=2",
+                ],
                 "llm_profile_id": None,
             },
         )
@@ -1337,7 +1406,9 @@ class CrawlJobsApiTests(unittest.TestCase):
             ],
         )
 
-    def test_retry_v2_crawl_job_deduplicates_historical_start_urls_by_normalized_url(self) -> None:
+    def test_retry_v2_crawl_job_deduplicates_historical_start_urls_by_normalized_url(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -1364,7 +1435,9 @@ class CrawlJobsApiTests(unittest.TestCase):
                 f"/api/crawl-jobs/{job_id}/retry",
                 json={"clear_existing_data": True},
             )
-        except Exception as exc:  # pragma: no cover - keeps the red test as an assertion failure.
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - keeps the red test as an assertion failure.
             self.fail(f"retry crawl job raised {exc!r}")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
@@ -1441,7 +1514,9 @@ class CrawlJobsApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state_count, 0)
 
-    def test_crawl_job_events_include_status_trace_page_and_candidate_messages(self) -> None:
+    def test_crawl_job_events_include_status_trace_page_and_candidate_messages(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -1499,7 +1574,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(payload["job"]["candidate_count"], 3)
         self.assertEqual(len(payload["pages"]), 1)
         self.assertEqual(len(payload["candidates"]), 3)
-        self.assertIn("任务进入待审核", [event["message"] for event in payload["events"]])
+        self.assertIn(
+            "任务进入待审核", [event["message"] for event in payload["events"]]
+        )
 
     def test_approve_requires_candidate_ids(self) -> None:
         create_response = self.client.post(
@@ -1752,7 +1829,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["selected_count"], 1)
         self.assertEqual(response.json()["enriched_count"], 0)
         self.assertIn("已加入补全队列", response.json()["message"])
-        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running")
+        self.assertEqual(
+            self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running"
+        )
 
     def test_resume_review_allows_canceled_job_with_candidates(self) -> None:
         create_response = self.client.post(
@@ -1841,7 +1920,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["enriched_count"], 0)
         self.assertIn("已加入补全队列", response.json()["message"])
 
-    def test_approve_partially_completed_job_can_finish_remaining_candidates(self) -> None:
+    def test_approve_partially_completed_job_can_finish_remaining_candidates(
+        self,
+    ) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -1855,17 +1936,28 @@ class CrawlJobsApiTests(unittest.TestCase):
         job_id = create_response.json()["id"]
         self._seed_page_and_candidates(job_id)
         self._set_job_status(job_id, "needs_review")
-        initial_candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
+        initial_candidates = self.client.get(
+            f"/api/crawl-jobs/{job_id}/candidates"
+        ).json()
 
         first_response = self.client.post(
             f"/api/crawl-jobs/{job_id}/approve",
             json={"candidate_ids": [initial_candidates[0]["id"]]},
         )
         self.assertEqual(first_response.status_code, 200, msg=first_response.text)
-        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "partially_completed")
+        self.assertEqual(
+            self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"],
+            "partially_completed",
+        )
 
-        refreshed_candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
-        no_email_candidate = next(candidate for candidate in refreshed_candidates if candidate["email"] is None)
+        refreshed_candidates = self.client.get(
+            f"/api/crawl-jobs/{job_id}/candidates"
+        ).json()
+        no_email_candidate = next(
+            candidate
+            for candidate in refreshed_candidates
+            if candidate["email"] is None
+        )
         patch_response = self.client.patch(
             f"/api/crawl-jobs/candidates/{no_email_candidate['id']}",
             json={
@@ -1884,7 +1976,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(patch_response.status_code, 200, msg=patch_response.text)
 
-        remaining_candidates = self.client.get(f"/api/crawl-jobs/{job_id}/candidates").json()
+        remaining_candidates = self.client.get(
+            f"/api/crawl-jobs/{job_id}/candidates"
+        ).json()
         remaining_ids = [
             candidate["id"]
             for candidate in remaining_candidates
@@ -1897,7 +1991,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
 
         self.assertEqual(second_response.status_code, 200, msg=second_response.text)
-        self.assertEqual(self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "completed")
+        self.assertEqual(
+            self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "completed"
+        )
 
     def test_approve_rejects_candidates_from_other_job(self) -> None:
         first_response = self.client.post(
@@ -1924,7 +2020,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         second_job_id = second_response.json()["id"]
         self._seed_page_and_candidates(first_job_id)
         self._set_job_status(second_job_id, "needs_review")
-        other_candidates = self.client.get(f"/api/crawl-jobs/{first_job_id}/candidates").json()
+        other_candidates = self.client.get(
+            f"/api/crawl-jobs/{first_job_id}/candidates"
+        ).json()
 
         response = self.client.post(
             f"/api/crawl-jobs/{second_job_id}/approve",
@@ -1969,7 +2067,9 @@ class CrawlJobsApiTests(unittest.TestCase):
                 )
                 session.add(page)
                 await session.flush()
-                page_task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+                page_task = await session.scalar(
+                    select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+                )
                 self.assertIsNotNone(page_task)
                 page_task.status = CrawlPageTaskStatus.PENDING.value
                 session.add(
@@ -2037,31 +2137,35 @@ class CrawlJobsApiTests(unittest.TestCase):
                 )
                 session.add(candidate)
                 await session.flush()
-                page_task = await session.scalar(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id))
+                page_task = await session.scalar(
+                    select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+                )
                 self.assertIsNotNone(page_task)
                 page_task.status = CrawlPageTaskStatus.PROCESSING.value
                 page_task.worker_id = "w-page"
-                session.add_all([
-                    CrawlPageChunk(
-                        job_id=job_id,
-                        page_id=page.id,
-                        source_url="https://example.edu/faculty",
-                        page_fingerprint="page-processing",
-                        chunk_id="chunk-processing",
-                        chunk_index=0,
-                        chunk_hash="hash-processing",
-                        status=CrawlPageChunkStatus.PROCESSING.value,
-                        worker_id="w-chunk",
-                        content="处理中 chunk",
-                        token_estimate=10,
-                    ),
-                    CrawlCandidateEnrichmentTask(
-                        job_id=job_id,
-                        candidate_id=candidate.id,
-                        status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-                        worker_id="w-enrich",
-                    ),
-                ])
+                session.add_all(
+                    [
+                        CrawlPageChunk(
+                            job_id=job_id,
+                            page_id=page.id,
+                            source_url="https://example.edu/faculty",
+                            page_fingerprint="page-processing",
+                            chunk_id="chunk-processing",
+                            chunk_index=0,
+                            chunk_hash="hash-processing",
+                            status=CrawlPageChunkStatus.PROCESSING.value,
+                            worker_id="w-chunk",
+                            content="处理中 chunk",
+                            token_estimate=10,
+                        ),
+                        CrawlCandidateEnrichmentTask(
+                            job_id=job_id,
+                            candidate_id=candidate.id,
+                            status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                            worker_id="w-enrich",
+                        ),
+                    ]
+                )
                 await session.commit()
 
         asyncio.run(_seed())
@@ -2071,12 +2175,34 @@ class CrawlJobsApiTests(unittest.TestCase):
             from sqlalchemy import select
 
             from app.core.database import get_session_factory
-            from app.models import CrawlCandidateEnrichmentTask, CrawlPageChunk, CrawlPageTask
+            from app.models import (
+                CrawlCandidateEnrichmentTask,
+                CrawlPageChunk,
+                CrawlPageTask,
+            )
 
             async with get_session_factory()() as session:
-                page_tasks = list(await session.scalars(select(CrawlPageTask.status).where(CrawlPageTask.job_id == job_id).order_by(CrawlPageTask.id.asc())))
-                chunks = list(await session.scalars(select(CrawlPageChunk.status).where(CrawlPageChunk.job_id == job_id).order_by(CrawlPageChunk.id.asc())))
-                enrichment_tasks = list(await session.scalars(select(CrawlCandidateEnrichmentTask.status).where(CrawlCandidateEnrichmentTask.job_id == job_id).order_by(CrawlCandidateEnrichmentTask.id.asc())))
+                page_tasks = list(
+                    await session.scalars(
+                        select(CrawlPageTask.status)
+                        .where(CrawlPageTask.job_id == job_id)
+                        .order_by(CrawlPageTask.id.asc())
+                    )
+                )
+                chunks = list(
+                    await session.scalars(
+                        select(CrawlPageChunk.status)
+                        .where(CrawlPageChunk.job_id == job_id)
+                        .order_by(CrawlPageChunk.id.asc())
+                    )
+                )
+                enrichment_tasks = list(
+                    await session.scalars(
+                        select(CrawlCandidateEnrichmentTask.status)
+                        .where(CrawlCandidateEnrichmentTask.job_id == job_id)
+                        .order_by(CrawlCandidateEnrichmentTask.id.asc())
+                    )
+                )
                 return {
                     "page_tasks": page_tasks,
                     "chunks": chunks,
@@ -2154,11 +2280,16 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         asyncio.run(_seed())
 
-
     def _seed_page_candidate_and_chunk(self, job_id: int) -> None:
         async def _seed() -> None:
             from app.core.database import get_session_factory
-            from app.models import CrawlCandidate, CrawlPage, CrawlPageChunk, CrawlPageChunkStatus, CrawlPageStatus
+            from app.models import (
+                CrawlCandidate,
+                CrawlPage,
+                CrawlPageChunk,
+                CrawlPageChunkStatus,
+                CrawlPageStatus,
+            )
 
             async with get_session_factory()() as session:
                 page = CrawlPage(
@@ -2217,7 +2348,9 @@ class CrawlJobsApiTests(unittest.TestCase):
 
             async with get_session_factory()() as session:
                 count = await session.scalar(
-                    select(func.count()).select_from(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id),
+                    select(func.count())
+                    .select_from(CrawlPageChunk)
+                    .where(CrawlPageChunk.job_id == job_id),
                 )
                 return int(count or 0)
 
@@ -2231,7 +2364,11 @@ class CrawlJobsApiTests(unittest.TestCase):
             from app.models import CrawlPageTask, CrawlPageTaskStatus
 
             async with get_session_factory()() as session:
-                tasks = list(await session.scalars(select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)))
+                tasks = list(
+                    await session.scalars(
+                        select(CrawlPageTask).where(CrawlPageTask.job_id == job_id)
+                    )
+                )
                 for task in tasks:
                     task.status = CrawlPageTaskStatus.SUCCEEDED.value
                 await session.commit()
@@ -2355,6 +2492,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             return int(row[0])
         finally:
             connection.close()
+
     def _get_job_llm_profile_id(self, job_id: int) -> int | None:
         import sqlite3
 
@@ -2368,7 +2506,9 @@ class CrawlJobsApiTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def _list_operation_logs(self, event_name: str, entity_id: str) -> list[dict[str, object]]:
+    def _list_operation_logs(
+        self, event_name: str, entity_id: str
+    ) -> list[dict[str, object]]:
         import json
         import sqlite3
 
@@ -2394,6 +2534,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             ]
         finally:
             connection.close()
+
     def _create_llm_profile(self, name: str, model_name: str) -> int:
         response = self.client.post(
             "/api/llm-profiles",
@@ -2412,6 +2553,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 201, msg=response.text)
         return int(response.json()["id"])
+
     def _set_job_status(self, job_id: int, status: str) -> None:
         async def _set_status() -> None:
             from app.core.database import get_session_factory
@@ -2510,6 +2652,7 @@ class CrawlJobsApiTests(unittest.TestCase):
                 return job.current_run_id
 
         return asyncio.run(_get_current_run_id())
+
 
 if __name__ == "__main__":
     unittest.main()

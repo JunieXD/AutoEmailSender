@@ -34,17 +34,25 @@ def upgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
     table_names = set(inspector.get_table_names())
-    if "identity_materials" not in table_names or "identity_profiles" not in table_names:
+    if (
+        "identity_materials" not in table_names
+        or "identity_profiles" not in table_names
+    ):
         return
 
-    material_columns = {column["name"]: column for column in inspector.get_columns("identity_materials")}
+    material_columns = {
+        column["name"]: column for column in inspector.get_columns("identity_materials")
+    }
     if "identity_id" not in material_columns:
-        raise RuntimeError("identity_materials.identity_id is required for the global-library upgrade")
+        raise RuntimeError(
+            "identity_materials.identity_id is required for the global-library upgrade"
+        )
 
     material_fk = _foreign_key_for_column("identity_materials", "identity_id")
     material_fk_is_global = (
         material_fk is not None
-        and str((material_fk.get("options") or {}).get("ondelete") or "").upper() == "SET NULL"
+        and str((material_fk.get("options") or {}).get("ondelete") or "").upper()
+        == "SET NULL"
     )
     material_schema_needs_rebuild = (
         not material_columns["identity_id"].get("nullable", False)
@@ -116,10 +124,13 @@ def upgrade() -> None:
             """
         )
     )
-    primary_fk = _foreign_key_for_column("identity_profiles", "current_primary_material_id")
+    primary_fk = _foreign_key_for_column(
+        "identity_profiles", "current_primary_material_id"
+    )
     primary_fk_has_set_null = (
         primary_fk is not None
-        and str((primary_fk.get("options") or {}).get("ondelete") or "").upper() == "SET NULL"
+        and str((primary_fk.get("options") or {}).get("ondelete") or "").upper()
+        == "SET NULL"
     )
     if not primary_fk_has_set_null:
         with op.batch_alter_table(
@@ -172,7 +183,9 @@ def downgrade() -> None:
             ["id"],
         )
 
-    primary_fk = _foreign_key_for_column("identity_profiles", "current_primary_material_id")
+    primary_fk = _foreign_key_for_column(
+        "identity_profiles", "current_primary_material_id"
+    )
     with op.batch_alter_table(
         "identity_profiles",
         schema=None,
@@ -192,7 +205,9 @@ def downgrade() -> None:
         )
 
 
-def _foreign_key_for_column(table_name: str, column_name: str) -> dict[str, object] | None:
+def _foreign_key_for_column(
+    table_name: str, column_name: str
+) -> dict[str, object] | None:
     for foreign_key in sa.inspect(op.get_bind()).get_foreign_keys(table_name):
         if list(foreign_key.get("constrained_columns") or []) == [column_name]:
             return foreign_key
@@ -201,15 +216,31 @@ def _foreign_key_for_column(table_name: str, column_name: str) -> dict[str, obje
 
 def _verify_global_schema(connection: sa.Connection) -> None:
     inspector = sa.inspect(connection)
-    columns = {column["name"]: column for column in inspector.get_columns("identity_materials")}
+    columns = {
+        column["name"]: column for column in inspector.get_columns("identity_materials")
+    }
     if not columns["identity_id"].get("nullable", False):
-        raise RuntimeError("global material migration did not make identity_id nullable")
+        raise RuntimeError(
+            "global material migration did not make identity_id nullable"
+        )
     material_fk = _foreign_key_for_column("identity_materials", "identity_id")
-    primary_fk = _foreign_key_for_column("identity_profiles", "current_primary_material_id")
-    if str(((material_fk or {}).get("options") or {}).get("ondelete") or "").upper() != "SET NULL":
-        raise RuntimeError("global material migration did not protect materials on identity deletion")
-    if str(((primary_fk or {}).get("options") or {}).get("ondelete") or "").upper() != "SET NULL":
-        raise RuntimeError("global material migration did not protect identity defaults on material deletion")
+    primary_fk = _foreign_key_for_column(
+        "identity_profiles", "current_primary_material_id"
+    )
+    if (
+        str(((material_fk or {}).get("options") or {}).get("ondelete") or "").upper()
+        != "SET NULL"
+    ):
+        raise RuntimeError(
+            "global material migration did not protect materials on identity deletion"
+        )
+    if (
+        str(((primary_fk or {}).get("options") or {}).get("ondelete") or "").upper()
+        != "SET NULL"
+    ):
+        raise RuntimeError(
+            "global material migration did not protect identity defaults on material deletion"
+        )
 
 
 def _ensure_legacy_ownership_is_representable(connection: sa.Connection) -> None:

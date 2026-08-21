@@ -222,6 +222,7 @@ class ReceivedEmail:
     headers: dict[str, str]
     received_at: datetime | None = None
 
+
 class _HtmlTextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -270,7 +271,11 @@ async def test_smtp_connection(identity: IdentityProfile) -> tuple[bool, str]:
 
 
 async def test_imap_connection(identity: IdentityProfile) -> tuple[bool, str]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return False, "当前身份未完整配置 IMAP"
     try:
         await asyncio.to_thread(_test_imap_connection_sync, identity)
@@ -352,7 +357,11 @@ async def send_email_to_recipient(
 
 
 async def discover_sent_folder(identity: IdentityProfile) -> str | None:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return None
     return await asyncio.to_thread(_discover_sent_folder_sync, identity)
 
@@ -394,8 +403,15 @@ async def _fetch_incremental_mailbox_messages(
     *,
     expected_uidvalidity: int | None | object,
     return_uidvalidity: bool,
-) -> tuple[int | None, list[ImapFetchedMessage]] | tuple[int | None, list[ImapFetchedMessage], int | None]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+) -> (
+    tuple[int | None, list[ImapFetchedMessage]]
+    | tuple[int | None, list[ImapFetchedMessage], int | None]
+):
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         if return_uidvalidity:
             return last_seen_uid, [], None
         return last_seen_uid, []
@@ -416,7 +432,9 @@ async def fetch_incremental_inbox_messages(
     identity: IdentityProfile,
     last_seen_uid: int | None,
 ) -> tuple[int | None, list[ImapFetchedMessage]]:
-    return await fetch_incremental_mailbox_messages(identity, DEFAULT_IMAP_FOLDER, last_seen_uid)
+    return await fetch_incremental_mailbox_messages(
+        identity, DEFAULT_IMAP_FOLDER, last_seen_uid
+    )
 
 
 async def fetch_professor_history_mailbox_messages(
@@ -426,7 +444,11 @@ async def fetch_professor_history_mailbox_messages(
     *,
     folder_role: str,
 ) -> list[ImapFetchedMessage]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return []
     return await asyncio.to_thread(
         _fetch_professor_history_mailbox_messages_sync,
@@ -464,7 +486,11 @@ async def fetch_professor_history_mailbox_message_headers_with_command_count(
     since_date: date | None = None,
     expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapHistoryHeaderFetchResult:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return ImapHistoryHeaderFetchResult(messages=[], command_count=0)
     return await asyncio.to_thread(
         _fetch_professor_history_mailbox_message_headers_with_command_count_sync,
@@ -490,7 +516,11 @@ async def fetch_recent_mailbox_message_headers_since(
     known_uids: tuple[int, ...] | None = None,
     known_uidvalidity: int | None = None,
 ) -> ImapHistoryHeaderFetchResult:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return ImapHistoryHeaderFetchResult(messages=[], command_count=0)
     return await asyncio.to_thread(
         _fetch_recent_mailbox_message_headers_since_sync,
@@ -510,7 +540,11 @@ async def search_mailbox_uids_since_date(
     folder: str,
     since_date: date,
 ) -> ImapMailboxUidSearchResult:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return ImapMailboxUidSearchResult(uid_count=0, command_count=0)
     return await asyncio.to_thread(
         _search_mailbox_uids_since_date_sync,
@@ -529,7 +563,11 @@ async def fetch_history_mailbox_message_headers_before_uid(
     max_fetch_batches: int | None = None,
     expected_uidvalidity: int | None | object = _UIDVALIDITY_UNSET,
 ) -> ImapMailboxHistoryHeaderFetchResult:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return ImapMailboxHistoryHeaderFetchResult(
             messages=[],
             command_count=0,
@@ -554,7 +592,11 @@ async def fetch_professor_history_mailbox_messages_by_uid(
     folder: str,
     uids: list[int],
 ) -> list[ImapFetchedMessage]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return []
     if not uids:
         return []
@@ -582,11 +624,17 @@ async def fetch_inbox_messages_from_sender(
     identity: IdentityProfile,
     from_email: str,
 ) -> list[ReceivedEmail]:
-    if not identity.imap_host or not identity.imap_username or not identity.imap_password:
+    if (
+        not identity.imap_host
+        or not identity.imap_username
+        or not identity.imap_password
+    ):
         return []
     if not from_email.strip():
         return []
-    messages = await fetch_professor_history_inbox_messages(identity, from_email.strip().lower())
+    messages = await fetch_professor_history_inbox_messages(
+        identity, from_email.strip().lower()
+    )
     return [_imap_fetched_to_received(message) for message in messages]
 
 
@@ -603,7 +651,9 @@ def build_email_message(
     from app.modules.campaigns.public import get_identity_sender_name
 
     message = EmailMessage()
-    message["From"] = formataddr((get_identity_sender_name(identity), identity.email_address))
+    message["From"] = formataddr(
+        (get_identity_sender_name(identity), identity.email_address)
+    )
     message["To"] = professor.email or ""
     message["Subject"] = subject
     message["Message-ID"] = make_msgid(domain=identity.email_address.split("@")[-1])
@@ -630,10 +680,15 @@ def build_email_message(
 
 
 def text_to_html(body_text: str) -> str:
-    paragraphs = [segment.strip() for segment in body_text.split("\n\n") if segment.strip()]
+    paragraphs = [
+        segment.strip() for segment in body_text.split("\n\n") if segment.strip()
+    ]
     if not paragraphs:
         return "<p></p>"
-    return "".join(f"<p>{escape(paragraph).replace(chr(10), '<br/>')}</p>" for paragraph in paragraphs)
+    return "".join(
+        f"<p>{escape(paragraph).replace(chr(10), '<br/>')}</p>"
+        for paragraph in paragraphs
+    )
 
 
 def email_datetime_now() -> str:
@@ -673,7 +728,9 @@ def _test_imap_connection_sync(identity: IdentityProfile) -> None:
                 pass
 
 
-def _send_email_sync(identity: IdentityProfile, message: EmailMessage) -> SentFolderSyncResult:
+def _send_email_sync(
+    identity: IdentityProfile, message: EmailMessage
+) -> SentFolderSyncResult:
     server = None
     try:
         _validate_smtp_login_credentials(identity)
@@ -838,7 +895,9 @@ def _fetch_incremental_inbox_messages_sync(
     identity: IdentityProfile,
     last_seen_uid: int | None,
 ) -> tuple[int | None, list[ImapFetchedMessage]]:
-    return _fetch_incremental_mailbox_messages_sync(identity, DEFAULT_IMAP_FOLDER, last_seen_uid)
+    return _fetch_incremental_mailbox_messages_sync(
+        identity, DEFAULT_IMAP_FOLDER, last_seen_uid
+    )
 
 
 def _fetch_professor_history_mailbox_messages_sync(
@@ -927,12 +986,15 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
         batches = _chunked(uids, max(1, get_settings().imap_fetch_batch_size))
         fetch_batches = batches
         if max_fetch_batches is not None and max_fetch_batches < len(batches):
-            fetch_batches = batches[:max(0, max_fetch_batches)]
+            fetch_batches = batches[: max(0, max_fetch_batches)]
             exhausted = bool(batches)
         fetch_command_count = 0
         stop_fetching = False
         for batch in fetch_batches:
-            if max_fetch_batches is not None and fetch_command_count >= max_fetch_batches:
+            if (
+                max_fetch_batches is not None
+                and fetch_command_count >= max_fetch_batches
+            ):
                 exhausted = True
                 break
             acquire_history_imap_command_slot_sync(identity, "FETCH")
@@ -943,7 +1005,10 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
             for uid in batch:
                 payload = payloads_by_uid.get(uid)
                 if payload is None:
-                    if max_fetch_batches is not None and fetch_command_count >= max_fetch_batches:
+                    if (
+                        max_fetch_batches is not None
+                        and fetch_command_count >= max_fetch_batches
+                    ):
                         exhausted = True
                         stop_fetching = True
                         break
@@ -961,7 +1026,9 @@ def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
                     stop_fetching = True
                     break
                 received_at = _extract_received_at_from_fetch_payload(payload)
-                message = _parse_fetched_headers(uid, raw_headers, "", None, received_at)
+                message = _parse_fetched_headers(
+                    uid, raw_headers, "", None, received_at
+                )
                 if message is not None:
                     message.uidvalidity = uidvalidity
                     messages.append(message)
@@ -1028,7 +1095,10 @@ def _fetch_recent_mailbox_message_headers_since_sync(
         fetch_command_count = 0
         stop_fetching = False
         for batch in fetch_batches:
-            if max_fetch_batches is not None and fetch_command_count >= max_fetch_batches:
+            if (
+                max_fetch_batches is not None
+                and fetch_command_count >= max_fetch_batches
+            ):
                 exhausted = True
                 break
             acquire_history_imap_command_slot_sync(identity, "FETCH")
@@ -1039,7 +1109,10 @@ def _fetch_recent_mailbox_message_headers_since_sync(
             for uid in batch:
                 payload = payloads_by_uid.get(uid)
                 if payload is None:
-                    if max_fetch_batches is not None and fetch_command_count >= max_fetch_batches:
+                    if (
+                        max_fetch_batches is not None
+                        and fetch_command_count >= max_fetch_batches
+                    ):
                         exhausted = True
                         stop_fetching = True
                         break
@@ -1057,7 +1130,9 @@ def _fetch_recent_mailbox_message_headers_since_sync(
                     stop_fetching = True
                     break
                 received_at = _extract_received_at_from_fetch_payload(payload)
-                message = _parse_fetched_headers(uid, raw_headers, "", None, received_at)
+                message = _parse_fetched_headers(
+                    uid, raw_headers, "", None, received_at
+                )
                 if message is not None:
                     message.uidvalidity = uidvalidity
                     messages.append(message)
@@ -1129,9 +1204,11 @@ def _fetch_history_mailbox_message_headers_before_uid_sync(
         if uidvalidity_changed:
             effective_before_uid = None
         if effective_before_uid is None:
-            high_water_uid, high_water_command_count = _get_selected_mailbox_high_water_uid(
-                identity,
-                client,
+            high_water_uid, high_water_command_count = (
+                _get_selected_mailbox_high_water_uid(
+                    identity,
+                    client,
+                )
             )
             command_count += high_water_command_count
             if high_water_uid is None:
@@ -1188,7 +1265,9 @@ def _fetch_history_mailbox_message_headers_before_uid_sync(
 
         acquire_history_imap_command_slot_sync(identity, "FETCH")
         command_count += 1
-        fetched_items = fetch_message_headers_payloads_by_uid_range(client, start_uid, end_uid)
+        fetched_items = fetch_message_headers_payloads_by_uid_range(
+            client, start_uid, end_uid
+        )
         for uid, payload in fetched_items:
             raw_headers = _extract_message_bytes_from_fetch_payload(payload)
             if not raw_headers:
@@ -1240,12 +1319,18 @@ def _fetch_mailbox_messages_by_uid_sync(
                 raw_headers = _extract_message_bytes_from_fetch_payload(payload)
                 if not raw_headers:
                     continue
-                text_parts = _fetch_history_text_body_parts_by_uid(identity, client, uid)
+                text_parts = _fetch_history_text_body_parts_by_uid(
+                    identity, client, uid
+                )
                 if text_parts.body_text or text_parts.body_html:
                     body_text = strip_quoted_reply_text(text_parts.body_text or "")
-                    body_html = strip_quoted_reply_html(text_parts.body_html or "") or None
+                    body_html = (
+                        strip_quoted_reply_html(text_parts.body_html or "") or None
+                    )
                     if not body_text and body_html:
-                        body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
+                        body_text = strip_quoted_reply_text(
+                            convert_html_to_text(body_html)
+                        )
                 else:
                     raw_body = _fetch_history_message_body_by_uid(identity, client, uid)
                     body_text, body_html = _parse_fetched_body(raw_headers, raw_body)
@@ -1340,7 +1425,9 @@ def _imap_fetched_to_received(message: ImapFetchedMessage) -> ReceivedEmail:
     )
 
 
-def _open_logged_in_imap_client(identity: IdentityProfile, folder: str = DEFAULT_IMAP_FOLDER) -> IMAP4 | IMAP4_SSL:
+def _open_logged_in_imap_client(
+    identity: IdentityProfile, folder: str = DEFAULT_IMAP_FOLDER
+) -> IMAP4 | IMAP4_SSL:
     client = _open_imap_client(identity)
     try:
         client.login(identity.imap_username or "", identity.imap_password or "")
@@ -1362,7 +1449,11 @@ def _get_selected_mailbox_uidvalidity(client: IMAP4 | IMAP4_SSL) -> int | None:
     if status not in {"OK", "UIDVALIDITY"} or not payload:
         return None
     for item in payload:
-        value = item.decode("utf-8", errors="ignore") if isinstance(item, (bytes, bytearray)) else str(item)
+        value = (
+            item.decode("utf-8", errors="ignore")
+            if isinstance(item, (bytes, bytearray))
+            else str(item)
+        )
         value = value.strip()
         if value.isdigit():
             return int(value)
@@ -1434,7 +1525,11 @@ def _get_selected_mailbox_uidnext(client: IMAP4 | IMAP4_SSL) -> int | None:
     if status not in {"OK", "UIDNEXT"} or not payload:
         return None
     for item in payload:
-        value = item.decode("utf-8", errors="ignore") if isinstance(item, (bytes, bytearray)) else str(item)
+        value = (
+            item.decode("utf-8", errors="ignore")
+            if isinstance(item, (bytes, bytearray))
+            else str(item)
+        )
         value = value.strip()
         if value.isdigit():
             return int(value)
@@ -1498,7 +1593,9 @@ def _fetch_history_text_body_parts_by_uid(
             continue
         if part.content_type == "text/html" and html_part is not None:
             continue
-        mime = _fetch_history_body_section(identity, client, uid, f"{part.section}.MIME")
+        mime = _fetch_history_body_section(
+            identity, client, uid, f"{part.section}.MIME"
+        )
         body = _fetch_history_body_section(identity, client, uid, part.section)
         if not body:
             continue
@@ -1575,7 +1672,11 @@ def _fetch_message_header_payload_by_uid(
 
 def _extract_message_bytes_from_fetch_payload(payload: list[object]) -> bytes:
     for item in payload:
-        if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], (bytes, bytearray)):
+        if (
+            isinstance(item, tuple)
+            and len(item) >= 2
+            and isinstance(item[1], (bytes, bytearray))
+        ):
             return bytes(item[1])
     return b""
 
@@ -1587,10 +1688,14 @@ def _fetch_message_body_by_uid(client: IMAP4 | IMAP4_SSL, uid: int) -> bytes:
     return _extract_message_bytes_from_fetch_payload(list(payload))
 
 
-def _parse_fetched_body(raw_headers: bytes, raw_body: bytes) -> tuple[str | None, str | None]:
+def _parse_fetched_body(
+    raw_headers: bytes, raw_body: bytes
+) -> tuple[str | None, str | None]:
     if not raw_body:
         return None, None
-    parsed = BytesParser(policy=policy.default).parsebytes(raw_headers + b"\r\n" + raw_body)
+    parsed = BytesParser(policy=policy.default).parsebytes(
+        raw_headers + b"\r\n" + raw_body
+    )
     parsed_parts = parse_text_parts_from_message(parsed)
     body_text = strip_quoted_reply_text(parsed_parts.body_text or "")
     body_html = strip_quoted_reply_html(parsed_parts.body_html or "") or None
@@ -1598,7 +1703,9 @@ def _parse_fetched_body(raw_headers: bytes, raw_body: bytes) -> tuple[str | None
         body_text = strip_quoted_reply_text(convert_html_to_text(body_html))
     if not body_text:
         fallback_charset = parsed.get_content_charset() or "utf-8"
-        body_text = strip_quoted_reply_text(raw_body.decode(fallback_charset, errors="replace"))
+        body_text = strip_quoted_reply_text(
+            raw_body.decode(fallback_charset, errors="replace")
+        )
     return body_text, body_html
 
 
@@ -1723,7 +1830,11 @@ def _find_special_use_sent_folder(client: IMAP4 | IMAP4_SSL) -> str | None:
     if status != "OK" or not data:
         return None
     for item in data:
-        text = item.decode("utf-8", errors="replace") if isinstance(item, (bytes, bytearray)) else str(item)
+        text = (
+            item.decode("utf-8", errors="replace")
+            if isinstance(item, (bytes, bytearray))
+            else str(item)
+        )
         if "\\sent" not in text.lower():
             continue
         folder = _parse_imap_list_mailbox_name(text)
@@ -1862,9 +1973,12 @@ def extract_message_content(message: EmailMessage) -> tuple[str, str | None]:
     text_content = strip_quoted_reply_text(
         "\n".join(part.strip() for part in text_parts if part.strip()).strip(),
     )
-    html_content = strip_quoted_reply_html(
-        "\n".join(part.strip() for part in html_parts if part.strip()).strip(),
-    ) or None
+    html_content = (
+        strip_quoted_reply_html(
+            "\n".join(part.strip() for part in html_parts if part.strip()).strip(),
+        )
+        or None
+    )
     if not text_content and html_content:
         text_content = strip_quoted_reply_text(convert_html_to_text(html_content))
     return text_content or "", html_content
@@ -1875,9 +1989,7 @@ def convert_html_to_text(content: str) -> str:
     parser.feed(content)
     parser.close()
     return "\n".join(
-        line.strip()
-        for line in parser.get_text().splitlines()
-        if line.strip()
+        line.strip() for line in parser.get_text().splitlines() if line.strip()
     )
 
 
@@ -1917,7 +2029,9 @@ def _find_chinese_reply_header_html_index(content: str) -> int | None:
     for match in CHINESE_REPLY_HTML_HEADER_PATTERN.finditer(content):
         marker_index = match.start()
         text_from_marker = convert_html_to_text(content[marker_index:])
-        sequence_match = CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN.match(text_from_marker)
+        sequence_match = CHINESE_REPLY_TEXT_HEADER_SEQUENCE_PATTERN.match(
+            text_from_marker
+        )
         if not sequence_match:
             continue
         block_index = _find_previous_html_quote_block_index(content, marker_index)
@@ -1933,7 +2047,9 @@ def _find_chinese_reply_header_html_index(content: str) -> int | None:
 
 def _find_previous_html_quote_block_index(content: str, marker_index: int) -> int:
     lower_content = content.lower()
-    return max(lower_content.rfind(tag, 0, marker_index) for tag in HTML_REPLY_QUOTE_BLOCK_TAGS)
+    return max(
+        lower_content.rfind(tag, 0, marker_index) for tag in HTML_REPLY_QUOTE_BLOCK_TAGS
+    )
 
 
 def decode_mime_header(value: str | None) -> str | None:
@@ -2003,5 +2119,7 @@ def _is_valid_smtp_ehlo_hostname(value: str) -> bool:
 def _open_imap_client(identity: IdentityProfile) -> IMAP4 | IMAP4_SSL:
     timeout = get_settings().smtp_send_timeout_seconds
     if identity.imap_port == 993:
-        return IMAP4_SSL(identity.imap_host or "", identity.imap_port or 993, timeout=timeout)
+        return IMAP4_SSL(
+            identity.imap_host or "", identity.imap_port or 993, timeout=timeout
+        )
     return IMAP4(identity.imap_host or "", identity.imap_port or 143, timeout=timeout)

@@ -105,10 +105,12 @@ class CrawlerV2ProfileUrlPolicyTests(unittest.TestCase):
                 content,
                 base_url="https://example.edu/faculty/list.htm",
             ),
-            ((
-                "李清钦",
-                "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm",
-            ),),
+            (
+                (
+                    "李清钦",
+                    "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm",
+                ),
+            ),
         )
         self.assertTrue(
             has_explicit_markdown_link(

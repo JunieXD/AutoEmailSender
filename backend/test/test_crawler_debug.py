@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.modules.crawler.pages.debug import append_crawler_v2_debug_event, crawler_debug_file_path
+from app.modules.crawler.pages.debug import (
+    append_crawler_v2_debug_event,
+    crawler_debug_file_path,
+)
 
 
 class CrawlerV2DebugLogTests(unittest.TestCase):
@@ -42,7 +45,10 @@ class CrawlerV2DebugLogTests(unittest.TestCase):
 
         self.assertEqual(debug_file, crawler_debug_file_path(42))
         assert debug_file is not None
-        rows = [json.loads(line) for line in debug_file.read_text(encoding="utf-8").splitlines()]
+        rows = [
+            json.loads(line)
+            for line in debug_file.read_text(encoding="utf-8").splitlines()
+        ]
         self.assertEqual(len(rows), 1)
         raw_event = rows[0]["raw_event"]
         self.assertEqual(raw_event["worker_kind"], "chunk")
