@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -112,6 +113,42 @@ class SubmissionSkillTests(unittest.TestCase):
             self.assertEqual(result["status"], "planned")
             self.assertFalse((root / ".maintainer-submissions").exists())
             self.assertTrue(any(command[0] == "gh" and command[1] == "pr" for command in result["commands"]))
+
+    def test_submit_recovers_an_existing_pr_without_creating_another(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.xlsx"
+            write_community_xlsx(source)
+            input_path = root / "submissions.json"
+            input_path.write_text(json.dumps({"submissions": [{"file": source.name}]}), encoding="utf-8")
+            batch_dir = root / "batch"
+            prepare(input_path, batch_dir, repository="owner/repo", license_name="CC BY 4.0", dry_run=False)
+            with patch("submit_submissions._gh_search", return_value=[{"url": "https://github.com/owner/repo/pull/42", "number": 42}]):
+                result = submit(batch_dir / "manifest.json", repo=None, worktree=None, base="main", execute=False)
+            self.assertEqual(result["status"], "already_exists")
+            manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["submission"]["pr_url"], "https://github.com/owner/repo/pull/42")
+            self.assertEqual(manifest["submission"]["status"], "submitted")
+
+    def test_execute_refuses_a_dirty_worktree_before_external_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.xlsx"
+            write_community_xlsx(source)
+            input_path = root / "submissions.json"
+            input_path.write_text(json.dumps({"submissions": [{"file": source.name}]}), encoding="utf-8")
+            batch_dir = root / "batch"
+            prepare(input_path, batch_dir, repository="owner/repo", license_name="CC BY 4.0", dry_run=False)
+            worktree = root / "community"
+            worktree.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=worktree, check=True)
+            (worktree / "uncommitted.txt").write_text("keep", encoding="utf-8")
+            with patch("submit_submissions._gh_search", return_value=[]):
+                result = submit(batch_dir / "manifest.json", repo=None, worktree=worktree, base="main", execute=True)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["phase"], "precondition")
+            manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["submission"]["status"], "prepared")
 
 
 if __name__ == "__main__":

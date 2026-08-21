@@ -88,6 +88,11 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
     batch_id = str(manifest["batch_id"])
     existing = _gh_search(repository, batch_id, "pr")
     if existing:
+        existing_url = next(
+            (str(item["url"]) for item in existing if item.get("url")), None
+        )
+        if existing_url:
+            _write_status(manifest_path, status="submitted", pr_url=existing_url)
         return {"ok": True, "status": "already_exists", "batch_id": batch_id, "repository": repository, "existing": existing, "commands": []}
     branch = f"maintainer/community-batch-{batch_id}"
     commands = [
@@ -95,7 +100,7 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
         ["git", "add", f".maintainer-submissions/{batch_id}"],
         ["git", "commit", "-m", f"data: intake community mentor batch {batch_id}"],
         ["git", "push", "-u", "origin", branch],
-        ["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"data: community mentor batch {batch_id}", "--body-file", f".maintainer-submissions/{batch_id}/pr-body.md"],
+        ["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"[batch:{batch_id}] data: community mentor intake", "--body-file", f".maintainer-submissions/{batch_id}/pr-body.md"],
     ]
     result: dict[str, object] = {"ok": True, "status": "planned", "batch_id": batch_id, "repository": repository, "branch": branch, "commands": commands}
     if not execute:
@@ -105,14 +110,17 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
     worktree = worktree.expanduser().resolve()
     try:
         status = _command(["git", "status", "--porcelain"], cwd=worktree).stdout.strip()
-        if status:
-            raise RuntimeError("社区仓库工作区不干净；为避免覆盖用户改动，已停止")
-        branch_check = subprocess.run(["git", "branch", "--list", branch], cwd=worktree, check=False, capture_output=True, text=True)
-        if branch_check.stdout.strip():
-            raise RuntimeError(f"本地分支已存在：{branch}；请先人工核对，不自动复用")
-        target = worktree / ".maintainer-submissions" / batch_id
-        if target.exists():
-            raise RuntimeError(f"目标批次目录已存在：{target}")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {"ok": False, "phase": "precondition", "errors": [f"无法读取社区仓库状态：{exc}"]}
+    if status:
+        return {"ok": False, "phase": "precondition", "errors": ["社区仓库工作区不干净；为避免覆盖用户改动，已停止"]}
+    branch_check = subprocess.run(["git", "branch", "--list", branch], cwd=worktree, check=False, capture_output=True, text=True)
+    if branch_check.stdout.strip():
+        return {"ok": False, "phase": "precondition", "errors": [f"本地分支已存在：{branch}；请先人工核对，不自动复用"]}
+    target = worktree / ".maintainer-submissions" / batch_id
+    if target.exists():
+        return {"ok": False, "phase": "precondition", "errors": [f"目标批次目录已存在：{target}"]}
+    try:
         target.mkdir(parents=True)
         shutil.copytree(manifest_path.parent / "files", target / "files")
         remote_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -123,7 +131,7 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
         _command(["git", "add", f".maintainer-submissions/{batch_id}"], cwd=worktree)
         _command(["git", "commit", "-m", f"data: intake community mentor batch {batch_id}"], cwd=worktree)
         _command(["git", "push", "-u", "origin", branch], cwd=worktree)
-        created = _command(["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"data: community mentor batch {batch_id}", "--body-file", str(target / "pr-body.md")], cwd=worktree)
+        created = _command(["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"[batch:{batch_id}] data: community mentor intake", "--body-file", str(target / "pr-body.md")], cwd=worktree)
         pr_url = created.stdout.strip().splitlines()[-1]
         _write_status(manifest_path, status="submitted", pr_url=pr_url)
         remote_manifest["submission"]["status"] = "submitted"
@@ -153,4 +161,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
