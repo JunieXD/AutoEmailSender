@@ -51,7 +51,7 @@ from .scheduler import ensure_job_active
 from .token_usage import record_crawler_v2_token_usage
 from .lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
 from .models import CrawlerV2WorkKind
-from .url_utils import is_same_domain
+from .url_utils import is_same_domain, recover_embedded_absolute_url
 from ..jobs.runs import extract_token_usage_from_llm_response
 from app.modules.llm.public import LLMRuntimeError, ensure_llm_runtime_adaptation
 from ..llm.structured_output import (
@@ -96,6 +96,39 @@ _PROFILE_CHILD_SNAPSHOT_CACHE_MAX_ENTRIES = 128
 _PROFILE_CHILD_SNAPSHOT_CACHE_MAX_CHARACTERS = 16 * 1024 * 1024
 _MAX_EMAIL_EVIDENCE_ITEMS = 16
 _MAX_PROFILE_LINK_EVIDENCE_ITEMS = 40
+_COMPACT_ENRICHMENT_MAX_CHARS = 3000
+_COMPACT_ENRICHMENT_FIELD_LABELS = {
+    "contact",
+    "department",
+    "e-mail",
+    "email",
+    "name",
+    "position",
+    "publications",
+    "recent papers",
+    "research",
+    "research area",
+    "research areas",
+    "research direction",
+    "research directions",
+    "research interest",
+    "research interests",
+    "title",
+    "姓名",
+    "联系方式",
+    "联系",
+    "电子邮箱",
+    "邮箱",
+    "职称",
+    "系所",
+    "院系",
+    "部门",
+    "研究专长",
+    "研究方向",
+    "研究领域",
+    "代表性论文",
+    "论文",
+}
 _HTML_TAG_REMNANT_PATTERN = re.compile(
     r"</?(?:a|div|li|nav|ol|p|span|table|tbody|td|th|tr|ul)\b[^>]*>",
     re.IGNORECASE,
@@ -172,6 +205,93 @@ _PROFILE_CHILD_SNAPSHOT_INFLIGHT: dict[
 ] = {}
 
 
+def _should_use_compact_enrichment_retry(last_error: str | None) -> bool:
+    normalized = str(last_error or "").strip().casefold()
+    if "censorship_blocked" in normalized or "censorship blocked" in normalized:
+        return True
+    return "模型接口返回错误 451" in normalized
+
+
+def _compact_enrichment_page_text(
+    candidate: CrawlCandidate,
+    page_text: str,
+    *,
+    max_chars: int = _COMPACT_ENRICHMENT_MAX_CHARS,
+) -> str:
+    lines = [
+        " ".join(line.split())
+        for line in re.split(r"[\r\n]+", page_text or "")
+        if line.strip()
+    ]
+    if not lines:
+        return ""
+
+    normalized_name = "".join((candidate.name or "").split()).casefold()
+    selected_indexes: set[int] = set()
+    selected_labels: set[str] = set()
+    for index, line in enumerate(lines):
+        normalized_line = line.casefold()
+        compact_line = "".join(normalized_line.split())
+        field_parts = re.split(r"[:：]", normalized_line, maxsplit=1)
+        label = field_parts[0].strip()
+        if normalized_name and normalized_name in compact_line:
+            selected_indexes.add(index)
+        if "@" in line:
+            selected_indexes.add(index)
+        if (
+            label in _COMPACT_ENRICHMENT_FIELD_LABELS
+            and label not in selected_labels
+        ):
+            selected_labels.add(label)
+            selected_indexes.add(index)
+            field_value = field_parts[1].strip() if len(field_parts) > 1 else ""
+            if not field_value and index + 1 < len(lines):
+                selected_indexes.add(index + 1)
+
+    if not selected_indexes:
+        return "\n".join(lines)[:max_chars]
+
+    selected_lines: list[str] = []
+    current_length = 0
+    for index in sorted(selected_indexes):
+        line = lines[index]
+        separator_length = 1 if selected_lines else 0
+        remaining = max_chars - current_length - separator_length
+        if remaining <= 0:
+            break
+        selected_lines.append(line[:remaining])
+        current_length += separator_length + min(len(line), remaining)
+    return "\n".join(selected_lines)
+
+
+async def _repair_embedded_candidate_profile_url(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    candidate_id: int,
+) -> bool:
+    async with session_factory() as session:
+        candidate = await session.get(CrawlCandidate, candidate_id)
+        if candidate is None:
+            return False
+        original_url = (candidate.profile_url or "").strip()
+        repaired_url = recover_embedded_absolute_url(original_url)
+        if not repaired_url or repaired_url == original_url:
+            return False
+
+        removed_identities = candidate_identity_values(
+            name=candidate.name,
+            profile_url=original_url,
+        )
+        candidate.profile_url = normalize_profile_url(repaired_url)
+        await rebuild_candidate_identity_keys(
+            session,
+            candidate,
+            exclude_identities=removed_identities,
+        )
+        await session.commit()
+        return True
+
+
 async def run_crawler_v2_enrichment_worker_once(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -184,6 +304,7 @@ async def run_crawler_v2_enrichment_worker_once(
             return 0
         if not await ensure_job_active(session, task.job_id):
             return 0
+        prefer_compact_input = _should_use_compact_enrichment_retry(task.last_error)
         candidate = await session.get(CrawlCandidate, task.candidate_id)
         if candidate is None:
             job_id = task.job_id
@@ -222,10 +343,15 @@ async def run_crawler_v2_enrichment_worker_once(
             return 1
 
     try:
+        await _repair_embedded_candidate_profile_url(
+            session_factory,
+            candidate_id=candidate_id,
+        )
         enrichment_result = await enrich_candidate_once_with_usage(
             session_factory,
             candidate_id=candidate_id,
             fresh_after=enrichment_started_at,
+            prefer_compact_input=prefer_compact_input,
         )
         raw_model_text = None
         if isinstance(enrichment_result, tuple):
@@ -536,6 +662,7 @@ async def enrich_candidate_once_with_usage(
     *,
     candidate_id: int,
     fresh_after: datetime | None = None,
+    prefer_compact_input: bool = False,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
     async with session_factory() as session:
         candidate = await session.get(CrawlCandidate, candidate_id)
@@ -594,6 +721,7 @@ async def enrich_candidate_once_with_usage(
         candidate,
         page_text,
         page_snapshot=profile_snapshot,
+        prefer_compact_input=prefer_compact_input,
     )
 
 
@@ -640,8 +768,14 @@ async def enrich_candidate_profile_with_llm_with_usage(
     page_text: str,
     *,
     page_snapshot: PageSnapshot | None = None,
+    prefer_compact_input: bool = False,
 ) -> tuple[CandidateEnrichmentPayload, dict[str, int | None] | None, str | None]:
-    prompt = build_candidate_enrichment_prompt(candidate, page_text)
+    llm_page_text = (
+        _compact_enrichment_page_text(candidate, page_text)
+        if prefer_compact_input
+        else page_text
+    )
+    prompt = build_candidate_enrichment_prompt(candidate, llm_page_text)
     completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
         ctx.session_factory,
         llm_profile,

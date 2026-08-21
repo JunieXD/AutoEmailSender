@@ -48,6 +48,7 @@ from app.services.html_text import html_to_text
 from app.services.beautiful_soup import is_comment, parse_html
 from app.modules.llm.public import LLMRuntimeAdaptation
 from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from ..v2.url_utils import recover_embedded_absolute_url
 from app.modules.professors.public import (
     RECENT_PAPERS_MAX_ITEMS,
     is_valid_professor_email,
@@ -475,7 +476,8 @@ def normalize_candidate_profile_url(value: object, *, base_url: str | None = Non
     if base_url and _looks_like_hostname_without_scheme(raw):
         base_scheme = urlparse(base_url).scheme.lower()
         raw = f"{base_scheme if base_scheme in {'http', 'https'} else 'https'}://{raw}"
-    return normalize_navigable_url(raw, base_url=base_url)
+    absolute = urljoin(base_url or "", raw) if base_url else raw
+    return normalize_navigable_url(recover_embedded_absolute_url(absolute))
 
 
 def _looks_like_hostname_without_scheme(value: str) -> bool:
@@ -958,23 +960,27 @@ def _resolve_public_dns_host_ips(host: str) -> tuple[str, ...]:
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
-            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+            raise TemporaryCrawlDNSResolutionError(
+                TEMPORARY_DNS_RESOLUTION_MESSAGE
+            ) from exc
         if payload.get("Status") != 0:
-            raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+            raise TemporaryCrawlDNSResolutionError(TEMPORARY_DNS_RESOLUTION_MESSAGE)
         for answer in payload.get("Answer") or []:
             if not isinstance(answer, dict) or answer.get("type") not in {1, 28}:
                 continue
             try:
                 ip_address = ipaddress.ip_address(str(answer.get("data") or ""))
             except ValueError as exc:
-                raise ValueError(UNSAFE_CRAWL_URL_MESSAGE) from exc
+                raise TemporaryCrawlDNSResolutionError(
+                    TEMPORARY_DNS_RESOLUTION_MESSAGE
+                ) from exc
             if _is_unsafe_ip_address(ip_address):
                 raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
             normalized_ip = str(ip_address)
             if normalized_ip not in resolved_ips:
                 resolved_ips.append(normalized_ip)
     if not resolved_ips:
-        raise ValueError(UNSAFE_CRAWL_URL_MESSAGE)
+        raise TemporaryCrawlDNSResolutionError(TEMPORARY_DNS_RESOLUTION_MESSAGE)
     return tuple(resolved_ips)
 
 

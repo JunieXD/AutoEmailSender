@@ -34,6 +34,7 @@ from app.modules.crawler.llm.structured_output import (
 from app.modules.llm.runtime import (
     ChatCompletionResult,
     ChatCompletionUsage,
+    LLMRuntimeError,
     LLMRuntimeAdaptation,
 )
 from app.modules.crawler.v2 import enrichment_worker as crawler_v2_enrichment_worker
@@ -554,6 +555,7 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.session_factory,
             candidate_id=candidate_id,
             fresh_after=operation_started_at,
+            prefer_compact_input=False,
         )
 
     async def test_fresh_saved_profile_with_trailing_slash_is_reused(self) -> None:
@@ -826,6 +828,35 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         adaptation_mock.assert_not_awaited()
         fetch_mock.assert_not_awaited()
 
+    async def test_embedded_unproven_cross_domain_profile_stays_blocked(self) -> None:
+        _, task_id = await self._seed_task(
+            profile_url=(
+                "https://example.edu/redirect/"
+                "https://people.example.net/invented"
+            )
+        )
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.fetch_profile_text",
+            new=AsyncMock(),
+        ) as fetch_mock:
+            processed = await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+        assert task is not None
+        self.assertEqual(
+            task.status,
+            CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+        )
+        self.assertIn("未在来源列表原文中出现", task.last_error or "")
+        fetch_mock.assert_not_awaited()
+
     async def test_unsafe_cross_domain_profile_stays_blocked(self) -> None:
         profile_url = "http://127.0.0.1/private"
         candidate_id, task_id = await self._seed_task(profile_url=profile_url)
@@ -1084,6 +1115,120 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(task.worker_id)
         self.assertIsNone(task.claimed_at)
         self.assertIsNotNone(task.lease_expires_at)
+
+    async def test_content_policy_retry_uses_compact_page_input(self) -> None:
+        _, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html"
+        )
+        compact_flags: list[bool] = []
+
+        async def enrich_with_one_content_policy_failure(*_args, **kwargs):
+            compact_flags.append(bool(kwargs.get("prefer_compact_input")))
+            if len(compact_flags) == 1:
+                raise LLMRuntimeError(
+                    '模型接口返回错误 451: {"code":"censorship_blocked"}',
+                    status_code=451,
+                )
+            return CandidateEnrichmentPayload(), None, ""
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(side_effect=enrich_with_one_content_policy_failure),
+        ):
+            await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                task.status = CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
+                task.worker_id = "w1"
+                task.lease_expires_at = None
+                await session.commit()
+            await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(compact_flags, [False, True])
+
+    async def test_ordinary_retry_keeps_full_page_input(self) -> None:
+        _, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html"
+        )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            task.last_error = "模型请求超时（120 秒）"
+            await session.commit()
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(return_value=(CandidateEnrichmentPayload(), None, "")),
+        ) as enrichment_mock:
+            await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertFalse(enrichment_mock.await_args.kwargs["prefer_compact_input"])
+
+    def test_compact_enrichment_text_keeps_fields_and_drops_unrelated_biography(self) -> None:
+        candidate = CrawlCandidate(name="邱澎生", profile_url="https://example.edu/qiu")
+        page_text = "\n".join(
+            (
+                "邱澎生",
+                "职称",
+                "特聘教授",
+                "联系方式",
+                "pengshan1963@sjtu.edu.cn",
+                "研究专长：明清制度经济史、明清法制史、明清城市史",
+                "个人经历",
+                "研究专长：",
+                "这是一段与补全字段无关且可能触发服务商内容策略的长篇经历。",
+            )
+        )
+
+        compact = crawler_v2_enrichment_worker._compact_enrichment_page_text(
+            candidate,
+            page_text,
+        )
+
+        self.assertIn("邱澎生", compact)
+        self.assertIn("特聘教授", compact)
+        self.assertIn("pengshan1963@sjtu.edu.cn", compact)
+        self.assertIn("明清制度经济史", compact)
+        self.assertNotIn("长篇经历", compact)
+
+    async def test_existing_embedded_profile_url_is_repaired_before_enrichment(self) -> None:
+        malformed_url = (
+            "https://webplus.zuel.edu.cn/_web/_customize/folder/react/"
+            "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm"
+        )
+        candidate_id, task_id = await self._seed_task(profile_url=malformed_url)
+
+        with patch(
+            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(return_value=(CandidateEnrichmentPayload(), None, "")),
+        ) as enrichment_mock:
+            await run_crawler_v2_enrichment_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        async with self.session_factory() as session:
+            candidate = await session.get(CrawlCandidate, candidate_id)
+        assert candidate is not None
+        self.assertEqual(
+            candidate.profile_url,
+            "http://xagx.zuel.edu.cn/2021/1110/c3560a282079/page.htm",
+        )
+        self.assertEqual(enrichment_mock.await_args.kwargs["candidate_id"], candidate_id)
 
     async def test_llm_retry_reuses_profile_text_after_fetch_succeeds(self) -> None:
         candidate_id, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")

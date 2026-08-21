@@ -1,11 +1,56 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+import re
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 from ..pages.domain_policy import is_same_registrable_domain
 
 _TRACKING_QUERY_PREFIXES = ("utm_",)
 _TRACKING_QUERY_KEYS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid"}
+_ABSOLUTE_URL_PATTERN = re.compile(r"https?://", re.IGNORECASE)
+
+
+def recover_embedded_absolute_url(url: str) -> str:
+    """Recover an absolute URL accidentally embedded in another URL's path."""
+
+    raw = str(url or "").strip()
+    try:
+        outer = urlsplit(raw)
+    except ValueError:
+        return raw
+    if outer.scheme.lower() not in {"http", "https"} or not outer.hostname:
+        return raw
+
+    decoded_url = raw
+    for _ in range(4):
+        matches = tuple(_ABSOLUTE_URL_PATTERN.finditer(decoded_url))
+        if len(matches) >= 2:
+            embedded_start = matches[1].start()
+            path_end = min(
+                (
+                    position
+                    for separator in ("?", "#")
+                    if (position := decoded_url.find(separator)) >= 0
+                ),
+                default=len(decoded_url),
+            )
+            candidate = decoded_url[embedded_start:]
+            try:
+                parsed_candidate = urlsplit(candidate)
+            except ValueError:
+                parsed_candidate = None
+            if (
+                embedded_start < path_end
+                and parsed_candidate is not None
+                and parsed_candidate.scheme.lower() in {"http", "https"}
+                and parsed_candidate.hostname
+            ):
+                return candidate
+        next_url = unquote(decoded_url)
+        if next_url == decoded_url:
+            break
+        decoded_url = next_url
+    return raw
 
 
 def normalize_url(url: str, *, base_url: str | None = None) -> str:

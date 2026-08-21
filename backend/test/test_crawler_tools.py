@@ -379,6 +379,40 @@ class CrawlerToolTests(unittest.TestCase):
             "https://cs.example.edu/teachers/zhang.htm",
         )
 
+    def test_normalize_candidate_profile_url_recovers_absolute_url_in_path(self) -> None:
+        self.assertEqual(
+            normalize_candidate_profile_url(
+                "https://webplus.example.edu/_customize/folder/react/"
+                "http://faculty.example.edu/people/zhang.htm"
+            ),
+            "http://faculty.example.edu/people/zhang.htm",
+        )
+
+    def test_normalize_candidate_profile_url_recovers_encoded_absolute_url_in_path(self) -> None:
+        self.assertEqual(
+            normalize_candidate_profile_url(
+                "https://webplus.example.edu/_customize/folder/react/"
+                "https%253A%252F%252Ffaculty.example.edu%252Fpeople%252Fzhang.htm"
+            ),
+            "https://faculty.example.edu/people/zhang.htm",
+        )
+
+    def test_normalize_candidate_profile_url_preserves_embedded_url_query(self) -> None:
+        self.assertEqual(
+            normalize_candidate_profile_url(
+                "https://webplus.example.edu/react/"
+                "https://faculty.example.edu/profile.jsp?id=42&lang=zh_CN"
+            ),
+            "https://faculty.example.edu/profile.jsp?id=42&lang=zh_CN",
+        )
+
+    def test_recovered_private_profile_url_remains_unsafe(self) -> None:
+        repaired = normalize_candidate_profile_url(
+            "https://webplus.example.edu/react/http://127.0.0.1/private"
+        )
+        self.assertEqual(repaired, "http://127.0.0.1/private")
+        self.assertFalse(is_safe_public_crawl_url(repaired or ""))
+
     def test_page_snapshot_cache_distinguishes_spa_hash_routes(self) -> None:
         ctx = self._test_ctx()
         staff = PageSnapshot(
@@ -1212,6 +1246,28 @@ class CrawlerToolTests(unittest.TestCase):
                     "https://profiles.example.net/person",
                     allow_public_dns_fallback=True,
                 )
+
+    def test_public_dns_service_failure_is_temporary(self) -> None:
+        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        with patch(
+            "app.modules.crawler.pages.tools.httpx.get",
+            side_effect=httpx.ConnectError("temporary DNS service failure"),
+        ):
+            with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
+                crawler_tools._resolve_public_dns_host_ips("faculty.example.edu")
+
+    def test_public_dns_no_answer_is_temporary(self) -> None:
+        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"Status": 0, "Answer": []},
+        )
+        with patch(
+            "app.modules.crawler.pages.tools.httpx.get",
+            return_value=response,
+        ):
+            with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
+                crawler_tools._resolve_public_dns_host_ips("faculty.example.edu")
 
     def test_public_dns_recheck_never_applies_to_private_ip_literal(self) -> None:
         with patch(

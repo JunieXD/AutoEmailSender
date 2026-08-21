@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import CrawlCandidate, CrawlCandidateIdentityKey
 from app.modules.crawler.pages.domain_policy import is_same_registrable_domain
-from app.modules.crawler.v2.url_utils import normalize_url
+from app.modules.crawler.v2.url_utils import normalize_url, recover_embedded_absolute_url
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
@@ -72,7 +72,7 @@ def normalize_candidate_profile_url(value: object) -> str | None:
     if not raw:
         return None
     try:
-        normalized = normalize_url(raw)
+        normalized = normalize_url(recover_embedded_absolute_url(raw))
     except (TypeError, ValueError):
         return None
     parsed = urlsplit(normalized)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit, urlunsplit
 
-from .url_utils import normalize_url
+from .url_utils import normalize_url, recover_embedded_absolute_url
 
 
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
@@ -20,7 +20,7 @@ def extract_normalized_markdown_links(
 ) -> tuple[tuple[str, str], ...]:
     links: list[tuple[str, str]] = []
     for match in _MARKDOWN_LINK_PATTERN.finditer(content):
-        normalized = normalize_url(match.group(2), base_url=base_url)
+        normalized = normalize_profile_url(match.group(2), base_url=base_url)
         parsed = urlsplit(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             continue
@@ -54,7 +54,8 @@ def normalize_profile_url(url: str, *, base_url: str | None = None) -> str:
     unchanged.
     """
 
-    normalized = normalize_url(url, base_url=base_url)
+    joined = urljoin(base_url or "", url.strip())
+    normalized = normalize_url(recover_embedded_absolute_url(joined))
     parsed = urlsplit(normalized)
     path = parsed.path or "/"
     if path != "/":
