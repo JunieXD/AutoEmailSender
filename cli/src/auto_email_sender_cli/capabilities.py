@@ -174,6 +174,12 @@ _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
         "community submission",
         "prepare mentor submission",
     ),
+    "professors.community.export-batch": (
+        "批量导出社区投稿包",
+        "按学校学院导出导师包",
+        "批量准备导师投稿",
+        "community batch export",
+    ),
     "professors.community.catalog": (
         "查看社区导师库",
         "读取社区投稿目标",
@@ -315,6 +321,7 @@ _FILE_EXPORT_COMMANDS: Final[frozenset[str]] = frozenset(
     {
         "professors.export",
         "professors.community.export-package",
+        "professors.community.export-batch",
         "communications.messages.export",
         "diagnostics.export",
         "diagnostics.crawler-debug",
@@ -1075,6 +1082,14 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "导出可提交给社区的导师共享包",
         "L0",
         "available",
+        guide_topic="community",
+    ),
+    Capability(
+        "professors.community.export-batch",
+        "按冻结的学校/学院导师 ID 文件批量导出共享包并记录逐项状态",
+        "L1",
+        "available",
+        mutates=True,
         guide_topic="community",
     ),
     Capability(

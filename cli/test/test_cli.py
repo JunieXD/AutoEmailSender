@@ -1176,6 +1176,74 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2, msg=result.output)
         self.assertEqual(json.loads(result.stdout)["error"]["code"], "PROFESSOR_ID_INPUT_CONFLICT")
 
+    def test_community_export_batch_writes_submission_input_and_resume_state(self) -> None:
+        fake_client = _FakeAgentClient(
+            {"/api/agent/v1/community-mentors/share-package": b"community xlsx"}
+        )
+        payload = {
+            "items": [
+                {"university": "甲大学", "school": "计算机学院", "professor_ids": [7, 9]},
+                {"university": "乙大学", "school": "软件学院", "department": "软件工程系", "professor_ids": [11]},
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            items_file = root / "batch.json"
+            output_dir = root / "batch"
+            items_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                return_value=fake_client,
+            ):
+                result = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "community",
+                        "export-batch",
+                        "--items-file",
+                        items_file.as_posix(),
+                        "--output-dir",
+                        output_dir.as_posix(),
+                    ],
+                )
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertEqual(len(fake_client.download_calls), 2)
+            self.assertEqual(fake_client.download_params[0], {"professor_ids": "7,9"})
+            self.assertEqual(fake_client.download_params[1], {"professor_ids": "11"})
+            submissions = json.loads((output_dir / "submissions.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(submissions["submissions"]), 2)
+            state = json.loads((output_dir / "export-state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "succeeded")
+            self.assertTrue(all(item["status"] == "succeeded" for item in state["items"]))
+
+            resumed_client = _FakeAgentClient(
+                {"/api/agent/v1/community-mentors/share-package": b"should not download"}
+            )
+            with patch(
+                "auto_email_sender_cli.commands.professors.AgentApiClient",
+                return_value=resumed_client,
+            ):
+                resumed = self.runner.invoke(
+                    app,
+                    [
+                        "--format",
+                        "json",
+                        "professors",
+                        "community",
+                        "export-batch",
+                        "--items-file",
+                        items_file.as_posix(),
+                        "--output-dir",
+                        output_dir.as_posix(),
+                        "--resume",
+                    ],
+                )
+            self.assertEqual(resumed.exit_code, 0, msg=resumed.output)
+            self.assertEqual(resumed_client.download_calls, [])
+
     def test_capabilities_no_match_distinguishes_query_from_existing_resource(
         self,
     ) -> None:

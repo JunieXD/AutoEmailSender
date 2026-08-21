@@ -770,6 +770,18 @@ _PROFILES: Final[dict[str, OperationProfile]] = {
         ("读取或报告返回的变更回执、revision 和待处理项。",),
         _LOCAL_REPLAY,
     ),
+    "export_local": OperationProfile(
+        _LOCAL_WRITE_EFFECT,
+        _APP_REQUIRED,
+        _UNTRUSTED_DATA,
+        (),
+        _WRITE_ERRORS,
+        (),
+        (
+            "批量导出会逐单位写入状态文件；失败后先读取 export-state.json，再使用 --resume，避免重复请求已成功单位。",
+        ),
+        _STATUS_BEFORE_RETRY,
+    ),
     "write_local_irreversible": OperationProfile(
         _IRREVERSIBLE_LOCAL_WRITE_EFFECT,
         _APP_REQUIRED,
@@ -1099,6 +1111,7 @@ _bind(
     "diagnostics.export",
     "diagnostics.crawler-debug",
 )
+_bind("export_local", "professors.community.export-batch")
 _bind("observe_delivery", "deliveries.list")
 _bind("observe_job", "matching.jobs.list", "matching.jobs.get", "matching.jobs.items")
 _bind(

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import secrets
+import tempfile
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -501,6 +503,225 @@ def export_community_share_package(
                 "size_bytes": len(content),
             },
             human_text=f"已导出社区共享包到：\n{destination}",
+            guide_topic="community",
+            app_version=client.descriptor.app_version,
+        )
+    except CliError as error:
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code) from error
+
+
+@community_app.command("export-batch")
+def export_community_share_batch(
+    ctx: typer.Context,
+    items_file: Annotated[
+        Path,
+        typer.Option(
+            "--items-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="包含 items:[{university,school,department?,professor_ids:[...]}] 的 JSON 文件。",
+        ),
+    ],
+    output_dir: Annotated[
+        Path, typer.Option("--output-dir", help="批量文件和状态写入目录。")
+    ],
+    force: Annotated[
+        bool, typer.Option("--force", help="允许覆盖同名输出文件；不会删除其他文件。")
+    ] = False,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="复用 export-state.json 中已成功且仍存在的文件。")
+    ] = False,
+) -> None:
+    context = cli_context(ctx)
+    command = "professors.community.export-batch"
+    try:
+        payload = json.loads(items_file.read_text(encoding="utf-8"))
+        items = payload.get("items") if isinstance(payload, dict) else payload
+        if not isinstance(items, list) or not items:
+            raise ValueError("items 必须是非空数组")
+        normalized: list[dict[str, object]] = []
+        seen_units: set[tuple[str, str]] = set()
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"items[{index}] 必须是对象")
+            university = str(item.get("university", "")).strip()
+            school = str(item.get("school", "")).strip()
+            department = str(item.get("department", "")).strip()
+            ids = item.get("professor_ids")
+            if not university or not school:
+                raise ValueError(f"items[{index}] 必须包含 university 和 school")
+            if not isinstance(ids, list) or not ids:
+                raise ValueError(f"items[{index}].professor_ids 必须是非空数组")
+            try:
+                professor_ids_for_item = [int(value) for value in ids]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"items[{index}].professor_ids 必须都是正整数") from exc
+            if any(value < 1 for value in professor_ids_for_item):
+                raise ValueError(f"items[{index}].professor_ids 必须都是正整数")
+            if len(set(professor_ids_for_item)) != len(professor_ids_for_item):
+                raise ValueError(f"items[{index}].professor_ids 不能重复")
+            if len(professor_ids_for_item) > 500:
+                raise ValueError(f"items[{index}].professor_ids 不能超过 500 个")
+            unit_key = (university.casefold(), school.casefold())
+            if unit_key in seen_units:
+                raise ValueError(f"重复投稿单位：{university} / {school}")
+            seen_units.add(unit_key)
+            normalized.append(
+                {
+                    "university": university,
+                    "school": school,
+                    "department": department,
+                    "professor_ids": professor_ids_for_item,
+                }
+            )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        error = CliError(
+            code="COMMUNITY_BATCH_FILE_INVALID",
+            message=f"社区批量导出文件无效：{exc}",
+            exit_code=2,
+        )
+        emit_error(context, command=command, error=error, guide_topic="community")
+        raise typer.Exit(error.exit_code) from exc
+
+    try:
+        validate_context_options(
+            context,
+            supports_filter=False,
+            supports_output_file=False,
+        )
+        destination = output_dir.expanduser().resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        files_dir = destination / "files"
+        files_dir.mkdir(exist_ok=True)
+        state_path = destination / "export-state.json"
+        state: dict[str, object] = {
+            "schema_version": 1,
+            "status": "running",
+            "items": [],
+        }
+        previous_items: dict[int, dict[str, object]] = {}
+        if resume and state_path.exists():
+            try:
+                previous_payload = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise CliError(
+                    code="COMMUNITY_BATCH_STATE_INVALID",
+                    message=f"无法读取 export-state.json：{exc}",
+                    exit_code=2,
+                ) from exc
+            if isinstance(previous_payload, dict) and isinstance(previous_payload.get("items"), list):
+                previous_items = {
+                    int(item["index"]): item
+                    for item in previous_payload["items"]
+                    if isinstance(item, dict) and str(item.get("status")) == "succeeded"
+                }
+        client = AgentApiClient(timeout=90.0)
+        successful_inputs: list[dict[str, object]] = []
+        for index, item in enumerate(normalized, start=1):
+            file_name = f"{index:03d}.xlsx"
+            file_path = files_dir / file_name
+            item_state: dict[str, object] = {
+                "index": index,
+                "university": item["university"],
+                "school": item["school"],
+                "professor_count": len(item["professor_ids"]),
+                "file": f"files/{file_name}",
+                "status": "pending",
+            }
+            previous = previous_items.get(index)
+            if (
+                previous is not None
+                and previous.get("university") == item["university"]
+                and previous.get("school") == item["school"]
+                and previous.get("professor_count") == len(item["professor_ids"])
+                and (destination / str(previous.get("file", ""))).is_file()
+            ):
+                item_state["status"] = "succeeded"
+                successful_inputs.append(
+                    {
+                        "file": f"files/{file_name}",
+                        "university": item["university"],
+                        "school": item["school"],
+                        "department": item["department"],
+                    }
+                )
+                state["items"].append(item_state)
+                state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                continue
+            try:
+                if file_path.exists() and not force:
+                    raise CliError(
+                        code="OUTPUT_EXISTS",
+                        message=f"输出文件已存在：{file_path}；使用 --force 才能覆盖。",
+                        exit_code=2,
+                    )
+                content = client.download_bytes(
+                    "/api/agent/v1/community-mentors/share-package",
+                    params={
+                        "professor_ids": ",".join(
+                            str(value) for value in item["professor_ids"]
+                        )
+                    },
+                )
+                temporary_fd, temporary_name = tempfile.mkstemp(
+                    prefix=f".{file_name}-", dir=files_dir
+                )
+                os.close(temporary_fd)
+                temporary = Path(temporary_name)
+                try:
+                    temporary.write_bytes(content)
+                    temporary.replace(file_path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                item_state["status"] = "succeeded"
+                successful_inputs.append(
+                    {
+                        "file": f"files/{file_name}",
+                        "university": item["university"],
+                        "school": item["school"],
+                        "department": item["department"],
+                    }
+                )
+            except CliError as error:
+                item_state["status"] = "failed"
+                item_state["error"] = error.code
+                state["items"].append(item_state)
+                state["status"] = "failed"
+                state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                (destination / "submissions.json").write_text(json.dumps({"submissions": successful_inputs}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                item_state["status"] = "failed"
+                item_state["error"] = str(exc)[:500]
+                state["items"].append(item_state)
+                state["status"] = "failed"
+                state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                (destination / "submissions.json").write_text(json.dumps({"submissions": successful_inputs}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                raise CliError(
+                    code="COMMUNITY_BATCH_ITEM_FAILED",
+                    message=f"{item['university']} / {item['school']} 导出失败：{exc}",
+                    exit_code=5,
+                ) from exc
+            state["items"].append(item_state)
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        state["status"] = "succeeded"
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        submissions_path = destination / "submissions.json"
+        submissions_path.write_text(json.dumps({"submissions": successful_inputs}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        emit_success(
+            context,
+            command=command,
+            data={
+                "output_dir": destination.as_posix(),
+                "submissions_file": submissions_path.as_posix(),
+                "state_file": state_path.as_posix(),
+                "unit_count": len(successful_inputs),
+                "professor_count": sum(int(item["professor_count"]) for item in state["items"] if item["status"] == "succeeded"),
+            },
+            human_text=f"已批量导出 {len(successful_inputs)} 个社区投稿单位到：\n{destination}",
             guide_topic="community",
             app_version=client.descriptor.app_version,
         )

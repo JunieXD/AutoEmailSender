@@ -83,6 +83,19 @@ JSON_FILE_EXAMPLES: dict[str, dict[str, object]] = {
             ],
         },
     },
+    "professors.community.export-batch": {
+        "option": "--items-file",
+        "format": "json",
+        "example": {
+            "items": [
+                {
+                    "university": "示例大学",
+                    "school": "计算机学院",
+                    "professor_ids": [1, 2, 3],
+                },
+            ],
+        },
+    },
 }
 
 
