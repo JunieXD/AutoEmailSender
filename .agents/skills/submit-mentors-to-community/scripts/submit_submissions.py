@@ -17,7 +17,7 @@ def _command(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
 
 
-def _gh_search(repo: str, batch_id: str, kind: str) -> list[dict[str, object]]:
+def _gh_search(repo: str, batch_id: str, kind: str) -> tuple[list[dict[str, object]], str | None]:
     result = subprocess.run(
         [
             "gh",
@@ -37,12 +37,14 @@ def _gh_search(repo: str, batch_id: str, kind: str) -> list[dict[str, object]]:
         text=True,
     )
     if result.returncode != 0:
-        return []
+        return [], (result.stderr or "gh 查询失败").strip()[:500]
     try:
         payload = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
-        return []
-    return payload if isinstance(payload, list) else []
+        return [], "gh 查询返回了无法解析的 JSON"
+    if not isinstance(payload, list):
+        return [], "gh 查询返回格式不是数组"
+    return payload, None
 
 
 def _body(manifest: dict[str, object]) -> str:
@@ -86,7 +88,24 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     repository = repo or str(manifest["repository"])
     batch_id = str(manifest["batch_id"])
-    existing = _gh_search(repository, batch_id, "pr")
+    existing, search_error = _gh_search(repository, batch_id, "pr")
+    search_warnings = [search_error] if search_error else []
+    if search_error:
+        result = {
+            "ok": False,
+            "status": "unknown",
+            "phase": "dedupe",
+            "batch_id": batch_id,
+            "repository": repository,
+            "error": search_error,
+            "recovery": "先修复 gh 登录/网络后重新查询同一 batch_id；禁止绕过查重直接提交。",
+        }
+        if not execute:
+            result["ok"] = True
+            result["status"] = "planned"
+            result["warnings"] = [search_error]
+        else:
+            return result
     if existing:
         existing_url = next(
             (str(item["url"]) for item in existing if item.get("url")), None
@@ -103,11 +122,14 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
         ["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"[batch:{batch_id}] data: community mentor intake", "--body-file", f".maintainer-submissions/{batch_id}/pr-body.md"],
     ]
     result: dict[str, object] = {"ok": True, "status": "planned", "batch_id": batch_id, "repository": repository, "branch": branch, "commands": commands}
+    if search_warnings:
+        result["warnings"] = search_warnings
     if not execute:
         return result
     if worktree is None:
         return {"ok": False, "phase": "precondition", "errors": ["--execute 必须同时提供 --worktree 指向社区仓库的干净 checkout"], "planned": result}
     worktree = worktree.expanduser().resolve()
+    external_started = False
     try:
         status = _command(["git", "status", "--porcelain"], cwd=worktree).stdout.strip()
     except (OSError, subprocess.CalledProcessError) as exc:
@@ -130,6 +152,7 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
         _command(["git", "switch", "-c", branch], cwd=worktree)
         _command(["git", "add", f".maintainer-submissions/{batch_id}"], cwd=worktree)
         _command(["git", "commit", "-m", f"data: intake community mentor batch {batch_id}"], cwd=worktree)
+        external_started = True
         _command(["git", "push", "-u", "origin", branch], cwd=worktree)
         created = _command(["gh", "pr", "create", "--repo", repository, "--head", branch, "--base", base, "--draft", "--title", f"[batch:{batch_id}] data: community mentor intake", "--body-file", str(target / "pr-body.md")], cwd=worktree)
         pr_url = created.stdout.strip().splitlines()[-1]
@@ -142,8 +165,9 @@ def submit(manifest_path: Path, *, repo: str | None, worktree: Path | None, base
         _command(["git", "push"], cwd=worktree)
         return {**result, "status": "submitted", "pr_url": pr_url}
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        _write_status(manifest_path, status="unknown", error=str(exc))
-        return {"ok": False, "status": "unknown", "batch_id": batch_id, "repository": repository, "error": str(exc), "recovery": "先查询同一 batch_id 的 PR，再决定是否继续；禁止盲目重试。"}
+        status = "unknown" if external_started else "failed"
+        _write_status(manifest_path, status=status, error=str(exc))
+        return {"ok": False, "status": status, "batch_id": batch_id, "repository": repository, "error": str(exc), "recovery": "先查询同一 batch_id 的 PR，再决定是否继续；禁止盲目重试。" if external_started else "修复本地 checkout 后重新运行；尚未发生远程写入。"}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -107,7 +107,7 @@ class SubmissionSkillTests(unittest.TestCase):
             input_path.write_text(json.dumps({"submissions": [{"file": source.name}]}), encoding="utf-8")
             batch_dir = root / "batch"
             prepare(input_path, batch_dir, repository="owner/repo", license_name="CC BY 4.0", dry_run=False)
-            with patch("submit_submissions._gh_search", return_value=[]):
+            with patch("submit_submissions._gh_search", return_value=([], None)):
                 result = submit(batch_dir / "manifest.json", repo=None, worktree=None, base="main", execute=False)
             self.assertTrue(result["ok"])
             self.assertEqual(result["status"], "planned")
@@ -123,7 +123,7 @@ class SubmissionSkillTests(unittest.TestCase):
             input_path.write_text(json.dumps({"submissions": [{"file": source.name}]}), encoding="utf-8")
             batch_dir = root / "batch"
             prepare(input_path, batch_dir, repository="owner/repo", license_name="CC BY 4.0", dry_run=False)
-            with patch("submit_submissions._gh_search", return_value=[{"url": "https://github.com/owner/repo/pull/42", "number": 42}]):
+            with patch("submit_submissions._gh_search", return_value=([{"url": "https://github.com/owner/repo/pull/42", "number": 42}], None)):
                 result = submit(batch_dir / "manifest.json", repo=None, worktree=None, base="main", execute=False)
             self.assertEqual(result["status"], "already_exists")
             manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -143,12 +143,27 @@ class SubmissionSkillTests(unittest.TestCase):
             worktree.mkdir()
             subprocess.run(["git", "init", "--quiet"], cwd=worktree, check=True)
             (worktree / "uncommitted.txt").write_text("keep", encoding="utf-8")
-            with patch("submit_submissions._gh_search", return_value=[]):
+            with patch("submit_submissions._gh_search", return_value=([], None)):
                 result = submit(batch_dir / "manifest.json", repo=None, worktree=worktree, base="main", execute=True)
             self.assertFalse(result["ok"])
             self.assertEqual(result["phase"], "precondition")
             manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["submission"]["status"], "prepared")
+
+    def test_execute_stops_when_dedupe_query_is_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.xlsx"
+            write_community_xlsx(source)
+            input_path = root / "submissions.json"
+            input_path.write_text(json.dumps({"submissions": [{"file": source.name}]}), encoding="utf-8")
+            batch_dir = root / "batch"
+            prepare(input_path, batch_dir, repository="owner/repo", license_name="CC BY 4.0", dry_run=False)
+            with patch("submit_submissions._gh_search", return_value=([], "not logged in")):
+                result = submit(batch_dir / "manifest.json", repo=None, worktree=root, base="main", execute=True)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["phase"], "dedupe")
+            self.assertEqual(result["status"], "unknown")
 
 
 if __name__ == "__main__":
