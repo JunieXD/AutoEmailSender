@@ -30,7 +30,9 @@ def upgrade() -> None:
 
     with op.batch_alter_table("email_tasks", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("batch_send_canceled_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column(
+                "batch_send_canceled_at", sa.DateTime(timezone=True), nullable=True
+            ),
         )
 
 

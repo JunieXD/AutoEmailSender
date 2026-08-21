@@ -10,7 +10,18 @@ from time import perf_counter
 from typing import Literal, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import case, func, or_, select
@@ -303,7 +314,10 @@ from app.modules.campaigns.public import (
     BatchTaskResendContextError,
     build_batch_task_resend_context,
 )
-from app.services.agent_mutations import execute_agent_factory_mutation, execute_agent_mutation
+from app.services.agent_mutations import (
+    execute_agent_factory_mutation,
+    execute_agent_mutation,
+)
 from app.modules.matching.public import (
     create_match_analysis_job_record,
     delete_match_analysis_job_record,
@@ -424,7 +438,9 @@ def get_agent_community_mentor_data_service() -> CommunityMentorDataService:
     return CommunityMentorDataService()
 
 
-def get_agent_community_mentor_data_service_factory() -> Callable[[], CommunityMentorDataService]:
+def get_agent_community_mentor_data_service_factory() -> Callable[
+    [], CommunityMentorDataService
+]:
     return get_agent_community_mentor_data_service
 
 
@@ -461,7 +477,9 @@ async def read_agent_runtime(request: Request) -> AgentRuntimeInfoRead:
 @router.get("/professors", response_model=AgentPage[AgentProfessorRead])
 async def list_agent_professors(
     q: str | None = Query(default=None),
-    name_script: Literal["latin", "han", "cyrillic", "arabic", "digit"] | None = Query(default=None),
+    name_script: Literal["latin", "han", "cyrillic", "arabic", "digit"] | None = Query(
+        default=None
+    ),
     archived: Literal["active", "archived", "all"] = Query(default="active"),
     tag_id: int | None = Query(default=None, ge=1),
     professor_id: int | None = Query(default=None, ge=1),
@@ -898,7 +916,9 @@ async def prepare_agent_professor_import(
 async def get_agent_community_catalog(
     refresh: bool = Query(default=False),
     session: AsyncSession = Depends(get_async_session),
-    service: CommunityMentorDataService = Depends(get_agent_community_mentor_data_service),
+    service: CommunityMentorDataService = Depends(
+        get_agent_community_mentor_data_service
+    ),
 ) -> CommunityCatalogRead:
     try:
         bundle = await service.get_catalog(force_refresh=refresh)
@@ -925,7 +945,9 @@ async def get_agent_community_catalog(
 async def list_agent_community_records(
     payload: CommunityRecordSelectionPayload,
     session: AsyncSession = Depends(get_async_session),
-    service: CommunityMentorDataService = Depends(get_agent_community_mentor_data_service),
+    service: CommunityMentorDataService = Depends(
+        get_agent_community_mentor_data_service
+    ),
 ) -> CommunityRecordsRead:
     try:
         record_bundle = await service.load_records(
@@ -952,7 +974,9 @@ async def list_agent_community_records(
 async def preview_agent_community_import(
     payload: CommunityPreviewPayload,
     session: AsyncSession = Depends(get_async_session),
-    service: CommunityMentorDataService = Depends(get_agent_community_mentor_data_service),
+    service: CommunityMentorDataService = Depends(
+        get_agent_community_mentor_data_service
+    ),
 ) -> CommunityRecordsRead:
     try:
         record_bundle = await service.load_records(
@@ -960,13 +984,19 @@ async def preview_agent_community_import(
             unit_paths=payload.unit_paths,
         )
         records_by_id = {record.id: record for record in record_bundle.records}
-        missing_ids = [record_id for record_id in payload.record_ids if record_id not in records_by_id]
+        missing_ids = [
+            record_id
+            for record_id in payload.record_ids
+            if record_id not in records_by_id
+        ]
         if missing_ids:
             raise CommunityDataError(
                 f"所选导师不属于当前学院数据：{', '.join(missing_ids[:3])}",
                 code="COMMUNITY_DATA_SELECTION_INVALID",
             )
-        selected_records = [records_by_id[record_id] for record_id in payload.record_ids]
+        selected_records = [
+            records_by_id[record_id] for record_id in payload.record_ids
+        ]
         lifecycle_warnings = await sync_community_link_lifecycle(
             session,
             record_bundle.catalog_bundle,
@@ -991,7 +1021,9 @@ async def preview_agent_community_import(
 async def prepare_agent_community_mentor_import(
     payload: CommunityImportPayload,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    service: CommunityMentorDataService = Depends(get_agent_community_mentor_data_service),
+    service: CommunityMentorDataService = Depends(
+        get_agent_community_mentor_data_service
+    ),
 ) -> AgentChangePlanRead:
     return await create_community_mentor_import_change_plan(
         get_session_factory(),
@@ -1022,7 +1054,9 @@ async def export_agent_community_share_package(
             ),
         )
     professors_by_id = {professor.id: professor for professor in professors}
-    missing_ids = [professor_id for professor_id in ids if professor_id not in professors_by_id]
+    missing_ids = [
+        professor_id for professor_id in ids if professor_id not in professors_by_id
+    ]
     if missing_ids:
         raise AgentApiError(
             status_code=404,
@@ -1062,9 +1096,7 @@ async def list_agent_professor_tags(
         statement = statement.where(ProfessorTag.name == name)
     tags = list(
         await session.scalars(
-            statement.order_by(ProfessorTag.id.asc())
-            .offset(cursor)
-            .limit(limit + 1),
+            statement.order_by(ProfessorTag.id.asc()).offset(cursor).limit(limit + 1),
         ),
     )
     page, next_cursor, has_more = _slice_page(tags, cursor=cursor, limit=limit)
@@ -1208,7 +1240,10 @@ async def read_agent_communication_thread(
     thread = _serialize_thread_row(rows[0])
     return AgentCommunicationThreadDetailRead(
         **thread.model_dump(),
-        messages=[_serialize_message(message, include_body=include_body) for message in message_page],
+        messages=[
+            _serialize_message(message, include_body=include_body)
+            for message in message_page
+        ],
         messages_next_cursor=next_cursor,
         messages_has_more=has_more,
     )
@@ -1233,9 +1268,13 @@ async def list_agent_messages(
     if thread_id is not None:
         thread_identity_id, thread_professor_id = _parse_thread_id(thread_id)
         if identity_id is not None and identity_id != thread_identity_id:
-            raise HTTPException(status_code=400, detail="thread_id 与 identity_id 不一致")
+            raise HTTPException(
+                status_code=400, detail="thread_id 与 identity_id 不一致"
+            )
         if professor_id is not None and professor_id != thread_professor_id:
-            raise HTTPException(status_code=400, detail="thread_id 与 professor_id 不一致")
+            raise HTTPException(
+                status_code=400, detail="thread_id 与 professor_id 不一致"
+            )
         identity_id = thread_identity_id
         professor_id = thread_professor_id
 
@@ -1260,7 +1299,9 @@ async def list_agent_messages(
     )
     page, next_cursor, has_more = _slice_page(messages, cursor=cursor, limit=limit)
     response = AgentPage(
-        items=[_serialize_message(message, include_body=include_body) for message in page],
+        items=[
+            _serialize_message(message, include_body=include_body) for message in page
+        ],
         next_cursor=next_cursor,
         has_more=has_more,
     )
@@ -1294,6 +1335,7 @@ async def sync_agent_communications(
             code="IMAP_NOT_CONFIGURED",
             message="该发件身份尚未配置 IMAP，无法同步邮箱通信记录。",
         )
+
     async def mutation() -> AgentCommunicationSyncRead:
         detected_count = await sync_identity_history_poll_once(
             get_session_factory(),
@@ -1630,7 +1672,9 @@ async def approve_agent_task_draft(
     )
 
 
-@router.post("/tasks/{task_id}/cancel-schedule", response_model=AgentWorkspaceThreadRead)
+@router.post(
+    "/tasks/{task_id}/cancel-schedule", response_model=AgentWorkspaceThreadRead
+)
 async def cancel_agent_task_schedule(
     task_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -1652,7 +1696,9 @@ async def cancel_agent_task_schedule(
     )
 
 
-@router.post("/tasks/{task_id}/continue-manually", response_model=AgentWorkspaceThreadRead)
+@router.post(
+    "/tasks/{task_id}/continue-manually", response_model=AgentWorkspaceThreadRead
+)
 async def continue_agent_task_manually(
     task_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -1673,7 +1719,9 @@ async def continue_agent_task_manually(
     )
 
 
-@router.post("/tasks/{task_id}/start-follow-up", response_model=AgentWorkspaceThreadRead)
+@router.post(
+    "/tasks/{task_id}/start-follow-up", response_model=AgentWorkspaceThreadRead
+)
 async def start_agent_task_follow_up(
     task_id: int,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -1694,7 +1742,9 @@ async def start_agent_task_follow_up(
     )
 
 
-@router.post("/tasks/{task_id}/primary-material", response_model=AgentWorkspaceThreadRead)
+@router.post(
+    "/tasks/{task_id}/primary-material", response_model=AgentWorkspaceThreadRead
+)
 async def update_agent_task_primary_material(
     task_id: int,
     payload: AgentTaskPrimaryMaterialRequest,
@@ -1728,7 +1778,9 @@ async def update_agent_task_primary_material(
     )
 
 
-@router.post("/tasks/{task_id}/outreach-config", response_model=AgentWorkspaceThreadRead)
+@router.post(
+    "/tasks/{task_id}/outreach-config", response_model=AgentWorkspaceThreadRead
+)
 async def update_agent_task_outreach_config(
     task_id: int,
     payload: AgentTaskOutreachConfigRequest,
@@ -1763,7 +1815,9 @@ async def update_agent_task_outreach_config(
     )
 
 
-@router.post("/tasks/{task_id}/calculate-match", response_model=AgentTaskMatchCalculationRead)
+@router.post(
+    "/tasks/{task_id}/calculate-match", response_model=AgentTaskMatchCalculationRead
+)
 async def calculate_agent_task_match(
     task_id: int,
     payload: AgentTaskRuntimeProfileRequest | None = None,
@@ -1771,6 +1825,7 @@ async def calculate_agent_task_match(
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentTaskMatchCalculationRead:
     request_payload = payload.model_dump(mode="json") if payload is not None else None
+
     async def mutation() -> AgentTaskMatchCalculationRead:
         async with get_session_factory()() as mutation_session:
             result = await _calculate_agent_task_match(
@@ -2055,11 +2110,15 @@ async def list_agent_materials(
             IdentityMaterial.identity_id == resolved_source_identity_id,
         )
     if material_type:
-        statement = statement.where(IdentityMaterial.material_type == material_type.strip().lower())
+        statement = statement.where(
+            IdentityMaterial.material_type == material_type.strip().lower()
+        )
     materials = list(
         (
             await session.scalars(
-                statement.order_by(IdentityMaterial.id.asc()).offset(cursor).limit(limit + 1),
+                statement.order_by(IdentityMaterial.id.asc())
+                .offset(cursor)
+                .limit(limit + 1),
             )
         ).unique(),
     )
@@ -2127,8 +2186,7 @@ async def download_agent_material(
     session: AsyncSession = Depends(get_async_session),
 ) -> FileResponse:
     material = await session.scalar(
-        select(IdentityMaterial)
-        .where(IdentityMaterial.id == material_id),
+        select(IdentityMaterial).where(IdentityMaterial.id == material_id),
     )
     if material is None:
         raise HTTPException(status_code=404, detail="未找到材料")
@@ -2244,16 +2302,21 @@ async def list_agent_identities(
         statement = statement.where(IdentityProfile.id == identity_id)
     if is_default is not None:
         statement = statement.where(IdentityProfile.is_default.is_(is_default))
-    smtp_predicate = (IdentityProfile.smtp_host != "")
+    smtp_predicate = IdentityProfile.smtp_host != ""
     smtp_predicate = smtp_predicate & (IdentityProfile.smtp_username != "")
     smtp_predicate = smtp_predicate & (IdentityProfile.smtp_password != "")
     if smtp_configured is not None:
-        statement = statement.where(smtp_predicate if smtp_configured else ~smtp_predicate)
+        statement = statement.where(
+            smtp_predicate if smtp_configured else ~smtp_predicate
+        )
     if imap_configured is not None:
-        predicate = func.coalesce(
-            func.trim(IdentityProfile.imap_host),
-            "",
-        ) != ""
+        predicate = (
+            func.coalesce(
+                func.trim(IdentityProfile.imap_host),
+                "",
+            )
+            != ""
+        )
         predicate = predicate & (IdentityProfile.imap_port > 0)
         predicate = predicate & (
             func.coalesce(func.trim(IdentityProfile.imap_username), "") != ""
@@ -2262,7 +2325,9 @@ async def list_agent_identities(
         statement = statement.where(predicate if imap_configured else ~predicate)
     identities = list(
         await session.scalars(
-            statement.order_by(IdentityProfile.is_default.desc(), IdentityProfile.id.asc())
+            statement.order_by(
+                IdentityProfile.is_default.desc(), IdentityProfile.id.asc()
+            )
             .offset(cursor)
             .limit(limit + 1),
         ),
@@ -2385,6 +2450,7 @@ async def test_agent_identity_smtp(
     session: AsyncSession = Depends(get_async_session),
 ) -> ConnectionTestResult:
     try:
+
         async def mutation() -> ConnectionTestResult:
             async with get_session_factory()() as mutation_session:
                 result = await _test_agent_identity_smtp(mutation_session, identity_id)
@@ -2411,6 +2477,7 @@ async def test_agent_identity_imap(
     session: AsyncSession = Depends(get_async_session),
 ) -> ConnectionTestResult:
     try:
+
         async def mutation() -> ConnectionTestResult:
             async with get_session_factory()() as mutation_session:
                 result = await _test_agent_identity_imap(mutation_session, identity_id)
@@ -2580,6 +2647,7 @@ async def test_agent_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentLLMProfileTestRead:
     try:
+
         async def mutation() -> AgentLLMProfileTestRead:
             async with get_session_factory()() as mutation_session:
                 result = await _test_agent_llm_profile(mutation_session, profile_id)
@@ -2620,7 +2688,9 @@ async def list_agent_communication_groups(
             for group in groups
             if group.match_source_identity_id == match_source_identity_id
         ]
-    page, next_cursor, has_more = _slice_page(groups[cursor:], cursor=cursor, limit=limit)
+    page, next_cursor, has_more = _slice_page(
+        groups[cursor:], cursor=cursor, limit=limit
+    )
     response = AgentPage(items=list(page), next_cursor=next_cursor, has_more=has_more)
     return _project_agent_collection_response(response, fields)
 
@@ -2740,7 +2810,9 @@ async def list_agent_match_analysis_jobs(
         statement = statement.where(MatchAnalysisJob.deleted_at.is_(None))
     jobs = list(
         await session.scalars(
-            statement.order_by(MatchAnalysisJob.created_at.desc(), MatchAnalysisJob.id.desc())
+            statement.order_by(
+                MatchAnalysisJob.created_at.desc(), MatchAnalysisJob.id.desc()
+            )
             .offset(cursor)
             .limit(limit + 1),
         ),
@@ -2973,7 +3045,9 @@ async def create_agent_professor_information_enrichment_job(
             request_data=payload.model_dump(mode="json"),
             idempotency_key=idempotency_key,
             response_type=ProfessorInformationEnrichmentJobRead,
-            mutation=lambda: _create_agent_professor_information_enrichment_job(session, payload),
+            mutation=lambda: _create_agent_professor_information_enrichment_job(
+                session, payload
+            ),
         )
     except RuntimeError as exc:
         raise _agent_information_enrichment_error(exc, status_code=409) from exc
@@ -3036,7 +3110,9 @@ async def cancel_agent_professor_information_enrichment_job(
             request_data={"job_id": job_id},
             idempotency_key=idempotency_key,
             response_type=ProfessorInformationEnrichmentJobActionRead,
-            mutation=lambda: _cancel_agent_professor_information_enrichment_job(session, job_id),
+            mutation=lambda: _cancel_agent_professor_information_enrichment_job(
+                session, job_id
+            ),
         )
     except ValueError as exc:
         raise _agent_information_enrichment_error(exc) from exc
@@ -3059,7 +3135,9 @@ async def retry_agent_professor_information_enrichment_job(
             request_data={"job_id": job_id},
             idempotency_key=idempotency_key,
             response_type=ProfessorInformationEnrichmentJobRead,
-            mutation=lambda: _retry_agent_professor_information_enrichment_job(session, job_id),
+            mutation=lambda: _retry_agent_professor_information_enrichment_job(
+                session, job_id
+            ),
         )
     except ValueError as exc:
         raise _agent_information_enrichment_error(exc) from exc
@@ -3081,7 +3159,9 @@ async def delete_agent_professor_information_enrichment_job(
             request_data={"job_id": job_id},
             idempotency_key=idempotency_key,
             response_type=ProfessorInformationEnrichmentJobActionRead,
-            mutation=lambda: _delete_agent_professor_information_enrichment_job(session, job_id),
+            mutation=lambda: _delete_agent_professor_information_enrichment_job(
+                session, job_id
+            ),
         )
     except ValueError as exc:
         raise _agent_information_enrichment_error(exc) from exc
@@ -3103,7 +3183,9 @@ async def restore_agent_professor_information_enrichment_job(
             request_data={"job_id": job_id},
             idempotency_key=idempotency_key,
             response_type=ProfessorInformationEnrichmentJobActionRead,
-            mutation=lambda: _restore_agent_professor_information_enrichment_job(session, job_id),
+            mutation=lambda: _restore_agent_professor_information_enrichment_job(
+                session, job_id
+            ),
         )
     except ValueError as exc:
         raise _agent_information_enrichment_error(exc) from exc
@@ -3235,7 +3317,9 @@ async def list_agent_faculty_crawl_job_events(
     )
 
 
-@router.get("/crawler/jobs/{job_id}/pages", response_model=AgentPage[AgentCrawlPageRead])
+@router.get(
+    "/crawler/jobs/{job_id}/pages", response_model=AgentPage[AgentCrawlPageRead]
+)
 async def list_agent_faculty_crawl_pages(
     job_id: int,
     cursor: int = Query(default=0, ge=0),
@@ -3376,7 +3460,9 @@ async def enrich_many_agent_crawl_candidates(
     )
 
 
-@router.patch("/crawler/candidates/{candidate_id}", response_model=AgentCrawlCandidateRead)
+@router.patch(
+    "/crawler/candidates/{candidate_id}", response_model=AgentCrawlCandidateRead
+)
 async def update_agent_faculty_crawl_candidate(
     candidate_id: int,
     payload: AgentCrawlCandidateUpdateRequest,
@@ -3438,7 +3524,9 @@ async def resume_agent_faculty_crawl_job(
             command="crawler.jobs.resume",
             request_data={
                 "job_id": job_id,
-                "payload": payload.model_dump(mode="json") if payload is not None else None,
+                "payload": payload.model_dump(mode="json")
+                if payload is not None
+                else None,
             },
             idempotency_key=idempotency_key,
             response_type=CrawlJobSummaryRead,
@@ -3809,7 +3897,8 @@ async def read_agent_token_usage_visualization(
 async def list_agent_email_campaigns(
     view: Literal["current", "trash"] = Query(default="current"),
     identity_id: int | None = Query(default=None, ge=1),
-    status: Literal["running", "paused", "stopped", "completed", "expired"] | None = Query(
+    status: Literal["running", "paused", "stopped", "completed", "expired"]
+    | None = Query(
         default=None,
     ),
     cursor: int = Query(default=0, ge=0),
@@ -4225,6 +4314,7 @@ async def create_agent_draft(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> AgentDraftRead:
     try:
+
         async def mutation() -> AgentDraftRead:
             task = await generate_agent_draft(get_session_factory(), payload)
             return _serialize_draft(task)
@@ -4260,6 +4350,7 @@ async def save_agent_draft_content(
     if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
+
         async def mutation() -> AgentDraftRead:
             await _ensure_draft_revision(task_id, if_revision)
             task = await save_agent_draft(get_session_factory(), task_id, payload)
@@ -4293,6 +4384,7 @@ async def regenerate_agent_draft_content(
     if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
+
         async def mutation() -> AgentDraftRead:
             await _ensure_draft_revision(task_id, if_revision)
             task = await regenerate_agent_draft(get_session_factory(), task_id, payload)
@@ -4327,6 +4419,7 @@ async def rewrite_agent_draft_content(
     if_revision: str | None = Header(default=None, alias="If-Revision"),
 ) -> AgentDraftRead:
     try:
+
         async def mutation() -> AgentDraftRead:
             await _ensure_draft_revision(task_id, if_revision)
             task = await rewrite_agent_draft(get_session_factory(), task_id, payload)
@@ -4389,7 +4482,9 @@ async def get_agent_test_email_status(
     )
 
 
-@router.get("/test-email/{identity_id}/{llm_profile_id}", response_model=TestComposeThreadRead)
+@router.get(
+    "/test-email/{identity_id}/{llm_profile_id}", response_model=TestComposeThreadRead
+)
 async def get_agent_test_email_thread(
     identity_id: int,
     llm_profile_id: int,
@@ -4418,7 +4513,9 @@ async def generate_agent_test_email_draft(
     request_data = {
         "identity_id": identity_id,
         "llm_profile_id": llm_profile_id,
-        "payload": payload.model_dump(mode="json", exclude_unset=True) if payload else {},
+        "payload": payload.model_dump(mode="json", exclude_unset=True)
+        if payload
+        else {},
     }
 
     async def mutation() -> TestComposeThreadRead:
@@ -4427,16 +4524,21 @@ async def generate_agent_test_email_draft(
                 mutation_session,
                 identity_id=identity_id,
                 llm_profile_id=llm_profile_id,
-                outreach_template_id=(payload.outreach_template_id if payload else None),
+                outreach_template_id=(
+                    payload.outreach_template_id if payload else None
+                ),
                 template_selection_explicit=(
-                    payload is not None and "outreach_template_id" in payload.model_fields_set
+                    payload is not None
+                    and "outreach_template_id" in payload.model_fields_set
                 ),
                 subject_template=(payload.subject if payload else None),
                 body_text_template=(payload.body_text if payload else None),
                 body_html_template=(payload.body_html if payload else None),
                 template_content_explicit=(
                     payload is not None
-                    and bool({"subject", "body_text", "body_html"} & payload.model_fields_set)
+                    and bool(
+                        {"subject", "body_text", "body_html"} & payload.model_fields_set
+                    )
                 ),
                 commit=False,
                 event_name="agent_cli.test_email.draft_generated",
@@ -4513,8 +4615,12 @@ async def prepare_agent_test_email_send(
     )
 
 
-@router.get("/plans/{plan_id}", response_model=AgentActionPlanRead | AgentChangePlanRead)
-async def read_agent_action_plan(plan_id: str) -> AgentActionPlanRead | AgentChangePlanRead:
+@router.get(
+    "/plans/{plan_id}", response_model=AgentActionPlanRead | AgentChangePlanRead
+)
+async def read_agent_action_plan(
+    plan_id: str,
+) -> AgentActionPlanRead | AgentChangePlanRead:
     if plan_id.startswith("change_"):
         return await get_change_plan(get_session_factory(), plan_id)
     return await get_email_action_plan(get_session_factory(), plan_id)
@@ -4553,7 +4659,9 @@ async def execute_agent_action_plan(
         request_data={"plan_id": plan_id, **payload.model_dump(mode="json")},
         idempotency_key=idempotency_key,
         response_type=AgentActionPlanRead,
-        mutation=lambda: execute_email_action_plan(get_session_factory(), plan_id, payload),
+        mutation=lambda: execute_email_action_plan(
+            get_session_factory(), plan_id, payload
+        ),
         external_execution=True,
     )
 
@@ -4839,10 +4947,10 @@ async def _set_agent_primary_material(
         event_name="agent_cli.material.primary_set",
         actor="agent_cli",
     )
-    target_identity_id = identity_id if identity_id is not None else material.identity_id
-    default_identity_ids = {
-        identity.id for identity in material.default_for_identities
-    }
+    target_identity_id = (
+        identity_id if identity_id is not None else material.identity_id
+    )
+    default_identity_ids = {identity.id for identity in material.default_for_identities}
     if target_identity_id is not None:
         default_identity_ids.add(target_identity_id)
     return _serialize_material(
@@ -5365,7 +5473,9 @@ async def _set_agent_identity_default_template(
         session,
         identity,
         "agent_cli.identity.default_outreach_template_updated",
-        metadata={"default_outreach_template_id": identity.default_outreach_template_id},
+        metadata={
+            "default_outreach_template_id": identity.default_outreach_template_id
+        },
     )
     return _serialize_identity(identity)
 
@@ -5500,7 +5610,9 @@ async def _create_agent_professor_information_enrichment_job(
         actor="agent_cli",
     )
     result = await get_professor_information_enrichment_job(session, job.id)
-    if result is None:  # pragma: no cover - the record was just created in this transaction
+    if (
+        result is None
+    ):  # pragma: no cover - the record was just created in this transaction
         raise ValueError("信息补全任务不存在")
     return result
 
@@ -5522,7 +5634,9 @@ async def _cancel_agent_professor_information_enrichment_job(
         actor="agent_cli",
     )
     result = await get_professor_information_enrichment_job(session, job_id)
-    if result is None:  # pragma: no cover - the record cannot disappear in this transaction
+    if (
+        result is None
+    ):  # pragma: no cover - the record cannot disappear in this transaction
         raise ValueError("信息补全任务不存在")
     return ProfessorInformationEnrichmentJobActionRead(ok=True, job=result)
 
@@ -5537,7 +5651,9 @@ async def _retry_agent_professor_information_enrichment_job(
         actor="agent_cli",
     )
     result = await get_professor_information_enrichment_job(session, job.id)
-    if result is None:  # pragma: no cover - the record was just created in this transaction
+    if (
+        result is None
+    ):  # pragma: no cover - the record was just created in this transaction
         raise ValueError("信息补全任务不存在")
     return result
 
@@ -5553,7 +5669,9 @@ async def _delete_agent_professor_information_enrichment_job(
         actor="agent_cli",
     )
     result = await get_professor_information_enrichment_job(session, job.id)
-    if result is None:  # pragma: no cover - the record cannot disappear in this transaction
+    if (
+        result is None
+    ):  # pragma: no cover - the record cannot disappear in this transaction
         raise ValueError("信息补全任务不存在")
     return ProfessorInformationEnrichmentJobActionRead(ok=True, job=result)
 
@@ -5569,7 +5687,9 @@ async def _restore_agent_professor_information_enrichment_job(
         actor="agent_cli",
     )
     result = await get_professor_information_enrichment_job(session, job.id)
-    if result is None:  # pragma: no cover - the record cannot disappear in this transaction
+    if (
+        result is None
+    ):  # pragma: no cover - the record cannot disappear in this transaction
         raise ValueError("信息补全任务不存在")
     return ProfessorInformationEnrichmentJobActionRead(ok=True, job=result)
 
@@ -5663,7 +5783,9 @@ async def _enrich_many_agent_crawl_candidates(
         resource_id = raw_item.get("job_id")
         normalized_resource_id = (
             resource_id
-            if isinstance(resource_id, int) and not isinstance(resource_id, bool) and resource_id > 0
+            if isinstance(resource_id, int)
+            and not isinstance(resource_id, bool)
+            and resource_id > 0
             else None
         )
         try:
@@ -5705,7 +5827,9 @@ async def _enrich_many_agent_crawl_candidates(
         items.append(
             {
                 "job_id": payload.job_id,
-                "queued_count": submission.queued_count if submission is not None else 0,
+                "queued_count": submission.queued_count
+                if submission is not None
+                else 0,
                 "already_active_count": (
                     submission.already_active_count if submission is not None else 0
                 ),
@@ -6337,7 +6461,9 @@ async def _query_threads(
     if sent is not None:
         statement = statement.having(sent_count > 0 if sent else sent_count == 0)
     if replied is not None:
-        statement = statement.having(received_count > 0 if replied else received_count == 0)
+        statement = statement.having(
+            received_count > 0 if replied else received_count == 0
+        )
     result = await session.execute(
         statement.order_by(
             last_message_at.desc(),
@@ -6371,15 +6497,10 @@ def _project_agent_collection_response(
     if fields is None:
         return response
     selected = list(
-        dict.fromkeys(
-            field.strip()
-            for field in fields.split(",")
-            if field.strip()
-        ),
+        dict.fromkeys(field.strip() for field in fields.split(",") if field.strip()),
     )
     if not selected or any(
-        len(field) > 100 or not field.replace("_", "").isalnum()
-        for field in selected
+        len(field) > 100 or not field.replace("_", "").isalnum() for field in selected
     ):
         raise AgentApiError(
             status_code=422,
@@ -6388,11 +6509,7 @@ def _project_agent_collection_response(
         )
     payload = response.model_dump(mode="json")
     collection_key = next(
-        (
-            key
-            for key in ("items", "records")
-            if isinstance(payload.get(key), list)
-        ),
+        (key for key in ("items", "records") if isinstance(payload.get(key), list)),
         None,
     )
     if collection_key is None:
@@ -6435,7 +6552,9 @@ def _serialize_tag(tag: ProfessorTag) -> AgentProfessorTagRead:
     )
 
 
-def _serialize_crawl_candidate(candidate: CrawlCandidate | object) -> AgentCrawlCandidateRead:
+def _serialize_crawl_candidate(
+    candidate: CrawlCandidate | object,
+) -> AgentCrawlCandidateRead:
     result = AgentCrawlCandidateRead.model_validate(candidate)
     return result.model_copy(update={"revision": revision_for(result)})
 
@@ -6628,7 +6747,8 @@ def _serialize_agent_workspace_thread(
                 for message in workspace.messages
             ],
             "communication_scope": [
-                serialize_identity(identity) for identity in workspace.communication_scope
+                serialize_identity(identity)
+                for identity in workspace.communication_scope
             ],
             "sync_warnings": [
                 {

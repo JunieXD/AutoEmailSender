@@ -102,13 +102,19 @@ async def preview_community_import(
             unit_paths=payload.unit_paths,
         )
         records_by_id = {record.id: record for record in record_bundle.records}
-        missing_ids = [record_id for record_id in payload.record_ids if record_id not in records_by_id]
+        missing_ids = [
+            record_id
+            for record_id in payload.record_ids
+            if record_id not in records_by_id
+        ]
         if missing_ids:
             raise CommunityDataError(
                 f"所选导师不属于当前学院数据：{', '.join(missing_ids[:3])}",
                 code="COMMUNITY_DATA_SELECTION_INVALID",
             )
-        selected_records = [records_by_id[record_id] for record_id in payload.record_ids]
+        selected_records = [
+            records_by_id[record_id] for record_id in payload.record_ids
+        ]
         lifecycle_warnings = await sync_community_link_lifecycle(
             session,
             record_bundle.catalog_bundle,
@@ -148,8 +154,7 @@ async def import_from_community(
                 code="COMMUNITY_DATA_SELECTION_INVALID",
             )
         selected_records = [
-            records_by_id[item.community_record_id]
-            for item in payload.items
+            records_by_id[item.community_record_id] for item in payload.items
         ]
         await sync_community_link_lifecycle(session, record_bundle.catalog_bundle)
         comparisons = await build_community_comparisons(session, selected_records)
@@ -215,7 +220,9 @@ async def _build_community_share_package_response(
             ),
         )
     professors_by_id = {professor.id: professor for professor in professors}
-    missing_ids = [professor_id for professor_id in ids if professor_id not in professors_by_id]
+    missing_ids = [
+        professor_id for professor_id in ids if professor_id not in professors_by_id
+    ]
     if missing_ids:
         raise HTTPException(status_code=404, detail=f"未找到导师：{missing_ids[0]}")
     try:

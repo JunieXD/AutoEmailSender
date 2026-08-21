@@ -97,9 +97,16 @@ class RuntimeSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["draft_rewrite_formality"], "formal")
         self.assertEqual(response.json()["draft_rewrite_length"], "more_detailed")
         self.assertEqual(response.json()["draft_rewrite_specificity"], "detailed")
-        self.assertEqual(response.json()["draft_template_preservation"], "content_first")
-        self.assertEqual(response.json()["draft_custom_instruction"], "请少用套话，结尾保持简短。")
-        self.assertEqual(response.json()["intended_research_direction"], "医学自然语言处理、临床知识图谱")
+        self.assertEqual(
+            response.json()["draft_template_preservation"], "content_first"
+        )
+        self.assertEqual(
+            response.json()["draft_custom_instruction"], "请少用套话，结尾保持简短。"
+        )
+        self.assertEqual(
+            response.json()["intended_research_direction"],
+            "医学自然语言处理、临床知识图谱",
+        )
         logs = self.client.get(
             "/api/diagnostics/operation-logs",
             params={"event_name": "runtime_settings.updated"},
@@ -180,7 +187,9 @@ class RuntimeSettingsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    def test_patch_runtime_settings_rejects_batch_draft_concurrency_out_of_range(self) -> None:
+    def test_patch_runtime_settings_rejects_batch_draft_concurrency_out_of_range(
+        self,
+    ) -> None:
         response = self.client.patch(
             "/api/runtime-settings",
             json={
@@ -204,7 +213,9 @@ class RuntimeSettingsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    def test_patch_runtime_settings_rejects_invalid_draft_rewrite_preference(self) -> None:
+    def test_patch_runtime_settings_rejects_invalid_draft_rewrite_preference(
+        self,
+    ) -> None:
         response = self.client.patch(
             "/api/runtime-settings",
             json={

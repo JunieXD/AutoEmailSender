@@ -13,6 +13,7 @@ from app.core.schema_metadata import (
     read_app_metadata,
 )
 
+
 class MigrationRuntimeTests(unittest.TestCase):
     def tearDown(self) -> None:
         from app.core.config import get_settings
@@ -24,7 +25,10 @@ class MigrationRuntimeTests(unittest.TestCase):
     def test_run_migrations_to_head_writes_app_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "runtime.db"
-            with patch.dict(os.environ, {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"}):
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"},
+            ):
                 from app.core.config import get_settings
                 from app.core.migrations import run_migrations_to_head
 
@@ -50,16 +54,23 @@ class MigrationRuntimeTests(unittest.TestCase):
             data_dir = root / "data"
             connection = sqlite3.connect(db_path)
             try:
-                connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
-                connection.execute("INSERT INTO alembic_version (version_num) VALUES ('04d66ff4c25b')")
+                connection.execute(
+                    "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO alembic_version (version_num) VALUES ('04d66ff4c25b')"
+                )
                 connection.commit()
             finally:
                 connection.close()
 
-            with patch.dict(os.environ, {
-                "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
-                "AUTO_EMAIL_SENDER_DATA_DIR": str(data_dir),
-            }):
+            with patch.dict(
+                os.environ,
+                {
+                    "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
+                    "AUTO_EMAIL_SENDER_DATA_DIR": str(data_dir),
+                },
+            ):
                 from app.core.config import get_settings
                 import app.core.migrations as migrations
 
@@ -78,9 +89,15 @@ class MigrationRuntimeTests(unittest.TestCase):
             db_path = root / "auto_email_sender.db"
             connection = sqlite3.connect(db_path)
             try:
-                connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
-                connection.execute("INSERT INTO alembic_version (version_num) VALUES ('d6e4b8c2a1f0')")
-                connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                connection.execute(
+                    "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO alembic_version (version_num) VALUES ('d6e4b8c2a1f0')"
+                )
+                connection.execute(
+                    "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
                 connection.executemany(
                     "INSERT INTO app_metadata (key, value) VALUES (?, ?)",
                     [
@@ -93,10 +110,13 @@ class MigrationRuntimeTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            with patch.dict(os.environ, {
-                "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
-                "AUTO_EMAIL_SENDER_APP_VERSION": "2.4.0",
-            }):
+            with patch.dict(
+                os.environ,
+                {
+                    "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
+                    "AUTO_EMAIL_SENDER_APP_VERSION": "2.4.0",
+                },
+            ):
                 from app.core.config import get_settings
                 import app.core.migrations as migrations
 
@@ -119,18 +139,27 @@ class MigrationRuntimeTests(unittest.TestCase):
             db_path = root / "auto_email_sender.db"
             connection = sqlite3.connect(db_path)
             try:
-                connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
+                connection.execute(
+                    "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+                )
                 connection.commit()
             finally:
                 connection.close()
 
-            with patch.dict(os.environ, {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"}):
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"},
+            ):
                 from app.core.config import get_settings
                 import app.core.migrations as migrations
 
                 get_settings.cache_clear()
                 with (
-                    patch.object(migrations, "create_schema_backup", side_effect=OSError("copy failed")),
+                    patch.object(
+                        migrations,
+                        "create_schema_backup",
+                        side_effect=OSError("copy failed"),
+                    ),
                     patch.object(migrations.command, "upgrade") as upgrade,
                 ):
                     with self.assertRaises(OSError):
@@ -144,7 +173,9 @@ class MigrationRuntimeTests(unittest.TestCase):
             db_path = root / "auto_email_sender.db"
             connection = sqlite3.connect(db_path)
             try:
-                connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                connection.execute(
+                    "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
                 connection.execute(
                     "INSERT INTO app_metadata (key, value) VALUES (?, ?)",
                     ("minimum_supported_app_version", "9.9.9"),
@@ -153,7 +184,10 @@ class MigrationRuntimeTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            with patch.dict(os.environ, {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"}):
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}"},
+            ):
                 from app.core.config import get_settings
                 import app.core.migrations as migrations
 
@@ -163,6 +197,7 @@ class MigrationRuntimeTests(unittest.TestCase):
                         migrations.run_migrations_to_head()
 
             upgrade.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

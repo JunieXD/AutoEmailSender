@@ -67,7 +67,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         except FileNotFoundError:
             pass
 
-    async def test_batch_creation_keeps_ineligible_professors_as_skipped_items(self) -> None:
+    async def test_batch_creation_keeps_ineligible_professors_as_skipped_items(
+        self,
+    ) -> None:
         active_id = await self._create_professor(
             name="可补全导师",
             profile_url="https://example.edu/active",
@@ -90,7 +92,13 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
 
         job_id = await create_professor_information_enrichment_job(
             self.session_factory,
-            professor_ids=[active_id, missing_url_id, complete_id, archived_id, active_id],
+            professor_ids=[
+                active_id,
+                missing_url_id,
+                complete_id,
+                archived_id,
+                active_id,
+            ],
             llm_profile_id=self.llm_profile_id,
             trigger_mode="batch",
         )
@@ -102,7 +110,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.job_kind, CrawlJobKind.PROFESSOR_ENRICHMENT.value)
         self.assertTrue(job.task_center_visible)
         self.assertEqual(job.progress_total, 4)
-        self.assertEqual([item.status for item in items], ["queued", "skipped", "skipped", "skipped"])
+        self.assertEqual(
+            [item.status for item in items], ["queued", "skipped", "skipped", "skipped"]
+        )
         self.assertEqual(items[1].skip_reason, "缺少有效的导师主页链接")
         self.assertEqual(items[2].skip_reason, "资料已完整，无需补全")
         self.assertEqual(items[3].skip_reason, "导师已在回收站")
@@ -146,7 +156,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_batch_items_page_filters_and_counts_without_loading_all_items(self) -> None:
+    async def test_batch_items_page_filters_and_counts_without_loading_all_items(
+        self,
+    ) -> None:
         active_id = await self._create_professor(
             name="可补全导师",
             profile_url="https://example.edu/active",
@@ -197,7 +209,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.status for item in skipped_page.items], ["skipped"])
         self.assertTrue(skipped_page.has_more)
 
-    async def test_unknown_and_empty_legacy_skip_reasons_are_safely_classified(self) -> None:
+    async def test_unknown_and_empty_legacy_skip_reasons_are_safely_classified(
+        self,
+    ) -> None:
         first_id = await self._create_professor(
             name="旧版原因导师",
             profile_url="https://example.edu/legacy-reason",
@@ -329,7 +343,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                 trigger_mode="single",
             )
 
-    async def test_worker_only_fills_fields_that_are_still_empty_at_commit(self) -> None:
+    async def test_worker_only_fills_fields_that_are_still_empty_at_commit(
+        self,
+    ) -> None:
         professor_id = await self._create_professor(
             name="并发编辑导师",
             email="existing@example.edu",
@@ -391,11 +407,15 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(professor.research_direction, "可信人工智能")
         self.assertEqual(professor.recent_papers, ["Paper A"])
         self.assertEqual(task.enriched_fields, ["research_direction", "recent_papers"])
-        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value)
+        self.assertEqual(
+            task.status, CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
+        )
         self.assertEqual(job_read.status, CrawlJobStatus.COMPLETED.value)
         self.assertEqual(job_read.total_tokens, 150)
         self.assertEqual(len(token_records.records), 1)
-        self.assertEqual(token_records.records[0].feature_type, "information_enrichment")
+        self.assertEqual(
+            token_records.records[0].feature_type, "information_enrichment"
+        )
         self.assertEqual(token_records.records[0].title, "并发编辑导师 · 信息补全")
 
     async def test_worker_marks_no_new_information_as_skipped(self) -> None:
@@ -442,7 +462,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_read.skipped_count, 1)
         self.assertEqual(job_read.skip_reasons[0].code, "NO_NEW_INFORMATION")
 
-    async def test_terminal_error_is_sanitized_without_losing_original_reason(self) -> None:
+    async def test_terminal_error_is_sanitized_without_losing_original_reason(
+        self,
+    ) -> None:
         professor_id = await self._create_professor(
             name="失败导师",
             profile_url="https://example.edu/failure",
@@ -481,7 +503,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
             job_read = await get_professor_information_enrichment_job(session, job_id)
         assert task is not None and job_read is not None
-        self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value)
+        self.assertEqual(
+            task.status, CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value
+        )
         self.assertIn("HTTP 401", task.last_error or "")
         self.assertIn("[REDACTED]", task.last_error or "")
         self.assertNotIn("top-secret", task.last_error or "")
@@ -510,7 +534,9 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                     CrawlCandidateEnrichmentTask.job_id == job_id,
                 )
             )
-            assert job is not None and task is not None and job.current_run_id is not None
+            assert (
+                job is not None and task is not None and job.current_run_id is not None
+            )
             run = await session.get(CrawlJobRun, job.current_run_id)
             assert run is not None
             job.status = CrawlJobStatus.RUNNING.value
@@ -584,6 +610,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             task.failure_count = failure_count
             await session.commit()
             return task.id
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,10 @@ from app.modules.campaigns.public import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
 )
-from app.modules.campaigns.public import should_mark_batch_task_completed, sync_batch_task_completion
+from app.modules.campaigns.public import (
+    should_mark_batch_task_completed,
+    sync_batch_task_completion,
+)
 from app.services.file_storage import build_display_name, save_upload
 from app.services.agent_mutations import fingerprint
 from .support import (
@@ -136,7 +139,9 @@ async def upload_identity_material_record(
     material = IdentityMaterial(
         identity_id=identity_id,
         source_identity=identity,
-        display_name=(display_name or build_display_name(stored_upload.original_name)).strip()
+        display_name=(
+            display_name or build_display_name(stored_upload.original_name)
+        ).strip()
         or build_display_name(stored_upload.original_name),
         original_filename=stored_upload.original_name,
         file_path=stored_upload.file_path,
@@ -156,10 +161,15 @@ async def upload_identity_material_record(
     ):
         identity.current_primary_material_id = material.id
         identity.updated_at = utc_now()
-        await _apply_primary_material_to_blocked_batch_tasks(session, material, identity.id)
+        await _apply_primary_material_to_blocked_batch_tasks(
+            session, material, identity.id
+        )
 
     await record_material_event(session, material, event_name, actor=actor)
-    return material, identity.current_primary_material_id if identity is not None else None
+    return (
+        material,
+        identity.current_primary_material_id if identity is not None else None,
+    )
 
 
 async def set_primary_material_record(
@@ -178,7 +188,9 @@ async def set_primary_material_record(
             "当前材料不支持作为默认材料",
         )
 
-    resolved_identity_id = identity_id if identity_id is not None else material.identity_id
+    resolved_identity_id = (
+        identity_id if identity_id is not None else material.identity_id
+    )
     if resolved_identity_id is None:
         raise MaterialMutationError(
             400,
@@ -294,7 +306,10 @@ async def delete_identity_material_record(
     completed_batch_task_ids = _completed_batch_task_ids(state.batch_tasks)
     _ensure_material_deletion_allowed(state, completed_batch_task_ids)
     preview = _build_material_deletion_snapshot(state, completed_batch_task_ids)
-    if expected_fingerprint is not None and preview["deletion_fingerprint"] != expected_fingerprint:
+    if (
+        expected_fingerprint is not None
+        and preview["deletion_fingerprint"] != expected_fingerprint
+    ):
         raise MaterialMutationError(
             409,
             "MATERIAL_DELETION_STALE",
@@ -303,7 +318,9 @@ async def delete_identity_material_record(
 
     material = state.material
     default_identities = state.default_identities
-    cleared_default_identity_ids = sorted(identity.id for identity in default_identities)
+    cleared_default_identity_ids = sorted(
+        identity.id for identity in default_identities
+    )
 
     completed_batch_task_ids = []
     for batch_task in state.batch_tasks:
@@ -323,9 +340,11 @@ async def delete_identity_material_record(
             removed_rewrite_source_task_ids.append(task.id)
         if not _material_reference_can_be_detached(task):
             continue
-        detached_primary, removed_attachment, reset_draft = _detach_material_from_email_task(
-            task,
-            material.id,
+        detached_primary, removed_attachment, reset_draft = (
+            _detach_material_from_email_task(
+                task,
+                material.id,
+            )
         )
         if detached_primary:
             detached_primary_task_ids.append(task.id)
@@ -422,7 +441,9 @@ async def _load_material_deletion_state(
                     or_(
                         EmailTask.primary_material_id == material.id,
                         EmailTask.selected_material_ids.is_not(None),
-                        EmailTask.draft_rewrite_source_selected_material_ids.is_not(None),
+                        EmailTask.draft_rewrite_source_selected_material_ids.is_not(
+                            None
+                        ),
                     ),
                 ),
             )
@@ -486,7 +507,8 @@ def _ensure_material_deletion_allowed(
     blocking_tasks = [
         task
         for task in state.candidate_tasks
-        if _task_references_material(task, material_id) and _material_reference_blocks_deletion(task)
+        if _task_references_material(task, material_id)
+        and _material_reference_blocks_deletion(task)
     ]
     if blocking_tasks:
         raise MaterialMutationError(
@@ -513,7 +535,10 @@ def _ensure_material_deletion_allowed(
     for batch_task in state.batch_tasks:
         if batch_task.deleted_at is not None:
             continue
-        if batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES or batch_task.id in completed_ids:
+        if (
+            batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES
+            or batch_task.id in completed_ids
+        ):
             continue
         if _batch_task_references_material(batch_task, material_id):
             raise MaterialMutationError(
@@ -563,10 +588,12 @@ def _build_material_deletion_snapshot(
     for task in referenced_tasks:
         if not _material_reference_can_be_detached_in_preview(task, completed_ids):
             continue
-        detached_primary, removed_attachment, reset_draft = _describe_email_task_detachment(
-            task,
-            material_id,
-            completed_ids,
+        detached_primary, removed_attachment, reset_draft = (
+            _describe_email_task_detachment(
+                task,
+                material_id,
+                completed_ids,
+            )
         )
         if detached_primary:
             detached_primary_task_ids.append(task.id)
@@ -649,7 +676,9 @@ def _build_material_deletion_snapshot(
     if is_primary:
         warnings.append("该材料当前是默认 AI 参考材料，删除后会清除该默认设置。")
     if detached_primary_task_ids or removed_attachment_task_ids:
-        warnings.append("引用该材料的可安全处理草稿会解除引用；部分草稿将回到需要重新审核的状态。")
+        warnings.append(
+            "引用该材料的可安全处理草稿会解除引用；部分草稿将回到需要重新审核的状态。"
+        )
     if detached_batch_task_ids:
         warnings.append("已停止、已完成或已删除的批量任务会解除该材料引用。")
     return {
@@ -689,11 +718,15 @@ def _material_reference_task_fingerprint_data(task: EmailTask) -> dict[str, obje
         "risk_points": task.risk_points or [],
         "match_keywords": task.match_keywords or [],
         "scheduled_at": _serialize_optional_datetime(task.scheduled_at),
-        "batch_send_canceled_at": _serialize_optional_datetime(task.batch_send_canceled_at),
+        "batch_send_canceled_at": _serialize_optional_datetime(
+            task.batch_send_canceled_at
+        ),
     }
 
 
-def _material_reference_batch_fingerprint_data(batch_task: BatchTask) -> dict[str, object]:
+def _material_reference_batch_fingerprint_data(
+    batch_task: BatchTask,
+) -> dict[str, object]:
     return {
         "id": batch_task.id,
         "status": batch_task.status,
@@ -746,13 +779,19 @@ def _describe_email_task_detachment(
         reset_draft = True
     elif detached_primary and task.status == EmailTaskStatus.DRAFT_FAILED.value:
         reset_draft = False
-    if removed_attachment and not detached_primary and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES:
+    if (
+        removed_attachment
+        and not detached_primary
+        and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES
+    ):
         reset_draft = True
     if (
         (detached_primary or removed_attachment)
         and task.status in INACTIVE_BATCH_DETACHABLE_MATERIAL_REFERENCE_STATUSES
         and task.batch_task is not None
-        and _batch_task_is_inactive_in_preview(task.batch_task, completed_batch_task_ids)
+        and _batch_task_is_inactive_in_preview(
+            task.batch_task, completed_batch_task_ids
+        )
     ):
         reset_draft = True
     return detached_primary, removed_attachment, reset_draft
@@ -782,7 +821,9 @@ async def _apply_primary_material_to_blocked_batch_tasks(
                 .where(
                     EmailTask.identity_id == identity_id,
                     EmailTask.source == "batch",
-                    batch_item_uses_llm_generation_column(EmailTask.outreach_generation_mode),
+                    batch_item_uses_llm_generation_column(
+                        EmailTask.outreach_generation_mode
+                    ),
                     EmailTask.primary_material_id.is_(None),
                     EmailTask.status.in_(
                         [
@@ -801,7 +842,10 @@ async def _apply_primary_material_to_blocked_batch_tasks(
     now = utc_now()
     for task in tasks:
         batch_task = task.batch_task
-        if batch_task is None or batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES:
+        if (
+            batch_task is None
+            or batch_task.status in NON_CONTINUABLE_BATCH_TASK_STATUSES
+        ):
             continue
         task.outreach_generation_mode = normalize_batch_item_generation_mode(task)
         task.primary_material_id = material.id
@@ -846,7 +890,10 @@ def _material_reference_blocks_deletion(task: EmailTask) -> bool:
     batch_task = task.batch_task
     if batch_task is None:
         return True
-    return batch_task.deleted_at is None and batch_task.status not in NON_CONTINUABLE_BATCH_TASK_STATUSES
+    return (
+        batch_task.deleted_at is None
+        and batch_task.status not in NON_CONTINUABLE_BATCH_TASK_STATUSES
+    )
 
 
 def _material_reference_can_be_detached(task: EmailTask) -> bool:
@@ -871,7 +918,10 @@ def _batch_task_is_inactive(batch_task: BatchTask) -> bool:
 
 
 def _inactive_batch_cancellation_reason(task: EmailTask) -> str:
-    if task.batch_task is not None and task.batch_task.status == BatchTaskStatus.EXPIRED.value:
+    if (
+        task.batch_task is not None
+        and task.batch_task.status == BatchTaskStatus.EXPIRED.value
+    ):
         return EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
     return EmailTaskCancellationReason.BATCH_STOPPED.value
 
@@ -892,7 +942,9 @@ def _clear_approved_draft(task: EmailTask) -> None:
     task.scheduled_at = None
 
 
-def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple[bool, bool, bool]:
+def _detach_material_from_email_task(
+    task: EmailTask, material_id: int
+) -> tuple[bool, bool, bool]:
     detached_primary = False
     removed_attachment = False
     reset_draft = False
@@ -919,13 +971,18 @@ def _detach_material_from_email_task(task: EmailTask, material_id: int) -> tuple
             if selected_material_id != material_id
         ]
         removed_attachment = True
-        if not detached_primary and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES:
+        if (
+            not detached_primary
+            and task.status in MATERIAL_REFERENCE_RESET_DRAFT_STATUSES
+        ):
             _clear_approved_draft(task)
             task.status = EmailTaskStatus.REVIEW_REQUIRED.value
             task.last_error = None
             reset_draft = True
 
-    if (detached_primary or removed_attachment) and _is_inactive_batch_approved_material_reference(task):
+    if (
+        detached_primary or removed_attachment
+    ) and _is_inactive_batch_approved_material_reference(task):
         _clear_approved_draft(task)
         task.status = EmailTaskStatus.CANCELED.value
         task.cancellation_reason = _inactive_batch_cancellation_reason(task)

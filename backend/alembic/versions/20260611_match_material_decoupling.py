@@ -31,7 +31,9 @@ PRIMARY_MATERIAL_FILTER = """
 
 def upgrade() -> None:
     with op.batch_alter_table("match_analysis_runs", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("primary_material_id", sa.Integer(), nullable=True))
+        batch_op.add_column(
+            sa.Column("primary_material_id", sa.Integer(), nullable=True)
+        )
         batch_op.create_foreign_key(
             "fk_match_analysis_runs_primary_material_id_identity_materials",
             "identity_materials",

@@ -723,7 +723,9 @@ async def dispatch_email_task(
             completed_at = utc_now()
             delivery_attempt.status = EmailDeliveryAttemptStatus.ACCEPTED.value
             delivery_attempt.app_message_id = rfc_message_id
-            delivery_attempt.normalized_app_message_id = normalize_message_id(rfc_message_id)
+            delivery_attempt.normalized_app_message_id = normalize_message_id(
+                rfc_message_id
+            )
             delivery_attempt.completed_at = completed_at
 
             task.status = EmailTaskStatus.SENT.value

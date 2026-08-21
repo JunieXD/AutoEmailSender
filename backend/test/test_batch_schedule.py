@@ -13,7 +13,9 @@ from app.modules.campaigns.scheduling import (
 
 
 class BatchScheduleTest(unittest.TestCase):
-    def test_build_jittered_batch_schedule_spreads_actual_count_across_window(self) -> None:
+    def test_build_jittered_batch_schedule_spreads_actual_count_across_window(
+        self,
+    ) -> None:
         result = build_jittered_batch_schedule(
             task_count=6,
             scheduled_dates=["2026-05-04"],
@@ -45,7 +47,9 @@ class BatchScheduleTest(unittest.TestCase):
         self.assertEqual(dates.count("2026-05-05"), 10)
         self.assertEqual(dates.count("2026-05-06"), 0)
 
-    def test_build_jittered_batch_schedule_uses_remaining_window_for_today(self) -> None:
+    def test_build_jittered_batch_schedule_uses_remaining_window_for_today(
+        self,
+    ) -> None:
         result = build_jittered_batch_schedule(
             task_count=4,
             scheduled_dates=["2026-05-04"],
@@ -56,11 +60,19 @@ class BatchScheduleTest(unittest.TestCase):
             jitter_ratio=0,
         )
 
-        self.assertEqual(result[0], datetime(2026, 5, 4, 14, 29, 52, 500000, tzinfo=UTC))
-        self.assertEqual(result[-1], datetime(2026, 5, 4, 17, 29, 7, 500000, tzinfo=UTC))
-        self.assertTrue(all(item >= datetime(2026, 5, 4, 14, 0, tzinfo=UTC) for item in result))
+        self.assertEqual(
+            result[0], datetime(2026, 5, 4, 14, 29, 52, 500000, tzinfo=UTC)
+        )
+        self.assertEqual(
+            result[-1], datetime(2026, 5, 4, 17, 29, 7, 500000, tzinfo=UTC)
+        )
+        self.assertTrue(
+            all(item >= datetime(2026, 5, 4, 14, 0, tzinfo=UTC) for item in result)
+        )
 
-    def test_build_jittered_batch_schedule_stores_local_window_times_as_utc(self) -> None:
+    def test_build_jittered_batch_schedule_stores_local_window_times_as_utc(
+        self,
+    ) -> None:
         result = build_jittered_batch_schedule(
             task_count=1,
             scheduled_dates=["2026-05-04"],
@@ -104,7 +116,9 @@ class BatchScheduleTest(unittest.TestCase):
         self.assertEqual(result, sorted(result))
         self.assertTrue(all(window_start <= item <= window_end for item in result))
 
-    def test_build_jittered_batch_schedule_leaves_tail_buffer_before_window_end(self) -> None:
+    def test_build_jittered_batch_schedule_leaves_tail_buffer_before_window_end(
+        self,
+    ) -> None:
         result = build_jittered_batch_schedule(
             task_count=200,
             scheduled_dates=["2026-05-04"],
@@ -148,7 +162,9 @@ class BatchScheduleTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
                     normalize_scheduled_dates([value])
 
-    def test_is_datetime_in_batch_window_requires_selected_date_and_time_window(self) -> None:
+    def test_is_datetime_in_batch_window_requires_selected_date_and_time_window(
+        self,
+    ) -> None:
         now = datetime(2026, 5, 4, 10, 30, tzinfo=UTC)
 
         self.assertTrue(

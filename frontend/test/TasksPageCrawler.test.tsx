@@ -26,6 +26,7 @@ const notifySuccess = vi.hoisted(() => vi.fn());
 const scrollIntoView = vi.hoisted(() => vi.fn());
 const crawlApiMocks = vi.hoisted(() => ({
   listCrawlJobs: vi.fn(),
+  listCrawlJobsPage: vi.fn(),
   approveCrawlCandidates: vi.fn(),
   cancelCrawlJob: vi.fn(),
   enrichCrawlCandidates: vi.fn(),
@@ -85,6 +86,11 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs: vi.fn().mockResolvedValue([]),
+  listProfessorInformationEnrichmentJobsPage: vi.fn().mockResolvedValue({
+    items: [],
+    total_count: 0,
+    current_total_count: 0,
+  }),
   listProfessorInformationEnrichmentItems: vi.fn().mockResolvedValue([]),
   listProfessorInformationEnrichmentItemsPage: vi.fn().mockResolvedValue({
     items: [],
@@ -100,6 +106,7 @@ vi.mock("@/entities/professor/api/informationEnrichment", () => ({
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlJobs: crawlApiMocks.listCrawlJobs,
+  listCrawlJobsPage: crawlApiMocks.listCrawlJobsPage,
   approveCrawlCandidates: crawlApiMocks.approveCrawlCandidates,
   cancelCrawlJob: crawlApiMocks.cancelCrawlJob,
   enrichCrawlCandidates: crawlApiMocks.enrichCrawlCandidates,
@@ -179,6 +186,18 @@ describe("TasksPage crawler jobs tab", () => {
     vi.mocked(listBatchTaskItems).mockResolvedValue([]);
     vi.mocked(listMatchAnalysisJobs).mockResolvedValue([]);
     vi.mocked(listCrawlJobs).mockResolvedValue([runningJob]);
+    crawlApiMocks.listCrawlJobsPage.mockImplementation(
+      async (params: { offset: number; limit: number; unpaged?: boolean }) => {
+        const jobs = await crawlApiMocks.listCrawlJobs();
+        return {
+          items: params.unpaged
+            ? jobs
+            : jobs.slice(params.offset, params.offset + params.limit),
+          total_count: jobs.length,
+          current_total_count: jobs.length,
+        };
+      },
+    );
     vi.mocked(approveCrawlCandidates).mockResolvedValue({
       inserted_count: 1,
       updated_count: 0,

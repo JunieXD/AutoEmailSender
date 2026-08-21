@@ -61,16 +61,25 @@ def list_deliveries(
         DeliverySource,
         typer.Option("--source", help="all、manual 或 batch。"),
     ] = DeliverySource.ALL,
-    status: Annotated[str | None, typer.Option("--status", help="发送计划状态筛选。")]=None,
+    status: Annotated[
+        str | None, typer.Option("--status", help="发送计划状态筛选。")
+    ] = None,
     sort: Annotated[DeliverySort | None, typer.Option("--sort")] = None,
     search_fields: Annotated[
         list[DeliverySearchField] | None,
-        typer.Option("--search-field", help="可重复：recipient_name、recipient_email、subject、batch_name。"),
+        typer.Option(
+            "--search-field",
+            help="可重复：recipient_name、recipient_email、subject、batch_name。",
+        ),
     ] = None,
     query: Annotated[str | None, typer.Option("--query", "-q")] = None,
     task_id: Annotated[int | None, typer.Option("--task-id", min=1)] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")]=False,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")]=None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
 ) -> None:
     run_read_command(
         ctx,
@@ -114,7 +123,9 @@ def reschedule_delivery(
     task_id: Annotated[int, typer.Argument(min=1)],
     scheduled_at: Annotated[
         str,
-        typer.Option("--scheduled-at", help="带时区的 ISO 8601 时间，且至少晚于当前时间 1 分钟。"),
+        typer.Option(
+            "--scheduled-at", help="带时区的 ISO 8601 时间，且至少晚于当前时间 1 分钟。"
+        ),
     ],
     expected_updated_at: Annotated[
         str,

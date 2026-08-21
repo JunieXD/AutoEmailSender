@@ -204,7 +204,7 @@ describe("filterDashboardProfessors", () => {
       "姓名、职称",
     );
     expect(getDashboardKeywordSearchPlaceholder(["unknown"])).toBe(
-      "姓名、邮箱、学校、学院、系所、职称、研究方向、标签",
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签",
     );
   });
 
@@ -227,7 +227,7 @@ describe("filterDashboardProfessors", () => {
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
   });
 
-  it("does not match keyword against personal notes", () => {
+  it("matches keyword against personal notes by default and by selected scope", () => {
     const noteOnlyProfessors = [
       buildProfessor({
         id: 4,
@@ -246,6 +246,18 @@ describe("filterDashboardProfessors", () => {
 
     expect(
       namesFor(noteOnlyProfessors, { keyword: "独有备注关键词" }),
+    ).toEqual(["Alice"]);
+    expect(
+      namesFor(noteOnlyProfessors, {
+        keyword: "独有备注关键词",
+        keywordSearchScopes: ["personalNote"],
+      }),
+    ).toEqual(["Alice"]);
+    expect(
+      namesFor(noteOnlyProfessors, {
+        keyword: "独有备注关键词",
+        keywordSearchScopes: ["name"],
+      }),
     ).toEqual([]);
   });
 

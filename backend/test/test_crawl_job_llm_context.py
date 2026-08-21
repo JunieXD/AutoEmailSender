@@ -20,7 +20,9 @@ class CrawlJobLLMContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_uses_frozen_settings_and_current_credentials(self) -> None:
         descriptor, database_path = tempfile.mkstemp(suffix=".db")
         os.close(descriptor)
-        engine = create_async_engine(f"sqlite+aiosqlite:///{Path(database_path).as_posix()}")
+        engine = create_async_engine(
+            f"sqlite+aiosqlite:///{Path(database_path).as_posix()}"
+        )
         try:
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)

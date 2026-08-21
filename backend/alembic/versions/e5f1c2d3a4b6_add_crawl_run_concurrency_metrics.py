@@ -22,10 +22,17 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     with op.batch_alter_table("crawl_job_runs") as batch_op:
         batch_op.add_column(
-            sa.Column("retry_count", sa.Integer(), server_default=sa.text("0"), nullable=False)
+            sa.Column(
+                "retry_count", sa.Integer(), server_default=sa.text("0"), nullable=False
+            )
         )
         batch_op.add_column(
-            sa.Column("host_limited_count", sa.Integer(), server_default=sa.text("0"), nullable=False)
+            sa.Column(
+                "host_limited_count",
+                sa.Integer(),
+                server_default=sa.text("0"),
+                nullable=False,
+            )
         )
         batch_op.add_column(
             sa.Column(

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-export const blurFocusedNumberInputOnWheel = () => {
+const blurFocusedNumberInputOnWheel = () => {
   const activeElement = document.activeElement;
   if (activeElement instanceof HTMLInputElement && activeElement.type === 'number') {
     activeElement.blur();

@@ -21,7 +21,9 @@ workspaces_app = typer.Typer(
 def get_workspace(
     ctx: typer.Context,
     professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
-    identity_id: Annotated[int, typer.Option("--identity-id", min=1, help="发件身份 ID。")],
+    identity_id: Annotated[
+        int, typer.Option("--identity-id", min=1, help="发件身份 ID。")
+    ],
     llm_profile_id: Annotated[
         int,
         typer.Option("--llm-profile-id", min=1, help="LLM 配置 ID。"),
@@ -44,7 +46,9 @@ def get_workspace(
 def ensure_workspace_task(
     ctx: typer.Context,
     professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
-    identity_id: Annotated[int, typer.Option("--identity-id", min=1, help="发件身份 ID。")],
+    identity_id: Annotated[
+        int, typer.Option("--identity-id", min=1, help="发件身份 ID。")
+    ],
     llm_profile_id: Annotated[
         int,
         typer.Option("--llm-profile-id", min=1, help="LLM 配置 ID。"),
@@ -67,7 +71,9 @@ def ensure_workspace_task(
 def refresh_workspace_replies(
     ctx: typer.Context,
     professor_id: Annotated[int, typer.Argument(min=1, help="导师 ID。")],
-    identity_id: Annotated[int, typer.Option("--identity-id", min=1, help="发件身份 ID。")],
+    identity_id: Annotated[
+        int, typer.Option("--identity-id", min=1, help="发件身份 ID。")
+    ],
     llm_profile_id: Annotated[
         int,
         typer.Option("--llm-profile-id", min=1, help="LLM 配置 ID。"),

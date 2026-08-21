@@ -85,8 +85,6 @@ def merge_extra_body(
     return merged
 
 
-from datetime import UTC, datetime
-
 from sqlalchemy import JSON, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -240,7 +238,10 @@ def _is_better_thinking_disable_result(
         if baseline_reasoning is None:
             return candidate_reasoning == 0 and (
                 candidate_completion is not None
-                and (baseline_completion is None or candidate_completion < baseline_completion)
+                and (
+                    baseline_completion is None
+                    or candidate_completion < baseline_completion
+                )
             )
         if candidate_reasoning != baseline_reasoning:
             return candidate_reasoning < baseline_reasoning
@@ -300,8 +301,6 @@ async def probe_and_learn_extra_body(
 
     payload = _build_probe_payload(profile)
     attempts: list[dict[str, object] | None] = [None, *THINKING_DISABLE_CANDIDATES]
-    last_error: LLMRuntimeError | None = None
-
     for index, candidate in enumerate(attempts):
         try:
             completion = await _request_completion_endpoint(
@@ -311,7 +310,6 @@ async def probe_and_learn_extra_body(
                 extra_body=candidate,
             )
         except LLMRuntimeError as exc:
-            last_error = exc
             # 两种"思考模式信号"会触发候选切换：
             #   1. HTTP 400 + 协议错关键词（典型：reasoning_content must be passed back）
             #   2. HTTP 200 但 content 为空——思考模型把回答塞进 reasoning_content，
@@ -320,10 +318,7 @@ async def probe_and_learn_extra_body(
                 exc.status_code == 400
                 and is_thinking_mode_protocol_error(exc.status_code or 0, str(exc))
             )
-            is_empty_content_200 = (
-                exc.status_code == 200
-                and "空内容" in str(exc)
-            )
+            is_empty_content_200 = exc.status_code == 200 and "空内容" in str(exc)
             if not (is_protocol_400 or is_empty_content_200):
                 raise
             if index == len(attempts) - 1:
@@ -436,6 +431,7 @@ async def resolve_thinking_extra_body(profile: LLMProfile) -> dict[str, object] 
             return await ensure_thinking_adaptation(session, profile)
     except Exception:
         return None
+
 
 __all__ = [
     "EndpointKind",

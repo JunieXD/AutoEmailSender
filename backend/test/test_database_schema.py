@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import gc
 import json
 import logging
 import os
@@ -73,6 +74,7 @@ class MigrationScriptTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
+        gc.collect()
         self.temp_dir.cleanup()
 
     def test_alembic_revision_ids_are_unique(self) -> None:
@@ -82,8 +84,14 @@ class MigrationScriptTests(unittest.TestCase):
             revision = None
             for node in tree.body:
                 if isinstance(node, ast.Assign):
-                    target_names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-                elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    target_names = [
+                        target.id
+                        for target in node.targets
+                        if isinstance(target, ast.Name)
+                    ]
+                elif isinstance(node, ast.AnnAssign) and isinstance(
+                    node.target, ast.Name
+                ):
                     target_names = [node.target.id]
                 else:
                     continue
@@ -132,8 +140,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "upgrade", migration_revision)
         with sqlite3.connect(database_path) as connection:
             columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+                row[1] for row in connection.execute("PRAGMA table_info('crawl_jobs')")
             }
             historical_job = connection.execute(
                 """
@@ -147,8 +154,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "downgrade", previous_revision)
         with sqlite3.connect(database_path) as connection:
             columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+                row[1] for row in connection.execute("PRAGMA table_info('crawl_jobs')")
             }
             university = connection.execute(
                 "SELECT university FROM crawl_jobs",
@@ -176,8 +182,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "upgrade", migration_revision)
         with sqlite3.connect(database_path) as connection:
             columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+                row[1] for row in connection.execute("PRAGMA table_info('crawl_jobs')")
             }
             historical_job = connection.execute(
                 """
@@ -191,8 +196,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "downgrade", previous_revision)
         with sqlite3.connect(database_path) as connection:
             columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info('crawl_jobs')")
+                row[1] for row in connection.execute("PRAGMA table_info('crawl_jobs')")
             }
             university = connection.execute(
                 "SELECT university FROM crawl_jobs",
@@ -220,8 +224,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "upgrade", migration_revision)
         with sqlite3.connect(database_path) as connection:
             indexes = {
-                row[1]
-                for row in connection.execute("PRAGMA index_list('professors')")
+                row[1] for row in connection.execute("PRAGMA index_list('professors')")
             }
             fts_names = connection.execute(
                 """
@@ -239,8 +242,7 @@ class MigrationScriptTests(unittest.TestCase):
         self._run_alembic(env, "downgrade", previous_revision)
         with sqlite3.connect(database_path) as connection:
             remaining_indexes = {
-                row[1]
-                for row in connection.execute("PRAGMA index_list('professors')")
+                row[1] for row in connection.execute("PRAGMA index_list('professors')")
             }
             fts_table = connection.execute(
                 """
@@ -342,7 +344,9 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIn("agent_ui_handoffs", rebuilt_tables)
         self.assertIn("agent_ui_handoff_items", rebuilt_tables)
 
-    def test_global_material_library_migration_preserves_materials_and_source_deletion(self) -> None:
+    def test_global_material_library_migration_preserves_materials_and_source_deletion(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "global_material_library.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -405,7 +409,9 @@ class MigrationScriptTests(unittest.TestCase):
                 """,
                 ("b" * 64,),
             )
-            orphan_material_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            orphan_material_id = connection.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
             connection.commit()
 
         self._run_alembic(env, "upgrade", migration_revision)
@@ -417,12 +423,16 @@ class MigrationScriptTests(unittest.TestCase):
             )
             material_fk = next(
                 row
-                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                for row in connection.execute(
+                    "PRAGMA foreign_key_list('identity_materials')"
+                )
                 if row[3] == "identity_id"
             )
             primary_fk = next(
                 row
-                for row in connection.execute("PRAGMA foreign_key_list('identity_profiles')")
+                for row in connection.execute(
+                    "PRAGMA foreign_key_list('identity_profiles')"
+                )
                 if row[3] == "current_primary_material_id"
             )
             preserved = connection.execute(
@@ -464,7 +474,9 @@ class MigrationScriptTests(unittest.TestCase):
             self.assertIsNone(repaired_default_id)
 
             connection.execute("PRAGMA foreign_keys = ON")
-            connection.execute("DELETE FROM identity_profiles WHERE id = ?", (source_identity_id,))
+            connection.execute(
+                "DELETE FROM identity_profiles WHERE id = ?", (source_identity_id,)
+            )
             connection.commit()
             surviving_material = connection.execute(
                 "SELECT identity_id, file_path FROM identity_materials WHERE id = ?",
@@ -474,10 +486,14 @@ class MigrationScriptTests(unittest.TestCase):
                 "SELECT current_primary_material_id FROM identity_profiles WHERE id = ?",
                 (target_identity_id,),
             ).fetchone()[0]
-        self.assertEqual(surviving_material, (None, "/missing/legacy/uploads/resume.pdf"))
+        self.assertEqual(
+            surviving_material, (None, "/missing/legacy/uploads/resume.pdf")
+        )
         self.assertEqual(target_default, material_id)
 
-    def test_global_material_library_repairs_partially_migrated_material_fk(self) -> None:
+    def test_global_material_library_repairs_partially_migrated_material_fk(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "global_material_partial_fk.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -531,7 +547,9 @@ class MigrationScriptTests(unittest.TestCase):
             )
             before_fk = next(
                 row
-                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                for row in connection.execute(
+                    "PRAGMA foreign_key_list('identity_materials')"
+                )
                 if row[3] == "identity_id"
             )
         self.assertEqual(before_column[3], 1)
@@ -546,7 +564,9 @@ class MigrationScriptTests(unittest.TestCase):
             )
             after_fk = next(
                 row
-                for row in connection.execute("PRAGMA foreign_key_list('identity_materials')")
+                for row in connection.execute(
+                    "PRAGMA foreign_key_list('identity_materials')"
+                )
                 if row[3] == "identity_id"
             )
         self.assertEqual(after_column[3], 0)
@@ -555,7 +575,9 @@ class MigrationScriptTests(unittest.TestCase):
     def test_global_material_library_repairs_orphan_after_interrupted_schema_upgrade(
         self,
     ) -> None:
-        database_path = Path(self.temp_dir.name) / "global_material_interrupted_upgrade.db"
+        database_path = (
+            Path(self.temp_dir.name) / "global_material_interrupted_upgrade.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
         previous_revision = "20260810_agent_ui_handoffs"
@@ -596,8 +618,12 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIsNone(source_identity_id)
         self.assertEqual(version, migration_revision)
 
-    def test_global_material_library_downgrade_refuses_cross_identity_reuse(self) -> None:
-        database_path = Path(self.temp_dir.name) / "global_material_downgrade_blocked.db"
+    def test_global_material_library_downgrade_refuses_cross_identity_reuse(
+        self,
+    ) -> None:
+        database_path = (
+            Path(self.temp_dir.name) / "global_material_downgrade_blocked.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
         previous_revision = "20260810_agent_ui_handoffs"
@@ -630,7 +656,9 @@ class MigrationScriptTests(unittest.TestCase):
             run_alembic_in_process(env, "downgrade", previous_revision)
 
         with sqlite3.connect(database_path) as connection:
-            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
             material_count = connection.execute(
                 "SELECT COUNT(*) FROM identity_materials WHERE id = ?",
                 (material_id,),
@@ -638,7 +666,9 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(version, migration_revision)
         self.assertEqual(material_count, 1)
 
-    def test_global_material_library_round_trip_when_legacy_ownership_is_intact(self) -> None:
+    def test_global_material_library_round_trip_when_legacy_ownership_is_intact(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "global_material_round_trip.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -730,7 +760,9 @@ class MigrationScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cross-identity material references"):
             run_alembic_in_process(env, "downgrade", previous_revision)
 
-    def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(self) -> None:
+    def test_match_analysis_task_decoupling_migration_preserves_legacy_runs(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "match_task_decoupling.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -852,9 +884,7 @@ class MigrationScriptTests(unittest.TestCase):
             }
             job_columns = {
                 row[1]
-                for row in upgraded.execute(
-                    "PRAGMA table_info(match_analysis_jobs)"
-                )
+                for row in upgraded.execute("PRAGMA table_info(match_analysis_jobs)")
             }
             item_columns = {
                 row[1]
@@ -958,7 +988,9 @@ class MigrationScriptTests(unittest.TestCase):
             ).fetchall()
             column = next(
                 row
-                for row in upgraded.execute("PRAGMA table_info(app_settings)").fetchall()
+                for row in upgraded.execute(
+                    "PRAGMA table_info(app_settings)"
+                ).fetchall()
                 if row[1] == "crawler_worker_count"
             )
         finally:
@@ -977,7 +1009,9 @@ class MigrationScriptTests(unittest.TestCase):
             downgraded.close()
         self.assertEqual(values, [(1, 2), (2, 3)])
 
-    def test_crawler_identity_migration_preserves_historical_candidates_and_tasks(self) -> None:
+    def test_crawler_identity_migration_preserves_historical_candidates_and_tasks(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "crawler_recovery.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -1191,7 +1225,8 @@ class MigrationScriptTests(unittest.TestCase):
         upgraded = sqlite3.connect(database_path)
         try:
             professor_columns = {
-                row[1] for row in upgraded.execute("PRAGMA table_info(professors)").fetchall()
+                row[1]
+                for row in upgraded.execute("PRAGMA table_info(professors)").fetchall()
             }
             mailbox_columns = {
                 row[1]
@@ -1237,7 +1272,10 @@ class MigrationScriptTests(unittest.TestCase):
         downgraded = sqlite3.connect(database_path)
         try:
             downgraded_professor_columns = {
-                row[1] for row in downgraded.execute("PRAGMA table_info(professors)").fetchall()
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(professors)"
+                ).fetchall()
             }
             downgraded_mailbox_columns = {
                 row[1]
@@ -1275,7 +1313,9 @@ class MigrationScriptTests(unittest.TestCase):
             upgraded_again.close()
         self.assertEqual(version, HEAD_REVISION)
 
-    def test_professor_information_enrichment_migration_upgrades_and_downgrades(self) -> None:
+    def test_professor_information_enrichment_migration_upgrades_and_downgrades(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "professor_information_enrichment.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -1286,7 +1326,8 @@ class MigrationScriptTests(unittest.TestCase):
         upgraded = sqlite3.connect(database_path)
         try:
             crawl_job_columns = {
-                row[1] for row in upgraded.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+                row[1]
+                for row in upgraded.execute("PRAGMA table_info(crawl_jobs)").fetchall()
             }
             enrichment_task_columns = {
                 row[1]
@@ -1304,7 +1345,12 @@ class MigrationScriptTests(unittest.TestCase):
             upgraded.close()
 
         self.assertTrue(
-            {"job_kind", "trigger_mode", "task_center_visible", "display_name"}.issubset(
+            {
+                "job_kind",
+                "trigger_mode",
+                "task_center_visible",
+                "display_name",
+            }.issubset(
                 crawl_job_columns,
             ),
         )
@@ -1326,7 +1372,10 @@ class MigrationScriptTests(unittest.TestCase):
         downgraded = sqlite3.connect(database_path)
         try:
             downgraded_job_columns = {
-                row[1] for row in downgraded.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info(crawl_jobs)"
+                ).fetchall()
             }
             downgraded_task_columns = {
                 row[1]
@@ -1341,8 +1390,12 @@ class MigrationScriptTests(unittest.TestCase):
 
         self._run_alembic(env, "upgrade", "head")
 
-    def test_unified_email_history_upgrade_skips_normalized_message_duplicates(self) -> None:
-        legacy_db_path = Path(self.temp_dir.name) / "unified_email_duplicate_messages.db"
+    def test_unified_email_history_upgrade_skips_normalized_message_duplicates(
+        self,
+    ) -> None:
+        legacy_db_path = (
+            Path(self.temp_dir.name) / "unified_email_duplicate_messages.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
 
@@ -1408,7 +1461,9 @@ class MigrationScriptTests(unittest.TestCase):
                 """,
                 (first_log_id, second_log_id),
             ).fetchall()
-            version = upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            version = upgraded.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
         finally:
             upgraded.close()
 
@@ -1421,8 +1476,12 @@ class MigrationScriptTests(unittest.TestCase):
             ],
         )
 
-    def test_unified_email_history_downgrade_reports_null_llm_profile_logs(self) -> None:
-        legacy_db_path = Path(self.temp_dir.name) / "unified_email_null_llm_downgrade.db"
+    def test_unified_email_history_downgrade_reports_null_llm_profile_logs(
+        self,
+    ) -> None:
+        legacy_db_path = (
+            Path(self.temp_dir.name) / "unified_email_null_llm_downgrade.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
 
@@ -1464,7 +1523,9 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertIn("NULL", combined_output)
         self.assertIn("cannot downgrade", combined_output)
 
-    def test_identity_communication_group_migration_preserves_existing_data(self) -> None:
+    def test_identity_communication_group_migration_preserves_existing_data(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "identity_communication_groups.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -1587,7 +1648,9 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(remaining_task_count, 1)
         self.assertEqual(remaining_log_count, 1)
 
-    def test_outreach_template_library_migration_preserves_legacy_templates(self) -> None:
+    def test_outreach_template_library_migration_preserves_legacy_templates(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "outreach_template_library.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -1897,8 +1960,12 @@ class MigrationScriptTests(unittest.TestCase):
 
         self._run_alembic(env, "upgrade", "head")
 
-    def test_batch_template_snapshot_migration_upgrades_pre_library_batch_data(self) -> None:
-        database_path = Path(self.temp_dir.name) / "batch_template_snapshot_pre_library.db"
+    def test_batch_template_snapshot_migration_upgrades_pre_library_batch_data(
+        self,
+    ) -> None:
+        database_path = (
+            Path(self.temp_dir.name) / "batch_template_snapshot_pre_library.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
         pre_library_revision = "2f6a9d8c1e20"
@@ -2132,7 +2199,9 @@ class MigrationScriptTests(unittest.TestCase):
         try:
             downgraded_columns = {
                 row[1]
-                for row in downgraded.execute("PRAGMA table_info(batch_tasks)").fetchall()
+                for row in downgraded.execute(
+                    "PRAGMA table_info(batch_tasks)"
+                ).fetchall()
             }
         finally:
             downgraded.close()
@@ -2197,7 +2266,9 @@ class MigrationScriptTests(unittest.TestCase):
                 ).lastrowid,
             )
 
-            def insert_batch(name: str, subject: str, body: str, target_count: int) -> int:
+            def insert_batch(
+                name: str, subject: str, body: str, target_count: int
+            ) -> int:
                 return int(
                     connection.execute(
                         """
@@ -2364,7 +2435,9 @@ class MigrationScriptTests(unittest.TestCase):
 
             legacy_columns = [
                 row[1]
-                for row in connection.execute("PRAGMA table_info(batch_tasks)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(batch_tasks)"
+                ).fetchall()
             ]
             legacy_projection = ", ".join(f'"{column}"' for column in legacy_columns)
             legacy_rows_before = connection.execute(
@@ -2479,7 +2552,9 @@ class MigrationScriptTests(unittest.TestCase):
             ),
         )
 
-    def test_batch_template_snapshot_migration_resumes_from_partial_schema(self) -> None:
+    def test_batch_template_snapshot_migration_resumes_from_partial_schema(
+        self,
+    ) -> None:
         database_path = Path(self.temp_dir.name) / "batch_template_snapshot_partial.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
@@ -2597,10 +2672,12 @@ class MigrationScriptTests(unittest.TestCase):
                 (batch_task_id,),
             ).fetchone()
             columns = {
-                row[1] for row in upgraded.execute("PRAGMA table_info(batch_tasks)").fetchall()
+                row[1]
+                for row in upgraded.execute("PRAGMA table_info(batch_tasks)").fetchall()
             }
             index_names = [
-                row[1] for row in upgraded.execute("PRAGMA index_list(batch_tasks)").fetchall()
+                row[1]
+                for row in upgraded.execute("PRAGMA index_list(batch_tasks)").fetchall()
             ]
         finally:
             upgraded.close()
@@ -2630,7 +2707,9 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(index_names.count("ix_batch_tasks_outreach_template_id"), 1)
 
-    def test_identity_professor_match_result_migration_backfills_latest_task_once(self) -> None:
+    def test_identity_professor_match_result_migration_backfills_latest_task_once(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_identity_match_results.db"
@@ -2857,14 +2936,12 @@ class MigrationScriptTests(unittest.TestCase):
                 """,
                 (fallback_task_id,),
             )
-            invalid_latest_task_id = (
-                DatabaseSchemaTests._insert_manual_child_task_into(
-                    connection,
-                    parent_task_id=fallback_task_id,
-                    identity_id=identity_id,
-                    llm_profile_id=llm_profile_id,
-                    professor_id=fallback_professor_id,
-                )
+            invalid_latest_task_id = DatabaseSchemaTests._insert_manual_child_task_into(
+                connection,
+                parent_task_id=fallback_task_id,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_id=fallback_professor_id,
             )
             connection.execute(
                 """
@@ -2909,7 +2986,9 @@ class MigrationScriptTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_identity_match_migration_recovers_partial_and_repeated_upgrade(self) -> None:
+    def test_identity_match_migration_recovers_partial_and_repeated_upgrade(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
             legacy_db_path = Path(legacy_dir.name) / "partial_identity_matches.db"
@@ -3001,18 +3080,22 @@ class MigrationScriptTests(unittest.TestCase):
                 ),
             )
             self.assertTrue(
-                {"match_reason", "fit_points", "risk_points", "match_keywords"}
-                .issubset(run_columns),
+                {
+                    "match_reason",
+                    "fit_points",
+                    "risk_points",
+                    "match_keywords",
+                }.issubset(run_columns),
             )
         finally:
             legacy_dir.cleanup()
 
-    def test_identity_match_migration_repairs_orphaned_source_identity_ids(self) -> None:
+    def test_identity_match_migration_repairs_orphaned_source_identity_ids(
+        self,
+    ) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "orphaned-match-source-ids.db"
         legacy_env = os.environ.copy()
-        legacy_env["DATABASE_URL"] = (
-            f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
-        )
+        legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
         previous_revision = "20260804_merge_agent_change_recent_papers"
         self._run_alembic(legacy_env, "upgrade", previous_revision)
 
@@ -3105,15 +3188,13 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertEqual(job_source_id, identity_id)
         self.assertTrue(
             any(
-                row[2] == "identity_profiles"
-                and row[3] == "match_source_identity_id"
+                row[2] == "identity_profiles" and row[3] == "match_source_identity_id"
                 for row in group_foreign_keys
             ),
         )
         self.assertTrue(
             any(
-                row[2] == "identity_profiles"
-                and row[3] == "match_source_identity_id"
+                row[2] == "identity_profiles" and row[3] == "match_source_identity_id"
                 for row in job_foreign_keys
             ),
         )
@@ -3122,9 +3203,7 @@ class MigrationScriptTests(unittest.TestCase):
     def test_identity_match_migration_rebuilds_incomplete_result_table(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "incomplete-match-results.db"
         legacy_env = os.environ.copy()
-        legacy_env["DATABASE_URL"] = (
-            f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
-        )
+        legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
         previous_revision = "20260804_merge_agent_change_recent_papers"
         self._run_alembic(legacy_env, "upgrade", previous_revision)
 
@@ -3278,7 +3357,9 @@ class MigrationScriptTests(unittest.TestCase):
             )
 
     @staticmethod
-    def _run_alembic_result(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    def _run_alembic_result(
+        env: dict[str, str], *args: str
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, "-m", "alembic", *args],
             cwd=BACKEND_DIR,
@@ -3692,7 +3773,9 @@ class DatabaseSchemaTests(unittest.TestCase):
             ["archived_at", "created_at", "id"],
         )
         self.assertEqual(
-            self._get_index_columns("email_tasks", "ix_email_tasks_identity_professor_created_id"),
+            self._get_index_columns(
+                "email_tasks", "ix_email_tasks_identity_professor_created_id"
+            ),
             ["identity_id", "professor_id", "created_at", "id"],
         )
         self.assertEqual(
@@ -3838,7 +3921,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                 f"{expected_index} not used by query plan: {details}",
             )
 
-    def test_llm_endpoint_adaptation_upgrade_discards_old_cache_and_is_recoverable(self) -> None:
+    def test_llm_endpoint_adaptation_upgrade_discards_old_cache_and_is_recoverable(
+        self,
+    ) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "llm_endpoint_adaptation_upgrade.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -3863,7 +3948,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         try:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM thinking_adaptation_cache").fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM thinking_adaptation_cache"
+                ).fetchone()[0],
                 0,
             )
             connection.execute(
@@ -3894,18 +3981,26 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         try:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM thinking_adaptation_cache").fetchone()[0],
+                connection.execute(
+                    "SELECT COUNT(*) FROM thinking_adaptation_cache"
+                ).fetchone()[0],
                 0,
             )
             self.assertEqual(
-                connection.execute("SELECT version_num FROM alembic_version").fetchone()[0],
+                connection.execute(
+                    "SELECT version_num FROM alembic_version"
+                ).fetchone()[0],
                 HEAD_REVISION,
             )
         finally:
             connection.close()
 
-    def test_llm_endpoint_adaptation_downgrade_restores_legacy_thinking_cache(self) -> None:
-        database_path = Path(self.temp_dir.name) / "llm_endpoint_adaptation_downgrade.db"
+    def test_llm_endpoint_adaptation_downgrade_restores_legacy_thinking_cache(
+        self,
+    ) -> None:
+        database_path = (
+            Path(self.temp_dir.name) / "llm_endpoint_adaptation_downgrade.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
 
@@ -3923,7 +4018,12 @@ class DatabaseSchemaTests(unittest.TestCase):
             self.assertNotIn("llm_endpoint_adaptation_cache", table_names)
             self.assertNotIn(
                 "endpoint_kind",
-                {row[1] for row in connection.execute("PRAGMA table_info('thinking_adaptation_cache')")},
+                {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info('thinking_adaptation_cache')"
+                    )
+                },
             )
             unique_indexes = [
                 row[1]
@@ -3974,7 +4074,12 @@ class DatabaseSchemaTests(unittest.TestCase):
         crawl_job_columns = self._get_columns("crawl_jobs")
         self.assertIn("current_run_id", crawl_job_columns)
         self.assertTrue(
-            {"job_kind", "trigger_mode", "task_center_visible", "display_name"}.issubset(
+            {
+                "job_kind",
+                "trigger_mode",
+                "task_center_visible",
+                "display_name",
+            }.issubset(
                 crawl_job_columns,
             ),
         )
@@ -4033,7 +4138,7 @@ class DatabaseSchemaTests(unittest.TestCase):
     def test_html_template_import_derives_text_from_sanitized_html(self) -> None:
         imported = import_outreach_template_file(
             "template.html",
-            b'<p>Hello <strong>{{name}}</strong></p><script>alert(1)</script>',
+            b"<p>Hello <strong>{{name}}</strong></p><script>alert(1)</script>",
         )
 
         self.assertEqual(imported.body_html, "<p>Hello <strong>{{name}}</strong></p>")
@@ -4051,14 +4156,22 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_match_run_material.db"
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="run-material@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="运行记录模型")
-            professor_id = self._insert_professor_into(connection, "run-material@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="run-material@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="运行记录模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "run-material@example.edu"
+            )
             material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4097,19 +4210,29 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_leaves_match_run_primary_material_null_when_task_material_is_missing(self) -> None:
+    def test_migration_leaves_match_run_primary_material_null_when_task_material_is_missing(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_missing_run_material.db"
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = OFF")
-            identity_id = self._insert_identity_into(connection, email_address="missing-run-material@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="缺失材料模型")
-            professor_id = self._insert_professor_into(connection, "missing-run-material@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="missing-run-material@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="缺失材料模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "missing-run-material@example.edu"
+            )
             task_id = self._insert_email_task_with_material_into(
                 connection,
                 identity_id,
@@ -4142,20 +4265,34 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_leaves_match_run_primary_material_null_for_cross_identity_task_material(self) -> None:
+    def test_migration_leaves_match_run_primary_material_null_for_cross_identity_task_material(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_cross_identity_run_material.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_cross_identity_run_material.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="run-owner@example.com")
-            other_identity_id = self._insert_identity_into(connection, email_address="material-owner@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="跨身份材料模型")
-            professor_id = self._insert_professor_into(connection, "cross-identity-run@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="run-owner@example.com"
+            )
+            other_identity_id = self._insert_identity_into(
+                connection, email_address="material-owner@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="跨身份材料模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "cross-identity-run@example.edu"
+            )
             other_material_id = self._insert_identity_material_into(
                 connection,
                 other_identity_id,
@@ -4195,19 +4332,31 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_leaves_match_run_primary_material_null_for_non_primary_material_file(self) -> None:
+    def test_migration_leaves_match_run_primary_material_null_for_non_primary_material_file(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_non_primary_run_material.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_non_primary_run_material.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="run-image-material@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="不可匹配材料模型")
-            professor_id = self._insert_professor_into(connection, "run-image-material@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="run-image-material@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="不可匹配材料模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "run-image-material@example.edu"
+            )
             material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4248,20 +4397,34 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_recovers_identity_current_primary_material_from_recent_task(self) -> None:
+    def test_migration_recovers_identity_current_primary_material_from_recent_task(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_identity_primary_material.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_identity_primary_material.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="recover-primary@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="默认材料恢复模型")
-            old_professor_id = self._insert_professor_into(connection, "recover-old-primary@example.edu")
-            recent_professor_id = self._insert_professor_into(connection, "recover-recent-primary@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="recover-primary@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="默认材料恢复模型"
+            )
+            old_professor_id = self._insert_professor_into(
+                connection, "recover-old-primary@example.edu"
+            )
+            recent_professor_id = self._insert_professor_into(
+                connection, "recover-recent-primary@example.edu"
+            )
             old_material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4308,19 +4471,31 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_recovers_identity_current_primary_material_from_transcript_pdf_task(self) -> None:
+    def test_migration_recovers_identity_current_primary_material_from_transcript_pdf_task(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_transcript_primary_material.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_transcript_primary_material.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="recover-transcript@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="成绩单默认材料模型")
-            professor_id = self._insert_professor_into(connection, "recover-transcript@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="recover-transcript@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="成绩单默认材料模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "recover-transcript@example.edu"
+            )
             material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4352,17 +4527,23 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_recovers_identity_current_primary_material_from_only_material(self) -> None:
+    def test_migration_recovers_identity_current_primary_material_from_only_material(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_only_identity_material.db"
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="only-primary@example.com")
+            identity_id = self._insert_identity_into(
+                connection, email_address="only-primary@example.com"
+            )
             material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4386,19 +4567,31 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_backfills_empty_task_primary_material_from_identity_current_primary_material(self) -> None:
+    def test_migration_backfills_empty_task_primary_material_from_identity_current_primary_material(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_task_primary_material_backfill.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_task_primary_material_backfill.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="task-backfill@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="任务材料回填模型")
-            professor_id = self._insert_professor_into(connection, "task-backfill@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="task-backfill@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="任务材料回填模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "task-backfill@example.edu"
+            )
             material_id = self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4433,17 +4626,25 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-    def test_migration_leaves_ambiguous_identity_current_primary_material_empty(self) -> None:
+    def test_migration_leaves_ambiguous_identity_current_primary_material_empty(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
-            legacy_db_path = Path(legacy_dir.name) / "legacy_ambiguous_identity_material.db"
+            legacy_db_path = (
+                Path(legacy_dir.name) / "legacy_ambiguous_identity_material.db"
+            )
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
             self._run_alembic(legacy_env, "upgrade", "20260609rewrite")
 
             connection = sqlite3.connect(legacy_db_path)
             connection.execute("PRAGMA foreign_keys = ON")
-            identity_id = self._insert_identity_into(connection, email_address="ambiguous-primary@example.com")
+            identity_id = self._insert_identity_into(
+                connection, email_address="ambiguous-primary@example.com"
+            )
             self._insert_identity_material_into(
                 connection,
                 identity_id,
@@ -4474,7 +4675,6 @@ class DatabaseSchemaTests(unittest.TestCase):
         finally:
             legacy_dir.cleanup()
 
-
     def test_old_revision_can_upgrade_to_head(self) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "old_revision_upgrade.db"
         env = os.environ.copy()
@@ -4499,7 +4699,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         self._run_alembic(env, "upgrade", "20260630_imap_efficiency_guards")
         connection = sqlite3.connect(legacy_db_path)
         try:
-            connection.execute("ALTER TABLE identity_profiles ADD COLUMN next_send_after DATETIME")
+            connection.execute(
+                "ALTER TABLE identity_profiles ADD COLUMN next_send_after DATETIME"
+            )
             connection.commit()
         finally:
             connection.close()
@@ -4510,7 +4712,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(identity_profiles)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(identity_profiles)"
+                ).fetchall()
             }
             version = connection.execute(
                 "SELECT version_num FROM alembic_version",
@@ -4581,15 +4785,21 @@ class DatabaseSchemaTests(unittest.TestCase):
             ).fetchone()[0]
             mailbox_columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(imap_mailbox_sync_states)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(imap_mailbox_sync_states)"
+                ).fetchall()
             }
             professor_state_columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(imap_professor_sync_states)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(imap_professor_sync_states)"
+                ).fetchall()
             }
             app_setting_columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(app_settings)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(app_settings)"
+                ).fetchall()
             }
         finally:
             connection.close()
@@ -4599,7 +4809,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertIn("history_strategy_version", professor_state_columns)
         self.assertIn("intended_research_direction", app_setting_columns)
 
-    def test_obsolete_runtime_version_is_removed_without_losing_crawl_jobs(self) -> None:
+    def test_obsolete_runtime_version_is_removed_without_losing_crawl_jobs(
+        self,
+    ) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "runtime_v2_legacy_jobs.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -4618,7 +4830,14 @@ class DatabaseSchemaTests(unittest.TestCase):
                     progress_total
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                ("历史大学", "计算机学院", "https://example.edu/faculty", "needs_review", 1, 1),
+                (
+                    "历史大学",
+                    "计算机学院",
+                    "https://example.edu/faculty",
+                    "needs_review",
+                    1,
+                    1,
+                ),
             )
             connection.commit()
         finally:
@@ -4630,11 +4849,15 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(crawl_jobs)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(crawl_jobs)"
+                ).fetchall()
             }
             settings_columns = {
                 row[1]
-                for row in connection.execute("PRAGMA table_info(app_settings)").fetchall()
+                for row in connection.execute(
+                    "PRAGMA table_info(app_settings)"
+                ).fetchall()
             }
             job_count = connection.execute(
                 "SELECT COUNT(*) FROM crawl_jobs WHERE university = ?",
@@ -4656,11 +4879,21 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         connection.execute("PRAGMA foreign_keys = ON")
         try:
-            identity_id = self._insert_identity_into(connection, email_address="duplicate-identity@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="重复清理模型")
-            professor_id = self._insert_professor_into(connection, "duplicate-professor@example.edu")
-            first_task_id = self._insert_workspace_root_task_into(connection, identity_id, llm_profile_id, professor_id)
-            second_task_id = self._insert_workspace_root_task_into(connection, identity_id, llm_profile_id, professor_id)
+            identity_id = self._insert_identity_into(
+                connection, email_address="duplicate-identity@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="重复清理模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "duplicate-professor@example.edu"
+            )
+            first_task_id = self._insert_workspace_root_task_into(
+                connection, identity_id, llm_profile_id, professor_id
+            )
+            second_task_id = self._insert_workspace_root_task_into(
+                connection, identity_id, llm_profile_id, professor_id
+            )
             self._insert_email_log_into(
                 connection,
                 first_task_id,
@@ -4685,7 +4918,9 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         connection = sqlite3.connect(legacy_db_path)
         try:
-            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
             root_count = connection.execute(
                 """
                 SELECT COUNT(*)
@@ -4710,8 +4945,12 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual(root_count, 1)
         self.assertEqual(log_count, 1)
 
-    def test_concurrency_guard_migration_merges_duplicate_roots_with_existing_child(self) -> None:
-        legacy_db_path = Path(self.temp_dir.name) / "concurrency_guard_existing_child.db"
+    def test_concurrency_guard_migration_merges_duplicate_roots_with_existing_child(
+        self,
+    ) -> None:
+        legacy_db_path = (
+            Path(self.temp_dir.name) / "concurrency_guard_existing_child.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
 
@@ -4719,9 +4958,15 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         connection.execute("PRAGMA foreign_keys = ON")
         try:
-            identity_id = self._insert_identity_into(connection, email_address="guard-scope@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="并发保护模型")
-            professor_id = self._insert_professor_into(connection, "guard-scope@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="guard-scope@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="并发保护模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "guard-scope@example.edu"
+            )
             duplicate_root_id = self._insert_workspace_root_task_into(
                 connection,
                 identity_id,
@@ -4785,9 +5030,15 @@ class DatabaseSchemaTests(unittest.TestCase):
         self._run_alembic(env, "upgrade", "2f6a9d8c1e20")
         connection = sqlite3.connect(legacy_db_path)
         try:
-            identity_id = self._insert_identity_into(connection, email_address="contact-state@example.com")
-            llm_profile_id = self._insert_llm_profile_into(connection, name="状态迁移模型")
-            professor_id = self._insert_professor_into(connection, "contact-state@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="contact-state@example.com"
+            )
+            llm_profile_id = self._insert_llm_profile_into(
+                connection, name="状态迁移模型"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "contact-state@example.edu"
+            )
             skipped_task_id = connection.execute(
                 """
                 INSERT INTO email_tasks (
@@ -4855,7 +5106,15 @@ class DatabaseSchemaTests(unittest.TestCase):
                     agent_trace
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("半迁移大学", "计算机学院", "https://example.edu", "needs_review", 1, 1, json.dumps([])),
+                (
+                    "半迁移大学",
+                    "计算机学院",
+                    "https://example.edu",
+                    "needs_review",
+                    1,
+                    1,
+                    json.dumps([]),
+                ),
             ).lastrowid
             connection.execute(
                 """
@@ -4892,10 +5151,19 @@ class DatabaseSchemaTests(unittest.TestCase):
                 """,
                 (job_id,),
             ).lastrowid
-            connection.execute("CREATE INDEX ix_crawl_job_runs_job_id ON crawl_job_runs (job_id)")
-            connection.execute("CREATE INDEX ix_crawl_job_runs_status ON crawl_job_runs (status)")
-            connection.execute("ALTER TABLE crawl_jobs ADD COLUMN current_run_id INTEGER")
-            connection.execute("UPDATE crawl_jobs SET current_run_id = ? WHERE id = ?", (run_id, job_id))
+            connection.execute(
+                "CREATE INDEX ix_crawl_job_runs_job_id ON crawl_job_runs (job_id)"
+            )
+            connection.execute(
+                "CREATE INDEX ix_crawl_job_runs_status ON crawl_job_runs (status)"
+            )
+            connection.execute(
+                "ALTER TABLE crawl_jobs ADD COLUMN current_run_id INTEGER"
+            )
+            connection.execute(
+                "UPDATE crawl_jobs SET current_run_id = ? WHERE id = ?",
+                (run_id, job_id),
+            )
             connection.commit()
         finally:
             connection.close()
@@ -4918,7 +5186,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual(run_count, 1)
         self.assertEqual(current_run_id, run_id)
 
-    def test_identity_scope_migration_merges_duplicate_roots_with_existing_child(self) -> None:
+    def test_identity_scope_migration_merges_duplicate_roots_with_existing_child(
+        self,
+    ) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "identity_scope_existing_child.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -4927,10 +5197,18 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         connection.execute("PRAGMA foreign_keys = ON")
         try:
-            identity_id = self._insert_identity_into(connection, email_address="identity-scope@example.com")
-            first_llm_profile_id = self._insert_llm_profile_into(connection, name="身份范围模型一")
-            second_llm_profile_id = self._insert_llm_profile_into(connection, name="身份范围模型二")
-            professor_id = self._insert_professor_into(connection, "identity-scope@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="identity-scope@example.com"
+            )
+            first_llm_profile_id = self._insert_llm_profile_into(
+                connection, name="身份范围模型一"
+            )
+            second_llm_profile_id = self._insert_llm_profile_into(
+                connection, name="身份范围模型二"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "identity-scope@example.edu"
+            )
             duplicate_root_id = self._insert_workspace_root_task_into(
                 connection,
                 identity_id,
@@ -4985,8 +5263,12 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual(existing_child_parent_id, keep_root_id)
         self.assertEqual(duplicate_parent_id, existing_child_id)
 
-    def test_identity_scope_migration_tolerates_existing_app_metadata_table(self) -> None:
-        legacy_db_path = Path(self.temp_dir.name) / "identity_scope_existing_metadata.db"
+    def test_identity_scope_migration_tolerates_existing_app_metadata_table(
+        self,
+    ) -> None:
+        legacy_db_path = (
+            Path(self.temp_dir.name) / "identity_scope_existing_metadata.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
 
@@ -4994,10 +5276,18 @@ class DatabaseSchemaTests(unittest.TestCase):
         connection = sqlite3.connect(legacy_db_path)
         connection.execute("PRAGMA foreign_keys = ON")
         try:
-            identity_id = self._insert_identity_into(connection, email_address="retry-scope@example.com")
-            first_llm_profile_id = self._insert_llm_profile_into(connection, name="重试范围模型一")
-            second_llm_profile_id = self._insert_llm_profile_into(connection, name="重试范围模型二")
-            professor_id = self._insert_professor_into(connection, "retry-scope@example.edu")
+            identity_id = self._insert_identity_into(
+                connection, email_address="retry-scope@example.com"
+            )
+            first_llm_profile_id = self._insert_llm_profile_into(
+                connection, name="重试范围模型一"
+            )
+            second_llm_profile_id = self._insert_llm_profile_into(
+                connection, name="重试范围模型二"
+            )
+            professor_id = self._insert_professor_into(
+                connection, "retry-scope@example.edu"
+            )
             duplicate_root_id = self._insert_workspace_root_task_into(
                 connection,
                 identity_id,
@@ -5017,7 +5307,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                 llm_profile_id=second_llm_profile_id,
                 professor_id=professor_id,
             )
-            connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.execute(
+                "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
             connection.commit()
         finally:
             connection.close()
@@ -5026,7 +5318,9 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         connection = sqlite3.connect(legacy_db_path)
         try:
-            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
             metadata_table_count = connection.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_metadata'",
             ).fetchone()[0]
@@ -5046,15 +5340,21 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertEqual(existing_child_parent_id, keep_root_id)
         self.assertEqual(duplicate_parent_id, existing_child_id)
 
-    def test_identity_scope_migration_tolerates_missing_legacy_workspace_index(self) -> None:
-        legacy_db_path = Path(self.temp_dir.name) / "identity_scope_missing_legacy_index.db"
+    def test_identity_scope_migration_tolerates_missing_legacy_workspace_index(
+        self,
+    ) -> None:
+        legacy_db_path = (
+            Path(self.temp_dir.name) / "identity_scope_missing_legacy_index.db"
+        )
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
 
         self._run_alembic(env, "upgrade", "b2e7c9f1a4d6")
         connection = sqlite3.connect(legacy_db_path)
         try:
-            connection.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.execute(
+                "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
             connection.execute("DROP INDEX uq_email_tasks_workspace_task")
             connection.commit()
         finally:
@@ -5066,16 +5366,22 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             indexes = {
                 row[1]
-                for row in connection.execute("PRAGMA index_list('email_tasks')").fetchall()
+                for row in connection.execute(
+                    "PRAGMA index_list('email_tasks')"
+                ).fetchall()
             }
-            version = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+            version = connection.execute(
+                "SELECT version_num FROM alembic_version"
+            ).fetchone()[0]
         finally:
             connection.close()
 
         self.assertEqual(version, "d6e4b8c2a1f0")
         self.assertIn("uq_email_tasks_workspace_task", indexes)
 
-    def test_professor_tags_migration_tolerates_existing_tables_and_default_tag(self) -> None:
+    def test_professor_tags_migration_tolerates_existing_tables_and_default_tag(
+        self,
+    ) -> None:
         legacy_db_path = Path(self.temp_dir.name) / "professor_tags_existing_tables.db"
         env = os.environ.copy()
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
@@ -5110,7 +5416,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                 )
                 """
             )
-            connection.execute("CREATE INDEX ix_professor_tag_links_tag_id ON professor_tag_links (tag_id)")
+            connection.execute(
+                "CREATE INDEX ix_professor_tag_links_tag_id ON professor_tag_links (tag_id)"
+            )
             connection.execute(
                 """
                 INSERT INTO professor_tags (name, text_color, background_color)
@@ -5127,7 +5435,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             tag_names = {
                 row[0]
-                for row in connection.execute("SELECT name FROM professor_tags").fetchall()
+                for row in connection.execute(
+                    "SELECT name FROM professor_tags"
+                ).fetchall()
             }
             link_table_count = connection.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'professor_tag_links'",
@@ -5176,9 +5486,18 @@ class DatabaseSchemaTests(unittest.TestCase):
             )
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (batch_task_id, identity_id, llm_profile_id, professor_id, None, json.dumps([])),
+            (
+                batch_task_id,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                None,
+                json.dumps([]),
+            ),
         )
-        email_task_id = self.connection.execute("SELECT id FROM email_tasks").fetchone()[0]
+        email_task_id = self.connection.execute(
+            "SELECT id FROM email_tasks"
+        ).fetchone()[0]
 
         self.connection.execute(
             """
@@ -5245,7 +5564,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         unique_indexes = [row for row in indexes if row[2] == 1]
         indexed_columns = set()
         for index in unique_indexes:
-            for column in self.connection.execute(f"PRAGMA index_info('{index[1]}')").fetchall():
+            for column in self.connection.execute(
+                f"PRAGMA index_info('{index[1]}')"
+            ).fetchall():
                 indexed_columns.add(column[2])
 
         self.assertIn("parent_task_id", indexed_columns)
@@ -5284,7 +5605,15 @@ class DatabaseSchemaTests(unittest.TestCase):
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("manual", parent_task_id, identity_id, llm_profile_id, professor_id, None, json.dumps([])),
+            (
+                "manual",
+                parent_task_id,
+                identity_id,
+                llm_profile_id,
+                professor_id,
+                None,
+                json.dumps([]),
+            ),
         )
 
         with self.assertRaises(sqlite3.IntegrityError):
@@ -5301,15 +5630,27 @@ class DatabaseSchemaTests(unittest.TestCase):
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("manual", parent_task_id, identity_id, llm_profile_id, professor_id, None, json.dumps([])),
+                (
+                    "manual",
+                    parent_task_id,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    None,
+                    json.dumps([]),
+                ),
             )
 
-    def test_contact_task_state_migration_backfill_and_downgrade_restore_legacy_statuses(self) -> None:
+    def test_contact_task_state_migration_backfill_and_downgrade_restore_legacy_statuses(
+        self,
+    ) -> None:
         legacy_dir = tempfile.TemporaryDirectory()
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_task_states.db"
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
 
             self._run_alembic(legacy_env, "upgrade", "2f6a9d8c1e20")
 
@@ -5365,7 +5706,14 @@ class DatabaseSchemaTests(unittest.TestCase):
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (identity_id, llm_profile_id, "运行中批量任务", 1, None, json.dumps([])),
+                (
+                    identity_id,
+                    llm_profile_id,
+                    "运行中批量任务",
+                    1,
+                    None,
+                    json.dumps([]),
+                ),
             ).lastrowid
             stopped_batch_task_id = legacy.execute(
                 """
@@ -5379,7 +5727,14 @@ class DatabaseSchemaTests(unittest.TestCase):
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (identity_id, llm_profile_id, "已停止批量任务", 1, None, json.dumps([])),
+                (
+                    identity_id,
+                    llm_profile_id,
+                    "已停止批量任务",
+                    1,
+                    None,
+                    json.dumps([]),
+                ),
             ).lastrowid
             legacy.execute(
                 "UPDATE batch_tasks SET status = ? WHERE id = ?",
@@ -5399,7 +5754,15 @@ class DatabaseSchemaTests(unittest.TestCase):
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (None, identity_id, llm_profile_id, professor_id, None, json.dumps([]), "skipped"),
+                (
+                    None,
+                    identity_id,
+                    llm_profile_id,
+                    professor_id,
+                    None,
+                    json.dumps([]),
+                    "skipped",
+                ),
             )
             manual_task_id = legacy.execute("SELECT last_insert_rowid()").fetchone()[0]
             legacy.execute(
@@ -5425,7 +5788,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                     "skipped",
                 ),
             )
-            running_batch_task_item_id = legacy.execute("SELECT last_insert_rowid()").fetchone()[0]
+            running_batch_task_item_id = legacy.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
             legacy.execute(
                 """
                 INSERT INTO email_tasks (
@@ -5449,7 +5814,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                     "skipped",
                 ),
             )
-            stopped_batch_task_item_id = legacy.execute("SELECT last_insert_rowid()").fetchone()[0]
+            stopped_batch_task_item_id = legacy.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
             legacy.commit()
             legacy.close()
 
@@ -5501,7 +5868,9 @@ class DatabaseSchemaTests(unittest.TestCase):
                     "batch_stopped",
                 ),
             )
-            post_upgrade_task_id = upgraded.execute("SELECT last_insert_rowid()").fetchone()[0]
+            post_upgrade_task_id = upgraded.execute(
+                "SELECT last_insert_rowid()"
+            ).fetchone()[0]
             upgraded.commit()
             upgraded.close()
 
@@ -5509,7 +5878,12 @@ class DatabaseSchemaTests(unittest.TestCase):
 
             downgraded = sqlite3.connect(legacy_db_path)
             downgraded.execute("PRAGMA foreign_keys = ON")
-            task_columns = {row[1] for row in downgraded.execute("PRAGMA table_info('email_tasks')").fetchall()}
+            task_columns = {
+                row[1]
+                for row in downgraded.execute(
+                    "PRAGMA table_info('email_tasks')"
+                ).fetchall()
+            }
             downgraded_rows = downgraded.execute(
                 """
                 SELECT id, status
@@ -5543,7 +5917,9 @@ class DatabaseSchemaTests(unittest.TestCase):
         try:
             legacy_db_path = Path(legacy_dir.name) / "legacy_schema.db"
             legacy_env = os.environ.copy()
-            legacy_env["DATABASE_URL"] = f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            legacy_env["DATABASE_URL"] = (
+                f"sqlite+aiosqlite:///{legacy_db_path.as_posix()}"
+            )
 
             self._run_alembic(legacy_env, "upgrade", LEGACY_RUNTIME_REVISION)
 
@@ -5703,9 +6079,10 @@ class DatabaseSchemaTests(unittest.TestCase):
             )
 
     def _get_table_names(self) -> set[str]:
-        rows = self.connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        rows = self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
         return {row[0] for row in rows}
-
 
     def _get_columns(self, table_name: str) -> set[str]:
         rows = self.connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
@@ -5721,7 +6098,9 @@ class DatabaseSchemaTests(unittest.TestCase):
     def _get_index_columns(self, table_name: str, index_name: str) -> list[str]:
         index_names = {
             row[1]
-            for row in self.connection.execute(f"PRAGMA index_list('{table_name}')").fetchall()
+            for row in self.connection.execute(
+                f"PRAGMA index_list('{table_name}')"
+            ).fetchall()
         }
         self.assertIn(index_name, index_names)
         rows = self.connection.execute(f"PRAGMA index_info('{index_name}')").fetchall()
@@ -5730,11 +6109,15 @@ class DatabaseSchemaTests(unittest.TestCase):
     def _get_unique_index_columns(self, table_name: str) -> list[str]:
         unique_indexes = [
             row[1]
-            for row in self.connection.execute(f"PRAGMA index_list('{table_name}')").fetchall()
+            for row in self.connection.execute(
+                f"PRAGMA index_list('{table_name}')"
+            ).fetchall()
             if row[2]
         ]
         self.assertEqual(len(unique_indexes), 1)
-        rows = self.connection.execute(f"PRAGMA index_info('{unique_indexes[0]}')").fetchall()
+        rows = self.connection.execute(
+            f"PRAGMA index_info('{unique_indexes[0]}')"
+        ).fetchall()
         return [row[2] for row in rows]
 
     @staticmethod
@@ -5746,10 +6129,14 @@ class DatabaseSchemaTests(unittest.TestCase):
         return list(raw_value)
 
     def _insert_identity(self) -> int:
-        return self._insert_identity_into(self.connection, email_address="identity-default@example.com")
+        return self._insert_identity_into(
+            self.connection, email_address="identity-default@example.com"
+        )
 
     @staticmethod
-    def _insert_identity_into(connection: sqlite3.Connection, *, email_address: str) -> int:
+    def _insert_identity_into(
+        connection: sqlite3.Connection, *, email_address: str
+    ) -> int:
         cursor = connection.execute(
             """
             INSERT INTO identity_profiles (

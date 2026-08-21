@@ -147,14 +147,24 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
             schema["properties"]["items"]["items"],
             {"$ref": "#/$defs/ProbeItem"},
         )
-        self.assertEqual(schema["$defs"]["ProbeItem"]["properties"]["count"]["type"], "integer")
-        self.assertEqual(schema["$defs"]["ProbeItem"]["properties"]["enabled"]["type"], "boolean")
-        self.assertEqual(schema["$defs"]["ProbeItem"]["properties"]["kind"]["enum"], ["probe"])
+        self.assertEqual(
+            schema["$defs"]["ProbeItem"]["properties"]["count"]["type"], "integer"
+        )
+        self.assertEqual(
+            schema["$defs"]["ProbeItem"]["properties"]["enabled"]["type"], "boolean"
+        )
+        self.assertEqual(
+            schema["$defs"]["ProbeItem"]["properties"]["kind"]["enum"], ["probe"]
+        )
         self.assertFalse(schema["additionalProperties"])
         self.assertFalse(schema["$defs"]["ProbeItem"]["additionalProperties"])
 
-    async def test_deepseek_like_blank_conflict_and_positive_json_learns_json_object(self) -> None:
-        from app.modules.llm.adaptation.structured_output import probe_structured_output_mode
+    async def test_deepseek_like_blank_conflict_and_positive_json_learns_json_object(
+        self,
+    ) -> None:
+        from app.modules.llm.adaptation.structured_output import (
+            probe_structured_output_mode,
+        )
 
         strict_error = LLMRuntimeError(
             "This response_format type is unavailable now",
@@ -182,7 +192,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request_probe.await_count, 4)
 
     async def test_silently_ignored_json_object_is_not_misclassified(self) -> None:
-        from app.modules.llm.adaptation.structured_output import probe_structured_output_mode
+        from app.modules.llm.adaptation.structured_output import (
+            probe_structured_output_mode,
+        )
 
         responses = [
             SimpleNamespace(content="PLAIN"),
@@ -205,7 +217,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rate_limit_is_not_cached_as_unsupported(self) -> None:
         from app.models import LLMStructuredOutputAdaptationCache
-        from app.modules.llm.adaptation.structured_output import probe_structured_output_mode
+        from app.modules.llm.adaptation.structured_output import (
+            probe_structured_output_mode,
+        )
         from sqlalchemy import select
 
         error = LLMRuntimeError("rate limited", status_code=429)
@@ -347,7 +361,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_mode, "json_object")
         self.assertEqual(second_mode, "json_object")
 
-    async def test_request_uses_cached_strict_schema_and_parses_exact_json(self) -> None:
+    async def test_request_uses_cached_strict_schema_and_parses_exact_json(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.structured_output import (
             record_structured_output_adaptation,
         )
@@ -366,7 +382,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
             )
             with patch(
                 "app.modules.llm.runtime.request_chat_completion",
-                new=AsyncMock(return_value=ChatCompletionResult(content='{"value":"ok"}')),
+                new=AsyncMock(
+                    return_value=ChatCompletionResult(content='{"value":"ok"}')
+                ),
             ) as request_mock:
                 _completion, result, mode = await request_structured_completion(
                     self.profile,
@@ -387,7 +405,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
             json.dumps(wire_payload["response_format"]["json_schema"]["schema"]),
         )
 
-    async def test_strict_mode_output_violation_invalidates_cached_capability(self) -> None:
+    async def test_strict_mode_output_violation_invalidates_cached_capability(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.structured_output import (
             get_cached_structured_output_mode,
             record_structured_output_adaptation,
@@ -427,7 +447,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(cached)
 
-    async def test_json_object_semantic_failure_does_not_invalidate_protocol(self) -> None:
+    async def test_json_object_semantic_failure_does_not_invalidate_protocol(
+        self,
+    ) -> None:
         from app.modules.llm.adaptation.structured_output import (
             get_cached_structured_output_mode,
             record_structured_output_adaptation,
@@ -444,7 +466,9 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
             )
             with patch(
                 "app.modules.llm.runtime.request_chat_completion",
-                new=AsyncMock(return_value=ChatCompletionResult(content='{"other":"x"}')),
+                new=AsyncMock(
+                    return_value=ChatCompletionResult(content='{"other":"x"}')
+                ),
             ):
                 with self.assertRaisesRegex(LLMRuntimeError, "JSON 结构无效"):
                     await request_structured_completion(

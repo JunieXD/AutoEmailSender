@@ -21,7 +21,9 @@ def batch_item_uses_llm_generation_column(column):
 
 
 def batch_item_uses_llm_generation(email_task: EmailTask) -> bool:
-    return normalize_batch_item_generation_mode(email_task) == OUTREACH_GENERATION_MODE_LLM
+    return (
+        normalize_batch_item_generation_mode(email_task) == OUTREACH_GENERATION_MODE_LLM
+    )
 
 
 def batch_item_is_ready_for_llm_generation(email_task: EmailTask) -> bool:
@@ -63,7 +65,10 @@ def resolve_batch_task_item_next_action(email_task: EmailTask) -> str | None:
     }:
         if email_task.primary_material is None:
             return "select_primary_material"
-        if batch_item_uses_llm_generation(email_task) and not (email_task.professor.research_direction or "").strip():
+        if (
+            batch_item_uses_llm_generation(email_task)
+            and not (email_task.professor.research_direction or "").strip()
+        ):
             return "complete_professor_profile"
         return "waiting_draft_generation"
     return None

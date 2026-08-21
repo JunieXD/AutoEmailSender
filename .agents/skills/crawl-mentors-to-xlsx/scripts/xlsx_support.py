@@ -16,7 +16,9 @@ CORE_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properti
 DC_NS = "http://purl.org/dc/elements/1.1/"
 DCTERMS_NS = "http://purl.org/dc/terms/"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
-EXTENDED_NS = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+EXTENDED_NS = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+)
 VT_NS = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 
@@ -354,7 +356,10 @@ def _content_types_xml(sheet_count: int) -> bytes:
     ET.SubElement(
         root,
         "Default",
-        {"Extension": "rels", "ContentType": "application/vnd.openxmlformats-package.relationships+xml"},
+        {
+            "Extension": "rels",
+            "ContentType": "application/vnd.openxmlformats-package.relationships+xml",
+        },
     )
     ET.SubElement(
         root,
@@ -362,10 +367,22 @@ def _content_types_xml(sheet_count: int) -> bytes:
         {"Extension": "xml", "ContentType": "application/xml"},
     )
     overrides = [
-        ("/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
-        ("/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"),
-        ("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"),
-        ("/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"),
+        (
+            "/xl/workbook.xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        ),
+        (
+            "/xl/styles.xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml",
+        ),
+        (
+            "/docProps/core.xml",
+            "application/vnd.openxmlformats-package.core-properties+xml",
+        ),
+        (
+            "/docProps/app.xml",
+            "application/vnd.openxmlformats-officedocument.extended-properties+xml",
+        ),
     ]
     overrides.extend(
         (
@@ -386,9 +403,21 @@ def _content_types_xml(sheet_count: int) -> bytes:
 def _root_relationships_xml() -> bytes:
     root = ET.Element("Relationships", {"xmlns": PACKAGE_REL_NS})
     relationships = [
-        ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "xl/workbook.xml"),
-        ("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml"),
-        ("rId3", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", "docProps/app.xml"),
+        (
+            "rId1",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+            "xl/workbook.xml",
+        ),
+        (
+            "rId2",
+            "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties",
+            "docProps/core.xml",
+        ),
+        (
+            "rId3",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties",
+            "docProps/app.xml",
+        ),
     ]
     for rel_id, rel_type, target in relationships:
         ET.SubElement(
@@ -453,7 +482,9 @@ def _core_properties_xml() -> bytes:
     creator.text = "Auto Email Sender crawl-mentors-to-xlsx"
     modified_by = ET.SubElement(root, _tag(CORE_NS, "lastModifiedBy"))
     modified_by.text = "Auto Email Sender crawl-mentors-to-xlsx"
-    timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     created = ET.SubElement(
         root,
         _tag(DCTERMS_NS, "created"),
@@ -533,7 +564,9 @@ def write_professor_workbook(
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sheet_names = tuple(spec[0] for spec in sheet_specs)
-    with ZipFile(output_path, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
+    with ZipFile(
+        output_path, "w", compression=ZIP_DEFLATED, compresslevel=9
+    ) as archive:
         archive.writestr("[Content_Types].xml", _content_types_xml(len(sheet_specs)))
         archive.writestr("_rels/.rels", _root_relationships_xml())
         archive.writestr("docProps/core.xml", _core_properties_xml())
@@ -607,8 +640,7 @@ def _read_sheet(
             cell_type = cell.attrib.get("t")
             if cell_type == "inlineStr":
                 value = "".join(
-                    text.text or ""
-                    for text in cell.findall(f".//{_tag(MAIN_NS, 't')}")
+                    text.text or "" for text in cell.findall(f".//{_tag(MAIN_NS, 't')}")
                 )
             else:
                 value_element = cell.find(_tag(MAIN_NS, "v"))
@@ -625,7 +657,10 @@ def _read_sheet(
             current[column_index] = value
         row_values[row_number] = current
     rows = [
-        [row_values.get(row_number, {}).get(column, "") for column in range(1, max_column + 1)]
+        [
+            row_values.get(row_number, {}).get(column, "")
+            for column in range(1, max_column + 1)
+        ]
         for row_number in range(1, max_row + 1)
     ]
     return SheetData(name=name, rows=rows, formulas=tuple(formulas))
@@ -651,7 +686,11 @@ def read_workbook(path: Path) -> WorkbookData:
         if not sheet_elements:
             raise ValueError("XLSX 不包含工作表")
         active_view = workbook_root.find(f".//{_tag(MAIN_NS, 'workbookView')}")
-        active_index = int(active_view.attrib.get("activeTab", "0")) if active_view is not None else 0
+        active_index = (
+            int(active_view.attrib.get("activeTab", "0"))
+            if active_view is not None
+            else 0
+        )
         if active_index < 0 or active_index >= len(sheet_elements):
             active_index = 0
         shared_strings = _read_shared_strings(archive)

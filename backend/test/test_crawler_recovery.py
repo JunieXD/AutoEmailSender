@@ -76,7 +76,9 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job.status, CrawlJobStatus.NEEDS_REVIEW.value)
             self.assertIsNone(job.error_message)
 
-    async def test_running_faculty_crawl_is_paused_and_processing_work_released(self) -> None:
+    async def test_running_faculty_crawl_is_paused_and_processing_work_released(
+        self,
+    ) -> None:
         job_id = await self._create_running_job()
         future_lease = datetime.now(UTC) + timedelta(minutes=5)
         claimed_at = datetime.now(UTC)
@@ -108,7 +110,9 @@ class CrawlerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(task.claimed_at)
             self.assertIsNone(task.lease_expires_at)
             self.assertEqual(task.last_error, "任务已暂停，释放处理中工作项")
-            self.assertEqual(job.agent_trace[-1]["message"], INTERRUPTED_JOB_PAUSED_MESSAGE)
+            self.assertEqual(
+                job.agent_trace[-1]["message"], INTERRUPTED_JOB_PAUSED_MESSAGE
+            )
 
     async def test_running_enrichment_job_is_still_requeued(self) -> None:
         job_id = await self._create_running_job(

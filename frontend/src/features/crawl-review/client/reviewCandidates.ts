@@ -36,7 +36,7 @@ export type CrawlCandidateFilters = {
   reviewStatus: CrawlCandidateReviewStatusFilter;
 };
 
-export const DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES: CrawlCandidateSearchScope[] = [
+const DEFAULT_CRAWL_CANDIDATE_SEARCH_SCOPES: CrawlCandidateSearchScope[] = [
   'name',
   'email',
   'organization',

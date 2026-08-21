@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from .schemas import (
     ProfessorInformationEnrichmentItemRead,
     ProfessorInformationEnrichmentItemsPageRead,
     ProfessorInformationEnrichmentJobActionRead,
+    ProfessorInformationEnrichmentJobsPageRead,
     ProfessorInformationEnrichmentJobRead,
 )
 from .service import (
@@ -26,6 +27,7 @@ from .service import (
     get_professor_information_enrichment_job,
     list_professor_information_enrichment_items,
     list_professor_information_enrichment_items_page,
+    list_professor_information_enrichment_jobs_page,
     list_professor_information_enrichment_jobs,
     request_professor_information_enrichment_cancel,
     restore_professor_information_enrichment_job_record,
@@ -62,13 +64,17 @@ async def create_single_professor_information_enrichment(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="该导师已有信息补全正在进行") from exc
+        raise HTTPException(
+            status_code=409, detail="该导师已有信息补全正在进行"
+        ) from exc
     except ValueError as exc:
         detail = str(exc)
         status_code_value = 404 if detail == "导师不存在" else 422
         raise HTTPException(status_code=status_code_value, detail=detail) from exc
     result = await get_professor_information_enrichment_job(session, job_id)
-    if result is None:  # pragma: no cover - committed job cannot disappear in normal execution
+    if (
+        result is None
+    ):  # pragma: no cover - committed job cannot disappear in normal execution
         raise HTTPException(status_code=404, detail="信息补全任务不存在")
     return result
 
@@ -101,6 +107,40 @@ async def list_information_enrichment_jobs(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/page", response_model=ProfessorInformationEnrichmentJobsPageRead)
+async def list_information_enrichment_jobs_page(
+    view: Literal["current", "trash"] = Query(default="current"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=8, ge=1, le=100),
+    keyword: str | None = Query(default=None, max_length=200),
+    status_filter: str | None = Query(default=None, alias="status"),
+    sort_key: Literal["updated", "created", "progress"] = Query(default="created"),
+    sort_direction: Literal["asc", "desc"] = Query(default="desc"),
+    unpaged: bool = Query(default=False),
+    session: AsyncSession = Depends(get_async_session),
+) -> ProfessorInformationEnrichmentJobsPageRead:
+    (
+        jobs,
+        total_count,
+        current_total_count,
+    ) = await list_professor_information_enrichment_jobs_page(
+        session,
+        view=view,
+        offset=offset,
+        limit=limit,
+        keyword=keyword,
+        status=status_filter,
+        sort_key=sort_key,
+        sort_direction=sort_direction,
+        unpaged=unpaged,
+    )
+    return ProfessorInformationEnrichmentJobsPageRead(
+        items=jobs,
+        total_count=total_count,
+        current_total_count=current_total_count,
+    )
+
+
 @router.post(
     "",
     response_model=ProfessorInformationEnrichmentJobRead,
@@ -119,7 +159,9 @@ async def create_batch_information_enrichment_job(
             name=payload.name,
         )
     except IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="部分导师已有信息补全正在进行，请重试") from exc
+        raise HTTPException(
+            status_code=409, detail="部分导师已有信息补全正在进行，请重试"
+        ) from exc
     except ValueError as exc:
         detail = str(exc)
         status_code_value = 404 if detail == "导师不存在" else 422

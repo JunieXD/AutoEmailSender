@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.base import ApiSchema
 
+
 class CreateMatchAnalysisJobRequest(BaseModel):
     identity_id: int = Field(ge=1)
     llm_profile_id: int = Field(ge=1)

@@ -59,7 +59,9 @@ async def resolve_identity_communication_scope(
         )
 
     ordered_members = [active_identity]
-    ordered_members.extend(member for member in members if member.id != active_identity.id)
+    ordered_members.extend(
+        member for member in members if member.id != active_identity.id
+    )
     return IdentityCommunicationScope(
         active_identity=active_identity,
         identities=tuple(ordered_members),

@@ -53,7 +53,7 @@ macOS Apple Silicon 安装版数据目录：
 - 邮箱服务商是否限制第三方客户端登录。
 - 网络能否访问邮箱服务器。
 
-还不清楚 SMTP、IMAP 或授权码是什么，请查看[首次配置](./first-run#_1-创建发件身份)和[个人中心](./profile#发件身份)。
+还不清楚 SMTP、IMAP 或授权码是什么，请查看[邮箱授权码教程](./first-run#mail-authorization-code)和[个人中心](./profile#发件身份)。
 
 ## 匹配分析结果不准怎么办
 

@@ -103,9 +103,7 @@ def downgrade() -> None:
             if "ix_match_analysis_jobs_match_source_identity_id" in _index_names(
                 "match_analysis_jobs"
             ):
-                batch_op.drop_index(
-                    "ix_match_analysis_jobs_match_source_identity_id"
-                )
+                batch_op.drop_index("ix_match_analysis_jobs_match_source_identity_id")
             if match_job_foreign_key_name is not None:
                 batch_op.drop_constraint(
                     match_job_foreign_key_name,
@@ -113,9 +111,7 @@ def downgrade() -> None:
                 )
             batch_op.drop_column("match_source_identity_id")
 
-    if "match_source_identity_id" in _column_names(
-        "identity_communication_groups"
-    ):
+    if "match_source_identity_id" in _column_names("identity_communication_groups"):
         communication_group_foreign_key_name = _foreign_key_name(
             "identity_communication_groups",
             ["match_source_identity_id"],
@@ -370,7 +366,9 @@ def _add_match_analysis_result_details() -> None:
         ("risk_points", sa.JSON()),
         ("match_keywords", sa.JSON()),
     ]
-    missing = [(name, column_type) for name, column_type in additions if name not in columns]
+    missing = [
+        (name, column_type) for name, column_type in additions if name not in columns
+    ]
     if not missing:
         return
     with op.batch_alter_table("match_analysis_runs") as batch_op:
@@ -480,19 +478,23 @@ def _backfill_match_results() -> None:
         if key in seen:
             continue
         seen.add(key)
-        run = bind.execute(
-            sa.select(
-                runs.c.id,
-                runs.c.primary_material_id,
-                runs.c.finished_at,
+        run = (
+            bind.execute(
+                sa.select(
+                    runs.c.id,
+                    runs.c.primary_material_id,
+                    runs.c.finished_at,
+                )
+                .where(
+                    runs.c.email_task_id == task["id"],
+                    runs.c.success.is_(True),
+                )
+                .order_by(runs.c.finished_at.desc(), runs.c.id.desc())
+                .limit(1)
             )
-            .where(
-                runs.c.email_task_id == task["id"],
-                runs.c.success.is_(True),
-            )
-            .order_by(runs.c.finished_at.desc(), runs.c.id.desc())
-            .limit(1)
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         analyzed_at = (
             run["finished_at"]
             if run is not None and run["finished_at"] is not None
@@ -550,8 +552,7 @@ def _column_names(table_name: str) -> set[str]:
     if table_name not in _table_names():
         return set()
     return {
-        column["name"]
-        for column in sa.inspect(op.get_bind()).get_columns(table_name)
+        column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)
     }
 
 

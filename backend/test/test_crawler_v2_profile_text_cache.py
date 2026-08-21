@@ -22,7 +22,9 @@ class ProfileTextCacheTests(unittest.TestCase):
         self.assertIn(third, cache)
         self.assertEqual(len(cache), 2)
 
-    def test_character_budget_evicts_old_entries_and_rejects_oversized_value(self) -> None:
+    def test_character_budget_evicts_old_entries_and_rejects_oversized_value(
+        self,
+    ) -> None:
         cache = ProfileTextCache(max_entries=10, max_characters=8)
         first = (1, 10, 100, "first")
         second = (1, 10, 101, "second")
@@ -43,7 +45,12 @@ class ProfileTextCacheTests(unittest.TestCase):
         same_candidate_other_factory = (2, 10, 100, "other-factory")
         same_job_other_candidate = (1, 10, 101, "other-candidate")
         other_job = (1, 11, 100, "other-job")
-        for key in (target, same_candidate_other_factory, same_job_other_candidate, other_job):
+        for key in (
+            target,
+            same_candidate_other_factory,
+            same_job_other_candidate,
+            other_job,
+        ):
             cache.put(key, key[3])
 
         self.assertEqual(

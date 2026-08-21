@@ -155,6 +155,11 @@ describe("filterManagementProfessors", () => {
         { research_direction: "AI systems" },
       ],
       [
+        "personalNote",
+        { personal_note: null },
+        { personal_note: "已联系" },
+      ],
+      [
         "tag",
         { tags: [] },
         {
@@ -229,7 +234,7 @@ describe("filterManagementProfessors", () => {
       "姓名、邮箱",
     );
     expect(getManagementKeywordSearchPlaceholder(["unknown"])).toBe(
-      "姓名、邮箱、学校、学院、系所、职称、研究方向、标签",
+      "姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签",
     );
   });
 
@@ -252,7 +257,7 @@ describe("filterManagementProfessors", () => {
     expect(namesFor(taggedProfessors, { keyword: "高意愿" })).toEqual(["Tagged"]);
   });
 
-  it("does not match keyword against personal notes", () => {
+  it("matches keyword against personal notes by default and by selected scope", () => {
     const noteOnlyProfessors = [
       buildProfessor({
         id: 4,
@@ -273,6 +278,18 @@ describe("filterManagementProfessors", () => {
 
     expect(
       namesFor(noteOnlyProfessors, { keyword: "隐私备注关键词" }),
+    ).toEqual(["Alice"]);
+    expect(
+      namesFor(noteOnlyProfessors, {
+        keyword: "隐私备注关键词",
+        keywordSearchScopes: ["personalNote"],
+      }),
+    ).toEqual(["Alice"]);
+    expect(
+      namesFor(noteOnlyProfessors, {
+        keyword: "隐私备注关键词",
+        keywordSearchScopes: ["email"],
+      }),
     ).toEqual([]);
   });
 

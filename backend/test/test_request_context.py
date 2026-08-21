@@ -50,7 +50,9 @@ class RequestContextTests(unittest.TestCase):
     def test_invalid_request_id_header_is_replaced(self) -> None:
         invalid_request_id = "bad/request id"
 
-        response = self.client.get("/api/ping", headers={"X-Request-ID": invalid_request_id})
+        response = self.client.get(
+            "/api/ping", headers={"X-Request-ID": invalid_request_id}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertNotEqual(response.headers["X-Request-ID"], invalid_request_id)
@@ -59,7 +61,9 @@ class RequestContextTests(unittest.TestCase):
     def test_too_long_request_id_header_is_replaced(self) -> None:
         too_long_request_id = "a" * 129
 
-        response = self.client.get("/api/ping", headers={"X-Request-ID": too_long_request_id})
+        response = self.client.get(
+            "/api/ping", headers={"X-Request-ID": too_long_request_id}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertNotEqual(response.headers["X-Request-ID"], too_long_request_id)
@@ -68,18 +72,24 @@ class RequestContextTests(unittest.TestCase):
     def test_request_id_is_available_in_endpoint_and_reset_after_request(self) -> None:
         request_id = "service.context-1"
 
-        response = self.client.get("/test/request-id", headers={"X-Request-ID": request_id})
+        response = self.client.get(
+            "/test/request-id", headers={"X-Request-ID": request_id}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"request_id": request_id})
         self.assertEqual(response.headers["X-Request-ID"], request_id)
         self.assertIsNone(get_request_id())
 
-    def test_unhandled_exception_response_keeps_request_id_and_resets_context(self) -> None:
+    def test_unhandled_exception_response_keeps_request_id_and_resets_context(
+        self,
+    ) -> None:
         request_id = "service.error-1"
         client = TestClient(self.app, raise_server_exceptions=False)
         try:
-            response = client.get("/test/request-id-error", headers={"X-Request-ID": request_id})
+            response = client.get(
+                "/test/request-id-error", headers={"X-Request-ID": request_id}
+            )
         finally:
             client.close()
 
@@ -97,7 +107,9 @@ class RequestContextTests(unittest.TestCase):
             error_log.unlink()
         client = TestClient(self.app, raise_server_exceptions=False)
         try:
-            response = client.get("/test/request-id-error", headers={"X-Request-ID": request_id})
+            response = client.get(
+                "/test/request-id-error", headers={"X-Request-ID": request_id}
+            )
         finally:
             client.close()
 
@@ -109,10 +121,14 @@ class RequestContextTests(unittest.TestCase):
         self.assertIn("Traceback", content)
 
     def test_unhandled_exception_returns_json_and_resets_context(self) -> None:
-        response = self.client.get("/test/request-id-error", headers={"X-Request-ID": "service.error-2"})
+        response = self.client.get(
+            "/test/request-id-error", headers={"X-Request-ID": "service.error-2"}
+        )
 
         self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.json(), {"detail": "boom", "request_id": "service.error-2"})
+        self.assertEqual(
+            response.json(), {"detail": "boom", "request_id": "service.error-2"}
+        )
         self.assertIsNone(get_request_id())
 
 

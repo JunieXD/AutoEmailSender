@@ -1,9 +1,8 @@
 {
   "name": "auto-email-sender-desktop",
-  "version": "2.5.4",
+  "version": "2.6.0",
   "private": true,
   "allowScripts": {
-    "electron@39.8.10": true,
     "electron-winstaller@5.4.0": true,
     "esbuild@0.28.1": true,
     "fsevents@2.3.3": true
@@ -33,7 +32,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.0",
-    "electron": "^39.8.10",
+    "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",

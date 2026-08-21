@@ -29,4 +29,6 @@ def email_matches(value: str | None, candidates: Iterable[str | None]) -> bool:
     normalized = normalize_email_address(value)
     if not normalized:
         return False
-    return any(normalized == normalize_email_address(candidate) for candidate in candidates)
+    return any(
+        normalized == normalize_email_address(candidate) for candidate in candidates
+    )

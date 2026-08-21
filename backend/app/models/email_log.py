@@ -160,14 +160,18 @@ class EmailLog(Base):
     folder: Mapped[str | None] = mapped_column(String(255), nullable=True)
     uidvalidity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     imap_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    normalized_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    normalized_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     message_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
     from_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     to_emails: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     cc_emails: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     bcc_emails: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     synced_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    provider_payload: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    provider_payload: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
     failure_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     reply_headers: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

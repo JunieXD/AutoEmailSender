@@ -34,7 +34,9 @@ class AgentApiClientTests(unittest.TestCase):
         )
         self.assertTrue(http_client.is_closed)
 
-    def test_api_error_exit_codes_follow_error_contract_not_only_http_status(self) -> None:
+    def test_api_error_exit_codes_follow_error_contract_not_only_http_status(
+        self,
+    ) -> None:
         self.assertEqual(
             _exit_code_for_api_error(
                 status_code=409,
@@ -74,7 +76,10 @@ class AgentApiClientTests(unittest.TestCase):
     def test_successful_non_json_response_is_a_structured_cli_error(self) -> None:
         descriptor = _descriptor()
         http_client, _ = _http_client(httpx.Response(200, content=b"not-json"))
-        with patch("auto_email_sender_cli.client.ensure_runtime_descriptor", return_value=descriptor):
+        with patch(
+            "auto_email_sender_cli.client.ensure_runtime_descriptor",
+            return_value=descriptor,
+        ):
             with self.assertRaises(CliError) as raised:
                 AgentApiClient(descriptor, http_client=http_client).request(
                     "GET",
@@ -86,7 +91,9 @@ class AgentApiClientTests(unittest.TestCase):
 
     def test_network_failure_recovers_runtime_and_retries_once(self) -> None:
         first = _descriptor(base_url="http://127.0.0.1:48120", access_token="old-token")
-        second = _descriptor(base_url="http://127.0.0.1:48121", access_token="new-token")
+        second = _descriptor(
+            base_url="http://127.0.0.1:48121", access_token="new-token"
+        )
         http_client, transport = _http_client(
             httpx.ConnectError("backend restarting"),
             httpx.Response(200, json={"status": "ok"}),
@@ -124,7 +131,9 @@ class AgentApiClientTests(unittest.TestCase):
 
     def test_rotated_token_is_reloaded_after_authentication_failure(self) -> None:
         first = _descriptor(access_token="old-token")
-        second = _descriptor(access_token="new-token", base_url="http://127.0.0.1:48122")
+        second = _descriptor(
+            access_token="new-token", base_url="http://127.0.0.1:48122"
+        )
         http_client, transport = _http_client(
             httpx.Response(401, json={"error": {"code": "INVALID_ACCESS_TOKEN"}}),
             httpx.Response(200, json={"status": "ok"}),
@@ -144,20 +153,29 @@ class AgentApiClientTests(unittest.TestCase):
 
     def test_download_bytes_uses_agent_token_and_binary_accept_header(self) -> None:
         descriptor = _descriptor()
-        http_client, transport = _http_client(httpx.Response(200, content=b"resume content"))
-        with patch("auto_email_sender_cli.client.ensure_runtime_descriptor", return_value=descriptor):
+        http_client, transport = _http_client(
+            httpx.Response(200, content=b"resume content")
+        )
+        with patch(
+            "auto_email_sender_cli.client.ensure_runtime_descriptor",
+            return_value=descriptor,
+        ):
             result = AgentApiClient(http_client=http_client).download_bytes(
                 "/api/agent/v1/materials/8/download",
             )
 
         self.assertEqual(result, b"resume content")
-        self.assertEqual(transport.requests[0].headers["Authorization"], "Bearer agent-token")
+        self.assertEqual(
+            transport.requests[0].headers["Authorization"], "Bearer agent-token"
+        )
         self.assertEqual(
             transport.requests[0].headers["Accept"],
             "application/octet-stream",
         )
 
-    def test_direct_runtime_descriptor_with_old_protocol_is_rejected_before_request(self) -> None:
+    def test_direct_runtime_descriptor_with_old_protocol_is_rejected_before_request(
+        self,
+    ) -> None:
         descriptor = _descriptor(protocol_version="1")
         http_client, transport = _http_client(httpx.Response(200, json={}))
         with self.assertRaises(RuntimeProtocolMismatchError):
@@ -168,10 +186,15 @@ class AgentApiClientTests(unittest.TestCase):
 
         self.assertEqual(transport.requests, [])
 
-    def test_non_idempotent_network_timeout_is_reported_as_unknown_without_retry(self) -> None:
+    def test_non_idempotent_network_timeout_is_reported_as_unknown_without_retry(
+        self,
+    ) -> None:
         descriptor = _descriptor()
         http_client, transport = _http_client(httpx.ReadTimeout("smtp timeout"))
-        with patch("auto_email_sender_cli.client.ensure_runtime_descriptor", return_value=descriptor):
+        with patch(
+            "auto_email_sender_cli.client.ensure_runtime_descriptor",
+            return_value=descriptor,
+        ):
             with self.assertRaises(ExternalExecutionUnknownError) as raised:
                 AgentApiClient(descriptor, http_client=http_client).request(
                     "POST",
@@ -183,7 +206,9 @@ class AgentApiClientTests(unittest.TestCase):
         self.assertEqual(raised.exception.details["request_id"], "req_same")
         self.assertEqual(len(transport.requests), 1)
 
-    def test_mutating_connect_error_is_app_unavailable_without_a_second_execution(self) -> None:
+    def test_mutating_connect_error_is_app_unavailable_without_a_second_execution(
+        self,
+    ) -> None:
         descriptor = _descriptor()
         http_client, transport = _http_client(httpx.ConnectError("desktop is closed"))
         with self.assertRaises(RuntimeUnavailableError) as raised:
@@ -261,12 +286,18 @@ class AgentApiClientTests(unittest.TestCase):
 
         self.assertEqual(result, {"items": []})
         self.assertEqual(len(transport.requests), 2)
-        self.assertTrue(transport.requests[0].url.path.endswith("/api/agent/v1/runtime"))
-        self.assertTrue(transport.requests[1].url.path.endswith("/api/agent/v1/professors"))
+        self.assertTrue(
+            transport.requests[0].url.path.endswith("/api/agent/v1/runtime")
+        )
+        self.assertTrue(
+            transport.requests[1].url.path.endswith("/api/agent/v1/professors")
+        )
         self.assertIs(client._http_client, http_client)
 
     def test_request_timeout_overrides_the_client_default(self) -> None:
-        http_client, transport = _http_client(httpx.Response(200, json={"status": "ok"}))
+        http_client, transport = _http_client(
+            httpx.Response(200, json={"status": "ok"})
+        )
         client = AgentApiClient(_descriptor(), timeout=30.0, http_client=http_client)
 
         result = client.request(
@@ -295,7 +326,9 @@ class AgentApiClientTests(unittest.TestCase):
 
         client.request("POST", "/api/jobs", idempotency_key="request-7")
 
-        self.assertEqual(client.last_response_headers["x-agent-mutation-status"], "replayed")
+        self.assertEqual(
+            client.last_response_headers["x-agent-mutation-status"], "replayed"
+        )
         self.assertEqual(
             client.last_response_headers["x-agent-mutation-command"],
             "crawler.jobs.create",
@@ -356,7 +389,9 @@ class _SequenceTransport(httpx.BaseTransport):
         )
 
 
-def _http_client(*outcomes: httpx.Response | Exception) -> tuple[httpx.Client, _SequenceTransport]:
+def _http_client(
+    *outcomes: httpx.Response | Exception,
+) -> tuple[httpx.Client, _SequenceTransport]:
     transport = _SequenceTransport(outcomes)
     return httpx.Client(transport=transport), transport
 

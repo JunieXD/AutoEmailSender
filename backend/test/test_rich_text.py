@@ -61,9 +61,7 @@ class RichTextRenderingTest(unittest.TestCase):
                                 {
                                     "type": "link",
                                     "href": "javascript:alert(1)",
-                                    "children": [
-                                        {"type": "text", "text": "危险链接"}
-                                    ],
+                                    "children": [{"type": "text", "text": "危险链接"}],
                                 }
                             ],
                         }

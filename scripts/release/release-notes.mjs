@@ -23,17 +23,6 @@ export function buildReleaseNotes(version) {
     `- Windows：下载 \`${windowsInstallerName}\` 后双击安装。`,
     `- macOS Apple Silicon：下载 \`${macAppleSiliconInstallerName}\`，打开后把应用拖到“应用程序”。`,
     "- macOS 版本尚未通过 Apple 官方认证，首次打开可能会被系统拦截；请到“系统设置 > 隐私与安全性”点击“仍要打开”，再确认打开。",
-    "- Intel Mac 暂未提供安装包。",
-    "",
-    "## 自动更新",
-    "",
-    "- Windows：支持在应用内下载并安装更新。",
-    "- macOS Apple Silicon：支持自动检查并在应用内安装更新。",
-    "- 旧版 macOS 用户需要手动安装本版本一次，之后即可使用应用内更新。",
-    "",
-    "## 导师抓取 Skill",
-    "",
-    "- 想用 Codex 或 Claude Code 从学校官网整理导师信息并生成导入表？查看[导师抓取 Skill 安装与使用教程](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)。",
     "",
   ].join("\n");
 }

@@ -48,7 +48,9 @@ DESKTOP_PARENT_POLL_SECONDS = 1.0
 
 
 def parse_desktop_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Auto Email Sender desktop backend.")
+    parser = argparse.ArgumentParser(
+        description="Run Auto Email Sender desktop backend."
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--self-check", action="store_true")
@@ -137,7 +139,9 @@ def run_packaged_document_self_check(fixture_dir: Path) -> int:
         content = extract_text_from_document(path.as_posix()) or ""
         missing = [sentinel for sentinel in sentinels if sentinel not in content]
         if missing:
-            raise RuntimeError(f"packaged document self-check failed for {file_name}: {missing}")
+            raise RuntimeError(
+                f"packaged document self-check failed for {file_name}: {missing}"
+            )
 
     print("packaged document self-check ok")
     return 0

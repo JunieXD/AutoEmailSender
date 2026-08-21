@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from app.core.time import utc_now
 
@@ -200,7 +200,9 @@ def _is_sensitive_key(key: str) -> bool:
     normalized = "".join(char for char in key.lower() if char.isalnum())
     if normalized in TOKEN_USAGE_KEYS:
         return False
-    return normalized in SENSITIVE_KEYS or any(part in normalized for part in SENSITIVE_KEY_PARTS)
+    return normalized in SENSITIVE_KEYS or any(
+        part in normalized for part in SENSITIVE_KEY_PARTS
+    )
 
 
 def _safe_message(message: str | None) -> str | None:

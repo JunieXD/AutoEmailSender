@@ -4,7 +4,7 @@ import path from "node:path";
 
 export const AGENT_RUNTIME_PROTOCOL_VERSION = "3";
 
-export type AgentRuntimeProcess = {
+type AgentRuntimeProcess = {
   pid: number;
   started_at: string;
 };

@@ -35,7 +35,9 @@ class CommunicationsModuleBoundaryTest(unittest.TestCase):
             sync.sync_workspace_professor_replies,
         )
         self.assertIs(public.TestComposeThreadRead, schemas.TestComposeThreadRead)
-        self.assertIs(public.build_test_compose_thread, runtime.build_test_compose_thread)
+        self.assertIs(
+            public.build_test_compose_thread, runtime.build_test_compose_thread
+        )
 
 
 if __name__ == "__main__":

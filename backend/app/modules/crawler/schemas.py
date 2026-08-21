@@ -97,7 +97,6 @@ class CrawlJobCreatePayload(BaseModel):
 
 
 class CrawlJobRead(ApiSchema):
-
     id: int
     university: str
     school: str
@@ -152,6 +151,12 @@ class CrawlJobSummaryRead(CrawlJobRead):
     effective_models: list[str] = Field(default_factory=list)
 
 
+class CrawlJobSummaryPageRead(ApiSchema):
+    items: list[CrawlJobSummaryRead]
+    total_count: int
+    current_total_count: int
+
+
 class CrawlJobDetailsRead(ApiSchema):
     job: CrawlJobSummaryRead
     pages: list["CrawlPageRead"]
@@ -169,7 +174,6 @@ class CrawlJobEventRead(ApiSchema):
 
 
 class CrawlPageRead(ApiSchema):
-
     id: int
     job_id: int
     url: str
@@ -184,7 +188,6 @@ class CrawlPageRead(ApiSchema):
 
 
 class CrawlCandidateRead(ApiSchema):
-
     id: int
     job_id: int
     professor_id: int | None

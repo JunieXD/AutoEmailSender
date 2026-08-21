@@ -51,7 +51,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
     def _run_async(self, awaitable):
         return asyncio.run(awaitable)
 
-    def test_workspace_merges_group_history_deduplicates_and_keeps_drafts_isolated(self) -> None:
+    def test_workspace_merges_group_history_deduplicates_and_keeps_drafts_isolated(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 now = datetime.now(UTC)
@@ -60,7 +62,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
                 identity_b = self._identity("身份 B", "workspace-b@example.com")
                 identity_c = self._identity("身份 C", "workspace-c@example.com")
                 llm_profile = self._llm_profile()
-                professor = Professor(name="共享导师", email="shared-professor@example.edu")
+                professor = Professor(
+                    name="共享导师", email="shared-professor@example.edu"
+                )
                 history_only_professor = Professor(
                     name="仅有历史导师",
                     email="history-only@example.edu",
@@ -208,12 +212,16 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
                 )
                 return thread_a, thread_b, thread_c, history_only, task_a.id, task_b.id
 
-        thread_a, thread_b, thread_c, history_only, task_a_id, task_b_id = self._run_async(
-            scenario(),
+        thread_a, thread_b, thread_c, history_only, task_a_id, task_b_id = (
+            self._run_async(
+                scenario(),
+            )
         )
 
         self.assertEqual(thread_a.current_task.id, task_a_id)
-        self.assertEqual([identity.id for identity in thread_a.communication_scope], [1, 2])
+        self.assertEqual(
+            [identity.id for identity in thread_a.communication_scope], [1, 2]
+        )
         self.assertEqual(
             [message.subject for message in thread_a.messages],
             ["A 的当前草稿", "共享主题", "Re: 共享主题"],
@@ -232,7 +240,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
         )
 
         self.assertEqual(thread_b.current_task.id, task_b_id)
-        self.assertEqual([identity.id for identity in thread_b.communication_scope], [2, 1])
+        self.assertEqual(
+            [identity.id for identity in thread_b.communication_scope], [2, 1]
+        )
         self.assertEqual(
             [message.subject for message in thread_b.messages],
             ["B 的当前草稿", "共享主题", "Re: 共享主题"],
@@ -247,7 +257,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
             ["B 收到的历史"],
         )
 
-    def test_home_and_dashboard_use_shared_communication_but_current_identity_tasks(self) -> None:
+    def test_home_and_dashboard_use_shared_communication_but_current_identity_tasks(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 now = datetime.now(UTC)
@@ -267,7 +279,15 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
                     research_direction="机器学习",
                 )
                 session.add_all(
-                    [group, identity_a, identity_b, identity_c, llm_profile, professor_x, professor_y],
+                    [
+                        group,
+                        identity_a,
+                        identity_b,
+                        identity_c,
+                        llm_profile,
+                        professor_x,
+                        professor_y,
+                    ],
                 )
                 await session.flush()
                 identity_a.communication_group_id = group.id
@@ -377,7 +397,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
                 )
                 return statuses, dashboard, professor_x.id, professor_y.id
 
-        statuses, dashboard, professor_x_id, professor_y_id = self._run_async(scenario())
+        statuses, dashboard, professor_x_id, professor_y_id = self._run_async(
+            scenario()
+        )
 
         self.assertEqual(statuses[professor_x_id].status, "replied")
         self.assertEqual(statuses[professor_x_id].sent_count, 1)
@@ -419,13 +441,21 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
         self.assertEqual(status_distribution[EmailTaskStatus.SEND_FAILED.value], 1)
         self.assertEqual(status_distribution[EmailTaskStatus.SCHEDULED.value], 0)
 
-    def test_manual_refresh_syncs_group_members_and_reports_partial_failure(self) -> None:
+    def test_manual_refresh_syncs_group_members_and_reports_partial_failure(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 group = IdentityCommunicationGroup()
-                identity_a = self._identity("身份 A", "refresh-a@example.com", with_imap=True)
-                identity_b = self._identity("身份 B", "refresh-b@example.com", with_imap=True)
-                identity_c = self._identity("身份 C", "refresh-c@example.com", with_imap=True)
+                identity_a = self._identity(
+                    "身份 A", "refresh-a@example.com", with_imap=True
+                )
+                identity_b = self._identity(
+                    "身份 B", "refresh-b@example.com", with_imap=True
+                )
+                identity_c = self._identity(
+                    "身份 C", "refresh-c@example.com", with_imap=True
+                )
                 session.add_all([group, identity_a, identity_b, identity_c])
                 await session.flush()
                 identity_a.communication_group_id = group.id
@@ -434,7 +464,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
 
                 calls: list[int] = []
 
-                async def fake_sync(_session_factory, identity_id: int, professor_id: int):
+                async def fake_sync(
+                    _session_factory, identity_id: int, professor_id: int
+                ):
                     self.assertEqual(professor_id, 88)
                     calls.append(identity_id)
                     if identity_id == identity_b.id:
@@ -449,7 +481,10 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
                         "app.modules.workspace.api.sync_workspace_professor_replies",
                         side_effect=fake_sync,
                     ),
-                    patch("app.modules.workspace.api.get_session_factory", return_value=object()),
+                    patch(
+                        "app.modules.workspace.api.get_session_factory",
+                        return_value=object(),
+                    ),
                     patch(
                         "app.modules.workspace.api.build_workspace_thread",
                         side_effect=fake_build_thread,
@@ -473,7 +508,9 @@ class SharedIdentityCommunicationTests(unittest.TestCase):
         self.assertEqual(warnings[0].identity_id, identity_b_id)
         self.assertIn("同步失败", warnings[0].message)
 
-    def test_shared_status_scales_without_identity_or_professor_n_plus_one_queries(self) -> None:
+    def test_shared_status_scales_without_identity_or_professor_n_plus_one_queries(
+        self,
+    ) -> None:
         async def scenario():
             async with self.session_factory() as session:
                 group = IdentityCommunicationGroup()

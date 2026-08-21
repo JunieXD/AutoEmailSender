@@ -400,9 +400,10 @@ describe("HomePage onboarding", () => {
     expect(sortButton).not.toHaveClass("ui-select-shell");
     fireEvent.click(searchScopeButton);
     expect(screen.getByRole("option", { name: "邮箱" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "备注" })).toBeInTheDocument();
     fireEvent.click(searchScopeButton);
     fireEvent.change(
-      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签"),
+      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签"),
       { target: { value: "不存在的导师" } },
     );
 
@@ -645,7 +646,7 @@ describe("HomePage onboarding", () => {
     expect(screen.getByText("李教授")).toBeInTheDocument();
 
     fireEvent.change(
-      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签"),
+      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签"),
       { target: { value: "王教授" } },
     );
 
@@ -661,7 +662,7 @@ describe("HomePage onboarding", () => {
 
     expect(await screen.findByTestId("home-dashboard")).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、标签"),
+      screen.getByPlaceholderText("姓名、邮箱、学校、学院、系所、职称、研究方向、备注、标签"),
     ).toHaveValue("王教授");
     expect(await screen.findByText("王教授")).toBeInTheDocument();
     expect(screen.queryByText("李教授")).not.toBeInTheDocument();

@@ -27,8 +27,7 @@ def serialize_outreach_template(template: OutreachTemplate) -> OutreachTemplateR
         body_text=template.body_text,
         body_html=template.body_html,
         is_ready=bool(
-            (template.subject or "").strip()
-            and (template.body_text or "").strip()
+            (template.subject or "").strip() and (template.body_text or "").strip()
         ),
         is_default=template.is_default,
         archived_at=template.archived_at,
@@ -135,12 +134,16 @@ async def sync_template_to_default_identities(
     template: OutreachTemplate,
 ) -> None:
     identities = (
-        await session.scalars(
-            select(IdentityProfile).where(
-                IdentityProfile.default_outreach_template_id == template.id,
+        (
+            await session.scalars(
+                select(IdentityProfile).where(
+                    IdentityProfile.default_outreach_template_id == template.id,
+                )
             )
         )
-    ).unique().all()
+        .unique()
+        .all()
+    )
     for identity in identities:
         apply_template_to_identity_legacy_fields(identity, template)
 
@@ -150,12 +153,16 @@ async def unlink_template_from_identities(
     template: OutreachTemplate,
 ) -> None:
     identities = (
-        await session.scalars(
-            select(IdentityProfile).where(
-                IdentityProfile.default_outreach_template_id == template.id,
+        (
+            await session.scalars(
+                select(IdentityProfile).where(
+                    IdentityProfile.default_outreach_template_id == template.id,
+                )
             )
         )
-    ).unique().all()
+        .unique()
+        .all()
+    )
     for identity in identities:
         clear_identity_default_template(identity)
 

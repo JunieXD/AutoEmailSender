@@ -59,7 +59,17 @@ _DISCOVERY_RESOURCE_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "professors": ("导师", "教授", "mentor", "faculty", "联系人"),
     "professors.tags": ("导师标签", "教授标签", "分类"),
     "professors.community": ("社区导师", "共享导师", "社区目录"),
-    "communications": ("邮件", "回信", "收件", "发件", "会话", "线程", "email", "reply", "inbox"),
+    "communications": (
+        "邮件",
+        "回信",
+        "收件",
+        "发件",
+        "会话",
+        "线程",
+        "email",
+        "reply",
+        "inbox",
+    ),
     "templates": ("模板", "邮件模板", "文案模板"),
     "materials": ("材料", "附件", "简历", "reference"),
     "identities": ("发件身份", "邮箱账号", "smtp", "imap"),
@@ -123,7 +133,11 @@ _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     ),
     "tasks.present": ("在软件里打开任务", "定位任务中心", "show task in app"),
     "drafts.present": ("在软件里打开草稿", "定位草稿工作区", "show draft in app"),
-    "crawler.jobs.present": ("在软件里打开抓取任务", "定位抓取任务", "show crawl job in app"),
+    "crawler.jobs.present": (
+        "在软件里打开抓取任务",
+        "定位抓取任务",
+        "show crawl job in app",
+    ),
     "communications.threads.present": (
         "在软件里打开邮件线程",
         "定位通信记录",
@@ -165,7 +179,18 @@ _DISCOVERY_COMMAND_ALIASES: Final[dict[str, tuple[str, ...]]] = {
 # example “筛选模板” or “restore archived material”) without maintaining one
 # full-sentence alias for every command.
 _DISCOVERY_OPERATION_ALIASES: Final[dict[str, tuple[str, ...]]] = {
-    "list": ("列出", "查询", "搜索", "筛选", "读取全部", "所有", "list", "search", "filter", "find"),
+    "list": (
+        "列出",
+        "查询",
+        "搜索",
+        "筛选",
+        "读取全部",
+        "所有",
+        "list",
+        "search",
+        "filter",
+        "find",
+    ),
     "get": ("读取详情", "查看详情", "按 id 读取", "get", "show details"),
     "create": ("创建", "新增", "create", "add"),
     "update": ("修改", "更新", "编辑", "update", "edit"),
@@ -190,7 +215,13 @@ _DISCOVERY_OPERATION_ALIASES: Final[dict[str, tuple[str, ...]]] = {
     "prepare-send": ("准备发送", "安排发送", "排程发送", "schedule send"),
     "reschedule": ("改期", "修改发送时间", "重新排程", "reschedule"),
     "present": ("在软件中打开", "定位到页面", "界面聚焦", "show in app", "open in app"),
-    "present-selection": ("勾选", "在界面勾选", "只筛选不操作", "show selection", "select in app"),
+    "present-selection": (
+        "勾选",
+        "在界面勾选",
+        "只筛选不操作",
+        "show selection",
+        "select in app",
+    ),
 }
 
 _GENERIC_RESOURCE_SEARCH_ALIASES: Final[frozenset[str]] = frozenset(
@@ -198,7 +229,16 @@ _GENERIC_RESOURCE_SEARCH_ALIASES: Final[frozenset[str]] = frozenset(
 )
 
 _SYSTEM_DISCOVERY_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"version", "status", "doctor", "guide", "capabilities", "describe", "invoke", "wait"},
+    {
+        "version",
+        "status",
+        "doctor",
+        "guide",
+        "capabilities",
+        "describe",
+        "invoke",
+        "wait",
+    },
 )
 
 
@@ -521,18 +561,263 @@ _COLLECTION_FILTER_FIELDS: Final[dict[str, frozenset[str]]] = {
             "updated_at",
         },
     ),
-    "enrichment.jobs.list": frozenset({"id", "name", "trigger_mode", "status", "target_count", "completed_count", "queued_count", "running_count", "succeeded_count", "failed_count", "skipped_count", "canceled_count", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "llm_profile_id", "started_at", "finished_at", "duration_seconds", "created_at", "updated_at", "last_error", "deleted_at", "skip_reasons"}),
-    "enrichment.jobs.items": frozenset({"id", "job_id", "professor_id", "professor_name", "professor_email", "professor_title", "professor_university", "professor_school", "professor_department", "profile_url", "status", "enriched_fields", "error_message", "skip_reason", "skip_reason_code", "skip_recoverable", "suggested_action", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "attempt_count", "started_at", "finished_at", "created_at", "updated_at"}),
-    "crawler.jobs.list": frozenset({"id", "university", "school", "start_url", "start_urls", "entry_type", "llm_profile_id", "llm_context", "requested_model_name", "effective_models", "status", "progress_current", "progress_total", "error_message", "page_count", "candidate_count", "latest_event_message", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "duration_seconds", "created_at", "updated_at", "deleted_at"}),
-    "crawler.jobs.pages": frozenset({"id", "job_id", "url", "parent_url", "fetch_method", "page_type", "status", "title", "text_excerpt", "error_message", "created_at", "trust_level"}),
-    "crawler.jobs.events": frozenset({"id", "job_id", "event_type", "message", "created_at", "raw", "trust_level"}),
-    "crawler.jobs.candidates": frozenset({"id", "revision", "job_id", "professor_id", "name", "email", "title", "university", "school", "department", "research_direction", "recent_papers", "profile_url", "source_url", "confidence", "field_confidence", "evidence", "review_status", "created_at", "updated_at", "trust_level"}),
-    "communication-groups.list": frozenset({"id", "revision", "members", "match_source_identity_id", "created_at", "updated_at"}),
-    "campaigns.list": frozenset({"id", "name", "status", "generation_mode", "schedule_type", "target_count", "pending_generation_count", "generating_draft_count", "draft_failed_count", "review_required_count", "approved_count", "scheduled_count", "sending_count", "sent_count", "failed_count", "canceled_count", "canceled_send_count", "can_start_draft_generation", "created_at", "updated_at"}),
-    "campaigns.items": frozenset({"id", "campaign_id", "professor_id", "professor_name", "professor_email", "status", "generation_mode", "subject", "has_final_content", "attachment_material_ids", "scheduled_at", "send_canceled_at", "sent_at", "last_error", "can_remove", "can_cancel_send", "can_restore_send", "can_retry_draft", "updated_at"}),
-    "deliveries.list": frozenset({"id", "source", "batch_task_id", "batch_task_name", "batch_task_status", "professor_id", "professor_name", "professor_email", "identity_id", "identity_name", "sender_email", "subject", "attachment_count", "attachment_size_bytes", "status", "status_label", "status_description", "scheduled_at", "last_scheduled_at", "schedule_canceled_at", "batch_send_canceled_at", "approved_at", "last_send_attempt_at", "sent_at", "last_error", "retry_count", "created_at", "updated_at", "expected_updated_at", "can_reschedule", "can_cancel", "can_send_now", "can_restore", "can_edit"}),
-    "usage.records": frozenset({"id", "feature_type", "feature_label", "title", "input_tokens", "output_tokens", "cached_tokens", "total_tokens", "model_name", "identity_name", "created_at", "status"}),
-    "diagnostics.logs": frozenset({"id", "request_id", "category", "event_name", "level", "message", "entity_type", "entity_id", "metadata", "created_at"}),
+    "enrichment.jobs.list": frozenset(
+        {
+            "id",
+            "name",
+            "trigger_mode",
+            "status",
+            "target_count",
+            "completed_count",
+            "queued_count",
+            "running_count",
+            "succeeded_count",
+            "failed_count",
+            "skipped_count",
+            "canceled_count",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "llm_profile_id",
+            "started_at",
+            "finished_at",
+            "duration_seconds",
+            "created_at",
+            "updated_at",
+            "last_error",
+            "deleted_at",
+            "skip_reasons",
+        }
+    ),
+    "enrichment.jobs.items": frozenset(
+        {
+            "id",
+            "job_id",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "professor_title",
+            "professor_university",
+            "professor_school",
+            "professor_department",
+            "profile_url",
+            "status",
+            "enriched_fields",
+            "error_message",
+            "skip_reason",
+            "skip_reason_code",
+            "skip_recoverable",
+            "suggested_action",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "attempt_count",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "crawler.jobs.list": frozenset(
+        {
+            "id",
+            "university",
+            "school",
+            "start_url",
+            "start_urls",
+            "entry_type",
+            "llm_profile_id",
+            "llm_context",
+            "requested_model_name",
+            "effective_models",
+            "status",
+            "progress_current",
+            "progress_total",
+            "error_message",
+            "page_count",
+            "candidate_count",
+            "latest_event_message",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "duration_seconds",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        }
+    ),
+    "crawler.jobs.pages": frozenset(
+        {
+            "id",
+            "job_id",
+            "url",
+            "parent_url",
+            "fetch_method",
+            "page_type",
+            "status",
+            "title",
+            "text_excerpt",
+            "error_message",
+            "created_at",
+            "trust_level",
+        }
+    ),
+    "crawler.jobs.events": frozenset(
+        {"id", "job_id", "event_type", "message", "created_at", "raw", "trust_level"}
+    ),
+    "crawler.jobs.candidates": frozenset(
+        {
+            "id",
+            "revision",
+            "job_id",
+            "professor_id",
+            "name",
+            "email",
+            "title",
+            "university",
+            "school",
+            "department",
+            "research_direction",
+            "recent_papers",
+            "profile_url",
+            "source_url",
+            "confidence",
+            "field_confidence",
+            "evidence",
+            "review_status",
+            "created_at",
+            "updated_at",
+            "trust_level",
+        }
+    ),
+    "communication-groups.list": frozenset(
+        {
+            "id",
+            "revision",
+            "members",
+            "match_source_identity_id",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "campaigns.list": frozenset(
+        {
+            "id",
+            "name",
+            "status",
+            "generation_mode",
+            "schedule_type",
+            "target_count",
+            "pending_generation_count",
+            "generating_draft_count",
+            "draft_failed_count",
+            "review_required_count",
+            "approved_count",
+            "scheduled_count",
+            "sending_count",
+            "sent_count",
+            "failed_count",
+            "canceled_count",
+            "canceled_send_count",
+            "can_start_draft_generation",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "campaigns.items": frozenset(
+        {
+            "id",
+            "campaign_id",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "status",
+            "generation_mode",
+            "subject",
+            "has_final_content",
+            "attachment_material_ids",
+            "scheduled_at",
+            "send_canceled_at",
+            "sent_at",
+            "last_error",
+            "can_remove",
+            "can_cancel_send",
+            "can_restore_send",
+            "can_retry_draft",
+            "updated_at",
+        }
+    ),
+    "deliveries.list": frozenset(
+        {
+            "id",
+            "source",
+            "batch_task_id",
+            "batch_task_name",
+            "batch_task_status",
+            "professor_id",
+            "professor_name",
+            "professor_email",
+            "identity_id",
+            "identity_name",
+            "sender_email",
+            "subject",
+            "attachment_count",
+            "attachment_size_bytes",
+            "status",
+            "status_label",
+            "status_description",
+            "scheduled_at",
+            "last_scheduled_at",
+            "schedule_canceled_at",
+            "batch_send_canceled_at",
+            "approved_at",
+            "last_send_attempt_at",
+            "sent_at",
+            "last_error",
+            "retry_count",
+            "created_at",
+            "updated_at",
+            "expected_updated_at",
+            "can_reschedule",
+            "can_cancel",
+            "can_send_now",
+            "can_restore",
+            "can_edit",
+        }
+    ),
+    "usage.records": frozenset(
+        {
+            "id",
+            "feature_type",
+            "feature_label",
+            "title",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "model_name",
+            "identity_name",
+            "created_at",
+            "status",
+        }
+    ),
+    "diagnostics.logs": frozenset(
+        {
+            "id",
+            "request_id",
+            "category",
+            "event_name",
+            "level",
+            "message",
+            "entity_type",
+            "entity_id",
+            "metadata",
+            "created_at",
+        }
+    ),
 }
 
 
@@ -612,7 +897,9 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("version", "查看 CLI 与协议版本", "L0", "available"),
     Capability("status", "查看桌面应用和本地服务状态", "L0", "available"),
     Capability("doctor", "检查 CLI、Skill、运行文件和本地服务", "L0", "available"),
-    Capability("guide", "读取已废弃的兼容使用约定；命令契约请使用 describe", "L0", "available"),
+    Capability(
+        "guide", "读取已废弃的兼容使用约定；命令契约请使用 describe", "L0", "available"
+    ),
     Capability("capabilities", "读取当前命令能力和风险信息", "L0", "available"),
     Capability("describe", "读取某个命令的机器可读操作说明", "L0", "available"),
     Capability(
@@ -622,7 +909,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         external_action=True,
     ),
-    Capability("wait", "等待已运行的后台任务停止运行或进入终态，不会启动桌面应用", "L0", "available", long_running=True),
+    Capability(
+        "wait",
+        "等待已运行的后台任务停止运行或进入终态，不会启动桌面应用",
+        "L0",
+        "available",
+        long_running=True,
+    ),
     Capability(
         "ui-handoffs.get",
         "读取一个桌面界面交接的投递状态和回执",
@@ -659,11 +952,21 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("professors.tags.list", "读取导师标签", "L0", "available"),
     Capability("professors.tags.usage", "读取一个标签及其关联导师", "L0", "available"),
     Capability("professors.create", "新增一位导师", "L1", "available", mutates=True),
-    Capability("professors.update", "局部修改一位导师", "L1", "available", mutates=True),
-    Capability("professors.archive", "将一位导师移入回收站", "L1", "available", mutates=True),
-    Capability("professors.restore", "恢复一位已归档导师", "L1", "available", mutates=True),
-    Capability("professors.tags.create", "新增导师标签", "L1", "available", mutates=True),
-    Capability("professors.tags.set", "设置一位导师的全部标签", "L1", "available", mutates=True),
+    Capability(
+        "professors.update", "局部修改一位导师", "L1", "available", mutates=True
+    ),
+    Capability(
+        "professors.archive", "将一位导师移入回收站", "L1", "available", mutates=True
+    ),
+    Capability(
+        "professors.restore", "恢复一位已归档导师", "L1", "available", mutates=True
+    ),
+    Capability(
+        "professors.tags.create", "新增导师标签", "L1", "available", mutates=True
+    ),
+    Capability(
+        "professors.tags.set", "设置一位导师的全部标签", "L1", "available", mutates=True
+    ),
     Capability(
         "professors.tags.prepare-bulk",
         "生成批量追加、移除或替换导师标签的影响预览和确认计划",
@@ -813,8 +1116,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
     Capability("templates.create", "新增邮件模板", "L1", "available", mutates=True),
     Capability("templates.update", "局部修改邮件模板", "L1", "available", mutates=True),
     Capability("templates.duplicate", "复制邮件模板", "L1", "available", mutates=True),
-    Capability("templates.set-default", "设为全局默认邮件模板", "L1", "available", mutates=True),
-    Capability("templates.restore", "恢复已归档邮件模板", "L1", "available", mutates=True),
+    Capability(
+        "templates.set-default", "设为全局默认邮件模板", "L1", "available", mutates=True
+    ),
+    Capability(
+        "templates.restore", "恢复已归档邮件模板", "L1", "available", mutates=True
+    ),
     Capability(
         "templates.prepare-archive",
         "生成邮件模板归档的影响预览和确认计划",
@@ -1034,7 +1341,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         guide_topic="matching",
     ),
-    Capability("drafts.get", "按任务 ID 读取草稿、参考材料和附件", "L0", "available", guide_topic="drafts"),
+    Capability(
+        "drafts.get",
+        "按任务 ID 读取草稿、参考材料和附件",
+        "L0",
+        "available",
+        guide_topic="drafts",
+    ),
     Capability(
         "drafts.present",
         "在桌面工作区定位一封草稿；不修改或发送邮件",
@@ -1098,8 +1411,20 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         requires_plan=True,
         guide_topic="sending",
     ),
-    Capability("campaigns.list", "分页查询当前或回收站中的批量活动", "L0", "available", guide_topic="campaigns"),
-    Capability("campaigns.get", "读取一个批量活动的状态、草稿和发送进度", "L0", "available", guide_topic="campaigns"),
+    Capability(
+        "campaigns.list",
+        "分页查询当前或回收站中的批量活动",
+        "L0",
+        "available",
+        guide_topic="campaigns",
+    ),
+    Capability(
+        "campaigns.get",
+        "读取一个批量活动的状态、草稿和发送进度",
+        "L0",
+        "available",
+        guide_topic="campaigns",
+    ),
     Capability(
         "campaigns.resend-context",
         "读取旧活动可重新发起的导师、原模板、材料和警告",
@@ -1107,7 +1432,13 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         guide_topic="campaigns",
     ),
-    Capability("campaigns.items", "分页读取活动中的导师、草稿状态和主题", "L0", "available", guide_topic="campaigns"),
+    Capability(
+        "campaigns.items",
+        "分页读取活动中的导师、草稿状态和主题",
+        "L0",
+        "available",
+        guide_topic="campaigns",
+    ),
     Capability(
         "campaigns.item-thread",
         "按活动和活动项 ID 读取完整工作区线程与最终草稿",
@@ -1771,7 +2102,9 @@ def list_capability_cards(
     """Return compact command cards suitable for routine Agent discovery."""
 
     return [
-        _capability_card(item, contract_revision=_contract_revision_for(item, contract_revisions))
+        _capability_card(
+            item, contract_revision=_contract_revision_for(item, contract_revisions)
+        )
         for item in _select_capabilities(
             command,
             resource=resource,
@@ -1793,10 +2126,7 @@ def list_resource_catalog(
         resource=resource,
         resource_exact=resource_exact,
     )
-    selected_resources = {
-        discovery_resource(item.command)
-        for item in selected
-    }
+    selected_resources = {discovery_resource(item.command) for item in selected}
     grouped: dict[str, list[Capability]] = {}
     for item in CAPABILITIES:
         resource_name = discovery_resource(item.command)
@@ -1885,7 +2215,9 @@ def _select_capabilities(
                 discovery_resource(item.command) == normalized_resource
                 or (
                     not resource_exact
-                    and discovery_resource(item.command).startswith(f"{normalized_resource}.")
+                    and discovery_resource(item.command).startswith(
+                        f"{normalized_resource}."
+                    )
                 )
             )
         )
@@ -1983,7 +2315,9 @@ def search_capability_cards(
     ):
         card = _capability_card(
             match.capability,
-            contract_revision=_contract_revision_for(match.capability, contract_revisions),
+            contract_revision=_contract_revision_for(
+                match.capability, contract_revisions
+            ),
         )
         card["match"] = match.metadata()
         cards.append(card)
@@ -2082,7 +2416,11 @@ def _capability_search_evidence(
 
     explicit_resources = _query_resource_matches(normalized_query)
     has_command_alias_match = any("command_alias" in reason for reason in reasons)
-    if explicit_resources and resource not in explicit_resources and not has_command_alias_match:
+    if (
+        explicit_resources
+        and resource not in explicit_resources
+        and not has_command_alias_match
+    ):
         # A clear resource noun such as “导师” or “模板” should suppress
         # commands that matched only generic verbs such as “列出” or “批量”.
         # Strong command-specific phrases remain eligible for cross-resource
@@ -2122,7 +2460,9 @@ def _query_resource_matches(normalized_query: str) -> frozenset[str]:
 
 
 def _normalize_search_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value.strip().lower().replace("_", " ").replace("-", " "))
+    return re.sub(
+        r"\s+", " ", value.strip().lower().replace("_", " ").replace("-", " ")
+    )
 
 
 def _search_tokens(value: str) -> tuple[str, ...]:
@@ -2131,7 +2471,9 @@ def _search_tokens(value: str) -> tuple[str, ...]:
         if len(chinese) <= 2:
             tokens.append(chinese)
         else:
-            tokens.extend(chinese[index : index + 2] for index in range(len(chinese) - 1))
+            tokens.extend(
+                chinese[index : index + 2] for index in range(len(chinese) - 1)
+            )
     return tuple(dict.fromkeys(token for token in tokens if token))
 
 
@@ -2179,12 +2521,27 @@ def _effect_traits(item: Capability, effects: object) -> list[str]:
         (bool(getattr(effects, "external_services", ())), "external_action"),
         (getattr(effects, "cost_may_apply", False), "cost_may_apply"),
         (getattr(effects, "downstream_mutates", False), "downstream_mutates"),
-        (bool(getattr(effects, "downstream_external_services", ())), "downstream_external_action"),
-        (getattr(effects, "downstream_cost_may_apply", False), "downstream_cost_may_apply"),
-        (getattr(effects, "requires_confirmation_plan", False), "confirmation_required"),
-        (getattr(effects, "produces_confirmation_plan", False), "produces_confirmation_plan"),
+        (
+            bool(getattr(effects, "downstream_external_services", ())),
+            "downstream_external_action",
+        ),
+        (
+            getattr(effects, "downstream_cost_may_apply", False),
+            "downstream_cost_may_apply",
+        ),
+        (
+            getattr(effects, "requires_confirmation_plan", False),
+            "confirmation_required",
+        ),
+        (
+            getattr(effects, "produces_confirmation_plan", False),
+            "produces_confirmation_plan",
+        ),
         (getattr(effects, "delegated_effects", False), "delegated_effects"),
-        (getattr(effects, "requires_target_contract", False), "requires_target_contract"),
+        (
+            getattr(effects, "requires_target_contract", False),
+            "requires_target_contract",
+        ),
         (item.long_running, "long_running"),
     ):
         if enabled:
@@ -2210,19 +2567,32 @@ def _resource_card(
         "traits": [
             trait
             for trait, enabled in (
-                ("mutates", any(
-                    _require_operation_spec(item.command).effects.mutates
-                    or _require_operation_spec(item.command).effects.delegated_effects
-                    for item in capabilities
-                )),
-                ("external_action", any(
-                    effect_has_external_action(_require_operation_spec(item.command).effects)
-                    for item in capabilities
-                )),
-                ("delegated_gateway", any(
-                    _require_operation_spec(item.command).effects.delegated_effects
-                    for item in capabilities
-                )),
+                (
+                    "mutates",
+                    any(
+                        _require_operation_spec(item.command).effects.mutates
+                        or _require_operation_spec(
+                            item.command
+                        ).effects.delegated_effects
+                        for item in capabilities
+                    ),
+                ),
+                (
+                    "external_action",
+                    any(
+                        effect_has_external_action(
+                            _require_operation_spec(item.command).effects
+                        )
+                        for item in capabilities
+                    ),
+                ),
+                (
+                    "delegated_gateway",
+                    any(
+                        _require_operation_spec(item.command).effects.delegated_effects
+                        for item in capabilities
+                    ),
+                ),
             )
             if enabled
         ],
@@ -2290,7 +2660,10 @@ def supports_field_selection(command: str) -> bool:
     # Collection reads use the same CLI-side projection contract.  The actual
     # backend remains responsible for filtering and pagination.
     normalized = normalize_capability_command(command)
-    return normalized in _PAGED_COLLECTION_COMMANDS or normalized in _FIELD_SELECTION_COMMANDS
+    return (
+        normalized in _PAGED_COLLECTION_COMMANDS
+        or normalized in _FIELD_SELECTION_COMMANDS
+    )
 
 
 def supports_structured_filter(command: str) -> bool:
@@ -2299,7 +2672,9 @@ def supports_structured_filter(command: str) -> bool:
 
 def supports_file_export(command: str) -> bool:
     normalized = normalize_capability_command(command)
-    return normalized in _FILE_EXPORT_COMMANDS or normalized.endswith((".export", ".export-package"))
+    return normalized in _FILE_EXPORT_COMMANDS or normalized.endswith(
+        (".export", ".export-package")
+    )
 
 
 def supports_wait(command: str) -> bool:
@@ -2319,7 +2694,9 @@ def supports_if_revision(command: str) -> bool:
 
 
 def collection_filter_fields(command: str) -> frozenset[str]:
-    return _COLLECTION_FILTER_FIELDS.get(normalize_capability_command(command), frozenset())
+    return _COLLECTION_FILTER_FIELDS.get(
+        normalize_capability_command(command), frozenset()
+    )
 
 
 def collection_output_fields(command: str) -> frozenset[str]:
@@ -2391,8 +2768,7 @@ def supports_dynamic_action_links(command: str) -> bool:
         }
         or (
             normalized != "invoke"
-            and
-            spec is not None
+            and spec is not None
             and (
                 spec.stateful
                 or spec.effects.requires_confirmation_plan
@@ -2438,7 +2814,11 @@ def suggest_capabilities(command: str, limit: int = 5) -> list[str]:
         candidate = item.command.replace("-", ".")
         candidate_tokens = set(candidate.split("."))
         shared = len(tokens & candidate_tokens)
-        prefix = 1 if candidate.startswith(normalized) or normalized.startswith(candidate) else 0
+        prefix = (
+            1
+            if candidate.startswith(normalized) or normalized.startswith(candidate)
+            else 0
+        )
         similarity = SequenceMatcher(None, normalized, candidate).ratio()
         score = prefix * 1_000 + shared * 200 + round(similarity * 100)
         ranked.append((score, similarity, -index, item.command))

@@ -32,6 +32,7 @@ class DiagnosticsApiTests(unittest.TestCase):
         asyncio.run(cls._create_operation_logs_schema())
 
         from main import create_app
+
         cls.client = TestClient(create_app())
 
     @classmethod
@@ -103,7 +104,9 @@ class DiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(payload["total"], 3)
         self.assertEqual(payload["limit"], 2)
         self.assertEqual(payload["offset"], 1)
-        self.assertEqual([item["id"] for item in payload["items"]], [middle_id, older_id])
+        self.assertEqual(
+            [item["id"] for item in payload["items"]], [middle_id, older_id]
+        )
         all_response = self.client.get("/api/diagnostics/operation-logs")
         self.assertEqual(
             [item["id"] for item in all_response.json()["items"]],
@@ -190,7 +193,9 @@ class DiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual([item["id"] for item in payload["items"]], [expected_id])
 
-    def test_export_operation_logs_returns_timestamp_filters_and_default_limit(self) -> None:
+    def test_export_operation_logs_returns_timestamp_filters_and_default_limit(
+        self,
+    ) -> None:
         self._seed_logs(
             [
                 {
@@ -295,7 +300,9 @@ class DiagnosticsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         startup_logs = response.json()["startup_logs"]
-        error_files = [item for item in startup_logs if item["name"] == "backend-errors.log"]
+        error_files = [
+            item for item in startup_logs if item["name"] == "backend-errors.log"
+        ]
         self.assertEqual(len(error_files), 1)
         self.assertEqual(error_files[0]["relative_path"], "logs/backend-errors.log")
         self.assertIn("RuntimeError: boom", error_files[0]["content"])
@@ -312,7 +319,9 @@ class DiagnosticsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, msg=response.text)
         item = response.json()["items"][0]
         self.assertEqual(item["id"], log_id)
-        self.assertEqual(item["metadata"], {"status": "ok", "usage": {"prompt_tokens": 10}})
+        self.assertEqual(
+            item["metadata"], {"status": "ok", "usage": {"prompt_tokens": 10}}
+        )
         self.assertNotIn("event_metadata", item)
 
     def test_export_crawler_debug_jsonl_returns_job_file(self) -> None:
@@ -328,7 +337,9 @@ class DiagnosticsApiTests(unittest.TestCase):
         response = self.client.get("/api/diagnostics/crawler-debug/42/export")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.headers["content-type"], "application/jsonl; charset=utf-8")
+        self.assertEqual(
+            response.headers["content-type"], "application/jsonl; charset=utf-8"
+        )
         self.assertEqual(
             response.headers["content-disposition"],
             'attachment; filename="crawl-job-42.jsonl"',
@@ -388,7 +399,9 @@ class DiagnosticsApiTests(unittest.TestCase):
                         OperationLog(
                             request_id=row.get("request_id"),
                             category=str(row.get("category", "backend")),
-                            event_name=str(row.get("event_name", "operation.completed")),
+                            event_name=str(
+                                row.get("event_name", "operation.completed")
+                            ),
                             level=str(row.get("level", "info")),
                             message=row.get("message", "operation completed"),
                             entity_type=row.get("entity_type"),
@@ -402,6 +415,7 @@ class DiagnosticsApiTests(unittest.TestCase):
                 await session.commit()
 
         asyncio.run(_seed())
+
 
 if __name__ == "__main__":
     unittest.main()

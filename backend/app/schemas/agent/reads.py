@@ -6,7 +6,11 @@ from typing import Generic, Literal, TypeVar
 from pydantic import Field, model_validator
 
 from app.schemas.base import ApiSchema
-from app.modules.crawler.public import CrawlCandidateRead, CrawlJobEventRead, CrawlPageRead
+from app.modules.crawler.public import (
+    CrawlCandidateRead,
+    CrawlJobEventRead,
+    CrawlPageRead,
+)
 from app.modules.workspace.deliveries.schemas import (
     EmailDeliveryItemRead,
     EmailDeliveryViewCountsRead,

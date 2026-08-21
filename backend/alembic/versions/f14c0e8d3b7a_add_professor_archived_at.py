@@ -20,7 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     with op.batch_alter_table("professors", schema=None) as batch_op:
-        batch_op.add_column(sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(
+            sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True)
+        )
 
 
 def downgrade() -> None:

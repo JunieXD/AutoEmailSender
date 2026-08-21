@@ -8,6 +8,7 @@ import {
   getCrawlJobDetails,
   getCrawlJobEvents,
   listCrawlJobs,
+  listCrawlJobsPage,
   listCrawlPages,
   restoreCrawlJob,
   resumeCrawlJobReview,
@@ -87,6 +88,74 @@ describe('crawlJobsApi', () => {
       limit: undefined,
       view: undefined,
     });
+  });
+
+  it('lists a filtered task-center crawl job page', async () => {
+    mockedApiFetch.mockResolvedValue({
+      items: [],
+      total_count: 53,
+      current_total_count: 61,
+    });
+
+    await listCrawlJobsPage({
+      offset: 16,
+      limit: 8,
+      view: 'trash',
+      keyword: '计算机',
+      searchScopes: ['university', 'school'],
+      status: 'failed',
+      sortKey: 'progress',
+      sortDirection: 'asc',
+      unpaged: true,
+    });
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      '/api/crawl-jobs/page',
+      undefined,
+      {
+        offset: 16,
+        limit: 8,
+        view: 'trash',
+        keyword: '计算机',
+        search_scopes: 'university,school',
+        status: 'failed',
+        sort_key: 'progress',
+        sort_direction: 'asc',
+        unpaged: 1,
+      },
+    );
+  });
+
+  it('coalesces identical task-center page requests while they are pending', async () => {
+    let resolveRequest: ((value: {
+      items: never[];
+      total_count: number;
+      current_total_count: number;
+    }) => void) | undefined;
+    mockedApiFetch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    const params = {
+      offset: 0,
+      limit: 8,
+      view: 'current' as const,
+      sortKey: 'created' as const,
+      sortDirection: 'desc' as const,
+    };
+
+    const firstRequest = listCrawlJobsPage(params);
+    const secondRequest = listCrawlJobsPage({ ...params });
+
+    expect(secondRequest).toBe(firstRequest);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+
+    resolveRequest?.({ items: [], total_count: 0, current_total_count: 0 });
+    await Promise.all([firstRequest, secondRequest]);
+
+    await listCrawlJobsPage(params);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
   });
 
   it('gets a crawl job summary from the expected URL', async () => {

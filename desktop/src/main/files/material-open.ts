@@ -1,4 +1,4 @@
-﻿import { app, ipcMain, shell } from "electron";
+﻿import { ipcMain, shell } from "electron";
 import { createWriteStream } from "node:fs";
 import { chmod, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
@@ -10,7 +10,7 @@ import type {
 } from "../../../../contracts/desktop-ipc.js";
 
 export const MATERIAL_OPEN_COPY_TTL_MS = 24 * 60 * 60 * 1000;
-export const MATERIAL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.materialOpen;
+const MATERIAL_OPEN_IPC_CHANNEL = DESKTOP_IPC_CHANNELS.materialOpen;
 
 type MaterialOpenDependencies = {
   openPath: (filePath: string) => Promise<string>;

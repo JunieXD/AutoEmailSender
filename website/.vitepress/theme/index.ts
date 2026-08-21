@@ -27,10 +27,34 @@ function localizeBuiltInLabels(): void {
   });
 }
 
+function syncAcknowledgementOutline(): void {
+  if (!document.querySelector<HTMLElement>(".acknowledgement-group")) return;
+
+  const outline = document.querySelector<HTMLElement>(".VPDocAsideOutline");
+  const activeLink = outline?.querySelector<HTMLElement>("a.active");
+  if (!outline || !activeLink) return;
+
+  const outlineRect = outline.getBoundingClientRect();
+  const activeRect = activeLink.getBoundingClientRect();
+  const edgePadding = 28;
+  if (
+    activeRect.top < outlineRect.top + edgePadding ||
+    activeRect.bottom > outlineRect.bottom - edgePadding
+  ) {
+    activeLink.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }
+}
+
 const LocalizedLayout = {
   setup() {
     let observer: MutationObserver | undefined;
     let frame = 0;
+    let outlineFrame = 0;
+
+    const scheduleOutlineSync = () => {
+      cancelAnimationFrame(outlineFrame);
+      outlineFrame = requestAnimationFrame(syncAcknowledgementOutline);
+    };
 
     onMounted(() => {
       const scheduleLocalization = () => {
@@ -40,11 +64,15 @@ const LocalizedLayout = {
       scheduleLocalization();
       observer = new MutationObserver(scheduleLocalization);
       observer.observe(document.body, { childList: true, subtree: true });
+      window.addEventListener("scroll", scheduleOutlineSync, { passive: true });
+      scheduleOutlineSync();
     });
 
     onBeforeUnmount(() => {
       observer?.disconnect();
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(outlineFrame);
+      window.removeEventListener("scroll", scheduleOutlineSync);
     });
 
     return () => h(DefaultTheme.Layout!);

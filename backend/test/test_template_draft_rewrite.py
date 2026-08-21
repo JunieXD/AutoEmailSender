@@ -34,11 +34,13 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         )
 
         html = (
-            '<p><strong>{{name}}</strong>老师，您好，<u>欢迎</u>您。</p>'
-            '<table><tbody><tr><td>原表格</td></tr></tbody></table>'
+            "<p><strong>{{name}}</strong>老师，您好，<u>欢迎</u>您。</p>"
+            "<table><tbody><tr><td>原表格</td></tr></tbody></table>"
         )
 
-        document = build_draft_rewrite_document(html, build_template_context(identity, professor))
+        document = build_draft_rewrite_document(
+            html, build_template_context(identity, professor)
+        )
 
         self.assertEqual(len(document.blocks), 2)
         self.assertEqual(document.blocks[0].segment_id, "seg_1")
@@ -81,7 +83,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             '<table style="border-collapse:collapse"><tbody><tr><td>原表格</td></tr></tbody></table>'
         )
 
-        document = build_draft_rewrite_document(html, build_template_context(identity, professor))
+        document = build_draft_rewrite_document(
+            html, build_template_context(identity, professor)
+        )
 
         self.assertEqual(document.blocks[1].type, "table")
         self.assertEqual(
@@ -110,12 +114,11 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             research_direction="Agent",
         )
 
-        html = (
-            "<p>尊敬的{{name}}教授：</p>"
-            "<p>正文内容。</p>"
-        )
+        html = "<p>尊敬的{{name}}教授：</p><p>正文内容。</p>"
 
-        document = build_draft_rewrite_document(html, build_template_context(identity, professor))
+        document = build_draft_rewrite_document(
+            html, build_template_context(identity, professor)
+        )
 
         self.assertFalse(document.blocks[0].locked)
         self.assertFalse(document.blocks[1].locked)
@@ -137,7 +140,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             [False, True, True, True, True, False],
         )
 
-    def test_apply_replacements_preserves_seventeenth_visually_empty_block(self) -> None:
+    def test_apply_replacements_preserves_seventeenth_visually_empty_block(
+        self,
+    ) -> None:
         html = "".join(
             [
                 "<p>尊敬的李老师：</p>",
@@ -198,7 +203,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(document.blocks[0].text, "{{year}}年{{month}}月{{day}}日")
         self.assertEqual(document.blocks[0].rewrite_text, "[[P1]]年[[P2]]月[[P3]]日")
 
-    def test_build_draft_rewrite_document_keeps_literal_dates_and_times_editable(self) -> None:
+    def test_build_draft_rewrite_document_keeps_literal_dates_and_times_editable(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>计划于2026年5月21日 09:30联系，参考2024-2025年的经历。</p>",
             {},
@@ -217,7 +224,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
 
         self.assertIn("2030年8月1日 18:00", result.text)
 
-    def test_build_draft_rewrite_document_allows_editing_rendered_research_direction(self) -> None:
+    def test_build_draft_rewrite_document_allows_editing_rendered_research_direction(
+        self,
+    ) -> None:
         research_direction = "人工智能、计算机视觉、图神经网络、自然语言处理"
         document = build_draft_rewrite_document(
             f"<p>我关注您在 <strong>{research_direction}</strong> 方向的工作。</p>",
@@ -246,7 +255,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertNotIn("计算机视觉", result.text)
         self.assertNotIn("[[F1]]", result.html)
 
-    def test_build_draft_rewrite_document_renders_research_placeholder_as_editable_text(self) -> None:
+    def test_build_draft_rewrite_document_renders_research_placeholder_as_editable_text(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>我关注您的 {{research_direction}} 研究。</p>",
             {"research_direction": "图神经网络、自然语言处理"},
@@ -266,7 +277,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertNotIn("图神经网络", result.text)
         self.assertNotIn("[[F1]]", result.html)
 
-    def test_build_draft_rewrite_document_excludes_paragraphs_inside_table(self) -> None:
+    def test_build_draft_rewrite_document_excludes_paragraphs_inside_table(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>正文。</p><table><tr><td><p>表格内部。</p></td></tr></table><p>结尾。</p>",
             {"research_direction": "Agent"},
@@ -292,9 +305,11 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(style.font_family, "Arial")
         self.assertEqual(style.font_size, "14pt")
 
-    def test_select_dominant_font_and_size_prefers_chinese_family_in_mixed_stack(self) -> None:
+    def test_select_dominant_font_and_size_prefers_chinese_family_in_mixed_stack(
+        self,
+    ) -> None:
         html = (
-            '<p style="font-family:\'Times New Roman\',\'宋体\',SimSun,serif;font-size:12pt">'
+            "<p style=\"font-family:'Times New Roman','宋体',SimSun,serif;font-size:12pt\">"
             "这是一段更长的中文正文文本，用来确认中文主字体不会被误判成英文衬线字体。"
             "</p>"
             '<p style="font-family:Arial;font-size:14pt">Short</p>'
@@ -305,7 +320,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(style.font_family, "宋体")
         self.assertEqual(style.font_size, "12pt")
 
-    def test_apply_draft_rewrite_replacements_renders_runs_and_keeps_table(self) -> None:
+    def test_apply_draft_rewrite_replacements_renders_runs_and_keeps_table(
+        self,
+    ) -> None:
         identity = IdentityProfile(
             id=1,
             name="张三",
@@ -348,7 +365,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertIn("<table", result.html)
         self.assertIn("原表格", result.text)
 
-    def test_apply_draft_rewrite_replacements_restores_locked_salutation_and_table(self) -> None:
+    def test_apply_draft_rewrite_replacements_restores_locked_salutation_and_table(
+        self,
+    ) -> None:
         identity = IdentityProfile(
             id=1,
             name="张三",
@@ -399,7 +418,7 @@ class TemplateDraftRewriteTests(unittest.TestCase):
             (
                 '<p style="font-family:宋体;font-size:12pt;line-height:1.5">'
                 '我是学生，<span style="font-family:楷体;font-size:12pt">（学校说明）</span>'
-                '<strong>成绩优秀</strong>。</p>'
+                "<strong>成绩优秀</strong>。</p>"
             ),
             {"research_direction": "Agent"},
         )
@@ -458,7 +477,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertIn("color:#f00", result.html)
         self.assertIn("Agent", result.text)
 
-    def test_apply_replacements_preserves_original_block_when_style_region_is_invalid(self) -> None:
+    def test_apply_replacements_preserves_original_block_when_style_region_is_invalid(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>普通文本<strong>重点</strong>。</p>",
             {"research_direction": "Agent"},
@@ -472,7 +493,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual("".join(result.text.split()), "普通文本重点。")
         self.assertIn("<strong>重点</strong>", result.html)
 
-    def test_apply_replacements_preserves_original_block_for_invisible_only_text(self) -> None:
+    def test_apply_replacements_preserves_original_block_for_invisible_only_text(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document("<p>普通正文。</p>", {})
 
         result = apply_draft_rewrite_replacements(
@@ -496,7 +519,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertEqual(result.text.count("Agent"), 1)
         self.assertNotIn("[[F1]]", result.html)
 
-    def test_apply_replacements_does_not_enforce_research_direction_content(self) -> None:
+    def test_apply_replacements_does_not_enforce_research_direction_content(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>正文。</p>",
             {"research_direction": "Agent"},
@@ -528,7 +553,9 @@ class TemplateDraftRewriteTests(unittest.TestCase):
         self.assertIn("第二段。", result.text)
         self.assertNotIn("第三段。", result.text)
 
-    def test_apply_replacements_allows_changing_literal_research_direction_count(self) -> None:
+    def test_apply_replacements_allows_changing_literal_research_direction_count(
+        self,
+    ) -> None:
         document = build_draft_rewrite_document(
             "<p>我关注您在 Agent、NLP、CV 方向的工作，并再次关注 Agent、NLP、CV。</p>",
             {"research_direction": "Agent、NLP、CV"},

@@ -14,7 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
-from app.models import BatchTask, BatchTaskStatus, EmailTask, EmailTaskCancellationReason, EmailTaskSource, EmailTaskStatus, Professor
+from app.models import (
+    BatchTask,
+    BatchTaskStatus,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskSource,
+    EmailTaskStatus,
+    Professor,
+)
 from app.modules.campaigns.public import (
     batch_item_uses_llm_generation_column,
     normalize_batch_item_generation_mode,
@@ -55,7 +63,9 @@ class BatchDraftGenerationCoordinator:
         self._warmed_batch_ids: set[int] = set()
 
     @asynccontextmanager
-    async def track(self, batch_task_id: int, task: asyncio.Task[object]) -> AsyncIterator[None]:
+    async def track(
+        self, batch_task_id: int, task: asyncio.Task[object]
+    ) -> AsyncIterator[None]:
         tasks = self._tasks_by_batch_id.setdefault(batch_task_id, set())
         tasks.add(task)
         try:
@@ -98,7 +108,9 @@ class BatchDraftScheduler:
         self._coordinator = coordinator
 
     async def run_forever(self, stopped: asyncio.Event) -> None:
-        await self._run(stopped=stopped, stop_when_idle=False, concurrency_override=None)
+        await self._run(
+            stopped=stopped, stop_when_idle=False, concurrency_override=None
+        )
 
     async def run_until_idle(self, *, concurrency: int) -> int:
         return await self._run(
@@ -124,7 +136,9 @@ class BatchDraftScheduler:
                     if concurrency is None:
                         async with self._session_factory() as session:
                             settings = await get_runtime_settings(session)
-                        concurrency = max(settings.batch_draft_generation_concurrency, 1)
+                        concurrency = max(
+                            settings.batch_draft_generation_concurrency, 1
+                        )
 
                     await materialize_missing_research_template_fallbacks(
                         self._session_factory,
@@ -286,7 +300,9 @@ async def _recover_stale_batch_draft_task(
                 status=EmailTaskStatus.CANCELED.value,
                 cancellation_reason=EmailTaskCancellationReason.BATCH_STOPPED.value,
             )
-        elif task.batch_task and task.batch_task.status == BatchTaskStatus.EXPIRED.value:
+        elif (
+            task.batch_task and task.batch_task.status == BatchTaskStatus.EXPIRED.value
+        ):
             values.update(
                 status=EmailTaskStatus.CANCELED.value,
                 cancellation_reason=EmailTaskCancellationReason.SCHEDULE_EXPIRED.value,
@@ -731,16 +747,35 @@ async def _release_batch_draft_claim(
         if task is None:
             return
         if task.status == EmailTaskStatus.GENERATING_DRAFT.value:
-            if task.batch_task and task.batch_task.status == BatchTaskStatus.PAUSED.value:
-                task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
-            elif task.batch_task and task.batch_task.status == BatchTaskStatus.EXPIRED.value:
+            if (
+                task.batch_task
+                and task.batch_task.status == BatchTaskStatus.PAUSED.value
+            ):
+                task.status = (
+                    task.draft_generation_previous_status
+                    or EmailTaskStatus.DISCOVERED.value
+                )
+            elif (
+                task.batch_task
+                and task.batch_task.status == BatchTaskStatus.EXPIRED.value
+            ):
                 task.status = EmailTaskStatus.CANCELED.value
-                task.cancellation_reason = EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
-            elif task.batch_task and task.batch_task.status == BatchTaskStatus.STOPPED.value:
+                task.cancellation_reason = (
+                    EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
+                )
+            elif (
+                task.batch_task
+                and task.batch_task.status == BatchTaskStatus.STOPPED.value
+            ):
                 task.status = EmailTaskStatus.CANCELED.value
-                task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
+                task.cancellation_reason = (
+                    EmailTaskCancellationReason.BATCH_STOPPED.value
+                )
             else:
-                task.status = task.draft_generation_previous_status or EmailTaskStatus.DISCOVERED.value
+                task.status = (
+                    task.draft_generation_previous_status
+                    or EmailTaskStatus.DISCOVERED.value
+                )
         task.draft_generation_previous_status = None
         _clear_batch_draft_claim(task)
         task.updated_at = utc_now()

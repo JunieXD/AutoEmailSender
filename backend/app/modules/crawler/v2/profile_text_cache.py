@@ -92,7 +92,9 @@ class ProfileTextCache:
     def __contains__(self, key: object) -> bool:
         return key in self._entries
 
-    def _discard_matching(self, predicate: Callable[[ProfileTextCacheKey], bool]) -> int:
+    def _discard_matching(
+        self, predicate: Callable[[ProfileTextCacheKey], bool]
+    ) -> int:
         matching_keys = [key for key in self._entries if predicate(key)]
         for key in matching_keys:
             self._total_characters -= len(self._entries.pop(key))

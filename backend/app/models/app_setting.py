@@ -4,7 +4,7 @@ from datetime import datetime
 
 from app.core.time import utc_now
 
-from sqlalchemy import DateTime, Integer, String, Text, text
+from sqlalchemy import Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base

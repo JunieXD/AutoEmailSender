@@ -109,13 +109,13 @@ def emit_success(
         max_items=context.max_items,
         continuation_input=continuation_input,
         invoke_input=(
-            context.invoke_input
-            if context.invoke_command == command
-            else None
+            context.invoke_input if context.invoke_command == command else None
         ),
     )
     response_request_id = request_id or context.request_id
-    receipt = emitted_data.get("mutation_receipt") if isinstance(emitted_data, dict) else None
+    receipt = (
+        emitted_data.get("mutation_receipt") if isinstance(emitted_data, dict) else None
+    )
     if isinstance(receipt, dict) and receipt.get("request_id") == response_request_id:
         response_request_id = None
     meta = build_meta(
@@ -132,7 +132,10 @@ def emit_success(
     is_paged_collection = (
         isinstance(emitted_data, dict)
         and isinstance(emitted_data.get("items"), list)
-        and any(key in emitted_data for key in ("next_cursor", "has_more", "pagination_mode"))
+        and any(
+            key in emitted_data
+            for key in ("next_cursor", "has_more", "pagination_mode")
+        )
     )
     page_items = emitted_data.get("items") if is_paged_collection else None
     if is_paged_collection and context.output_format is OutputFormat.JSONL:
@@ -147,11 +150,11 @@ def emit_success(
     }
     if context.output_format is OutputFormat.HUMAN:
         result_metadata = result_protocol_metadata(emitted_data)
-        omitted_paths = result_metadata.get("omitted_paths", []) if result_metadata else []
+        omitted_paths = (
+            result_metadata.get("omitted_paths", []) if result_metadata else []
+        )
         has_summarized_content = any(
-            path != "/items/*"
-            for path in omitted_paths
-            if isinstance(path, str)
+            path != "/items/*" for path in omitted_paths if isinstance(path, str)
         )
         rendered = (
             _pretty_json(emitted_data)
@@ -212,7 +215,9 @@ def emit_error(
         "details": redact_error_details(error.details),
     }
     if error.suggested_command:
-        payload["suggested_action"] = {"command": sanitize_error_message(error.suggested_command)}
+        payload["suggested_action"] = {
+            "command": sanitize_error_message(error.suggested_command)
+        }
     envelope = {
         "ok": False,
         "error": payload,

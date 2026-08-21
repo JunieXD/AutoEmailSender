@@ -17,7 +17,9 @@ from app.core.agent_api_errors import AgentApiError
 
 
 def revision_for(value: BaseModel | dict[str, Any]) -> str:
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
+    payload = (
+        value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
+    )
     payload.pop("revision", None)
     payload.pop("created_at", None)
     payload.pop("updated_at", None)

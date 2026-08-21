@@ -106,7 +106,9 @@ def _boundary_violations() -> set[str]:
                         f"{relative_source} -> {target} "
                         f"({source_category} must not depend on {target_category})"
                     )
-            if target == "app" or target.startswith(("app.", "backend", "sqlalchemy", "sqlite3")):
+            if target == "app" or target.startswith(
+                ("app.", "backend", "sqlalchemy", "sqlite3")
+            ):
                 violations.add(
                     f"{relative_source} -> {target} "
                     "(CLI must use the versioned Agent API instead of backend/database internals)"

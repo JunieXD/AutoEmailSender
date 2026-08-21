@@ -29,8 +29,12 @@ def list_professor_information_enrichment_jobs(
     ] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -98,8 +102,12 @@ def list_professor_information_enrichment_job_items(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,

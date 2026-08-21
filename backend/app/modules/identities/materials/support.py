@@ -57,7 +57,9 @@ def ensure_material_extracted_text(material: IdentityMaterial) -> str | None:
 
     material.extracted_text = extract_text_from_document(material.file_path)
     if not material.extracted_text:
-        raise ValueError("默认材料无法提取文本，请换用可复制文本的 PDF/DOCX/TXT/MD 材料后重试")
+        raise ValueError(
+            "默认材料无法提取文本，请换用可复制文本的 PDF/DOCX/TXT/MD 材料后重试"
+        )
     return material.extracted_text
 
 

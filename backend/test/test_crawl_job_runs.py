@@ -16,7 +16,6 @@ from app.modules.crawler.jobs.runs import (
 )
 
 
-
 class CrawlJobRunDurationTests(unittest.TestCase):
     def test_settle_active_segment_treats_naive_sqlite_timestamp_as_utc(self) -> None:
         run = CrawlJobRun(
@@ -152,6 +151,7 @@ class CrawlJobRunTokenUsageTests(unittest.TestCase):
         self.assertEqual(usage["input_tokens"], 100)
         self.assertEqual(usage["output_tokens"], 20)
         self.assertEqual(usage["cached_tokens"], 80)
+
 
 if __name__ == "__main__":
     unittest.main()

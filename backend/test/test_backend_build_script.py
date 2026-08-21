@@ -46,7 +46,9 @@ class BackendBuildScriptTest(unittest.TestCase):
 
         self.assertIn("[switch]$SkipSync", content)
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
-        self.assertIn("uv run python -m playwright install --only-shell chromium", content)
+        self.assertIn(
+            "uv run python -m playwright install --only-shell chromium", content
+        )
         self.assertIn("[switch]$CleanPlaywright", content)
         self.assertNotIn('"build", "dist", "ms-playwright"', content)
 
@@ -98,13 +100,17 @@ class BackendBuildScriptTest(unittest.TestCase):
                 self.assertIn("--additional-hooks-dir", content)
                 self.assertNotIn("--collect-all playwright", content)
 
-    def test_precise_playwright_hooks_keep_driver_package_without_bundled_node(self) -> None:
+    def test_precise_playwright_hooks_keep_driver_package_without_bundled_node(
+        self,
+    ) -> None:
         import playwright
 
         hooks_dir = BUILD_SCRIPTS_ROOT / "pyinstaller-hooks"
         hook_namespace = runpy.run_path(str(hooks_dir / "hook-playwright.py"))
         package_dir = Path(playwright.__file__).resolve().parent
-        collected_sources = {Path(source).resolve() for source, _destination in hook_namespace["datas"]}
+        collected_sources = {
+            Path(source).resolve() for source, _destination in hook_namespace["datas"]
+        }
         expected_driver_files = {
             source.resolve()
             for source in (package_dir / "driver" / "package").rglob("*")
@@ -132,7 +138,9 @@ class BackendBuildScriptTest(unittest.TestCase):
 
         for api_name in ["async_api", "sync_api"]:
             with self.subTest(api_name=api_name):
-                api_hook = runpy.run_path(str(hooks_dir / f"hook-playwright.{api_name}.py"))
+                api_hook = runpy.run_path(
+                    str(hooks_dir / f"hook-playwright.{api_name}.py")
+                )
                 self.assertEqual(api_hook["datas"], [])
                 self.assertEqual(api_hook["binaries"], [])
                 self.assertEqual(api_hook["hiddenimports"], [])
@@ -143,12 +151,14 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn('Join-Path $BackendDir "dist\\backend\\backend.exe"', content)
         self.assertIn("--self-check", content)
         self.assertIn(
-            '& $PackagedBackendExe --document-self-check '
+            "& $PackagedBackendExe --document-self-check "
             '(Join-Path $BackendDir "test\\fixtures\\document_extraction")',
             content,
         )
 
-    def test_backend_packaging_uses_noarchive_for_smaller_differential_updates(self) -> None:
+    def test_backend_packaging_uses_noarchive_for_smaller_differential_updates(
+        self,
+    ) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.ps1").read_text(encoding="utf-8")
 
         self.assertIn("--debug noarchive", content)
@@ -166,7 +176,14 @@ class BackendBuildScriptTest(unittest.TestCase):
         self.assertIn("native\\ocr\\windows\\windows-media-ocr.ps1", windows_script)
         self.assertIn('--add-data "$WindowsOcrScript;native/ocr"', windows_script)
         self.assertTrue(
-            (REPOSITORY_ROOT / "backend" / "native" / "ocr" / "macos" / "email_ocr.swift").is_file()
+            (
+                REPOSITORY_ROOT
+                / "backend"
+                / "native"
+                / "ocr"
+                / "macos"
+                / "email_ocr.swift"
+            ).is_file()
         )
         self.assertTrue(
             (
@@ -185,14 +202,20 @@ class BackendBuildScriptTest(unittest.TestCase):
         )
 
         self.assertIn("$env:PLAYWRIGHT_BROWSERS_PATH = $PlaywrightBrowsersDir", content)
-        self.assertIn("uv run python -m playwright install --only-shell chromium", content)
+        self.assertIn(
+            "uv run python -m playwright install --only-shell chromium", content
+        )
 
-    def test_macos_backend_build_script_matches_packaged_runtime_dependencies(self) -> None:
+    def test_macos_backend_build_script_matches_packaged_runtime_dependencies(
+        self,
+    ) -> None:
         content = (BUILD_SCRIPTS_ROOT / "build-backend.sh").read_text(encoding="utf-8")
 
         self.assertIn("set -euo pipefail", content)
         self.assertIn('PLAYWRIGHT_BROWSERS_PATH="$PlaywrightBrowsersDir"', content)
-        self.assertIn("uv run python -m playwright install --only-shell chromium", content)
+        self.assertIn(
+            "uv run python -m playwright install --only-shell chromium", content
+        )
         self.assertIn("uv run pyinstaller", content)
         self.assertIn("--debug noarchive", content)
         self.assertIn("--hidden-import main", content)

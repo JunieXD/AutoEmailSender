@@ -14,7 +14,9 @@ from alembic import op
 
 
 revision: str = "20260709_professor_dashboard_indexes"
-down_revision: Union[str, Sequence[str], None] = "20260708_merge_email_history_direction_heads"
+down_revision: Union[str, Sequence[str], None] = (
+    "20260708_merge_email_history_direction_heads"
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

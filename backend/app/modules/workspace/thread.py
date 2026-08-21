@@ -37,7 +37,10 @@ from .schemas import (
     WorkspaceSyncWarningRead,
 )
 import app.modules.llm.public as llm_runtime
-from app.modules.communications.public import CommunicationEvent, load_communication_events
+from app.modules.communications.public import (
+    CommunicationEvent,
+    load_communication_events,
+)
 from app.modules.identities.public import (
     material_can_be_primary,
     resolve_identity_communication_scope,
@@ -48,7 +51,10 @@ from app.services.match_results import (
     load_resolved_match_result,
     match_result_is_stale,
 )
-from app.modules.communications.public import strip_quoted_reply_html, strip_quoted_reply_text
+from app.modules.communications.public import (
+    strip_quoted_reply_html,
+    strip_quoted_reply_text,
+)
 from app.services.operation_logs import record_operation_log
 from app.services.material_catalog import list_global_materials
 from app.modules.campaigns.public import (
@@ -86,7 +92,10 @@ async def build_workspace_thread(
     llm_profile = await _get_llm_profile(session, llm_profile_id)
     current_task = await _get_latest_email_task(session, professor_id, identity_id)
     task_updated = _recover_legacy_sent_task_status(current_task)
-    task_updated = _backfill_task_primary_material_from_identity(current_task, identity) or task_updated
+    task_updated = (
+        _backfill_task_primary_material_from_identity(current_task, identity)
+        or task_updated
+    )
     if apply_recent_attachment_defaults:
         task_updated = (
             await _backfill_recent_workspace_attachment_defaults(
@@ -174,7 +183,9 @@ async def _build_workspace_thread_read(
         reversed(draft_logs),
         None,
     )
-    latest_draft_usage = _extract_usage(latest_draft_log.provider_payload if latest_draft_log else None)
+    latest_draft_usage = _extract_usage(
+        latest_draft_log.provider_payload if latest_draft_log else None
+    )
 
     token_estimate = None
     if (
@@ -231,7 +242,9 @@ async def _build_workspace_thread_read(
             batch_task_id=current_task.batch_task_id if current_task else None,
             parent_task_id=current_task.parent_task_id if current_task else None,
             status=current_task.status if current_task else None,
-            cancellation_reason=current_task.cancellation_reason if current_task else None,
+            cancellation_reason=current_task.cancellation_reason
+            if current_task
+            else None,
             can_continue_manually=_can_continue_manually(current_task),
             can_write_follow_up=_can_write_follow_up(current_task),
             outreach_template_id=(
@@ -241,17 +254,27 @@ async def _build_workspace_thread_read(
             outreach_template_subject=current_task_outreach.subject_template,
             outreach_template_body_text=current_task_outreach.body_text_template,
             outreach_template_body_html=current_task_outreach.body_html_template,
-            rendered_template_subject=rendered_template.subject if rendered_template else None,
-            rendered_template_body_text=rendered_template.body_text if rendered_template else None,
-            rendered_template_body_html=rendered_template.body_html if rendered_template else None,
+            rendered_template_subject=rendered_template.subject
+            if rendered_template
+            else None,
+            rendered_template_body_text=rendered_template.body_text
+            if rendered_template
+            else None,
+            rendered_template_body_html=rendered_template.body_html
+            if rendered_template
+            else None,
             match_score=match_result.match_score if match_result else None,
             match_reason=match_result.match_reason if match_result else None,
             fit_points=list(match_result.fit_points) if match_result else [],
             risk_points=list(match_result.risk_points) if match_result else [],
             match_keywords=list(match_result.match_keywords) if match_result else [],
             generated_subject=current_task.generated_subject if current_task else None,
-            generated_content_text=current_task.generated_content_text if current_task else None,
-            generated_content_html=current_task.generated_content_html if current_task else None,
+            generated_content_text=current_task.generated_content_text
+            if current_task
+            else None,
+            generated_content_html=current_task.generated_content_html
+            if current_task
+            else None,
             draft_generation_source=(
                 current_task.draft_generation_source if current_task else None
             ),
@@ -259,33 +282,55 @@ async def _build_workspace_thread_read(
                 current_task.draft_fallback_reason if current_task else None
             ),
             approved_subject=current_task.approved_subject if current_task else None,
-            approved_body_text=current_task.approved_body_text if current_task else None,
-            approved_body_html=current_task.approved_body_html if current_task else None,
-            primary_material_id=current_task.primary_material_id if current_task else None,
+            approved_body_text=current_task.approved_body_text
+            if current_task
+            else None,
+            approved_body_html=current_task.approved_body_html
+            if current_task
+            else None,
+            primary_material_id=current_task.primary_material_id
+            if current_task
+            else None,
             primary_material=(
-                serialize_material(current_task.primary_material, identity.current_primary_material_id)
+                serialize_material(
+                    current_task.primary_material, identity.current_primary_material_id
+                )
                 if current_task and current_task.primary_material is not None
                 else None
             ),
-            selected_material_ids=current_task.selected_material_ids if current_task else None,
+            selected_material_ids=current_task.selected_material_ids
+            if current_task
+            else None,
             approved_at=current_task.approved_at if current_task else None,
             scheduled_at=current_task.scheduled_at if current_task else None,
             last_scheduled_at=current_task.last_scheduled_at if current_task else None,
-            schedule_canceled_at=current_task.schedule_canceled_at if current_task else None,
-            last_send_attempt_at=current_task.last_send_attempt_at if current_task else None,
+            schedule_canceled_at=current_task.schedule_canceled_at
+            if current_task
+            else None,
+            last_send_attempt_at=current_task.last_send_attempt_at
+            if current_task
+            else None,
             sent_at=current_task.sent_at if current_task else None,
-            last_rfc_message_id=current_task.last_rfc_message_id if current_task else None,
+            last_rfc_message_id=current_task.last_rfc_message_id
+            if current_task
+            else None,
             retry_count=current_task.retry_count if current_task else 0,
             last_error=current_task.last_error if current_task else None,
             is_replied=current_task.is_replied if current_task else False,
             estimated_prompt_tokens=(
-                token_estimate.estimated_prompt_tokens if token_estimate is not None else None
+                token_estimate.estimated_prompt_tokens
+                if token_estimate is not None
+                else None
             ),
             estimated_completion_tokens_upper_bound=(
-                token_estimate.estimated_completion_tokens_upper_bound if token_estimate is not None else None
+                token_estimate.estimated_completion_tokens_upper_bound
+                if token_estimate is not None
+                else None
             ),
             estimated_total_tokens_upper_bound=(
-                token_estimate.estimated_total_tokens_upper_bound if token_estimate is not None else None
+                token_estimate.estimated_total_tokens_upper_bound
+                if token_estimate is not None
+                else None
             ),
             last_draft_prompt_tokens=latest_draft_usage.get("prompt_tokens"),
             last_draft_completion_tokens=latest_draft_usage.get("completion_tokens"),
@@ -330,10 +375,7 @@ async def _build_workspace_thread_read(
                     )
                     for log in draft_logs
                 ],
-                *[
-                    _serialize_workspace_event(event)
-                    for event in communication_events
-                ],
+                *[_serialize_workspace_event(event) for event in communication_events],
             ],
             key=lambda message: (message.created_at, message.id),
         ),
@@ -357,7 +399,10 @@ async def build_workspace_thread_for_task(
     identity = await _get_identity(session, current_task.identity_id)
     llm_profile = await _get_llm_profile(session, current_task.llm_profile_id)
     task_updated = _recover_legacy_sent_task_status(current_task)
-    task_updated = _backfill_task_primary_material_from_identity(current_task, identity) or task_updated
+    task_updated = (
+        _backfill_task_primary_material_from_identity(current_task, identity)
+        or task_updated
+    )
     if task_updated:
         await session.commit()
         await session.refresh(current_task)
@@ -398,7 +443,9 @@ async def ensure_workspace_task(
                 current_task,
                 commit=commit,
             )
-        task_updated = _backfill_task_primary_material_from_identity(current_task, identity)
+        task_updated = _backfill_task_primary_material_from_identity(
+            current_task, identity
+        )
         if apply_recent_attachment_defaults:
             task_updated = (
                 await _backfill_recent_workspace_attachment_defaults(
@@ -443,8 +490,12 @@ async def ensure_workspace_task(
         outreach_template_snapshot_version=1,
         outreach_generation_mode=snapshot.generation_mode,
         outreach_template_subject=_normalize_nullable_text(snapshot.subject_template),
-        outreach_template_body_text=_normalize_nullable_text(snapshot.body_text_template),
-        outreach_template_body_html=_normalize_nullable_text(snapshot.body_html_template),
+        outreach_template_body_text=_normalize_nullable_text(
+            snapshot.body_text_template
+        ),
+        outreach_template_body_html=_normalize_nullable_text(
+            snapshot.body_html_template
+        ),
         status=(
             EmailTaskStatus.MATCHED.value
             if match_result is not None
@@ -489,6 +540,7 @@ async def ensure_workspace_task(
         await session.commit()
         await session.refresh(task)
     return task
+
 
 async def _create_workspace_resume_task(
     session: AsyncSession,
@@ -762,13 +814,17 @@ def _extract_usage(provider_payload: dict[str, object] | None) -> dict[str, int 
         }
 
     return {
-        "prompt_tokens": raw_usage.get("prompt_tokens") if isinstance(raw_usage.get("prompt_tokens"), int) else None,
+        "prompt_tokens": raw_usage.get("prompt_tokens")
+        if isinstance(raw_usage.get("prompt_tokens"), int)
+        else None,
         "completion_tokens": (
             raw_usage.get("completion_tokens")
             if isinstance(raw_usage.get("completion_tokens"), int)
             else None
         ),
-        "total_tokens": raw_usage.get("total_tokens") if isinstance(raw_usage.get("total_tokens"), int) else None,
+        "total_tokens": raw_usage.get("total_tokens")
+        if isinstance(raw_usage.get("total_tokens"), int)
+        else None,
     }
 
 
@@ -797,7 +853,11 @@ def _serialize_workspace_message(
         *(candidate for candidate in fallback_logs if candidate.id != log.id),
     )
     subject = next(
-        (candidate.subject for candidate in ordered_logs if (candidate.subject or "").strip()),
+        (
+            candidate.subject
+            for candidate in ordered_logs
+            if (candidate.subject or "").strip()
+        ),
         None,
     )
     rfc_message_id = next(
@@ -809,7 +869,11 @@ def _serialize_workspace_message(
         None,
     )
     reply_headers = next(
-        (candidate.reply_headers for candidate in ordered_logs if candidate.reply_headers),
+        (
+            candidate.reply_headers
+            for candidate in ordered_logs
+            if candidate.reply_headers
+        ),
         None,
     )
     usage = _extract_usage(log.provider_payload)
@@ -841,8 +905,7 @@ def _serialize_workspace_message(
         total_tokens=usage.get("total_tokens"),
         created_at=created_at_override or log.created_at,
         source_identities=[
-            _serialize_workspace_identity(identity)
-            for identity in source_identities
+            _serialize_workspace_identity(identity) for identity in source_identities
         ],
     )
 
@@ -893,7 +956,8 @@ def _build_workspace_draft(
                 task.approved_body_text,
                 task.generated_content_text,
                 rendered_template.body_text if rendered_template else None,
-            ) or "",
+            )
+            or "",
             body_html=_first_text(
                 task.draft_rewrite_source_body_html,
                 task.approved_body_html,
@@ -910,7 +974,9 @@ def _build_workspace_draft(
         body_text = task.approved_body_text or ""
         body_html = task.approved_body_html
         source = "saved"
-    elif task is not None and _has_meaningful_body(task.generated_content_text, task.generated_content_html):
+    elif task is not None and _has_meaningful_body(
+        task.generated_content_text, task.generated_content_html
+    ):
         subject = task.generated_subject
         body_text = task.generated_content_text or ""
         body_html = task.generated_content_html
@@ -968,7 +1034,8 @@ def _task_blocks_draft_actions(task: EmailTask | None) -> bool:
     if task is None:
         return False
     return bool(
-        task.status in {
+        task.status
+        in {
             EmailTaskStatus.GENERATING_DRAFT.value,
             EmailTaskStatus.SENDING.value,
             EmailTaskStatus.SENT.value,
@@ -1026,18 +1093,21 @@ def _can_continue_manually(task: EmailTask | None) -> bool:
 def _can_write_follow_up(task: EmailTask | None) -> bool:
     return bool(
         task is not None
-        and task.status in {
+        and task.status
+        in {
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
         }
     )
+
 
 def _should_resume_workspace_task(task: EmailTask | None) -> bool:
     if task is None:
         return False
     if (
         task.status == EmailTaskStatus.CANCELED.value
-        and task.cancellation_reason == EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
+        and task.cancellation_reason
+        == EmailTaskCancellationReason.SCHEDULE_EXPIRED.value
     ):
         return True
     if task.source != EmailTaskSource.BATCH.value or task.batch_task is None:

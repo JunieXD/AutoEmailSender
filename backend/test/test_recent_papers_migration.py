@@ -27,9 +27,7 @@ class RecentPapersMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "recent-papers.db"
             env = os.environ.copy()
-            env["DATABASE_URL"] = (
-                f"sqlite+aiosqlite:///{database_path.as_posix()}"
-            )
+            env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
             env["ENABLE_BACKGROUND_WORKERS"] = "0"
 
             with patch.dict(os.environ, env, clear=True):

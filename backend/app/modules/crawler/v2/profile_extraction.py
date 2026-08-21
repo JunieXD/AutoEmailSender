@@ -64,7 +64,11 @@ async def invoke_v2_profile_extraction_agent(
         page_text=page_text,
         page_html_excerpt=page_html_excerpt,
     )
-    completion, wire_payload, _structured_mode = await request_crawler_structured_completion(
+    (
+        completion,
+        wire_payload,
+        _structured_mode,
+    ) = await request_crawler_structured_completion(
         session_factory,
         llm_profile,
         adaptation,
@@ -106,8 +110,8 @@ def build_v2_profile_extraction_prompt(
     return (
         "你是 AutoEmailSender 的 V2 详情页整页抽取 Worker。只处理当前页面，不要发现新 URL，不要请求新页面。\n"
         "只输出一个 JSON 对象，不要输出解释文字、Markdown 或代码块。\n"
-        "JSON 字段必须为 \"status\" 和 \"candidate\"。status 只能是 candidate 或 no_candidate。\n"
-        f"如果页面不是单个导师个人详情页，返回 {{\"status\":\"no_candidate\",\"candidate\":{EMPTY_CANDIDATE_WIRE_JSON}}}。\n"
+        'JSON 字段必须为 "status" 和 "candidate"。status 只能是 candidate 或 no_candidate。\n'
+        f'如果页面不是单个导师个人详情页，返回 {{"status":"no_candidate","candidate":{EMPTY_CANDIDATE_WIRE_JSON}}}。\n'
         "status=candidate 时 candidate 必须包含 name；缺少姓名时返回 no_candidate。\n"
         "无论 status 为何，candidate 都必须是完整对象，不能返回 null。status=no_candidate 时必须使用上面的空候选对象。\n"
         f"{CANDIDATE_WIRE_PROMPT_CONTRACT}\n"

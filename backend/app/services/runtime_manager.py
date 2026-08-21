@@ -161,7 +161,9 @@ class RuntimeManager:
 
         dispatcher_startup_recovered = False
 
-        async def run_dispatcher_once(session_factory: async_sessionmaker[AsyncSession]) -> int:
+        async def run_dispatcher_once(
+            session_factory: async_sessionmaker[AsyncSession],
+        ) -> int:
             nonlocal dispatcher_startup_recovered
             if not dispatcher_startup_recovered:
                 await mark_overdue_manual_schedules_missed(session_factory)
@@ -262,7 +264,9 @@ class RuntimeManager:
             if processed > 0:
                 if wait_after_processed:
                     try:
-                        await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
+                        await asyncio.wait_for(
+                            self._stopped.wait(), timeout=interval_seconds
+                        )
                     except TimeoutError:
                         continue
                     continue
@@ -270,7 +274,10 @@ class RuntimeManager:
                     continue
                 min_seconds, max_seconds = processed_jitter_seconds
                 try:
-                    await asyncio.wait_for(self._stopped.wait(), timeout=random.uniform(min_seconds, max_seconds))
+                    await asyncio.wait_for(
+                        self._stopped.wait(),
+                        timeout=random.uniform(min_seconds, max_seconds),
+                    )
                 except TimeoutError:
                     continue
                 continue
@@ -279,7 +286,6 @@ class RuntimeManager:
                 await asyncio.wait_for(self._stopped.wait(), timeout=interval_seconds)
             except TimeoutError:
                 continue
-
 
 
 async def _run_match_analysis_worker_once(

@@ -83,8 +83,20 @@ async def _claim_next_v2_work_locked(
             page_concurrency=config.page_concurrency,
             page_domain_concurrency=config.page_domain_concurrency,
             chunk_concurrency=config.chunk_concurrency,
-            enrichment_concurrency=max(1, int(runtime_settings.crawler_profile_enrichment_concurrency or config.enrichment_concurrency)),
-            enrichment_host_concurrency=max(1, int(runtime_settings.crawler_host_concurrency or config.enrichment_host_concurrency)),
+            enrichment_concurrency=max(
+                1,
+                int(
+                    runtime_settings.crawler_profile_enrichment_concurrency
+                    or config.enrichment_concurrency
+                ),
+            ),
+            enrichment_host_concurrency=max(
+                1,
+                int(
+                    runtime_settings.crawler_host_concurrency
+                    or config.enrichment_host_concurrency
+                ),
+            ),
             lease_seconds=config.lease_seconds,
         )
         now = utc_now()
@@ -139,7 +151,9 @@ async def _eligible_job_ids(
                 CrawlJob.status == CrawlJobStatus.RUNNING.value,
                 CrawlJob.deleted_at.is_(None),
             )
-            .order_by(CrawlJob.updated_at.asc(), CrawlJob.created_at.asc(), CrawlJob.id.asc())
+            .order_by(
+                CrawlJob.updated_at.asc(), CrawlJob.created_at.asc(), CrawlJob.id.asc()
+            )
         )
     )
     admitted_jobs = list(running_jobs[:job_concurrency])
@@ -206,7 +220,9 @@ async def run_crawler_v2_scheduler_once(
     worker_id: str = "crawler-v2-scheduler",
     config: CrawlerV2WorkerConfig | None = None,
 ) -> int:
-    claimed = await claim_next_v2_work(session_factory, worker_id=worker_id, config=config)
+    claimed = await claim_next_v2_work(
+        session_factory, worker_id=worker_id, config=config
+    )
     if claimed.kind is not CrawlerV2WorkKind.IDLE:
         return 1
     async with session_factory() as session:
@@ -219,7 +235,9 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
     jobs = list(
         await session.scalars(
             select(CrawlJob).where(
-                CrawlJob.status.in_([CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value]),
+                CrawlJob.status.in_(
+                    [CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value]
+                ),
                 CrawlJob.deleted_at.is_(None),
             )
         )
@@ -242,14 +260,19 @@ async def finalize_idle_jobs(session: AsyncSession) -> None:
             if await _requeue_direct_entry_pages_for_browser_retry(session, job=job):
                 continue
             final_status = CrawlJobStatus.FAILED.value
-            error_message = await _job_terminal_failure_message(session, job_id=job.id) or "抓取未发现候选导师"
+            error_message = (
+                await _job_terminal_failure_message(session, job_id=job.id)
+                or "抓取未发现候选导师"
+            )
         else:
             final_status = CrawlJobStatus.NEEDS_REVIEW.value
         await _append_enrichment_completion_event_if_needed(session, job, now=now)
         job.status = final_status
         job.error_message = error_message
         job.updated_at = now
-        await mark_crawl_job_run_finished(session, job, status=final_status, error_message=error_message, now=now)
+        await mark_crawl_job_run_finished(
+            session, job, status=final_status, error_message=error_message, now=now
+        )
         profile_text_cache.discard_job(job_id=job.id)
 
 
@@ -263,10 +286,13 @@ async def _claim_page_task(
     config: CrawlerV2WorkerConfig,
 ) -> CrawlerV2ClaimedWork:
     active_count = await session.scalar(
-        select(func.count()).select_from(CrawlPageTask).join(
+        select(func.count())
+        .select_from(CrawlPageTask)
+        .join(
             CrawlJob,
             CrawlJob.id == CrawlPageTask.job_id,
-        ).where(
+        )
+        .where(
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
@@ -289,12 +315,21 @@ async def _claim_page_task(
     )
     if task is None:
         return CrawlerV2ClaimedWork.idle()
-    result = await _conditional_claim_page_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    result = await _conditional_claim_page_task(
+        session,
+        task=task,
+        worker_id=worker_id,
+        now=now,
+        lease_expires_at=lease_expires_at,
+    )
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
     await _mark_job_running_for_claimed_work(session, job_id=task.job_id, now=now)
-    return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.PAGE, work_item_id=task.id, job_id=task.job_id)
+    return CrawlerV2ClaimedWork(
+        kind=CrawlerV2WorkKind.PAGE, work_item_id=task.id, job_id=task.job_id
+    )
+
 
 async def _claim_chunk(
     session: AsyncSession,
@@ -306,10 +341,13 @@ async def _claim_chunk(
     config: CrawlerV2WorkerConfig,
 ) -> CrawlerV2ClaimedWork:
     active_count = await session.scalar(
-        select(func.count()).select_from(CrawlPageChunk).join(
+        select(func.count())
+        .select_from(CrawlPageChunk)
+        .join(
             CrawlJob,
             CrawlJob.id == CrawlPageChunk.job_id,
-        ).where(
+        )
+        .where(
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
             CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
@@ -332,12 +370,21 @@ async def _claim_chunk(
     )
     if chunk is None:
         return CrawlerV2ClaimedWork.idle()
-    result = await _conditional_claim_chunk(session, chunk=chunk, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    result = await _conditional_claim_chunk(
+        session,
+        chunk=chunk,
+        worker_id=worker_id,
+        now=now,
+        lease_expires_at=lease_expires_at,
+    )
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
     await _mark_job_running_for_claimed_work(session, job_id=chunk.job_id, now=now)
-    return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.CHUNK, work_item_id=chunk.id, job_id=chunk.job_id)
+    return CrawlerV2ClaimedWork(
+        kind=CrawlerV2WorkKind.CHUNK, work_item_id=chunk.id, job_id=chunk.job_id
+    )
+
 
 async def _claim_enrichment_task(
     session: AsyncSession,
@@ -349,13 +396,17 @@ async def _claim_enrichment_task(
     config: CrawlerV2WorkerConfig,
 ) -> CrawlerV2ClaimedWork:
     active_count = await session.scalar(
-        select(func.count()).select_from(CrawlCandidateEnrichmentTask).join(
+        select(func.count())
+        .select_from(CrawlCandidateEnrichmentTask)
+        .join(
             CrawlJob,
             CrawlJob.id == CrawlCandidateEnrichmentTask.job_id,
-        ).where(
+        )
+        .where(
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
-            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
             CrawlCandidateEnrichmentTask.lease_expires_at > now,
         )
     )
@@ -366,7 +417,10 @@ async def _claim_enrichment_task(
         await session.execute(
             select(CrawlCandidateEnrichmentTask, CrawlCandidate.profile_url)
             .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
-            .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
+            .join(
+                CrawlCandidate,
+                CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id,
+            )
             .where(
                 CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
                 CrawlJob.deleted_at.is_(None),
@@ -386,25 +440,38 @@ async def _claim_enrichment_task(
         break
     if task is None:
         return CrawlerV2ClaimedWork.idle()
-    result = await _conditional_claim_enrichment_task(session, task=task, worker_id=worker_id, now=now, lease_expires_at=lease_expires_at)
+    result = await _conditional_claim_enrichment_task(
+        session,
+        task=task,
+        worker_id=worker_id,
+        now=now,
+        lease_expires_at=lease_expires_at,
+    )
     if result.rowcount != 1:
         await session.rollback()
         return CrawlerV2ClaimedWork.idle()
     await _mark_job_running_for_claimed_work(session, job_id=task.job_id, now=now)
-    return CrawlerV2ClaimedWork(kind=CrawlerV2WorkKind.ENRICHMENT, work_item_id=task.id, job_id=task.job_id)
+    return CrawlerV2ClaimedWork(
+        kind=CrawlerV2WorkKind.ENRICHMENT, work_item_id=task.id, job_id=task.job_id
+    )
 
 
-
-async def _active_enrichment_host_counts(session: AsyncSession, *, now: datetime) -> dict[str, int]:
+async def _active_enrichment_host_counts(
+    session: AsyncSession, *, now: datetime
+) -> dict[str, int]:
     rows = await session.execute(
         select(CrawlCandidate.profile_url)
         .select_from(CrawlCandidateEnrichmentTask)
-        .join(CrawlCandidate, CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id)
+        .join(
+            CrawlCandidate,
+            CrawlCandidate.id == CrawlCandidateEnrichmentTask.candidate_id,
+        )
         .join(CrawlJob, CrawlJob.id == CrawlCandidateEnrichmentTask.job_id)
         .where(
             CrawlJob.status.in_(_ACTIVE_JOB_STATUSES),
             CrawlJob.deleted_at.is_(None),
-            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
             CrawlCandidateEnrichmentTask.lease_expires_at > now,
         )
     )
@@ -424,7 +491,10 @@ def _candidate_profile_host(profile_url: str | None) -> str | None:
     except ValueError:
         return None
 
-async def _mark_job_running_for_claimed_work(session: AsyncSession, *, job_id: int, now: datetime) -> None:
+
+async def _mark_job_running_for_claimed_work(
+    session: AsyncSession, *, job_id: int, now: datetime
+) -> None:
     job = await session.get(CrawlJob, job_id)
     if job is None:
         return
@@ -433,6 +503,8 @@ async def _mark_job_running_for_claimed_work(session: AsyncSession, *, job_id: i
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         await mark_crawl_job_run_running(session, job, now=now)
+
+
 def _page_task_claimable(now: datetime):
     return or_(
         CrawlPageTask.status == CrawlPageTaskStatus.PENDING.value,
@@ -441,7 +513,11 @@ def _page_task_claimable(now: datetime):
             CrawlPageTask.lease_expires_at.is_(None)
             | (CrawlPageTask.lease_expires_at <= now)
         ),
-        (CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value) & ((CrawlPageTask.lease_expires_at.is_(None)) | (CrawlPageTask.lease_expires_at <= now)),
+        (CrawlPageTask.status == CrawlPageTaskStatus.FAILED_RETRYABLE.value)
+        & (
+            (CrawlPageTask.lease_expires_at.is_(None))
+            | (CrawlPageTask.lease_expires_at <= now)
+        ),
     )
 
 
@@ -461,7 +537,11 @@ def _chunk_claimable(now: datetime):
             CrawlPageChunk.lease_expires_at.is_(None)
             | (CrawlPageChunk.lease_expires_at <= now)
         ),
-        (CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value) & ((CrawlPageChunk.lease_expires_at.is_(None)) | (CrawlPageChunk.lease_expires_at <= now)),
+        (CrawlPageChunk.status == CrawlPageChunkStatus.FAILED_RETRYABLE.value)
+        & (
+            (CrawlPageChunk.lease_expires_at.is_(None))
+            | (CrawlPageChunk.lease_expires_at <= now)
+        ),
     )
 
 
@@ -475,21 +555,34 @@ def _chunk_unfinished(now: datetime):
 
 def _enrichment_task_claimable(now: datetime):
     return or_(
-        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value)
+        CrawlCandidateEnrichmentTask.status
+        == CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+        (
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
+        )
         & (
             CrawlCandidateEnrichmentTask.lease_expires_at.is_(None)
             | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)
         ),
-        (CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value) & ((CrawlCandidateEnrichmentTask.lease_expires_at.is_(None)) | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)),
+        (
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value
+        )
+        & (
+            (CrawlCandidateEnrichmentTask.lease_expires_at.is_(None))
+            | (CrawlCandidateEnrichmentTask.lease_expires_at <= now)
+        ),
     )
 
 
 def _enrichment_task_unfinished(now: datetime):
     return or_(
         _enrichment_task_claimable(now),
-        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-        CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+        CrawlCandidateEnrichmentTask.status
+        == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+        CrawlCandidateEnrichmentTask.status
+        == CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
     )
 
 
@@ -548,7 +641,9 @@ async def _conditional_claim_enrichment_task(
     return await session.execute(
         update(CrawlCandidateEnrichmentTask)
         .execution_options(synchronize_session=False)
-        .where(CrawlCandidateEnrichmentTask.id == task.id, _enrichment_task_claimable(now))
+        .where(
+            CrawlCandidateEnrichmentTask.id == task.id, _enrichment_task_claimable(now)
+        )
         .values(
             status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
             worker_id=worker_id,
@@ -560,28 +655,37 @@ async def _conditional_claim_enrichment_task(
         )
     )
 
-async def _job_has_available_or_leased_work(session: AsyncSession, *, job_id: int, now: datetime) -> bool:
+
+async def _job_has_available_or_leased_work(
+    session: AsyncSession, *, job_id: int, now: datetime
+) -> bool:
     page = await session.scalar(
-        select(CrawlPageTask.id).where(
+        select(CrawlPageTask.id)
+        .where(
             CrawlPageTask.job_id == job_id,
             _page_task_unfinished(now),
-        ).limit(1)
+        )
+        .limit(1)
     )
     if page is not None:
         return True
     chunk = await session.scalar(
-        select(CrawlPageChunk.id).where(
+        select(CrawlPageChunk.id)
+        .where(
             CrawlPageChunk.job_id == job_id,
             _chunk_unfinished(now),
-        ).limit(1)
+        )
+        .limit(1)
     )
     if chunk is not None:
         return True
     enrichment = await session.scalar(
-        select(CrawlCandidateEnrichmentTask.id).where(
+        select(CrawlCandidateEnrichmentTask.id)
+        .where(
             CrawlCandidateEnrichmentTask.job_id == job_id,
             _enrichment_task_unfinished(now),
-        ).limit(1)
+        )
+        .limit(1)
     )
     return enrichment is not None
 
@@ -685,7 +789,10 @@ async def _append_enrichment_completion_event_if_needed(
     status_by_candidate_id: dict[int, str] = {}
     for candidate_id, status in rows:
         current_status = status_by_candidate_id.get(int(candidate_id))
-        if current_status is None or status_priority[status] > status_priority[current_status]:
+        if (
+            current_status is None
+            or status_priority[status] > status_priority[current_status]
+        ):
             status_by_candidate_id[int(candidate_id)] = status
     counts = {
         status: sum(1 for value in status_by_candidate_id.values() if value == status)
@@ -717,7 +824,9 @@ async def _append_enrichment_completion_event_if_needed(
     )
 
 
-async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -> str | None:
+async def _job_terminal_failure_message(
+    session: AsyncSession, *, job_id: int
+) -> str | None:
     terminal_errors: list[tuple[datetime | None, str]] = []
     page_errors = await session.execute(
         select(CrawlPageTask.updated_at, CrawlPageTask.last_error).where(
@@ -744,9 +853,13 @@ async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -
         if last_error and last_error.strip()
     )
     enrichment_errors = await session.execute(
-        select(CrawlCandidateEnrichmentTask.updated_at, CrawlCandidateEnrichmentTask.last_error).where(
+        select(
+            CrawlCandidateEnrichmentTask.updated_at,
+            CrawlCandidateEnrichmentTask.last_error,
+        ).where(
             CrawlCandidateEnrichmentTask.job_id == job_id,
-            CrawlCandidateEnrichmentTask.status == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
+            CrawlCandidateEnrichmentTask.status
+            == CrawlCandidateEnrichmentTaskStatus.FAILED_TERMINAL.value,
             CrawlCandidateEnrichmentTask.last_error.is_not(None),
         )
     )
@@ -757,7 +870,10 @@ async def _job_terminal_failure_message(session: AsyncSession, *, job_id: int) -
     )
     if not terminal_errors:
         return None
-    message = max(terminal_errors, key=lambda item: item[0].timestamp() if item[0] is not None else 0)[1]
+    message = max(
+        terminal_errors,
+        key=lambda item: item[0].timestamp() if item[0] is not None else 0,
+    )[1]
     return format_llm_runtime_error_for_user(message)
 
 

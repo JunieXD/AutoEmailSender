@@ -58,12 +58,72 @@ def audit_database(database_path: Path) -> list[TimeIssue]:
     connection.row_factory = sqlite3.Row
     try:
         issues: list[TimeIssue] = []
-        issues.extend(_audit_order(connection, "crawl_page_tasks", "id", "claimed_at", "lease_expires_at", "lease_expires_before_claimed", "检查 page worker 租约写入逻辑"))
-        issues.extend(_audit_order(connection, "crawl_page_chunks", "id", "claimed_at", "lease_expires_at", "lease_expires_before_claimed", "检查 chunk worker 租约写入逻辑"))
-        issues.extend(_audit_order(connection, "crawl_candidate_enrichment_tasks", "id", "claimed_at", "lease_expires_at", "lease_expires_before_claimed", "检查 enrichment worker 租约写入逻辑"))
-        issues.extend(_audit_order(connection, "crawl_job_runs", "id", "started_at", "finished_at", "finished_before_started", "检查抓取运行状态结算逻辑"))
-        issues.extend(_audit_order(connection, "crawl_jobs", "id", "created_at", "updated_at", "updated_before_created", "检查任务更新时间写入逻辑"))
-        issues.extend(_audit_order(connection, "email_tasks", "id", "created_at", "updated_at", "updated_before_created", "检查邮件任务更新时间写入逻辑"))
+        issues.extend(
+            _audit_order(
+                connection,
+                "crawl_page_tasks",
+                "id",
+                "claimed_at",
+                "lease_expires_at",
+                "lease_expires_before_claimed",
+                "检查 page worker 租约写入逻辑",
+            )
+        )
+        issues.extend(
+            _audit_order(
+                connection,
+                "crawl_page_chunks",
+                "id",
+                "claimed_at",
+                "lease_expires_at",
+                "lease_expires_before_claimed",
+                "检查 chunk worker 租约写入逻辑",
+            )
+        )
+        issues.extend(
+            _audit_order(
+                connection,
+                "crawl_candidate_enrichment_tasks",
+                "id",
+                "claimed_at",
+                "lease_expires_at",
+                "lease_expires_before_claimed",
+                "检查 enrichment worker 租约写入逻辑",
+            )
+        )
+        issues.extend(
+            _audit_order(
+                connection,
+                "crawl_job_runs",
+                "id",
+                "started_at",
+                "finished_at",
+                "finished_before_started",
+                "检查抓取运行状态结算逻辑",
+            )
+        )
+        issues.extend(
+            _audit_order(
+                connection,
+                "crawl_jobs",
+                "id",
+                "created_at",
+                "updated_at",
+                "updated_before_created",
+                "检查任务更新时间写入逻辑",
+            )
+        )
+        issues.extend(
+            _audit_order(
+                connection,
+                "email_tasks",
+                "id",
+                "created_at",
+                "updated_at",
+                "updated_before_created",
+                "检查邮件任务更新时间写入逻辑",
+            )
+        )
         issues.extend(_audit_scheduled_at_range(connection))
         issues.extend(_audit_active_seconds(connection))
         return issues
@@ -115,7 +175,9 @@ def _audit_scheduled_at_range(connection: sqlite3.Connection) -> list[TimeIssue]
     if not _table_exists(connection, "email_tasks"):
         return []
     now = datetime.now(UTC)
-    rows = connection.execute("select id, scheduled_at from email_tasks where scheduled_at is not null").fetchall()
+    rows = connection.execute(
+        "select id, scheduled_at from email_tasks where scheduled_at is not null"
+    ).fetchall()
     issues: list[TimeIssue] = []
     for row in rows:
         scheduled_at = parse_sqlite_datetime(row["scheduled_at"])
@@ -169,7 +231,12 @@ def render_markdown_report(issues: Iterable[TimeIssue]) -> str:
     if not issue_list:
         lines.append("未发现明显时间数据异常。")
         return "\n".join(lines) + "\n"
-    lines.extend(["| 表 | 主键 | 字段 | 原始值 | 问题类型 | 建议 |", "| --- | --- | --- | --- | --- | --- |"])
+    lines.extend(
+        [
+            "| 表 | 主键 | 字段 | 原始值 | 问题类型 | 建议 |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for issue in issue_list:
         lines.append(
             f"| {issue.table} | {issue.primary_key} | {issue.field} | {issue.raw_value} | {issue.issue_type} | {issue.suggestion} |"
@@ -184,7 +251,9 @@ def write_reports(output_directory: Path, issues: Iterable[TimeIssue]) -> Report
     json_path = output_directory / f"time-audit-{timestamp}.json"
     markdown_path = output_directory / f"time-audit-{timestamp}.md"
     json_path.write_text(
-        json.dumps([asdict(issue) for issue in issue_list], ensure_ascii=False, indent=2),
+        json.dumps(
+            [asdict(issue) for issue in issue_list], ensure_ascii=False, indent=2
+        ),
         encoding="utf-8",
     )
     markdown_path.write_text(render_markdown_report(issue_list), encoding="utf-8")

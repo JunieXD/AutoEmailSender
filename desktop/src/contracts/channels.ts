@@ -25,6 +25,3 @@ export const DESKTOP_IPC_CHANNELS = {
   updateQuitAndInstall: "update:quit-and-install",
   updateStatus: "update:status",
 } as const;
-
-export type DesktopIpcChannel =
-  (typeof DESKTOP_IPC_CHANNELS)[keyof typeof DESKTOP_IPC_CHANNELS];

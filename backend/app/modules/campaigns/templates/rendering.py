@@ -131,7 +131,9 @@ def get_outreach_template_defaults_validation_error(
     return MISSING_TEMPLATE_BODY_TEXT_DETAIL
 
 
-def build_template_context(identity: IdentityProfile, professor: Professor) -> dict[str, str]:
+def build_template_context(
+    identity: IdentityProfile, professor: Professor
+) -> dict[str, str]:
     return {
         "name": professor.name or "",
         "email": professor.email or "",
@@ -222,7 +224,10 @@ def resolve_outreach_template_config(
     body_html_template: str | None = None,
 ) -> OutreachTemplateConfig:
     default_template = template or getattr(identity, "default_outreach_template", None)
-    if default_template is not None and getattr(default_template, "archived_at", None) is not None:
+    if (
+        default_template is not None
+        and getattr(default_template, "archived_at", None) is not None
+    ):
         default_template = None
     default_mode = (
         getattr(default_template, "recommended_generation_mode", None)
@@ -250,16 +255,14 @@ def resolve_outreach_template_config(
 
     return OutreachTemplateConfig(
         generation_mode=mode,
-        subject_template=(subject_template if subject_template is not None else default_subject),
+        subject_template=(
+            subject_template if subject_template is not None else default_subject
+        ),
         body_text_template=(
-            body_text_template
-            if body_text_template is not None
-            else default_body_text
+            body_text_template if body_text_template is not None else default_body_text
         ),
         body_html_template=(
-            body_html_template
-            if body_html_template is not None
-            else default_body_html
+            body_html_template if body_html_template is not None else default_body_html
         ),
     )
 
@@ -287,8 +290,12 @@ def render_outreach_template(
     if not subject:
         raise ValueError("固定模板渲染后缺少邮件主题")
 
-    rendered_body_text = render_template_string(normalized_body_text_template, context).strip()
-    rendered_body_html = render_template_string(normalized_body_html_template, context).strip()
+    rendered_body_text = render_template_string(
+        normalized_body_text_template, context
+    ).strip()
+    rendered_body_html = render_template_string(
+        normalized_body_html_template, context
+    ).strip()
 
     if not rendered_body_text:
         raise ValueError("固定模板渲染后缺少可发送正文")
@@ -336,14 +343,18 @@ def render_template_with_context(value: str | None, context: dict[str, str]) -> 
     return render_template_string(value or "", context)
 
 
-def import_outreach_template_file(file_name: str, content: bytes) -> ImportedOutreachTemplate:
+def import_outreach_template_file(
+    file_name: str, content: bytes
+) -> ImportedOutreachTemplate:
     suffix = Path(file_name).suffix.lower()
     if suffix not in SUPPORTED_TEMPLATE_IMPORT_SUFFIXES:
         raise ValueError("模板文件暂只支持 .docx、.html、.htm、.txt、.md")
 
     if suffix == ".docx":
         body_html = _convert_docx_template_to_html(content)
-        body_text = _extract_docx_template_to_text(content).strip() or html_to_text(body_html)
+        body_text = _extract_docx_template_to_text(content).strip() or html_to_text(
+            body_html
+        )
         if not body_text:
             raise ValueError("模板文件里没有可用正文")
         return ImportedOutreachTemplate(
@@ -528,8 +539,7 @@ def _render_docx_table(table) -> str:
         cell_parts: list[str] = []
         for cell in row.cells:
             paragraph_parts = [
-                _render_docx_paragraph(paragraph, 0)
-                for paragraph in cell.paragraphs
+                _render_docx_paragraph(paragraph, 0) for paragraph in cell.paragraphs
             ]
             content = "".join(part for part in paragraph_parts if part)
             cell_parts.append(
@@ -650,7 +660,9 @@ def _get_docx_first_line_indent(paragraph) -> str | None:
     points = _docx_length_to_points(first_line_indent)
     if points is None or points <= 0:
         return "0"
-    font_size = _docx_font_size_to_points(_get_docx_paragraph_font_size(paragraph, "p")) or 12.0
+    font_size = (
+        _docx_font_size_to_points(_get_docx_paragraph_font_size(paragraph, "p")) or 12.0
+    )
     em_value = points / font_size
     if abs(em_value - round(em_value)) < 0.05:
         em_text = str(int(round(em_value)))
@@ -752,7 +764,11 @@ def _decorate_docx_email_html(value: str) -> str:
         text = paragraph.get_text(" ", strip=True)
         is_in_table = paragraph.find_parent("table") is not None
         is_section_heading = bool(re.match(r"^（[一二三四五六七八九十]+）", text))
-        indent = "0" if paragraph is first_paragraph or is_in_table or is_section_heading else "2em"
+        indent = (
+            "0"
+            if paragraph is first_paragraph or is_in_table or is_section_heading
+            else "2em"
+        )
         margin_top = "16px" if is_section_heading else "0"
         _append_inline_style(
             paragraph,
@@ -771,12 +787,7 @@ def _decorate_docx_email_html(value: str) -> str:
     for table in container.find_all("table"):
         _append_inline_style(
             table,
-            (
-                "width:100%;"
-                "border-collapse:collapse;"
-                "table-layout:fixed;"
-                "margin:12px 0;"
-            ),
+            ("width:100%;border-collapse:collapse;table-layout:fixed;margin:12px 0;"),
         )
 
     for cell in container.find_all(["td", "th"]):

@@ -15,7 +15,9 @@ MENTOR_ID_PATTERN = r"^mentor_[a-z0-9][a-z0-9_-]{7,63}$"
 ORGANIZATION_ID_PATTERN = r"^org_[a-z0-9][a-z0-9_-]{2,63}$"
 AFFILIATION_ID_PATTERN = r"^aff_[a-z0-9][a-z0-9_-]{7,63}$"
 DATA_FILE_PATTERN = r"^objects/sha256/[a-f0-9]{64}\.json$"
-RELEASE_FILE_PATTERN = rf"^releases/{DATASET_VERSION_FRAGMENT}/(catalog|revocations)\.json$"
+RELEASE_FILE_PATTERN = (
+    rf"^releases/{DATASET_VERSION_FRAGMENT}/(catalog|revocations)\.json$"
+)
 MANIFEST_FILE_PATTERN = rf"^(?:{DATA_FILE_PATTERN[1:-1]}|{RELEASE_FILE_PATTERN[1:-1]})$"
 MAX_COMMUNITY_LOADED_RECORDS = 2_000
 MAX_COMMUNITY_SHARE_PROFESSORS = 500
@@ -109,7 +111,9 @@ class CommunityManifestFile(CommunityDatasetSchema):
     @model_validator(mode="after")
     def _validate_content_address(self) -> "CommunityManifestFile":
         if self.path.startswith("objects/sha256/"):
-            path_digest = self.path.removeprefix("objects/sha256/").removesuffix(".json")
+            path_digest = self.path.removeprefix("objects/sha256/").removesuffix(
+                ".json"
+            )
             if path_digest != self.sha256:
                 raise ValueError("内容寻址对象路径与 SHA-256 不一致")
         return self
@@ -206,7 +210,9 @@ class CommunityMentorContact(CommunityDatasetSchema):
     @classmethod
     def _normalize_email(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized.count("@") != 1 or any(character.isspace() for character in normalized):
+        if normalized.count("@") != 1 or any(
+            character.isspace() for character in normalized
+        ):
             raise ValueError("社区邮箱格式无效")
         return normalized
 
@@ -236,7 +242,9 @@ class CommunityMentorAffiliation(CommunityDatasetSchema):
 
 class CommunityMentorContributor(CommunityDatasetSchema):
     github_user_id: int = Field(gt=0)
-    github_login_at_submission: str = Field(pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+    github_login_at_submission: str = Field(
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+    )
     issue_urls: list[str] = Field(min_length=1, max_length=100)
 
     @field_validator("issue_urls")
@@ -272,7 +280,9 @@ class CommunityMentorRecord(CommunityDatasetSchema):
     @classmethod
     def _normalize_email(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized.count("@") != 1 or any(character.isspace() for character in normalized):
+        if normalized.count("@") != 1 or any(
+            character.isspace() for character in normalized
+        ):
             raise ValueError("社区主邮箱格式无效")
         return normalized
 
@@ -349,7 +359,9 @@ class CommunityShardDocument(CommunityDatasetSchema):
     schema_version: Literal[2]
     university: CommunityShardOrganization
     unit: CommunityShardUnit
-    records: list[CommunityMentorRecord] = Field(max_length=MAX_COMMUNITY_LOADED_RECORDS)
+    records: list[CommunityMentorRecord] = Field(
+        max_length=MAX_COMMUNITY_LOADED_RECORDS
+    )
 
     @model_validator(mode="after")
     def _validate_unique_records(self) -> "CommunityShardDocument":
@@ -440,7 +452,9 @@ class CommunityCatalogRead(ApiSchema):
     stale: bool
     warning: str | None
     verified_at: datetime
-    lifecycle_warnings: list[CommunityLifecycleWarningRead] = Field(default_factory=list)
+    lifecycle_warnings: list[CommunityLifecycleWarningRead] = Field(
+        default_factory=list
+    )
 
 
 class CommunityRecordSelectionPayload(BaseModel):
@@ -525,7 +539,9 @@ class CommunityRecordsRead(ApiSchema):
     stale: bool
     warning: str | None
     records: list[CommunityMentorComparisonRead]
-    lifecycle_warnings: list[CommunityLifecycleWarningRead] = Field(default_factory=list)
+    lifecycle_warnings: list[CommunityLifecycleWarningRead] = Field(
+        default_factory=list
+    )
 
 
 class CommunityImportItemPayload(BaseModel):

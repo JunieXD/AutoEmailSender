@@ -158,7 +158,9 @@ def save_draft(
 def regenerate_draft(
     ctx: typer.Context,
     task_id: Annotated[int, typer.Argument(min=1)],
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -217,7 +219,9 @@ def rewrite_draft(
     body_text: Annotated[str, typer.Option("--body-text")] = "",
     subject: Annotated[str | None, typer.Option("--subject")] = None,
     body_html: Annotated[str | None, typer.Option("--body-html")] = None,
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
     attachment_material_ids: Annotated[
         list[int] | None,
         typer.Option("--attachment-material-id", min=1),

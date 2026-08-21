@@ -11,7 +11,7 @@ import type {
   DesktopCommunityShareSaveResult as CommunityShareSaveResult,
 } from "../../../../contracts/desktop-ipc.js";
 
-export type SelectedImportFile = {
+type SelectedImportFile = {
   name: string;
   type: string;
   data: ArrayBuffer;
@@ -37,7 +37,7 @@ export function buildProfessorImportDialogOptions(): OpenDialogOptions {
   };
 }
 
-export function getImportFileMimeType(fileName: string): string {
+function getImportFileMimeType(fileName: string): string {
   const extension = path.extname(fileName).toLowerCase();
   if (extension === ".csv") {
     return "text/csv";

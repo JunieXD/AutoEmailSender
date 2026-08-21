@@ -86,7 +86,9 @@ async def resolve_professor_selection(
         elif archived == "archived":
             statement = statement.where(Professor.archived_at.is_not(None))
         statement = _apply_professor_selection_where(statement, where)
-        matched_ids = list(await session.scalars(statement.order_by(Professor.id.asc())))
+        matched_ids = list(
+            await session.scalars(statement.order_by(Professor.id.asc()))
+        )
 
     matched_count = len(matched_ids)
     excluded_ids = set(selection.exclude_ids)
@@ -104,7 +106,9 @@ async def resolve_professor_selection(
                 code="PROFESSOR_SELECTION_EXCLUSIONS_NOT_FOUND",
                 message="部分排除导师不存在。",
             )
-    selected_ids = [professor_id for professor_id in matched_ids if professor_id not in excluded_ids]
+    selected_ids = [
+        professor_id for professor_id in matched_ids if professor_id not in excluded_ids
+    ]
     excluded_count = matched_count - len(selected_ids)
     if not selected_ids:
         raise ProfessorSelectionError(
@@ -115,7 +119,9 @@ async def resolve_professor_selection(
     return selected_ids, matched_count, excluded_count
 
 
-def _apply_professor_selection_where(statement: object, where: dict[str, object]) -> object:
+def _apply_professor_selection_where(
+    statement: object, where: dict[str, object]
+) -> object:
     for field, condition in where.items():
         column = _TEXT_FILTER_COLUMNS.get(field)
         if column is None:
@@ -138,7 +144,9 @@ def _apply_professor_selection_where(statement: object, where: dict[str, object]
                     code="INVALID_PROFESSOR_SELECTION_FILTER",
                     message="contains_script 目前只支持导师 name 字段。",
                 )
-            statement = statement.where(professor_name_script_clause(expected.strip().lower()))
+            statement = statement.where(
+                professor_name_script_clause(expected.strip().lower())
+            )
         elif operator in {"eq", "ne"}:
             if isinstance(expected, (dict, list)):
                 raise ProfessorSelectionError(

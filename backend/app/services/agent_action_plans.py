@@ -49,9 +49,7 @@ async def create_email_action_plan(
 ) -> AgentActionPlanRead:
     normalized_key = _normalize_idempotency_key(idempotency_key)
     scheduled_at = (
-        as_utc_aware(payload.scheduled_at)
-        if payload.scheduled_at is not None
-        else None
+        as_utc_aware(payload.scheduled_at) if payload.scheduled_at is not None else None
     )
     if scheduled_at is not None and scheduled_at <= utc_now():
         raise AgentApiError(
@@ -95,7 +93,9 @@ async def create_email_action_plan(
         now = utc_now()
         plan = AgentActionPlan(
             id=_new_plan_id(),
-            action="email.schedule" if payload.delivery == "scheduled" else "email.send",
+            action="email.schedule"
+            if payload.delivery == "scheduled"
+            else "email.send",
             status=PLAN_STATUS_AWAITING,
             email_task_id=task.id,
             idempotency_key=normalized_key,
@@ -437,7 +437,9 @@ def _build_task_snapshot(
     material_by_id = {material.id: material for material in materials}
     attachment_ids = list(dict.fromkeys(task.selected_material_ids or []))
     missing_attachment_ids = [
-        material_id for material_id in attachment_ids if material_id not in material_by_id
+        material_id
+        for material_id in attachment_ids
+        if material_id not in material_by_id
     ]
     if missing_attachment_ids:
         raise ValueError("草稿包含已删除或不存在的附件")
@@ -446,7 +448,9 @@ def _build_task_snapshot(
     generation_mode = (
         "template"
         if raw_mode == "template"
-        else "manual" if raw_mode == "manual" else "ai_rewrite"
+        else "manual"
+        if raw_mode == "manual"
+        else "ai_rewrite"
     )
     schedule_iso = (
         serialize_api_datetime(as_utc_aware(scheduled_at))
@@ -454,8 +458,7 @@ def _build_task_snapshot(
         else None
     )
     attachment_total_size_bytes = sum(
-        max(0, material_by_id[material_id].size_bytes)
-        for material_id in attachment_ids
+        max(0, material_by_id[material_id].size_bytes) for material_id in attachment_ids
     )
     summary = {
         "recipient_count": 1,
@@ -659,7 +662,8 @@ def _build_execution_result(
             else None
         ),
         "rfc_message_id": task.last_rfc_message_id if task is not None else None,
-        "error": failure_message or (task.last_error if task is not None else "任务不存在"),
+        "error": failure_message
+        or (task.last_error if task is not None else "任务不存在"),
     }
 
 

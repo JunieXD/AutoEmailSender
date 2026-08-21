@@ -69,8 +69,12 @@ class AgentUiHandoff(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    awaiting_user_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    awaiting_user_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     applied_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     canceled_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -55,6 +55,7 @@ export type ProfessorKeywordSearchScopeDTO =
   | 'department'
   | 'title'
   | 'researchDirection'
+  | 'personalNote'
   | 'tag';
 
 export interface ProfessorDashboardPageRequestDTO {
@@ -158,12 +159,6 @@ export interface ProfessorTagUsageProfessorDTO {
 export interface ProfessorTagUsageDTO {
   tag: ProfessorTagDTO;
   professors: ProfessorTagUsageProfessorDTO[];
-}
-
-export interface ProfessorImportResultDTO {
-  inserted_count: number;
-  total_count: number;
-  message: string;
 }
 
 export interface ProfessorManagementItemDTO {
@@ -280,6 +275,12 @@ export interface ProfessorInformationEnrichmentJobDTO {
   updated_at: string;
   deleted_at: string | null;
   last_error: string | null;
+}
+
+export interface ProfessorInformationEnrichmentJobsPageDTO {
+  items: ProfessorInformationEnrichmentJobDTO[];
+  total_count: number;
+  current_total_count: number;
 }
 
 export interface ProfessorInformationEnrichmentItemDTO {

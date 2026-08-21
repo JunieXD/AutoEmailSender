@@ -158,10 +158,15 @@ def _should_move_ambiguous_root_option(
     if index < command_index:
         return True
     root_command, leaf_command = command_path
-    if option == "--request-id" and root_command == "diagnostics" and leaf_command in {
-        "logs",
-        "crawler-debug",
-    }:
+    if (
+        option == "--request-id"
+        and root_command == "diagnostics"
+        and leaf_command
+        in {
+            "logs",
+            "crawler-debug",
+        }
+    ):
         return False
     if (
         option == "--format"
@@ -247,10 +252,7 @@ def _select_capability_card_fields(
 ) -> list[dict[str, object]]:
     if not selected:
         return items
-    return [
-        {key: item[key] for key in selected if key in item}
-        for item in items
-    ]
+    return [{key: item[key] for key in selected if key in item} for item in items]
 
 
 class AgentTyperGroup(TyperGroup):
@@ -323,7 +325,10 @@ def _usage_error_suggestions(error: UsageError) -> list[str]:
     if isinstance(option_name, str) and command is not None:
         option_names: list[str] = []
         for parameter in getattr(command, "params", ()):
-            for item in (*getattr(parameter, "opts", ()), *getattr(parameter, "secondary_opts", ())):
+            for item in (
+                *getattr(parameter, "opts", ()),
+                *getattr(parameter, "secondary_opts", ()),
+            ):
                 rendered = str(item)
                 option_names.append(
                     rendered
@@ -332,7 +337,9 @@ def _usage_error_suggestions(error: UsageError) -> list[str]:
                 )
         return get_close_matches(option_name, option_names, n=5, cutoff=0.45)
 
-    match = re.search(r"No such command ['\"]([^'\"]+)['\"]", str(getattr(error, "message", "")))
+    match = re.search(
+        r"No such command ['\"]([^'\"]+)['\"]", str(getattr(error, "message", ""))
+    )
     context = getattr(error, "ctx", None)
     if match is not None and context is not None and isinstance(command, TyperGroup):
         return get_close_matches(
@@ -408,7 +415,11 @@ app.add_typer(test_email_app, name="test-email")
 app.add_typer(usage_app, name="usage")
 app.add_typer(ui_handoffs_app, name="ui-handoffs")
 app.add_typer(workspaces_app, name="workspaces")
-app.command("wait", help="等待一个已运行的后台任务进入终态；不会启动桌面应用。", no_args_is_help=True)(wait_for_resource)
+app.command(
+    "wait",
+    help="等待一个已运行的后台任务进入终态；不会启动桌面应用。",
+    no_args_is_help=True,
+)(wait_for_resource)
 
 
 def _current_command_contract_revisions(
@@ -447,7 +458,9 @@ def _current_command_contract_revisions(
     }
     missing = sorted(set(selected_commands) - set(revisions))
     if missing:
-        raise RuntimeError(f"Published capability is not describable: {', '.join(missing)}")
+        raise RuntimeError(
+            f"Published capability is not describable: {', '.join(missing)}"
+        )
     return revisions
 
 
@@ -492,7 +505,7 @@ def root(
         str | None,
         typer.Option(
             "--filter",
-            help="集合结构化筛选 JSON，例如 '{\"status\":{\"eq\":\"review_required\"}}'。",
+            help='集合结构化筛选 JSON，例如 \'{"status":{"eq":"review_required"}}\'。',
         ),
     ] = None,
     projection: Annotated[
@@ -667,7 +680,10 @@ def capabilities_command(
     ] = None,
     resource: Annotated[
         str | None,
-        typer.Option("--resource", help="按资源族筛选，例如 professors、communications、campaigns。"),
+        typer.Option(
+            "--resource",
+            help="按资源族筛选，例如 professors、communications、campaigns。",
+        ),
     ] = None,
     query: Annotated[
         str | None,
@@ -679,7 +695,9 @@ def capabilities_command(
     ] = None,
     limit: Annotated[
         int | None,
-        typer.Option("--limit", min=1, max=25, help="--query 最多返回多少个命令，默认 8。"),
+        typer.Option(
+            "--limit", min=1, max=25, help="--query 最多返回多少个命令，默认 8。"
+        ),
     ] = None,
     resource_exact: Annotated[
         bool,
@@ -694,7 +712,10 @@ def capabilities_command(
     ] = None,
     all_details: Annotated[
         bool,
-        typer.Option("--all", help="等同于 --view full；必须同时用 --command 或 --resource 缩小范围。"),
+        typer.Option(
+            "--all",
+            help="等同于 --view full；必须同时用 --command 或 --resource 缩小范围。",
+        ),
     ] = False,
     select: Annotated[
         list[str],
@@ -705,7 +726,10 @@ def capabilities_command(
     ] = [],
     minimal: Annotated[
         bool,
-        typer.Option("--minimal", help="省略 build、next 和工作区提示，只返回缓存与结果必需字段。"),
+        typer.Option(
+            "--minimal",
+            help="省略 build、next 和工作区提示，只返回缓存与结果必需字段。",
+        ),
     ] = False,
     since: Annotated[
         str | None,
@@ -766,7 +790,11 @@ def capabilities_command(
         )
         emit_error(context, command="capabilities", error=error)
         raise typer.Exit(error.exit_code)
-    if requested_view is not None and requested_view not in {"catalog", "commands", "full"}:
+    if requested_view is not None and requested_view not in {
+        "catalog",
+        "commands",
+        "full",
+    }:
         error = CliError(
             code="INVALID_ARGUMENT",
             message=f"未知 capabilities 视图：{view}",
@@ -864,18 +892,26 @@ def capabilities_command(
         if (command or resource or query) and not full_items:
             requested = command or query or resource or ""
             normalized = normalize_capability_command(requested)
-            normalized_resource = normalize_capability_command(resource) if resource else None
-            resource_exists = bool(
-                list_capabilities(
-                    resource=resource,
-                    resource_exact=resource_exact,
+            normalized_resource = (
+                normalize_capability_command(resource) if resource else None
+            )
+            resource_exists = (
+                bool(
+                    list_capabilities(
+                        resource=resource,
+                        resource_exact=resource_exact,
+                    )
                 )
-            ) if resource else None
+                if resource
+                else None
+            )
             if query is not None:
                 if resource is not None and resource_exists is False:
                     message = f"没有找到资源能力：{resource}"
                 else:
-                    scope_label = f"资源 {resource} 范围" if resource else "当前能力目录"
+                    scope_label = (
+                        f"资源 {resource} 范围" if resource else "当前能力目录"
+                    )
                     message = f"在{scope_label}内没有找到与任务意图匹配的命令：{query}"
                 suggestions = [
                     item.command
@@ -901,7 +937,9 @@ def capabilities_command(
                     "normalized_resource": normalized_resource,
                     "resource_exact": resource_exact,
                     "resource_exists": resource_exists,
-                    "search_mode": CAPABILITY_SEARCH_MODE if query is not None else None,
+                    "search_mode": CAPABILITY_SEARCH_MODE
+                    if query is not None
+                    else None,
                     "suggestions": suggestions,
                 },
             )
@@ -912,9 +950,7 @@ def capabilities_command(
         raise typer.Exit(error.exit_code) from error
 
     selected_commands = [
-        item["command"]
-        for item in full_items
-        if isinstance(item.get("command"), str)
+        item["command"] for item in full_items if isinstance(item.get("command"), str)
     ]
     contract_revisions: dict[str, str] | None = None
     if effective_view in {"commands", "full"}:
@@ -1005,8 +1041,7 @@ def capabilities_command(
             "resources": len(items),
             "commands": len(full_items),
             "available_commands": sum(
-                item["availability"] == "available"
-                for item in full_items
+                item["availability"] == "available" for item in full_items
             ),
         }
         human_lines = ["当前 CLI 资源目录："]
@@ -1035,12 +1070,10 @@ def capabilities_command(
         summary = {
             "commands": len(items),
             "available_commands": sum(
-                item["availability"] == "available"
-                for item in items
+                item["availability"] == "available" for item in items
             ),
             "unavailable_commands": sum(
-                item["availability"] != "available"
-                for item in items
+                item["availability"] != "available" for item in items
             ),
         }
         human_lines = ["当前 CLI 命令："]
@@ -1057,12 +1090,10 @@ def capabilities_command(
         summary = {
             "commands": len(items),
             "available_commands": sum(
-                item["availability"] == "available"
-                for item in items
+                item["availability"] == "available" for item in items
             ),
             "unavailable_commands": sum(
-                item["availability"] != "available"
-                for item in items
+                item["availability"] != "available" for item in items
             ),
         }
         human_lines = ["当前 CLI 完整能力："]
@@ -1202,7 +1233,9 @@ def describe_command_handler(
         data = description
     else:
         data = compact_command_description(description)
-        requested_details, invalid_sections = description_sections(description, sections)
+        requested_details, invalid_sections = description_sections(
+            description, sections
+        )
         if invalid_sections:
             error = CliError(
                 code="INVALID_ARGUMENT",
@@ -1264,7 +1297,9 @@ def status_command(ctx: typer.Context) -> None:
         runtime_hint = ""
         warnings: list[str] = []
         if data["state"] == "stopped":
-            runtime_hint = "\n请先手动打开 Auto Email Sender，等待加载完成后再执行业务命令。"
+            runtime_hint = (
+                "\n请先手动打开 Auto Email Sender，等待加载完成后再执行业务命令。"
+            )
             warnings.append("Auto Email Sender 当前未运行，请先手动打开软件。")
         elif data["state"] == "orphaned":
             runtime_hint = "\n桌面进程已退出，残留后端正在清理；请重新打开软件。"
@@ -1344,9 +1379,7 @@ def doctor_command(
     agent_skill_installation = inspect_agent_skill_installation()
     cli_installation = agent_skill_installation.get("cli")
     cli_manifest_target = (
-        cli_installation.get("target")
-        if isinstance(cli_installation, dict)
-        else None
+        cli_installation.get("target") if isinstance(cli_installation, dict) else None
     )
     command_matches_manifest = (
         True
@@ -1385,7 +1418,9 @@ def doctor_command(
             {
                 "id": "cli_installation",
                 "ok": bool(cli_installation.get("ok")),
-                "message": str(cli_installation.get("message") or "无法验证 CLI 安装。"),
+                "message": str(
+                    cli_installation.get("message") or "无法验证 CLI 安装。"
+                ),
                 "details": cli_installation,
             },
         )
@@ -1443,14 +1478,17 @@ def doctor_command(
             )
     healthy = all(bool(check["ok"]) for check in checks)
     installation_needs_update = not bool(agent_skill_installation["ok"]) or (
-        isinstance(cli_installation, dict)
-        and not bool(cli_installation.get("ok"))
+        isinstance(cli_installation, dict) and not bool(cli_installation.get("ok"))
     )
     recommended_action = None
     if manual_open_required:
-        recommended_action = "请先手动打开 Auto Email Sender，等待加载完成后再执行需要本地服务的命令。"
+        recommended_action = (
+            "请先手动打开 Auto Email Sender，等待加载完成后再执行需要本地服务的命令。"
+        )
         if installation_needs_update:
-            recommended_action += "此外，请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
+            recommended_action += (
+                "此外，请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
+            )
     elif not healthy:
         recommended_action = "请在个人中心展开“命令行与 Agent”并点击“重新安装”。"
     data = {
@@ -1524,7 +1562,12 @@ def _format_guide_human(guide: dict[str, object]) -> str:
 
 
 def _format_description_human(description: dict[str, object]) -> str:
-    lines = [str(description["command"]), str(description["summary"]), "", str(description["usage"])]
+    lines = [
+        str(description["command"]),
+        str(description["summary"]),
+        "",
+        str(description["usage"]),
+    ]
     parameters = description.get("parameters")
     if isinstance(parameters, list) and parameters:
         lines.append("\n参数：")
@@ -1532,7 +1575,11 @@ def _format_description_human(description: dict[str, object]) -> str:
             if not isinstance(parameter, dict):
                 continue
             flags = parameter.get("flags")
-            label = " / ".join(str(flag) for flag in flags) if isinstance(flags, list) else str(parameter.get("name"))
+            label = (
+                " / ".join(str(flag) for flag in flags)
+                if isinstance(flags, list)
+                else str(parameter.get("name"))
+            )
             required = "必填" if parameter.get("required") else "可选"
             lines.append(f"- {label}（{required}）")
     elif isinstance(description.get("input"), dict):
@@ -1544,7 +1591,11 @@ def _format_description_human(description: dict[str, object]) -> str:
                 if not isinstance(name, str) or not isinstance(parameter, dict):
                     continue
                 flags = parameter.get("flags")
-                label = " / ".join(str(flag) for flag in flags) if isinstance(flags, list) else name
+                label = (
+                    " / ".join(str(flag) for flag in flags)
+                    if isinstance(flags, list)
+                    else name
+                )
                 required = "必填" if parameter.get("required") else "可选"
                 lines.append(f"- {label}（{required}）")
     next_steps = description.get("next_steps") or description.get("next_actions")

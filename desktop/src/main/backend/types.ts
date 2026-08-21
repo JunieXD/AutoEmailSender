@@ -53,7 +53,7 @@ export type BackendExit = {
 
 export type BackendExitHandler = (exit: BackendExit) => void;
 
-export type DatabaseRequiresNewerAppDetail = {
+type DatabaseRequiresNewerAppDetail = {
   code: "DATABASE_REQUIRES_NEWER_APP";
   message: string;
   current_app_version: string;

@@ -1,5 +1,6 @@
 import { Activity, lazy, Suspense, useCallback, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { loadBackgroundTasksPage } from "@/app/taskCenterPreload";
 import { useSelectionContext } from "@/context/SelectionContext";
 import {
   isAgentCrawlJobHandoff,
@@ -13,7 +14,7 @@ import { getEmailTaskThread } from "@/lib/api/emailTasksApi";
 import type { PendingCrawlJobHandoff } from "@/pages/BackgroundTasksPage";
 
 const BackgroundTasksPage = lazy(() =>
-  import("@/pages/BackgroundTasksPage").then((module) => ({
+  loadBackgroundTasksPage().then((module) => ({
     default: module.BackgroundTasksPage,
   })),
 );

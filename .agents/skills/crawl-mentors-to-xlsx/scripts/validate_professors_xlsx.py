@@ -50,7 +50,9 @@ def _table_rows(
         if not any(value.strip() for value in values):
             continue
         if any(value.strip() for value in row[len(columns) :]):
-            issues.append(ContractIssue(f"{sheet.name}!{row_number}", "标准列之后存在额外数据"))
+            issues.append(
+                ContractIssue(f"{sheet.name}!{row_number}", "标准列之后存在额外数据")
+            )
         result.append({column: values[index] for index, column in enumerate(columns)})
     return result
 
@@ -90,7 +92,9 @@ def validate(path: Path) -> dict[str, object]:
             )
         )
     if not workbook.sheets or workbook.sheets[0].name != "Professors":
-        issues.append(ContractIssue("workbook.sheets[0]", "第一个工作表必须是 Professors"))
+        issues.append(
+            ContractIssue("workbook.sheets[0]", "第一个工作表必须是 Professors")
+        )
     sheet_summaries: list[dict[str, int | str]] = []
     for sheet in workbook.sheets:
         summary, error_cells = _sheet_summary(sheet)
@@ -119,7 +123,11 @@ def validate(path: Path) -> dict[str, object]:
         include_user_fields = False
         columns = SAFE_COLUMNS
     else:
-        raw_header = tuple(value.strip() for value in _trim_row(professor_sheet.rows[0])) if professor_sheet.rows else ()
+        raw_header = (
+            tuple(value.strip() for value in _trim_row(professor_sheet.rows[0]))
+            if professor_sheet.rows
+            else ()
+        )
         if raw_header == FULL_COLUMNS:
             columns = FULL_COLUMNS
             include_user_fields = True
@@ -141,8 +149,7 @@ def validate(path: Path) -> dict[str, object]:
         source_rows = _table_rows(sources_sheet, columns=SOURCE_FIELDS, issues=issues)
 
     full_records = [
-        {field: row.get(field, "") for field in FULL_COLUMNS}
-        for row in professor_rows
+        {field: row.get(field, "") for field in FULL_COLUMNS} for row in professor_rows
     ]
     raw_payload = {
         "records": full_records,
@@ -189,9 +196,7 @@ def validate(path: Path) -> dict[str, object]:
         "active_sheet": workbook.active_sheet_name,
         "sheets": sheet_summaries,
         "formula_count": sum(item["formula_count"] for item in sheet_summaries),
-        "error_value_count": sum(
-            item["error_value_count"] for item in sheet_summaries
-        ),
+        "error_value_count": sum(item["error_value_count"] for item in sheet_summaries),
         "errors": [item.as_dict() for item in issues],
     }
 

@@ -108,7 +108,9 @@ class UnifiedEmailLogModelsTestCase(unittest.TestCase):
 
         self.assertEqual(self._run_async(scenario()), 2)
 
-    def test_same_identity_professor_direction_normalized_message_id_is_rejected(self) -> None:
+    def test_same_identity_professor_direction_normalized_message_id_is_rejected(
+        self,
+    ) -> None:
         async def scenario() -> None:
             async with self.session_factory() as session:
                 session.add_all(

@@ -41,4 +41,6 @@ def downgrade() -> None:
 
 def _professor_state_columns() -> set[str]:
     inspector = sa.inspect(op.get_bind())
-    return {column["name"] for column in inspector.get_columns("imap_professor_sync_states")}
+    return {
+        column["name"] for column in inspector.get_columns("imap_professor_sync_states")
+    }

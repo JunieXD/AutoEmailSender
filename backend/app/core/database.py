@@ -40,7 +40,9 @@ def _configure_sqlite_connection_pragmas(engine: AsyncEngine, settings: object) 
     if synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
         synchronous = "NORMAL"
     cache_size_kib = max(1, int(getattr(settings, "sqlite_cache_size_mib", 64))) * 1024
-    mmap_size_bytes = max(0, int(getattr(settings, "sqlite_mmap_size_mib", 256))) * 1024 * 1024
+    mmap_size_bytes = (
+        max(0, int(getattr(settings, "sqlite_mmap_size_mib", 256))) * 1024 * 1024
+    )
     wal_autocheckpoint_pages = max(
         1,
         int(getattr(settings, "sqlite_wal_autocheckpoint_pages", 1000)),
@@ -50,10 +52,13 @@ def _configure_sqlite_connection_pragmas(engine: AsyncEngine, settings: object) 
         * 1024
         * 1024
     )
-    slow_query_seconds = max(
-        0,
-        int(getattr(settings, "sqlite_slow_query_ms", 250)),
-    ) / 1000
+    slow_query_seconds = (
+        max(
+            0,
+            int(getattr(settings, "sqlite_slow_query_ms", 250)),
+        )
+        / 1000
+    )
 
     @event.listens_for(engine.sync_engine, "connect")
     def set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]

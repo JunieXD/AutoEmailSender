@@ -16,6 +16,7 @@ const selectionMock = vi.hoisted(() => ({
 const draftGuardMock = vi.hoisted(() => ({
   requestWorkspaceDraftGuard: vi.fn(async () => true),
 }));
+const taskCenterPreloadMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("@/components/molecules/DesktopUpdateButton", () => ({
   DesktopUpdateButton: () => <button type="button">检查更新</button>,
@@ -27,6 +28,10 @@ vi.mock("@/context/SelectionContext", () => ({
 
 vi.mock("@/context/useWorkspaceDraftGuard", () => ({
   useWorkspaceDraftGuard: () => draftGuardMock,
+}));
+
+vi.mock("@/app/taskCenterPreload", () => ({
+  preloadTaskCenter: taskCenterPreloadMock,
 }));
 
 describe("TopNavBar", () => {
@@ -80,6 +85,19 @@ describe("TopNavBar", () => {
       "href",
       "/tasks?section=delivery&view=attention&q=timeout&search_fields=subject&sort=updated_asc",
     );
+  });
+
+  it("preloads the task center when navigation intent is shown", () => {
+    render(
+      <MemoryRouter>
+        <TopNavBar />
+      </MemoryRouter>,
+    );
+
+    const taskCenterLink = screen.getByRole("link", { name: "任务中心" });
+    fireEvent.mouseEnter(taskCenterLink);
+
+    expect(taskCenterPreloadMock).toHaveBeenCalledTimes(1);
   });
 
   it("places the community library at the far right after profile", () => {

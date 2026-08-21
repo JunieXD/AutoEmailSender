@@ -37,8 +37,12 @@ def list_campaigns(
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -102,8 +106,12 @@ def list_campaign_items(
     campaign_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -164,7 +172,9 @@ def prepare_campaign_create(
         CampaignScheduleType,
         typer.Option("--schedule-type", help="immediate 或 scheduled。"),
     ] = CampaignScheduleType.IMMEDIATE,
-    window_start_time: Annotated[str | None, typer.Option("--window-start-time")] = None,
+    window_start_time: Annotated[
+        str | None, typer.Option("--window-start-time")
+    ] = None,
     window_end_time: Annotated[str | None, typer.Option("--window-end-time")] = None,
     emails_per_window: Annotated[
         int | None,
@@ -175,13 +185,21 @@ def prepare_campaign_create(
         typer.Option("--scheduled-date", help="可重复，格式 YYYY-MM-DD。"),
     ] = None,
 ) -> None:
-    if generation_mode == CampaignGenerationMode.AI_REWRITE and reference_material_id is None:
+    if (
+        generation_mode == CampaignGenerationMode.AI_REWRITE
+        and reference_material_id is None
+    ):
         raise typer.BadParameter(
             "--generation-mode ai_rewrite 必须指定 --reference-material-id。",
             param_hint="--reference-material-id",
         )
     if schedule_type == CampaignScheduleType.SCHEDULED:
-        if not scheduled_dates or not window_start_time or not window_end_time or emails_per_window is None:
+        if (
+            not scheduled_dates
+            or not window_start_time
+            or not window_end_time
+            or emails_per_window is None
+        ):
             raise typer.BadParameter(
                 "定时活动必须指定 --scheduled-date、--window-start-time、--window-end-time 和 --emails-per-window。",
                 param_hint="--schedule-type",
@@ -263,9 +281,7 @@ def approve_campaign_item_draft(
     run_write_command(
         ctx,
         command="campaigns.approve-item-draft",
-        path=(
-            f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft"
-        ),
+        path=(f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/approve-draft"),
         json_body={
             "subject": subject,
             "body_text": body_text,

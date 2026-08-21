@@ -106,7 +106,9 @@ def cancel_ui_handoff(
 @ui_handoffs_app.command("retry")
 def retry_ui_handoff(
     ctx: typer.Context,
-    handoff_id: Annotated[str, typer.Argument(help="failed 或 awaiting_user 的 handoff_id。")],
+    handoff_id: Annotated[
+        str, typer.Argument(help="failed 或 awaiting_user 的 handoff_id。")
+    ],
 ) -> None:
     run_ui_handoff_command(
         ctx,

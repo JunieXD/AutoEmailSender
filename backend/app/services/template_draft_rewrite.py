@@ -91,7 +91,9 @@ class DraftRewriteDocument:
     protected_tokens: list[DraftRewriteProtectedToken] = field(default_factory=list)
 
 
-def build_draft_rewrite_document(html: str, context: dict[str, str]) -> DraftRewriteDocument:
+def build_draft_rewrite_document(
+    html: str, context: dict[str, str]
+) -> DraftRewriteDocument:
     soup = parse_html(html.strip())
     _render_template_text_nodes(soup, context)
     blocks: list[DraftRewriteSourceBlock] = []
@@ -274,7 +276,9 @@ def _relative_inline_style(
     if marks:
         style["marks"] = marks
 
-    base_style = _parse_css(_select_base_inline_style(container) or str(container.get("style", "")))
+    base_style = _parse_css(
+        _select_base_inline_style(container) or str(container.get("style", ""))
+    )
     base_families = _split_font_family_stack(base_style.get("font-family", ""))
     base_family = _choose_font_family_for_text(text, base_families)
     effective_family = _resolve_effective_font_family(text_node)
@@ -321,7 +325,9 @@ def _select_base_inline_style(element: Tag) -> str | None:
         order += 1
     if not weighted_styles:
         return None
-    return max(weighted_styles, key=lambda item: (weighted_styles[item], -first_seen[item]))
+    return max(
+        weighted_styles, key=lambda item: (weighted_styles[item], -first_seen[item])
+    )
 
 
 def _nearest_inline_style(text_node: NavigableString, container: Tag) -> str | None:
@@ -377,6 +383,7 @@ def _resolve_effective_color(text_node: NavigableString, container: Tag) -> str 
             break
     return None
 
+
 def _has_visible_segment_text(text: str) -> bool:
     return bool(INVISIBLE_SEGMENT_TEXT_PATTERN.sub("", text))
 
@@ -416,11 +423,11 @@ def apply_draft_rewrite_replacements(
 ) -> RichTextRenderResult:
     soup = parse_html(document.html)
     elements = _iter_segment_elements(soup)
-    element_map = {block.segment_id: element for block, element in zip(document.blocks, elements)}
+    element_map = {
+        block.segment_id: element for block, element in zip(document.blocks, elements)
+    }
     editable_blocks = [
-        block
-        for block in document.blocks
-        if block.type != "table" and not block.locked
+        block for block in document.blocks if block.type != "table" and not block.locked
     ]
     validated_replacements = _validate_replacements(editable_blocks, replacements)
 
@@ -464,7 +471,10 @@ def _validate_replacements(
     block_map = {block.segment_id: block for block in editable_blocks}
     validated: dict[str, dict[str, object]] = {}
     for replacement in replacements:
-        if not isinstance(replacement, dict) or set(replacement) != {"segment_id", "text"}:
+        if not isinstance(replacement, dict) or set(replacement) != {
+            "segment_id",
+            "text",
+        }:
             continue
         segment_id = replacement.get("segment_id")
         text = replacement.get("text")
@@ -596,7 +606,9 @@ def _render_template_text(text: str, context: dict[str, str]) -> str:
     return PLACEHOLDER_PATTERN.sub(replace, text)
 
 
-def _apply_dominant_font_style(soup: BeautifulSoup, style: DraftRewriteFontStyle) -> None:
+def _apply_dominant_font_style(
+    soup: BeautifulSoup, style: DraftRewriteFontStyle
+) -> None:
     for tag in soup.find_all(True):
         if _is_within_table(tag):
             continue
@@ -678,6 +690,7 @@ def _extract_font_family_candidates(tag: Tag) -> list[str]:
             deduped.append(candidate)
     return deduped
 
+
 def _split_font_family_stack(value: str) -> list[str]:
     families: list[str] = []
     for item in value.split(","):
@@ -685,6 +698,7 @@ def _split_font_family_stack(value: str) -> list[str]:
         if family:
             families.append(family)
     return families
+
 
 def _choose_font_family_for_text(text: str, candidates: list[str]) -> str | None:
     if not candidates:
@@ -697,8 +711,10 @@ def _choose_font_family_for_text(text: str, candidates: list[str]) -> str | None
 
     return candidates[0]
 
+
 def _contains_cjk_char(text: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", text))
+
 
 def _looks_like_cjk_font_family(font_family: str) -> bool:
     return any(hint in font_family for hint in CJK_FONT_HINTS)

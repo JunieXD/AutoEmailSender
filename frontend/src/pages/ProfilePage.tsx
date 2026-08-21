@@ -43,6 +43,8 @@ import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
 import { CommunicationSharingPanel } from "@/components/organisms/CommunicationSharingPanel";
 import { formatApiDateTime } from "@/lib/dateTime";
 import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
+import { openExternalHttpUrl } from "@/lib/externalUrls";
+import { PROFILE_HELP_LINKS } from "@/lib/helpLinks";
 import { textToEmailHtml } from "@/lib/richEmail";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
@@ -398,9 +400,73 @@ const labelClassName =
 
 const renderFieldLabel = (label: string, required = false) => (
   <span className={labelClassName}>
-    {required && <span className="text-base leading-none text-red-500">*</span>}
+    {required && (
+      <span aria-hidden="true" className="text-base leading-none text-red-500">
+        *
+      </span>
+    )}
     <span>{label}</span>
   </span>
+);
+
+const ContextualHelpLink = ({
+  href,
+  children,
+  tone = "quiet",
+  compact = false,
+}: {
+  href: string;
+  children: ReactNode;
+  tone?: "quiet" | "surface";
+  compact?: boolean;
+}) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    onClick={(event) => {
+      event.preventDefault();
+      openExternalHttpUrl(href);
+    }}
+    className={clsx(
+      "inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary underline decoration-primary/30 underline-offset-4 transition hover:bg-primary/5 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
+      compact
+        ? "min-h-0 rounded px-1 py-0 leading-5"
+        : "min-h-9 rounded-xl px-2.5",
+      tone === "surface" &&
+        "border border-stone-200 bg-white/90 no-underline shadow-sm hover:border-primary/25 hover:bg-white",
+    )}
+  >
+    <span>{children}</span>
+    <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+  </a>
+);
+
+const FormFieldHeader = ({
+  id,
+  label,
+  required = false,
+  help,
+}: {
+  id: string;
+  label: string;
+  required?: boolean;
+  help?: ReactNode;
+}) => (
+  <div className="mb-2 flex min-h-[22px] flex-wrap items-center justify-start gap-x-1 gap-y-1">
+    <label
+      htmlFor={id}
+      className="inline-flex items-center gap-1 text-sm font-medium text-stone-800"
+    >
+      {required && (
+        <span aria-hidden="true" className="text-base leading-none text-red-500">
+          *
+        </span>
+      )}
+      <span>{label}</span>
+    </label>
+    {help}
+  </div>
 );
 
 function ProfileSetupSection({
@@ -408,6 +474,7 @@ function ProfileSetupSection({
   title,
   description,
   badge,
+  helpAction,
   open,
   renderContent,
   onToggle,
@@ -419,6 +486,7 @@ function ProfileSetupSection({
   title: string;
   description: string;
   badge: ReactNode;
+  helpAction?: ReactNode;
   open: boolean;
   renderContent: boolean;
   onToggle: () => void;
@@ -440,29 +508,47 @@ function ProfileSetupSection({
       ref={sectionRef}
       className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm"
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={`${sectionId}-setup-content`}
-        onClick={onToggle}
-        className="collapsible-card-toggle flex w-full items-center justify-between gap-4 px-6 py-5 text-left transition hover:bg-stone-50 active:bg-stone-50"
+      <div
+        onClick={(event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest("a, button")
+          ) {
+            return;
+          }
+          onToggle();
+        }}
+        className="cursor-pointer px-6 py-5 transition hover:bg-stone-50 active:bg-stone-50"
       >
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`${sectionId}-setup-content`}
+          onClick={onToggle}
+          className="collapsible-card-toggle flex w-full min-w-0 items-center justify-between gap-4 text-left active:bg-stone-50"
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
             {badge}
           </div>
-          {description ? (
-            <p className="mt-2 text-sm leading-6 text-stone-600">{description}</p>
-          ) : null}
-        </div>
-        <ChevronDown
-          className={clsx(
-            "h-5 w-5 shrink-0 text-stone-500 transition-transform",
-            open ? "rotate-180" : "rotate-0",
-          )}
-        />
-      </button>
+          <ChevronDown
+            className={clsx(
+              "h-5 w-5 shrink-0 text-stone-500 transition-transform",
+              open ? "rotate-180" : "rotate-0",
+            )}
+          />
+        </button>
+        {description || helpAction ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+            {description ? (
+              <p className="text-xs leading-5 text-stone-600 sm:text-sm sm:leading-6">
+                {description}
+              </p>
+            ) : null}
+            {helpAction}
+          </div>
+        ) : null}
+      </div>
 
       {renderContent ? (
         <div
@@ -553,6 +639,13 @@ const LlmModelsFeedbackPanel = ({
         <div className="mt-3 rounded-2xl border border-stone-200 bg-white/90 px-3 py-2 text-xs leading-5 text-stone-600">
           <div className="font-medium text-stone-800">请求 URL</div>
           <div className="mt-1 break-all">{result.request_url}</div>
+        </div>
+      ) : null}
+      {!result.ok ? (
+        <div className="mt-3 border-t border-red-200/80 pt-3">
+          <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration} tone="surface">
+            查看模型配置排查步骤
+          </ContextualHelpLink>
         </div>
       ) : null}
       {result.models.length > 0 ? (
@@ -716,6 +809,13 @@ const LlmTestFeedbackPanel = ({
           <div className="mt-1 whitespace-pre-wrap">
             {result.response_preview}
           </div>
+        </div>
+      ) : null}
+      {!result.ok ? (
+        <div className="mt-3 border-t border-red-200/80 pt-3">
+          <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration} tone="surface">
+            查看模型配置排查步骤
+          </ContextualHelpLink>
         </div>
       ) : null}
     </div>
@@ -1019,6 +1119,13 @@ const IdentityConnectionCard = ({
             {lastResult.message}
           </div>
         )}
+        {lastResult.status === "error" ? (
+          <div className="mt-3 border-t border-stone-200 pt-3">
+            <ContextualHelpLink href={PROFILE_HELP_LINKS.mailAuthorization} tone="surface">
+              按邮箱配置教程逐项检查
+            </ContextualHelpLink>
+          </div>
+        ) : null}
       </div>
     ) : null}
   </div>
@@ -3368,6 +3475,12 @@ export const ProfilePage = () => {
                     完成以下 4 项即可开始使用。
                   </p>
                 </div>
+                <ContextualHelpLink
+                  href={PROFILE_HELP_LINKS.firstRun}
+                  tone="surface"
+                >
+                  查看完整配置教程
+                </ContextualHelpLink>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {setupItems.map((item) => (
@@ -3425,6 +3538,14 @@ export const ProfilePage = () => {
                   ? getIdentityProfileName(defaultIdentity)
                   : "未设置"}
               </span>
+            }
+            helpAction={
+              <ContextualHelpLink
+                href={PROFILE_HELP_LINKS.mailAuthorization}
+                compact
+              >
+                邮箱配置教程
+              </ContextualHelpLink>
             }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
@@ -3504,9 +3625,19 @@ export const ProfilePage = () => {
                 />
               </label>
               <div className="block">
-                <label htmlFor="smtp-password">
-                  {renderFieldLabel("邮箱授权码", true)}
-                </label>
+                <FormFieldHeader
+                  id="smtp-password"
+                  label="邮箱授权码"
+                  required
+                  help={
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.mailAuthorization}
+                      compact
+                    >
+                      如何获取授权码
+                    </ContextualHelpLink>
+                  }
+                />
                 <div className="group relative">
                   <input
                     id="smtp-password"
@@ -3536,6 +3667,9 @@ export const ProfilePage = () => {
                     )}
                   </button>
                 </div>
+                <p className="mt-2 text-xs leading-5 text-stone-500">
+                  不是邮箱登录密码，请填写授权码或应用专用密码。
+                </p>
               </div>
               <label className="block">
                 {renderFieldLabel("SMTP 端口", true)}
@@ -3656,6 +3790,14 @@ export const ProfilePage = () => {
                 默认模型：{defaultLLMProfile?.name ?? "未设置"}
               </span>
             }
+            helpAction={
+              <ContextualHelpLink
+                href={PROFILE_HELP_LINKS.llmConfiguration}
+                compact
+              >
+                模型配置教程
+              </ContextualHelpLink>
+            }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
                 <EditorSwitcher
@@ -3701,9 +3843,22 @@ export const ProfilePage = () => {
                   placeholder="示例：DeepSeek V4 Flash"
                 />
               </label>
-              <label className="block md:col-span-2">
-                {renderFieldLabel("API 地址", true)}
+              <div className="block md:col-span-2">
+                <FormFieldHeader
+                  id="llm-api-base-url"
+                  label="API Base URL"
+                  required
+                  help={
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.llmConfiguration}
+                      compact
+                    >
+                      查看填写示例
+                    </ContextualHelpLink>
+                  }
+                />
                 <input
+                  id="llm-api-base-url"
                   value={llmForm.api_base_url}
                   onChange={(event) =>
                     setLlmForm((previous) => ({
@@ -3714,10 +3869,26 @@ export const ProfilePage = () => {
                   className={inputClassName}
                   placeholder="示例：https://api.deepseek.com"
                 />
-              </label>
-              <label className="block">
-                {renderFieldLabel("API Key", true)}
+                <p className="mt-2 text-xs leading-5 text-stone-500">
+                  模型服务商提供的 OpenAI 兼容接口地址，不是平台官网地址。
+                </p>
+              </div>
+              <div className="block">
+                <FormFieldHeader
+                  id="llm-api-key"
+                  label="API Key"
+                  required
+                  help={
+                    <ContextualHelpLink
+                      href={PROFILE_HELP_LINKS.llmConfiguration}
+                      compact
+                    >
+                      如何获取 API Key
+                    </ContextualHelpLink>
+                  }
+                />
                 <input
+                  id="llm-api-key"
                   type="password"
                   value={llmForm.api_key}
                   onChange={(event) =>
@@ -3729,7 +3900,10 @@ export const ProfilePage = () => {
                   className={inputClassName}
                   placeholder="示例：sk-xxxxxxxxxxxxxxxx"
                 />
-              </label>
+                <p className="mt-2 text-xs leading-5 text-stone-500">
+                  在模型服务商控制台创建，不是账号登录密码。
+                </p>
+              </div>
               <label className="block">
                 {renderFieldLabel("模型名称", true)}
                 <input

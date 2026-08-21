@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.base import ApiSchema
 
+
 class LLMProfileBase(BaseModel):
     name: str
     provider: str = "openai"
@@ -28,7 +29,6 @@ class LLMProfileUpdate(LLMProfileBase):
 
 
 class LLMProfileRead(LLMProfileBase):
-
     id: int
     created_at: datetime
     updated_at: datetime

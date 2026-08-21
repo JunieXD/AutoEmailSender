@@ -278,7 +278,9 @@ async def delete_professor_tag_record(
     tag, professors = await _load_professor_tag_with_usage(session, tag_id)
     tag_name = tag.name
     professor_ids = [professor.id for professor in professors]
-    await session.execute(delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag.id))
+    await session.execute(
+        delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag.id)
+    )
     await session.delete(tag)
     await record_operation_log(
         session,
@@ -304,7 +306,9 @@ async def prepare_bulk_professor_archive_snapshot(
     session: AsyncSession,
     professor_ids: list[int],
 ) -> dict[str, object]:
-    ordered_ids, professors = await _resolve_bulk_professor_archive(session, professor_ids)
+    ordered_ids, professors = await _resolve_bulk_professor_archive(
+        session, professor_ids
+    )
     professors_by_id = {professor.id: professor for professor in professors}
     items = [
         {
@@ -324,7 +328,9 @@ async def prepare_bulk_professor_archive_snapshot(
     already_archived_count = len(items) - affected_count
     warnings = []
     if already_archived_count:
-        warnings.append(f"其中 {already_archived_count} 位导师已在回收站中，不会重复移动。")
+        warnings.append(
+            f"其中 {already_archived_count} 位导师已在回收站中，不会重复移动。"
+        )
     return {
         "snapshot_version": "1",
         "request": {"professor_ids": ordered_ids},
@@ -357,7 +363,9 @@ async def bulk_archive_professor_records(
     event_name: str,
     actor: str,
 ) -> dict[str, object]:
-    ordered_ids, professors = await _resolve_bulk_professor_archive(session, professor_ids)
+    ordered_ids, professors = await _resolve_bulk_professor_archive(
+        session, professor_ids
+    )
     now = utc_now()
     affected_ids = [
         professor.id for professor in professors if professor.archived_at is None
@@ -615,7 +623,9 @@ async def prepare_professor_import_snapshot(
     if parsed.failed_count:
         warnings.append(f"文件中有 {parsed.failed_count} 行无效数据会被跳过。")
     if tag_names and len(tag_names) > len(existing_tag_names):
-        warnings.append(f"会新建 {len(tag_names) - len(existing_tag_names)} 个导师标签。")
+        warnings.append(
+            f"会新建 {len(tag_names) - len(existing_tag_names)} 个导师标签。"
+        )
 
     return {
         "snapshot_version": "1",
@@ -637,7 +647,10 @@ async def prepare_professor_import_snapshot(
         "warnings": warnings,
         "state": {
             "professors": state,
-            "tags": [_serialize_tag_snapshot(tag) for tag in sorted(existing_tags, key=lambda item: item.id)],
+            "tags": [
+                _serialize_tag_snapshot(tag)
+                for tag in sorted(existing_tags, key=lambda item: item.id)
+            ],
         },
     }
 
@@ -711,8 +724,7 @@ async def import_professor_records(
         if email in existing_professor_ids_by_email and not imported_tag_names:
             continue
         replace_tags_by_professor_id[professor_ids_by_email[email]] = [
-            tags_by_name[tag_name].id
-            for tag_name in dict.fromkeys(imported_tag_names)
+            tags_by_name[tag_name].id for tag_name in dict.fromkeys(imported_tag_names)
         ]
     await _replace_professor_tag_links(
         session,
@@ -853,7 +865,9 @@ async def create_professor_tag_record(
     name = payload.name.strip()
     if not name:
         raise ProfessorMutationError(400, "TAG_NAME_REQUIRED", "标签名不能为空")
-    existing = await session.scalar(select(ProfessorTag).where(ProfessorTag.name == name))
+    existing = await session.scalar(
+        select(ProfessorTag).where(ProfessorTag.name == name)
+    )
     if existing is not None:
         raise ProfessorMutationError(409, "PROFESSOR_TAG_EXISTS", "标签已存在")
     tag = ProfessorTag(
@@ -959,7 +973,9 @@ async def _resolve_bulk_professor_archive(
     professor_ids: list[int],
 ) -> tuple[list[int], list[Professor]]:
     if not professor_ids:
-        raise ProfessorMutationError(400, "PROFESSOR_IDS_REQUIRED", "请至少选择一位导师")
+        raise ProfessorMutationError(
+            400, "PROFESSOR_IDS_REQUIRED", "请至少选择一位导师"
+        )
     if len(set(professor_ids)) != len(professor_ids):
         raise ProfessorMutationError(400, "PROFESSOR_IDS_DUPLICATE", "导师 ID 不能重复")
     ordered_ids = list(professor_ids)
@@ -978,9 +994,13 @@ async def _resolve_bulk_tag_update(
     payload: ProfessorBulkTagsPayload,
 ) -> tuple[list[int], list[Professor], list[ProfessorTag]]:
     if not payload.professor_ids:
-        raise ProfessorMutationError(400, "PROFESSOR_IDS_REQUIRED", "请至少选择一位导师")
+        raise ProfessorMutationError(
+            400, "PROFESSOR_IDS_REQUIRED", "请至少选择一位导师"
+        )
     if payload.mode in {"add", "remove"} and not payload.tag_ids:
-        raise ProfessorMutationError(400, "TAG_IDS_REQUIRED", "请选择要追加或移除的标签")
+        raise ProfessorMutationError(
+            400, "TAG_IDS_REQUIRED", "请选择要追加或移除的标签"
+        )
 
     professor_ids = list(dict.fromkeys(payload.professor_ids))
     professors = await _load_professors_by_ids(
@@ -1042,7 +1062,9 @@ async def load_or_create_tags_by_names(
     session: AsyncSession,
     tag_names: list[str],
 ) -> tuple[list[ProfessorTag], int]:
-    normalized_names = list(dict.fromkeys(name.strip() for name in tag_names if name.strip()))
+    normalized_names = list(
+        dict.fromkeys(name.strip() for name in tag_names if name.strip())
+    )
     if not normalized_names:
         return [], 0
     existing_tags: list[ProfessorTag] = []
@@ -1099,9 +1121,7 @@ async def _load_existing_import_professor_ids(
 ) -> dict[str, int]:
     normalized_emails = list(
         dict.fromkeys(
-            str(email).strip().lower()
-            for email in emails
-            if str(email).strip()
+            str(email).strip().lower() for email in emails if str(email).strip()
         ),
     )
     professor_ids_by_email: dict[str, int] = {}
@@ -1155,7 +1175,9 @@ def _ids_metadata(professor_ids: list[int]) -> dict[str, object]:
     }
 
 
-def _serialize_import_professor_state(professor: Professor | None) -> dict[str, object] | None:
+def _serialize_import_professor_state(
+    professor: Professor | None,
+) -> dict[str, object] | None:
     if professor is None:
         return None
     return {

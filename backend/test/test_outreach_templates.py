@@ -29,24 +29,33 @@ class OutreachTemplateImportTests(unittest.TestCase):
         )
 
     def test_docx_import_prefers_html_and_raw_text_from_source(self) -> None:
-        from app.modules.campaigns.templates.rendering import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import (
+            import_outreach_template_file,
+        )
 
         converted_html = (
             "<p><strong>老师您好：</strong></p>"
             "<p>我是张三，想向您请教科研方向。</p>"
             "<ul><li>已附上简历</li><li>期待交流</li></ul>"
         )
-        extracted_text = "老师您好：\n\n我是张三，想向您请教科研方向。\n\n已附上简历\n\n期待交流"
+        extracted_text = (
+            "老师您好：\n\n我是张三，想向您请教科研方向。\n\n已附上简历\n\n期待交流"
+        )
 
-        with patch(
-            "app.modules.campaigns.templates.rendering._convert_docx_template_to_html",
-            return_value=converted_html,
-        ), patch(
-            "app.modules.campaigns.templates.rendering._extract_docx_template_to_text",
-            return_value=extracted_text,
-            create=True,
+        with (
+            patch(
+                "app.modules.campaigns.templates.rendering._convert_docx_template_to_html",
+                return_value=converted_html,
+            ),
+            patch(
+                "app.modules.campaigns.templates.rendering._extract_docx_template_to_text",
+                return_value=extracted_text,
+                create=True,
+            ),
         ):
-            result = import_outreach_template_file("template.docx", b"fake-docx-content")
+            result = import_outreach_template_file(
+                "template.docx", b"fake-docx-content"
+            )
 
         self.assertIsNone(result.subject)
         self.assertEqual(result.format_name, "docx")
@@ -54,7 +63,9 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertEqual(result.body_text, extracted_text)
 
     def test_docx_fixture_import_builds_email_ready_html(self) -> None:
-        from app.modules.campaigns.templates.rendering import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import (
+            import_outreach_template_file,
+        )
 
         fixture = self.FIXTURE_DIR / "taoci.docx"
         result = import_outreach_template_file(fixture.name, fixture.read_bytes())
@@ -67,7 +78,10 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertIn("<table", result.body_html)
         self.assertIn("{{name}}", result.body_html)
         self.assertIn("推免资格", result.body_text)
-        self.assertIn("王俊杰，以专业第一的成绩获得了推免资格。现在联系您或许有些晚了", result.body_text)
+        self.assertIn(
+            "王俊杰，以专业第一的成绩获得了推免资格。现在联系您或许有些晚了",
+            result.body_text,
+        )
         self.assertNotIn("推免资格\n\n。现在联系您", result.body_text)
 
     def test_docx_import_preserves_word_paragraph_formatting(self) -> None:
@@ -75,7 +89,9 @@ class OutreachTemplateImportTests(unittest.TestCase):
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Pt
 
-        from app.modules.campaigns.templates.rendering import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import (
+            import_outreach_template_file,
+        )
 
         document = Document()
         heading = document.add_heading("[推免自荐] 陈帆", level=1)
@@ -118,11 +134,15 @@ class OutreachTemplateImportTests(unittest.TestCase):
         self.assertIn("专业第一", result.body_text)
 
     def test_docx_fixture_keeps_reference_html_block_structure(self) -> None:
-        from app.modules.campaigns.templates.rendering import import_outreach_template_file
+        from app.modules.campaigns.templates.rendering import (
+            import_outreach_template_file,
+        )
 
         docx_fixture = self.FIXTURE_DIR / "taoci.docx"
         htm_fixture = self.FIXTURE_DIR / "taoci.htm"
-        result = import_outreach_template_file(docx_fixture.name, docx_fixture.read_bytes())
+        result = import_outreach_template_file(
+            docx_fixture.name, docx_fixture.read_bytes()
+        )
         imported_soup = BeautifulSoup(result.body_html, "html.parser")
 
         reference_html = htm_fixture.read_text(encoding="gb18030", errors="ignore")

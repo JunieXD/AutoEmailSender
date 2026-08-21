@@ -5,8 +5,13 @@ import { BrainCircuit, Mail, UserCircle2 } from "lucide-react";
 import { DesktopUpdateButton } from "@/components/molecules/DesktopUpdateButton";
 import { QqGroupButton } from "@/components/molecules/QqGroupButton";
 import { TopBarSelectMenu } from "@/components/atoms/TopBarSelectMenu";
+import { preloadTaskCenter } from "@/app/taskCenterPreload";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
+
+const preloadTaskCenterSafely = () => {
+  void preloadTaskCenter().catch(() => undefined);
+};
 
 export const TopNavBar = () => {
   const { pathname, search } = useLocation();
@@ -29,6 +34,21 @@ export const TopNavBar = () => {
       setTaskCenterHref(`/tasks${search}`);
     }
   }, [pathname, search]);
+
+  useEffect(() => {
+    if (pathname === "/tasks") {
+      return;
+    }
+    const preload = () => preloadTaskCenterSafely();
+    const idleWindow = window as Window & {
+      requestIdleCallback?: typeof window.requestIdleCallback;
+      cancelIdleCallback?: typeof window.cancelIdleCallback;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      const idleCallbackId = idleWindow.requestIdleCallback(preload, { timeout: 2000 });
+      return () => idleWindow.cancelIdleCallback?.(idleCallbackId);
+    }
+  }, [pathname]);
 
   const navItems = [
     { label: "首页", href: "/" },
@@ -136,6 +156,9 @@ export const TopNavBar = () => {
               <NavLink
                 key={item.href}
                 to={item.href}
+                onFocus={item.label === "任务中心" ? preloadTaskCenterSafely : undefined}
+                onMouseEnter={item.label === "任务中心" ? preloadTaskCenterSafely : undefined}
+                onPointerDown={item.label === "任务中心" ? preloadTaskCenterSafely : undefined}
                 className={({ isActive }) =>
                   clsx(
                     "inline-flex min-w-20 shrink-0 items-center justify-center rounded-xl border px-4 py-1 text-sm font-medium whitespace-nowrap transition-all",

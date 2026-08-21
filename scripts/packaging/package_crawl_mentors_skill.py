@@ -70,9 +70,7 @@ def package_skill(repo_root: Path, version: str, output_directory: Path) -> Path
 
     resolved_output_directory = output_directory.resolve()
     resolved_output_directory.mkdir(parents=True, exist_ok=True)
-    output_path = (
-        resolved_output_directory / f"{SKILL_NAME}-v{normalized_version}.zip"
-    )
+    output_path = resolved_output_directory / f"{SKILL_NAME}-v{normalized_version}.zip"
 
     with ZipFile(output_path, "w") as archive:
         for relative_path in expected_files:

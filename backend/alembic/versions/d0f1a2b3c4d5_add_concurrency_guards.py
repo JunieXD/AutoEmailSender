@@ -120,12 +120,22 @@ def _deduplicate_workspace_root_tasks() -> None:
             ).mappings()
         }
 
-        delete_ids = [task_id for task_id in duplicate_ids if task_id not in duplicate_ids_with_children]
+        delete_ids = [
+            task_id
+            for task_id in duplicate_ids
+            if task_id not in duplicate_ids_with_children
+        ]
         if delete_ids:
-            delete_params = {f"id_{index}": value for index, value in enumerate(delete_ids)}
-            delete_id_list = ", ".join(f":id_{index}" for index in range(len(delete_ids)))
+            delete_params = {
+                f"id_{index}": value for index, value in enumerate(delete_ids)
+            }
+            delete_id_list = ", ".join(
+                f":id_{index}" for index in range(len(delete_ids))
+            )
             bind.execute(
-                sa.text(f"UPDATE email_logs SET email_task_id = :keep_id WHERE email_task_id IN ({delete_id_list})"),
+                sa.text(
+                    f"UPDATE email_logs SET email_task_id = :keep_id WHERE email_task_id IN ({delete_id_list})"
+                ),
                 {"keep_id": keep_id, **delete_params},
             )
             bind.execute(
@@ -167,8 +177,12 @@ def upgrade() -> None:
         "email_tasks",
         ["professor_id", "identity_id", "llm_profile_id"],
         unique=True,
-        sqlite_where=sa.text("source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"),
-        postgresql_where=sa.text("source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"),
+        sqlite_where=sa.text(
+            "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
+        ),
+        postgresql_where=sa.text(
+            "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
+        ),
     )
 
 

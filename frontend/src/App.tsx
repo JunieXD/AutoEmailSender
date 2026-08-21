@@ -10,7 +10,9 @@ import { AgentSupportOnboarding } from '@/components/organisms/AgentSupportOnboa
 import { KeepAliveLayout } from '@/components/organisms/KeepAliveLayout';
 import { RouteScrollRestoration } from '@/components/organisms/RouteScrollRestoration';
 import { TopNavBar } from '@/components/organisms/TopNavBar';
+import { TruncatedTextTooltipProvider } from '@/components/organisms/TruncatedTextTooltipProvider';
 import { BackgroundTaskNotificationProvider } from '@/app/providers/BackgroundTaskNotificationContext';
+import { loadTasksPage } from '@/app/taskCenterPreload';
 import { DesktopBackendProvider } from '@/context/DesktopBackendContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { SelectionProvider } from '@/context/SelectionContext';
@@ -39,7 +41,9 @@ const DashboardPage = lazy(() =>
 const ProfilePage = lazy(() =>
   import('@/pages/ProfilePage').then((module) => ({ default: module.ProfilePage })),
 );
-const TasksPage = lazy(() => import('@/pages/TasksPage').then((module) => ({ default: module.TasksPage })));
+const TasksPage = lazy(() =>
+  loadTasksPage().then((module) => ({ default: module.TasksPage })),
+);
 const TestComposePage = lazy(() =>
   import('@/pages/TestComposePage').then((module) => ({ default: module.TestComposePage })),
 );
@@ -66,6 +70,7 @@ const AppShell = () => (
                   data-app-shell="true"
                   className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background"
                 >
+                  <TruncatedTextTooltipProvider />
                   <DesktopStartupStatusBanner />
                   <AgentSupportOnboarding />
                   <TopNavBar />

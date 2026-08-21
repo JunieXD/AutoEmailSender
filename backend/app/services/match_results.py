@@ -119,10 +119,7 @@ async def resolve_identity_match_scope(
         )
 
     source_identity = await _load_identity_for_matching(session, source_identity_id)
-    if (
-        source_identity is None
-        or source_identity.communication_group_id != group_id
-    ):
+    if source_identity is None or source_identity.communication_group_id != group_id:
         # Corrupt or partially migrated configuration must never leak another
         # identity's data. Fall back to the active identity safely.
         return IdentityMatchScope(
@@ -162,45 +159,45 @@ async def load_resolved_match_results(
         canonical_rows.extend(
             (
                 await session.execute(
-                select(
-                    IdentityProfessorMatchResult.id.label("result_id"),
-                    IdentityProfessorMatchResult.identity_id,
-                    IdentityProfessorMatchResult.professor_id,
-                    IdentityProfessorMatchResult.llm_profile_id,
-                    IdentityProfessorMatchResult.primary_material_id,
-                    IdentityMaterial.display_name.label("primary_material_name"),
-                    IdentityProfessorMatchResult.source_email_task_id,
-                    IdentityProfessorMatchResult.latest_analysis_run_id,
-                    IdentityProfessorMatchResult.match_score,
-                    IdentityProfessorMatchResult.match_reason,
-                    cast(
-                        IdentityProfessorMatchResult.fit_points,
-                        Text,
-                    ).label("fit_points"),
-                    cast(
-                        IdentityProfessorMatchResult.risk_points,
-                        Text,
-                    ).label("risk_points"),
-                    cast(
-                        IdentityProfessorMatchResult.match_keywords,
-                        Text,
-                    ).label("match_keywords"),
-                    IdentityProfessorMatchResult.analyzed_at,
-                    IdentityProfessorMatchResult.updated_at,
+                    select(
+                        IdentityProfessorMatchResult.id.label("result_id"),
+                        IdentityProfessorMatchResult.identity_id,
+                        IdentityProfessorMatchResult.professor_id,
+                        IdentityProfessorMatchResult.llm_profile_id,
+                        IdentityProfessorMatchResult.primary_material_id,
+                        IdentityMaterial.display_name.label("primary_material_name"),
+                        IdentityProfessorMatchResult.source_email_task_id,
+                        IdentityProfessorMatchResult.latest_analysis_run_id,
+                        IdentityProfessorMatchResult.match_score,
+                        IdentityProfessorMatchResult.match_reason,
+                        cast(
+                            IdentityProfessorMatchResult.fit_points,
+                            Text,
+                        ).label("fit_points"),
+                        cast(
+                            IdentityProfessorMatchResult.risk_points,
+                            Text,
+                        ).label("risk_points"),
+                        cast(
+                            IdentityProfessorMatchResult.match_keywords,
+                            Text,
+                        ).label("match_keywords"),
+                        IdentityProfessorMatchResult.analyzed_at,
+                        IdentityProfessorMatchResult.updated_at,
+                    )
+                    .outerjoin(
+                        IdentityMaterial,
+                        IdentityMaterial.id
+                        == IdentityProfessorMatchResult.primary_material_id,
+                    )
+                    .where(
+                        IdentityProfessorMatchResult.identity_id
+                        == scope.source_identity_id,
+                        IdentityProfessorMatchResult.professor_id.in_(
+                            professor_id_chunk,
+                        ),
+                    )
                 )
-                .outerjoin(
-                    IdentityMaterial,
-                    IdentityMaterial.id
-                    == IdentityProfessorMatchResult.primary_material_id,
-                )
-                .where(
-                    IdentityProfessorMatchResult.identity_id
-                    == scope.source_identity_id,
-                    IdentityProfessorMatchResult.professor_id.in_(
-                        professor_id_chunk,
-                    ),
-                )
-            )
             ).mappings(),
         )
     result_by_professor: dict[int, MatchResultView] = {}
@@ -221,56 +218,56 @@ async def load_resolved_match_results(
                 legacy_rows.extend(
                     (
                         await session.execute(
-                        select(
-                            EmailTask.id.label("task_id"),
-                            EmailTask.identity_id,
-                            EmailTask.professor_id,
-                            EmailTask.llm_profile_id,
-                            EmailTask.primary_material_id,
-                            IdentityMaterial.display_name.label(
-                                "primary_material_name"
+                            select(
+                                EmailTask.id.label("task_id"),
+                                EmailTask.identity_id,
+                                EmailTask.professor_id,
+                                EmailTask.llm_profile_id,
+                                EmailTask.primary_material_id,
+                                IdentityMaterial.display_name.label(
+                                    "primary_material_name"
+                                ),
+                                EmailTask.match_score,
+                                EmailTask.match_reason,
+                                cast(EmailTask.fit_points, Text).label("fit_points"),
+                                cast(EmailTask.risk_points, Text).label("risk_points"),
+                                cast(EmailTask.match_keywords, Text).label(
+                                    "match_keywords"
+                                ),
+                                EmailTask.created_at,
+                                EmailTask.updated_at,
+                            )
+                            .outerjoin(
+                                IdentityMaterial,
+                                IdentityMaterial.id == EmailTask.primary_material_id,
+                            )
+                            .where(
+                                EmailTask.identity_id == scope.source_identity_id,
+                                EmailTask.professor_id.in_(professor_id_chunk),
+                                EmailTask.match_score.is_not(None),
+                                EmailTask.batch_send_canceled_at.is_(None),
+                                (
+                                    EmailTask.match_source_identity_id.is_(None)
+                                    | (
+                                        EmailTask.match_source_identity_id
+                                        == scope.source_identity_id
+                                    )
+                                ),
+                                ~(
+                                    (EmailTask.status == EmailTaskStatus.CANCELED.value)
+                                    & (
+                                        EmailTask.cancellation_reason
+                                        == EmailTaskCancellationReason.USER_REMOVED.value
+                                    )
+                                ),
+                            )
+                            .order_by(
+                                EmailTask.professor_id.asc(),
+                                EmailTask.updated_at.desc(),
+                                EmailTask.created_at.desc(),
+                                EmailTask.id.desc(),
                             ),
-                            EmailTask.match_score,
-                            EmailTask.match_reason,
-                            cast(EmailTask.fit_points, Text).label("fit_points"),
-                            cast(EmailTask.risk_points, Text).label("risk_points"),
-                            cast(EmailTask.match_keywords, Text).label(
-                                "match_keywords"
-                            ),
-                            EmailTask.created_at,
-                            EmailTask.updated_at,
                         )
-                        .outerjoin(
-                            IdentityMaterial,
-                            IdentityMaterial.id == EmailTask.primary_material_id,
-                        )
-                        .where(
-                            EmailTask.identity_id == scope.source_identity_id,
-                            EmailTask.professor_id.in_(professor_id_chunk),
-                            EmailTask.match_score.is_not(None),
-                            EmailTask.batch_send_canceled_at.is_(None),
-                            (
-                                EmailTask.match_source_identity_id.is_(None)
-                                | (
-                                    EmailTask.match_source_identity_id
-                                    == scope.source_identity_id
-                                )
-                            ),
-                            ~(
-                                (EmailTask.status == EmailTaskStatus.CANCELED.value)
-                                & (
-                                    EmailTask.cancellation_reason
-                                    == EmailTaskCancellationReason.USER_REMOVED.value
-                                )
-                            ),
-                        )
-                        .order_by(
-                            EmailTask.professor_id.asc(),
-                            EmailTask.updated_at.desc(),
-                            EmailTask.created_at.desc(),
-                            EmailTask.id.desc(),
-                        ),
-                    )
                     ).mappings(),
                 )
             for task in legacy_rows:

@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.modules.crawler.pages.tools import CrawlToolContext, PageSnapshot
+from app.services.html_text import html_to_text
 from app.modules.crawler.v2.native_ocr import (
     _is_small_horizontal_image,
     extract_ocr_email_evidence,
@@ -12,12 +13,35 @@ from app.modules.crawler.v2.native_ocr import (
 )
 from app.modules.crawler.v2.profile_fallbacks import (
     extract_email_evidence,
+    extract_profile_document_email_evidence,
     extract_profile_link_evidence,
     resolve_profile_image_urls,
 )
 
 
 class CrawlerProfileFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def test_profile_document_fallback_reads_visible_fields_after_body(self) -> None:
+        snapshot = PageSnapshot(
+            url="https://example.edu/zhang/",
+            html="""
+                <html><body><p>张三的个人简介</p></body>
+                <div>姓名：张三</div>
+                <div>电子邮件：zhang@example.edu</div>
+                <script>hidden@example.edu</script>
+                <!-- comment@example.edu -->
+                </html>
+            """,
+            fetch_method="http",
+            status="succeeded",
+        )
+
+        evidence = extract_profile_document_email_evidence(snapshot)
+
+        self.assertEqual([item.email for item in evidence], ["zhang@example.edu"])
+        self.assertEqual(evidence[0].source_kind, "profile_document")
+        self.assertIn("姓名：张三", evidence[0].context)
+        self.assertNotIn("zhang@example.edu", html_to_text(snapshot.html))
+
     def test_extracts_every_valid_text_email_with_local_context(self) -> None:
         text = (
             "张三教授的联系方式是 zhang@example.edu，办公室位于主楼。"

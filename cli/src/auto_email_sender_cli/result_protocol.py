@@ -142,8 +142,7 @@ def prepare_result_data(
         if isinstance(selector, str) and selector.strip()
     )
     if len(selectors) > MAX_EXPANDED_PATHS or any(
-        len(selector) > MAX_EXPAND_SELECTOR_CHARS
-        for selector in selectors
+        len(selector) > MAX_EXPAND_SELECTOR_CHARS for selector in selectors
     ):
         raise ValueError("expanded_paths exceeds the supported safety range")
     preserve_collection_items = frozenset(
@@ -169,21 +168,19 @@ def prepare_result_data(
     )
     assert isinstance(summarized, dict)
     omitted_paths.extend(item_limit_omitted)
-    summarized, budget_omitted_paths, budget_compacted, budget_input_bytes = _enforce_result_budget(
-        summarized,
-        max_output_bytes=max_output_bytes,
+    summarized, budget_omitted_paths, budget_compacted, budget_input_bytes = (
+        _enforce_result_budget(
+            summarized,
+            max_output_bytes=max_output_bytes,
+        )
     )
     omitted_paths.extend(budget_omitted_paths)
     items_value = summarized.get("items")
-    collection_records_omitted = (
-        isinstance(projection_input.get("items"), list)
-        and (
-            original_item_count is not None
-            or budget_compacted
-            or (
-                isinstance(items_value, dict)
-                and items_value.get("kind") == "array_summary"
-            )
+    collection_records_omitted = isinstance(projection_input.get("items"), list) and (
+        original_item_count is not None
+        or budget_compacted
+        or (
+            isinstance(items_value, dict) and items_value.get("kind") == "array_summary"
         )
     )
     limit = _result_limit(summarized)
@@ -706,7 +703,9 @@ def _project_collection_items(
             result.append(item)
             continue
         result.append({key: value for key, value in item.items() if key in fields})
-        omitted.extend(f"/items/*/{_escape_pointer(key)}" for key in item if key not in fields)
+        omitted.extend(
+            f"/items/*/{_escape_pointer(key)}" for key in item if key not in fields
+        )
     return result, omitted
 
 
@@ -871,7 +870,8 @@ def _budget_summary(value: Any, *, path: str) -> dict[str, object]:
             return {
                 **value,
                 "preview": preview,
-                "truncated": bool(value.get("truncated")) or len(value["preview"]) > len(preview),
+                "truncated": bool(value.get("truncated"))
+                or len(value["preview"]) > len(preview),
             }
         if kind == "object_summary" and isinstance(value.get("keys"), list):
             return {**value, "keys": value["keys"][:6]}
@@ -963,4 +963,6 @@ def _compact_omitted_paths(paths: Sequence[str]) -> tuple[list[str], int]:
 
 def _wildcard_array_indexes(path: str) -> str:
     components = path.split("/")
-    return "/".join("*" if component.isdigit() else component for component in components)
+    return "/".join(
+        "*" if component.isdigit() else component for component in components
+    )

@@ -553,9 +553,7 @@ class PdfConverter(DocumentConverter):
                     extension=".pdf",
                     feature="pdf",
                 )
-            ) from _dependency_exc_info[1].with_traceback(
-                _dependency_exc_info[2]
-            )  # type: ignore[union-attr]
+            ) from _dependency_exc_info[1].with_traceback(_dependency_exc_info[2])  # type: ignore[union-attr]
 
         assert isinstance(file_stream, io.IOBase)
 

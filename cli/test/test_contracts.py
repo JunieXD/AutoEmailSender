@@ -21,7 +21,10 @@ from auto_email_sender_cli.capabilities import (
     supports_pagination,
     supports_wait,
 )
-from auto_email_sender_cli.contracts import command_contract_revision, validate_command_contract
+from auto_email_sender_cli.contracts import (
+    command_contract_revision,
+    validate_command_contract,
+)
 from auto_email_sender_cli.describe import (
     compact_command_description,
     describe_command,
@@ -68,7 +71,9 @@ class _FakeClient:
 
 
 class ContractTests(unittest.TestCase):
-    def test_error_detail_option_catalogs_are_bounded_without_truncating_business_ids(self) -> None:
+    def test_error_detail_option_catalogs_are_bounded_without_truncating_business_ids(
+        self,
+    ) -> None:
         details = redact_error_details(
             {
                 "available_fields": [f"field_{index}" for index in range(30)],
@@ -81,12 +86,16 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(details["available_fields_truncated"])
         self.assertEqual(details["candidate_ids"], list(range(1, 31)))
 
-    def test_operation_manifest_covers_every_capability_without_legacy_drift(self) -> None:
+    def test_operation_manifest_covers_every_capability_without_legacy_drift(
+        self,
+    ) -> None:
         self.assertEqual(validate_operation_manifest(CAPABILITIES), [])
         self.assertEqual({item.command for item in CAPABILITIES}, set(OPERATION_SPECS))
         for capability in CAPABILITIES:
             spec = OPERATION_SPECS[capability.command]
-            self.assertEqual(spec.effects.mutates, capability.mutates, capability.command)
+            self.assertEqual(
+                spec.effects.mutates, capability.mutates, capability.command
+            )
             self.assertEqual(
                 effect_has_external_action(spec.effects),
                 capability.external_action,
@@ -121,7 +130,9 @@ class ContractTests(unittest.TestCase):
         guide = describe_command(app, "guide")
         assert guide is not None
         self.assertTrue(guide["lifecycle"]["deprecated"])
-        self.assertEqual(guide["lifecycle"]["replaced_by"], ["capabilities", "describe"])
+        self.assertEqual(
+            guide["lifecycle"]["replaced_by"], ["capabilities", "describe"]
+        )
 
     def test_communication_group_contract_exposes_match_source_controls(self) -> None:
         create = describe_command(app, "communication-groups.create")
@@ -141,7 +152,9 @@ class ContractTests(unittest.TestCase):
         self.assertIn("clear_match_source_identity", update_properties)
         self.assertIn("match_source_identity_id", get["output"]["known_fields"])
 
-    def test_catalog_revision_includes_each_live_command_contract_revision(self) -> None:
+    def test_catalog_revision_includes_each_live_command_contract_revision(
+        self,
+    ) -> None:
         commands = [
             capability.command
             for capability in CAPABILITIES
@@ -165,20 +178,38 @@ class ContractTests(unittest.TestCase):
         )
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         concurrency = json.loads(
-            (baseline_path.parent / "agent_cli_concurrency_coverage.json").read_text(encoding="utf-8"),
+            (baseline_path.parent / "agent_cli_concurrency_coverage.json").read_text(
+                encoding="utf-8"
+            ),
         )
         gui = json.loads(
-            (baseline_path.parent / "agent_cli_gui_coverage.json").read_text(encoding="utf-8"),
+            (baseline_path.parent / "agent_cli_gui_coverage.json").read_text(
+                encoding="utf-8"
+            ),
         )
-        available = [item.command for item in CAPABILITIES if item.availability == "available"]
-        writes = [item.command for item in CAPABILITIES if item.availability == "available" and item.mutates]
+        available = [
+            item.command for item in CAPABILITIES if item.availability == "available"
+        ]
+        writes = [
+            item.command
+            for item in CAPABILITIES
+            if item.availability == "available" and item.mutates
+        ]
         high_risk = [
             item.command
             for item in CAPABILITIES
             if item.availability == "available" and item.risk_level in {"L2", "L3"}
         ]
-        paged = [item.command for item in CAPABILITIES if item.availability == "available" and supports_pagination(item.command)]
-        stateful = [item.command for item in CAPABILITIES if item.availability == "available" and capability_stateful(item.command)]
+        paged = [
+            item.command
+            for item in CAPABILITIES
+            if item.availability == "available" and supports_pagination(item.command)
+        ]
+        stateful = [
+            item.command
+            for item in CAPABILITIES
+            if item.availability == "available" and capability_stateful(item.command)
+        ]
         self.assertEqual(baseline["available_leaf_commands"], available)
         self.assertEqual(baseline["write_commands"], writes)
         self.assertEqual(baseline["high_risk_commands"], high_risk)
@@ -198,7 +229,9 @@ class ContractTests(unittest.TestCase):
             [item["source"] for item in gui["actions"]],
         )
 
-    def test_every_available_leaf_has_a_complete_schema_validated_contract(self) -> None:
+    def test_every_available_leaf_has_a_complete_schema_validated_contract(
+        self,
+    ) -> None:
         failures: list[str] = []
         descriptions = describe_commands(
             app,
@@ -216,8 +249,12 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(description["command"], capability.command)
             self.assertEqual(description["risk"]["level"], capability.risk_level)
             self.assertEqual(description["effects"]["mutates"], capability.mutates)
-            self.assertEqual(description["risk"]["availability"], capability.availability)
-            self.assertEqual(description["risk"]["requires_plan"], capability.requires_plan)
+            self.assertEqual(
+                description["risk"]["availability"], capability.availability
+            )
+            self.assertEqual(
+                description["risk"]["requires_plan"], capability.requires_plan
+            )
             compact = compact_command_description(description)
             self.assertLess(
                 len(
@@ -253,7 +290,8 @@ class ContractTests(unittest.TestCase):
                 "command": description["command"] == advertised["command"],
                 "resource": description["resource"] == advertised["resource"],
                 "risk": description["risk"]["level"] == advertised["risk_level"],
-                "availability": description["risk"]["availability"] == advertised["availability"],
+                "availability": description["risk"]["availability"]
+                == advertised["availability"],
                 "mutates": description["effects"]["mutates"] == advertised["mutates"],
                 "plan_role": description["effects"]["plan_role"]
                 == advertised["plan_role"],
@@ -263,14 +301,17 @@ class ContractTests(unittest.TestCase):
                 ),
                 "produces_plan": description["effects"]["produces_confirmation_plan"]
                 == advertised["produces_confirmation_plan"],
-                "long_running": description["risk"]["long_running"] == advertised["long_running"],
+                "long_running": description["risk"]["long_running"]
+                == advertised["long_running"],
                 "field_selection": description["output"]["field_selection"]
                 == advertised["supports_field_selection"],
                 "file_export": description["output"]["file_export"]
                 == advertised["supports_file_export"],
                 "structured_filter": description["output"]["structured_filter"]
                 == advertised["supports_structured_filter"],
-                "if_revision": description["input"]["global_options"]["if_revision"]["supported"]
+                "if_revision": description["input"]["global_options"]["if_revision"][
+                    "supported"
+                ]
                 == advertised["supports_if_revision"],
                 "filter_fields": description["output"]["filter_contract"]["fields"]
                 is not None
@@ -280,9 +321,13 @@ class ContractTests(unittest.TestCase):
                     isinstance(field_schema, dict)
                     and field_schema.get("type") not in (None, "unknown")
                     and "operators" not in field_schema
-                    for field_schema in description["output"]["filter_contract"]["fields"].values()
+                    for field_schema in description["output"]["filter_contract"][
+                        "fields"
+                    ].values()
                 ),
-                "filter_operators": set(description["output"]["filter_contract"]["operators"])
+                "filter_operators": set(
+                    description["output"]["filter_contract"]["operators"]
+                )
                 == set(advertised["filter_operators"]),
             }
             failures.extend(
@@ -292,17 +337,22 @@ class ContractTests(unittest.TestCase):
             )
         self.assertEqual(failures, [])
 
-    def test_bounded_community_comparison_reads_advertise_nested_field_selection(self) -> None:
+    def test_bounded_community_comparison_reads_advertise_nested_field_selection(
+        self,
+    ) -> None:
         for command in ("professors.community.records", "professors.community.preview"):
             description = describe_command(app, command)
             assert description is not None
             self.assertTrue(description["output"]["field_selection"], command)
             self.assertFalse(description["output"]["pagination"], command)
-            self.assertIn("--fields", {
-                flag
-                for parameter in description["parameters"]
-                for flag in parameter.get("flags", [])
-            })
+            self.assertIn(
+                "--fields",
+                {
+                    flag
+                    for parameter in description["parameters"]
+                    for flag in parameter.get("flags", [])
+                },
+            )
             self.assertIn("comparison_token", description["output"]["known_fields"])
 
     def test_contract_schemas_publish_standard_types_and_result_fields(self) -> None:
@@ -321,7 +371,11 @@ class ContractTests(unittest.TestCase):
             for name, property_schema in input_properties.items():
                 self.assertIn("type", property_schema, f"{capability.command}.{name}")
                 if property_schema.get("type") == "array":
-                    self.assertIsInstance(property_schema.get("items"), dict, f"{capability.command}.{name}")
+                    self.assertIsInstance(
+                        property_schema.get("items"),
+                        dict,
+                        f"{capability.command}.{name}",
+                    )
 
             output_schema = description["output"]["schema"]
             data_schema = output_schema["properties"]["data"]
@@ -342,13 +396,19 @@ class ContractTests(unittest.TestCase):
         professor_update = describe_command(app, "professors.update")
         assert professor_update is not None
         self.assertEqual(
-            professor_update["output"]["schema"]["properties"]["data"]["properties"]["recent_papers"]["type"],
+            professor_update["output"]["schema"]["properties"]["data"]["properties"][
+                "recent_papers"
+            ]["type"],
             "array",
         )
 
-    def test_paged_collection_contracts_expose_common_pagination_projection_filter_and_export(self) -> None:
+    def test_paged_collection_contracts_expose_common_pagination_projection_filter_and_export(
+        self,
+    ) -> None:
         for capability in CAPABILITIES:
-            if capability.availability != "available" or not supports_pagination(capability.command):
+            if capability.availability != "available" or not supports_pagination(
+                capability.command
+            ):
                 continue
             description = describe_command(app, capability.command)
             assert description is not None
@@ -366,8 +426,13 @@ class ContractTests(unittest.TestCase):
             )
             self.assertIn("--fields", names, capability.command)
             self.assertIn("--all", names, capability.command)
-            self.assertTrue(capability.to_dict()["supports_file_export"], capability.command)
-            self.assertEqual(set(collection_filter_fields(capability.command)), set(capability.to_dict()["filter_fields"]))
+            self.assertTrue(
+                capability.to_dict()["supports_file_export"], capability.command
+            )
+            self.assertEqual(
+                set(collection_filter_fields(capability.command)),
+                set(capability.to_dict()["filter_fields"]),
+            )
             self.assertTrue(capability.to_dict()["filter_fields"], capability.command)
 
     def test_capabilities_can_filter_by_resource_without_runtime(self) -> None:
@@ -381,7 +446,9 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(items)
         self.assertTrue(all(item["resource"] == "communications" for item in items))
 
-    def test_offline_status_and_doctor_contracts_match_their_actual_fields(self) -> None:
+    def test_offline_status_and_doctor_contracts_match_their_actual_fields(
+        self,
+    ) -> None:
         status = describe_command(app, "status")
         doctor = describe_command(app, "doctor")
         assert status is not None
@@ -398,9 +465,15 @@ class ContractTests(unittest.TestCase):
             set(doctor["output"]["known_fields"]),
             {"healthy", "checks", "recommended_action", "repair_command"},
         )
-        status_properties = status["output"]["schema"]["properties"]["data"]["properties"]
-        doctor_properties = doctor["output"]["schema"]["properties"]["data"]["properties"]
-        self.assertEqual(status_properties["desktop_process_running"]["type"], "boolean")
+        status_properties = status["output"]["schema"]["properties"]["data"][
+            "properties"
+        ]
+        doctor_properties = doctor["output"]["schema"]["properties"]["data"][
+            "properties"
+        ]
+        self.assertEqual(
+            status_properties["desktop_process_running"]["type"], "boolean"
+        )
         self.assertEqual(status_properties["backend_ready"]["type"], "boolean")
         self.assertEqual(status_properties["protocol_compatible"]["type"], "boolean")
         self.assertEqual(doctor_properties["healthy"]["type"], "boolean")
@@ -423,10 +496,14 @@ class ContractTests(unittest.TestCase):
         crawler = describe_command(app, "crawler.jobs.get")
         assert crawler is not None
         self.assertIn("llm_context", crawler["output"]["known_fields"])
-        crawler_properties = crawler["output"]["schema"]["properties"]["data"]["properties"]
+        crawler_properties = crawler["output"]["schema"]["properties"]["data"][
+            "properties"
+        ]
         self.assertEqual(crawler_properties["llm_context"]["type"], ["object", "null"])
         self.assertEqual(
-            wait["output"]["schema"]["properties"]["data"]["properties"]["elapsed_seconds"]["type"],
+            wait["output"]["schema"]["properties"]["data"]["properties"][
+                "elapsed_seconds"
+            ]["type"],
             ["number", "null"],
         )
 
@@ -435,7 +512,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(kwargs)
                 return super().request(method, path, **kwargs)
 
@@ -456,7 +535,9 @@ class ContractTests(unittest.TestCase):
                 ],
             )
         self.assertEqual(result.exit_code, 2, msg=result.output)
-        self.assertEqual(json.loads(result.stdout)["error"]["code"], "IF_REVISION_REQUIRES_WRITE")
+        self.assertEqual(
+            json.loads(result.stdout)["error"]["code"], "IF_REVISION_REQUIRES_WRITE"
+        )
         self.assertEqual(client.calls, [])
 
     def test_include_revisions_is_rejected_for_detail_reads(self) -> None:
@@ -464,7 +545,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(kwargs)
                 return {"id": 1, "name": "A"}
 
@@ -492,7 +575,9 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(client.calls, [])
 
-    def test_if_revision_is_rejected_for_writes_without_backend_revision_support(self) -> None:
+    def test_if_revision_is_rejected_for_writes_without_backend_revision_support(
+        self,
+    ) -> None:
         self.assertTrue(supports_if_revision("professors.update"))
         self.assertFalse(supports_if_revision("professors.create"))
         self.assertFalse(supports_if_revision("materials.upload"))
@@ -519,7 +604,9 @@ class ContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result.exit_code, 2, msg=result.output)
-        self.assertEqual(json.loads(result.stdout)["error"]["code"], "IF_REVISION_REQUIRES_WRITE")
+        self.assertEqual(
+            json.loads(result.stdout)["error"]["code"], "IF_REVISION_REQUIRES_WRITE"
+        )
 
     def test_next_actions_only_reference_real_commands_or_generic_wait(self) -> None:
         registered = {item.command for item in CAPABILITIES}
@@ -538,7 +625,9 @@ class ContractTests(unittest.TestCase):
                     f"{capability.command} -> {action}",
                 )
 
-    def test_wait_is_only_advertised_for_resources_with_a_background_job_route(self) -> None:
+    def test_wait_is_only_advertised_for_resources_with_a_background_job_route(
+        self,
+    ) -> None:
         draft = describe_command(app, "drafts.generate")
         matching = describe_command(app, "matching.jobs.create")
         assert draft is not None
@@ -556,13 +645,33 @@ class ContractTests(unittest.TestCase):
         for command in ("matching.jobs.list", "campaigns.list", "campaigns.stop"):
             description = describe_command(app, command)
             assert description is not None
-            self.assertNotIn("wait", [item["command"] for item in description["next_actions"]], command)
+            self.assertNotIn(
+                "wait",
+                [item["command"] for item in description["next_actions"]],
+                command,
+            )
 
-    def test_background_creation_contracts_point_to_real_status_and_item_reads(self) -> None:
+    def test_background_creation_contracts_point_to_real_status_and_item_reads(
+        self,
+    ) -> None:
         expected = {
-            "matching.jobs.create": {"matching.jobs.get", "matching.jobs.items", "wait"},
-            "enrichment.jobs.create": {"enrichment.jobs.get", "enrichment.jobs.items", "wait"},
-            "crawler.jobs.create": {"crawler.jobs.get", "crawler.jobs.events", "crawler.jobs.pages", "crawler.jobs.candidates", "wait"},
+            "matching.jobs.create": {
+                "matching.jobs.get",
+                "matching.jobs.items",
+                "wait",
+            },
+            "enrichment.jobs.create": {
+                "enrichment.jobs.get",
+                "enrichment.jobs.items",
+                "wait",
+            },
+            "crawler.jobs.create": {
+                "crawler.jobs.get",
+                "crawler.jobs.events",
+                "crawler.jobs.pages",
+                "crawler.jobs.candidates",
+                "wait",
+            },
         }
         for command, expected_commands in expected.items():
             description = describe_command(app, command)
@@ -590,13 +699,13 @@ class ContractTests(unittest.TestCase):
                 if item["name"] == parameter_name
             )
             self.assertTrue(parameter["required"], command)
-            self.assertIn(parameter_name, description["input"]["schema"]["required"], command)
+            self.assertIn(
+                parameter_name, description["input"]["schema"]["required"], command
+            )
 
         bulk_archive = describe_command(app, "professors.prepare-bulk-archive")
         assert bulk_archive is not None
-        bulk_parameters = {
-            item["name"]: item for item in bulk_archive["parameters"]
-        }
+        bulk_parameters = {item["name"]: item for item in bulk_archive["parameters"]}
         self.assertFalse(bulk_parameters["professor_ids"]["required"])
         self.assertFalse(bulk_parameters["selection_filter"]["required"])
         self.assertEqual(
@@ -635,9 +744,18 @@ class ContractTests(unittest.TestCase):
 
     def test_detail_contracts_publish_nested_result_fields(self) -> None:
         expected_fields = {
-            "communications.threads.get": {"messages", "messages_next_cursor", "messages_has_more"},
+            "communications.threads.get": {
+                "messages",
+                "messages_next_cursor",
+                "messages_has_more",
+            },
             "professors.tags.usage": {"tag", "professors"},
-            "campaigns.get": {"identity", "llm_profile", "template", "reference_material"},
+            "campaigns.get": {
+                "identity",
+                "llm_profile",
+                "template",
+                "reference_material",
+            },
             "crawler.jobs.get": {"page_count", "candidate_count", "total_tokens"},
             "enrichment.jobs.get": {
                 "completed_count",
@@ -649,7 +767,9 @@ class ContractTests(unittest.TestCase):
         for command, fields in expected_fields.items():
             description = describe_command(app, command)
             assert description is not None
-            self.assertTrue(fields.issubset(set(description["output"]["known_fields"])), command)
+            self.assertTrue(
+                fields.issubset(set(description["output"]["known_fields"])), command
+            )
 
     def test_contracts_publish_runtime_fields_and_collection_envelope(self) -> None:
         professors = describe_command(app, "professors.list")
@@ -678,7 +798,9 @@ class ContractTests(unittest.TestCase):
                 jobs["output"]["known_fields"],
             ),
         )
-        self.assertTrue({"mentor", "email"}.issubset(dashboard["output"]["known_fields"]))
+        self.assertTrue(
+            {"mentor", "email"}.issubset(dashboard["output"]["known_fields"])
+        )
         self.assertTrue(
             {"summary", "pagination", "model_options", "records"}.issubset(
                 usage["output"]["envelope_fields"],
@@ -688,7 +810,9 @@ class ContractTests(unittest.TestCase):
         assert resend is not None
         self.assertNotIn("available_actions", resend["output"]["known_fields"])
 
-    def test_material_contracts_distinguish_default_context_from_upload_source(self) -> None:
+    def test_material_contracts_distinguish_default_context_from_upload_source(
+        self,
+    ) -> None:
         material_list = describe_command(app, "materials.list")
         material_get = describe_command(app, "materials.get")
         material_upload = describe_command(app, "materials.upload")
@@ -726,7 +850,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.offsets: list[int] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 offset = int((kwargs.get("params") or {}).get("offset", 0))
                 limit = int((kwargs.get("params") or {}).get("limit", 2))
                 self.offsets.append(offset)
@@ -749,7 +875,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.cursors: list[object] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 params = kwargs.get("params") or {}
                 cursor = params.get("cursor")
                 self.cursors.append(cursor)
@@ -781,7 +909,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.pages = 0
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.pages += 1
                 page = int((kwargs.get("params") or {}).get("page", 1))
                 return {
@@ -795,18 +925,24 @@ class ContractTests(unittest.TestCase):
                     "pagination_mode": "page",
                 }
 
-        result = fetch_all_pages(PageClient(), "/usage", params={"page": 1, "page_size": 1})
+        result = fetch_all_pages(
+            PageClient(), "/usage", params={"page": 1, "page_size": 1}
+        )
         self.assertEqual(result["records"], [{"id": 1}, {"id": 2}])
         self.assertEqual(result["summary"], {"total_tokens": 9})
         self.assertEqual(result["model_options"], ["model-a"])
 
-    def test_non_paged_envelopes_with_items_are_not_misclassified_as_collections(self) -> None:
+    def test_non_paged_envelopes_with_items_are_not_misclassified_as_collections(
+        self,
+    ) -> None:
         envelope = {
             "task": {"id": 7},
             "items": [{"id": 11, "status": "review_required"}],
             "summary": {"total": 1},
         }
-        normalized = normalize_collection_response(envelope, command="campaigns.resend-context")
+        normalized = normalize_collection_response(
+            envelope, command="campaigns.resend-context"
+        )
         self.assertEqual(normalized, envelope)
 
     def test_l3_and_high_impact_l2_operations_have_confirmation_plans(self) -> None:
@@ -826,12 +962,21 @@ class ContractTests(unittest.TestCase):
                     "import",
                 )
             )
-            if capability.risk_level == "L2" and capability.mutates and high_impact_name:
+            if (
+                capability.risk_level == "L2"
+                and capability.mutates
+                and high_impact_name
+            ):
                 self.assertTrue(capability.requires_plan, capability.command)
 
-    def test_high_risk_contracts_disclose_scope_external_cost_and_confirmation(self) -> None:
+    def test_high_risk_contracts_disclose_scope_external_cost_and_confirmation(
+        self,
+    ) -> None:
         for capability in CAPABILITIES:
-            if capability.availability != "available" or capability.risk_level not in {"L2", "L3"}:
+            if capability.availability != "available" or capability.risk_level not in {
+                "L2",
+                "L3",
+            }:
                 continue
             description = describe_command(app, capability.command)
             assert description is not None
@@ -839,19 +984,27 @@ class ContractTests(unittest.TestCase):
             self.assertIsInstance(effects, dict)
             assert isinstance(effects, dict)
             self.assertTrue(effects.get("impact_scope"), capability.command)
-            self.assertIsInstance(effects.get("external_services"), list, capability.command)
+            self.assertIsInstance(
+                effects.get("external_services"), list, capability.command
+            )
             self.assertIn("cost_may_apply", effects, capability.command)
             self.assertIn("confirmation_rule", effects, capability.command)
-            self.assertIn("unknown_external_result_protection", effects, capability.command)
+            self.assertIn(
+                "unknown_external_result_protection", effects, capability.command
+            )
             self.assertEqual(
                 effects["requires_confirmation_plan"],
                 effects["plan_role"] == "consumer",
             )
-            self.assertIn(effects["plan_role"], {"none", "producer", "consumer", "delegated"})
+            self.assertIn(
+                effects["plan_role"], {"none", "producer", "consumer", "delegated"}
+            )
             self.assertIn("current_effects", effects)
             self.assertIn("downstream_effects", effects)
 
-    def test_plan_producers_consumers_and_delegated_invoke_have_distinct_semantics(self) -> None:
+    def test_plan_producers_consumers_and_delegated_invoke_have_distinct_semantics(
+        self,
+    ) -> None:
         producer = describe_command(app, "drafts.prepare-send")
         consumer = describe_command(app, "plans.execute")
         delegated = describe_command(app, "invoke")
@@ -862,8 +1015,12 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(producer["effects"]["plan_role"], "producer")
         self.assertTrue(producer["effects"]["produces_confirmation_plan"])
         self.assertFalse(producer["effects"]["confirmation_required_before_invocation"])
-        self.assertEqual(producer["effects"]["current_effects"]["external_services"], [])
-        self.assertEqual(producer["effects"]["downstream_effects"]["external_services"], ["smtp"])
+        self.assertEqual(
+            producer["effects"]["current_effects"]["external_services"], []
+        )
+        self.assertEqual(
+            producer["effects"]["downstream_effects"]["external_services"], ["smtp"]
+        )
         compact_producer = compact_command_description(producer)
         self.assertIn("downstream_mutates", compact_producer["risk"]["traits"])
         self.assertIn("mutates", compact_producer["effects"]["downstream"]["traits"])
@@ -908,7 +1065,9 @@ class ContractTests(unittest.TestCase):
         wait = describe_command(app, "wait")
         assert version is not None
         assert wait is not None
-        self.assertEqual([item["code"] for item in version["errors"]], ["INVALID_ARGUMENT"])
+        self.assertEqual(
+            [item["code"] for item in version["errors"]], ["INVALID_ARGUMENT"]
+        )
         self.assertTrue(wait["output"]["terminal_states"])
         self.assertTrue(wait["state_transitions"])
 
@@ -921,7 +1080,9 @@ class ContractTests(unittest.TestCase):
         ):
             description = describe_command(app, command)
             assert description is not None
-            self.assertNotIn("llm", description["effects"]["external_services"], command)
+            self.assertNotIn(
+                "llm", description["effects"]["external_services"], command
+            )
             self.assertFalse(description["effects"]["cost_may_apply"], command)
         models = describe_command(app, "llm-profiles.models")
         assert models is not None
@@ -941,7 +1102,9 @@ class ContractTests(unittest.TestCase):
             assert description is not None
             for parameter in description["parameters"]:
                 name = str(parameter["name"]).lower()
-                self.assertFalse(any(part in name for part in secret_parts), capability.command)
+                self.assertFalse(
+                    any(part in name for part in secret_parts), capability.command
+                )
         redacted = _redact_receipt_value(
             {
                 "api_key": "known-api-secret",
@@ -1001,7 +1164,9 @@ class ContractTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.cursors: list[object] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 params = kwargs.get("params") or {}
                 cursor = params.get("cursor")
                 self.cursors.append(cursor)
@@ -1053,7 +1218,10 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(payload["summary"], {"record_count": 3})
             self.assertEqual(payload["selected_fields"], ["id", "name"])
             self.assertNotIn("items", payload)
-            lines = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            lines = [
+                json.loads(line)
+                for line in destination.read_text(encoding="utf-8").splitlines()
+            ]
             self.assertEqual([item["id"] for item in lines], [1, 2, 3])
             self.assertTrue(all("email" not in item for item in lines))
             self.assertEqual(client.cursors, [None, "2"])
@@ -1063,7 +1231,9 @@ class ContractTests(unittest.TestCase):
             descriptor = type("Descriptor", (), {"app_version": "test"})()
             last_request_id = "request-filter-stream"
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 params = kwargs.get("params") or {}
                 if params.get("cursor") is None:
                     return {
@@ -1114,7 +1284,10 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(payload["page_count"], 2)
             self.assertTrue(payload["filter_applied"])
             self.assertEqual(payload["summary"], {"record_count": 2})
-            lines = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            lines = [
+                json.loads(line)
+                for line in destination.read_text(encoding="utf-8").splitlines()
+            ]
             self.assertEqual([item["id"] for item in lines], [1, 4])
 
     def test_streaming_export_does_not_overwrite_an_existing_file(self) -> None:
@@ -1138,10 +1311,14 @@ class ContractTests(unittest.TestCase):
                     ],
                 )
             self.assertEqual(result.exit_code, 2, msg=result.output)
-            self.assertEqual(json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS")
+            self.assertEqual(
+                json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS"
+            )
             self.assertEqual(destination.read_text(encoding="utf-8"), "keep me\n")
 
-    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not portable on Windows")
+    @unittest.skipIf(
+        os.name == "nt", "POSIX permission bits are not portable on Windows"
+    )
     def test_collection_exports_are_private_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             destination = Path(temp_dir) / "professors.jsonl"
@@ -1190,7 +1367,10 @@ class ContractTests(unittest.TestCase):
                     ],
                 )
             self.assertEqual(result.exit_code, 0, msg=result.output)
-            rows = [json.loads(line) for line in destination.read_text(encoding="utf-8").splitlines()]
+            rows = [
+                json.loads(line)
+                for line in destination.read_text(encoding="utf-8").splitlines()
+            ]
             self.assertEqual([row["id"] for row in rows], [1, 2])
 
     def test_streaming_export_fallback_never_overwrites_an_existing_file(self) -> None:
@@ -1220,7 +1400,9 @@ class ContractTests(unittest.TestCase):
                     ],
                 )
             self.assertEqual(result.exit_code, 2, msg=result.output)
-            self.assertEqual(json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS")
+            self.assertEqual(
+                json.loads(result.stdout)["error"]["code"], "OUTPUT_EXISTS"
+            )
             self.assertEqual(destination.read_text(encoding="utf-8"), "keep me\n")
 
     def test_all_stdout_limit_fails_with_an_output_file_recovery_action(self) -> None:
@@ -1229,7 +1411,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "RESULT_TOO_LARGE")
         self.assertIn("--output-file", raised.exception.suggested_command or "")
 
-    def test_field_projection_preserves_full_record_revision_and_rejects_unknown_empty_field(self) -> None:
+    def test_field_projection_preserves_full_record_revision_and_rejects_unknown_empty_field(
+        self,
+    ) -> None:
         full_record = {"id": 1, "name": "A", "email": "a@example.edu"}
         with patch(
             "auto_email_sender_cli.commands.common.AgentApiClient",
@@ -1248,12 +1432,16 @@ class ContractTests(unittest.TestCase):
             )
         self.assertEqual(projected.exit_code, 0, msg=projected.output)
         projected_item = json.loads(projected.stdout)["data"]["items"][0]
-        self.assertEqual(projected_item["revision"], _with_revision(full_record)["revision"])
+        self.assertEqual(
+            projected_item["revision"], _with_revision(full_record)["revision"]
+        )
         self.assertEqual(projected_item["name"], "A")
         self.assertNotIn("email", projected_item)
 
         class _EmptyClient(_FakeClient):
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 return {"items": [], "next_cursor": None, "has_more": False}
 
         with patch(
@@ -1272,7 +1460,9 @@ class ContractTests(unittest.TestCase):
                 ],
             )
         self.assertNotEqual(invalid.exit_code, 0)
-        self.assertEqual(json.loads(invalid.stdout)["error"]["code"], "INVALID_FIELD_SELECTION")
+        self.assertEqual(
+            json.loads(invalid.stdout)["error"]["code"], "INVALID_FIELD_SELECTION"
+        )
 
         with patch(
             "auto_email_sender_cli.commands.common.AgentApiClient",
@@ -1289,10 +1479,14 @@ class ContractTests(unittest.TestCase):
                     "revision",
                 ],
             )
-        self.assertEqual(revision_projection.exit_code, 0, msg=revision_projection.output)
+        self.assertEqual(
+            revision_projection.exit_code, 0, msg=revision_projection.output
+        )
         self.assertEqual(json.loads(revision_projection.stdout)["data"]["items"], [])
 
-    def test_structured_filter_is_whitelisted_and_fetches_complete_collection(self) -> None:
+    def test_structured_filter_is_whitelisted_and_fetches_complete_collection(
+        self,
+    ) -> None:
         with patch(
             "auto_email_sender_cli.commands.common.AgentApiClient",
             return_value=_FakeClient(),
@@ -1343,9 +1537,13 @@ class ContractTests(unittest.TestCase):
             ],
         )
         self.assertEqual(invalid_type.exit_code, 2, msg=invalid_type.output)
-        self.assertEqual(json.loads(invalid_type.stdout)["error"]["code"], "INVALID_FILTER")
+        self.assertEqual(
+            json.loads(invalid_type.stdout)["error"]["code"], "INVALID_FILTER"
+        )
 
-    def test_contains_script_filter_handles_unicode_and_pushes_safe_name_predicate(self) -> None:
+    def test_contains_script_filter_handles_unicode_and_pushes_safe_name_predicate(
+        self,
+    ) -> None:
         data = {
             "items": [
                 {"id": 1, "name": "李雷"},
@@ -1372,7 +1570,9 @@ class ContractTests(unittest.TestCase):
             {"name_script": "latin"},
         )
         self.assertIn("contains_script", collection_filter_operators("professors.list"))
-        self.assertNotIn("contains_script", collection_filter_operators("templates.list"))
+        self.assertNotIn(
+            "contains_script", collection_filter_operators("templates.list")
+        )
 
         for script, expected_id in (
             ("han", 1),
@@ -1396,11 +1596,15 @@ class ContractTests(unittest.TestCase):
             )
         self.assertEqual(invalid_field.exception.code, "INVALID_FILTER")
 
-    def test_contains_script_filter_reports_server_pushdown_and_local_validation(self) -> None:
+    def test_contains_script_filter_reports_server_pushdown_and_local_validation(
+        self,
+    ) -> None:
         class ScriptFilterClient(_FakeClient):
             calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(dict(kwargs.get("params", {})))
                 return {
                     "items": [
@@ -1443,14 +1647,18 @@ class ContractTests(unittest.TestCase):
             },
         )
 
-    def test_local_filter_streams_pages_and_limits_matching_not_scanned_items(self) -> None:
+    def test_local_filter_streams_pages_and_limits_matching_not_scanned_items(
+        self,
+    ) -> None:
         class PagedClient:
             descriptor = type("Descriptor", (), {"app_version": "test"})()
 
             def __init__(self) -> None:
                 self.calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 params = dict(kwargs.get("params", {}))
                 self.calls.append(params)
                 cursor = int(params.get("cursor", 0))
@@ -1509,9 +1717,13 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(all_matches.exception.code, "RESULT_TOO_LARGE")
         self.assertIn("--output-file", all_matches.exception.suggested_command or "")
 
-    def test_streaming_filter_and_pagination_fail_closed_at_safety_boundaries(self) -> None:
+    def test_streaming_filter_and_pagination_fail_closed_at_safety_boundaries(
+        self,
+    ) -> None:
         class LoopClient:
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 return {
                     "items": [{"id": 1, "name": "A"}],
                     "next_cursor": "1",
@@ -1540,7 +1752,9 @@ class ContractTests(unittest.TestCase):
             )
         self.assertEqual(consumer_error.exception.code, "INVALID_PAGE_CONSUMER")
 
-    def test_native_filter_pushdown_reduces_backend_work_with_local_fallback(self) -> None:
+    def test_native_filter_pushdown_reduces_backend_work_with_local_fallback(
+        self,
+    ) -> None:
         self.assertEqual(
             server_field_params(
                 "id,name",
@@ -1646,7 +1860,9 @@ class ContractTests(unittest.TestCase):
             last_request_id = "request-filter-pushdown"
             calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(dict(kwargs.get("params", {})))
                 # Simulate an older backend that ignores the pushed parameter;
                 # the CLI's local pass must still remove the non-matching row.
@@ -1684,7 +1900,9 @@ class ContractTests(unittest.TestCase):
         class ProjectionClient(RecordingClient):
             calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(dict(kwargs.get("params", {})))
                 # Simulate an older backend that ignores fields. The final
                 # local projection must still be authoritative.
@@ -1718,7 +1936,9 @@ class ContractTests(unittest.TestCase):
             descriptor = type("Descriptor", (), {"app_version": "test"})()
             last_request_id = "request-state-revision"
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 return {"items": [record], "next_cursor": None, "has_more": False}
 
         with patch(
@@ -1740,10 +1960,30 @@ class ContractTests(unittest.TestCase):
     def test_usage_filter_recomputes_token_summary_for_filtered_records(self) -> None:
         data = {
             "items": [
-                {"id": 1, "feature_type": "crawl", "input_tokens": 4, "output_tokens": 2, "cached_tokens": 1, "total_tokens": 6},
-                {"id": 2, "feature_type": "draft_generation", "input_tokens": 10, "output_tokens": 3, "cached_tokens": 0, "total_tokens": 13},
+                {
+                    "id": 1,
+                    "feature_type": "crawl",
+                    "input_tokens": 4,
+                    "output_tokens": 2,
+                    "cached_tokens": 1,
+                    "total_tokens": 6,
+                },
+                {
+                    "id": 2,
+                    "feature_type": "draft_generation",
+                    "input_tokens": 10,
+                    "output_tokens": 3,
+                    "cached_tokens": 0,
+                    "total_tokens": 13,
+                },
             ],
-            "summary": {"input_tokens": 14, "output_tokens": 5, "cached_tokens": 1, "total_tokens": 19, "record_count": 2},
+            "summary": {
+                "input_tokens": 14,
+                "output_tokens": 5,
+                "cached_tokens": 1,
+                "total_tokens": 19,
+                "record_count": 2,
+            },
             "next_cursor": None,
             "has_more": False,
         }
@@ -1752,7 +1992,16 @@ class ContractTests(unittest.TestCase):
             '{"feature_type":{"eq":"crawl"}}',
             command="usage.records",
         )
-        self.assertEqual(filtered["summary"], {"input_tokens": 4, "output_tokens": 2, "cached_tokens": 1, "total_tokens": 6, "record_count": 1})
+        self.assertEqual(
+            filtered["summary"],
+            {
+                "input_tokens": 4,
+                "output_tokens": 2,
+                "cached_tokens": 1,
+                "total_tokens": 6,
+                "record_count": 1,
+            },
+        )
 
     def test_filter_on_detail_command_fails_before_issuing_a_request(self) -> None:
         class _DetailClient(_FakeClient):
@@ -1762,7 +2011,9 @@ class ContractTests(unittest.TestCase):
                 self.last_response_headers = {}
                 self.calls: list[dict[str, object]] = []
 
-            def request(self, method: str, path: str, **kwargs: object) -> dict[str, object]:
+            def request(
+                self, method: str, path: str, **kwargs: object
+            ) -> dict[str, object]:
                 self.calls.append(kwargs)
                 return {"id": 1, "name": "A", "email": "a@example.edu"}
 
@@ -1784,10 +2035,14 @@ class ContractTests(unittest.TestCase):
                 ],
             )
         self.assertNotEqual(result.exit_code, 0)
-        self.assertEqual(json.loads(result.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED")
+        self.assertEqual(
+            json.loads(result.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED"
+        )
         self.assertEqual(client.calls, [])
 
-    def test_collection_only_global_options_are_not_silently_ignored_by_writes(self) -> None:
+    def test_collection_only_global_options_are_not_silently_ignored_by_writes(
+        self,
+    ) -> None:
         result = CliRunner().invoke(
             app,
             [
@@ -1804,7 +2059,9 @@ class ContractTests(unittest.TestCase):
             ],
         )
         self.assertNotEqual(result.exit_code, 0)
-        self.assertEqual(json.loads(result.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED")
+        self.assertEqual(
+            json.loads(result.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED"
+        )
 
     def test_mutation_receipt_finds_nonstandard_affected_ids(self) -> None:
         receipt = add_mutation_receipt(
@@ -1853,7 +2110,9 @@ class ContractTests(unittest.TestCase):
                     ],
                 )
             self.assertEqual(filtered.exit_code, 2, msg=filtered.output)
-            self.assertEqual(json.loads(filtered.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED")
+            self.assertEqual(
+                json.loads(filtered.stdout)["error"]["code"], "FILTER_NOT_SUPPORTED"
+            )
             self.assertFalse(export_path.exists())
 
             download_path = Path(temp_dir) / "material.pdf"
@@ -1882,7 +2141,9 @@ class ContractTests(unittest.TestCase):
             )
             self.assertFalse(download_path.exists())
 
-    def test_state_metadata_covers_non_terminal_partial_and_nested_task_states(self) -> None:
+    def test_state_metadata_covers_non_terminal_partial_and_nested_task_states(
+        self,
+    ) -> None:
         data = {
             "id": 42,
             "status": "partially_completed",
@@ -1893,10 +2154,7 @@ class ContractTests(unittest.TestCase):
             },
         }
         projected = augment_state_metadata(data, command="campaigns.get")
-        action_map = {
-            item["action"]: item
-            for item in projected["available_actions"]
-        }
+        action_map = {item["action"]: item for item in projected["available_actions"]}
         self.assertEqual(projected["status"], "partially_completed")
         self.assertEqual(action_map["read"]["command"], "campaigns.get")
         self.assertEqual(action_map["read"]["arguments"], {"campaign_id": 42})
@@ -1916,12 +2174,13 @@ class ContractTests(unittest.TestCase):
             command="campaigns.items",
         )
         item_actions = {
-            item["action"]: item
-            for item in campaign_item["available_actions"]
+            item["action"]: item for item in campaign_item["available_actions"]
         }
         prepare_send = item_actions["prepare-send"]
         self.assertEqual(prepare_send["command"], "campaigns.prepare-send")
-        self.assertEqual(prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]})
+        self.assertEqual(
+            prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]}
+        )
         self.assertEqual(prepare_send["risk_level"], "L3")
         self.assertNotIn("confirmation_required", prepare_send)
         self.assertNotIn("confirmation_required_before_invocation", prepare_send)
@@ -2022,10 +2281,16 @@ class ContractTests(unittest.TestCase):
             {"id": 7, "status": "needs_review"},
             command="crawler.jobs.get",
         )
-        crawler_actions = {item["action"]: item for item in crawler["available_actions"]}
+        crawler_actions = {
+            item["action"]: item for item in crawler["available_actions"]
+        }
         self.assertEqual(crawler_actions["enrich"]["command"], "crawler.jobs.enrich")
-        self.assertEqual(crawler_actions["enrich"]["required_input"], ["selection_mode"])
-        self.assertEqual(crawler_actions["approve"]["required_input"], ["selection_mode"])
+        self.assertEqual(
+            crawler_actions["enrich"]["required_input"], ["selection_mode"]
+        )
+        self.assertEqual(
+            crawler_actions["approve"]["required_input"], ["selection_mode"]
+        )
 
         partial_crawler = augment_state_metadata(
             {"id": 8, "status": "partially_completed"},
@@ -2057,24 +2322,36 @@ class ContractTests(unittest.TestCase):
             "canceled",
         }
         for capability in CAPABILITIES:
-            if capability.availability != "available" or not capability_stateful(capability.command):
+            if capability.availability != "available" or not capability_stateful(
+                capability.command
+            ):
                 continue
             description = describe_command(app, capability.command)
             assert description is not None
             output = description["output"]
             self.assertIsInstance(output, dict)
             assert isinstance(output, dict)
-            self.assertIsInstance(output.get("state_metadata"), dict, capability.command)
+            self.assertIsInstance(
+                output.get("state_metadata"), dict, capability.command
+            )
             self.assertTrue(output.get("terminal_states"), capability.command)
             self.assertTrue(description["state_transitions"], capability.command)
             for status in known_states:
-                projected = augment_state_metadata({"status": status}, command=capability.command)
-                self.assertIsInstance(projected.get("available_actions"), list, capability.command)
-                self.assertIsInstance(projected.get("blocked_actions"), dict, capability.command)
+                projected = augment_state_metadata(
+                    {"status": status}, command=capability.command
+                )
+                self.assertIsInstance(
+                    projected.get("available_actions"), list, capability.command
+                )
+                self.assertIsInstance(
+                    projected.get("blocked_actions"), dict, capability.command
+                )
                 if status in {"queued", "running"}:
                     self.assertNotIn("succeeded", projected["available_actions"])
 
-    def test_wait_state_rules_do_not_confuse_paused_unknown_or_partial_results(self) -> None:
+    def test_wait_state_rules_do_not_confuse_paused_unknown_or_partial_results(
+        self,
+    ) -> None:
         paused = _available_actions("crawler.jobs", 7, "paused")
         paused_actions = {item["action"]: item for item in paused}
         self.assertEqual(paused_actions["resume"]["command"], "crawler.jobs.resume")
@@ -2086,13 +2363,17 @@ class ContractTests(unittest.TestCase):
 
         partial = _available_actions("enrichment.jobs", 9, "partially_completed")
         partial_actions = {item["action"]: item for item in partial}
-        self.assertEqual(partial_actions["retry"]["command"], "enrichment.jobs.retry-failed")
+        self.assertEqual(
+            partial_actions["retry"]["command"], "enrichment.jobs.retry-failed"
+        )
         self.assertNotIn("wait", partial_actions)
 
         review = _available_actions("crawler.jobs", 10, "needs_review")
         review_actions = {item["action"]: item for item in review}
         self.assertEqual(review_actions["enrich"]["required_input"], ["selection_mode"])
-        self.assertEqual(review_actions["approve"]["required_input"], ["selection_mode"])
+        self.assertEqual(
+            review_actions["approve"]["required_input"], ["selection_mode"]
+        )
 
 
 if __name__ == "__main__":

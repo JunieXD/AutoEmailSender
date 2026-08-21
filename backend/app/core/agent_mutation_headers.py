@@ -33,14 +33,25 @@ class AgentMutationHeadersMiddleware:
                     headers = list(message.get("headers", []))
                     headers.extend(
                         [
-                            (b"x-agent-mutation-receipt", receipt["id"].encode("utf-8")),
-                            (b"x-agent-mutation-status", receipt["status"].encode("utf-8")),
-                            (b"x-agent-mutation-command", receipt["command"].encode("utf-8")),
+                            (
+                                b"x-agent-mutation-receipt",
+                                receipt["id"].encode("utf-8"),
+                            ),
+                            (
+                                b"x-agent-mutation-status",
+                                receipt["status"].encode("utf-8"),
+                            ),
+                            (
+                                b"x-agent-mutation-command",
+                                receipt["command"].encode("utf-8"),
+                            ),
                         ],
                     )
                     request_id = get_request_id()
                     if request_id:
-                        headers.append((b"x-audit-reference", request_id.encode("utf-8")))
+                        headers.append(
+                            (b"x-audit-reference", request_id.encode("utf-8"))
+                        )
                     message = {**message, "headers": headers}
             await send(message)
 

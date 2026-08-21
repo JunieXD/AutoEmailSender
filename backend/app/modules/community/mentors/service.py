@@ -40,7 +40,6 @@ from .schemas import (
     CommunityMentorRecord,
     CommunityRecordsRead,
     CommunityRelocationRecord,
-    CommunityRevocationRecord,
     CommunityRevocationsDocument,
     CommunityShardDocument,
 )
@@ -49,7 +48,9 @@ from app.modules.professors.public import normalize_recent_papers
 from .system_proxy import resolve_system_proxy
 
 
-DEFAULT_COMMUNITY_DATA_BASE_URL = "https://juniexd.github.io/AutoEmailSender-MentorData/"
+DEFAULT_COMMUNITY_DATA_BASE_URL = (
+    "https://juniexd.github.io/AutoEmailSender-MentorData/"
+)
 COMMUNITY_DATA_BASE_URLS_ENV = "AUTO_EMAIL_SENDER_COMMUNITY_DATA_BASE_URLS"
 COMMUNITY_CACHE_DIRECTORY_NAME = "community-mentor-cache"
 LATEST_MAX_BYTES = 64 * 1024
@@ -96,7 +97,9 @@ LIFECYCLE_STATUS_LABELS = {
 
 
 class CommunityDataError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "COMMUNITY_DATA_UNAVAILABLE") -> None:
+    def __init__(
+        self, message: str, *, code: str = "COMMUNITY_DATA_UNAVAILABLE"
+    ) -> None:
         super().__init__(message)
         self.code = code
 
@@ -167,7 +170,9 @@ class CommunityMentorDataService:
             for value in (base_urls or self._configured_base_urls())
         )
         if not self.base_urls:
-            raise CommunityDataError("未配置社区导师库数据地址", code="COMMUNITY_DATA_CONFIG_INVALID")
+            raise CommunityDataError(
+                "未配置社区导师库数据地址", code="COMMUNITY_DATA_CONFIG_INVALID"
+            )
         if cache_max_bytes <= 0 or cache_retained_versions <= 0:
             raise ValueError("社区导师缓存容量和保留版本数必须为正整数")
         self.http_client = http_client
@@ -225,7 +230,9 @@ class CommunityMentorDataService:
 
         warning = failures[-1] if failures else "社区导师库暂时无法访问"
         try:
-            fallback_warning = f"网络刷新失败，正在使用最后一次验证成功的缓存：{warning}"
+            fallback_warning = (
+                f"网络刷新失败，正在使用最后一次验证成功的缓存：{warning}"
+            )
             bundle = self._load_cached_catalog(
                 stale=True,
                 warning=fallback_warning,
@@ -303,8 +310,7 @@ class CommunityMentorDataService:
         records: list[CommunityMentorRecord] = []
         seen_record_ids: set[str] = set()
         revocations_by_id = {
-            item.community_record_id: item
-            for item in bundle.revocations.records
+            item.community_record_id: item for item in bundle.revocations.records
         }
         downloaded_from_network = False
         for path, payload, source in loaded_manifest_files:
@@ -349,7 +355,9 @@ class CommunityMentorDataService:
                 existing_record_id = current_emails.get(contact.email)
                 if existing_record_id is not None and existing_record_id != record.id:
                     duplicate_label = (
-                        "重复主邮箱" if contact.email == record.email else "重复当前邮箱"
+                        "重复主邮箱"
+                        if contact.email == record.email
+                        else "重复当前邮箱"
                     )
                     raise CommunityDataError(
                         f"社区数据包含跨导师{duplicate_label}：{contact.email}",
@@ -384,7 +392,8 @@ class CommunityMentorDataService:
             expected.unit_type not in {"school", "institute"}
             or record.school == expected.unit_name
         ) and (
-            expected.unit_type != "department" or record.department == expected.unit_name
+            expected.unit_type != "department"
+            or record.department == expected.unit_name
         )
         # School, institute, and department shards may contain records whose
         # primary organization is a more specific center or laboratory.
@@ -403,12 +412,19 @@ class CommunityMentorDataService:
             )
 
     async def _refresh_catalog_from_base(self, base_url: str) -> CommunityCatalogBundle:
-        latest_payload = await self._download_bytes(base_url, "latest.json", LATEST_MAX_BYTES)
-        latest = self._parse_json_model(latest_payload, CommunityLatestDocument, "latest.json")
+        latest_payload = await self._download_bytes(
+            base_url, "latest.json", LATEST_MAX_BYTES
+        )
+        latest = self._parse_json_model(
+            latest_payload, CommunityLatestDocument, "latest.json"
+        )
         release_root = f"releases/{latest.dataset_version}/"
         expected_manifest_path = f"{release_root}manifest.json"
         expected_catalog_path = f"{release_root}catalog.json"
-        if latest.manifest_path != expected_manifest_path or latest.catalog_path != expected_catalog_path:
+        if (
+            latest.manifest_path != expected_manifest_path
+            or latest.catalog_path != expected_catalog_path
+        ):
             raise CommunityDataError(
                 "latest.json 包含不安全或不一致的版本路径",
                 code="COMMUNITY_DATA_PATH_INVALID",
@@ -507,10 +523,14 @@ class CommunityMentorDataService:
         if index.get("schema_version") != 2:
             raise CommunityDataError("本地社区目录缓存版本不受支持")
         dataset_version = index.get("dataset_version")
-        if not isinstance(dataset_version, str) or re.fullmatch(
-            r"v2-[a-f0-9]{32}",
-            dataset_version,
-        ) is None:
+        if (
+            not isinstance(dataset_version, str)
+            or re.fullmatch(
+                r"v2-[a-f0-9]{32}",
+                dataset_version,
+            )
+            is None
+        ):
             raise CommunityDataError("本地社区目录缓存数据版本无效")
         base_url_raw = index.get("base_url")
         if not isinstance(base_url_raw, str):
@@ -519,14 +539,18 @@ class CommunityMentorDataService:
         if base_url not in self.base_urls:
             base_url = self.base_urls[0]
         try:
-            verified_at = datetime.fromisoformat(str(index["verified_at"]).replace("Z", "+00:00"))
+            verified_at = datetime.fromisoformat(
+                str(index["verified_at"]).replace("Z", "+00:00")
+            )
         except ValueError as exc:
             raise CommunityDataError("本地社区目录缓存核验时间无效") from exc
         if verified_at.tzinfo is None:
             raise CommunityDataError("本地社区目录缓存核验时间缺少时区")
 
         version_root = self.cache_directory / "datasets" / dataset_version
-        latest_payload = self._read_cache_file(version_root / "latest.json", LATEST_MAX_BYTES)
+        latest_payload = self._read_cache_file(
+            version_root / "latest.json", LATEST_MAX_BYTES
+        )
         manifest_payload = self._read_cache_file(
             version_root / "manifest.json",
             MANIFEST_MAX_BYTES,
@@ -539,7 +563,9 @@ class CommunityMentorDataService:
             version_root / "revocations.json",
             REVOCATIONS_MAX_BYTES,
         )
-        latest = self._parse_json_model(latest_payload, CommunityLatestDocument, "缓存 latest.json")
+        latest = self._parse_json_model(
+            latest_payload, CommunityLatestDocument, "缓存 latest.json"
+        )
         manifest = self._parse_json_model(
             manifest_payload,
             CommunityManifestDocument,
@@ -548,9 +574,13 @@ class CommunityMentorDataService:
         self._validate_core_versions(latest, manifest)
         self._validate_app_compatibility(manifest)
         manifest_files = {item.path: item for item in manifest.files}
-        self._verify_manifest_payload(catalog_payload, manifest_files[latest.catalog_path])
+        self._verify_manifest_payload(
+            catalog_payload, manifest_files[latest.catalog_path]
+        )
         revocations_path = f"releases/{dataset_version}/revocations.json"
-        self._verify_manifest_payload(revocations_payload, manifest_files[revocations_path])
+        self._verify_manifest_payload(
+            revocations_payload, manifest_files[revocations_path]
+        )
         catalog = self._parse_json_model(
             catalog_payload,
             CommunityCatalogDocument,
@@ -608,7 +638,9 @@ class CommunityMentorDataService:
             or state.get("schema_version") != 1
             or state.get("dataset_version") != bundle.catalog.dataset_version
             or not isinstance(state.get("stale"), bool)
-            or not (state.get("warning") is None or isinstance(state.get("warning"), str))
+            or not (
+                state.get("warning") is None or isinstance(state.get("warning"), str)
+            )
         ):
             return bundle
         return replace(
@@ -665,7 +697,9 @@ class CommunityMentorDataService:
         )
         for base_url in candidate_bases:
             try:
-                payload = await self._download_bytes(base_url, relative_path, SHARD_MAX_BYTES)
+                payload = await self._download_bytes(
+                    base_url, relative_path, SHARD_MAX_BYTES
+                )
                 self._verify_manifest_payload(payload, manifest_file)
                 self._write_atomic(cache_path, payload)
                 if prune_cache:
@@ -702,7 +736,9 @@ class CommunityMentorDataService:
             self._prune_cache(current_version=bundle.catalog.dataset_version)
         return loaded
 
-    async def _download_bytes(self, base_url: str, relative_path: str, max_bytes: int) -> bytes:
+    async def _download_bytes(
+        self, base_url: str, relative_path: str, max_bytes: int
+    ) -> bytes:
         url = self._build_download_url(base_url, relative_path)
         if self.http_client is not None:
             return await self._download_bytes_with_client(
@@ -785,7 +821,9 @@ class CommunityMentorDataService:
                     try:
                         declared_length = int(content_length)
                     except ValueError as exc:
-                        raise CommunityDataError(f"{relative_path} Content-Length 无效") from exc
+                        raise CommunityDataError(
+                            f"{relative_path} Content-Length 无效"
+                        ) from exc
                     if declared_length < 0 or declared_length > max_bytes:
                         raise CommunityDataError(
                             f"{relative_path} 超过 {max_bytes} 字节大小限制",
@@ -832,25 +870,38 @@ class CommunityMentorDataService:
     @staticmethod
     def _validate_relative_path(relative_path: str) -> None:
         if not relative_path or "\\" in relative_path or len(relative_path) > 512:
-            raise CommunityDataError("社区数据文件路径无效", code="COMMUNITY_DATA_PATH_INVALID")
+            raise CommunityDataError(
+                "社区数据文件路径无效", code="COMMUNITY_DATA_PATH_INVALID"
+            )
         pure_path = PurePosixPath(relative_path)
         if pure_path.is_absolute() or ".." in pure_path.parts or "." in pure_path.parts:
-            raise CommunityDataError("社区数据文件路径不安全", code="COMMUNITY_DATA_PATH_INVALID")
+            raise CommunityDataError(
+                "社区数据文件路径不安全", code="COMMUNITY_DATA_PATH_INVALID"
+            )
         if str(pure_path) != relative_path:
-            raise CommunityDataError("社区数据文件路径未规范化", code="COMMUNITY_DATA_PATH_INVALID")
+            raise CommunityDataError(
+                "社区数据文件路径未规范化", code="COMMUNITY_DATA_PATH_INVALID"
+            )
 
     @staticmethod
     def _validate_data_path(path: str) -> None:
         CommunityMentorDataService._validate_relative_path(path)
         if re.fullmatch(r"objects/sha256/[a-f0-9]{64}\.json", path) is None:
-            raise CommunityDataError("学院分片路径无效", code="COMMUNITY_DATA_PATH_INVALID")
+            raise CommunityDataError(
+                "学院分片路径无效", code="COMMUNITY_DATA_PATH_INVALID"
+            )
 
     @staticmethod
     def _parse_json_model(payload: bytes, model: type[ModelT], label: str) -> ModelT:
         try:
             raw = json.loads(payload.decode("utf-8"))
             return model.model_validate(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            ValidationError,
+            ValueError,
+        ) as exc:
             raise CommunityDataError(
                 f"{label} 格式或字段校验失败",
                 code="COMMUNITY_DATA_INVALID",
@@ -862,7 +913,9 @@ class CommunityMentorDataService:
         manifest: CommunityManifestDocument,
     ) -> None:
         if latest.dataset_version != manifest.dataset_version:
-            raise CommunityDataError("latest.json 与 Manifest 版本不一致", code="COMMUNITY_DATA_INVALID")
+            raise CommunityDataError(
+                "latest.json 与 Manifest 版本不一致", code="COMMUNITY_DATA_INVALID"
+            )
 
     @staticmethod
     def _validate_app_compatibility(manifest: CommunityManifestDocument) -> None:
@@ -875,7 +928,9 @@ class CommunityMentorDataService:
             )
 
     @staticmethod
-    def _validate_declared_size(manifest_file: CommunityManifestFile, max_bytes: int) -> None:
+    def _validate_declared_size(
+        manifest_file: CommunityManifestFile, max_bytes: int
+    ) -> None:
         if manifest_file.bytes <= 0 or manifest_file.bytes > max_bytes:
             raise CommunityDataError(
                 f"Manifest 中 {manifest_file.path} 的大小超出限制",
@@ -883,7 +938,9 @@ class CommunityMentorDataService:
             )
 
     @staticmethod
-    def _verify_manifest_payload(payload: bytes, manifest_file: CommunityManifestFile) -> None:
+    def _verify_manifest_payload(
+        payload: bytes, manifest_file: CommunityManifestFile
+    ) -> None:
         if len(payload) != manifest_file.bytes:
             raise CommunityDataError(
                 f"{manifest_file.path} 字节数与 Manifest 不一致",
@@ -896,9 +953,9 @@ class CommunityMentorDataService:
                 code="COMMUNITY_DATA_HASH_MISMATCH",
             )
         if manifest_file.path.startswith("objects/sha256/"):
-            path_digest = (
-                manifest_file.path.removeprefix("objects/sha256/").removesuffix(".json")
-            )
+            path_digest = manifest_file.path.removeprefix(
+                "objects/sha256/"
+            ).removesuffix(".json")
             if path_digest != digest:
                 raise CommunityDataError(
                     f"{manifest_file.path} 内容寻址路径与 SHA-256 不一致",
@@ -919,7 +976,9 @@ class CommunityMentorDataService:
             revocations.dataset_version,
         }
         if len(versions) != 1:
-            raise CommunityDataError("社区核心数据文件版本不一致", code="COMMUNITY_DATA_INVALID")
+            raise CommunityDataError(
+                "社区核心数据文件版本不一致", code="COMMUNITY_DATA_INVALID"
+            )
         generated_times = {
             latest.generated_at,
             manifest.generated_at,
@@ -927,9 +986,13 @@ class CommunityMentorDataService:
             revocations.generated_at,
         }
         if len(generated_times) != 1:
-            raise CommunityDataError("社区核心数据文件生成时间不一致", code="COMMUNITY_DATA_INVALID")
+            raise CommunityDataError(
+                "社区核心数据文件生成时间不一致", code="COMMUNITY_DATA_INVALID"
+            )
         manifest_data_paths = {
-            item.path for item in manifest.files if item.path.startswith("objects/sha256/")
+            item.path
+            for item in manifest.files
+            if item.path.startswith("objects/sha256/")
         }
         catalog_data_paths = {
             unit.path
@@ -965,7 +1028,9 @@ class CommunityMentorDataService:
                 "schema_version": 2,
                 "dataset_version": version,
                 "base_url": base_url,
-                "verified_at": verified_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "verified_at": verified_at.astimezone(UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -1097,7 +1162,9 @@ class CommunityMentorDataService:
         root = self.cache_directory.resolve()
         path = (root / relative_path).resolve()
         if path != root and root not in path.parents:
-            raise CommunityDataError("缓存文件路径越界", code="COMMUNITY_DATA_PATH_INVALID")
+            raise CommunityDataError(
+                "缓存文件路径越界", code="COMMUNITY_DATA_PATH_INVALID"
+            )
         return path
 
     @staticmethod
@@ -1181,7 +1248,9 @@ def _normalize_url(value: str) -> str:
     userinfo = ""
     if "@" in parsed.netloc:
         userinfo = f"{parsed.netloc.rpartition('@')[0]}@"
-    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    default_port = (scheme == "https" and port == 443) or (
+        scheme == "http" and port == 80
+    )
     port_suffix = "" if port is None or default_port else f":{port}"
     return urlunsplit(
         (
@@ -1198,7 +1267,9 @@ def _comparison_value(field: str, value: Any) -> Any:
     if value is None:
         return None
     if field == "recent_papers":
-        return tuple(_normalize_string(str(item)) for item in value if str(item).strip())
+        return tuple(
+            _normalize_string(str(item)) for item in value if str(item).strip()
+        )
     if isinstance(value, str):
         if field in URL_IMPORT_FIELDS:
             return _normalize_url(value) or None
@@ -1218,7 +1289,9 @@ def _is_empty(field: str, value: Any) -> bool:
     return normalized is None or normalized == ()
 
 
-def _identity_conflict_reason(professor: Professor, record: CommunityMentorRecord) -> str | None:
+def _identity_conflict_reason(
+    professor: Professor, record: CommunityMentorRecord
+) -> str | None:
     if not _values_equal("name", professor.name, record.name):
         return "邮箱相同，但姓名不同，需要人工确认是否为同一位导师"
     local_organization = {
@@ -1235,7 +1308,9 @@ def _identity_conflict_reason(professor: Professor, record: CommunityMentorRecor
             for affiliation in record.affiliations
         )
         if not organization_matches:
-            return "邮箱相同，但学校或学院不同，可能是调动、双聘或邮箱复用，需要人工确认"
+            return (
+                "邮箱相同，但学校或学院不同，可能是调动、双聘或邮箱复用，需要人工确认"
+            )
     return None
 
 
@@ -1259,7 +1334,9 @@ def _build_field_comparisons(
         local_value = local_values.get(field)
         community_value = community_values[field]
         baseline_present = snapshot is not None and field in snapshot
-        baseline_value = snapshot.get(field) if baseline_present and snapshot is not None else None
+        baseline_value = (
+            snapshot.get(field) if baseline_present and snapshot is not None else None
+        )
         if professor is None:
             state = "new"
             suggested_choice = "community"
@@ -1363,11 +1440,7 @@ async def build_community_comparisons(
         for record in records
     }
     record_emails = sorted(
-        {
-            email
-            for emails in record_emails_by_id.values()
-            for email in emails
-        }
+        {email for emails in record_emails_by_id.values() for email in emails}
     )
     professors_by_email: dict[str, list[Professor]] = {}
     candidate_links_by_professor_id: dict[int, ProfessorCommunityLink] = {}
@@ -1385,7 +1458,9 @@ async def build_community_comparisons(
             )
         for professor in professors:
             if professor.email:
-                professors_by_email.setdefault(professor.email.lower(), []).append(professor)
+                professors_by_email.setdefault(professor.email.lower(), []).append(
+                    professor
+                )
         if professors:
             candidate_links: list[ProfessorCommunityLink] = []
             professor_ids = [professor.id for professor in professors]
@@ -1394,7 +1469,9 @@ async def build_community_comparisons(
                     (
                         await session.execute(
                             select(ProfessorCommunityLink).where(
-                                ProfessorCommunityLink.professor_id.in_(professor_id_batch),
+                                ProfessorCommunityLink.professor_id.in_(
+                                    professor_id_batch
+                                ),
                             ),
                         )
                     ).scalars(),
@@ -1439,7 +1516,8 @@ async def build_community_comparisons(
                 professor = candidates[0]
                 match_reason = (
                     "email"
-                    if professor.email and professor.email.lower() == record.email.lower()
+                    if professor.email
+                    and professor.email.lower() == record.email.lower()
                     else "secondary_email"
                 )
                 candidate_link = candidate_links_by_professor_id.get(professor.id)
@@ -1472,12 +1550,16 @@ async def build_community_comparisons(
             snapshot=snapshot,
         )
         states = {field.state for field in fields}
-        if record.status != "active" or (link is not None and link.remote_status != "active"):
+        if record.status != "active" or (
+            link is not None and link.remote_status != "active"
+        ):
             category = "retired_or_revoked"
             lifecycle_status = (
                 record.status
                 if record.status != "active"
-                else link.remote_status if link is not None else "removed"
+                else link.remote_status
+                if link is not None
+                else "removed"
             )
             import_blocked = True
             import_blocked_reason = (
@@ -1543,8 +1625,7 @@ async def sync_community_link_lifecycle(
         ).scalars(),
     )
     revoked_by_id = {
-        item.community_record_id: item
-        for item in bundle.revocations.records
+        item.community_record_id: item for item in bundle.revocations.records
     }
     relocations_by_id: dict[str, CommunityRelocationRecord] = {}
     for event in bundle.revocations.events:
@@ -1657,7 +1738,10 @@ async def import_community_records(
                 "请关闭当前预览并重新预览后再导入",
                 code="COMMUNITY_DATA_PREVIEW_STALE",
             )
-        if comparison.category == "retired_or_revoked" or comparison.record.status != "active":
+        if (
+            comparison.category == "retired_or_revoked"
+            or comparison.record.status != "active"
+        ):
             raise CommunityDataError(
                 f"导师 {comparison.record.name} 已退休、离职或撤销，不能作为新数据导入",
                 code="COMMUNITY_DATA_LIFECYCLE_BLOCKED",
@@ -1695,7 +1779,9 @@ async def import_community_records(
             local_values = professor_values(professor)
             preview_fields = {field.field: field for field in comparison.fields}
             local_changed_after_comparison = any(
-                not _values_equal(field, local_values[field], preview_fields[field].local_value)
+                not _values_equal(
+                    field, local_values[field], preview_fields[field].local_value
+                )
                 for field in COMMUNITY_IMPORT_FIELDS
             )
             if (
@@ -1719,7 +1805,9 @@ async def import_community_records(
             inserted_count += 1
             action = "inserted"
         else:
-            existing_professor_link = await session.get(ProfessorCommunityLink, professor.id)
+            existing_professor_link = await session.get(
+                ProfessorCommunityLink, professor.id
+            )
             if (
                 existing_professor_link is not None
                 and existing_professor_link.community_record_id != comparison.record.id
@@ -1870,7 +1958,9 @@ def build_community_share_package(professors: list[Professor]) -> bytes:
         if not professor.email:
             raise ValueError(f"导师“{professor.name}”缺少邮箱，无法导出社区共享包")
         if not professor.source_url:
-            raise ValueError(f"导师“{professor.name}”缺少官方来源链接，无法导出社区共享包")
+            raise ValueError(
+                f"导师“{professor.name}”缺少官方来源链接，无法导出社区共享包"
+            )
         values = professor_values(professor)
         values["recent_papers"] = "\n".join(
             normalize_recent_papers(professor.recent_papers)

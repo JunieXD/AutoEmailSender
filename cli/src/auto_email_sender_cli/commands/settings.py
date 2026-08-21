@@ -80,23 +80,34 @@ def update_runtime_settings(
     ] = None,
     draft_rewrite_length: Annotated[
         str | None,
-        typer.Option("--draft-rewrite-length", help="shorter、default 或 more_detailed。"),
+        typer.Option(
+            "--draft-rewrite-length", help="shorter、default 或 more_detailed。"
+        ),
     ] = None,
     draft_rewrite_specificity: Annotated[
         str | None,
-        typer.Option("--draft-rewrite-specificity", help="concise、balanced 或 detailed。"),
+        typer.Option(
+            "--draft-rewrite-specificity", help="concise、balanced 或 detailed。"
+        ),
     ] = None,
     draft_template_preservation: Annotated[
         str | None,
-        typer.Option("--draft-template-preservation", help="structure_first、balanced 或 content_first。"),
+        typer.Option(
+            "--draft-template-preservation",
+            help="structure_first、balanced 或 content_first。",
+        ),
     ] = None,
     draft_custom_instruction: Annotated[
         str | None,
-        typer.Option("--draft-custom-instruction", help="AI 改写补充要求，最多 2000 字符。"),
+        typer.Option(
+            "--draft-custom-instruction", help="AI 改写补充要求，最多 2000 字符。"
+        ),
     ] = None,
     intended_research_direction: Annotated[
         str | None,
-        typer.Option("--intended-research-direction", help="目标研究方向，最多 2000 字符。"),
+        typer.Option(
+            "--intended-research-direction", help="目标研究方向，最多 2000 字符。"
+        ),
     ] = None,
 ) -> None:
     requested_updates = {
@@ -128,7 +139,9 @@ def update_runtime_settings(
             message="请至少指定一个需要修改的设置项。",
             exit_code=2,
         )
-        emit_error(context, command="settings.update", error=error, guide_topic="settings")
+        emit_error(
+            context, command="settings.update", error=error, guide_topic="settings"
+        )
         raise typer.Exit(error.exit_code)
 
     try:
@@ -174,7 +187,9 @@ def update_runtime_settings(
             request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except CliError as error:
-        emit_error(context, command="settings.update", error=error, guide_topic="settings")
+        emit_error(
+            context, command="settings.update", error=error, guide_topic="settings"
+        )
         raise typer.Exit(error.exit_code) from error
 
 

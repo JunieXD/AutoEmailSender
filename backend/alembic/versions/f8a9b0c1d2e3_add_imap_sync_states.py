@@ -84,8 +84,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("last_scanned_uid", sa.Integer(), nullable=True),
-        sa.Column("historical_scan_started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("historical_scan_completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "historical_scan_started_at", sa.DateTime(timezone=True), nullable=True
+        ),
+        sa.Column(
+            "historical_scan_completed_at", sa.DateTime(timezone=True), nullable=True
+        ),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column(
             "created_at",

@@ -20,7 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("UPDATE app_settings SET draft_max_tokens = 6000 WHERE draft_max_tokens = 3600")
+    op.execute(
+        "UPDATE app_settings SET draft_max_tokens = 6000 WHERE draft_max_tokens = 3600"
+    )
     with op.batch_alter_table("app_settings", schema=None) as batch_op:
         batch_op.alter_column(
             "draft_max_tokens",
@@ -31,7 +33,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("UPDATE app_settings SET draft_max_tokens = 3600 WHERE draft_max_tokens = 6000")
+    op.execute(
+        "UPDATE app_settings SET draft_max_tokens = 3600 WHERE draft_max_tokens = 6000"
+    )
     with op.batch_alter_table("app_settings", schema=None) as batch_op:
         batch_op.alter_column(
             "draft_max_tokens",

@@ -38,6 +38,7 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             profile_extraction as crawler_v2_profile_extraction,
             routing as crawler_v2_routing,
         )
+
         self.assertIn(
             "request_structured_completion(",
             inspect.getsource(llm_runtime.generate_match_evaluation),
@@ -60,7 +61,9 @@ class StructuredOutputWireContractTests(unittest.TestCase):
                     inspect.getsource(function),
                 )
 
-    def test_business_services_do_not_parse_llm_json_outside_central_runtime(self) -> None:
+    def test_business_services_do_not_parse_llm_json_outside_central_runtime(
+        self,
+    ) -> None:
         services_root = Path(__file__).resolve().parents[1] / "app" / "services"
         violations: list[str] = []
         for path in services_root.glob("*.py"):
@@ -144,7 +147,9 @@ class StructuredOutputWireContractTests(unittest.TestCase):
                 properties = value.get("properties")
                 self.assertIsInstance(properties, dict)
                 self.assertIs(value.get("additionalProperties"), False)
-                self.assertEqual(set(value.get("required") or []), set(properties or {}))
+                self.assertEqual(
+                    set(value.get("required") or []), set(properties or {})
+                )
             for item in value.values():
                 self._assert_all_objects_are_closed_and_required(item)
         elif isinstance(value, list):

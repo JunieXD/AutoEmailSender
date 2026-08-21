@@ -5,7 +5,13 @@ import unittest
 
 class MatchingModuleBoundaryTest(unittest.TestCase):
     def test_public_facade_reexports_matching_contracts(self) -> None:
-        from app.modules.matching import job_runtime, public, schemas, scoring, task_analysis
+        from app.modules.matching import (
+            job_runtime,
+            public,
+            schemas,
+            scoring,
+            task_analysis,
+        )
 
         self.assertIs(public.MatchAnalysisJobRead, schemas.MatchAnalysisJobRead)
         self.assertIs(

@@ -55,14 +55,10 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
         supplied_token = _read_bearer_token(request)
         expects_agent_token = _is_agent_path(request.url.path)
         expected_token = (
-            self.tokens.agent_token
-            if expects_agent_token
-            else self.tokens.ui_token
+            self.tokens.agent_token if expects_agent_token else self.tokens.ui_token
         )
         other_scope_token = (
-            self.tokens.ui_token
-            if expects_agent_token
-            else self.tokens.agent_token
+            self.tokens.ui_token if expects_agent_token else self.tokens.agent_token
         )
 
         if supplied_token is None:
@@ -71,7 +67,9 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
                 code="AUTH_REQUIRED",
                 message="此本地接口需要访问令牌。",
             )
-        if other_scope_token is not None and _tokens_equal(supplied_token, other_scope_token):
+        if other_scope_token is not None and _tokens_equal(
+            supplied_token, other_scope_token
+        ):
             return _auth_error(
                 status_code=403,
                 code="TOKEN_SCOPE_FORBIDDEN",

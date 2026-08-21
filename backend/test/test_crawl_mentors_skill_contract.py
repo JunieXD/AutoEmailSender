@@ -103,9 +103,7 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
         )
         self.assertIn("$crawl-mentors-to-xlsx", openai_metadata)
 
-        claude_entry = (CLAUDE_SKILL_ROOT / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
+        claude_entry = (CLAUDE_SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: crawl-mentors-to-xlsx", claude_entry)
         self.assertIn(
             "../../../.agents/skills/crawl-mentors-to-xlsx/SKILL.md",
@@ -177,9 +175,13 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
 
         for value in cases:
             with self.subTest(value=value):
-                self.assertEqual(normalize_skill_email(value), normalize_backend_email(value))
+                self.assertEqual(
+                    normalize_skill_email(value), normalize_backend_email(value)
+                )
 
-    def test_title_mapping_handles_multiword_aliases_without_partial_match(self) -> None:
+    def test_title_mapping_handles_multiword_aliases_without_partial_match(
+        self,
+    ) -> None:
         cases = {
             "Associate Professor": "副教授",
             "Assistant Professor, PhD Supervisor": "助理教授",
@@ -222,7 +224,9 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
             )
 
             workbook = load_workbook(output_path, read_only=True, data_only=False)
-            self.assertEqual(workbook.sheetnames, ["Professors", "Needs Review", "Sources"])
+            self.assertEqual(
+                workbook.sheetnames, ["Professors", "Needs Review", "Sources"]
+            )
             self.assertEqual(workbook.active.title, "Professors")
             headers = [cell.value for cell in next(workbook["Professors"].iter_rows())]
             self.assertEqual(headers, PROFESSOR_LEGACY_TEMPLATE_COLUMNS)
@@ -242,7 +246,10 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
 
             with ZipFile(output_path) as archive:
                 content_types = archive.read("[Content_Types].xml")
-            self.assertIn(b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">', content_types)
+            self.assertIn(
+                b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+                content_types,
+            )
             self.assertNotIn(b"ns0:", content_types)
 
     def test_full_workbook_includes_explicit_user_fields(self) -> None:
@@ -277,9 +284,7 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
             ),
             "generic_email": _record(email="info@example.edu"),
             "missing_source": _record(source_url=""),
-            "long_profile_url": _record(
-                profile_url="https://example.edu/" + "a" * 481
-            ),
+            "long_profile_url": _record(profile_url="https://example.edu/" + "a" * 481),
             "long_tag": _record(tags=["x" * 65]),
             "long_personal_note": _record(personal_note="x" * 10_001),
         }
@@ -305,7 +310,9 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
                 include_user_fields=False,
             )
 
-    def test_contract_normalizes_delimiters_inside_direction_and_tag_arrays(self) -> None:
+    def test_contract_normalizes_delimiters_inside_direction_and_tag_arrays(
+        self,
+    ) -> None:
         payload = _payload(
             _record(
                 research_direction=["大语言模型; 智能体"],
@@ -358,7 +365,9 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
         with self.assertRaises(ContractValidationError):
             canonicalize_payload(invalid_review_reason, include_user_fields=False)
 
-    def test_validator_rejects_noncanonical_separator_formula_and_active_sheet(self) -> None:
+    def test_validator_rejects_noncanonical_separator_formula_and_active_sheet(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             baseline = self._build(directory, _payload(_record()))

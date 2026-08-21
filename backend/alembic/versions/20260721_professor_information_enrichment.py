@@ -52,7 +52,10 @@ def upgrade() -> None:
                 server_default=sa.true(),
             ),
         ),
-        ("display_name", sa.Column("display_name", sa.String(length=255), nullable=True)),
+        (
+            "display_name",
+            sa.Column("display_name", sa.String(length=255), nullable=True),
+        ),
     )
     for name, column in additions:
         if name not in crawl_job_columns:
@@ -79,8 +82,14 @@ def upgrade() -> None:
         ),
         ("skip_reason", sa.Column("skip_reason", sa.Text(), nullable=True)),
         ("enriched_fields", sa.Column("enriched_fields", sa.JSON(), nullable=True)),
-        ("started_at", sa.Column("started_at", sa.DateTime(timezone=True), nullable=True)),
-        ("finished_at", sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True)),
+        (
+            "started_at",
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        ),
+        (
+            "finished_at",
+            sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+        ),
     )
     with op.batch_alter_table("crawl_candidate_enrichment_tasks") as batch_op:
         for name, column in task_additions:

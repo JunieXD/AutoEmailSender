@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from app.core.time import utc_now
@@ -185,7 +185,9 @@ def read_startup_logs() -> list[DiagnosticFileRead]:
 
 
 async def _count_operation_logs(session: AsyncSession, filters: list[object]) -> int:
-    statement: Select[tuple[int]] = select(func.count()).select_from(OperationLog).where(*filters)
+    statement: Select[tuple[int]] = (
+        select(func.count()).select_from(OperationLog).where(*filters)
+    )
     return int(await session.scalar(statement) or 0)
 
 
@@ -202,4 +204,3 @@ def _to_operation_log_read(log: OperationLog) -> OperationLogRead:
         metadata=log.event_metadata,
         created_at=log.created_at,
     )
-

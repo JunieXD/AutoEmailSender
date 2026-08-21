@@ -16,7 +16,10 @@ from app.models import (
     ImapProfessorSyncState,
 )
 from app.core.config import get_settings
-from app.modules.communications.imap.state import claim_next_mailbox_history_scans, reset_mailbox_history_scans_to_pending
+from app.modules.communications.imap.state import (
+    claim_next_mailbox_history_scans,
+    reset_mailbox_history_scans_to_pending,
+)
 
 
 class ImapSyncModelsTestCase(unittest.TestCase):
@@ -103,7 +106,9 @@ class ImapSyncModelsTestCase(unittest.TestCase):
         self.assertEqual(self._run_async(scenario()), "abc123")
 
     def test_mailbox_state_tracks_folder_history_scan_progress(self) -> None:
-        async def scenario() -> tuple[str, int | None, int | None, int, int, str | None]:
+        async def scenario() -> tuple[
+            str, int | None, int | None, int, int, str | None
+        ]:
             async with self.session_factory() as session:
                 session.add(
                     ImapMailboxSyncState(
@@ -180,7 +185,9 @@ class ImapSyncModelsTestCase(unittest.TestCase):
                 await session.commit()
                 state_id = state.id
 
-            await reset_mailbox_history_scans_to_pending(self.session_factory, [state_id])
+            await reset_mailbox_history_scans_to_pending(
+                self.session_factory, [state_id]
+            )
 
             async with self.session_factory() as session:
                 state = await session.get(ImapMailboxSyncState, state_id)
@@ -294,12 +301,16 @@ class ImapSyncModelsTestCase(unittest.TestCase):
             index.name
             for index in Base.metadata.tables["imap_professor_sync_states"].indexes
         }
-        self.assertIn("ix_imap_professor_sync_identity_status_updated", professor_indexes)
+        self.assertIn(
+            "ix_imap_professor_sync_identity_status_updated", professor_indexes
+        )
         mailbox_indexes = {
             index.name
             for index in Base.metadata.tables["imap_mailbox_sync_states"].indexes
         }
-        self.assertIn("ix_imap_mailbox_sync_identity_history_status_updated", mailbox_indexes)
+        self.assertIn(
+            "ix_imap_mailbox_sync_identity_history_status_updated", mailbox_indexes
+        )
 
     def test_imap_efficiency_settings_defaults_are_conservative(self) -> None:
         settings = get_settings()

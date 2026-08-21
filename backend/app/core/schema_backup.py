@@ -8,10 +8,12 @@ from pathlib import Path
 
 SCHEMA_BACKUP_KEEP_COUNT = 5
 
+
 @dataclass(frozen=True, slots=True)
 class SchemaBackupResult:
     database_backup_path: Path
     metadata_path: Path
+
 
 def create_schema_backup(
     *,
@@ -49,7 +51,10 @@ def create_schema_backup(
         encoding="utf-8",
     )
     prune_schema_backups(backup_dir, keep=SCHEMA_BACKUP_KEEP_COUNT)
-    return SchemaBackupResult(database_backup_path=backup_path, metadata_path=metadata_path)
+    return SchemaBackupResult(
+        database_backup_path=backup_path, metadata_path=metadata_path
+    )
+
 
 def prune_schema_backups(
     backup_dir: Path,
@@ -67,6 +72,7 @@ def prune_schema_backups(
         db_path.unlink(missing_ok=True)
         db_path.with_suffix(".json").unlink(missing_ok=True)
 
+
 def _unique_backup_path(backup_dir: Path, app_version: str, timestamp: str) -> Path:
     base_name = f"auto_email_sender.before-{app_version}.{timestamp}"
     candidate = backup_dir / f"{base_name}.db"
@@ -75,6 +81,7 @@ def _unique_backup_path(backup_dir: Path, app_version: str, timestamp: str) -> P
         candidate = backup_dir / f"{base_name}-{counter}.db"
         counter += 1
     return candidate
+
 
 def _backup_sort_key(db_path: Path) -> tuple[datetime, str]:
     metadata_path = db_path.with_suffix(".json")

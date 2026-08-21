@@ -80,7 +80,9 @@ def serialize_identity(
         is_default=identity.is_default,
         current_primary_material_id=current_primary_material_id,
         current_primary_material=(
-            serialize_material(identity.current_primary_material, current_primary_material_id)
+            serialize_material(
+                identity.current_primary_material, current_primary_material_id
+            )
             if identity.current_primary_material is not None
             else None
         ),
@@ -89,7 +91,10 @@ def serialize_identity(
                 material,
                 current_primary_material_id,
                 default_for_identity_ids=(
-                    [default_identity.id for default_identity in material.default_for_identities]
+                    [
+                        default_identity.id
+                        for default_identity in material.default_for_identities
+                    ]
                     if has_global_catalog
                     else None
                 ),

@@ -1,4 +1,4 @@
-export const APP_SCROLL_CONTAINER_SELECTOR = '[data-app-scroll-container="true"]';
+const APP_SCROLL_CONTAINER_SELECTOR = '[data-app-scroll-container="true"]';
 
 export const getAppScrollContainer = (): HTMLElement | null => {
   if (typeof document === "undefined") {

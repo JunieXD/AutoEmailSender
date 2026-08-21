@@ -64,6 +64,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteBatchTaskItem: vi.fn(),
   restoreBatchTaskItemSend: vi.fn(),
   listCrawlJobs: vi.fn(),
+  listCrawlJobsPage: vi.fn(),
   getCrawlJob: vi.fn(),
   getCrawlJobDetails: vi.fn(),
   getCrawlJobEvents: vi.fn(),
@@ -86,6 +87,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteMatchAnalysisJob: vi.fn(),
   restoreMatchAnalysisJob: vi.fn(),
   listProfessorInformationEnrichmentJobs: vi.fn(),
+  listProfessorInformationEnrichmentJobsPage: vi.fn(),
   listProfessorInformationEnrichmentItems: vi.fn(),
   listProfessorInformationEnrichmentItemsPage: vi.fn(),
   cancelProfessorInformationEnrichmentJob: vi.fn(),
@@ -201,6 +203,7 @@ vi.mock("@/lib/api/outreachTemplates", () => ({
 
 vi.mock("@/lib/api/crawlJobsApi", () => ({
   listCrawlJobs: apiMocks.listCrawlJobs,
+  listCrawlJobsPage: apiMocks.listCrawlJobsPage,
   getCrawlJob: apiMocks.getCrawlJob,
   getCrawlJobDetails: apiMocks.getCrawlJobDetails,
   getCrawlJobEvents: apiMocks.getCrawlJobEvents,
@@ -230,6 +233,8 @@ vi.mock("@/lib/api/matchAnalysisJobsApi", () => ({
 vi.mock("@/entities/professor/api/informationEnrichment", () => ({
   listProfessorInformationEnrichmentJobs:
     apiMocks.listProfessorInformationEnrichmentJobs,
+  listProfessorInformationEnrichmentJobsPage:
+    apiMocks.listProfessorInformationEnrichmentJobsPage,
   listProfessorInformationEnrichmentItems:
     apiMocks.listProfessorInformationEnrichmentItems,
   listProfessorInformationEnrichmentItemsPage:
@@ -546,6 +551,159 @@ describe("CrawlJobCard", () => {
     expect(screen.getByRole("button", { name: "还原任务" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "删除" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重新抓取" })).not.toBeInTheDocument();
+  });
+});
+
+describe("TasksPage task-center server pagination", () => {
+  it("keeps the initial crawl count at zero and makes one initial list request", async () => {
+    selectionMock.selectedIdentityId = null;
+    let resolveRequest: ((value: {
+      items: CrawlJobSummaryDTO[];
+      total_count: number;
+      current_total_count: number;
+    }) => void) | undefined;
+    apiMocks.listCrawlJobsPage.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    const crawlTab = await screen.findByRole("button", { name: "智能抓取" });
+    expect(within(crawlTab).getByText("0")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      resolveRequest?.({ items: [], total_count: 0, current_total_count: 0 });
+    });
+    expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "信息补全" }));
+      await Promise.resolve();
+    });
+    expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the server total for the crawl badge and requests the selected page", async () => {
+    apiMocks.listCrawlJobsPage.mockResolvedValue({
+      items: [buildCrawlJob({ status: "running" })],
+      total_count: 53,
+      current_total_count: 61,
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    const crawlTab = await screen.findByRole("button", { name: "智能抓取" });
+    fireEvent.click(crawlTab);
+
+    await waitFor(() => {
+      expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledWith({
+        offset: 0,
+        limit: 8,
+        view: "current",
+        keyword: undefined,
+        searchScopes: ["university", "school", "url", "event"],
+        status: undefined,
+        sortKey: "created",
+        sortDirection: "desc",
+        unpaged: false,
+      });
+    });
+    expect(within(crawlTab).getByText("61")).toBeInTheDocument();
+    expect(screen.getByText("显示 1-8 / 53 个任务")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    await waitFor(() => {
+      expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledWith(
+        expect.objectContaining({ offset: 8, limit: 8 }),
+      );
+    });
+  });
+
+  it("keeps Chinese natural task-name sorting in unpaged compatibility mode", async () => {
+    const jobs = [
+      buildCrawlJob({ id: 10, university: "示例大学 10" }),
+      buildCrawlJob({ id: 2, university: "示例大学 2" }),
+      buildCrawlJob({ id: 1, university: "示例大学 1" }),
+    ];
+    apiMocks.listCrawlJobsPage.mockResolvedValue({
+      items: jobs,
+      total_count: jobs.length,
+      current_total_count: jobs.length,
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "智能抓取" }));
+    fireEvent.click(screen.getByRole("button", { name: "任务排序" }));
+    fireEvent.click(screen.getByRole("button", { name: "任务名称" }));
+
+    await waitFor(() => {
+      expect(apiMocks.listCrawlJobsPage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          unpaged: true,
+          sortKey: "created",
+          sortDirection: "desc",
+        }),
+      );
+    });
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "示例大学 1 / 计算机与人工智能学院",
+      "示例大学 2 / 计算机与人工智能学院",
+      "示例大学 10 / 计算机与人工智能学院",
+    ]);
+  });
+
+  it("uses the server totals for information enrichment", async () => {
+    apiMocks.listProfessorInformationEnrichmentJobsPage.mockResolvedValue({
+      items: [buildInformationEnrichmentJob()],
+      total_count: 52,
+      current_total_count: 57,
+    });
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    const enrichmentTab = screen.getByRole("button", { name: "信息补全" });
+    fireEvent.click(enrichmentTab);
+
+    await waitFor(() => {
+      expect(apiMocks.listProfessorInformationEnrichmentJobsPage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          offset: 0,
+          limit: 8,
+          view: "current",
+          unpaged: false,
+        }),
+      );
+    });
+    expect(within(enrichmentTab).getByText("57")).toBeInTheDocument();
+    expect(screen.getByText("显示 1-8 / 52 个任务")).toBeInTheDocument();
   });
 });
 
@@ -1035,6 +1193,22 @@ beforeEach(() => {
   apiMocks.listBatchTaskItems.mockResolvedValue([]);
   apiMocks.listOutreachTemplates.mockResolvedValue([]);
   apiMocks.listCrawlJobs.mockResolvedValue([]);
+  apiMocks.listCrawlJobsPage.mockImplementation(
+    async (params: { offset: number; limit: number; view: "current" | "trash"; unpaged?: boolean }) => {
+      const jobs = await apiMocks.listCrawlJobs({ view: params.view });
+      const currentJobs =
+        params.view === "current"
+          ? jobs
+          : await apiMocks.listCrawlJobs({ view: "current" });
+      return {
+        items: params.unpaged
+          ? jobs
+          : jobs.slice(params.offset, params.offset + params.limit),
+        total_count: jobs.length,
+        current_total_count: currentJobs.length,
+      };
+    },
+  );
   apiMocks.getCrawlJob.mockResolvedValue(buildCrawlJob());
   apiMocks.getCrawlJobEvents.mockResolvedValue([]);
   apiMocks.listCrawlCandidates.mockResolvedValue([]);
@@ -1050,6 +1224,26 @@ beforeEach(() => {
     buildMatchAnalysisJobItemsPage(),
   );
   apiMocks.listProfessorInformationEnrichmentJobs.mockResolvedValue([]);
+  apiMocks.listProfessorInformationEnrichmentJobsPage.mockImplementation(
+    async (params: { offset: number; limit: number; view: "current" | "trash"; unpaged?: boolean }) => {
+      const jobs = await apiMocks.listProfessorInformationEnrichmentJobs({
+        view: params.view,
+      });
+      const currentJobs =
+        params.view === "current"
+          ? jobs
+          : await apiMocks.listProfessorInformationEnrichmentJobs({
+              view: "current",
+            });
+      return {
+        items: params.unpaged
+          ? jobs
+          : jobs.slice(params.offset, params.offset + params.limit),
+        total_count: jobs.length,
+        current_total_count: currentJobs.length,
+      };
+    },
+  );
   apiMocks.listProfessorInformationEnrichmentItems.mockResolvedValue([]);
   apiMocks.listProfessorInformationEnrichmentItemsPage.mockResolvedValue(
     buildInformationEnrichmentItemsPage(),

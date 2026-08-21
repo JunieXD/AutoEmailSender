@@ -89,6 +89,12 @@ class ProfessorInformationEnrichmentJobRead(ApiSchema):
     )
 
 
+class ProfessorInformationEnrichmentJobsPageRead(ApiSchema):
+    items: list[ProfessorInformationEnrichmentJobRead]
+    total_count: int
+    current_total_count: int
+
+
 class ProfessorInformationEnrichmentItemRead(ApiSchema):
     id: int
     job_id: int

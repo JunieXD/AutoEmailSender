@@ -44,26 +44,50 @@ def upgrade() -> None:
                     ),
                 )
             if "history_high_water_uid" not in existing_columns:
-                batch_op.add_column(sa.Column("history_high_water_uid", sa.Integer(), nullable=True))
+                batch_op.add_column(
+                    sa.Column("history_high_water_uid", sa.Integer(), nullable=True)
+                )
             if "history_next_before_uid" not in existing_columns:
-                batch_op.add_column(sa.Column("history_next_before_uid", sa.Integer(), nullable=True))
+                batch_op.add_column(
+                    sa.Column("history_next_before_uid", sa.Integer(), nullable=True)
+                )
             if "history_scan_started_at" not in existing_columns:
                 batch_op.add_column(
-                    sa.Column("history_scan_started_at", sa.DateTime(timezone=True), nullable=True),
+                    sa.Column(
+                        "history_scan_started_at",
+                        sa.DateTime(timezone=True),
+                        nullable=True,
+                    ),
                 )
             if "history_scan_completed_at" not in existing_columns:
                 batch_op.add_column(
-                    sa.Column("history_scan_completed_at", sa.DateTime(timezone=True), nullable=True),
+                    sa.Column(
+                        "history_scan_completed_at",
+                        sa.DateTime(timezone=True),
+                        nullable=True,
+                    ),
                 )
             if "history_last_error" not in existing_columns:
-                batch_op.add_column(sa.Column("history_last_error", sa.Text(), nullable=True))
+                batch_op.add_column(
+                    sa.Column("history_last_error", sa.Text(), nullable=True)
+                )
             if "history_scanned_count" not in existing_columns:
                 batch_op.add_column(
-                    sa.Column("history_scanned_count", sa.Integer(), server_default="0", nullable=False),
+                    sa.Column(
+                        "history_scanned_count",
+                        sa.Integer(),
+                        server_default="0",
+                        nullable=False,
+                    ),
                 )
             if "history_matched_count" not in existing_columns:
                 batch_op.add_column(
-                    sa.Column("history_matched_count", sa.Integer(), server_default="0", nullable=False),
+                    sa.Column(
+                        "history_matched_count",
+                        sa.Integer(),
+                        server_default="0",
+                        nullable=False,
+                    ),
                 )
             if "history_strategy_version" not in existing_columns:
                 batch_op.add_column(
@@ -125,4 +149,6 @@ def downgrade() -> None:
 
 def _mailbox_columns() -> set[str]:
     inspector = sa.inspect(op.get_bind())
-    return {column["name"] for column in inspector.get_columns("imap_mailbox_sync_states")}
+    return {
+        column["name"] for column in inspector.get_columns("imap_mailbox_sync_states")
+    }

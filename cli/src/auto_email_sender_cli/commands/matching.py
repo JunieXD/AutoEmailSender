@@ -24,15 +24,21 @@ matching_app.add_typer(jobs_app, name="jobs")
 def list_match_analysis_jobs(
     ctx: typer.Context,
     identity_id: Annotated[int | None, typer.Option("--identity-id", min=1)] = None,
-    llm_profile_id: Annotated[int | None, typer.Option("--llm-profile-id", min=1)] = None,
+    llm_profile_id: Annotated[
+        int | None, typer.Option("--llm-profile-id", min=1)
+    ] = None,
     view: Annotated[
         str,
         typer.Option("--view", help="current 或 trash。"),
     ] = "current",
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,
@@ -71,7 +77,7 @@ def create_match_analysis_job(
         list[int],
         typer.Option("--professor-id", min=1, help="可重复指定需要分析的导师 ID。"),
     ],
-    name: Annotated[str | None, typer.Option("--name", help="可选任务名称。")]=None,
+    name: Annotated[str | None, typer.Option("--name", help="可选任务名称。")] = None,
 ) -> None:
     run_write_command(
         ctx,
@@ -108,8 +114,12 @@ def list_match_analysis_job_items(
     job_id: Annotated[int, typer.Argument(min=1)],
     cursor: Annotated[int, typer.Option("--cursor", min=0)] = 0,
     limit: Annotated[int, typer.Option("--limit", min=1, max=500)] = 25,
-    fields: Annotated[str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。") ] = None,
-    all_items: Annotated[bool, typer.Option("--all", help="自动读取全部分页结果。")] = False,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="只返回需要的字段，逗号分隔。")
+    ] = None,
+    all_items: Annotated[
+        bool, typer.Option("--all", help="自动读取全部分页结果。")
+    ] = False,
 ) -> None:
     run_read_command(
         ctx,

@@ -10,7 +10,7 @@ export type ProfessorDashboardSortKey =
 
 export type ProfessorDashboardSortDirection = "asc" | "desc";
 
-export const isProfessorDashboardTimeSortKey = (
+const isProfessorDashboardTimeSortKey = (
   sortKey: ProfessorDashboardSortKey,
 ): sortKey is "lastSentAt" | "lastRepliedAt" =>
   sortKey === "lastSentAt" || sortKey === "lastRepliedAt";

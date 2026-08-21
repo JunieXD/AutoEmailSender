@@ -262,9 +262,8 @@ def is_structured_output_protocol_rejection(error: LLMRuntimeError) -> bool:
     if error.status_code not in (400, 422):
         return False
     text = str(error).lower()
-    return (
-        any(keyword in text for keyword in _PROTOCOL_REJECTION_KEYWORDS)
-        and any(keyword in text for keyword in _UNSUPPORTED_KEYWORDS)
+    return any(keyword in text for keyword in _PROTOCOL_REJECTION_KEYWORDS) and any(
+        keyword in text for keyword in _UNSUPPORTED_KEYWORDS
     )
 
 
@@ -304,7 +303,9 @@ def _matches_strict_probe_item(item: object) -> bool:
     )
 
 
-def _probe_payload(profile: LLMProfile, prompt: str, *, max_tokens: int) -> dict[str, object]:
+def _probe_payload(
+    profile: LLMProfile, prompt: str, *, max_tokens: int
+) -> dict[str, object]:
     return {
         "model": profile.model_name,
         "messages": [{"role": "user", "content": prompt}],
@@ -333,9 +334,7 @@ async def _request_probe(
             payload,
             mode=mode,
             schema=(
-                dict(_STRICT_PROBE_SCHEMA)
-                if mode == "json_schema_strict"
-                else None
+                dict(_STRICT_PROBE_SCHEMA) if mode == "json_schema_strict" else None
             ),
             schema_name="structured_capability_probe",
         )
@@ -423,7 +422,8 @@ async def probe_structured_output_mode(
                 positive_content = str(getattr(positive_result, "content", ""))
                 mode = (
                     "json_object"
-                    if _parse_exact_json_object(positive_content) == {"probe": "JSON_OK"}
+                    if _parse_exact_json_object(positive_content)
+                    == {"probe": "JSON_OK"}
                     else "prompt_only"
                 )
         except LLMRuntimeError as error:

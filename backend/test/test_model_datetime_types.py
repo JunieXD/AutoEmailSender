@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta, timezone
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, CrawlJob, CrawlJobRun, CrawlJobStatus, CrawlPageTask, EmailTask, EmailTaskSource, EmailTaskStatus
+from app.models import (
+    Base,
+    CrawlJob,
+    CrawlJobRun,
+    CrawlJobStatus,
+    CrawlPageTask,
+    EmailTask,
+    EmailTaskSource,
+    EmailTaskStatus,
+)
 
 
 class ModelDateTimeTypesTest(unittest.TestCase):
@@ -16,7 +25,12 @@ class ModelDateTimeTypesTest(unittest.TestCase):
 
     def test_crawl_page_task_lease_reads_as_utc_aware(self) -> None:
         with Session(self.engine) as session:
-            job = CrawlJob(university="U", school="S", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
+            job = CrawlJob(
+                university="U",
+                school="S",
+                start_url="https://example.edu",
+                status=CrawlJobStatus.RUNNING.value,
+            )
             session.add(job)
             session.flush()
             task = CrawlPageTask(
@@ -30,21 +44,32 @@ class ModelDateTimeTypesTest(unittest.TestCase):
             task_id = task.id
 
         with Session(self.engine) as session:
-            loaded = session.scalar(select(CrawlPageTask).where(CrawlPageTask.id == task_id))
+            loaded = session.scalar(
+                select(CrawlPageTask).where(CrawlPageTask.id == task_id)
+            )
 
         assert loaded is not None
-        self.assertEqual(loaded.lease_expires_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            loaded.lease_expires_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
     def test_crawl_job_run_started_at_reads_as_utc_aware(self) -> None:
         with Session(self.engine) as session:
-            job = CrawlJob(university="U", school="S", start_url="https://example.edu", status=CrawlJobStatus.RUNNING.value)
+            job = CrawlJob(
+                university="U",
+                school="S",
+                start_url="https://example.edu",
+                status=CrawlJobStatus.RUNNING.value,
+            )
             session.add(job)
             session.flush()
             run = CrawlJobRun(
                 job_id=job.id,
                 attempt_number=1,
                 status=CrawlJobStatus.RUNNING.value,
-                started_at=datetime(2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8))),
+                started_at=datetime(
+                    2026, 5, 31, 14, 44, 37, tzinfo=timezone(timedelta(hours=8))
+                ),
             )
             session.add(run)
             session.commit()
@@ -54,7 +79,9 @@ class ModelDateTimeTypesTest(unittest.TestCase):
             loaded = session.scalar(select(CrawlJobRun).where(CrawlJobRun.id == run_id))
 
         assert loaded is not None
-        self.assertEqual(loaded.started_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            loaded.started_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
     def test_email_task_scheduled_at_reads_as_utc_aware(self) -> None:
         with Session(self.engine) as session:
@@ -74,7 +101,9 @@ class ModelDateTimeTypesTest(unittest.TestCase):
             loaded = session.scalar(select(EmailTask).where(EmailTask.id == task_id))
 
         assert loaded is not None
-        self.assertEqual(loaded.scheduled_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC))
+        self.assertEqual(
+            loaded.scheduled_at, datetime(2026, 5, 31, 6, 44, 37, tzinfo=UTC)
+        )
 
 
 if __name__ == "__main__":

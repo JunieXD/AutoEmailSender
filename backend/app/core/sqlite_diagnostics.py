@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 SQLITE_LOCK_DIAGNOSTIC = "sqlite_database_locked"
-SQLITE_LOCK_DIAGNOSTIC_LINE = (
-    f"diagnostic={SQLITE_LOCK_DIAGNOSTIC} database_lock=1"
-)
+SQLITE_LOCK_DIAGNOSTIC_LINE = f"diagnostic={SQLITE_LOCK_DIAGNOSTIC} database_lock=1"
 SQLITE_LOCK_USER_MESSAGE = (
     "本地数据库正忙，当前操作在有限重试后仍未完成。"
     "请稍候重试；如果问题持续出现，请确认没有多个软件实例同时运行。"

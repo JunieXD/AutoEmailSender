@@ -18,7 +18,9 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-WORKSPACE_TASK_WHERE = "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
+WORKSPACE_TASK_WHERE = (
+    "source = 'manual' AND batch_task_id IS NULL AND parent_task_id IS NULL"
+)
 
 
 def _get_task_chain_tail_id(connection: sa.engine.Connection, task_id: int) -> int:

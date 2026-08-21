@@ -105,7 +105,6 @@ app -> pages -> widgets -> features -> entities -> shared
 | 来源 | 目标 |
 |---|---|
 | `context/NotificationContext.tsx` | `components/organisms/NotificationViewport.tsx` |
-| `lib/api/createTask.ts` | `features/create-task/types.ts` |
 | `lib/api/tokenUsage.ts` | `features/token-usage/client/tokenUsage.ts` |
 | `lib/useConfirmDialog.tsx` | `components/atoms/ConfirmDialog.tsx` |
 

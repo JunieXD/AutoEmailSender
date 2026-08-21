@@ -10,7 +10,9 @@ from pathlib import Path
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_TEMPLATE_ROOT = Path(tempfile.gettempdir()) / "auto-email-sender-test-db-templates"
+DEFAULT_TEMPLATE_ROOT = (
+    Path(tempfile.gettempdir()) / "auto-email-sender-test-db-templates"
+)
 
 
 def create_migrated_sqlite_database(

@@ -798,8 +798,15 @@ describe('CommunityMentorsPage', () => {
     expect(await screen.findByText('导师0001')).toBeInTheDocument();
     expect(screen.queryByText('导师0101')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+    const pagination = await screen.findByRole('navigation', {
+      name: '社区导师列表分页',
+    });
+    expect(within(pagination).getByText('显示 1-100 / 101 位导师')).toBeInTheDocument();
+    expect(screen.getByLabelText('社区导师每页数量')).toHaveTextContent('100');
+
+    fireEvent.click(within(pagination).getByRole('button', { name: '下一页' }));
     expect(await screen.findByText('导师0101')).toBeInTheDocument();
+    expect(within(pagination).getByText('显示 101-101 / 101 位导师')).toBeInTheDocument();
 
     const recordList = screen.getByTestId('community-mentor-record-list');
     fireEvent.click(screen.getByRole('button', { name: '全选当前导师' }));

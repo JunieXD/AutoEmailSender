@@ -30,7 +30,7 @@ const HANDOFF_SURFACES = new Set<DesktopAgentUiHandoffSurface>([
   "draft.workspace",
 ]);
 
-export type AgentUiHandoffRenderer = {
+type AgentUiHandoffRenderer = {
   isDestroyed: () => boolean;
   webContents: {
     isDestroyed: () => boolean;
@@ -311,7 +311,7 @@ export function parseClaimedUiHandoff(value: unknown): DesktopAgentUiHandoff {
   };
 }
 
-export function parseUiHandoffState(value: unknown): DesktopAgentUiHandoffState {
+function parseUiHandoffState(value: unknown): DesktopAgentUiHandoffState {
   const source = requireRecord(value, "界面交接响应不是对象");
   const status = requireString(source.status, "status");
   const surface = requireString(source.surface, "surface");

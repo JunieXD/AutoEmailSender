@@ -274,7 +274,11 @@ def _merge_duplicate_candidates() -> None:
             if keeper[field_name] not in (None, "", []):
                 continue
             replacement = next(
-                (row[field_name] for row in group if row[field_name] not in (None, "", [])),
+                (
+                    row[field_name]
+                    for row in group
+                    if row[field_name] not in (None, "", [])
+                ),
                 None,
             )
             if replacement not in (None, "", []):
@@ -315,7 +319,9 @@ def _merge_duplicate_candidates() -> None:
             connection.execute(
                 enrichment_table.delete().where(enrichment_table.c.id.in_(task_ids))
             )
-        connection.execute(candidate_table.delete().where(candidate_table.c.id.in_(duplicate_ids)))
+        connection.execute(
+            candidate_table.delete().where(candidate_table.c.id.in_(duplicate_ids))
+        )
 
 
 def _candidate_survivor_score(row: sa.RowMapping) -> tuple[int, int, int]:

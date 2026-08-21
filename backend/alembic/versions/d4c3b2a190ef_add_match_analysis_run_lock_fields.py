@@ -29,9 +29,15 @@ def upgrade() -> None:
                 nullable=False,
             )
         )
-        batch_op.add_column(sa.Column("started_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("error_kind", sa.String(length=32), nullable=True))
+        batch_op.add_column(
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("error_kind", sa.String(length=32), nullable=True)
+        )
 
     op.execute(
         "UPDATE match_analysis_runs "
@@ -47,7 +53,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("uq_match_analysis_runs_running_per_task", table_name="match_analysis_runs")
+    op.drop_index(
+        "uq_match_analysis_runs_running_per_task", table_name="match_analysis_runs"
+    )
     with op.batch_alter_table("match_analysis_runs") as batch_op:
         batch_op.drop_column("error_kind")
         batch_op.drop_column("finished_at")

@@ -145,10 +145,14 @@ def _looks_like_pdf(content_type: str, content: bytes) -> bool:
 def _extract_pdf_text(content: bytes) -> str:
     from app.services.document_extraction.pdf_converter import PdfConverter, StreamInfo
 
-    return PdfConverter().convert(
-        BytesIO(content),
-        StreamInfo(mimetype="application/pdf", extension=".pdf"),
-    ).markdown
+    return (
+        PdfConverter()
+        .convert(
+            BytesIO(content),
+            StreamInfo(mimetype="application/pdf", extension=".pdf"),
+        )
+        .markdown
+    )
 
 
 def _bound_head_and_tail(text: str, max_chars: int) -> str:

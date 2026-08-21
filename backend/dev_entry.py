@@ -8,7 +8,9 @@ import uvicorn
 
 
 def build_uvicorn_options(argv: Sequence[str] | None = None) -> dict[str, Any]:
-    parser = argparse.ArgumentParser(description="Run Auto Email Sender backend for development.")
+    parser = argparse.ArgumentParser(
+        description="Run Auto Email Sender backend for development."
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)
     args = parser.parse_args(argv)
