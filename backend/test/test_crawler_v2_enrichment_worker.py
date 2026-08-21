@@ -538,7 +538,8 @@ class CrawlerV2EnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         llm_mock.assert_not_awaited()
         async with self.session_factory() as session:
             task = await session.get(CrawlCandidateEnrichmentTask, task_id)
-            job = await session.get(CrawlJob, 1)
+            assert task is not None
+            job = await session.get(CrawlJob, task.job_id)
         assert task is not None and job is not None
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
         self.assertEqual(
