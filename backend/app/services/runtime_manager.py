@@ -19,7 +19,7 @@ from app.modules.campaigns.public import (
     BatchDraftGenerationCoordinator,
     BatchDraftScheduler,
 )
-from app.modules.crawler.public import run_crawler_v2_once
+from app.modules.crawler.public import run_crawler_once
 from app.modules.matching.public import run_queued_match_analysis_jobs_once
 from app.modules.system.public import get_runtime_settings
 from app.modules.workspace.public import (
@@ -136,7 +136,7 @@ class RuntimeManager:
                     f"crawler-worker-{index}",
                     5,
                     partial(
-                        run_crawler_v2_once,
+                        run_crawler_once,
                         worker_id=f"crawler-worker-{index}",
                     ),
                     processed_jitter_seconds=(2, 5),

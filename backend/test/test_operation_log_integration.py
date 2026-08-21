@@ -23,7 +23,7 @@ class OperationLogIntegrationTests(unittest.TestCase):
         os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{cls.db_path.as_posix()}"
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
         cls.getaddrinfo_patcher = patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
         )
         cls.getaddrinfo_patcher.start()

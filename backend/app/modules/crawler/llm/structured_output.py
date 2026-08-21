@@ -151,7 +151,7 @@ class ProfileLinkSelectionWirePayload(BaseModel):
     link_ids: list[int]
 
 
-class V2ChunkWirePayload(BaseModel):
+class CrawlerChunkWirePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_count: int
@@ -190,7 +190,7 @@ class V2ChunkWirePayload(BaseModel):
         return value
 
 
-class V2ProfileExtractionWirePayload(BaseModel):
+class CrawlerProfileExtractionWirePayload(BaseModel):
     """Always carries a candidate object to avoid a nullable strict schema.
 
     ``candidate`` is ignored when ``status`` is ``no_candidate``.  The prompt
@@ -259,8 +259,8 @@ def professor_candidate_wire_to_dict(
     return payload
 
 
-def v2_profile_wire_to_dict(
-    value: V2ProfileExtractionWirePayload,
+def profile_wire_to_dict(
+    value: CrawlerProfileExtractionWirePayload,
 ) -> dict[str, object]:
     if value.status == "no_candidate":
         return {"status": "no_candidate", "candidate": None}

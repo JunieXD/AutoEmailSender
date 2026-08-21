@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from app.modules.crawler.pages.tools import PageSnapshot
-from app.modules.crawler.v2.profile_documents import (
+from app.modules.crawler.runtime.profile_documents import (
     discover_embedded_profile_pdf_urls,
     extract_primary_embedded_profile_pdf_text,
     merge_profile_text_with_embedded_pdf,
@@ -58,7 +58,7 @@ class CrawlerProfileDocumentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.modules.crawler.v2.profile_documents.fetch_binary_resource",
+            "app.modules.crawler.runtime.profile_documents.fetch_binary_resource",
             new=AsyncMock(
                 return_value=(
                     "https://faculty.example.edu/profiles/zhang.pdf",
@@ -89,7 +89,7 @@ class CrawlerProfileDocumentTests(unittest.IsolatedAsyncioTestCase):
             status="succeeded",
         )
         with patch(
-            "app.modules.crawler.v2.profile_documents.fetch_binary_resource",
+            "app.modules.crawler.runtime.profile_documents.fetch_binary_resource",
             new=AsyncMock(side_effect=ValueError("too large")),
         ):
             result = await extract_primary_embedded_profile_pdf_text(  # type: ignore[arg-type]

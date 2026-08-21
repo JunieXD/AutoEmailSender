@@ -12,8 +12,8 @@ from app.modules.crawler.llm.structured_output import (
     CandidateEnrichmentWirePayload,
     CandidateFieldConfidenceWire,
     ProfessorCandidateWirePayload,
-    V2ChunkWirePayload,
-    V2ProfileExtractionWirePayload,
+    CrawlerChunkWirePayload,
+    CrawlerProfileExtractionWirePayload,
     ProfileLinkSelectionWirePayload,
     professor_candidate_wire_to_dict,
 )
@@ -32,11 +32,11 @@ class _LooseObjectResult(BaseModel):
 class StructuredOutputWireContractTests(unittest.TestCase):
     def test_all_known_non_agent_json_calls_use_the_shared_adaptation(self) -> None:
         from app.modules.llm import runtime as llm_runtime
-        from app.modules.crawler.v2 import (
-            chunk_worker as crawler_v2_chunk_worker,
-            enrichment_worker as crawler_v2_enrichment_worker,
-            profile_extraction as crawler_v2_profile_extraction,
-            routing as crawler_v2_routing,
+        from app.modules.crawler.runtime import (
+            chunk_worker as crawler_runtime_chunk_worker,
+            enrichment_worker as crawler_runtime_enrichment_worker,
+            profile_extraction as crawler_runtime_profile_extraction,
+            routing as crawler_runtime_routing,
         )
 
         self.assertIn(
@@ -50,10 +50,10 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             2,
         )
         for function in (
-            crawler_v2_chunk_worker.invoke_v2_chunk_agent,
-            crawler_v2_enrichment_worker.enrich_candidate_profile_with_llm_with_usage,
-            crawler_v2_profile_extraction.invoke_v2_profile_extraction_agent,
-            crawler_v2_routing._invoke_structured_routing_phase,
+            crawler_runtime_chunk_worker.invoke_chunk_agent,
+            crawler_runtime_enrichment_worker.enrich_candidate_profile_with_llm_with_usage,
+            crawler_runtime_profile_extraction.invoke_profile_extraction_agent,
+            crawler_runtime_routing._invoke_structured_routing_phase,
         ):
             with self.subTest(function=function.__name__):
                 self.assertIn(
@@ -87,9 +87,9 @@ class StructuredOutputWireContractTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_every_production_wire_model_is_strict_schema_compatible(self) -> None:
-        from app.modules.crawler.v2.routing import (
-            V2EntryRoutingPayload,
-            V2PaginationRoutingPayload,
+        from app.modules.crawler.runtime.routing import (
+            EntryRoutingPayload,
+            PaginationRoutingPayload,
         )
 
         models = (
@@ -100,10 +100,10 @@ class StructuredOutputWireContractTests(unittest.TestCase):
             CandidateEnrichmentWirePayload,
             CandidateEmailSelectionWirePayload,
             ProfileLinkSelectionWirePayload,
-            V2ChunkWirePayload,
-            V2ProfileExtractionWirePayload,
-            V2EntryRoutingPayload,
-            V2PaginationRoutingPayload,
+            CrawlerChunkWirePayload,
+            CrawlerProfileExtractionWirePayload,
+            EntryRoutingPayload,
+            PaginationRoutingPayload,
         )
 
         for model in models:

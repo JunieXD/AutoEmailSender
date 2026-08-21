@@ -26,7 +26,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         cls.client.close()
 
     def setUp(self) -> None:
-        from app.modules.crawler.v2.profile_text_cache import profile_text_cache
+        from app.modules.crawler.runtime.profile_text_cache import profile_text_cache
 
         profile_text_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -49,7 +49,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.cookies.clear()
-        from app.modules.crawler.v2.profile_text_cache import profile_text_cache
+        from app.modules.crawler.runtime.profile_text_cache import profile_text_cache
 
         profile_text_cache.clear()
         from app.core.config import get_settings
@@ -308,7 +308,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
     def test_cancel_clears_cached_profile_text_for_canceled_items(self) -> None:
-        from app.modules.crawler.v2.profile_text_cache import profile_text_cache
+        from app.modules.crawler.runtime.profile_text_cache import profile_text_cache
 
         professor_id = self._create_professor(
             name="取消补全导师",

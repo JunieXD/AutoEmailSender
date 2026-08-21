@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.crawl_job import CrawlPageFetchState, CrawlPageFetchStatus
-from ..v2.url_utils import is_spa_route_fragment
+from ..runtime.url_utils import is_spa_route_fragment
 
 # Keep the ledger budget aligned with the crawler's existing connectivity retry
 # budget so it cannot prematurely turn a network outage into a terminal skip.

@@ -23,10 +23,10 @@ from app.models import (
 )
 from app.modules.crawler.jobs.recovery import recover_interrupted_crawl_jobs
 from app.modules.crawler.pages.tools import CandidateEnrichmentPayload
-from app.modules.crawler.v2.enrichment_worker import (
-    run_crawler_v2_enrichment_worker_once,
+from app.modules.crawler.runtime.enrichment_worker import (
+    run_crawler_enrichment_worker_once,
 )
-from app.modules.crawler.v2.scheduler import finalize_idle_jobs
+from app.modules.crawler.runtime.scheduler import finalize_idle_jobs
 from app.modules.professors.public import (
     create_professor_information_enrichment_job,
     finalize_professor_information_enrichment_job,
@@ -379,10 +379,10 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             "total_tokens": 150,
         }
         with patch(
-            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(return_value=(payload, usage)),
         ):
-            processed = await run_crawler_v2_enrichment_worker_once(
+            processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
                 task_id=task_id,
                 worker_id="test-worker",
@@ -439,10 +439,10 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             recent_papers=[],
         )
         with patch(
-            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(return_value=(payload, None)),
         ):
-            processed = await run_crawler_v2_enrichment_worker_once(
+            processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
                 task_id=task_id,
                 worker_id="test-worker",
@@ -482,7 +482,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.modules.crawler.v2.enrichment_worker.enrich_candidate_once_with_usage",
+            "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(
                 side_effect=ValueError(
                     "HTTP 401 Authorization: Bearer top-secret\n"
@@ -491,7 +491,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            await run_crawler_v2_enrichment_worker_once(
+            await run_crawler_enrichment_worker_once(
                 self.session_factory,
                 task_id=task_id,
                 worker_id="test-worker",

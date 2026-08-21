@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.core.query_chunks import chunked_values, unique_positive_ids
+from app.schemas.selection import SelectionSpec
 from app.models import (
     CrawlCandidate,
     CrawlCandidateReviewStatus,
@@ -50,6 +51,10 @@ from .schemas import (
     CrawlJobResumePayload,
 )
 from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
+from .jobs.query import (
+    parse_crawl_task_search_scopes,
+    query_crawl_task_center_jobs,
+)
 from .jobs.enrichment_operations import (
     append_candidate_enrichment_terminal_event,
     start_candidate_enrichment_operation,
@@ -70,6 +75,22 @@ from .jobs.runs import (
     mark_crawl_job_run_queued,
     mark_crawl_job_run_running,
 )
+from .jobs.records import (
+    CrawlJobRecordError,
+    approve_faculty_crawl_candidates,
+    cancel_faculty_crawl_job_record,
+    create_faculty_crawl_job_record,
+    delete_faculty_crawl_job_record,
+    enqueue_faculty_crawl_candidate_enrichment_records,
+    get_faculty_crawl_job_summary,
+    list_faculty_crawl_job_records,
+    pause_faculty_crawl_job_record,
+    restore_faculty_crawl_job_record,
+    resume_faculty_crawl_job_record,
+    resume_faculty_crawl_job_review_record,
+    retry_faculty_crawl_job_record,
+    update_faculty_crawl_candidate_record,
+)
 from app.services.operation_logs import record_operation_log
 from app.modules.professors.public import (
     get_or_create_professor_by_email,
@@ -77,9 +98,9 @@ from app.modules.professors.public import (
     normalize_professor_email,
     normalize_recent_papers,
 )
-from .v2.url_utils import normalize_url
-from .v2.profile_text_cache import profile_text_cache
-from .v2.routing import (
+from .runtime.url_utils import normalize_url
+from .runtime.profile_text_cache import profile_text_cache
+from .runtime.routing import (
     ENTRY_EXPANSION_MODE,
     NO_EXPANSION_MODE,
     START_DISCOVERY_REASON,
@@ -88,7 +109,14 @@ from .v2.routing import (
 
 router = APIRouter(prefix="/api/crawl-jobs", tags=["crawl-jobs"])
 CrawlJobListLimit = Annotated[int, Query(ge=1, le=50)]
-CRAWL_TASK_SEARCH_SCOPES = frozenset({"university", "school", "url", "event"})
+
+
+def _raise_http_record_error(error: CrawlJobRecordError) -> None:
+    message = {
+        "CRAWL_CANDIDATE_ENRICHMENT_RUNNING": "候选信息正在补全中，请稍后再试",
+        "CRAWL_CANDIDATE_ENRICHMENT_NOT_REVIEWABLE": "抓取任务尚未进入审核状态",
+    }.get(error.code, error.message)
+    raise HTTPException(status_code=error.status_code, detail=message) from error
 
 
 def _iter_unique_start_urls_for_page_tasks(job: CrawlJob) -> list[tuple[str, str]]:
@@ -117,52 +145,10 @@ async def create_crawl_job(
     payload: CrawlJobCreatePayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = CrawlJob(
-        university=payload.university,
-        school=payload.school,
-        start_url=payload.start_url,
-        start_urls=payload.start_urls,
-        entry_type=payload.entry_type,
-        llm_profile_id=payload.llm_profile_id,
-        status=CrawlJobStatus.QUEUED.value,
-        progress_current=0,
-        progress_total=0,
-    )
-    session.add(job)
-    await session.flush()
-    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
-        session.add(
-            CrawlPageTask(
-                job_id=job.id,
-                normalized_url=normalized_url,
-                original_url=start_url,
-                parent_url=None,
-                discovery_reason=START_DISCOVERY_REASON,
-                expansion_mode=(
-                    NO_EXPANSION_MODE
-                    if job.entry_type == "profile"
-                    else ENTRY_EXPANSION_MODE
-                ),
-                depth=0,
-                status=CrawlPageTaskStatus.PENDING.value,
-            )
-        )
-    await create_initial_crawl_job_run(session, job)
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.created",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "university": job.university,
-            "school": job.school,
-            "start_url": job.start_url,
-            "start_urls": job.start_urls or [job.start_url],
-            "entry_type": job.entry_type,
-            "llm_profile_id": job.llm_profile_id,
-        },
-    )
+    try:
+        job = await create_faculty_crawl_job_record(session, payload)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     await session.refresh(job)
     return job
@@ -174,22 +160,15 @@ async def list_crawl_jobs(
     view: str = "current",
     session: AsyncSession = Depends(get_async_session),
 ) -> list[CrawlJobSummaryRead]:
-    statement = (
-        select(CrawlJob)
-        .options(selectinload(CrawlJob.current_run))
-        .where(CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value)
-    )
-    if view == "trash":
-        statement = statement.where(CrawlJob.deleted_at.is_not(None))
-    elif view == "current":
-        statement = statement.where(CrawlJob.deleted_at.is_(None))
-    else:
-        raise HTTPException(status_code=400, detail="未知任务视图")
-    statement = statement.order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
-    if limit is not None:
-        statement = statement.limit(limit)
-    jobs = list((await session.execute(statement)).scalars())
-    return await _build_crawl_job_summaries(session, jobs)
+    try:
+        return await list_faculty_crawl_job_records(
+            session,
+            view=view,
+            offset=0,
+            limit=limit,
+        )
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
 
 
 @router.get("/page", response_model=CrawlJobSummaryPageRead)
@@ -205,8 +184,11 @@ async def list_crawl_jobs_page(
     unpaged: bool = Query(default=False),
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJobSummaryPageRead:
-    scopes = _parse_crawl_task_search_scopes(search_scopes)
-    jobs, total_count = await _query_crawl_task_center_jobs(
+    try:
+        scopes = parse_crawl_task_search_scopes(search_scopes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    jobs, total_count = await query_crawl_task_center_jobs(
         session,
         view=view,
         offset=offset,
@@ -241,319 +223,21 @@ async def list_crawl_jobs_page(
     )
 
 
-def _parse_crawl_task_search_scopes(value: str | None) -> frozenset[str]:
-    if value is None or not value.strip():
-        return CRAWL_TASK_SEARCH_SCOPES
-    scopes = frozenset(part.strip() for part in value.split(",") if part.strip())
-    if not scopes or not scopes.issubset(CRAWL_TASK_SEARCH_SCOPES):
-        raise HTTPException(status_code=400, detail="未知抓取任务搜索范围")
-    return scopes
-
-
-async def _query_crawl_task_center_jobs(
-    session: AsyncSession,
-    *,
-    view: str,
-    offset: int,
-    limit: int,
-    keyword: str | None,
-    search_scopes: frozenset[str],
-    status_filter: str | None,
-    sort_key: str,
-    sort_direction: str,
-    unpaged: bool,
-) -> tuple[list[CrawlJob], int]:
-    filters = [CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value]
-    if view == "current":
-        filters.append(CrawlJob.deleted_at.is_(None))
-    else:
-        filters.append(CrawlJob.deleted_at.is_not(None))
-    if status_filter is not None:
-        filters.append(CrawlJob.status == status_filter)
-
-    normalized_keyword = (keyword or "").strip().lower()
-    if normalized_keyword and "event" in search_scopes:
-        return await _query_crawl_task_center_jobs_with_event_search(
-            session,
-            filters=filters,
-            offset=offset,
-            limit=limit,
-            keyword=normalized_keyword,
-            search_scopes=search_scopes,
-            sort_key=sort_key,
-            sort_direction=sort_direction,
-            unpaged=unpaged,
-        )
-
-    if normalized_keyword:
-        filters.append(
-            or_(
-                *_crawl_task_keyword_conditions(
-                    normalized_keyword,
-                    search_scopes=search_scopes,
-                )
-            )
-        )
-    total_count = int(
-        (
-            await session.scalar(
-                select(func.count()).select_from(CrawlJob).where(*filters)
-            )
-        )
-        or 0
-    )
-    statement = (
-        select(CrawlJob).options(selectinload(CrawlJob.current_run)).where(*filters)
-    )
-    statement = _order_crawl_task_statement(
-        statement,
-        sort_key=sort_key,
-        sort_direction=sort_direction,
-    )
-    if not unpaged:
-        statement = statement.offset(offset).limit(limit)
-    return list(await session.scalars(statement)), total_count
-
-
-async def _query_crawl_task_center_jobs_with_event_search(
-    session: AsyncSession,
-    *,
-    filters: list[object],
-    offset: int,
-    limit: int,
-    keyword: str,
-    search_scopes: frozenset[str],
-    sort_key: str,
-    sort_direction: str,
-    unpaged: bool,
-) -> tuple[list[CrawlJob], int]:
-    candidates = list(
-        await session.scalars(
-            select(CrawlJob)
-            .where(*filters)
-            .order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
-        )
-    )
-    matching_jobs = [
-        job
-        for job in candidates
-        if _crawl_task_matches_keyword(
-            job,
-            keyword=keyword,
-            search_scopes=search_scopes,
-        )
-    ]
-    _sort_crawl_task_jobs(
-        matching_jobs,
-        sort_key=sort_key,
-        sort_direction=sort_direction,
-    )
-    total_count = len(matching_jobs)
-    selected_jobs = matching_jobs if unpaged else matching_jobs[offset : offset + limit]
-    if not selected_jobs:
-        return [], total_count
-    selected_ids = [job.id for job in selected_jobs]
-    loaded_jobs = list(
-        await session.scalars(
-            select(CrawlJob)
-            .options(selectinload(CrawlJob.current_run))
-            .where(CrawlJob.id.in_(selected_ids))
-        )
-    )
-    jobs_by_id = {job.id: job for job in loaded_jobs}
-    return [jobs_by_id[job_id] for job_id in selected_ids], total_count
-
-
-def _crawl_task_keyword_conditions(
-    keyword: str,
-    *,
-    search_scopes: frozenset[str],
-) -> list[object]:
-    pattern = f"%{_escape_crawl_task_search_keyword(keyword)}%"
-    conditions: list[object] = []
-    if "university" in search_scopes:
-        conditions.append(
-            func.lower(func.coalesce(CrawlJob.university, "")).like(
-                pattern,
-                escape="\\",
-            )
-        )
-    if "school" in search_scopes:
-        conditions.append(
-            func.lower(func.coalesce(CrawlJob.school, "")).like(
-                pattern,
-                escape="\\",
-            )
-        )
-    if "url" in search_scopes:
-        conditions.extend(
-            [
-                func.lower(func.coalesce(CrawlJob.start_url, "")).like(
-                    pattern,
-                    escape="\\",
-                ),
-                func.lower(func.coalesce(cast(CrawlJob.start_urls, String), "")).like(
-                    pattern,
-                    escape="\\",
-                ),
-            ]
-        )
-    return conditions
-
-
-def _crawl_task_matches_keyword(
-    job: CrawlJob,
-    *,
-    keyword: str,
-    search_scopes: frozenset[str],
-) -> bool:
-    values: list[str] = []
-    if "university" in search_scopes:
-        values.append(job.university)
-    if "school" in search_scopes:
-        values.append(job.school)
-    if "url" in search_scopes:
-        values.extend([job.start_url, " ".join(job.start_urls or [])])
-    if "event" in search_scopes:
-        values.append(_latest_event_message(job.agent_trace) or "")
-    return any(keyword in value.lower() for value in values)
-
-
-def _order_crawl_task_statement(
-    statement: object,
-    *,
-    sort_key: str,
-    sort_direction: str,
-):
-    if sort_key == "updated":
-        primary_sort = CrawlJob.updated_at
-    elif sort_key == "progress":
-        primary_sort = case(
-            (
-                CrawlJob.progress_total > 0,
-                cast(CrawlJob.progress_current, Float)
-                / cast(CrawlJob.progress_total, Float),
-            ),
-            else_=0.0,
-        )
-    else:
-        primary_sort = CrawlJob.created_at
-    ordered_primary = (
-        primary_sort.asc() if sort_direction == "asc" else primary_sort.desc()
-    )
-    return statement.order_by(
-        ordered_primary,
-        CrawlJob.created_at.desc(),
-        CrawlJob.id.desc(),
-    )
-
-
-def _sort_crawl_task_jobs(
-    jobs: list[CrawlJob],
-    *,
-    sort_key: str,
-    sort_direction: str,
-) -> None:
-    if sort_key == "updated":
-        get_value = lambda job: job.updated_at
-    elif sort_key == "progress":
-        get_value = lambda job: (
-            job.progress_current / job.progress_total if job.progress_total > 0 else 0
-        )
-    else:
-        get_value = lambda job: job.created_at
-    jobs.sort(key=get_value, reverse=sort_direction == "desc")
-
-
-def _escape_crawl_task_search_keyword(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 @router.patch("/candidates/{candidate_id}", response_model=CrawlCandidateRead)
 async def update_crawl_candidate(
     candidate_id: int,
     payload: CrawlCandidateUpdatePayload,
     session: AsyncSession = Depends(get_async_session),
-) -> CrawlCandidate:
-    candidate = await session.scalar(
-        select(CrawlCandidate)
-        .join(CrawlJob, CrawlJob.id == CrawlCandidate.job_id)
-        .where(
-            CrawlCandidate.id == candidate_id,
-            CrawlJob.job_kind == CrawlJobKind.FACULTY_CRAWL.value,
-        )
-    )
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="未找到候选导师")
-    candidate = (
-        await canonicalize_candidate_ids(
+) -> CrawlCandidateRead:
+    try:
+        candidate = await update_faculty_crawl_candidate_record(
             session,
-            job_id=candidate.job_id,
-            candidate_ids=[candidate.id],
+            candidate_id,
+            payload,
         )
-    )[0][0]
-    previous_identities = set(
-        candidate_identity_values(
-            name=candidate.name,
-            email=candidate.email,
-            profile_url=candidate.profile_url,
-        )
-    )
-
-    candidate.name = payload.name
-    candidate.email = payload.email.lower() if payload.email else None
-    candidate.title = payload.title
-    candidate.university = payload.university
-    candidate.school = payload.school
-    candidate.department = payload.department
-    candidate.research_direction = payload.research_direction
-    candidate.recent_papers = payload.recent_papers
-    candidate.profile_url = payload.profile_url
-    candidate.source_url = payload.source_url
-    candidate.review_status = payload.review_status
-    mark_candidate_fields_manual(
-        candidate,
-        (
-            "name",
-            "email",
-            "title",
-            "university",
-            "school",
-            "department",
-            "research_direction",
-            "recent_papers",
-            "profile_url",
-            "source_url",
-        ),
-    )
-    candidate.updated_at = utc_now()
-    current_identities = set(
-        candidate_identity_values(
-            name=candidate.name,
-            email=candidate.email,
-            profile_url=candidate.profile_url,
-        )
-    )
-    candidate = await rebuild_candidate_identity_keys(
-        session,
-        candidate,
-        exclude_identities=previous_identities - current_identities,
-    )
-
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_candidate.updated",
-        entity_type="crawl_candidate",
-        entity_id=str(candidate.id),
-        metadata={
-            "job_id": candidate.job_id,
-            "review_status": candidate.review_status,
-            "has_email": bool(candidate.email),
-        },
-    )
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
-    await session.refresh(candidate)
     return candidate
 
 
@@ -562,9 +246,10 @@ async def get_crawl_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJobSummaryRead:
-    job = await _get_crawl_job_or_404(session, job_id)
-    summaries = await _build_crawl_job_summaries(session, [job])
-    return summaries[0]
+    try:
+        return await get_faculty_crawl_job_summary(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
 
 
 @router.get("/{job_id}/details", response_model=CrawlJobDetailsRead)
@@ -698,159 +383,16 @@ async def approve_crawl_candidates(
     payload: CrawlJobApprovePayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJobApproveResult:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status not in {
-        CrawlJobStatus.NEEDS_REVIEW.value,
-        CrawlJobStatus.PARTIALLY_COMPLETED.value,
-        CrawlJobStatus.CANCELED.value,
-    }:
-        raise HTTPException(status_code=409, detail="抓取任务尚未进入审核状态")
-    if not payload.candidate_ids:
-        raise HTTPException(status_code=400, detail="请至少选择一位候选导师")
-
-    candidates, missing_candidate_ids = await canonicalize_candidate_ids(
-        session,
-        job_id=job_id,
-        candidate_ids=payload.candidate_ids,
-    )
-    if missing_candidate_ids:
-        raise HTTPException(status_code=400, detail="未找到可审核的候选导师")
-    if not candidates:
-        raise HTTPException(status_code=400, detail="未找到可审核的候选导师")
-
-    inserted_count = 0
-    updated_count = 0
-    skipped_count = 0
-    now = utc_now()
-
-    for candidate in candidates:
-        email = normalize_professor_email(candidate.email)
-        if email is None or not is_valid_professor_email(email):
-            skipped_count += 1
-            continue
-
-        professor, inserted = await get_or_create_professor_by_email(
+    try:
+        result = await approve_faculty_crawl_candidates(
             session,
-            email,
-            name=candidate.name,
+            job_id,
+            payload.candidate_ids,
         )
-        if inserted:
-            inserted_count += 1
-        else:
-            updated_count += 1
-
-        professor.name = candidate.name
-        professor.email = email
-        professor.title = candidate.title
-        professor.university = candidate.university
-        professor.school = candidate.school
-        professor.department = candidate.department
-        professor.research_direction = candidate.research_direction
-        professor.recent_papers = normalize_recent_papers(candidate.recent_papers)
-        professor.profile_url = candidate.profile_url
-        professor.source_url = candidate.source_url
-        professor.archived_at = None
-        professor.updated_at = now
-        await session.flush()
-
-        candidate.professor_id = professor.id
-        candidate.review_status = CrawlCandidateReviewStatus.ACCEPTED.value
-        candidate.updated_at = now
-
-    await session.flush()
-    if job.status in {
-        CrawlJobStatus.NEEDS_REVIEW.value,
-        CrawlJobStatus.PARTIALLY_COMPLETED.value,
-    }:
-        remaining_pending_count = await session.scalar(
-            select(func.count())
-            .select_from(CrawlCandidate)
-            .where(
-                CrawlCandidate.job_id == job_id,
-                canonical_candidate_clause(),
-                CrawlCandidate.review_status
-                == CrawlCandidateReviewStatus.PENDING.value,
-            ),
-        )
-        job.status = (
-            CrawlJobStatus.PARTIALLY_COMPLETED.value
-            if int(remaining_pending_count or 0) > 0
-            else CrawlJobStatus.COMPLETED.value
-        )
-    job.updated_at = now
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.approved",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "inserted_count": inserted_count,
-            "updated_count": updated_count,
-            "skipped_count": skipped_count,
-            "candidate_count": len(candidates),
-        },
-    )
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
-
-    return CrawlJobApproveResult(
-        inserted_count=inserted_count,
-        updated_count=updated_count,
-        skipped_count=skipped_count,
-        message=(
-            f"审核完成：新增 {inserted_count} 位导师，更新 {updated_count} 位导师，"
-            f"跳过 {skipped_count} 位候选。"
-        ),
-    )
-
-
-async def _resolve_and_refresh_crawl_job_llm_profile(
-    session: AsyncSession,
-    job: CrawlJob,
-    requested_llm_profile_id: int | None,
-    *,
-    trigger: str,
-) -> LLMProfile:
-    old_profile: LLMProfile | None = None
-    if job.llm_profile_id is not None:
-        old_profile = await session.get(LLMProfile, job.llm_profile_id)
-
-    if requested_llm_profile_id is not None:
-        llm_profile = await session.get(LLMProfile, requested_llm_profile_id)
-        if llm_profile is None:
-            raise HTTPException(status_code=404, detail="模型配置不存在")
-    elif old_profile is not None:
-        llm_profile = old_profile
-    else:
-        llm_profile = await session.scalar(
-            select(LLMProfile)
-            .where(LLMProfile.is_default.is_(True))
-            .order_by(LLMProfile.created_at.asc(), LLMProfile.id.asc())
-            .limit(1),
-        )
-        if llm_profile is None:
-            raise HTTPException(status_code=409, detail="请先配置可用的 LLM Profile")
-
-    if job.llm_profile_id != llm_profile.id:
-        await record_operation_log(
-            session,
-            category="crawler",
-            event_name="crawl_job.llm_profile_refreshed",
-            entity_type="crawl_job",
-            entity_id=str(job.id),
-            metadata={
-                "old_llm_profile_id": job.llm_profile_id,
-                "old_model_name": old_profile.model_name
-                if old_profile is not None
-                else None,
-                "new_llm_profile_id": llm_profile.id,
-                "new_model_name": llm_profile.model_name,
-                "trigger": trigger,
-            },
-        )
-        job.llm_profile_id = llm_profile.id
-
-    return llm_profile
+    return result
 
 
 @router.post("/{job_id}/enrich", response_model=CrawlJobEnrichResult)
@@ -859,180 +401,27 @@ async def enrich_crawl_candidates(
     payload: CrawlJobEnrichPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJobEnrichResult:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status == CrawlJobStatus.RUNNING.value:
-        raise HTTPException(status_code=409, detail="候选信息正在补全中，请稍后再试")
-    if job.status not in {
-        CrawlJobStatus.NEEDS_REVIEW.value,
-        CrawlJobStatus.PARTIALLY_COMPLETED.value,
-    }:
-        raise HTTPException(status_code=409, detail="抓取任务尚未进入审核状态")
     if not payload.candidate_ids:
         raise HTTPException(status_code=400, detail="请至少选择一位候选导师")
-
-    llm_profile = await _resolve_and_refresh_crawl_job_llm_profile(
-        session,
-        job,
-        payload.llm_profile_id,
-        trigger="enrich",
-    )
-
-    return await _enqueue_crawl_candidate_enrichment_tasks(
-        session,
-        job,
-        candidate_ids=payload.candidate_ids,
-        llm_profile_id=llm_profile.id,
-    )
-
-
-async def _enqueue_crawl_candidate_enrichment_tasks(
-    session: AsyncSession,
-    job: CrawlJob,
-    *,
-    candidate_ids: list[int],
-    llm_profile_id: int | None,
-) -> CrawlJobEnrichResult:
-    unique_ids = list(dict.fromkeys(candidate_ids))
-    candidates, _missing_candidate_ids = await canonicalize_candidate_ids(
-        session,
-        job_id=job.id,
-        candidate_ids=unique_ids,
-    )
-    enrichable_candidates = [
-        candidate for candidate in candidates if (candidate.profile_url or "").strip()
-    ]
-    skipped_count = len(candidates) - len(enrichable_candidates)
-    if not enrichable_candidates:
-        await session.commit()
-        return CrawlJobEnrichResult(
-            selected_count=0,
-            enriched_count=0,
-            unchanged_count=0,
-            failed_count=0,
-            skipped_count=skipped_count,
-            message=f"跳过 {skipped_count} 位缺少详情页 URL 的候选。",
+    if (
+        payload.llm_profile_id is not None
+        and await session.get(LLMProfile, payload.llm_profile_id) is None
+    ):
+        raise HTTPException(status_code=404, detail="模型配置不存在")
+    try:
+        result = await enqueue_faculty_crawl_candidate_enrichment_records(
+            session,
+            job_id,
+            SelectionSpec(
+                mode="ids",
+                ids=list(dict.fromkeys(payload.candidate_ids)),
+            ),
+            llm_profile_id=payload.llm_profile_id,
         )
-
-    now = utc_now()
-    operation_id: str | None = None
-    enqueued_count = 0
-    existing_count = 0
-    runnable_existing_count = 0
-    completed_skipped_count = 0
-    for candidate in enrichable_candidates:
-        existing_task = await session.scalar(
-            select(CrawlCandidateEnrichmentTask).where(
-                CrawlCandidateEnrichmentTask.job_id == job.id,
-                CrawlCandidateEnrichmentTask.candidate_id == candidate.id,
-            )
-        )
-        if existing_task is not None:
-            if (
-                existing_task.status
-                == CrawlCandidateEnrichmentTaskStatus.SUCCEEDED.value
-            ):
-                if not _candidate_has_missing_enrichment_fields(candidate):
-                    existing_count += 1
-                    completed_skipped_count += 1
-                    continue
-            existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
-            existing_task.worker_id = None
-            existing_task.claimed_at = None
-            existing_task.lease_expires_at = None
-            existing_task.attempt_count = 0
-            existing_task.failure_count = 0
-            existing_task.last_error = None
-            existing_task.skip_reason = None
-            existing_task.enriched_fields = None
-            existing_task.started_at = None
-            existing_task.finished_at = None
-            existing_task.updated_at = now
-            profile_text_cache.discard_candidate(
-                job_id=job.id,
-                candidate_id=candidate.id,
-            )
-            enqueued_count += 1
-            continue
-        try:
-            async with session.begin_nested():
-                session.add(
-                    CrawlCandidateEnrichmentTask(
-                        job_id=job.id,
-                        candidate_id=candidate.id,
-                        status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
-                    )
-                )
-                await session.flush()
-        except IntegrityError:
-            existing_count += 1
-            runnable_existing_count += 1
-            continue
-        enqueued_count += 1
-
-    if enqueued_count > 0 or runnable_existing_count > 0:
-        operation_id = start_candidate_enrichment_operation(
-            job,
-            skipped_count=skipped_count,
-        )
-        job.status = CrawlJobStatus.RUNNING.value
-        job.error_message = None
-        job.updated_at = now
-        await mark_crawl_job_run_running(session, job, now=now)
-
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.candidate_enrichment_queued",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "selected_count": len(enrichable_candidates),
-            "enqueued_count": enqueued_count,
-            "existing_count": existing_count,
-            "runnable_existing_count": runnable_existing_count,
-            "skipped_count": skipped_count,
-            "llm_profile_id": llm_profile_id,
-            "operation_id": operation_id,
-        },
-    )
-
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
-    selected_count = len(enrichable_candidates)
-    skipped_message = (
-        f"跳过 {skipped_count} 位缺少详情页 URL 的候选。" if skipped_count > 0 else ""
-    )
-    completed_skipped_message = (
-        f"已补全跳过 {completed_skipped_count} 位。"
-        if completed_skipped_count > 0
-        else ""
-    )
-    if enqueued_count > 0:
-        message = f"已加入补全队列：选中 {selected_count} 位，入队 {enqueued_count} 位。{completed_skipped_message}{skipped_message}"
-    elif completed_skipped_count > 0 and existing_count == completed_skipped_count:
-        message = f"选中 {selected_count} 位，已补全跳过 {completed_skipped_count} 位。{skipped_message}"
-    else:
-        message = f"选中的 {selected_count} 位候选已在补全队列中或已补全。{completed_skipped_message}{skipped_message}"
-    return CrawlJobEnrichResult(
-        operation_id=operation_id,
-        selected_count=selected_count,
-        enriched_count=0,
-        unchanged_count=existing_count,
-        failed_count=0,
-        skipped_count=skipped_count,
-        message=message,
-    )
-
-
-def _candidate_has_missing_enrichment_fields(candidate: CrawlCandidate) -> bool:
-    return any(
-        (
-            not (candidate.email or "").strip(),
-            not (candidate.title or "").strip(),
-            not (candidate.department or "").strip(),
-            not (candidate.research_direction or "").strip(),
-            not any(str(item).strip() for item in candidate.recent_papers or []),
-        )
-    )
+    return result
 
 
 @router.post("/{job_id}/resume-review", response_model=CrawlJobRead)
@@ -1040,128 +429,13 @@ async def resume_crawl_job_review(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    original_status = job.status
-    if job.status not in {
-        CrawlJobStatus.CANCELED.value,
-        CrawlJobStatus.FAILED.value,
-    }:
-        raise HTTPException(
-            status_code=409, detail="仅允许已取消或失败的抓取任务转入待审核"
-        )
-
-    candidate_count = await session.scalar(
-        select(func.count())
-        .select_from(CrawlCandidate)
-        .where(
-            CrawlCandidate.job_id == job_id,
-            canonical_candidate_clause(),
-        ),
-    )
-    if int(candidate_count or 0) <= 0:
-        raise HTTPException(status_code=400, detail="当前任务没有可审核的候选导师")
-
-    now = utc_now()
-    job.status = CrawlJobStatus.NEEDS_REVIEW.value
-    job.error_message = None
-    job.updated_at = now
-
-    await _freeze_unfinished_discovery_work_for_review(session, job.id)
-
-    if job.current_run is not None:
-        job.current_run.status = CrawlJobStatus.NEEDS_REVIEW.value
-        job.current_run.updated_at = now
-
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.review_resumed",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "from_status": original_status,
-            "candidate_count": int(candidate_count or 0),
-        },
-    )
+    try:
+        job = await resume_faculty_crawl_job_review_record(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     await session.refresh(job)
     return job
-
-
-async def _freeze_unfinished_discovery_work_for_review(
-    session: AsyncSession, job_id: int
-) -> None:
-    terminal_values = {
-        "status": "failed_terminal",
-        "last_error": "任务已转入待审核，停止继续发现新候选",
-        "worker_id": None,
-        "claimed_at": None,
-        "lease_expires_at": None,
-    }
-    page_discovery_statuses = [
-        CrawlPageTaskStatus.PENDING.value,
-        CrawlPageTaskStatus.PROCESSING.value,
-        CrawlPageTaskStatus.FAILED_RETRYABLE.value,
-    ]
-    chunk_discovery_statuses = [
-        CrawlPageChunkStatus.PENDING.value,
-        CrawlPageChunkStatus.PROCESSING.value,
-        CrawlPageChunkStatus.SPLIT_REQUIRED.value,
-        CrawlPageChunkStatus.FAILED_RETRYABLE.value,
-    ]
-    await session.execute(
-        update(CrawlPageTask)
-        .where(
-            CrawlPageTask.job_id == job_id,
-            CrawlPageTask.status.in_(page_discovery_statuses),
-        )
-        .values(**terminal_values),
-    )
-    await session.execute(
-        update(CrawlPageChunk)
-        .where(
-            CrawlPageChunk.job_id == job_id,
-            CrawlPageChunk.status.in_(chunk_discovery_statuses),
-        )
-        .values(**terminal_values),
-    )
-
-
-async def _release_processing_work(
-    session: AsyncSession, job_id: int, *, reason: str
-) -> None:
-    clear_values = {
-        "status": "pending",
-        "last_error": reason,
-        "worker_id": None,
-        "claimed_at": None,
-        "lease_expires_at": None,
-    }
-    await session.execute(
-        update(CrawlPageTask)
-        .where(
-            CrawlPageTask.job_id == job_id,
-            CrawlPageTask.status == CrawlPageTaskStatus.PROCESSING.value,
-        )
-        .values(**clear_values),
-    )
-    await session.execute(
-        update(CrawlPageChunk)
-        .where(
-            CrawlPageChunk.job_id == job_id,
-            CrawlPageChunk.status == CrawlPageChunkStatus.PROCESSING.value,
-        )
-        .values(**clear_values),
-    )
-    await session.execute(
-        update(CrawlCandidateEnrichmentTask)
-        .where(
-            CrawlCandidateEnrichmentTask.job_id == job_id,
-            CrawlCandidateEnrichmentTask.status
-            == CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-        )
-        .values(**clear_values),
-    )
 
 
 @router.post("/{job_id}/cancel", response_model=CrawlJobRead)
@@ -1169,45 +443,10 @@ async def cancel_crawl_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status in {
-        CrawlJobStatus.COMPLETED.value,
-        CrawlJobStatus.FAILED.value,
-        CrawlJobStatus.CANCELED.value,
-    }:
-        profile_text_cache.discard_job(job_id=job.id)
-        return job
-
-    now = utc_now()
-    if job.active_candidate_enrichment_operation_id is not None:
-        append_candidate_enrichment_terminal_event(
-            job,
-            now=now,
-            status="canceled",
-            enriched_count=0,
-            unchanged_count=0,
-            failed_count=0,
-            message="候选导师详情补全已取消",
-        )
-    job.status = CrawlJobStatus.CANCELED.value
-    job.updated_at = now
-    await _release_processing_work(
-        session, job.id, reason="任务已取消，释放处理中工作项"
-    )
-    await mark_crawl_job_run_finished(
-        session,
-        job,
-        status=CrawlJobStatus.CANCELED.value,
-        now=now,
-    )
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.canceled",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={"status": job.status},
-    )
+    try:
+        job = await cancel_faculty_crawl_job_record(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
@@ -1219,29 +458,10 @@ async def pause_crawl_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status == CrawlJobStatus.PAUSED.value:
-        return job
-    if job.status not in {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}:
-        raise HTTPException(
-            status_code=409, detail="仅允许暂停排队中或运行中的抓取任务"
-        )
-
-    now = utc_now()
-    job.status = CrawlJobStatus.PAUSED.value
-    job.updated_at = now
-    await _release_processing_work(
-        session, job.id, reason="任务已暂停，释放处理中工作项"
-    )
-    await mark_crawl_job_run_paused(session, job, now=now)
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.paused",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={"status": job.status},
-    )
+    try:
+        job = await pause_faculty_crawl_job_record(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     await session.refresh(job)
     return job
@@ -1253,31 +473,10 @@ async def resume_crawl_job(
     payload: CrawlJobResumePayload | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status != CrawlJobStatus.PAUSED.value:
-        raise HTTPException(status_code=409, detail="仅允许继续已暂停的抓取任务")
-
-    if payload is not None and payload.llm_profile_id is not None:
-        await _resolve_and_refresh_crawl_job_llm_profile(
-            session,
-            job,
-            payload.llm_profile_id,
-            trigger="resume",
-        )
-
-    now = utc_now()
-    job.status = CrawlJobStatus.QUEUED.value
-    job.error_message = None
-    job.updated_at = now
-    await mark_crawl_job_run_queued(session, job, now=now)
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.resumed",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={"status": job.status},
-    )
+    try:
+        job = await resume_faculty_crawl_job_record(session, job_id, payload)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     await session.refresh(job)
     return job
@@ -1289,100 +488,19 @@ async def retry_crawl_job(
     payload: CrawlJobRetryPayload,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status not in {CrawlJobStatus.FAILED.value, CrawlJobStatus.CANCELED.value}:
-        raise HTTPException(
-            status_code=409,
-            detail='仅允许重试状态为"失败"或"已取消"的抓取任务',
-        )
-
-    await session.execute(
-        delete(CrawlCandidateEnrichmentTask).where(
-            CrawlCandidateEnrichmentTask.job_id == job.id
-        ),
-    )
-    await session.execute(
-        delete(CrawlPageTask).where(CrawlPageTask.job_id == job.id),
-    )
-    # An explicit retry is a fresh web-crawl attempt.  Do not let a previous
-    # terminal/transient fetch decision short-circuit the new run.
-    await session.execute(
-        delete(CrawlPageFetchState).where(CrawlPageFetchState.job_id == job.id),
-    )
-    if payload.clear_existing_data:
-        await session.execute(
-            delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
-        )
-
-    if payload.clear_existing_data:
-        await session.execute(
-            delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id),
-        )
-        await session.execute(
-            delete(CrawlPageChunk).where(CrawlPageChunk.job_id == job.id),
-        )
-        await session.execute(
-            delete(CrawlPage).where(CrawlPage.job_id == job.id),
-        )
-        job.agent_trace = []
-
-    if payload.llm_profile_id is not None:
-        await _resolve_and_refresh_crawl_job_llm_profile(
+    try:
+        job = await retry_faculty_crawl_job_record(
             session,
-            job,
-            payload.llm_profile_id,
-            trigger="retry",
+            job_id,
+            payload,
+            resolve_default_llm_profile=False,
         )
-
-    for start_url, normalized_url in _iter_unique_start_urls_for_page_tasks(job):
-        session.add(
-            CrawlPageTask(
-                job_id=job.id,
-                normalized_url=normalized_url,
-                original_url=start_url,
-                parent_url=None,
-                discovery_reason=START_DISCOVERY_REASON,
-                expansion_mode=(
-                    NO_EXPANSION_MODE
-                    if job.entry_type == "profile"
-                    else ENTRY_EXPANSION_MODE
-                ),
-                depth=0,
-                status=CrawlPageTaskStatus.PENDING.value,
-            )
-        )
-
-    now = utc_now()
-    job.status = CrawlJobStatus.QUEUED.value
-    job.progress_current = 0
-    job.progress_total = 0
-    job.error_message = None
-    job.updated_at = now
-    await create_retry_crawl_job_run(session, job, now=now)
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.retried",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "clear_existing_data": payload.clear_existing_data,
-        },
-    )
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
     return job
-
-
-CRAWL_JOB_DELETABLE_STATUSES = {
-    CrawlJobStatus.COMPLETED.value,
-    CrawlJobStatus.FAILED.value,
-    CrawlJobStatus.CANCELED.value,
-    CrawlJobStatus.NEEDS_REVIEW.value,
-    CrawlJobStatus.PARTIALLY_COMPLETED.value,
-}
 
 
 @router.post("/{job_id}/delete", response_model=CrawlJobRead)
@@ -1390,28 +508,10 @@ async def delete_crawl_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    if job.status not in CRAWL_JOB_DELETABLE_STATUSES:
-        raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is None:
-        now = utc_now()
-        job.deleted_at = now
-        job.updated_at = now
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.deleted",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "llm_profile_id": job.llm_profile_id,
-            "previous_deleted_at": previous_deleted_at.isoformat()
-            if previous_deleted_at
-            else None,
-        },
-    )
+    try:
+        job = await delete_faculty_crawl_job_record(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     profile_text_cache.discard_job(job_id=job.id)
     await session.refresh(job)
@@ -1423,25 +523,10 @@ async def restore_crawl_job(
     job_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> CrawlJob:
-    job = await _get_crawl_job_or_404(session, job_id)
-    previous_deleted_at = job.deleted_at
-    if job.deleted_at is not None:
-        job.deleted_at = None
-        job.updated_at = utc_now()
-    await record_operation_log(
-        session,
-        category="crawler",
-        event_name="crawl_job.restored",
-        entity_type="crawl_job",
-        entity_id=str(job.id),
-        metadata={
-            "status": job.status,
-            "llm_profile_id": job.llm_profile_id,
-            "previous_deleted_at": previous_deleted_at.isoformat()
-            if previous_deleted_at
-            else None,
-        },
-    )
+    try:
+        job = await restore_faculty_crawl_job_record(session, job_id)
+    except CrawlJobRecordError as exc:
+        _raise_http_record_error(exc)
     await session.commit()
     await session.refresh(job)
     return job

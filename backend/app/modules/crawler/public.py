@@ -45,15 +45,15 @@ from .jobs.runs import (
 from .jobs.recovery import recover_interrupted_crawl_jobs
 from .pages.debug import (
     append_crawler_debug_event,
-    append_crawler_v2_debug_event,
+    append_crawler_worker_debug_event,
     crawler_debug_file_path,
 )
-from .pages.tools import (
+from .pages.url_safety import (
     UNSAFE_CRAWL_URL_MESSAGE,
-    CrawlToolContext,
     is_safe_public_crawl_url,
     validate_safe_public_crawl_url,
 )
+from .pages.tools import CrawlToolContext
 from .schemas import (
     CrawlCandidateRead,
     CrawlCandidateReviewStatusDTO,
@@ -73,8 +73,8 @@ from .schemas import (
     CrawlJobSummaryRead,
     CrawlPageRead,
 )
-from .v2.profile_text_cache import ProfileTextCache, profile_text_cache
-from .v2.scheduler import run_crawler_v2_once
+from .runtime.profile_text_cache import ProfileTextCache, profile_text_cache
+from .runtime.scheduler import run_crawler_once
 
 __all__ = [
     "CRAWL_JOB_DELETABLE_STATUSES",
@@ -101,7 +101,7 @@ __all__ = [
     "ProfileTextCache",
     "UNSAFE_CRAWL_URL_MESSAGE",
     "append_crawler_debug_event",
-    "append_crawler_v2_debug_event",
+    "append_crawler_worker_debug_event",
     "build_crawl_job_events",
     "build_crawl_job_metrics",
     "canonical_candidate_clause",
@@ -139,7 +139,7 @@ __all__ = [
     "resume_faculty_crawl_job_review_record",
     "resolve_canonical_candidate",
     "retry_faculty_crawl_job_record",
-    "run_crawler_v2_once",
+    "run_crawler_once",
     "update_faculty_crawl_candidate_record",
     "validate_safe_public_crawl_url",
 ]

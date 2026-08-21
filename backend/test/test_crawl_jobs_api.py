@@ -33,7 +33,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         os.environ["ENABLE_BACKGROUND_WORKERS"] = "0"
         create_migrated_sqlite_database(self.db_path)
         self.getaddrinfo_patcher = patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -428,7 +428,7 @@ class CrawlJobsApiTests(unittest.TestCase):
 
     def test_create_crawl_job_allows_domain_without_dns_resolution(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             side_effect=AssertionError(
                 "Creating a crawl job should not resolve domain names"
             ),
@@ -717,7 +717,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(resumed_detail_response.json()["page_count"], 1)
         self.assertEqual(resumed_detail_response.json()["candidate_count"], 3)
 
-    def test_pause_releases_processing_v2_work_for_safe_resume(self) -> None:
+    def test_pause_releases_processing_runtime_work_for_safe_resume(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -729,14 +729,14 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
-        self._seed_processing_v2_work(job_id)
+        self._seed_processing_runtime_work(job_id)
 
         response = self.client.post(f"/api/crawl-jobs/{job_id}/pause")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["status"], "paused")
         self.assertEqual(
-            self._list_v2_work_statuses(job_id),
+            self._list_runtime_work_statuses(job_id),
             {
                 "page_tasks": ["pending"],
                 "chunks": ["pending"],
@@ -749,7 +749,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(resume_response.status_code, 200, msg=resume_response.text)
         self.assertEqual(resume_response.json()["status"], "queued")
         self.assertEqual(
-            self._list_v2_work_statuses(job_id),
+            self._list_runtime_work_statuses(job_id),
             {
                 "page_tasks": ["pending"],
                 "chunks": ["pending"],
@@ -757,7 +757,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             },
         )
 
-    def test_cancel_releases_processing_v2_work_so_workers_cannot_commit_late(
+    def test_cancel_releases_processing_runtime_work_so_workers_cannot_commit_late(
         self,
     ) -> None:
         create_response = self.client.post(
@@ -771,14 +771,14 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertEqual(create_response.status_code, 201, msg=create_response.text)
         job_id = create_response.json()["id"]
-        self._seed_processing_v2_work(job_id)
+        self._seed_processing_runtime_work(job_id)
 
         response = self.client.post(f"/api/crawl-jobs/{job_id}/cancel")
 
         self.assertEqual(response.status_code, 200, msg=response.text)
         self.assertEqual(response.json()["status"], "canceled")
         self.assertEqual(
-            self._list_v2_work_statuses(job_id),
+            self._list_runtime_work_statuses(job_id),
             {
                 "page_tasks": ["pending"],
                 "chunks": ["pending"],
@@ -814,7 +814,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(review_response.status_code, 200, msg=review_response.text)
         self.assertEqual(enrich_response.status_code, 200, msg=enrich_response.text)
         self.assertEqual(
-            self._list_v2_work_statuses(job_id),
+            self._list_runtime_work_statuses(job_id),
             {
                 "page_tasks": ["failed_terminal"],
                 "chunks": ["failed_terminal"],
@@ -1068,7 +1068,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(
             self.client.get(f"/api/crawl-jobs/{job_id}").json()["status"], "running"
         )
-        statuses = self._list_v2_work_statuses(job_id)
+        statuses = self._list_runtime_work_statuses(job_id)
         self.assertEqual(statuses["enrichment_tasks"], ["pending"])
         import sqlite3
 
@@ -1131,7 +1131,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertIsNone(active_operation_id)
 
-    def test_v2_enrich_requeues_succeeded_task_when_candidate_has_missing_fields(
+    def test_runtime_enrich_requeues_succeeded_task_when_candidate_has_missing_fields(
         self,
     ) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
@@ -1173,11 +1173,11 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["unchanged_count"], 0)
         self.assertIn("入队 1 位", body["message"])
         self.assertEqual(
-            self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["pending"]
+            self._list_runtime_work_statuses(job_id)["enrichment_tasks"], ["pending"]
         )
 
-    def test_v2_enrich_resets_previous_task_attempt_state(self) -> None:
-        from app.modules.crawler.v2.profile_text_cache import profile_text_cache
+    def test_runtime_enrich_resets_previous_task_attempt_state(self) -> None:
+        from app.modules.crawler.runtime.profile_text_cache import profile_text_cache
 
         profile_id = self._create_llm_profile("测试模型", "test-model")
         create_response = self.client.post(
@@ -1241,7 +1241,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         )
         self.assertNotIn(cache_key, profile_text_cache)
 
-    def test_v2_enrich_skips_succeeded_task_only_when_candidate_is_complete(
+    def test_runtime_enrich_skips_succeeded_task_only_when_candidate_is_complete(
         self,
     ) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
@@ -1281,7 +1281,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(body["unchanged_count"], 1)
         self.assertIn("已补全跳过 1 位", body["message"])
         self.assertEqual(
-            self._list_v2_work_statuses(job_id)["enrichment_tasks"], ["succeeded"]
+            self._list_runtime_work_statuses(job_id)["enrichment_tasks"], ["succeeded"]
         )
 
     def test_enrich_refreshes_job_llm_profile_before_running(self) -> None:
@@ -1372,7 +1372,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             [("https://example.edu/faculty", "pending")],
         )
 
-    def test_retry_v2_crawl_job_reseeds_pending_page_tasks(self) -> None:
+    def test_retry_runtime_crawl_job_reseeds_pending_page_tasks(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",
             json={
@@ -1406,7 +1406,7 @@ class CrawlJobsApiTests(unittest.TestCase):
             ],
         )
 
-    def test_retry_v2_crawl_job_deduplicates_historical_start_urls_by_normalized_url(
+    def test_retry_runtime_crawl_job_deduplicates_historical_start_urls_by_normalized_url(
         self,
     ) -> None:
         create_response = self.client.post(
@@ -2098,7 +2098,7 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         asyncio.run(_seed())
 
-    def _seed_processing_v2_work(self, job_id: int) -> None:
+    def _seed_processing_runtime_work(self, job_id: int) -> None:
         async def _seed() -> None:
             from sqlalchemy import select
 
@@ -2170,7 +2170,7 @@ class CrawlJobsApiTests(unittest.TestCase):
 
         asyncio.run(_seed())
 
-    def _list_v2_work_statuses(self, job_id: int) -> dict[str, list[str]]:
+    def _list_runtime_work_statuses(self, job_id: int) -> dict[str, list[str]]:
         async def _list() -> dict[str, list[str]]:
             from sqlalchemy import select
 

@@ -111,15 +111,15 @@ runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，
 
 ## crawler 基础子切片（第 6A 批，已完成）
 
-`backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`v2` 四个内部子包组织。`v2` 是当前单一
-抓取运行时的历史包名，不再表示可选择的运行时版本。模块拥有 DTO、job record/run/event/metrics、
+`backend/app/modules/crawler/` 按 `jobs`、`pages`、`llm`、`runtime` 四个内部子包组织。`runtime` 是当前
+单一抓取运行时，不存在可选择的 V1/V2 运行时分支。模块拥有 DTO、job record/run/event/metrics、
 页面抓取与 chunk 基础、crawler 专用 LLM wire adapter、调度策略和 workers。
 领域外只经 `crawler.public` 使用 record use cases、投影、安全 URL 合同、debug 路径、run/token 合同
 和 profile text cache；Professor enrichment 仍拥有补全 job 生命周期，仅把抓取执行委托给 crawler。
 
 ## crawler 编排子切片（第 6B 批，已完成）
 
-`crawler.api` 是 UI 适配器，`jobs.recovery` 负责进程重启后的任务恢复，`v2.scheduler` 负责
+`crawler.api` 是 UI 适配器，`jobs.recovery` 负责进程重启后的任务恢复，`runtime.scheduler` 负责
 claim/finalize，page/chunk/enrichment workers 只处理各自 work item。RuntimeManager 仅通过
 `crawler.public` 启动当前 worker；创建、补全、重试和恢复都没有 V1 分支或运行时版本选择。
 

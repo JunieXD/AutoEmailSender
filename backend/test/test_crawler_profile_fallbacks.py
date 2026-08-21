@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, patch
 
 from app.modules.crawler.pages.tools import CrawlToolContext, PageSnapshot
 from app.services.html_text import html_to_text
-from app.modules.crawler.v2.native_ocr import (
+from app.modules.crawler.runtime.native_ocr import (
     _is_small_horizontal_image,
     extract_ocr_email_evidence,
     image_dimensions,
 )
-from app.modules.crawler.v2.profile_fallbacks import (
+from app.modules.crawler.runtime.profile_fallbacks import (
     extract_email_evidence,
     extract_profile_document_email_evidence,
     extract_profile_link_evidence,
@@ -177,7 +177,7 @@ class CrawlerProfileFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.v2.native_ocr.fetch_binary_resource",
+                "app.modules.crawler.runtime.native_ocr.fetch_binary_resource",
                 new=AsyncMock(
                     return_value=(
                         "https://example.edu/zhang/email.gif",
@@ -187,7 +187,7 @@ class CrawlerProfileFallbackTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ) as fetch_mock,
             patch(
-                "app.modules.crawler.v2.native_ocr.recognize_image_text",
+                "app.modules.crawler.runtime.native_ocr.recognize_image_text",
                 new=AsyncMock(return_value="heix.j@hust.edu. cn"),
             ) as ocr_mock,
         ):

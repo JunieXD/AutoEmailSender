@@ -6,11 +6,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.base import ApiSchema
-from .pages.tools import (
+from .pages.url_safety import (
     UNSAFE_CRAWL_URL_MESSAGE,
     validate_safe_public_crawl_url,
 )
-from .v2.url_utils import normalize_url
+from .runtime.url_utils import normalize_url
 from app.modules.professors.public import normalize_recent_papers
 
 

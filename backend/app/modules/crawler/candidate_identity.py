@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import CrawlCandidate, CrawlCandidateIdentityKey
 from app.modules.crawler.pages.domain_policy import is_same_registrable_domain
-from app.modules.crawler.v2.url_utils import (
+from app.modules.crawler.runtime.url_utils import (
     normalize_url,
     recover_embedded_absolute_url,
 )

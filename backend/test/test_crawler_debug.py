@@ -8,12 +8,12 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.modules.crawler.pages.debug import (
-    append_crawler_v2_debug_event,
+    append_crawler_worker_debug_event,
     crawler_debug_file_path,
 )
 
 
-class CrawlerV2DebugLogTests(unittest.TestCase):
+class CrawlerRuntimeDebugLogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.previous_debug_dir = os.environ.get("CRAWLER_DEBUG_DIR")
@@ -34,8 +34,8 @@ class CrawlerV2DebugLogTests(unittest.TestCase):
         get_settings.cache_clear()
         self.temp_dir.cleanup()
 
-    def test_append_crawler_v2_debug_event_uses_existing_export_file_path(self) -> None:
-        debug_file = append_crawler_v2_debug_event(
+    def test_worker_debug_event_uses_existing_export_file_path(self) -> None:
+        debug_file = append_crawler_worker_debug_event(
             42,
             worker_kind="chunk",
             event_name="llm_response",
@@ -56,8 +56,8 @@ class CrawlerV2DebugLogTests(unittest.TestCase):
         self.assertEqual(raw_event["work_item_id"], "7")
         self.assertEqual(raw_event["parsed_payload"]["chunk_status"], "completed")
 
-    def test_append_crawler_v2_debug_event_summarizes_large_content(self) -> None:
-        debug_file = append_crawler_v2_debug_event(
+    def test_worker_debug_event_summarizes_large_content(self) -> None:
+        debug_file = append_crawler_worker_debug_event(
             43,
             worker_kind="page",
             event_name="page_fetched",

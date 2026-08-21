@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models import CrawlPageChunk, CrawlPageChunkStatus
 
-from ..v2.lease import CrawlerV2ClaimFence, fence_crawler_v2_claim
+from ..runtime.lease import CrawlerClaimFence, fence_crawler_claim
 from .chunking import (
     ChunkingConfig,
     PageChunkDraft,
@@ -22,10 +22,10 @@ async def create_chunks_for_page(
     job_id: int,
     page_id: int | None,
     drafts: list[PageChunkDraft],
-    claim_fence: CrawlerV2ClaimFence | None = None,
+    claim_fence: CrawlerClaimFence | None = None,
 ) -> int:
     async with session_factory() as session:
-        if claim_fence is not None and not await fence_crawler_v2_claim(
+        if claim_fence is not None and not await fence_crawler_claim(
             session,
             claim_fence,
         ):
@@ -76,10 +76,10 @@ async def split_page_chunk_for_retry(
     job_id: int,
     chunk_pk: int,
     reason: str,
-    claim_fence: CrawlerV2ClaimFence | None = None,
+    claim_fence: CrawlerClaimFence | None = None,
 ) -> dict[str, Any]:
     async with session_factory() as session:
-        if claim_fence is not None and not await fence_crawler_v2_claim(
+        if claim_fence is not None and not await fence_crawler_claim(
             session,
             claim_fence,
         ):

@@ -11,6 +11,20 @@ const reviewedLegacyViolations = new Set([
   "context/NotificationContext.tsx -> components/organisms/NotificationViewport.tsx",
   "lib/api/tokenUsage.ts -> features/token-usage/client/tokenUsage.ts",
   "lib/useConfirmDialog.tsx -> components/atoms/ConfirmDialog.tsx",
+  "features/professor-management/ProfessorsPage.tsx -> app/providers/BackgroundTaskNotificationContext.tsx",
+  "features/professor-management/ProfessorsPage.tsx -> features/agent-ui-handoffs/AgentProfessorSelectionBanner.tsx",
+  "features/professor-management/ProfessorsPage.tsx -> features/agent-ui-handoffs/types.ts",
+  "features/professor-management/ProfessorsPage.tsx -> features/agent-ui-handoffs/useAgentUiHandoffSurface.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> app/providers/BackgroundTaskNotificationContext.tsx",
+  "features/task-center/BackgroundTasksPage.tsx -> features/attachments/attachmentSize.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> features/batch-tasks/client/batchTaskDisplay.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> features/batch-tasks/components/BatchTaskResendDialog.tsx",
+  "features/task-center/BackgroundTasksPage.tsx -> features/crawl-review/client/crawlJobEvents.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> features/crawl-review/client/reviewCandidates.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> features/email-deliveries/components/TaskCenterSectionSwitch.tsx",
+  "features/task-center/BackgroundTasksPage.tsx -> features/email/client/getEmailSendFailureMessage.ts",
+  "features/task-center/BackgroundTasksPage.tsx -> features/navigation-handoffs/client/navigationHandoff.ts",
+  "features/task-center/model/crawlCandidateReview.ts -> features/crawl-review/client/reviewCandidates.ts",
 ]);
 
 type Boundary = {

@@ -8,7 +8,7 @@ class CrawlerModuleBoundaryTest(unittest.TestCase):
         from app.modules.crawler import public, schemas
         from app.modules.crawler.jobs import records, recovery, runs
         from app.modules.crawler.pages import debug, tools
-        from app.modules.crawler.v2 import profile_text_cache, scheduler
+        from app.modules.crawler.runtime import profile_text_cache, scheduler
 
         self.assertIs(public.CrawlJobCreatePayload, schemas.CrawlJobCreatePayload)
         self.assertIs(
@@ -29,7 +29,7 @@ class CrawlerModuleBoundaryTest(unittest.TestCase):
             public.recover_interrupted_crawl_jobs,
             recovery.recover_interrupted_crawl_jobs,
         )
-        self.assertIs(public.run_crawler_v2_once, scheduler.run_crawler_v2_once)
+        self.assertIs(public.run_crawler_once, scheduler.run_crawler_once)
 
 
 if __name__ == "__main__":

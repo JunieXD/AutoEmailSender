@@ -1168,7 +1168,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_allows_same_host(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -1182,7 +1182,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_rejects_other_host(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -1198,7 +1198,7 @@ class CrawlerToolTests(unittest.TestCase):
         self,
     ) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -1212,7 +1212,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_is_allowed_crawl_url_rejects_different_registrable_domain(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 80)),
             ],
@@ -1226,7 +1226,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_resolved_crawl_url_policy_rejects_private_dns_address(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("127.0.0.1", 443)),
             ],
@@ -1259,7 +1259,7 @@ class CrawlerToolTests(unittest.TestCase):
         self,
     ) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             side_effect=AssertionError(
                 "URL validation should not resolve domain names"
             ),
@@ -1270,7 +1270,7 @@ class CrawlerToolTests(unittest.TestCase):
         self,
     ) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             return_value=[
                 (0, 0, 0, "", ("93.184.216.34", 443)),
             ],
@@ -1300,11 +1300,11 @@ class CrawlerToolTests(unittest.TestCase):
         ]
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("2001::1", 443))],
             ),
             patch(
-                "app.modules.crawler.pages.tools.httpx.get",
+                "app.modules.crawler.pages.url_safety.httpx.get",
                 side_effect=responses,
             ) as public_dns_mock,
         ):
@@ -1330,11 +1330,11 @@ class CrawlerToolTests(unittest.TestCase):
         )
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("127.0.0.1", 443))],
             ),
             patch(
-                "app.modules.crawler.pages.tools.httpx.get",
+                "app.modules.crawler.pages.url_safety.httpx.get",
                 return_value=response,
             ),
         ):
@@ -1347,7 +1347,7 @@ class CrawlerToolTests(unittest.TestCase):
     def test_public_dns_service_failure_is_temporary(self) -> None:
         crawler_tools._resolve_public_dns_host_ips.cache_clear()
         with patch(
-            "app.modules.crawler.pages.tools.httpx.get",
+            "app.modules.crawler.pages.url_safety.httpx.get",
             side_effect=httpx.ConnectError("temporary DNS service failure"),
         ):
             with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
@@ -1360,7 +1360,7 @@ class CrawlerToolTests(unittest.TestCase):
             json=lambda: {"Status": 0, "Answer": []},
         )
         with patch(
-            "app.modules.crawler.pages.tools.httpx.get",
+            "app.modules.crawler.pages.url_safety.httpx.get",
             return_value=response,
         ):
             with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
@@ -1368,7 +1368,7 @@ class CrawlerToolTests(unittest.TestCase):
 
     def test_public_dns_recheck_never_applies_to_private_ip_literal(self) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.httpx.get",
+            "app.modules.crawler.pages.url_safety.httpx.get",
         ) as public_dns_mock:
             with self.assertRaises(ValueError):
                 _resolve_safe_public_crawl_url(
@@ -1382,7 +1382,7 @@ class CrawlerToolTests(unittest.TestCase):
         self,
     ) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             side_effect=AssertionError(
                 "URL validation should not resolve domain names"
             ),
@@ -1393,7 +1393,7 @@ class CrawlerToolTests(unittest.TestCase):
         self,
     ) -> None:
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             side_effect=AssertionError(
                 "URL validation should not resolve domain names"
             ),
@@ -3161,7 +3161,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.modules.crawler.pages.tools.socket.getaddrinfo",
+            "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
             side_effect=socket.gaierror(
                 socket.EAI_AGAIN, "temporary failure in name resolution"
             ),
@@ -3453,7 +3453,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
@@ -3491,7 +3491,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
@@ -3552,7 +3552,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
             ),
             patch(
@@ -3604,7 +3604,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 side_effect=[
                     [(0, 0, 0, "", ("93.184.216.34", 443))],
                     socket.gaierror("not found"),
@@ -3653,7 +3653,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
             ),
             patch(
@@ -3706,7 +3706,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
             ),
             patch(
@@ -3755,7 +3755,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[(0, 0, 0, "", ("93.184.216.34", 443))],
             ),
             patch(
@@ -3784,7 +3784,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
@@ -3824,7 +3824,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 side_effect=[
                     public_dns,
                     public_dns,
@@ -3879,7 +3879,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
@@ -3922,7 +3922,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
@@ -3965,13 +3965,13 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
             ),
             patch(
-                "app.modules.crawler.pages.tools._default_async_network_backend",
+                "app.modules.crawler.pages.url_safety._default_async_network_backend",
                 return_value=backend,
             ),
         ):
@@ -4009,13 +4009,13 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
             ),
             patch(
-                "app.modules.crawler.pages.tools._default_async_network_backend",
+                "app.modules.crawler.pages.url_safety._default_async_network_backend",
                 return_value=backend,
             ),
         ):
@@ -4059,7 +4059,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 side_effect=getaddrinfo,
             ),
             patch("app.modules.crawler.pages.tools.httpx.AsyncClient") as client_class,
@@ -4108,11 +4108,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 side_effect=resolve_current_public_ip,
             ),
             patch(
-                "app.modules.crawler.pages.tools._default_async_network_backend",
+                "app.modules.crawler.pages.url_safety._default_async_network_backend",
                 return_value=backend,
             ),
         ):
@@ -4178,7 +4178,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.socket.getaddrinfo",
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
                 return_value=[
                     (0, 0, 0, "", ("93.184.216.34", 443)),
                 ],
