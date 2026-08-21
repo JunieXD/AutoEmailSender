@@ -269,6 +269,14 @@ class ProfessorPaginationTests(unittest.TestCase):
             )
             self.assertEqual(await search("机器学习", ["name"]), [])
             self.assertEqual(
+                await search("仅备注可见词", ["personalNote"]), ["王短词"]
+            )
+            self.assertEqual(await search("仅备注可见词", ["name"]), [])
+            self.assertEqual(
+                await search("仅备注可见词", ["name", "personalNote"]),
+                ["王短词"],
+            )
+            self.assertEqual(
                 await search('量子"算法', ["researchDirection"]), ["引号导师"]
             )
             self.assertEqual(await search("%_精", ["researchDirection"]), ["符号导师"])
@@ -621,6 +629,7 @@ class ProfessorPaginationTests(unittest.TestCase):
                     department="人工智能系",
                     title="教授、博导",
                     research_direction="机器学习与视觉",
+                    personal_note="仅备注可见词",
                     tags=[tag],
                     created_at=base + timedelta(minutes=1),
                     updated_at=base + timedelta(minutes=1),

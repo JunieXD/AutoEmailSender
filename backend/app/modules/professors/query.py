@@ -250,6 +250,8 @@ def _keyword_condition(
     else:
         for scope in selected_database_scopes:
             conditions.append(_contains(field_by_scope[scope], keyword))
+    if "personalNote" in scopes:
+        conditions.append(_contains(Professor.personal_note, keyword))
     if "tag" in scopes:
         conditions.append(Professor.tags.any(_contains(ProfessorTag.name, keyword)))
     return or_(*conditions) if conditions else literal(False)

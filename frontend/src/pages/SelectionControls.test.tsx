@@ -361,6 +361,7 @@ const filterDashboardProfessors = <Item extends ProfessorDashboardItemDTO>(
       department: [item.department],
       title: [item.title],
       researchDirection: [item.research_direction, ...item.recent_papers],
+      personalNote: [item.personal_note],
       tag: item.tags.map((tag) => tag.name),
     };
     return Object.entries(values).some(([scope, candidates]) =>
@@ -442,6 +443,7 @@ const filterManagementProfessors = (
       department: [item.department],
       title: [item.title],
       researchDirection: [item.research_direction, ...item.recent_papers],
+      personalNote: [item.personal_note],
       tag: item.tags.map((tag) => tag.name),
     };
     return Object.entries(values).some(([scope, candidates]) =>

@@ -55,6 +55,7 @@ export type ProfessorKeywordSearchScopeDTO =
   | 'department'
   | 'title'
   | 'researchDirection'
+  | 'personalNote'
   | 'tag';
 
 export interface ProfessorDashboardPageRequestDTO {

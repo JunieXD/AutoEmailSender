@@ -34,6 +34,7 @@ ProfessorKeywordSearchScope = Literal[
     "department",
     "title",
     "researchDirection",
+    "personalNote",
     "tag",
 ]
 ProfessorSortDirection = Literal["asc", "desc"]
@@ -194,6 +195,7 @@ class ProfessorDashboardPageRequest(ProfessorPageRequestBase):
             "department",
             "title",
             "researchDirection",
+            "personalNote",
             "tag",
         ],
     )
@@ -218,6 +220,7 @@ class ProfessorManagementPageRequest(ProfessorPageRequestBase):
             "department",
             "title",
             "researchDirection",
+            "personalNote",
             "tag",
         ],
     )

@@ -15,6 +15,7 @@ export const DASHBOARD_KEYWORD_SEARCH_SCOPE_OPTIONS = [
   { value: "department", label: "系所" },
   { value: "title", label: "职称" },
   { value: "researchDirection", label: "研究方向" },
+  { value: "personalNote", label: "备注" },
   { value: "tag", label: "标签" },
 ] as const;
 
@@ -39,6 +40,7 @@ const dashboardKeywordFieldByScope: Record<
       | "department"
       | "title"
       | "research_direction"
+      | "personal_note"
     >
   | "tag"
 > = {
@@ -49,6 +51,7 @@ const dashboardKeywordFieldByScope: Record<
   department: "department",
   title: "title",
   researchDirection: "research_direction",
+  personalNote: "personal_note",
   tag: "tag",
 };
 
