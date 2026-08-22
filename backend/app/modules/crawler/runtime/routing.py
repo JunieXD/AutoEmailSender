@@ -27,6 +27,7 @@ PAGINATION_DISCOVERY_REASON = "pagination"
 
 MAX_ROUTING_LINKS = 1200
 MAX_ROUTING_CONTROLS = 200
+MAX_SAME_PAGE_CONTROL_SELECTIONS = 24
 MAX_ROUTING_VISIBLE_TEXT_CHARS = 8000
 _CONTROL_STATE_CLASS_MARKERS = ("active", "current", "disabled", "selected")
 
@@ -35,6 +36,10 @@ class EntryRoutingPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     discovered_urls: list[str]
+    same_page_control_ids: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_SAME_PAGE_CONTROL_SELECTIONS,
+    )
 
 
 class PaginationRoutingPayload(BaseModel):
@@ -93,6 +98,7 @@ class PageRoutingResult:
     usage: dict[str, int] | None
     pagination_control: PageRouteControl | None = None
     attempts: list[RoutingAttempt] = field(default_factory=list)
+    same_page_controls: list[PageRouteControl] = field(default_factory=list)
 
 
 async def invoke_page_routing_agent(
@@ -122,6 +128,7 @@ async def invoke_page_routing_agent(
 
     discovered_urls: list[str] = []
     entry_reasons: dict[str, str] = {}
+    same_page_controls: list[PageRouteControl] = []
     current_adaptation = adaptation
     if expansion_mode == ENTRY_EXPANSION_MODE:
         (
@@ -158,6 +165,10 @@ async def invoke_page_routing_agent(
             )
             for url in discovered_urls
         }
+        same_page_controls = select_model_same_page_controls(
+            entry_payload.same_page_control_ids,
+            controls=controls,
+        )
 
     pagination_payload, pagination_attempts, _ = await _invoke_structured_routing_phase(
         llm_profile,
@@ -191,6 +202,7 @@ async def invoke_page_routing_agent(
     return PageRoutingResult(
         discovered_urls=discovered_urls,
         entry_discovery_reasons=entry_reasons,
+        same_page_controls=same_page_controls,
         allow_expansion=bool(pagination_urls or pagination_control),
         pagination_urls=pagination_urls,
         usage=(accumulated_usage if any(accumulated_usage.values()) else None),
@@ -331,11 +343,13 @@ def build_entry_routing_prompt(
         "当前页直接列出多人时，仍检查它是否只是总名单的一个明确部分：若附近列出同一单位的并列人员分类，且有各自名单链接，选择尚未覆盖的分类页面。\n"
         "分类可以基于人员类别或单位内部组织；选择显示不同人员的名单页，当前页已显示的部分不要重复。若有多套分类，只保留覆盖更完整、相互重叠更少的一套，不要把同一批人按另一种维度再抓一遍。\n"
         "分类的前后页、页码不是分类，分页由另一阶段处理。\n"
+        "有些网站点击同一页面上的控件后，URL 不变，但会把当前人员名单切换为另一组互补名单。\n"
+        "如果页面提供了这种同页名单切换控件，请在 same_page_control_ids 中返回需要补抓的控件 ID；只选择能显示同一单位另一组人员的控件，不要选择导航、搜索、排序、普通筛选、分页或个人主页控件。\n"
         "如果当前页已经是完整名单，或没有明确的互补名单，返回空数组。\n"
         "不要选择当前页、个人主页、首页或上级目录、下属单位主页、非人员栏目、按表彰或项目选出的少数人、登录区、文件或站外页面。\n"
         "同一学校主域下的兄弟子域只有在链接明确属于目标名单时才可选择。不要试探性扩散。\n"
         "只能逐字返回下方可选择链接中的 URL，不能改写或猜造 URL。\n"
-        '只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{"discovered_urls":[]}。\n'
+        '只输出一个 JSON 对象，不要解释、Markdown 或代码块，格式为：{"discovered_urls":[],"same_page_control_ids":[]}。\n'
         f"学校：{university}\n"
         f"学院/单位：{school}\n"
         f"当前 URL：{source_url}\n"
@@ -404,6 +418,28 @@ def select_model_pagination_control(
         (control for control in controls if control.control_id == normalized_id),
         None,
     )
+
+
+def select_model_same_page_controls(
+    selected_control_ids: list[str],
+    *,
+    controls: list[PageRouteControl],
+) -> list[PageRouteControl]:
+    controls_by_id = {control.control_id: control for control in controls}
+    selected: list[PageRouteControl] = []
+    seen: set[str] = set()
+    for raw_id in selected_control_ids:
+        control_id = str(raw_id or "").strip()
+        if not control_id or control_id in seen:
+            continue
+        control = controls_by_id.get(control_id)
+        if control is None:
+            continue
+        seen.add(control_id)
+        selected.append(control)
+        if len(selected) >= MAX_SAME_PAGE_CONTROL_SELECTIONS:
+            break
+    return selected
 
 
 async def _invoke_structured_routing_phase(

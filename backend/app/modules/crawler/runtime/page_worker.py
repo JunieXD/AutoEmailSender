@@ -26,6 +26,7 @@ from ..pages.debug import append_crawler_worker_debug_event
 from ..pages.tools import (
     CrawlToolContext,
     PageSnapshot,
+    expand_browser_same_page_controls,
     ProfessorCandidatePayload,
     browser_investigate,
     crawl_page_with_http,
@@ -333,6 +334,9 @@ async def run_crawler_page_worker_once(
                 interactive_snapshots: tuple[PageSnapshot, ...] = ()
                 interactive_stopped_reason: str | None = None
                 interactive_pagination_failed = False
+                same_page_snapshots: tuple[PageSnapshot, ...] = ()
+                same_page_stopped_reason: str | None = None
+                same_page_error: str | None = None
                 if (
                     routing_failure is None
                     and routing_result.pagination_control is not None
@@ -375,6 +379,50 @@ async def run_crawler_page_worker_once(
                             "error": routing_failure,
                         },
                     )
+                # Same-page categories are independent from pagination. If a
+                # next-page click is temporarily unavailable, still collect
+                # the categories the model explicitly selected.
+                if routing_result.same_page_controls:
+                    try:
+                        same_page_result = await expand_browser_same_page_controls(
+                            ctx,
+                            snapshot.url,
+                            controls=[
+                                {
+                                    "tag": control.tag,
+                                    "text": control.text,
+                                    "title": control.title,
+                                    "aria_label": control.aria_label,
+                                    "class_tokens": control.class_tokens,
+                                    "match_index": control.match_index,
+                                }
+                                for control in routing_result.same_page_controls
+                            ],
+                            intent=fetch_intent,
+                        )
+                        same_page_snapshots = same_page_result.snapshots
+                        same_page_stopped_reason = same_page_result.stopped_reason
+                        same_page_error = same_page_result.error_message
+                    except Exception as same_page_exc:
+                        same_page_error = format_llm_runtime_error_for_user(
+                            same_page_exc
+                        )
+                    append_crawler_worker_debug_event(
+                        job.id,
+                        worker_kind="page",
+                        event_name="browser_same_page_controls_expanded",
+                        work_item_id=task_id,
+                        payload={
+                            "source_url": snapshot.url,
+                            "control_ids": [
+                                control.control_id
+                                for control in routing_result.same_page_controls
+                            ],
+                            "additional_page_count": len(same_page_snapshots),
+                            "stopped_reason": same_page_stopped_reason,
+                            "error": same_page_error,
+                        },
+                    )
                 if not await _page_task_can_commit(
                     session_factory,
                     task_id=task_id,
@@ -395,6 +443,14 @@ async def run_crawler_page_worker_once(
                         worker_id=worker_id,
                         page_id=page_id,
                         snapshot=interactive_snapshot,
+                    )
+                for same_page_snapshot in same_page_snapshots:
+                    chunk_result += await _create_chunks_for_page_snapshot(
+                        session_factory,
+                        task_id=task_id,
+                        worker_id=worker_id,
+                        page_id=page_id,
+                        snapshot=same_page_snapshot,
                     )
                 if routing_failure is None or (
                     interactive_pagination_failed and routing_result.discovered_urls
@@ -424,6 +480,9 @@ async def run_crawler_page_worker_once(
                         "chunk_result": chunk_result,
                         "interactive_page_count": len(interactive_snapshots),
                         "interactive_stopped_reason": interactive_stopped_reason,
+                        "same_page_count": len(same_page_snapshots),
+                        "same_page_stopped_reason": same_page_stopped_reason,
+                        "same_page_error": same_page_error,
                         "expansion_result": expansion_result,
                     },
                 )

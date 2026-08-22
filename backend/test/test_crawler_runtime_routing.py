@@ -18,6 +18,7 @@ from app.modules.crawler.runtime.routing import (
     extract_page_route_controls,
     extract_page_route_links,
     filter_model_selected_route_urls,
+    select_model_same_page_controls,
     _invoke_structured_routing_phase,
     invoke_page_routing_agent,
 )
@@ -112,6 +113,7 @@ class CrawlerRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("恰好向后推进一页", pagination_prompt)
         self.assertIn("第一页、最后一页、上一页、具体页码跳转", pagination_prompt)
         self.assertIn('"discovered_urls":[]', entry_prompt)
+        self.assertIn("same_page_control_ids", entry_prompt)
         self.assertIn('"allow_expansion":false', pagination_prompt)
 
     def test_extract_page_route_links_includes_iframe_and_keeps_spa_route(self) -> None:
@@ -172,6 +174,17 @@ class CrawlerRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(controls[1].title, "下一页")
         self.assertEqual(controls[1].control_id, "control-2")
         self.assertEqual(controls[1].aria_label, "right icon")
+
+    def test_select_model_same_page_controls_requires_real_ids(self) -> None:
+        controls = extract_page_route_controls(
+            '<a class="col_item_link">无机化学</a>'
+            '<a class="col_item_link">分析化学</a>'
+        )
+        selected = select_model_same_page_controls(
+            ["control-2", "control-2", "control-999", ""],
+            controls=controls,
+        )
+        self.assertEqual([control.text for control in selected], ["分析化学"])
 
     def test_extract_page_route_controls_exposes_javascript_form_pagination(
         self,

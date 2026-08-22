@@ -104,6 +104,7 @@ MAX_HTTP_REDIRECTS = 5
 MAX_RETRIES_FOR_BROWSER_RENDER = 2
 MAX_BROWSER_INTERACTIVE_PAGES = 500
 MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
+MAX_BROWSER_SAME_PAGE_CONTROLS = 24
 BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
@@ -150,6 +151,8 @@ DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
     "search_teacher.js",
     "_wp3services/generalquery?queryobj=articles",
     "queryobj=articles",
+    "_wp3services/generalquery?queryobj=teacherhome",
+    "queryobj=teacherhome",
 )
 _DYNAMIC_COLLECTION_TOKENS = {
     "cards",
@@ -298,6 +301,14 @@ class PageSnapshot(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class BrowserPaginationExpansion:
+    status: Literal["succeeded", "failed"]
+    snapshots: tuple[PageSnapshot, ...] = ()
+    stopped_reason: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserSamePageExpansion:
     status: Literal["succeeded", "failed"]
     snapshots: tuple[PageSnapshot, ...] = ()
     stopped_reason: str | None = None
@@ -1681,6 +1692,14 @@ def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> b
             for container in legacy_containers
         ):
             return True
+        dynamic_teacher_lists = soup.select(
+            ".teacher-list, .teacher-con .teacher-list, [class*='teacher-list']"
+        )
+        if dynamic_teacher_lists and not any(
+            _dynamic_collection_has_content(container)
+            for container in dynamic_teacher_lists
+        ):
+            return True
 
     collections = list(soup.select("ul, ol, tbody"))
     populated_families = {
@@ -2077,6 +2096,183 @@ async def expand_browser_pagination(
     return result
 
 
+async def expand_browser_same_page_controls(
+    ctx: CrawlToolContext,
+    url: str,
+    *,
+    controls: Sequence[dict[str, object]],
+    intent: CrawlPageIntent = "directory",
+    max_controls: int = MAX_BROWSER_SAME_PAGE_CONTROLS,
+) -> BrowserSamePageExpansion:
+    """Click model-selected same-page list controls and collect changed states."""
+
+    absolute_url = urljoin(ctx.start_url, url)
+    allowed_url_error = _resolved_context_url_error(ctx, absolute_url)
+    if allowed_url_error is not None:
+        return BrowserSamePageExpansion(
+            status="failed",
+            stopped_reason="unsafe_url",
+            error_message=allowed_url_error,
+        )
+    selected_controls = list(controls)[: max(0, int(max_controls))]
+    if not selected_controls:
+        return BrowserSamePageExpansion(
+            status="succeeded",
+            stopped_reason="no_controls",
+        )
+    browser_session_scope = ctx.browser_session_scope
+    if _should_offload_browser_fetch_to_thread():
+        result = await asyncio.to_thread(
+            _run_browser_same_page_controls_with_proactor_loop,
+            absolute_url,
+            selected_controls,
+            intent,
+            browser_session_scope,
+        )
+    else:
+        result = await _fetch_browser_same_page_controls_direct(
+            absolute_url,
+            selected_controls,
+            intent=intent,
+            browser_session_scope=browser_session_scope,
+        )
+    for snapshot in result.snapshots:
+        final_url_error = _resolved_context_url_error(ctx, snapshot.url)
+        if final_url_error is not None:
+            return BrowserSamePageExpansion(
+                status="failed",
+                snapshots=result.snapshots,
+                stopped_reason="unsafe_final_url",
+                error_message=final_url_error,
+            )
+    return result
+
+
+async def _fetch_browser_same_page_controls_direct(
+    absolute_url: str,
+    controls: Sequence[dict[str, object]],
+    *,
+    intent: CrawlPageIntent,
+    browser_session_scope: BrowserSessionScope | None = None,
+) -> BrowserSamePageExpansion:
+    playwright_factory = _get_async_playwright()
+    if playwright_factory is None:
+        return BrowserSamePageExpansion(
+            status="failed",
+            stopped_reason="playwright_unavailable",
+            error_message="Playwright same-page expansion unavailable",
+        )
+    options = _browser_fetch_options_for_intent(intent)
+    browser = None
+    try:
+        async with playwright_factory() as playwright:
+            browser = await playwright.chromium.launch(**_playwright_launch_options())
+            context = await browser.new_context(
+                user_agent=options.user_agent,
+                ignore_https_errors=options.ignore_https_errors,
+            )
+            await _restore_browser_session_cookies(
+                context,
+                browser_session_scope,
+                absolute_url,
+            )
+            page = await context.new_page()
+            await _install_browser_bandwidth_policy(page)
+            response = await page.goto(
+                absolute_url,
+                wait_until=options.wait_until,
+                timeout=options.page_timeout_ms,
+            )
+            response_status = getattr(response, "status", None)
+            if options.wait_for:
+                selector = options.wait_for[4:] if options.wait_for.startswith("css:") else options.wait_for
+                await page.wait_for_selector(selector, timeout=options.wait_for_timeout_ms)
+            if isinstance(response_status, int) and response_status in BROWSER_FALLBACK_STATUS:
+                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
+            if options.wait_for_dynamic_directory:
+                await _wait_for_dynamic_directory_html(page, absolute_url=absolute_url, options=options)
+            initial_body = await page.locator("body").inner_text()
+            initial_snapshot_html = await page.content()
+            initial_snapshot = _snapshot_from_browser_html(
+                html=initial_snapshot_html,
+                final_url=str(getattr(page, "url", "") or absolute_url),
+                absolute_url=absolute_url,
+            )
+            if isinstance(response_status, int):
+                initial_snapshot.http_status_code = response_status
+            if initial_snapshot.status != "succeeded":
+                return BrowserSamePageExpansion(
+                    status="failed",
+                    stopped_reason="initial_page_failed",
+                    error_message=initial_snapshot.error_message,
+                )
+            seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
+            snapshots: list[PageSnapshot] = []
+            for control in controls:
+                target = {
+                    "tag": str(control.get("tag") or "a"),
+                    "text": str(control.get("text") or ""),
+                    "title": str(control.get("title") or ""),
+                    "ariaLabel": str(control.get("aria_label") or ""),
+                    "classTokens": list(control.get("class_tokens") or ()),
+                    "matchIndex": max(0, int(control.get("match_index") or 0)),
+                }
+                match = await page.evaluate(_BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT, target)
+                if not isinstance(match, dict) or not isinstance(match.get("index"), int):
+                    continue
+                if bool(match.get("disabled")):
+                    continue
+                body_before = await page.locator("body").inner_text()
+                links_before = await _browser_link_signature(page)
+                await page.locator(target["tag"]).nth(int(match["index"])).click(
+                    timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+                )
+                changed, _, _ = await _wait_for_same_page_content_change(
+                    page,
+                    body_before=body_before,
+                    links_before=links_before,
+                )
+                if not changed:
+                    continue
+                await page.wait_for_timeout(350)
+                html = await page.content()
+                snapshot = _snapshot_from_browser_html(
+                    html=html,
+                    final_url=str(getattr(page, "url", "") or absolute_url),
+                    absolute_url=absolute_url,
+                )
+                if snapshot.status != "succeeded":
+                    continue
+                if isinstance(response_status, int):
+                    snapshot.http_status_code = response_status
+                fingerprint = _pagination_snapshot_fingerprint(snapshot)
+                if fingerprint in seen_fingerprints:
+                    continue
+                seen_fingerprints.add(fingerprint)
+                snapshots.append(snapshot)
+            await _remember_browser_session_cookies(context, browser_session_scope)
+            return BrowserSamePageExpansion(
+                status="succeeded",
+                snapshots=tuple(snapshots),
+                stopped_reason="controls_processed",
+            )
+    except Exception as exc:
+        return BrowserSamePageExpansion(
+            status="failed",
+            stopped_reason="browser_error",
+            error_message=_format_exception_for_snapshot(
+                exc,
+                "Playwright same-page expansion failed",
+            ),
+        )
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+
 async def _fetch_browser_pagination_direct(
     absolute_url: str,
     target: dict[str, object],
@@ -2340,6 +2536,42 @@ async def _wait_for_browser_content_change(
             body_before,
             latest_body,
         ):
+            return True, latest_body, latest_links
+    return False, latest_body, latest_links
+
+
+async def _wait_for_same_page_content_change(
+    page: Any,
+    *,
+    body_before: str,
+    links_before: tuple[str, ...],
+) -> tuple[bool, str, tuple[str, ...]]:
+    """Wait past the transient empty state produced by AJAX list replacement."""
+
+    elapsed_ms = 0
+    latest_body = body_before
+    latest_links = links_before
+    changed_at_ms: int | None = None
+    stable_ms = 0
+    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
+        await page.wait_for_timeout(250)
+        elapsed_ms += 250
+        latest_body = await page.locator("body").inner_text()
+        latest_links = await _browser_link_signature(page)
+        body_changed = _body_content_changed_substantially(body_before, latest_body)
+        links_changed = latest_links != links_before
+        if changed_at_ms is None and (body_changed or links_changed):
+            changed_at_ms = elapsed_ms
+            stable_ms = 0
+        if changed_at_ms is None:
+            continue
+        # A list click often clears the old anchors before the new response
+        # arrives.  Do not capture that intermediate empty state as a page.
+        if latest_links and latest_links != links_before:
+            stable_ms += 250
+            if stable_ms >= DYNAMIC_DIRECTORY_STABLE_MS:
+                return True, latest_body, latest_links
+        elif elapsed_ms - changed_at_ms >= 1500 and body_changed:
             return True, latest_body, latest_links
     return False, latest_body, latest_links
 
@@ -3165,6 +3397,25 @@ def _run_browser_pagination_with_proactor_loop(
             target,
             intent=intent,
             max_pages=max_pages,
+            browser_session_scope=browser_session_scope,
+        )
+    )
+
+
+def _run_browser_same_page_controls_with_proactor_loop(
+    absolute_url: str,
+    controls: Sequence[dict[str, object]],
+    intent: CrawlPageIntent,
+    browser_session_scope: BrowserSessionScope | None = None,
+) -> BrowserSamePageExpansion:
+    from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
+
+    ensure_windows_proactor_event_loop_policy()
+    return asyncio.run(
+        _fetch_browser_same_page_controls_direct(
+            absolute_url,
+            controls,
+            intent=intent,
             browser_session_scope=browser_session_scope,
         )
     )

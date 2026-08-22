@@ -26,7 +26,11 @@ from app.models import (
     CrawlWorkerTokenUsage,
     LLMProfile,
 )
-from app.modules.crawler.pages.tools import BrowserPaginationExpansion, PageSnapshot
+from app.modules.crawler.pages.tools import (
+    BrowserPaginationExpansion,
+    BrowserSamePageExpansion,
+    PageSnapshot,
+)
 from app.modules.llm.runtime import LLMRuntimeAdaptation
 from app.modules.crawler.runtime.page_worker import (
     MAX_ENTRY_DISCOVERY_DEPTH,
@@ -485,6 +489,97 @@ class CrawlerRuntimePageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [item.normalized_url for item in tasks], [snapshot.url, entry_url]
         )
+
+    async def test_same_page_categories_are_attempted_when_pagination_fails(self) -> None:
+        job_id, task_id = await self._seed_page_task()
+        snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员名单",
+            text="张三 教授",
+            html="<p>张三 教授</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        category_snapshot = PageSnapshot(
+            url="https://example.edu/faculty",
+            title="人员名单",
+            text="李四 副教授",
+            html="<p>李四 副教授</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        pagination_control = PageRouteControl(
+            control_id="control-next",
+            tag="button",
+            text="下一页",
+            title="",
+            aria_label="",
+            class_tokens=("next",),
+            match_index=0,
+        )
+        category_control = PageRouteControl(
+            control_id="control-associate",
+            tag="a",
+            text="副教授",
+            title="",
+            aria_label="",
+            class_tokens=("category",),
+            match_index=0,
+        )
+        self.routing_mock.return_value = PageRoutingResult(
+            discovered_urls=[],
+            entry_discovery_reasons={},
+            allow_expansion=True,
+            pagination_urls=[],
+            usage=None,
+            pagination_control=pagination_control,
+            same_page_controls=[category_control],
+            attempts=[],
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.runtime.page_worker.fetch_page_direct",
+                new=AsyncMock(return_value=snapshot),
+            ),
+            patch(
+                "app.modules.crawler.runtime.page_worker.expand_browser_pagination",
+                new=AsyncMock(
+                    return_value=BrowserPaginationExpansion(
+                        status="failed",
+                        stopped_reason="browser_error",
+                        error_message="分页控件点击失败",
+                    )
+                ),
+            ),
+            patch(
+                "app.modules.crawler.runtime.page_worker.expand_browser_same_page_controls",
+                new=AsyncMock(
+                    return_value=BrowserSamePageExpansion(
+                        status="succeeded",
+                        snapshots=(category_snapshot,),
+                        stopped_reason="controls_processed",
+                    )
+                ),
+            ) as same_page_mock,
+        ):
+            processed = await run_crawler_page_worker_once(
+                self.session_factory,
+                task_id=task_id,
+                worker_id="w1",
+            )
+
+        self.assertEqual(processed, 1)
+        same_page_mock.assert_awaited_once()
+        async with self.session_factory() as session:
+            chunks = list(
+                await session.scalars(
+                    select(CrawlPageChunk).where(CrawlPageChunk.job_id == job_id)
+                )
+            )
+        self.assertGreaterEqual(len(chunks), 2)
 
     async def test_spa_route_uses_browser_without_direct_fetch(self) -> None:
         spa_url = "https://welcome.example.edu/#/teacher/computer?page=2"

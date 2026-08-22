@@ -2565,6 +2565,22 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
         )
 
+    def test_dynamic_directory_detection_recognizes_teacherhome_empty_list(self) -> None:
+        snapshot = crawler_tools.html_to_snapshot(
+            "https://chem.nju.edu.cn/szll/list.htm",
+            """
+            <html><body><div class="search-teacher"><ul class="teacher-list"></ul></div>
+            <script src="/_upload/template/js/search.js"></script>
+            <script>var teacherUrl = '/_wp3services/generalQuery?queryObj=teacherHome';</script>
+            </body></html>
+            """,
+            "http",
+        )
+        self.assertTrue(snapshot.has_dynamic_teacher_directory_markers)
+        self.assertTrue(
+            crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
+        )
+
     def test_dynamic_directory_detection_ignores_decorative_empty_lists(self) -> None:
         snapshot = PageSnapshot(
             url="https://example.edu/page",
@@ -3148,6 +3164,51 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(actual, expected)
         self.assertEqual(to_thread.await_count, 1)
+
+    async def test_same_page_expansion_checks_final_url_after_thread_offload(self) -> None:
+        ctx = CrawlToolContext(
+            job_id=1,
+            start_url="https://example.edu/faculty",
+            university="示例大学",
+            school="计算机学院",
+            session_factory=_FakeSessionFactory(),  # type: ignore[arg-type]
+        )
+        unsafe_snapshot = PageSnapshot(
+            url="https://other.example.edu/faculty",
+            title="名单",
+            text="李四",
+            html="<p>李四</p>",
+            links=[],
+            fetch_method="browser",
+            status="succeeded",
+        )
+        expanded = crawler_tools.BrowserSamePageExpansion(
+            status="succeeded",
+            snapshots=(unsafe_snapshot,),
+        )
+
+        with (
+            patch(
+                "app.modules.crawler.pages.tools._resolved_context_url_error",
+                side_effect=[None, "不允许的最终 URL"],
+            ),
+            patch(
+                "app.modules.crawler.pages.tools._should_offload_browser_fetch_to_thread",
+                return_value=True,
+            ),
+            patch(
+                "app.modules.crawler.pages.tools.asyncio.to_thread",
+                new=AsyncMock(return_value=expanded),
+            ),
+        ):
+            actual = await crawler_tools.expand_browser_same_page_controls(
+                ctx,
+                ctx.start_url,
+                controls=[{"tag": "button", "text": "副教授"}],
+            )
+
+        self.assertEqual(actual.status, "failed")
+        self.assertEqual(actual.stopped_reason, "unsafe_final_url")
 
     async def test_browser_fetch_reports_temporary_dns_failure_separately_from_policy_rejection(
         self,
