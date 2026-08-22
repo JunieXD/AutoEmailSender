@@ -49,9 +49,15 @@ def build_crawl_job_events(
         },
     )
 
-    for index, trace_event in enumerate(
-        _iter_agent_trace(_get_attr(job, "agent_trace"))
-    ):
+    trace_events = _iter_agent_trace(_get_attr(job, "agent_trace"))
+    latest_failure_indexes = _latest_enrichment_failure_indexes(trace_events)
+    for index, trace_event in enumerate(trace_events):
+        failure_identity = _enrichment_failure_identity(trace_event)
+        if (
+            failure_identity is not None
+            and latest_failure_indexes[failure_identity] != index
+        ):
+            continue
         normalized = normalize_agent_trace_event(trace_event)
         if not _should_include_agent_trace_event(normalized):
             continue
@@ -184,6 +190,35 @@ def _iter_agent_trace(value: object) -> list[object]:
     if not isinstance(value, list):
         return []
     return list(value)
+
+
+def _latest_enrichment_failure_indexes(
+    trace_events: list[object],
+) -> dict[tuple[str, object], int]:
+    latest_indexes: dict[tuple[str, object], int] = {}
+    for index, event in enumerate(trace_events):
+        identity = _enrichment_failure_identity(event)
+        if identity is not None:
+            latest_indexes[identity] = index
+    return latest_indexes
+
+
+def _enrichment_failure_identity(event: object) -> tuple[str, object] | None:
+    if not isinstance(event, dict) or event.get("event_type") != "enrichment":
+        return None
+    raw = event.get("raw")
+    if not isinstance(raw, dict) or raw.get("status") != "failed":
+        return None
+    candidate_id = raw.get("candidate_id")
+    if candidate_id is not None:
+        return "candidate_id", candidate_id
+    task_id = raw.get("task_id")
+    if task_id is not None:
+        return "task_id", task_id
+    message = event.get("message")
+    if isinstance(message, str) and message.startswith("候选导师详情补全失败："):
+        return "message", message
+    return None
 
 
 def _should_include_agent_trace_event(event: dict[str, object]) -> bool:

@@ -1449,15 +1449,24 @@ async def _append_enrichment_failure_event(
     candidate_name = (
         candidate.name if candidate is not None and candidate.name else "未知导师"
     )
-    trace = list(job.agent_trace or [])
+    operation_progress = await _get_enrichment_operation_progress(session, task=task)
+    progress_suffix = _format_enrichment_progress(operation_progress)
+    trace = [
+        item
+        for item in list(job.agent_trace or [])
+        if not _is_previous_failed_enrichment_event(
+            item, task=task, candidate_name=candidate_name
+        )
+    ]
     trace.append(
         {
             "event_type": "enrichment",
-            "message": f"候选导师详情补全失败：{candidate_name}",
+            "message": f"候选导师详情补全失败：{candidate_name}{progress_suffix}",
             "created_at": utc_now().isoformat(),
             "raw": {
                 "candidate_id": task.candidate_id,
                 "task_id": task.id,
+                **_enrichment_progress_payload(task, operation_progress),
                 "status": "failed",
                 "task_status": task.status,
                 "attempt_count": int(task.attempt_count or 0),
@@ -1479,11 +1488,7 @@ async def _append_enrichment_success_event(
         return
     candidate_name = candidate.name if candidate.name else "未知导师"
     operation_progress = await _get_enrichment_operation_progress(session, task=task)
-    progress_suffix = (
-        f"（{operation_progress[0]} / {operation_progress[1]}）"
-        if operation_progress is not None
-        else ""
-    )
+    progress_suffix = _format_enrichment_progress(operation_progress)
     trace = [
         item
         for item in list(job.agent_trace or [])
@@ -1499,13 +1504,7 @@ async def _append_enrichment_success_event(
             "raw": {
                 "candidate_id": task.candidate_id,
                 "task_id": task.id,
-                "operation_id": task.enrichment_operation_id,
-                "progress_current": (
-                    operation_progress[0] if operation_progress is not None else None
-                ),
-                "progress_total": (
-                    operation_progress[1] if operation_progress is not None else None
-                ),
+                **_enrichment_progress_payload(task, operation_progress),
                 "status": "succeeded",
                 "task_status": task.status,
             },
@@ -1534,10 +1533,28 @@ async def _get_enrichment_operation_progress(
         select(func.count(CrawlCandidateEnrichmentTask.id)).where(
             CrawlCandidateEnrichmentTask.job_id == task.job_id,
             CrawlCandidateEnrichmentTask.enrichment_operation_id == operation_id,
+            CrawlCandidateEnrichmentTask.id != task.id,
             CrawlCandidateEnrichmentTask.status.in_(_TERMINAL_ENRICHMENT_TASK_STATUSES),
         )
     )
-    return int(current or 0), int(total)
+    return min(int(current or 0) + 1, int(total)), int(total)
+
+
+def _format_enrichment_progress(progress: tuple[int, int] | None) -> str:
+    if progress is None:
+        return ""
+    return f"（{progress[0]} / {progress[1]}）"
+
+
+def _enrichment_progress_payload(
+    task: CrawlCandidateEnrichmentTask,
+    progress: tuple[int, int] | None,
+) -> dict[str, object]:
+    return {
+        "operation_id": task.enrichment_operation_id,
+        "progress_current": progress[0] if progress is not None else None,
+        "progress_total": progress[1] if progress is not None else None,
+    }
 
 
 async def _append_enrichment_unchanged_event(
@@ -1551,15 +1568,18 @@ async def _append_enrichment_unchanged_event(
     if job is None:
         return
     candidate_name = candidate.name if candidate.name else "未知导师"
+    operation_progress = await _get_enrichment_operation_progress(session, task=task)
+    progress_suffix = _format_enrichment_progress(operation_progress)
     trace = list(job.agent_trace or [])
     trace.append(
         {
             "event_type": "enrichment",
-            "message": f"候选导师详情未发现新信息：{candidate_name}",
+            "message": (f"候选导师详情未发现新信息：{candidate_name}{progress_suffix}"),
             "created_at": utc_now().isoformat(),
             "raw": {
                 "candidate_id": task.candidate_id,
                 "task_id": task.id,
+                **_enrichment_progress_payload(task, operation_progress),
                 "status": "skipped",
                 "task_status": CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
                 "reason": reason,
@@ -1585,7 +1605,11 @@ def _is_previous_failed_enrichment_event(
             return True
         if raw.get("candidate_id") == task.candidate_id:
             return True
-    return event.get("message") == f"候选导师详情补全失败：{candidate_name}"
+    message = event.get("message")
+    message_prefix = f"候选导师详情补全失败：{candidate_name}"
+    return message == message_prefix or (
+        isinstance(message, str) and message.startswith(f"{message_prefix}（")
+    )
 
 
 async def _resolve_llm_profile(

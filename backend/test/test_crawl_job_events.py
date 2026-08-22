@@ -164,6 +164,50 @@ class CrawlJobEventsTests(unittest.TestCase):
 
         self.assertEqual(message, "候选导师详情补全成功：张三（院系、研究方向）")
 
+    def test_build_events_keeps_only_latest_failure_for_each_candidate(self) -> None:
+        job = CrawlJob(
+            id=6,
+            university="示例大学",
+            school="计算机学院",
+            start_url="https://example.edu/faculty",
+            status=CrawlJobStatus.RUNNING.value,
+            agent_trace=[
+                {
+                    "event_type": "enrichment",
+                    "message": "候选导师详情补全失败：张三（1 / 2）",
+                    "created_at": "2026-04-26T10:01:00+00:00",
+                    "raw": {
+                        "candidate_id": 21,
+                        "status": "failed",
+                        "error_message": "第一次失败",
+                    },
+                },
+                {
+                    "event_type": "enrichment",
+                    "message": "候选导师详情补全失败：张三（1 / 2）",
+                    "created_at": "2026-04-26T10:02:00+00:00",
+                    "raw": {
+                        "candidate_id": 21,
+                        "status": "failed",
+                        "error_message": "第二次失败",
+                    },
+                },
+            ],
+            created_at=datetime(2026, 4, 26, 10, 0, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 26, 10, 2, tzinfo=UTC),
+        )
+
+        events = build_crawl_job_events(job, pages=[], candidates=[])
+
+        failure_events = [
+            event
+            for event in events
+            if event["event_type"] == "enrichment"
+            and event["message"].startswith("候选导师详情补全失败：张三")
+        ]
+        self.assertEqual(len(failure_events), 1)
+        self.assertEqual(failure_events[0]["raw"]["raw"]["error_message"], "第二次失败")
+
     def test_naive_datetime_event_times_are_marked_as_utc(self) -> None:
         job = CrawlJob(
             id=4,

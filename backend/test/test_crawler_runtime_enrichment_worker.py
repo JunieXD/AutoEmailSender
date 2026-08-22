@@ -153,8 +153,13 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
             new=AsyncMock(return_value=(payload, None)),
         ):
+            runtime_session_factory = async_sessionmaker(
+                self.engine,
+                autoflush=False,
+                expire_on_commit=False,
+            )
             processed = await run_crawler_enrichment_worker_once(
-                self.session_factory, task_id=task_id, worker_id="w1"
+                runtime_session_factory, task_id=task_id, worker_id="w1"
             )
 
         self.assertEqual(processed, 1)
@@ -256,7 +261,11 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.status, CrawlCandidateEnrichmentTaskStatus.SKIPPED.value)
         self.assertEqual(task.skip_reason, "个人主页未提供可补全的新信息")
         trace = [item for item in job.agent_trace or [] if isinstance(item, dict)]
-        self.assertEqual(trace[-1]["message"], "候选导师详情未发现新信息：张三")
+        self.assertEqual(
+            trace[-1]["message"], "候选导师详情未发现新信息：张三（1 / 1）"
+        )
+        self.assertEqual(trace[-1]["raw"]["progress_current"], 1)
+        self.assertEqual(trace[-1]["raw"]["progress_total"], 1)
         self.assertEqual(trace[-1]["raw"]["status"], "skipped")
 
     async def test_saved_profile_shell_is_refetched(self) -> None:
@@ -1646,14 +1655,62 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         trace = [item for item in job.agent_trace or [] if isinstance(item, dict)]
         self.assertTrue(trace)
         self.assertEqual(trace[-1]["event_type"], "enrichment")
-        self.assertEqual(trace[-1]["message"], "候选导师详情补全失败：张三")
+        self.assertEqual(trace[-1]["message"], "候选导师详情补全失败：张三（1 / 1）")
         self.assertEqual(trace[-1]["raw"]["candidate_id"], 1)
+        self.assertEqual(trace[-1]["raw"]["progress_current"], 1)
+        self.assertEqual(trace[-1]["raw"]["progress_total"], 1)
         self.assertEqual(trace[-1]["raw"]["status"], "failed")
         self.assertEqual(
             trace[-1]["raw"]["task_status"],
             CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
         )
         self.assertIn("LLM 401", trace[-1]["raw"]["error_message"])
+
+    async def test_enrichment_worker_keeps_only_latest_failure_for_candidate(
+        self,
+    ) -> None:
+        _, task_id = await self._seed_task(
+            profile_url="https://example.edu/zhang.html"
+        )
+
+        with patch(
+            "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
+            new=AsyncMock(side_effect=[ValueError("第一次失败"), ValueError("第二次失败")]),
+        ):
+            await run_crawler_enrichment_worker_once(
+                self.session_factory, task_id=task_id, worker_id="w1"
+            )
+            async with self.session_factory() as session:
+                task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+                assert task is not None
+                task.status = CrawlCandidateEnrichmentTaskStatus.PROCESSING.value
+                task.worker_id = "w1"
+                task.claimed_at = None
+                task.lease_expires_at = None
+                await session.commit()
+            await run_crawler_enrichment_worker_once(
+                self.session_factory, task_id=task_id, worker_id="w1"
+            )
+
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            job = await session.get(CrawlJob, task.job_id)
+        assert job is not None
+        failure_events = [
+            item
+            for item in job.agent_trace or []
+            if isinstance(item, dict)
+            and item.get("event_type") == "enrichment"
+            and isinstance(item.get("raw"), dict)
+            and item["raw"].get("status") == "failed"
+        ]
+        self.assertEqual(len(failure_events), 1)
+        self.assertEqual(
+            failure_events[0]["message"],
+            "候选导师详情补全失败：张三（1 / 1）",
+        )
+        self.assertEqual(failure_events[0]["raw"]["error_message"], "第二次失败")
 
     async def test_enrichment_success_clears_previous_failure_state_and_trace(
         self,
