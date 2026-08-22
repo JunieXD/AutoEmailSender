@@ -58,6 +58,7 @@ import {
   deleteBatchTaskItem,
   getBatchTaskItemThread,
   getBatchTaskResendContext,
+  getBatchTaskSummary,
   listBatchTasks,
   listBatchTaskItems,
   pauseBatchTask,
@@ -236,6 +237,7 @@ import {
   BATCH_DETAIL_ITEM_PAGE_SIZE,
   BATCH_REVIEW_DRAFT_SOURCE_LABELS,
   BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS,
+  buildBatchTaskSummarySignature,
   CRAWL_DETAILS_REFRESH_INTERVAL_MS,
   CRAWL_DETAIL_CONTENT_REFRESH_INTERVAL_MS,
   CRAWL_REFRESH_INTERVAL_MS,
@@ -596,6 +598,7 @@ export const BackgroundTasksPage = ({
   const previousSelectedCrawlJobIdRef = useRef(selectedCrawlJob?.id ?? null);
   const latestTasksRequestIdRef = useRef(0);
   const latestBatchTaskDetailsRequestIdRef = useRef(0);
+  const batchTaskSummarySignatureRef = useRef<string | null>(null);
   const latestBatchReviewRequestIdRef = useRef(0);
   const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
@@ -1778,6 +1781,16 @@ export const BackgroundTasksPage = ({
         }
         setSelectedBatchTaskItems(data);
         lastBatchTaskDetailsLoadErrorRef.current = null;
+        try {
+          const summary = await getBatchTaskSummary(taskId);
+          if (latestBatchTaskDetailsRequestIdRef.current === requestId) {
+            batchTaskSummarySignatureRef.current =
+              buildBatchTaskSummarySignature(summary);
+          }
+        } catch {
+          // Keep the previous signature; the next poll will retry and refresh
+          // the full list if the summary moved on.
+        }
       } catch (loadError) {
         if (latestBatchTaskDetailsRequestIdRef.current !== requestId) {
           return;
@@ -1797,6 +1810,23 @@ export const BackgroundTasksPage = ({
       }
     },
     [notifyError],
+  );
+
+  const refreshBatchTaskDetailsIfSummaryChanged = useCallback(
+    async (taskId: number) => {
+      let summarySignature: string;
+      try {
+        const summary = await getBatchTaskSummary(taskId);
+        summarySignature = buildBatchTaskSummarySignature(summary);
+      } catch {
+        return;
+      }
+      if (summarySignature === batchTaskSummarySignatureRef.current) {
+        return;
+      }
+      await loadBatchTaskDetails(taskId);
+    },
+    [loadBatchTaskDetails],
   );
 
   const closeProfessorEditDialog = useCallback(() => {
@@ -2311,6 +2341,7 @@ export const BackgroundTasksPage = ({
       return undefined;
     }
     lastBatchTaskDetailsLoadErrorRef.current = null;
+    batchTaskSummarySignatureRef.current = null;
     void loadBatchTaskDetails(selectedBatchTaskId);
     if (selectedBatchTaskStatus !== "running") {
       return () => {
@@ -2318,7 +2349,7 @@ export const BackgroundTasksPage = ({
       };
     }
     const timer = window.setInterval(() => {
-      void loadBatchTaskDetails(selectedBatchTaskId);
+      void refreshBatchTaskDetailsIfSummaryChanged(selectedBatchTaskId);
     }, BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS);
     return () => {
       latestBatchTaskDetailsRequestIdRef.current += 1;
@@ -2326,6 +2357,7 @@ export const BackgroundTasksPage = ({
     };
   }, [
     loadBatchTaskDetails,
+    refreshBatchTaskDetailsIfSummaryChanged,
     selectedBatchTaskId,
     selectedBatchTaskStatus,
   ]);

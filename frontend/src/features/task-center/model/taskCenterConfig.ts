@@ -12,6 +12,11 @@ export const CRAWL_REFRESH_INTERVAL_MS = 2000;
 export const CRAWL_DETAILS_REFRESH_INTERVAL_MS = 2000;
 export const CRAWL_DETAIL_CONTENT_REFRESH_INTERVAL_MS = 10000;
 export const BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS = 10000;
+
+// Polling signature for a batch task card: any status counter, task status,
+// or timestamp change must invalidate it so the UI refetches the full item list.
+export const buildBatchTaskSummarySignature = (card: BatchTaskCardDTO): string =>
+  JSON.stringify(card);
 export const TASKS_PAGE_SIZE = 8;
 export const MONITOR_SECTION_PAGE_SIZE = 5;
 export const BATCH_DETAIL_ITEM_PAGE_SIZE = 20;

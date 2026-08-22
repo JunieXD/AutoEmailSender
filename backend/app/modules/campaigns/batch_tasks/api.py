@@ -652,6 +652,32 @@ async def get_batch_task_resend_context(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.get("/{task_id}/summary", response_model=BatchTaskCardRead)
+async def get_batch_task_summary(
+    task_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> BatchTaskCardRead:
+    """Cheap polling payload: task card with status counters, no item rows.
+
+    The desktop UI polls this while a running task is open and only refetches
+    the full item list when the counters change.
+    """
+    task = await session.scalar(
+        select(BatchTask).where(BatchTask.id == task_id)
+    )
+    if task is None:
+        raise HTTPException(status_code=404, detail="未找到批量任务")
+    metrics_by_task_id = await _load_batch_task_card_metrics(
+        session,
+        [task.id],
+        now=utc_now(),
+    )
+    return _serialize_batch_task(
+        task,
+        metrics=metrics_by_task_id.get(task.id, BatchTaskCardMetrics()),
+    )
+
+
 @router.get("/{task_id}/items", response_model=list[BatchTaskItemRead])
 async def list_batch_task_items(
     task_id: int,

@@ -33,6 +33,9 @@ export const createBatchTask = (payload: CreateBatchTaskRequestDTO) =>
     body: JSON.stringify(payload),
   });
 
+export const getBatchTaskSummary = (taskId: number) =>
+  apiFetch<BatchTaskCardDTO>(`/api/batch-tasks/${taskId}/summary`);
+
 export const listBatchTaskItems = (taskId: number) =>
   apiFetch<BatchTaskItemDTO[]>(`/api/batch-tasks/${taskId}/items`);
 
