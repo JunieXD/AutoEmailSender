@@ -11,6 +11,7 @@
   "main": "dist/src/main.js",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "postinstall": "node node_modules/electron/install.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "build:preload": "tsc -p tsconfig.preload.json && esbuild src/preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/src/preload.js",
     "build": "npm run clean && tsc -p tsconfig.json && npm run build:preload",
