@@ -10,7 +10,7 @@ from app.core.time import as_utc_aware, local_now, utc_now
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only, selectinload
+from sqlalchemy.orm import defer, load_only, selectinload
 
 from app.core.database import get_async_session, get_session_factory
 from app.core.query_chunks import chunked_values, unique_positive_ids
@@ -67,7 +67,7 @@ from app.modules.campaigns.status import email_task_is_not_user_removed_expressi
 from app.modules.identities.public import material_can_be_primary
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -308,7 +308,7 @@ async def create_batch_task(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     material_map = {
-        material.id: material for material in await list_global_materials(session)
+        material.id: material for material in await list_global_material_metadata(session)
     }
     primary_material_id = (
         payload.primary_material_id or identity.current_primary_material_id
@@ -1519,15 +1519,38 @@ async def _run_batch_task_item_workspace_action(
     await _get_batch_task_item(session, task_id, item_id)
 
 
+# Per-item draft/approval body snapshots can be tens of KB each; card metrics
+# and item lifecycle actions never read them, so skip them for card payloads.
+BATCH_TASK_ITEM_DEFERRED_COLUMNS = (
+    EmailTask.generated_content_text,
+    EmailTask.generated_content_html,
+    EmailTask.outreach_template_body_text,
+    EmailTask.outreach_template_body_html,
+    EmailTask.approved_body_text,
+    EmailTask.approved_body_html,
+    EmailTask.draft_rewrite_source_subject,
+    EmailTask.draft_rewrite_source_body_text,
+    EmailTask.draft_rewrite_source_body_html,
+)
+
+
 async def _load_batch_task_for_serialization(
     session: AsyncSession, task_id: int
 ) -> BatchTask | None:
     return await session.scalar(
         select(BatchTask)
         .options(
-            selectinload(BatchTask.email_tasks).selectinload(EmailTask.professor),
-            selectinload(BatchTask.email_tasks).selectinload(
-                EmailTask.primary_material
+            selectinload(BatchTask.email_tasks).options(
+                *[
+                    defer(deferred_column)
+                    for deferred_column in BATCH_TASK_ITEM_DEFERRED_COLUMNS
+                ],
+                selectinload(EmailTask.professor).options(
+                    defer(Professor.recent_papers),
+                ),
+                selectinload(EmailTask.primary_material).options(
+                    load_only(IdentityMaterial.id),
+                ),
             ),
         )
         .where(BatchTask.id == task_id)
