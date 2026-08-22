@@ -25,11 +25,13 @@ export const listProfessors = (params?: {
   ids?: number[];
 }) =>
   apiFetch<ProfessorDashboardItemDTO[]>(
-    '/api/professors',
-    undefined,
+    '/api/professors/fetch-by-ids',
     {
-      identity_id: params?.identityId ?? undefined,
-      ids: params?.ids?.length ? params.ids.join(',') : undefined,
+      method: 'POST',
+      body: JSON.stringify({
+        identity_id: params?.identityId ?? null,
+        ids: params?.ids ?? [],
+      }),
     },
   );
 

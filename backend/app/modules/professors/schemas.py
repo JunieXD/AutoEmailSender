@@ -363,6 +363,11 @@ class ProfessorBulkArchivePayload(BaseModel):
     ids: list[int]
 
 
+class ProfessorFetchByIdsPayload(BaseModel):
+    identity_id: int | None = None
+    ids: list[int] = Field(default_factory=list, max_length=10_000)
+
+
 ProfessorBulkTagMode = Literal["add", "remove", "replace"]
 
 

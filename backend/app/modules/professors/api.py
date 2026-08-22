@@ -36,6 +36,7 @@ from .schemas import (
     ProfessorDashboardItemRead,
     ProfessorDashboardPageRead,
     ProfessorDashboardPageRequest,
+    ProfessorFetchByIdsPayload,
     ProfessorImportFileResult,
     ProfessorImportResult,
     ProfessorIdSelectionRead,
@@ -98,12 +99,6 @@ async def list_professors(
     ids: str | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[ProfessorDashboardItemRead]:
-    statement = (
-        select(Professor)
-        .options(selectinload(Professor.tags))
-        .where(Professor.archived_at.is_(None))
-        .order_by(Professor.created_at.desc(), Professor.id.asc())
-    )
     requested_professor_ids = (
         unique_positive_ids(int(item) for item in ids.split(",") if item.strip())
         if ids
@@ -112,20 +107,77 @@ async def list_professors(
     if ids and not requested_professor_ids:
         return []
     if requested_professor_ids:
-        professors = []
-        for professor_id_chunk in chunked_values(requested_professor_ids):
-            professors.extend(
-                (
-                    await session.scalars(
-                        statement.where(Professor.id.in_(professor_id_chunk)),
-                    )
-                ).unique(),
-            )
-        professors.sort(key=lambda item: (-item.created_at.timestamp(), item.id))
+        professors = await _load_active_professors_by_ids(
+            session, requested_professor_ids
+        )
     else:
+        statement = (
+            select(Professor)
+            .options(selectinload(Professor.tags))
+            .where(Professor.archived_at.is_(None))
+            .order_by(Professor.created_at.desc(), Professor.id.asc())
+        )
         professors = list((await session.execute(statement)).scalars())
     if not professors:
         return []
+
+    return await _build_dashboard_professor_items(
+        session,
+        identity_id=identity_id,
+        professors=professors,
+    )
+
+
+@router.post("/fetch-by-ids", response_model=list[ProfessorDashboardItemRead])
+async def fetch_professors_by_ids(
+    payload: ProfessorFetchByIdsPayload,
+    session: AsyncSession = Depends(get_async_session),
+) -> list[ProfessorDashboardItemRead]:
+    # POST body variant of the ``ids`` query on GET ``/api/professors``: the
+    # create-task flow can select thousands of professors, which overflows
+    # practical URL length limits as a comma-joined query string.
+    requested_professor_ids = unique_positive_ids(payload.ids)
+    if not requested_professor_ids:
+        return []
+    professors = await _load_active_professors_by_ids(session, requested_professor_ids)
+    if not professors:
+        return []
+    return await _build_dashboard_professor_items(
+        session,
+        identity_id=payload.identity_id,
+        professors=professors,
+    )
+
+
+async def _load_active_professors_by_ids(
+    session: AsyncSession,
+    requested_professor_ids: list[int],
+) -> list[Professor]:
+    statement = (
+        select(Professor)
+        .options(selectinload(Professor.tags))
+        .where(Professor.archived_at.is_(None))
+        .order_by(Professor.created_at.desc(), Professor.id.asc())
+    )
+    professors: list[Professor] = []
+    for professor_id_chunk in chunked_values(requested_professor_ids):
+        professors.extend(
+            (
+                await session.scalars(
+                    statement.where(Professor.id.in_(professor_id_chunk)),
+                )
+            ).unique(),
+        )
+    professors.sort(key=lambda item: (-item.created_at.timestamp(), item.id))
+    return professors
+
+
+async def _build_dashboard_professor_items(
+    session: AsyncSession,
+    *,
+    identity_id: int | None,
+    professors: list[Professor],
+) -> list[ProfessorDashboardItemRead]:
 
     professor_ids = [professor.id for professor in professors]
     tasks_by_professor: dict[int, list[EmailTask]] = defaultdict(list)
