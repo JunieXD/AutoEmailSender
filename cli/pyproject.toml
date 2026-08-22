@@ -1,6 +1,6 @@
 [project]
 name = "auto-email-sender-cli"
-version = "2.6.0"
+version = "2.6.1"
 description = "Agent-friendly command line interface for Auto Email Sender"
 requires-python = ">=3.12"
 dependencies = [
