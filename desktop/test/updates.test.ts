@@ -237,6 +237,14 @@ describe("update helpers", () => {
     expect(source).not.toContain("await quitAndInstall");
   });
 
+  it("allows the window close handler to release the app for updater installation", () => {
+    const source = readDesktopApplicationSource();
+    const listenerStart = source.indexOf('autoUpdater.on("before-quit-for-update"');
+
+    expect(listenerStart).toBeGreaterThan(-1);
+    expect(source.slice(listenerStart, listenerStart + 180)).toContain("isQuitting = true");
+  });
+
   it("cleans stale update cache when a different version is available", () => {
     const source = readUpdateServiceSource();
 

@@ -1,4 +1,13 @@
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage, type MenuItemConstructorOptions } from "electron";
+import {
+  app,
+  autoUpdater,
+  BrowserWindow,
+  Menu,
+  Tray,
+  dialog,
+  nativeImage,
+  type MenuItemConstructorOptions,
+} from "electron";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -544,6 +553,10 @@ export function bootstrapDesktopApplication(): void {
   desktopApplicationBootstrapped = true;
 
   app.setAppUserModelId("com.juniexd.autoemailsender");
+  // electron-updater closes windows before Electron emits app's before-quit event.
+  autoUpdater.on("before-quit-for-update", () => {
+    isQuitting = true;
+  });
   const hasSingleInstanceLock = app.requestSingleInstanceLock();
   if (!hasSingleInstanceLock) {
     app.quit();
