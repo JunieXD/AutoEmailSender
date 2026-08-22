@@ -4038,6 +4038,254 @@ class LLMRuntimeAdaptationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.content, "recovered")
 
+    async def test_stale_thinking_extra_body_heals_on_empty_content(self) -> None:
+        # 回归：学到的关闭参数失效后（服务商行为变化），活体调用返回
+        # 200 空内容 → 应失效思考缓存、重新探测学习、并重试一次成功，
+        # 而不是把错误直接抛给上层。
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+                learned_extra_body={"enable_thinking": False},
+            )
+            await session.commit()
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            # 活体调用：200 但 content 为空（旧的关闭参数已失效）
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": ""}}]},
+            ),
+            # 重新探测基线：仍空内容 → 切候选
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": ""}}]},
+            ),
+            # 重新探测候选 1：成功
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "7"}}]},
+            ),
+            # 活体重试：成功
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "recovered"}}]},
+            ),
+        ]
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await request_chat_completion(
+                    profile,
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
+                    session=session,
+                )
+                await session.commit()
+
+        self.assertEqual(result.content, "recovered")
+        self.assertEqual(len(calls), 4)
+        # 重试的活体请求带上了重新学到的 extra_body
+        retry_payload = calls[3][1]
+        assert retry_payload is not None
+        self.assertEqual(retry_payload["thinking"], {"type": "disabled"})
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+            )
+        self.assertTrue(hit)
+        self.assertEqual(value, {"thinking": {"type": "disabled"}})
+
+    async def test_empty_content_without_learned_extra_body_does_not_heal(self) -> None:
+        # 学到的 extra_body 是 null 时，空内容不应触发重探：
+        # 避免思考预算随机耗尽的模型在每次调用前都跑一遍探测。
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": ""}}]},
+            ),
+        ]
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError) as context:
+                    await request_chat_completion(
+                        profile,
+                        {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "ping"}],
+                        },
+                        session=session,
+                    )
+
+        self.assertEqual(len(calls), 1)
+        self.assertNotIsInstance(context.exception, LLMEndpointProtocolError)
+
+    async def test_thinking_protocol_400_heals_and_retries_once(self) -> None:
+        # 回归：活体调用命中"reasoning_content must be passed back"类 400
+        # 时，必须失效缓存并重新学习（此前只有探测路径会处理这个信号）。
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import (
+            get_cached_extra_body,
+            record_thinking_adaptation,
+        )
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+                learned_extra_body=None,
+            )
+            await session.commit()
+
+        protocol_body = (
+            '{"error":{"message":"The reasoning_content in the thinking mode '
+            'must be passed back to the API."}}'
+        )
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            # 活体调用：思考协议 400
+            _FakeResponse(status_code=400, text=protocol_body),
+            # 重探基线：同样的 400 → 切候选
+            _FakeResponse(status_code=400, text=protocol_body),
+            # 重探候选 1：成功
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "7"}}]},
+            ),
+            # 活体重试：成功
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "recovered"}}]},
+            ),
+        ]
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await request_chat_completion(
+                    profile,
+                    {
+                        "model": profile.model_name,
+                        "messages": [{"role": "user", "content": "ping"}],
+                    },
+                    session=session,
+                )
+                await session.commit()
+
+        self.assertEqual(result.content, "recovered")
+        self.assertEqual(len(calls), 4)
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+            )
+        self.assertTrue(hit)
+        self.assertEqual(value, {"thinking": {"type": "disabled"}})
+
+    async def test_non_thinking_400_does_not_heal(self) -> None:
+        from app.modules.llm.adaptation.endpoint import record_endpoint_adaptation
+        from app.modules.llm.adaptation.thinking import record_thinking_adaptation
+
+        profile = self._profile()
+        async with self.session_factory() as session:
+            await record_endpoint_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+            )
+            await record_thinking_adaptation(
+                session,
+                api_base_url=profile.api_base_url or "",
+                model_name=profile.model_name,
+                endpoint_kind="chat_completions",
+                learned_extra_body={"enable_thinking": False},
+            )
+            await session.commit()
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=400,
+                text='{"error":{"message":"Not supported model"}}',
+            ),
+        ]
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *args, **kwargs: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                with self.assertRaises(LLMRuntimeError):
+                    await request_chat_completion(
+                        profile,
+                        {
+                            "model": profile.model_name,
+                            "messages": [{"role": "user", "content": "ping"}],
+                        },
+                        session=session,
+                    )
+
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

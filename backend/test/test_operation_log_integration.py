@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.modules.llm.adaptation.thinking import THINKING_PROBE_VERSION
 from app.modules.llm.runtime import LLMRuntimeAdaptation
 
 
@@ -225,13 +226,15 @@ class OperationLogIntegrationTests(unittest.TestCase):
             connection.execute(
                 """
                 INSERT INTO thinking_adaptation_cache
-                    (api_base_url, model_name, endpoint_kind, learned_extra_body)
-                VALUES (?, ?, ?, ?)
+                    (api_base_url, model_name, endpoint_kind, probe_version,
+                     learned_extra_body)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     "https://llm-user:llm-password@switch.example.com/v1",
                     "gpt-4o-mini",
                     "chat_completions",
+                    THINKING_PROBE_VERSION,
                     None,
                 ),
             )

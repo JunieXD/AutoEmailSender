@@ -16,6 +16,11 @@ from typing import Final, Literal
 
 EndpointKind = Literal["chat_completions", "responses"]
 
+# Bump to invalidate every thinking_adaptation_cache row learned by an older
+# probe: lookup filters on this version, and stale rows are re-probed and
+# overwritten on first use. Version 2 fixes candidates whose successful
+# disable removed the reasoning_tokens field being judged "not better".
+THINKING_PROBE_VERSION: Final[int] = 2
 
 THINKING_PROTOCOL_ERROR_KEYWORDS: Final[tuple[str, ...]] = (
     "reasoning_content",
@@ -92,7 +97,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ThinkingAdaptationCache
 from app.models import LLMProfile
-from ..runtime import LLMRuntimeError
+from ..runtime import LLMEmptyContentError, LLMRuntimeError
 
 
 async def get_cached_extra_body(
@@ -101,8 +106,12 @@ async def get_cached_extra_body(
     api_base_url: str,
     model_name: str,
     endpoint_kind: EndpointKind = "chat_completions",
+    probe_version: int = THINKING_PROBE_VERSION,
 ) -> tuple[bool, dict[str, object] | None]:
     """Look up the cached extra_body for a (base_url, model_name, endpoint) target.
+
+    Only rows written by the current ``probe_version`` count as hits; rows
+    learned by older probes are ignored so the next call re-probes.
 
     Returns ``(hit, value)`` where ``hit`` is True if a row exists (even if the
     stored value is ``None``, which positively means "we tried and the model
@@ -114,6 +123,7 @@ async def get_cached_extra_body(
             ThinkingAdaptationCache.api_base_url == api_base_url,
             ThinkingAdaptationCache.model_name == model_name,
             ThinkingAdaptationCache.endpoint_kind == endpoint_kind,
+            ThinkingAdaptationCache.probe_version == probe_version,
         )
     )
     if row is None:
@@ -129,6 +139,7 @@ async def record_thinking_adaptation(
     model_name: str,
     endpoint_kind: str = "chat_completions",
     learned_extra_body: dict[str, object] | None,
+    probe_version: int = THINKING_PROBE_VERSION,
 ) -> None:
     """Insert or update the cache row for a ``(base_url, model_name, endpoint)`` target.
 
@@ -141,6 +152,7 @@ async def record_thinking_adaptation(
         api_base_url=api_base_url,
         model_name=model_name,
         endpoint_kind=endpoint_kind,
+        probe_version=probe_version,
         learned_extra_body=learned_value,
         probed_at=now,
         updated_at=now,
@@ -153,6 +165,7 @@ async def record_thinking_adaptation(
                 ThinkingAdaptationCache.endpoint_kind,
             ],
             set_={
+                "probe_version": statement.excluded.probe_version,
                 "learned_extra_body": statement.excluded.learned_extra_body,
                 "probed_at": statement.excluded.probed_at,
                 "updated_at": now,
@@ -223,35 +236,74 @@ def _looks_like_thinking_enabled(result: object) -> bool:
     return completion_tokens is not None and completion_tokens > 32
 
 
-def _is_better_thinking_disable_result(
+def _completion_halved(
+    candidate_completion: int | None,
+    baseline_completion: int | None,
+) -> bool:
+    """True when completion tokens clearly dropped below half the baseline.
+
+    Providers count thinking tokens inside ``completion_tokens``, so a drop
+    this large is a real reduction; anything smaller is run-to-run noise.
+    """
+
+    return (
+        candidate_completion is not None
+        and baseline_completion is not None
+        and candidate_completion * 2 < baseline_completion
+    )
+
+
+def _candidate_rank(
     *,
     candidate_result: object,
     baseline_result: object,
-) -> bool:
+) -> tuple[int, int, int] | None:
+    """Rank one disable candidate against the thinking-enabled baseline.
+
+    Two tiers, because some models offer no way to turn thinking off and the
+    best available reduction is still worth learning:
+
+    - Tier 0 (thinking off): the candidate reports ``reasoning_tokens == 0``,
+      or the report disappears — providers omit the field entirely once no
+      reasoning happened — while completion tokens clearly drop. A missing
+      field after a successful disable is positive evidence, not missing data.
+    - Tier 1 (partial reduce): reasoning tokens clearly drop but stay > 0.
+
+    Returns a sort key (smaller is better) or ``None`` when the candidate is
+    no better than the baseline.
+    """
+
     candidate_reasoning = _usage_reasoning_tokens(candidate_result)
     baseline_reasoning = _usage_reasoning_tokens(baseline_result)
     candidate_completion = _usage_completion_tokens(candidate_result)
     baseline_completion = _usage_completion_tokens(baseline_result)
-    if candidate_reasoning is not None or baseline_reasoning is not None:
-        if candidate_reasoning is None:
-            return False
-        if baseline_reasoning is None:
-            return candidate_reasoning == 0 and (
-                candidate_completion is not None
-                and (
-                    baseline_completion is None
-                    or candidate_completion < baseline_completion
-                )
-            )
-        if candidate_reasoning != baseline_reasoning:
-            return candidate_reasoning < baseline_reasoning
-        if candidate_completion is None or baseline_completion is None:
-            return False
-        return candidate_completion < baseline_completion
 
-    if candidate_completion is None or baseline_completion is None:
-        return False
-    return candidate_completion < baseline_completion
+    if candidate_reasoning == 0:
+        return (0, candidate_completion or 0, 0)
+
+    if (
+        candidate_reasoning is None
+        and baseline_reasoning is not None
+        and baseline_reasoning > 0
+        and _completion_halved(candidate_completion, baseline_completion)
+    ):
+        return (0, candidate_completion, 0)
+
+    if (
+        candidate_reasoning is not None
+        and baseline_reasoning is not None
+        and candidate_reasoning * 2 < baseline_reasoning
+    ):
+        return (1, candidate_reasoning, candidate_completion or 0)
+
+    if (
+        candidate_reasoning is None
+        and baseline_reasoning is None
+        and _completion_halved(candidate_completion, baseline_completion)
+    ):
+        return (1, candidate_completion, 0)
+
+    return None
 
 
 def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
@@ -268,7 +320,10 @@ def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
             {"role": "user", "content": "我让你记的数字是几？只回复数字。"},
         ],
         "temperature": 0,
-        "max_tokens": probe_max_tokens_for_profile(profile, fallback=16),
+        # 48 keeps the budget above the >32 completion heuristic in
+        # _looks_like_thinking_enabled: providers that enforce max_tokens over
+        # thinking output must still be able to show a thinking-sized bill.
+        "max_tokens": probe_max_tokens_for_profile(profile, fallback=48),
     }
 
 
@@ -313,12 +368,12 @@ async def probe_and_learn_extra_body(
             # 两种"思考模式信号"会触发候选切换：
             #   1. HTTP 400 + 协议错关键词（典型：reasoning_content must be passed back）
             #   2. HTTP 200 但 content 为空——思考模型把回答塞进 reasoning_content，
-            #      content 留空，request_chat_completion 因此抛 "模型返回了空内容"
+            #      content 留空（LLMEmptyContentError，任何文案变体都算）
             is_protocol_400 = (
                 exc.status_code == 400
                 and is_thinking_mode_protocol_error(exc.status_code or 0, str(exc))
             )
-            is_empty_content_200 = exc.status_code == 200 and "空内容" in str(exc)
+            is_empty_content_200 = isinstance(exc, LLMEmptyContentError)
             if not (is_protocol_400 or is_empty_content_200):
                 raise
             if index == len(attempts) - 1:
@@ -332,7 +387,7 @@ async def probe_and_learn_extra_body(
         if candidate is None and _looks_like_thinking_enabled(completion):
             baseline_completion = completion
             best_candidate: dict[str, object] | None = None
-            best_completion = completion
+            best_rank: tuple[int, int, int] | None = None
             for disable_candidate in THINKING_DISABLE_CANDIDATES:
                 try:
                     disable_completion = await _request_completion_endpoint(
@@ -343,15 +398,15 @@ async def probe_and_learn_extra_body(
                     )
                 except LLMRuntimeError:
                     continue
-                if _is_better_thinking_disable_result(
+                rank = _candidate_rank(
                     candidate_result=disable_completion,
                     baseline_result=baseline_completion,
-                ) and _is_better_thinking_disable_result(
-                    candidate_result=disable_completion,
-                    baseline_result=best_completion,
-                ):
+                )
+                if rank is None:
+                    continue
+                if best_rank is None or rank < best_rank:
                     best_candidate = disable_candidate
-                    best_completion = disable_completion
+                    best_rank = rank
             await record_thinking_adaptation(
                 session,
                 api_base_url=resolve_base_url_for_cache(profile.api_base_url),
@@ -436,6 +491,7 @@ async def resolve_thinking_extra_body(profile: LLMProfile) -> dict[str, object] 
 __all__ = [
     "EndpointKind",
     "THINKING_DISABLE_CANDIDATES",
+    "THINKING_PROBE_VERSION",
     "THINKING_PROTOCOL_ERROR_KEYWORDS",
     "ThinkingAdaptationFailed",
     "ensure_thinking_adaptation",

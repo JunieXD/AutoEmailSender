@@ -307,7 +307,8 @@ LLM 端点协议自适应缓存表。按 `(api_base_url, model_name)` 维度记�
 | `api_base_url` | VARCHAR(500) NOT NULL | 模型 API 入口（已 strip 末尾 `/`） |
 | `model_name` | VARCHAR(255) NOT NULL | 模型 ID（如 `deepseek-chat`、`qwen3-32b`） |
 | `endpoint_kind` | VARCHAR(32) NOT NULL | 对应的端点协议类型 |
-| `learned_extra_body` | JSON NULL | 探活成功时使用的 `extra_body` 字典；NULL 表示该模型无需 `extra_body`（已确认） |
+| `probe_version` | INTEGER NOT NULL DEFAULT 1 | 学习该行时的探测逻辑版本；查找只命中当前版本，旧版本行会被重新探测并覆盖 |
+| `learned_extra_body` | JSON NULL | 探活成功时使用的 `extra_body` 字典；NULL 表示该模型无需 `extra_body`（已确认）。无法完全关闭思考的模型会存"减幅最大"的候选 |
 | `probed_at` | DATETIME NOT NULL | 上次探活完成的时间 |
 | `created_at` | DATETIME NOT NULL | 行创建时间 |
 | `updated_at` | DATETIME NOT NULL | 最后一次更新时间，行更新时由 ORM 自动写 |
@@ -324,6 +325,8 @@ LLM 端点协议自适应缓存表。按 `(api_base_url, model_name)` 维度记�
 - 抓取启动前会调用 `app.modules.llm.adaptation.thinking.ensure_thinking_adaptation`：缓存命中直接返回，未命中则触发一次"3 轮多轮探活 + 候选 `extra_body` 切换"，找到的值随当前 session 的 commit 一起落库。
 - 测活路径 `POST /api/llm-profiles/{id}/test` 在单轮探活成功后也会触发 `ensure_thinking_adaptation`，让用户在保存模型后第一次点测试时就能完成学习；预览测活 `POST /api/llm-profiles/preview/test` 不传 session，不会写缓存。
 - 候选 `extra_body` 列表见 `app/modules/llm/adaptation/thinking.py` 的 `THINKING_DISABLE_CANDIDATES`（当前覆盖 `thinking={"type":"disabled"}` / `enable_thinking=False` / `reasoning={"effort":"off"}` / `thinking_budget=0`）。
+- 候选比较是两级排序（`_candidate_rank`）：能让思考归零的候选（`reasoning_tokens` 报 0，或关闭成功后该字段消失且 completion 明显下降）优先；无法归零的模型学习"减幅过半"的最佳候选；噪声级波动不学习。
+- 活体调用失败自愈：`request_chat_completion` 命中思考协议 400 或"带已学 extra_body 仍空内容"时，会失效缓存行、重新探测并重试一次（每调用至多一次），避免坏缓存永久生效。
 - 如果候选列表全部用尽仍失败，会抛 `ThinkingAdaptationFailed`，抓取任务被标 FAILED，并在 `error_message` 中提示用户在 GitHub 上报。
 - 当前 page/chunk/enrichment worker 统一通过 crawler 的结构化输出适配层调用模型；失败由 worker retry 与 scheduler 终态逻辑记录，不存在旧 Agent 的独立失败分支。
 

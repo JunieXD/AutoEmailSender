@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.core.time import utc_now
-
-from sqlalchemy import JSON, String, UniqueConstraint, text
+from sqlalchemy import JSON, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import utc_now
 from app.models.base import Base
 from app.models.types import UTCDateTime
 
@@ -28,6 +27,11 @@ class ThinkingAdaptationCache(Base):
     api_base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     endpoint_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    probe_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+    )
     learned_extra_body: Mapped[dict[str, object] | None] = mapped_column(
         JSON,
         nullable=True,

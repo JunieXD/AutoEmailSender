@@ -542,6 +542,15 @@ class LLMEndpointProtocolError(LLMRuntimeError):
         self.response_envelope = response_envelope
 
 
+class LLMEmptyContentError(LLMRuntimeError):
+    """HTTP 200 but the response carried no usable text content.
+
+    Thinking models park the answer in ``reasoning_content`` and leave
+    ``content`` empty. Callers classify this exception instead of matching
+    message wording, so diagnostic phrasing can evolve freely.
+    """
+
+
 @dataclass(slots=True)
 class ChatCompletionUsage:
     prompt_tokens: int | None = None
@@ -1367,7 +1376,7 @@ async def _request_completion_endpoint(
             # content 为空字符串。这种情况视为"模型可达"，不抛错。
             content = "" if not isinstance(content, str) else content
         else:
-            raise LLMRuntimeError(
+            raise LLMEmptyContentError(
                 _empty_content_error_message(profile, data, endpoint_kind),
                 request_url=url,
                 endpoint_kind=endpoint_kind,
@@ -1507,6 +1516,53 @@ def _merge_protocol_error_attempts(
     ]
 
 
+async def _heal_stale_thinking_adaptation(
+    session: "AsyncSession",
+    profile: LLMProfile,
+    adaptation: LLMRuntimeAdaptation,
+    error: LLMRuntimeError,
+) -> LLMRuntimeAdaptation | None:
+    """Re-learn the thinking extra_body when a live call hits a thinking signal.
+
+    Two failure shapes count: the replay-protocol 400 (classified by
+    ``is_thinking_mode_protocol_error``) and an empty-content 200 that arrived
+    while a learned disable extra_body was active. The second gate keeps
+    models that randomly exhaust their budget on every call from re-probing
+    each time. Returns a fresh adaptation to retry with, or ``None`` to
+    surface the original error.
+    """
+
+    from .adaptation.thinking import (
+        ThinkingAdaptationFailed,
+        invalidate_thinking_adaptation,
+        is_thinking_mode_protocol_error,
+    )
+
+    is_protocol_400 = is_thinking_mode_protocol_error(
+        error.status_code or 0,
+        str(error),
+    )
+    is_stale_empty_content = (
+        isinstance(error, LLMEmptyContentError)
+        and adaptation.thinking_extra_body is not None
+    )
+    if not (is_protocol_400 or is_stale_empty_content):
+        return None
+    invalidated = await invalidate_thinking_adaptation(
+        session,
+        api_base_url=resolve_base_url(profile.api_base_url),
+        model_name=profile.model_name,
+        endpoint_kind=adaptation.endpoint_kind,
+        expected_extra_body=adaptation.thinking_extra_body,
+    )
+    if not invalidated:
+        return None
+    try:
+        return await ensure_llm_runtime_adaptation(session, profile)
+    except (LLMRuntimeError, ThinkingAdaptationFailed):
+        return None
+
+
 async def request_chat_completion(
     profile: LLMProfile,
     payload: dict[str, object],
@@ -1588,6 +1644,34 @@ async def request_chat_completion(
             )
             return completion
         except LLMRuntimeError as runtime_error:
+            healed_adaptation = await _heal_stale_thinking_adaptation(
+                session,
+                profile,
+                active_adaptation,
+                runtime_error,
+            )
+            if healed_adaptation is not None:
+                try:
+                    completion = await _request_completion_endpoint(
+                        profile,
+                        payload,
+                        endpoint_kind=healed_adaptation.endpoint_kind,
+                        extra_body=healed_adaptation.thinking_extra_body,
+                        allow_empty_content=allow_empty_content,
+                    )
+                except LLMRuntimeError as retry_error:
+                    retry_error.attempted_urls = _merge_attempted_urls(
+                        active_adaptation.endpoint_attempted_urls,
+                        healed_adaptation.endpoint_attempted_urls,
+                        retry_error.attempted_urls,
+                    )
+                    raise
+                completion.attempted_urls = _merge_attempted_urls(
+                    active_adaptation.endpoint_attempted_urls,
+                    healed_adaptation.endpoint_attempted_urls,
+                    completion.attempted_urls,
+                )
+                return completion
             runtime_error.attempted_urls = [
                 *active_adaptation.endpoint_attempted_urls,
                 *runtime_error.attempted_urls,
@@ -2874,6 +2958,7 @@ __all__ = [
     "DraftTokenEstimate",
     "GeneratedDraftContent",
     "GeneratedMatchEvaluation",
+    "LLMEmptyContentError",
     "LLMEndpointProtocolError",
     "LLMModelCatalogResult",
     "LLMProbeResult",

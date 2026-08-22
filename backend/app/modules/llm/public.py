@@ -25,6 +25,7 @@ from .adaptation.structured_output import (
 )
 from .adaptation.thinking import (
     THINKING_DISABLE_CANDIDATES,
+    THINKING_PROBE_VERSION,
     THINKING_PROTOCOL_ERROR_KEYWORDS,
     ThinkingAdaptationFailed,
     ensure_thinking_adaptation,
@@ -61,6 +62,7 @@ __all__ = [
     "STRUCTURED_OUTPUT_PROBE_VERSION",
     "StructuredOutputMode",
     "THINKING_DISABLE_CANDIDATES",
+    "THINKING_PROBE_VERSION",
     "THINKING_PROTOCOL_ERROR_KEYWORDS",
     "ThinkingAdaptationFailed",
     "classify_response_envelope",

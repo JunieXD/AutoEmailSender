@@ -3501,10 +3501,14 @@ class DatabaseSchemaTests(unittest.TestCase):
                 "model_name",
                 "learned_extra_body",
                 "endpoint_kind",
+                "probe_version",
                 "probed_at",
                 "created_at",
                 "updated_at",
             }.issubset(thinking_cache_columns),
+        )
+        self.assertTrue(
+            self._is_column_not_null("thinking_adaptation_cache", "probe_version"),
         )
         self.assertTrue(
             {

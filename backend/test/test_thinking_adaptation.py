@@ -521,7 +521,9 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(_build_probe_payload(profile)["max_tokens"], 128)
 
-        self.assertEqual(_build_probe_payload(self._profile())["max_tokens"], 16)
+        # 非 StepFun 的预算是 48：必须高于 _looks_like_thinking_enabled
+        # 的 >32 阈值，严格执行 max_tokens 的端点才能暴露思考开销
+        self.assertEqual(_build_probe_payload(self._profile())["max_tokens"], 48)
 
     async def test_silent_thinking_model_selects_lower_token_candidate(self) -> None:
         from unittest.mock import patch
@@ -814,7 +816,7 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         # 思考模型在第 1 次调用时返回 HTTP 200，但 content 为空（思考内容塞进了 reasoning_content）
-        # → request_chat_completion 抛 LLMRuntimeError("模型返回了空内容", status_code=200)
+        # → request_chat_completion 抛 LLMEmptyContentError(status_code=200)
         # → probe_and_learn_extra_body 应识别为思考模式信号，切候选 1 重试
         from unittest.mock import patch
 
@@ -858,6 +860,473 @@ class ProbeAndLearnTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertTrue(hit)
         self.assertEqual(value, {"thinking": {"type": "disabled"}})
+
+    async def test_stepfun_empty_content_variant_triggers_candidate_switch(
+        self,
+    ) -> None:
+        # StepFun 文案变体（"仅返回了推理内容"）不含"空内容"子串：
+        # 识别必须基于 LLMEmptyContentError 类型而不是错误文案
+        from unittest.mock import patch
+
+        from app.models import LLMProfile
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.modules.llm.adaptation.thinking import probe_and_learn_extra_body
+
+        profile = LLMProfile(
+            name="stepfun",
+            provider="openai",
+            api_base_url="https://api.stepfun.com/v1",
+            api_key="sk-test",
+            model_name="step-3.5-flash",
+        )
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "",
+                                "reasoning": "让我想一想……",
+                            },
+                            "finish_reason": "length",
+                        }
+                    ],
+                },
+            ),
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "7"}}]},
+            ),
+        ]
+
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, profile)
+                await session.commit()
+
+        self.assertEqual(result, {"thinking": {"type": "disabled"}})
+        self.assertEqual(len(calls), 2)
+
+    async def test_successful_disable_without_reasoning_field_is_learned(self) -> None:
+        # 回归：阿里云式端点只在思考发生时才返回 completion_tokens_details；
+        # 关闭成功后该字段整体消失（reasoning=None）。旧逻辑把"字段消失"
+        # 当成信息缺失而拒绝候选，导致学到 null、思考永远关不掉。
+        from unittest.mock import patch
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.modules.llm.adaptation.thinking import (
+            get_cached_extra_body,
+            probe_and_learn_extra_body,
+        )
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            # 基线：思考开启，reasoning 198
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 204,
+                        "total_tokens": 217,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 198,
+                            "text_tokens": 204,
+                        },
+                    },
+                },
+            ),
+            # 候选 1 thinking={"type":"disabled"}：生效，usage 不再带 details
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 15,
+                        "completion_tokens": 1,
+                        "total_tokens": 16,
+                    },
+                },
+            ),
+            # 候选 2 enable_thinking=False：生效
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 15,
+                        "completion_tokens": 2,
+                        "total_tokens": 17,
+                    },
+                },
+            ),
+            # 候选 3 reasoning={"effort":"off"}：被忽略，思考仍在
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 200,
+                        "total_tokens": 213,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 194,
+                            "text_tokens": 200,
+                        },
+                    },
+                },
+            ),
+            # 候选 4 reasoning_effort="low"：轻微减少（噪声级）
+            _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 13,
+                        "completion_tokens": 195,
+                        "total_tokens": 208,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 189,
+                            "text_tokens": 195,
+                        },
+                    },
+                },
+            ),
+            # 候选 5 thinking_budget=0：端点报参数错误
+            _FakeResponse(
+                status_code=400,
+                text='{"error":{"code":"invalid_parameter_error","message":"The thinking_budget parameter must be a positive integer"}}',
+            ),
+        ]
+
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, self._profile())
+                await session.commit()
+
+        # 归零候选里 completion 最小者胜出
+        self.assertEqual(result, {"thinking": {"type": "disabled"}})
+        self.assertEqual(len(calls), 6)
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+            )
+        self.assertTrue(hit)
+        self.assertEqual(value, {"thinking": {"type": "disabled"}})
+
+    async def test_model_without_disable_support_learns_best_reducer(self) -> None:
+        # 有些模型不提供完全关闭思考的开关，只能尽可能减少：
+        # 所有候选都无法归零时应学习减幅最大的候选，而不是放弃（null）。
+        from unittest.mock import patch
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.modules.llm.adaptation.thinking import (
+            get_cached_extra_body,
+            probe_and_learn_extra_body,
+        )
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        base_usage = {
+            "prompt_tokens": 13,
+            "total_tokens": 213,
+        }
+
+        def think_response(reasoning: int) -> _FakeResponse:
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        **base_usage,
+                        "completion_tokens": reasoning + 6,
+                        "completion_tokens_details": {"reasoning_tokens": reasoning},
+                    },
+                },
+            )
+
+        responses = [
+            think_response(194),  # 基线
+            think_response(190),  # thinking 无效
+            think_response(192),  # enable_thinking 无效
+            think_response(188),  # reasoning off 无效
+            think_response(40),  # reasoning_effort low：显著减少
+            _FakeResponse(  # thinking_budget=0 报错
+                status_code=400,
+                text='{"error":{"message":"The thinking_budget parameter must be a positive integer"}}',
+            ),
+        ]
+
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, self._profile())
+                await session.commit()
+
+        self.assertEqual(result, {"reasoning_effort": "low"})
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+            )
+        self.assertTrue(hit)
+        self.assertEqual(value, {"reasoning_effort": "low"})
+
+    async def test_noise_level_reduction_is_not_learned(self) -> None:
+        # 噪声级的波动（194 → 189，未过半）不应被误学为有效的关闭/减量参数
+        from unittest.mock import patch
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.modules.llm.adaptation.thinking import probe_and_learn_extra_body
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+
+        def think_response(reasoning: int, completion: int | None = None) -> _FakeResponse:
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 13,
+                        "completion_tokens": completion if completion is not None else reasoning + 6,
+                        "total_tokens": 213,
+                        "completion_tokens_details": {"reasoning_tokens": reasoning},
+                    },
+                },
+            )
+
+        def vanished_response(completion: int) -> _FakeResponse:
+            # 字段消失但 completion 没有明显下降：不能判为已关闭
+            return _FakeResponse(
+                status_code=200,
+                payload={
+                    "choices": [{"message": {"content": "7"}}],
+                    "usage": {
+                        "prompt_tokens": 13,
+                        "completion_tokens": completion,
+                        "total_tokens": 213,
+                    },
+                },
+            )
+
+        responses = [
+            think_response(194),  # 基线
+            vanished_response(196),  # thinking：无变化
+            vanished_response(197),  # enable_thinking：无变化
+            think_response(189),  # reasoning off：噪声级下降
+            think_response(189),  # reasoning_effort：噪声级下降
+            think_response(190),  # thinking_budget（此处不报错）
+        ]
+
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, self._profile())
+                await session.commit()
+
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 6)
+
+    async def test_legacy_probe_version_row_is_ignored_and_relearned(self) -> None:
+        # 旧版探测写入的行（probe_version=1）必须被视为未命中并重新学习，
+        # 这样修复上线后存量错误缓存能自愈
+        from unittest.mock import patch
+
+        from sqlalchemy import text as sql_text
+
+        from test.test_llm_runtime import _FakeAsyncClient, _FakeResponse
+
+        from app.modules.llm.adaptation.thinking import (
+            THINKING_PROBE_VERSION,
+            get_cached_extra_body,
+            probe_and_learn_extra_body,
+        )
+
+        async with self.session_factory() as session:
+            await session.execute(
+                sql_text(
+                    "INSERT INTO thinking_adaptation_cache "
+                    "(api_base_url, model_name, endpoint_kind, probe_version, "
+                    "learned_extra_body) VALUES "
+                    "('https://api.acme.ai/v1', 'acme-think-v1', "
+                    "'chat_completions', 1, NULL)"
+                )
+            )
+            await session.commit()
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+            )
+        self.assertFalse(hit)
+        self.assertIsNone(value)
+
+        calls: list[tuple[str, dict[str, object] | None]] = []
+        responses = [
+            _FakeResponse(
+                status_code=200,
+                payload={"choices": [{"message": {"content": "7"}}]},
+            ),
+        ]
+        with patch(
+            "app.modules.llm.runtime.httpx.AsyncClient",
+            side_effect=lambda *a, **kw: _FakeAsyncClient(responses, calls),
+        ):
+            async with self.session_factory() as session:
+                result = await probe_and_learn_extra_body(session, self._profile())
+                await session.commit()
+
+        self.assertIsNone(result)
+
+        async with self.session_factory() as session:
+            hit, value = await get_cached_extra_body(
+                session,
+                api_base_url="https://api.acme.ai/v1",
+                model_name="acme-think-v1",
+            )
+            version = await session.scalar(
+                sql_text(
+                    "SELECT probe_version FROM thinking_adaptation_cache "
+                    "WHERE api_base_url='https://api.acme.ai/v1' "
+                    "AND model_name='acme-think-v1'"
+                )
+            )
+            rows = await session.scalar(
+                sql_text(
+                    "SELECT COUNT(*) FROM thinking_adaptation_cache "
+                    "WHERE api_base_url='https://api.acme.ai/v1' "
+                    "AND model_name='acme-think-v1'"
+                )
+            )
+        self.assertTrue(hit)
+        self.assertIsNone(value)
+        self.assertEqual(version, THINKING_PROBE_VERSION)
+        self.assertEqual(rows, 1)
+
+
+class CandidateRankTests(unittest.TestCase):
+    """_candidate_rank：两级排序（归零优先，减量兜底），缺失字段语义正确。"""
+
+    class _Usage:
+        def __init__(
+            self,
+            completion_tokens: int | None,
+            reasoning_tokens: int | None,
+        ) -> None:
+            self.completion_tokens = completion_tokens
+            self.reasoning_tokens = reasoning_tokens
+
+    class _Result:
+        def __init__(self, usage: "CandidateRankTests._Usage | None") -> None:
+            self.usage = usage
+
+    @staticmethod
+    def _result(
+        completion_tokens: int | None,
+        reasoning_tokens: int | None = None,
+        with_usage: bool = True,
+    ) -> object:
+        if not with_usage:
+            return CandidateRankTests._Result(None)
+        return CandidateRankTests._Result(
+            CandidateRankTests._Usage(completion_tokens, reasoning_tokens)
+        )
+
+    def _rank(self, candidate: object, baseline: object) -> tuple[int, int, int] | None:
+        from app.modules.llm.adaptation.thinking import _candidate_rank
+
+        return _candidate_rank(
+            candidate_result=candidate,
+            baseline_result=baseline,
+        )
+
+    def test_explicit_zero_reasoning_is_tier_zero(self) -> None:
+        rank = self._rank(
+            self._result(2, reasoning_tokens=0),
+            self._result(204, reasoning_tokens=198),
+        )
+        self.assertEqual(rank, (0, 2, 0))
+
+    def test_vanished_reasoning_field_with_halved_completion_is_tier_zero(self) -> None:
+        # 核心回归：关闭成功后端点不再返回 reasoning_tokens，
+        # 该字段缺失 + completion 明显下降 = 已关闭，而不是"信息不足"
+        rank = self._rank(
+            self._result(1, reasoning_tokens=None),
+            self._result(204, reasoning_tokens=198),
+        )
+        self.assertEqual(rank, (0, 1, 0))
+
+    def test_vanished_reasoning_field_without_real_drop_is_rejected(self) -> None:
+        rank = self._rank(
+            self._result(196, reasoning_tokens=None),
+            self._result(194, reasoning_tokens=198),
+        )
+        self.assertIsNone(rank)
+
+    def test_halved_reasoning_is_tier_one(self) -> None:
+        rank = self._rank(
+            self._result(46, reasoning_tokens=40),
+            self._result(204, reasoning_tokens=198),
+        )
+        self.assertEqual(rank, (1, 40, 46))
+
+    def test_noise_level_reasoning_reduction_is_rejected(self) -> None:
+        rank = self._rank(
+            self._result(195, reasoning_tokens=189),
+            self._result(200, reasoning_tokens=194),
+        )
+        self.assertIsNone(rank)
+
+    def test_tier_zero_beats_smaller_tier_one(self) -> None:
+        disable = self._rank(
+            self._result(80, reasoning_tokens=0),
+            self._result(204, reasoning_tokens=198),
+        )
+        reduce = self._rank(
+            self._result(10, reasoning_tokens=5),
+            self._result(204, reasoning_tokens=198),
+        )
+        assert disable is not None and reduce is not None
+        self.assertLess(disable, reduce)
+
+    def test_completion_only_heuristic_halved_is_tier_one(self) -> None:
+        # 不报告 reasoning_tokens 的端点：completion 减半视为有效减量
+        rank = self._rank(
+            self._result(40, reasoning_tokens=None),
+            self._result(200, reasoning_tokens=None),
+        )
+        self.assertEqual(rank, (1, 40, 0))
+
+    def test_missing_usage_is_rejected(self) -> None:
+        rank = self._rank(
+            self._result(None, with_usage=False),
+            self._result(204, reasoning_tokens=198),
+        )
+        self.assertIsNone(rank)
 
 
 class EnsureThinkingAdaptationTests(unittest.IsolatedAsyncioTestCase):
