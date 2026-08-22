@@ -1231,19 +1231,22 @@ export const BackgroundTasksPage = ({
       setLoading(true);
     }
     try {
-      const data = await listBatchTasks({
-        identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
-        view: taskListViews.batch,
-      });
-      const currentData =
-        taskListViews.batch === "current"
-          ? data
-          : await listBatchTasks({
+      const isCurrentView = taskListViews.batch === "current";
+      const [data, currentViewData] = await Promise.all([
+        listBatchTasks({
+          identityId: selectedIdentityId,
+          llmProfileId: selectedLlmProfileId,
+          view: taskListViews.batch,
+        }),
+        isCurrentView
+          ? null
+          : listBatchTasks({
               identityId: selectedIdentityId,
               llmProfileId: selectedLlmProfileId,
               view: "current",
-            });
+            }),
+      ]);
+      const currentData = isCurrentView ? data : (currentViewData ?? data);
       if (
         latestTasksRequestIdRef.current !== requestId ||
         activeTasksRequestKeyRef.current !== tasksRequestKey
