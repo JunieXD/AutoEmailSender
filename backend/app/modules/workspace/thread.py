@@ -126,6 +126,7 @@ async def _build_workspace_thread_read(
     llm_profile: LLMProfile,
     current_task: EmailTask | None,
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
+    include_communication_events: bool = True,
 ) -> WorkspaceThreadRead:
     materials = await list_global_materials(session)
     selected_template = await get_default_outreach_template_for_identity(
@@ -158,12 +159,14 @@ async def _build_workspace_thread_read(
         active_identity_id=identity.id,
         professor_id=professor.id,
     )
-    communication_events = await load_communication_events(
-        session,
-        identity_ids=communication_scope.identity_ids,
-        professor_ids=[professor.id],
-        include_professors=False,
-    )
+    communication_events: list[CommunicationEvent] = []
+    if include_communication_events:
+        communication_events = await load_communication_events(
+            session,
+            identity_ids=communication_scope.identity_ids,
+            professor_ids=[professor.id],
+            include_professors=False,
+        )
     draft_logs: list[EmailLog] = []
     if current_task is not None:
         draft_logs = list(
@@ -391,6 +394,7 @@ async def build_workspace_thread_for_task(
     session: AsyncSession,
     *,
     task_id: int,
+    include_communication_events: bool = True,
 ) -> WorkspaceThreadRead:
     current_task = await _get_email_task_for_workspace_thread(session, task_id)
     if current_task is None:
@@ -412,6 +416,7 @@ async def build_workspace_thread_for_task(
         identity=identity,
         llm_profile=llm_profile,
         current_task=current_task,
+        include_communication_events=include_communication_events,
     )
 
 

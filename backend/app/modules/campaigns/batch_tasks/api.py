@@ -760,7 +760,11 @@ async def get_batch_task_item_thread(
     session: AsyncSession = Depends(get_async_session),
 ) -> WorkspaceThreadRead:
     await _get_batch_task_item(session, task_id, item_id)
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post(
@@ -807,7 +811,11 @@ async def regenerate_batch_task_item_draft(
         item_id,
         lambda: regenerate_task_draft(get_session_factory(), item_id),
     )
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post(
@@ -825,7 +833,11 @@ async def rewrite_batch_task_item_draft(
         item_id,
         lambda: rewrite_task_draft(get_session_factory(), item_id, payload),
     )
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post(
@@ -848,7 +860,11 @@ async def update_batch_task_item_outreach_config(
             outreach_template_id=payload.outreach_template_id,
         ),
     )
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post("/{task_id}/items/{item_id}/approve", response_model=WorkspaceThreadRead)
@@ -864,7 +880,11 @@ async def approve_batch_task_item_draft(
         item_id,
         lambda: approve_draft_task(get_session_factory(), item_id, payload),
     )
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post(
@@ -882,7 +902,11 @@ async def approve_and_send_batch_task_item_draft(
         item_id,
         lambda: approve_and_send_task(get_session_factory(), item_id, payload),
     )
-    return await build_workspace_thread_for_task(session, task_id=item_id)
+    return await build_workspace_thread_for_task(
+        session,
+        task_id=item_id,
+        include_communication_events=False,
+    )
 
 
 @router.post("/{task_id}/pause", response_model=BatchTaskActionResponse)

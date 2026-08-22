@@ -8012,7 +8012,7 @@ class ApiEndpointTests(unittest.TestCase):
                 },
             )
         payload = self.client.get(
-            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+            f"/api/email-tasks/{task_id}/thread"
         ).json()
         self.assertEqual(workspace_after.status_code, 200)
         self.assertEqual(payload["current_task"]["status"], "sent")
@@ -10352,7 +10352,7 @@ class ApiEndpointTests(unittest.TestCase):
             )
 
         replied_workspace = self.client.get(
-            f"/api/batch-tasks/{batch_task_id}/items/{task_id}/thread"
+            f"/api/email-tasks/{task_id}/thread"
         ).json()
         self.assertEqual(replied_workspace["current_task"]["status"], "reply_detected")
         self.assertTrue(replied_workspace["current_task"]["is_replied"])
