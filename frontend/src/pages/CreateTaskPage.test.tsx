@@ -178,7 +178,13 @@ describe("CreateTaskPage", () => {
     });
     window.localStorage.clear();
     window.sessionStorage.setItem("selected_professor_ids", JSON.stringify([selectedProfessor.id]));
-    listProfessorsMock.mockResolvedValue([selectedProfessor]);
+    listProfessorsMock.mockResolvedValue({
+      items: [selectedProfessor],
+      total_count: 1,
+      page: 1,
+      page_size: 10,
+      total_pages: 1,
+    });
     createBatchTaskMock.mockResolvedValue({
       id: 1,
       name: "批量任务",
@@ -785,7 +791,17 @@ describe("CreateTaskPage", () => {
       "selected_professor_ids",
       JSON.stringify(professors.map((professor) => professor.id)),
     );
-    listProfessorsMock.mockResolvedValue(professors);
+    listProfessorsMock.mockImplementation(async (params?: { page?: number; pageSize?: number }) => {
+      const page = params?.page ?? 1;
+      const pageSize = params?.pageSize ?? 10;
+      return {
+        items: professors.slice((page - 1) * pageSize, page * pageSize),
+        total_count: professors.length,
+        page,
+        page_size: pageSize,
+        total_pages: Math.max(1, Math.ceil(professors.length / pageSize)),
+      };
+    });
 
     render(
       <MemoryRouter>
@@ -800,9 +816,9 @@ describe("CreateTaskPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
 
-    expect(screen.queryByText("导师1")).not.toBeInTheDocument();
-    expect(screen.getByText("导师11")).toBeInTheDocument();
+    expect(await screen.findByText("导师11")).toBeInTheDocument();
     expect(screen.getByText("导师13")).toBeInTheDocument();
+    expect(screen.queryByText("导师1")).not.toBeInTheDocument();
     expect(
       screen.getByRole("complementary", { name: "目标导师列表" }),
     ).toHaveFocus();

@@ -37,6 +37,7 @@ from .schemas import (
     ProfessorDashboardPageRead,
     ProfessorDashboardPageRequest,
     ProfessorFetchByIdsPayload,
+    ProfessorFetchByIdsRead,
     ProfessorImportFileResult,
     ProfessorImportResult,
     ProfessorIdSelectionRead,
@@ -128,24 +129,46 @@ async def list_professors(
     )
 
 
-@router.post("/fetch-by-ids", response_model=list[ProfessorDashboardItemRead])
+@router.post("/fetch-by-ids", response_model=ProfessorFetchByIdsRead)
 async def fetch_professors_by_ids(
     payload: ProfessorFetchByIdsPayload,
     session: AsyncSession = Depends(get_async_session),
-) -> list[ProfessorDashboardItemRead]:
+) -> ProfessorFetchByIdsRead:
     # POST body variant of the ``ids`` query on GET ``/api/professors``: the
     # create-task flow can select thousands of professors, which overflows
     # practical URL length limits as a comma-joined query string.
     requested_professor_ids = unique_positive_ids(payload.ids)
     if not requested_professor_ids:
-        return []
+        return ProfessorFetchByIdsRead(
+            items=[],
+            total_count=0,
+            page=1,
+            page_size=payload.page_size or 0,
+            total_pages=1,
+        )
     professors = await _load_active_professors_by_ids(session, requested_professor_ids)
-    if not professors:
-        return []
-    return await _build_dashboard_professor_items(
+    total_count = len(professors)
+    if payload.page_size is None:
+        page_professors = professors
+        page = 1
+        page_size = total_count
+        total_pages = 1
+    else:
+        page_size = payload.page_size
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+        page = min(payload.page, total_pages)
+        page_professors = professors[(page - 1) * page_size : page * page_size]
+    items = await _build_dashboard_professor_items(
         session,
         identity_id=payload.identity_id,
-        professors=professors,
+        professors=page_professors,
+    )
+    return ProfessorFetchByIdsRead(
+        items=items,
+        total_count=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
     )
 
 
@@ -291,21 +314,6 @@ async def _build_dashboard_professor_items(
             )
         )
     return items
-
-
-@router.get("/management", response_model=list[ProfessorManagementItemRead])
-async def list_professors_for_management(
-    archived: str = Query(default="active"),
-    session: AsyncSession = Depends(get_async_session),
-) -> list[ProfessorManagementItemRead]:
-    statement = (
-        select(Professor)
-        .options(selectinload(Professor.tags))
-        .order_by(Professor.updated_at.desc(), Professor.created_at.desc())
-    )
-    statement = _apply_archived_filter(statement, archived)
-    professors = list((await session.execute(statement)).scalars())
-    return [_serialize_management_professor(professor) for professor in professors]
 
 
 @router.post("/search/dashboard", response_model=ProfessorDashboardPageRead)
@@ -805,19 +813,6 @@ async def trigger_crawler(
         "status": "accepted",
         "message": "已接收智能抓取请求，当前版本先返回占位结果，后续可接入真实 crawler。",
     }
-
-
-def _apply_archived_filter(statement, archived: str):
-    normalized = archived.lower()
-    if normalized == "active":
-        return statement.where(Professor.archived_at.is_(None))
-    if normalized == "archived":
-        return statement.where(Professor.archived_at.is_not(None))
-    if normalized == "all":
-        return statement
-    raise HTTPException(
-        status_code=400, detail="archived 参数仅支持 active、archived、all"
-    )
 
 
 def _ensure_professor_email_valid(email: str) -> None:

@@ -493,7 +493,10 @@ class ProfessorTagsApiTests(unittest.TestCase):
                 ),
             },
         )
-        professors = self.client.get("/api/professors/management").json()
+        professors = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         imported = next(
             professor
             for professor in professors
@@ -615,7 +618,10 @@ class ProfessorTagsApiTests(unittest.TestCase):
             },
         )
         refreshed = self.client.get(f"/api/professors/{created['id']}").json()
-        professors = self.client.get("/api/professors/management").json()
+        professors = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         inserted = next(
             item for item in professors if item["email"] == "safe-xlsx-new@example.edu"
         )

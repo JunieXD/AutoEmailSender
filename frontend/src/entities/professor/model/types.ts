@@ -42,6 +42,14 @@ export interface ProfessorPageDTO<T> {
   filter_options: ProfessorFilterOptionsDTO;
 }
 
+export interface ProfessorFetchByIdsDTO {
+  items: ProfessorDashboardItemDTO[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export interface ProfessorIdSelectionDTO {
   ids: number[];
   total_count: number;

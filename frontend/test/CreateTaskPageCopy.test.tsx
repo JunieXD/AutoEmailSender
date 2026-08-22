@@ -143,7 +143,13 @@ describe("CreateTaskPage copy", () => {
     mockedConfirm.mockResolvedValue(true);
     mockedNotifyError.mockReset();
     mockedNotifyFormErrors.mockReset();
-    mockedListProfessors.mockResolvedValue([professor]);
+    mockedListProfessors.mockResolvedValue({
+      items: [professor],
+      total_count: 1,
+      page: 1,
+      page_size: 10,
+      total_pages: 1,
+    });
     mockedUseSelectionContext.mockReturnValue({
       selectedIdentityId: selectedIdentity.id,
       selectedLlmProfileId: selectedLlmProfile.id,

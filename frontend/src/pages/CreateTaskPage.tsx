@@ -20,7 +20,7 @@ import {
   writeCreateTaskNavigationHandoff,
 } from '@/features/navigation-handoffs/client/navigationHandoff';
 import { listProfessors } from '@/entities/professor/api/professors';
-import { getPageItems, getTotalPages, PAGE_SIZE } from '@/lib/pagination';
+import { getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
 import { usePaginationState } from '@/lib/usePaginationState';
 import { useSelectionContext } from '@/context/SelectionContext';
@@ -99,6 +99,7 @@ export const CreateTaskPage = () => {
   );
   const resendPrefillContext = navigationHandoff?.resendContext ?? null;
   const [professors, setProfessors] = useState<ProfessorDashboardItemDTO[]>([]);
+  const [totalProfessorCount, setTotalProfessorCount] = useState(0);
   const {
     page: targetMentorsPage,
     pageSize: targetMentorsPageSize,
@@ -136,6 +137,7 @@ export const CreateTaskPage = () => {
   const [primaryMaterialId, setPrimaryMaterialId] = useState<number | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
+  const loadedProfessorsSelectionKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
   const templateInitializationKeyRef = useRef<string | null>(null);
@@ -147,10 +149,16 @@ export const CreateTaskPage = () => {
     !isResendPrefillActive ||
     resendContentStrategy !== 'reuse' ||
     resendPrefillContext?.requiresRegeneration !== false;
-  const professorsRequestKey =
-    selectedIdentityId && selectedProfessorIds.length > 0
-      ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
-      : null;
+  const professorsSelectionKey = useMemo(
+    () =>
+      selectedIdentityId && selectedProfessorIds.length > 0
+        ? `${selectedIdentityId}:${selectedProfessorIds.join(',')}`
+        : null,
+    [selectedIdentityId, selectedProfessorIds],
+  );
+  const professorsRequestKey = professorsSelectionKey
+    ? `${professorsSelectionKey}:${targetMentorsPage}:${targetMentorsPageSize}`
+    : null;
 
   useEffect(() => {
     if (resendCleanupTimeoutRef.current !== null) {
@@ -202,17 +210,23 @@ export const CreateTaskPage = () => {
         activeProfessorsRequestKeyRef.current = null;
         loadedProfessorsKeyRef.current = null;
         setProfessors([]);
+        setTotalProfessorCount(0);
+        loadedProfessorsSelectionKeyRef.current = null;
         setLoading(false);
         return;
       }
       const requestId = latestProfessorsRequestIdRef.current + 1;
       latestProfessorsRequestIdRef.current = requestId;
       activeProfessorsRequestKeyRef.current = professorsRequestKey;
-      setLoading(true);
+      if (loadedProfessorsSelectionKeyRef.current !== professorsSelectionKey) {
+        setLoading(true);
+      }
       try {
         const data = await listProfessors({
           identityId: selectedIdentityId,
           ids: selectedProfessorIds,
+          page: targetMentorsPage,
+          pageSize: targetMentorsPageSize,
         });
         if (
           latestProfessorsRequestIdRef.current !== requestId ||
@@ -220,8 +234,10 @@ export const CreateTaskPage = () => {
         ) {
           return;
         }
-        setProfessors(data);
+        setProfessors(data.items);
+        setTotalProfessorCount(data.total_count);
         loadedProfessorsKeyRef.current = professorsRequestKey;
+        loadedProfessorsSelectionKeyRef.current = professorsSelectionKey;
       } catch (loadError) {
         if (
           latestProfessorsRequestIdRef.current !== requestId ||
@@ -231,6 +247,7 @@ export const CreateTaskPage = () => {
         }
         if (loadedProfessorsKeyRef.current !== professorsRequestKey) {
           setProfessors([]);
+          setTotalProfessorCount(0);
         }
         const message = loadError instanceof Error ? loadError.message : '加载已选导师失败';
         notifyError('加载已选导师失败', message);
@@ -245,7 +262,7 @@ export const CreateTaskPage = () => {
     };
 
     void loadProfessors();
-  }, [notifyError, professorsRequestKey, selectedIdentityId, selectedProfessorIds]);
+  }, [notifyError, professorsRequestKey, professorsSelectionKey, selectedIdentityId, selectedProfessorIds, targetMentorsPage, targetMentorsPageSize]);
 
   useEffect(() => {
     if (!selectedIdentity) {
@@ -474,26 +491,18 @@ export const CreateTaskPage = () => {
     [selectedIdentity, selectedMaterialIds],
   );
   const targetMentorsTotalPages = getTotalPages(
-    professors.length,
+    totalProfessorCount,
     targetMentorsPageSize,
   );
   const safeTargetMentorsPage = Math.min(
     targetMentorsPage,
     targetMentorsTotalPages,
   );
-  const visibleTargetMentors = useMemo(
-    () =>
-      getPageItems(
-        professors,
-        safeTargetMentorsPage,
-        targetMentorsPageSize,
-      ),
-    [professors, safeTargetMentorsPage, targetMentorsPageSize],
-  );
+  const visibleTargetMentors = useMemo(() => professors, [professors]);
 
   useEffect(() => {
     setTargetMentorsPage(1);
-  }, [professorsRequestKey, setTargetMentorsPage]);
+  }, [professorsSelectionKey, setTargetMentorsPage]);
 
   useEffect(() => {
     setTargetMentorsPage((currentPage) => Math.min(currentPage, targetMentorsTotalPages));
@@ -506,14 +515,14 @@ export const CreateTaskPage = () => {
   const resendTemplateName = selectedOutreachTemplate?.name ?? '当前模板内容';
   const resendOutcomeDescription = isResendPrefillActive
     ? resendContentStrategy === 'template'
-      ? `${professors.length} 封将套用「${resendTemplateName}」，${
+      ? `${selectedProfessorIds.length} 封将套用「${resendTemplateName}」，${
           scheduleType === 'scheduled' ? '按计划自动发送' : '进入发送流程'
         }。`
       : resendContentStrategy === 'llm'
-        ? `${professors.length} 封将由 AI 重新改写并逐封审核。`
+        ? `${selectedProfessorIds.length} 封将由 AI 重新改写并逐封审核。`
         : resendPrefillContext?.requiresRegeneration
-          ? `${professors.length} 封优先沿用上次内容；缺失内容将重新生成。`
-          : `${professors.length} 封沿用上次内容；未审核内容仍需处理。`
+          ? `${selectedProfessorIds.length} 封优先沿用上次内容；缺失内容将重新生成。`
+          : `${selectedProfessorIds.length} 封沿用上次内容；未审核内容仍需处理。`
     : null;
   const templateSelectionPanel = (
     <div className="rounded-[28px] border border-stone-200 bg-stone-50/80 p-4">
@@ -559,7 +568,7 @@ export const CreateTaskPage = () => {
     if (!taskName.trim()) {
       validationErrors.push('任务名称不能为空');
     }
-    if (professors.length === 0) {
+    if (selectedProfessorIds.length === 0) {
       validationErrors.push('没有可创建任务的导师');
     }
     if (scheduleType === 'scheduled' && normalizedScheduledDates.length === 0) {
@@ -647,7 +656,7 @@ export const CreateTaskPage = () => {
     }
 
     const diagnosticData = {
-      selectedCount: professors.length,
+      selectedCount: selectedProfessorIds.length,
       identityId,
       llmProfileId,
       scheduleType,
@@ -673,7 +682,7 @@ export const CreateTaskPage = () => {
         identity_id: identityId,
         llm_profile_id: llmProfileId,
         name: taskName.trim(),
-        professor_ids: professors.map((item) => item.id),
+        professor_ids: selectedProfessorIds,
         schedule_type: scheduleType,
         scheduled_dates: scheduleType === 'scheduled' ? normalizedScheduledDates : null,
         window_start_time: scheduleType === 'scheduled' ? startTime : null,
@@ -1083,7 +1092,7 @@ export const CreateTaskPage = () => {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-stone-900">目标导师</h2>
-                <div className="mt-1 text-xs text-stone-500">共 {professors.length} 位</div>
+                <div className="mt-1 text-xs text-stone-500">共 {totalProfessorCount} 位</div>
               </div>
             </div>
             <div className="mt-4 space-y-3">
@@ -1103,7 +1112,7 @@ export const CreateTaskPage = () => {
               <Pagination
                 page={safeTargetMentorsPage}
                 pageSize={targetMentorsPageSize}
-                totalCount={professors.length}
+                totalCount={totalProfessorCount}
                 onChange={handleTargetMentorsPaginationChange}
                 ariaLabel="目标导师分页"
                 variant="compact"

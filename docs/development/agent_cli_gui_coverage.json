@@ -446,7 +446,6 @@
       "source": "entities/professor/api/professors.ts",
       "exported_actions": [
         "listProfessors",
-        "listProfessorsForManagement",
         "searchDashboardProfessors",
         "searchManagementProfessors",
         "searchDashboardProfessorIds",

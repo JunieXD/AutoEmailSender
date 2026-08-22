@@ -68,7 +68,7 @@ class ProfessorFetchByIdsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, msg=response.text)
         return response.json()["id"]
 
-    def test_fetch_by_ids_matches_get_ids_query(self) -> None:
+    def test_fetch_by_ids_unpaged_matches_get_ids_query(self) -> None:
         professor_ids = [self._create_professor(f"p{index}@example.edu") for index in range(3)]
 
         post_response = self.client.post(
@@ -81,7 +81,11 @@ class ProfessorFetchByIdsTests(unittest.TestCase):
         )
         self.assertEqual(post_response.status_code, 200, msg=post_response.text)
         self.assertEqual(get_response.status_code, 200, msg=get_response.text)
-        self.assertEqual(post_response.json(), get_response.json())
+        payload = post_response.json()
+        self.assertEqual(payload["total_count"], 3)
+        self.assertEqual(payload["page"], 1)
+        self.assertEqual(payload["total_pages"], 1)
+        self.assertEqual(payload["items"], get_response.json())
 
     def test_fetch_by_ids_with_empty_ids_returns_empty_list(self) -> None:
         response = self.client.post(
@@ -89,7 +93,49 @@ class ProfessorFetchByIdsTests(unittest.TestCase):
             json={"identity_id": None, "ids": []},
         )
         self.assertEqual(response.status_code, 200, msg=response.text)
-        self.assertEqual(response.json(), [])
+        self.assertEqual(response.json()["items"], [])
+        self.assertEqual(response.json()["total_count"], 0)
+
+    def test_fetch_by_ids_pages_without_overlap_or_gap(self) -> None:
+        professor_ids = [self._create_professor(f"page{index}@example.edu") for index in range(5)]
+
+        full = self.client.post(
+            "/api/professors/fetch-by-ids",
+            json={"identity_id": None, "ids": professor_ids},
+        )
+        self.assertEqual(full.status_code, 200, msg=full.text)
+        baseline_ids = [item["id"] for item in full.json()["items"]]
+        self.assertEqual(sorted(baseline_ids), sorted(professor_ids))
+
+        first_page = self.client.post(
+            "/api/professors/fetch-by-ids",
+            json={"identity_id": None, "ids": professor_ids, "page": 1, "page_size": 2},
+        )
+        second_page = self.client.post(
+            "/api/professors/fetch-by-ids",
+            json={"identity_id": None, "ids": professor_ids, "page": 2, "page_size": 2},
+        )
+        clamped_page = self.client.post(
+            "/api/professors/fetch-by-ids",
+            json={"identity_id": None, "ids": professor_ids, "page": 99, "page_size": 2},
+        )
+        self.assertEqual(first_page.status_code, 200, msg=first_page.text)
+        self.assertEqual(second_page.status_code, 200, msg=second_page.text)
+        self.assertEqual(clamped_page.status_code, 200, msg=clamped_page.text)
+
+        self.assertEqual(first_page.json()["total_count"], 5)
+        self.assertEqual(first_page.json()["total_pages"], 3)
+        self.assertEqual(
+            [item["id"] for item in first_page.json()["items"]], baseline_ids[:2]
+        )
+        self.assertEqual(
+            [item["id"] for item in second_page.json()["items"]], baseline_ids[2:4]
+        )
+        # An out-of-range page is clamped to the last page instead of returning empty.
+        self.assertEqual(clamped_page.json()["page"], 3)
+        self.assertEqual(
+            [item["id"] for item in clamped_page.json()["items"]], baseline_ids[4:]
+        )
 
     def test_fetch_by_ids_resolves_dashboard_fields_for_identity(self) -> None:
         identity_response = self.client.post(
@@ -123,7 +169,7 @@ class ProfessorFetchByIdsTests(unittest.TestCase):
             json={"identity_id": identity_id, "ids": [professor_id]},
         )
         self.assertEqual(response.status_code, 200, msg=response.text)
-        items = response.json()
+        items = response.json()["items"]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["id"], professor_id)
         self.assertEqual(items[0]["status"], "not_contacted")

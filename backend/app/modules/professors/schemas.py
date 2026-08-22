@@ -366,6 +366,17 @@ class ProfessorBulkArchivePayload(BaseModel):
 class ProfessorFetchByIdsPayload(BaseModel):
     identity_id: int | None = None
     ids: list[int] = Field(default_factory=list, max_length=10_000)
+    page: int = Field(default=1, ge=1)
+    # None returns the whole selection in one response (legacy behavior).
+    page_size: int | None = Field(default=None, ge=1, le=100)
+
+
+class ProfessorFetchByIdsRead(ApiSchema):
+    items: list[ProfessorDashboardItemRead] = Field(default_factory=list)
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 ProfessorBulkTagMode = Literal["add", "remove", "replace"]

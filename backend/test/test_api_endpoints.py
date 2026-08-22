@@ -776,11 +776,12 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(update_response.json()["title"], "副教授")
         self.assertEqual(update_response.json()["recent_papers"], ["Paper C"])
 
-        active_list = self.client.get(
-            "/api/professors/management", params={"archived": "active"}
+        active_list = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 10},
         )
         self.assertEqual(active_list.status_code, 200)
-        self.assertEqual(len(active_list.json()), 1)
+        self.assertEqual(active_list.json()["total_count"], 1)
 
         archive_response = self.client.post(f"/api/professors/{professor_id}/archive")
         self.assertEqual(archive_response.status_code, 200)
@@ -790,12 +791,13 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(dashboard_list.status_code, 200)
         self.assertEqual(dashboard_list.json(), [])
 
-        archived_list = self.client.get(
-            "/api/professors/management", params={"archived": "archived"}
+        archived_list = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "archived", "page": 1, "page_size": 10},
         )
         self.assertEqual(archived_list.status_code, 200)
-        self.assertEqual(len(archived_list.json()), 1)
-        self.assertIsNotNone(archived_list.json()[0]["archived_at"])
+        self.assertEqual(archived_list.json()["total_count"], 1)
+        self.assertIsNotNone(archived_list.json()["items"][0]["archived_at"])
 
         restore_response = self.client.post(f"/api/professors/{professor_id}/restore")
         self.assertEqual(restore_response.status_code, 200)
@@ -931,10 +933,13 @@ class ApiEndpointTests(unittest.TestCase):
             dashboard_professor["personal_note"], "6 月 20 日上午 Zoom 面试"
         )
 
-        management_list = self.client.get("/api/professors/management")
+        management_list = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        )
         self.assertEqual(management_list.status_code, 200, msg=management_list.text)
         management_professor = next(
-            item for item in management_list.json() if item["id"] == professor_id
+            item for item in management_list.json()["items"] if item["id"] == professor_id
         )
         self.assertEqual(
             management_professor["personal_note"], "6 月 20 日上午 Zoom 面试"
@@ -1035,12 +1040,17 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(detail_response.status_code, 200, msg=detail_response.text)
         self.assertEqual(detail_response.json()["personal_note"], "已有备注")
 
-        management_response = self.client.get("/api/professors/management")
+        management_response = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        )
         self.assertEqual(
             management_response.status_code, 200, msg=management_response.text
         )
         management_professor = next(
-            item for item in management_response.json() if item["id"] == professor_id
+            item
+            for item in management_response.json()["items"]
+            if item["id"] == professor_id
         )
         self.assertEqual(management_professor["personal_note"], "已有备注")
 
@@ -2570,9 +2580,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(csv_body["updated_count"], 1)
         self.assertEqual(csv_body["failed_count"], 1)
 
-        refreshed = self.client.get(
-            "/api/professors/management", params={"archived": "active"}
-        ).json()
+        refreshed = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         li_professor = next(
             item for item in refreshed if item["email"] == "li@example.edu"
         )
@@ -2607,10 +2618,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(
             new_template_import.status_code, 200, msg=new_template_import.text
         )
-        refreshed_after_note = self.client.get(
-            "/api/professors/management",
-            params={"archived": "active"},
-        ).json()
+        refreshed_after_note = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         li_after_note = next(
             item for item in refreshed_after_note if item["email"] == "li@example.edu"
         )
@@ -2682,9 +2693,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(xlsx_import.json()["inserted_count"], 0)
         self.assertEqual(xlsx_import.json()["updated_count"], 1)
 
-        management_all = self.client.get(
-            "/api/professors/management", params={"archived": "all"}
-        ).json()
+        management_all = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "all", "page": 1, "page_size": 50},
+        ).json()["items"]
         wang_professor = next(
             item for item in management_all if item["email"] == "wang@example.edu"
         )
@@ -2746,7 +2758,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(csv_reimport.json()["inserted_count"], 0)
         self.assertEqual(csv_reimport.json()["updated_count"], 1)
         self.assertEqual(csv_reimport.json()["failed_count"], 0)
-        after_csv_reimport = self.client.get("/api/professors/management").json()
+        after_csv_reimport = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         csv_reimported = next(
             item for item in after_csv_reimport if item["email"] == "export@example.edu"
         )
@@ -2781,7 +2796,10 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(xlsx_reimport.json()["inserted_count"], 0)
         self.assertEqual(xlsx_reimport.json()["updated_count"], 1)
         self.assertEqual(xlsx_reimport.json()["failed_count"], 0)
-        after_xlsx_reimport = self.client.get("/api/professors/management").json()
+        after_xlsx_reimport = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 50},
+        ).json()["items"]
         xlsx_reimported = next(
             item
             for item in after_xlsx_reimport

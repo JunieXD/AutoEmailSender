@@ -2150,13 +2150,16 @@ class CommunityApiTests(unittest.TestCase):
         self.assertEqual(import_response.status_code, 200, msg=import_response.text)
         self.assertEqual(import_response.json()["inserted_count"], 1)
 
-        management = self.client.get("/api/professors/management").json()
-        self.assertEqual(len(management), 1)
-        self.assertEqual(management[0]["email"], "zhang@example.edu")
+        management = self.client.post(
+            "/api/professors/search/management",
+            json={"archived": "active", "page": 1, "page_size": 10},
+        ).json()
+        self.assertEqual(management["total_count"], 1)
+        self.assertEqual(management["items"][0]["email"], "zhang@example.edu")
 
         share_response = self.client.post(
             "/api/community-mentors/share-package",
-            json={"professor_ids": [management[0]["id"]]},
+            json={"professor_ids": [management["items"][0]["id"]]},
         )
         self.assertEqual(share_response.status_code, 200, msg=share_response.text)
         workbook = load_workbook(

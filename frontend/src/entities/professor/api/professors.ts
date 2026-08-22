@@ -7,6 +7,7 @@ import type {
   ProfessorBulkTagsResultDTO,
   ProfessorDTO,
   ProfessorDashboardItemDTO,
+  ProfessorFetchByIdsDTO,
   ProfessorImportFileResultDTO,
   ProfessorManagementItemDTO,
   ProfessorDashboardPageRequestDTO,
@@ -23,22 +24,21 @@ import type {
 export const listProfessors = (params?: {
   identityId?: number | null;
   ids?: number[];
+  page?: number;
+  pageSize?: number;
 }) =>
-  apiFetch<ProfessorDashboardItemDTO[]>(
+  apiFetch<ProfessorFetchByIdsDTO>(
     '/api/professors/fetch-by-ids',
     {
       method: 'POST',
       body: JSON.stringify({
         identity_id: params?.identityId ?? null,
         ids: params?.ids ?? [],
+        page: params?.page ?? 1,
+        page_size: params?.pageSize ?? null,
       }),
     },
   );
-
-export const listProfessorsForManagement = (archived: 'active' | 'archived' | 'all') =>
-  apiFetch<ProfessorManagementItemDTO[]>('/api/professors/management', undefined, {
-    archived,
-  });
 
 export const searchDashboardProfessors = (
   payload: ProfessorDashboardPageRequestDTO,
