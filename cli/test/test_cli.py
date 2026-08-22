@@ -912,7 +912,14 @@ class CliTests(unittest.TestCase):
             ["--format", "json", "capabilities", "--resource", "professors"],
         )
         self.assertEqual(professors.exit_code, 0, msg=professors.output)
-        self.assertLess(len(professors.stdout.encode("utf-8")), 8_000)
+        # Measure the compact payload: Windows consoles make the CLI escape
+        # non-ASCII as \uXXXX, inflating raw stdout without growing content.
+        professors_output = json.dumps(
+            json.loads(professors.stdout),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertLess(len(professors_output), 8_000)
 
     def test_every_catalog_resource_can_be_selected_without_guessing_aliases(
         self,
