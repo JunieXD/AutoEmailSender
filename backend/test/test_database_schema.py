@@ -204,6 +204,71 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertNotIn("active_candidate_enrichment_skipped_count", columns)
         self.assertEqual(university, ("历史大学",))
 
+    def test_enrichment_task_operation_migration_preserves_existing_tasks(
+        self,
+    ) -> None:
+        database_path = Path(self.temp_dir.name) / "enrichment_task_operation.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260819_cleanup_public_beta"
+        migration_revision = "20260822_enrichment_task_op"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs(university, school, start_url)
+                VALUES ('历史大学', '历史学院', 'https://example.edu/faculty')
+                """
+            ).lastrowid
+            candidate_id = connection.execute(
+                "INSERT INTO crawl_candidates(job_id, name) VALUES (?, '历史导师')",
+                (job_id,),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO crawl_candidate_enrichment_tasks(
+                    job_id, candidate_id, status
+                ) VALUES (?, ?, 'pending')
+                """,
+                (job_id, candidate_id),
+            )
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info('crawl_candidate_enrichment_tasks')"
+                )
+            }
+            historical_task = connection.execute(
+                """
+                SELECT candidate_id, status, enrichment_operation_id
+                FROM crawl_candidate_enrichment_tasks
+                """
+            ).fetchone()
+        self.assertIn("enrichment_operation_id", columns)
+        self.assertEqual(historical_task, (candidate_id, "pending", None))
+
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info('crawl_candidate_enrichment_tasks')"
+                )
+            }
+            historical_task = connection.execute(
+                """
+                SELECT candidate_id, status
+                FROM crawl_candidate_enrichment_tasks
+                """
+            ).fetchone()
+        self.assertNotIn("enrichment_operation_id", columns)
+        self.assertEqual(historical_task, (candidate_id, "pending"))
+
     def test_professor_scale_search_migration_round_trip_preserves_data(self) -> None:
         database_path = Path(self.temp_dir.name) / "professor_scale_search.db"
         env = os.environ.copy()

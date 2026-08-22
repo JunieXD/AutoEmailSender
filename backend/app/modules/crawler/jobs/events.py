@@ -98,7 +98,9 @@ def build_crawl_job_events(
                 "id": f"job:{job_id}:candidate:{first_candidate_id or batch_index}",
                 "job_id": job_id,
                 "event_type": "candidate",
-                "message": f"发现候选导师：{'、'.join(names)}",
+                "message": (
+                    f"发现候选导师 {len(candidate_batch)} 人：{'、'.join(names)}"
+                ),
                 "created_at": _to_event_time(_get_attr(first_candidate, "created_at")),
                 "raw": {
                     "id": first_candidate_id,

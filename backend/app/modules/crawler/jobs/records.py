@@ -694,9 +694,14 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
             trigger="enrich",
             actor=actor,
         )
+        operation_id = start_candidate_enrichment_operation(
+            job,
+            skipped_count=skipped_count,
+        )
 
     for candidate, existing_task in tasks_to_enqueue:
         if existing_task is not None:
+            existing_task.enrichment_operation_id = operation_id
             existing_task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
             existing_task.worker_id = None
             existing_task.claimed_at = None
@@ -721,6 +726,7 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
                     CrawlCandidateEnrichmentTask(
                         job_id=job.id,
                         candidate_id=candidate.id,
+                        enrichment_operation_id=operation_id,
                         status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
                     ),
                 )
@@ -731,10 +737,6 @@ async def enqueue_faculty_crawl_candidate_enrichment_records(
         enqueued_count += 1
 
     if enqueued_count > 0 or already_active_count > 0:
-        operation_id = start_candidate_enrichment_operation(
-            job,
-            skipped_count=skipped_count,
-        )
         job.status = CrawlJobStatus.RUNNING.value
         job.error_message = None
         job.updated_at = now

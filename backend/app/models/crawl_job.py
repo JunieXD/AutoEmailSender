@@ -576,6 +576,9 @@ class CrawlCandidateEnrichmentTask(Base):
         nullable=True,
         index=True,
     )
+    enrichment_operation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(64), nullable=False, index=True, server_default=text("'pending'")
     )

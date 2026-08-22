@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from app.core.time import as_utc_aware, utc_now
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -1478,6 +1478,12 @@ async def _append_enrichment_success_event(
     if job is None:
         return
     candidate_name = candidate.name if candidate.name else "未知导师"
+    operation_progress = await _get_enrichment_operation_progress(session, task=task)
+    progress_suffix = (
+        f"（{operation_progress[0]} / {operation_progress[1]}）"
+        if operation_progress is not None
+        else ""
+    )
     trace = [
         item
         for item in list(job.agent_trace or [])
@@ -1488,17 +1494,50 @@ async def _append_enrichment_success_event(
     trace.append(
         {
             "event_type": "enrichment",
-            "message": f"候选导师详情补全成功：{candidate_name}",
+            "message": f"候选导师详情补全成功：{candidate_name}{progress_suffix}",
             "created_at": utc_now().isoformat(),
             "raw": {
                 "candidate_id": task.candidate_id,
                 "task_id": task.id,
+                "operation_id": task.enrichment_operation_id,
+                "progress_current": (
+                    operation_progress[0] if operation_progress is not None else None
+                ),
+                "progress_total": (
+                    operation_progress[1] if operation_progress is not None else None
+                ),
                 "status": "succeeded",
                 "task_status": task.status,
             },
         }
     )
     job.agent_trace = trace[-100:]
+
+
+async def _get_enrichment_operation_progress(
+    session: AsyncSession,
+    *,
+    task: CrawlCandidateEnrichmentTask,
+) -> tuple[int, int] | None:
+    operation_id = task.enrichment_operation_id
+    if not operation_id:
+        return None
+    total = await session.scalar(
+        select(func.count(CrawlCandidateEnrichmentTask.id)).where(
+            CrawlCandidateEnrichmentTask.job_id == task.job_id,
+            CrawlCandidateEnrichmentTask.enrichment_operation_id == operation_id,
+        )
+    )
+    if not total:
+        return None
+    current = await session.scalar(
+        select(func.count(CrawlCandidateEnrichmentTask.id)).where(
+            CrawlCandidateEnrichmentTask.job_id == task.job_id,
+            CrawlCandidateEnrichmentTask.enrichment_operation_id == operation_id,
+            CrawlCandidateEnrichmentTask.status.in_(_TERMINAL_ENRICHMENT_TASK_STATUSES),
+        )
+    )
+    return int(current or 0), int(total)
 
 
 async def _append_enrichment_unchanged_event(

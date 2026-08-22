@@ -60,7 +60,8 @@ class CrawlJobEventsTests(unittest.TestCase):
         ]
         self.assertEqual(len(candidate_events), 1)
         self.assertEqual(
-            candidate_events[0]["message"], "发现候选导师：张教授、李教授、王教授"
+            candidate_events[0]["message"],
+            "发现候选导师 3 人：张教授、李教授、王教授",
         )
         self.assertEqual(candidate_events[0]["raw"]["candidate_ids"], [21, 22, 23])
 
@@ -124,7 +125,7 @@ class CrawlJobEventsTests(unittest.TestCase):
         self.assertIn("任务进入待审核", messages)
         self.assertIn("候选导师详情补全成功：张教授", messages)
         self.assertIn("已抓取页面：Faculty", messages)
-        self.assertIn("发现候选导师：张教授", messages)
+        self.assertIn("发现候选导师 1 人：张教授", messages)
         for event in events:
             self.assertIn("id", event)
             self.assertEqual(event["job_id"], 1)

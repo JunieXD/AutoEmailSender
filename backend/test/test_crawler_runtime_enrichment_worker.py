@@ -121,6 +121,25 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         candidate_id, task_id = await self._seed_task(
             profile_url="https://example.edu/zhang.html"
         )
+        async with self.session_factory() as session:
+            task = await session.get(CrawlCandidateEnrichmentTask, task_id)
+            assert task is not None
+            second_candidate = CrawlCandidate(
+                job_id=task.job_id,
+                name="李四",
+                profile_url="https://example.edu/li.html",
+            )
+            session.add(second_candidate)
+            await session.flush()
+            session.add(
+                CrawlCandidateEnrichmentTask(
+                    job_id=task.job_id,
+                    candidate_id=second_candidate.id,
+                    enrichment_operation_id=task.enrichment_operation_id,
+                    status=CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                )
+            )
+            await session.commit()
         papers = [f"P{index}" for index in range(1, 13)]
         payload = CandidateEnrichmentPayload.model_construct(
             email="zhang@example.edu",
@@ -160,8 +179,10 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         trace = [item for item in job.agent_trace or [] if isinstance(item, dict)]
         self.assertTrue(trace)
         self.assertEqual(trace[-1]["event_type"], "enrichment")
-        self.assertEqual(trace[-1]["message"], "候选导师详情补全成功：张三")
+        self.assertEqual(trace[-1]["message"], "候选导师详情补全成功：张三（1 / 2）")
         self.assertEqual(trace[-1]["raw"]["candidate_id"], candidate_id)
+        self.assertEqual(trace[-1]["raw"]["progress_current"], 1)
+        self.assertEqual(trace[-1]["raw"]["progress_total"], 2)
         self.assertEqual(trace[-1]["raw"]["status"], "succeeded")
 
     async def test_enrichment_preserves_existing_candidate_fields(self) -> None:
@@ -1690,7 +1711,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             if isinstance(item, dict)
         ]
         self.assertNotIn("候选导师详情补全失败：张三", messages)
-        self.assertIn("候选导师详情补全成功：张三", messages)
+        self.assertIn("候选导师详情补全成功：张三（1 / 1）", messages)
 
     async def test_enrichment_worker_writes_runtime_debug_jsonl(self) -> None:
         _, task_id = await self._seed_task(profile_url="https://example.edu/zhang.html")
@@ -2288,6 +2309,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 start_url="https://example.edu/faculty",
                 status=CrawlJobStatus.RUNNING.value,
                 llm_profile_id=profile.id,
+                active_candidate_enrichment_operation_id="test-operation",
             )
             session.add(job)
             await session.flush()
@@ -2299,6 +2321,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
             task = CrawlCandidateEnrichmentTask(
                 job_id=job.id,
                 candidate_id=candidate.id,
+                enrichment_operation_id="test-operation",
                 status=CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
                 worker_id="w1",
             )

@@ -1081,8 +1081,17 @@ class CrawlJobsApiTests(unittest.TestCase):
                 """,
                 (job_id,),
             ).fetchone()
+            task_operation_id = connection.execute(
+                """
+                SELECT enrichment_operation_id
+                FROM crawl_candidate_enrichment_tasks
+                WHERE job_id = ? AND candidate_id = ?
+                """,
+                (job_id, candidate_id),
+            ).fetchone()[0]
         self.assertEqual(persisted_operation_id, operation_id)
         self.assertEqual(persisted_skipped_count, 1)
+        self.assertEqual(task_operation_id, operation_id)
 
     def test_cancel_candidate_enrichment_records_its_operation_id(self) -> None:
         profile_id = self._create_llm_profile("测试模型", "test-model")
@@ -1548,7 +1557,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertIn("任务进入待审核", messages)
         self.assertIn("候选导师详情补全成功：高分导师", messages)
         self.assertIn("已抓取页面：Faculty", messages)
-        self.assertIn("发现候选导师：高分导师、低分导师、无邮箱导师", messages)
+        self.assertIn("发现候选导师 3 人：高分导师、低分导师、无邮箱导师", messages)
 
     def test_crawl_job_details_returns_summary_and_reuses_detail_records(self) -> None:
         create_response = self.client.post(
