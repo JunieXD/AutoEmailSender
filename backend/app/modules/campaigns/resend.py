@@ -15,7 +15,7 @@ from app.models import (
 )
 from app.modules.identities.public import material_can_be_primary
 from app.services.rich_text import normalize_email_html
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 
 from .drafts.fallback import DRAFT_GENERATION_SOURCE_TEMPLATE
 from .schemas import (
@@ -225,7 +225,7 @@ async def build_batch_task_resend_context(
 
     primary_material_id, selected_material_ids, warnings = (
         filter_available_material_defaults(
-            materials=await list_global_materials(session),
+            materials=await list_global_material_metadata(session),
             primary_material_id=task.primary_material_id,
             selected_material_ids=task.selected_material_ids,
         )

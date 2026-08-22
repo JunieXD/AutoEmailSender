@@ -42,7 +42,7 @@ from .drafts.fallback import (
 from .status import sync_batch_task_completion
 from app.modules.identities.public import material_can_be_primary
 from app.services.operation_logs import record_operation_log
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 from .templates.library import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -997,7 +997,7 @@ async def _resolve_campaign_create_context(
         )
 
     material_map = {
-        material.id: material for material in await list_global_materials(session)
+        material.id: material for material in await list_global_material_metadata(session)
     }
     primary_material: IdentityMaterial | None = None
     if payload.reference_material_id is not None:
@@ -1253,7 +1253,7 @@ async def _resolve_campaign_send_context(
         )
     selected_tasks = [selected_by_id[item_id] for item_id in sorted(payload.item_ids)]
     material_by_id = {
-        material.id: material for material in await list_global_materials(session)
+        material.id: material for material in await list_global_material_metadata(session)
     }
     final_drafts = [
         _final_campaign_draft_or_raise(campaign, task, material_by_id)
@@ -1296,7 +1296,7 @@ async def _resolve_campaign_resume_context(
             message="该活动的定时发送窗口已全部过期，不能恢复运行。",
         )
     material_by_id = {
-        material.id: material for material in await list_global_materials(session)
+        material.id: material for material in await list_global_material_metadata(session)
     }
     delivery_drafts = [
         _current_campaign_delivery_draft_or_raise(
@@ -1353,7 +1353,7 @@ async def _resolve_campaign_restore_send_context(
             },
         )
     material_by_id = {
-        material.id: material for material in await list_global_materials(session)
+        material.id: material for material in await list_global_material_metadata(session)
     }
     return CampaignRestoreSendContext(
         campaign=campaign,

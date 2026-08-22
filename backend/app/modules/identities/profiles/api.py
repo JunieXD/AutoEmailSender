@@ -34,7 +34,7 @@ from .schemas import (
     IdentityTemplateImportResult,
 )
 from app.modules.campaigns.public import IdentityDefaultOutreachTemplateUpdate
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 from ..communication_groups.public import (
     cleanup_communication_group_after_identity_delete,
 )
@@ -78,7 +78,7 @@ async def list_identities(
         ),
     )
     identities = list(result.scalars().unique())
-    materials = await list_global_materials(session)
+    materials = await list_global_material_metadata(session)
     global_default_template = await _get_global_default_outreach_template(session)
     return [
         serialize_identity(identity, materials, global_default_template)
@@ -544,7 +544,7 @@ async def _serialize_identity_with_global_materials(
 ) -> IdentityProfileRead:
     return serialize_identity(
         identity,
-        await list_global_materials(session),
+        await list_global_material_metadata(session),
         await _get_global_default_outreach_template(session),
     )
 

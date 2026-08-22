@@ -28,7 +28,7 @@ from app.modules.workspace.public import (
 )
 from app.services.agent_plan_effects import resolve_agent_plan_effects
 from app.services.operation_logs import record_operation_log
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 
 
 PLAN_TTL = timedelta(minutes=30)
@@ -85,7 +85,7 @@ async def create_email_action_plan(
             )
         snapshot = _build_task_snapshot(
             task,
-            await list_global_materials(session),
+            await list_global_material_metadata(session),
             delivery=payload.delivery,
             scheduled_at=scheduled_at,
         )
@@ -237,7 +237,7 @@ async def execute_email_action_plan(
         try:
             current_snapshot = _build_task_snapshot(
                 task,
-                await list_global_materials(session),
+                await list_global_material_metadata(session),
                 delivery=delivery,
                 scheduled_at=scheduled_at,
             )

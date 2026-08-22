@@ -56,7 +56,7 @@ from app.modules.communications.public import (
     strip_quoted_reply_text,
 )
 from app.services.operation_logs import record_operation_log
-from app.services.material_catalog import list_global_materials
+from app.services.material_catalog import list_global_material_metadata
 from app.modules.campaigns.public import (
     get_default_outreach_template_for_identity,
 )
@@ -128,7 +128,7 @@ async def _build_workspace_thread_read(
     sync_warnings: list[WorkspaceSyncWarningRead] | None = None,
     include_communication_events: bool = True,
 ) -> WorkspaceThreadRead:
-    materials = await list_global_materials(session)
+    materials = await list_global_material_metadata(session)
     selected_template = await get_default_outreach_template_for_identity(
         session,
         identity,
