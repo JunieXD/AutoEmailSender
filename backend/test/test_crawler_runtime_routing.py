@@ -41,7 +41,7 @@ class CrawlerRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 cached_tokens=2,
             ),
         )
-        payload = EntryRoutingPayload(discovered_urls=[])
+        payload = EntryRoutingPayload(discovered_urls=[], same_page_control_ids=[])
         llm_profile = object()
         session_factory = object()
 
@@ -318,7 +318,7 @@ class CrawlerRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
         phase_mock = AsyncMock(
             side_effect=[
                 (
-                    EntryRoutingPayload(discovered_urls=[iframe_url]),
+                    EntryRoutingPayload(discovered_urls=[iframe_url], same_page_control_ids=[]),
                     [],
                     adaptation,
                 ),

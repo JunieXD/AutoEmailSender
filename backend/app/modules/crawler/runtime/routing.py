@@ -36,9 +36,10 @@ class EntryRoutingPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     discovered_urls: list[str]
+    # 不给默认值：严格 JSON Schema 要求所有属性 required，
+    # 提示词也约定模型必须显式输出（无控件时为空数组）。
     same_page_control_ids: list[str] = Field(
-        default_factory=list,
-        max_length=MAX_SAME_PAGE_CONTROL_SELECTIONS,
+        max_length=MAX_SAME_PAGE_CONTROL_SELECTIONS
     )
 
 
