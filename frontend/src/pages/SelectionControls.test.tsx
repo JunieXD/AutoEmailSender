@@ -13,8 +13,6 @@ import {
   createProfessorTag,
   deleteProfessorTag,
   getProfessorTagUsage,
-  listProfessors,
-  listProfessorsForManagement,
   searchDashboardProfessorIds,
   searchDashboardProfessors,
   searchManagementProfessorIds,
@@ -180,6 +178,13 @@ const managementProfessors: ProfessorManagementItemDTO[] =
     updated_at: "2026-05-01T00:00:00",
   }));
 
+const listProfessors = vi.fn(async () => dashboardProfessors);
+
+const listProfessorsForManagement = vi.fn(
+  async (archived?: string | null) =>
+    archived === "archived" ? [] : managementProfessors,
+);
+
 const buildProfessorHandoff = ({
   handoffId,
   surface,
@@ -306,8 +311,6 @@ vi.mock("@/entities/professor/api/professors", () => ({
       background_color: "#dcfce7",
     },
   ]),
-  listProfessors: vi.fn(async () => dashboardProfessors),
-  listProfessorsForManagement: vi.fn(async () => managementProfessors),
   searchDashboardProfessorIds: vi.fn(),
   searchDashboardProfessors: vi.fn(),
   searchManagementProfessorIds: vi.fn(),
@@ -543,7 +546,7 @@ describe("selection controls", () => {
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
     vi.mocked(searchDashboardProfessors).mockImplementation(async (payload) => {
-      const source = await listProfessors({ identityId: payload.identity_id });
+      const source = await listProfessors();
       const items = filterDashboardProfessors([...source], payload);
       return {
         items: pageItems(items, payload.page, payload.page_size),
@@ -557,7 +560,7 @@ describe("selection controls", () => {
       };
     });
     vi.mocked(searchDashboardProfessorIds).mockImplementation(async (payload) => {
-      const source = await listProfessors({ identityId: payload.identity_id });
+      const source = await listProfessors();
       const items = filterDashboardProfessors([...source], payload);
       return { ids: items.map((item) => item.id), total_count: items.length };
     });
