@@ -52,6 +52,7 @@ from app.modules.professors.public import (
     import_professor_records,
     is_valid_professor_email,
     get_or_create_professor_by_email,
+    lock_professor_tag_for_delete,
     normalize_professor_email,
     parse_professor_import_file,
     prepare_bulk_professor_archive_snapshot,
@@ -1363,6 +1364,7 @@ async def _execute_professor_tag_delete(
     ):
         raise _invalid_change_plan_snapshot_error()
     try:
+        await lock_professor_tag_for_delete(session, tag_id)
         current_snapshot = await prepare_professor_tag_delete_snapshot(session, tag_id)
     except ProfessorMutationError as exc:
         raise _tag_delete_plan_stale_error() from exc

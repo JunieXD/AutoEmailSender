@@ -64,6 +64,40 @@ class IdentityProfileRead(IdentityProfileBase):
     updated_at: datetime
 
 
+class IdentityReferenceCounts(ApiSchema):
+    email_tasks: int = 0
+    email_logs: int = 0
+    batch_tasks: int = 0
+    test_compose_sessions: int = 0
+    test_compose_messages: int = 0
+    match_analysis_jobs: int = 0
+    match_analysis_runs: int = 0
+    match_results: int = 0
+    delivery_attempts: int = 0
+    email_observations: int = 0
+
+
+class IdentityDeletionBlocker(ApiSchema):
+    kind: str
+    label: str
+    count: int
+    entity_ids: list[int | str]
+
+
+class IdentityDeletionImpact(ApiSchema):
+    identity_id: int
+    identity_name: str
+    email_address: str
+    is_default: bool
+    can_delete: bool
+    revision: str
+    references: IdentityReferenceCounts
+    blockers: list[IdentityDeletionBlocker]
+    preserved_material_count: int
+    communication_group_id: int | None
+    warnings: list[str]
+
+
 class ConnectionTestResult(ApiSchema):
     ok: bool
     message: str

@@ -17,6 +17,36 @@ export interface IdentityMaterialDTO {
   created_at: string;
 }
 
+export interface MaterialDeletionImpactDTO {
+  snapshot_version: string;
+  material_id: number;
+  deletion_fingerprint: string;
+  summary: {
+    material: {
+      id: number;
+      name: string;
+      source_identity_id: number | null;
+      identity_id: number | null;
+      is_primary: boolean;
+      default_for_identity_ids: number[];
+    };
+    effects: {
+      clears_default_reference_material: boolean;
+      cleared_default_identity_ids: number[];
+      detached_primary_task_ids: number[];
+      removed_attachment_task_ids: number[];
+      removed_rewrite_source_task_ids: number[];
+      reset_draft_task_ids: number[];
+      detached_test_compose_session_ids: number[];
+      detached_batch_task_ids: number[];
+      detached_match_analysis_run_count: number;
+      detached_match_result_count: number;
+      completed_batch_task_ids: number[];
+    };
+  };
+  warnings: string[];
+}
+
 export interface IdentityDTO {
   id: number;
   name: string;
@@ -50,6 +80,40 @@ export interface IdentityDTO {
   materials: IdentityMaterialDTO[];
   created_at: string;
   updated_at: string;
+}
+
+export interface IdentityReferenceCountsDTO {
+  email_tasks: number;
+  email_logs: number;
+  batch_tasks: number;
+  test_compose_sessions: number;
+  test_compose_messages: number;
+  match_analysis_jobs: number;
+  match_analysis_runs: number;
+  match_results: number;
+  delivery_attempts: number;
+  email_observations: number;
+}
+
+export interface IdentityDeletionBlockerDTO {
+  kind: string;
+  label: string;
+  count: number;
+  entity_ids: Array<number | string>;
+}
+
+export interface IdentityDeletionImpactDTO {
+  identity_id: number;
+  identity_name: string;
+  email_address: string;
+  is_default: boolean;
+  can_delete: boolean;
+  revision: string;
+  references: IdentityReferenceCountsDTO;
+  blockers: IdentityDeletionBlockerDTO[];
+  preserved_material_count: number;
+  communication_group_id: number | null;
+  warnings: string[];
 }
 
 export interface IdentityCommunicationGroupMemberDTO {

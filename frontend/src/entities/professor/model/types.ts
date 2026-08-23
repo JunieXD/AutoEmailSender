@@ -167,6 +167,7 @@ export interface ProfessorTagUsageProfessorDTO {
 export interface ProfessorTagUsageDTO {
   tag: ProfessorTagDTO;
   professors: ProfessorTagUsageProfessorDTO[];
+  revision: string;
 }
 
 export interface ProfessorManagementItemDTO {

@@ -1735,6 +1735,7 @@ export const ProfessorsPage = () => {
   };
 
   const handleDeleteProfessorTag = async (tag: ProfessorTagDTO) => {
+    let usageRevision = "";
     let usageProfessors: Array<{
       id: number;
       name: string;
@@ -1744,6 +1745,7 @@ export const ProfessorsPage = () => {
     }> = [];
     try {
       const usage = await getProfessorTagUsage(tag.id);
+      usageRevision = usage.revision;
       usageProfessors = usage.professors;
     } catch (usageError) {
       notifyError(
@@ -1780,7 +1782,7 @@ export const ProfessorsPage = () => {
     }
 
     try {
-      const result = await deleteProfessorTag(tag.id);
+      const result = await deleteProfessorTag(tag.id, usageRevision);
       setProfessorTags((previous) =>
         previous.filter((item) => item.id !== tag.id),
       );
@@ -1809,8 +1811,8 @@ export const ProfessorsPage = () => {
   ) => {
     const confirmed = await confirm({
       title: `将“${professor.name}”移入回收站？`,
-      description:
-        "移入回收站后，这位导师会从首页与正常列表中隐藏，但历史任务和通信会保留。",
+        description:
+          "移入回收站后，这位导师会从首页与正常列表中隐藏，但历史任务和通信会保留。若仍有待发送或发送中的邮件，系统会拒绝归档并提示先取消发送。",
       confirmLabel: "确认移入",
       cancelLabel: "取消",
       tone: "danger",

@@ -3348,8 +3348,8 @@ describe("TasksPage batch draft review", () => {
     });
     expect(screen.getByRole("button", { name: "审核通过" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "立即发送" })).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "删除草稿" })[0]).toBeDisabled();
-    expect(screen.getAllByRole("button", { name: "删除草稿" })[1]).not.toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "移除草稿" })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "移除草稿" })[1]).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
     expect(await screen.findByRole("button", { name: "审核通过" })).not.toBeDisabled();
@@ -3362,7 +3362,7 @@ describe("TasksPage batch draft review", () => {
       expect(apiMocks.regenerateBatchTaskItemDraft).toHaveBeenCalledWith(1, 12);
     });
     const deleteButtonsWhileBothRegenerate = screen.getAllByRole("button", {
-      name: "删除草稿",
+      name: "移除草稿",
     });
     expect(deleteButtonsWhileBothRegenerate[0]).toBeDisabled();
     expect(deleteButtonsWhileBothRegenerate[1]).toBeDisabled();
@@ -3398,13 +3398,14 @@ describe("TasksPage batch draft review", () => {
 
     confirmMock.mockClear();
     confirmMock.mockResolvedValueOnce(false);
-    fireEvent.click(screen.getAllByRole("button", { name: "删除草稿" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "移除草稿" })[1]);
     await waitFor(() => {
       expect(confirmMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "从批量任务中删除这封草稿？",
-          description: "删除后会从当前批量任务中彻底移除这位导师和对应草稿记录。",
-          confirmLabel: "删除草稿",
+          title: "从批量任务中移除这封草稿？",
+          description:
+            "该草稿会从当前待处理列表中移除并停止后续发送；记录仍会保留在任务历史中。",
+          confirmLabel: "移除草稿",
           cancelLabel: "先保留",
           tone: "danger",
         }),
@@ -3413,7 +3414,7 @@ describe("TasksPage batch draft review", () => {
     expect(apiMocks.deleteBatchTaskItem).not.toHaveBeenCalled();
 
     confirmMock.mockResolvedValueOnce(true);
-    fireEvent.click(screen.getAllByRole("button", { name: "删除草稿" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "移除草稿" })[1]);
 
     await waitFor(() => {
       expect(apiMocks.deleteBatchTaskItem).toHaveBeenCalledWith(1, 12);

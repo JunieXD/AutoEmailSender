@@ -983,11 +983,6 @@ async def retry_faculty_crawl_job_record(
     )
     if payload.clear_existing_data:
         await session.execute(
-            delete(CrawlWorkerTokenUsage).where(CrawlWorkerTokenUsage.job_id == job.id),
-        )
-
-    if payload.clear_existing_data:
-        await session.execute(
             delete(CrawlCandidate).where(CrawlCandidate.job_id == job.id)
         )
         await session.execute(

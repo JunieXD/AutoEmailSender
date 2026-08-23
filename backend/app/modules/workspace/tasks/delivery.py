@@ -22,6 +22,7 @@ from app.models import (
     EmailTaskSource,
     IdentityMaterial,
     IdentityProfile,
+    Professor,
 )
 from app.modules.campaigns.public import (
     build_send_template_context,
@@ -599,6 +600,25 @@ async def dispatch_email_task(
             return False
         if task.batch_task and task.batch_task.status != BatchTaskStatus.RUNNING.value:
             return False
+        # Archive and delivery decisions share this lock. After waiting for an
+        # in-flight archive transaction, refresh the relationship before claiming
+        # the task so an archived professor can never enter the SMTP path.
+        await session.execute(
+            update(Professor)
+            .where(Professor.id == task.professor_id)
+            .values(updated_at=Professor.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        await session.refresh(task.professor, attribute_names=["archived_at"])
+        if task.professor.archived_at is not None:
+            task.status = EmailTaskStatus.CANCELED.value
+            task.cancellation_reason = (
+                EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value
+            )
+            task.scheduled_at = None
+            task.updated_at = utc_now()
+            await session.commit()
+            return True
 
         claimed_at = as_utc_aware(now) if now is not None else utc_now()
         if _is_task_scheduled_for_future(task, claimed_at):

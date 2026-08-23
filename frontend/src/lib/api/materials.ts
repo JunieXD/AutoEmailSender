@@ -1,6 +1,10 @@
 import { apiFetch } from '@/lib/api/client';
 import { downloadApiFile } from '@/lib/api/download';
-import type { IdentityMaterialDTO, IdentityMaterialType } from '@/types';
+import type {
+  IdentityMaterialDTO,
+  IdentityMaterialType,
+  MaterialDeletionImpactDTO,
+} from '@/types';
 
 export const uploadIdentityMaterial = (
   identityId: number,
@@ -28,10 +32,15 @@ export const setPrimaryMaterial = (identityId: number, materialId: number) =>
     { method: 'POST' },
   );
 
-export const deleteMaterial = (materialId: number) =>
+export const getMaterialDeletionImpact = (materialId: number) =>
+  apiFetch<MaterialDeletionImpactDTO>(
+    `/api/materials/${materialId}/deletion-impact`,
+  );
+
+export const deleteMaterial = (materialId: number, deletionFingerprint: string) =>
   apiFetch<void>(`/api/materials/${materialId}`, {
     method: 'DELETE',
-  });
+  }, { deletion_fingerprint: deletionFingerprint });
 
 export const downloadMaterial = (materialId: number, filename: string) =>
   downloadApiFile(`/api/materials/${materialId}/download`, filename);

@@ -90,10 +90,10 @@ export const createProfessorTag = (payload: ProfessorTagPayloadDTO) =>
     body: JSON.stringify(payload),
   });
 
-export const deleteProfessorTag = (tagId: number) =>
+export const deleteProfessorTag = (tagId: number, impactRevision: string) =>
   apiFetch<ProfessorActionResultDTO>(`/api/professors/tags/${tagId}`, {
     method: 'DELETE',
-  });
+  }, { impact_revision: impactRevision });
 
 export const getProfessorTagUsage = (tagId: number) =>
   apiFetch<ProfessorTagUsageDTO>(`/api/professors/tags/${tagId}/usage`);

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import UploadFile
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -302,6 +302,15 @@ async def delete_identity_material_record(
     expected_fingerprint: str | None = None,
 ) -> MaterialDeletionResult:
     """Delete one material and detach every safe stale reference within this transaction."""
+    # Lock the material before the final snapshot. Updating the primary key to
+    # itself acquires SQLite's writer lock and a PostgreSQL row lock that also
+    # conflicts with new foreign-key references.
+    await session.execute(
+        update(IdentityMaterial)
+        .where(IdentityMaterial.id == material_id)
+        .values(id=IdentityMaterial.id)
+        .execution_options(synchronize_session=False)
+    )
     state = await _load_material_deletion_state(session, material_id)
     completed_batch_task_ids = _completed_batch_task_ids(state.batch_tasks)
     _ensure_material_deletion_allowed(state, completed_batch_task_ids)
@@ -674,13 +683,34 @@ def _build_material_deletion_snapshot(
     }
     warnings = ["确认后会永久删除该材料文件，无法从应用内恢复。"]
     if is_primary:
-        warnings.append("该材料当前是默认 AI 参考材料，删除后会清除该默认设置。")
-    if detached_primary_task_ids or removed_attachment_task_ids:
         warnings.append(
-            "引用该材料的可安全处理草稿会解除引用；部分草稿将回到需要重新审核的状态。"
+            f"会清除 {len(default_identity_ids)} 个身份的默认 AI 参考材料设置。"
+        )
+    affected_task_ids = set(detached_primary_task_ids)
+    affected_task_ids.update(removed_attachment_task_ids)
+    affected_task_ids.update(removed_rewrite_source_task_ids)
+    if affected_task_ids:
+        reset_suffix = (
+            f"；其中 {len(reset_draft_task_ids)} 个草稿会回到需要重新审核的状态"
+            if reset_draft_task_ids
+            else ""
+        )
+        warnings.append(
+            f"会解除 {len(affected_task_ids)} 个任务或草稿中的材料引用{reset_suffix}。"
         )
     if detached_batch_task_ids:
-        warnings.append("已停止、已完成或已删除的批量任务会解除该材料引用。")
+        warnings.append(
+            f"会解除 {len(detached_batch_task_ids)} 个历史批量任务中的材料引用。"
+        )
+    if detached_test_compose_session_ids:
+        warnings.append(
+            f"{len(detached_test_compose_session_ids)} 个测试写信会话会解除该材料引用。"
+        )
+    match_reference_count = len(state.match_analysis_runs) + len(state.match_results)
+    if match_reference_count:
+        warnings.append(
+            f"{match_reference_count} 条匹配分析记录会解除该材料引用，记录本身会保留。"
+        )
     return {
         "snapshot_version": "1",
         "material_id": material.id,

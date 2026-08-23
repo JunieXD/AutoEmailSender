@@ -7,10 +7,39 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services.file_storage import extract_text_from_document
+from app.services.file_storage import delete_file, extract_text_from_document
 
 
 class FileStorageExtractionTests(unittest.TestCase):
+    def test_delete_file_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "material.txt"
+            path.write_text("material", encoding="utf-8")
+
+            self.assertTrue(delete_file(path.as_posix()))
+            self.assertTrue(delete_file(path.as_posix()))
+            self.assertFalse(path.exists())
+
+    def test_delete_file_reports_cleanup_debt_without_raising(self) -> None:
+        from app.services import file_storage
+
+        with (
+            patch.object(file_storage, "Path") as path_factory,
+            patch.object(file_storage.logger, "exception") as log_exception,
+        ):
+            path_factory.return_value.unlink.side_effect = OSError("file is busy")
+            path_factory.return_value.as_posix.return_value = (
+                "material-cleanup-test.txt"
+            )
+            deleted = file_storage.delete_file("material-cleanup-test.txt")
+
+        self.assertFalse(deleted)
+        path_factory.return_value.unlink.assert_called_once_with(missing_ok=True)
+        log_exception.assert_called_once_with(
+            "材料记录已删除，但文件清理失败: %s",
+            "material-cleanup-test.txt",
+        )
+
     def test_import_keeps_heavy_document_dependencies_lazy(self) -> None:
         script = """
 import sys

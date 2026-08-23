@@ -83,6 +83,7 @@ class ProfessorTagUsageProfessorRead(ApiSchema):
 class ProfessorTagUsageRead(ApiSchema):
     tag: ProfessorTagRead
     professors: list[ProfessorTagUsageProfessorRead] = Field(default_factory=list)
+    revision: str
 
 
 class ProfessorRead(ApiSchema):

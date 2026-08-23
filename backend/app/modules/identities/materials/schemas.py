@@ -27,3 +27,11 @@ class IdentityMaterialRead(ApiSchema):
     is_primary: bool = False
     default_for_identity_ids: list[int] = Field(default_factory=list)
     created_at: datetime
+
+
+class MaterialDeletionImpactRead(ApiSchema):
+    snapshot_version: str
+    material_id: int
+    deletion_fingerprint: str
+    summary: dict[str, object]
+    warnings: list[str] = Field(default_factory=list)

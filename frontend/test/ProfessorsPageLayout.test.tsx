@@ -627,7 +627,7 @@ describe("ProfessorsPage layout", () => {
     expect(row).not.toBeNull();
     const record = within(row as HTMLElement);
     const editButton = record.getByRole("button", { name: "编辑" });
-    const archiveButton = record.getByRole("button", { name: "删除" });
+    const archiveButton = record.getByRole("button", { name: "归档" });
     const actionGroup = editButton.closest("div");
 
     expect(actionGroup).toHaveClass("grid", "grid-cols-2", "lg:mx-auto");

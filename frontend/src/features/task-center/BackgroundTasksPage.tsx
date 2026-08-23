@@ -2721,7 +2721,8 @@ export const BackgroundTasksPage = ({
 
     const confirmed = await confirm({
       title: "确认重新抓取任务？",
-      description: "清空已有页面和候选导师后重新抓取。",
+      description:
+        "将清空本任务已有页面、候选导师和抓取轨迹后重新抓取。已导入的导师、历史运行记录和 Token 用量会保留。",
       confirmLabel: "确认重新抓取",
       cancelLabel: "暂不处理",
     });
@@ -3590,9 +3591,10 @@ export const BackgroundTasksPage = ({
       return;
     }
     const confirmed = await confirm({
-      title: "从批量任务中删除这封草稿？",
-      description: "删除后会从当前批量任务中彻底移除这位导师和对应草稿记录。",
-      confirmLabel: "删除草稿",
+      title: "从批量任务中移除这封草稿？",
+      description:
+        "该草稿会从当前待处理列表中移除并停止后续发送；记录仍会保留在任务历史中。",
+      confirmLabel: "移除草稿",
       cancelLabel: "先保留",
       tone: "danger",
     });
@@ -3617,8 +3619,8 @@ export const BackgroundTasksPage = ({
       }
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "删除草稿失败";
-      notifyError("删除草稿失败", message);
+        actionError instanceof Error ? actionError.message : "移除草稿失败";
+      notifyError("移除草稿失败", message);
     } finally {
       clearBatchReviewItemAction(item.id, "delete");
     }
@@ -4117,7 +4119,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4134,8 +4136,8 @@ export const BackgroundTasksPage = ({
       await loadTasks();
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "删除任务失败";
-      notifyError("删除任务失败", message);
+        actionError instanceof Error ? actionError.message : "移入回收站失败";
+      notifyError("移入回收站失败", message);
     }
   };
 
@@ -4154,7 +4156,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteCrawlJob = async (job: CrawlJobSummaryDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4171,8 +4173,8 @@ export const BackgroundTasksPage = ({
       await loadCrawlJobs();
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "删除任务失败";
-      notifyError("删除任务失败", message);
+        actionError instanceof Error ? actionError.message : "移入回收站失败";
+      notifyError("移入回收站失败", message);
     }
   };
 
@@ -4191,7 +4193,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteMatchJob = async (job: MatchAnalysisJobDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4208,8 +4210,8 @@ export const BackgroundTasksPage = ({
       await loadMatchAnalysisJobs();
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "删除任务失败";
-      notifyError("删除任务失败", message);
+        actionError instanceof Error ? actionError.message : "移入回收站失败";
+      notifyError("移入回收站失败", message);
     }
   };
 
@@ -4230,7 +4232,7 @@ export const BackgroundTasksPage = ({
   ) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4247,8 +4249,8 @@ export const BackgroundTasksPage = ({
       await loadInformationEnrichmentJobs();
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "删除任务失败";
-      notifyError("删除任务失败", message);
+        actionError instanceof Error ? actionError.message : "移入回收站失败";
+      notifyError("移入回收站失败", message);
     }
   };
 
@@ -5143,7 +5145,7 @@ export const BackgroundTasksPage = ({
                           </button>
                           <button
                             type="button"
-                            aria-label="删除草稿"
+                            aria-label="移除草稿"
                             onClick={() => void handleDeleteBatchDraftItem(item)}
                             disabled={itemDeleting || itemBusyGenerating}
                             className="flex w-11 shrink-0 items-center justify-center border-l border-stone-100 text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"

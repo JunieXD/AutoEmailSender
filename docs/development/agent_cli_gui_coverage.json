@@ -243,6 +243,7 @@
         "createIdentity",
         "updateIdentity",
         "updateIdentityDefaultOutreachTemplate",
+        "getIdentityDeletionImpact",
         "deleteIdentity",
         "setDefaultIdentity",
         "testIdentitySmtp",
@@ -264,6 +265,11 @@
           "status": "ui_only",
           "required_capabilities": ["identities.credentials"],
           "reason": "身份删除保留在桌面凭据管理流程中。"
+        },
+        "getIdentityDeletionImpact": {
+          "status": "ui_only",
+          "required_capabilities": ["identities.credentials"],
+          "reason": "删除影响预览是桌面凭据删除确认流程的一部分。"
         }
       },
       "status": "available",
@@ -378,6 +384,7 @@
       "exported_actions": [
         "uploadIdentityMaterial",
         "setPrimaryMaterial",
+        "getMaterialDeletionImpact",
         "deleteMaterial",
         "downloadMaterial"
       ],
@@ -402,7 +409,8 @@
         "updateOutreachTemplate",
         "duplicateOutreachTemplate",
         "setGlobalDefaultOutreachTemplate",
-        "archiveOutreachTemplate"
+        "archiveOutreachTemplate",
+        "restoreOutreachTemplate"
       ],
       "status": "available",
       "required_capabilities": [

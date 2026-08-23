@@ -25,11 +25,12 @@ from app.models import (
 from app.services.file_storage import (
     delete_file,
 )
-from .schemas import IdentityMaterialRead
+from .schemas import IdentityMaterialRead, MaterialDeletionImpactRead
 from .serializer import serialize_material
 from .service import (
     MaterialMutationError,
     delete_identity_material_record,
+    prepare_material_deletion_snapshot,
     set_primary_material_record,
     upload_identity_material_record,
 )
@@ -208,17 +209,38 @@ async def set_identity_primary_material(
     )
 
 
+@router.get(
+    "/materials/{material_id}/deletion-impact",
+    response_model=MaterialDeletionImpactRead,
+)
+async def get_material_deletion_impact(
+    material_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> MaterialDeletionImpactRead:
+    try:
+        snapshot = await prepare_material_deletion_snapshot(session, material_id)
+    except MaterialMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return MaterialDeletionImpactRead.model_validate(snapshot)
+
+
 @router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_material(
     material_id: int,
+    deletion_fingerprint: str | None = Query(default=None, min_length=16, max_length=128),
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
     try:
+        expected_fingerprint = deletion_fingerprint
+        if expected_fingerprint is None:
+            preview = await prepare_material_deletion_snapshot(session, material_id)
+            expected_fingerprint = str(preview["deletion_fingerprint"])
         result = await delete_identity_material_record(
             session,
             material_id,
             event_name="identity_material.deleted",
             actor="ui",
+            expected_fingerprint=expected_fingerprint,
         )
     except MaterialMutationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

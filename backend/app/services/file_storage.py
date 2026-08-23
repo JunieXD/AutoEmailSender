@@ -47,12 +47,19 @@ def save_upload(file: UploadFile, *segments: str) -> StoredUpload:
     )
 
 
-def delete_file(file_path: str | None) -> None:
+def delete_file(file_path: str | None) -> bool:
     if not file_path:
-        return
+        return True
     target = Path(file_path)
-    if target.exists():
-        target.unlink()
+    try:
+        target.unlink(missing_ok=True)
+    except OSError:
+        # The database transaction has already committed when this is called.
+        # Treat a leftover file as cleanup debt instead of reporting a false
+        # deletion failure after the material record is irreversibly gone.
+        logger.exception("材料记录已删除，但文件清理失败: %s", target.as_posix())
+        return False
+    return True
 
 
 def extract_text_from_document(file_path: str) -> str | None:

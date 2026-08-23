@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.core.database import get_async_session
+from app.core.agent_revisions import revision_for
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.models import (
     EmailTask,
@@ -82,6 +83,8 @@ from .mutations import (
     bulk_update_professor_tags_record,
     create_professor_record,
     create_professor_tag_record,
+    delete_professor_tag_record,
+    lock_professor_tag_for_delete,
     import_professor_records,
     restore_professor_record,
     set_professor_tags_record,
@@ -479,7 +482,7 @@ async def get_professor_tag_usage(
             )
         ).scalars(),
     )
-    return ProfessorTagUsageRead(
+    result = ProfessorTagUsageRead(
         tag=_serialize_tag(tag),
         professors=[
             ProfessorTagUsageProfessorRead(
@@ -491,6 +494,17 @@ async def get_professor_tag_usage(
             )
             for professor in professors
         ],
+        revision="",
+    )
+    return result.model_copy(
+        update={
+            "revision": revision_for(
+                {
+                    "tag": result.tag.model_dump(mode="json"),
+                    "professor_ids": [professor.id for professor in result.professors],
+                }
+            )
+        }
     )
 
 
@@ -523,21 +537,41 @@ async def create_professor_tag(
 @router.delete("/tags/{tag_id}", response_model=ProfessorActionResult)
 async def delete_professor_tag(
     tag_id: int,
+    impact_revision: str = Query(..., min_length=20, max_length=64),
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorActionResult:
-    tag = await session.get(ProfessorTag, tag_id)
-    if tag is None:
-        raise HTTPException(status_code=404, detail="未找到标签")
-
-    await session.execute(
-        delete(ProfessorTagLink).where(ProfessorTagLink.tag_id == tag_id)
-    )
-    await session.delete(tag)
+    try:
+        await lock_professor_tag_for_delete(session, tag_id)
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    usage = await get_professor_tag_usage(tag_id, session)
+    if usage.revision != impact_revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "PROFESSOR_TAG_DELETE_PLAN_STALE",
+                "message": "标签关联的导师已发生变化，请重新确认删除影响。",
+                "usage": usage.model_dump(mode="json"),
+            },
+        )
+    try:
+        result = await delete_professor_tag_record(
+            session,
+            tag_id,
+            event_name="professor.tag_deleted",
+            actor="desktop_ui",
+        )
+    except ProfessorMutationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     await session.commit()
     return ProfessorActionResult(
         ok=True,
         affected_count=1,
-        message="标签已删除",
+        message=(
+            f"标签已删除，并从 {result['affected_professor_count']} 位导师中移除"
+            if result["affected_professor_count"]
+            else "标签已删除"
+        ),
     )
 
 

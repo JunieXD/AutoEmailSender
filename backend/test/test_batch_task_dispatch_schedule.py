@@ -92,6 +92,35 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
         mocked_send.assert_not_called()
 
+    def test_dispatcher_cancels_legacy_approved_task_for_archived_professor(
+        self,
+    ) -> None:
+        task_id = self._run_async(self._create_manual_approved_task())
+        self._run_async(self._archive_task_professor(task_id))
+
+        with patch(
+            "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+            AsyncMock(return_value=self._build_send_result()),
+        ) as mocked_send:
+            processed = self._run_async(
+                dispatch_due_tasks_once(
+                    self.session_factory,
+                    now=datetime.now(UTC),
+                    local_timezone=UTC,
+                )
+            )
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.CANCELED.value,
+        )
+        self.assertEqual(
+            self._run_async(self._get_task_cancellation_reason(task_id)),
+            EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value,
+        )
+        mocked_send.assert_not_called()
+
     def test_dispatch_due_tasks_skips_batch_task_outside_time_window(self) -> None:
         task_id = self._run_async(
             self._create_batch_task_with_approved_task(
@@ -480,6 +509,62 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
         )
         mocked_send.assert_not_awaited()
 
+    def test_dispatch_email_task_rechecks_professor_after_archive_lock(self) -> None:
+        task_id = self._run_async(
+            self._create_batch_task_with_approved_task(
+                scheduled_dates=["2026-05-04"],
+                emails_per_window=20,
+            ),
+        )
+        archive_once = True
+
+        def archive_before_lock(
+            _conn, _cursor, statement, _parameters, _context, _executemany
+        ):
+            nonlocal archive_once
+            if not archive_once:
+                return
+            if not statement.lstrip().upper().startswith("UPDATE PROFESSORS"):
+                return
+            archive_once = False
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    "UPDATE professors SET archived_at = ? "
+                    "WHERE id = (SELECT professor_id FROM email_tasks WHERE id = ?)",
+                    (datetime.now(UTC).isoformat(), task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        event.listen(
+            self.engine.sync_engine, "before_cursor_execute", archive_before_lock
+        )
+        try:
+            with patch(
+                "app.modules.workspace.tasks.delivery.mail_runtime.send_email",
+                AsyncMock(return_value=self._build_send_result()),
+            ) as mocked_send:
+                processed = self._run_async(
+                    dispatch_email_task(self.session_factory, task_id)
+                )
+        finally:
+            event.remove(
+                self.engine.sync_engine, "before_cursor_execute", archive_before_lock
+            )
+
+        self.assertTrue(processed)
+        self.assertEqual(
+            self._run_async(self._get_task_status(task_id)),
+            EmailTaskStatus.CANCELED.value,
+        )
+        self.assertEqual(
+            self._run_async(self._get_task_cancellation_reason(task_id)),
+            EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value,
+        )
+        mocked_send.assert_not_awaited()
+
     def test_dispatch_email_task_claim_skips_task_rescheduled_during_claim(
         self,
     ) -> None:
@@ -543,7 +628,7 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             if not cancel_once:
                 return
             normalized_statement = statement.lstrip().upper()
-            if not normalized_statement.startswith("UPDATE IDENTITY_PROFILES"):
+            if not normalized_statement.startswith("UPDATE PROFESSORS"):
                 return
             cancel_once = False
             connection = sqlite3.connect(self.db_path)
@@ -2093,6 +2178,15 @@ class BatchTaskDispatchScheduleTests(unittest.TestCase):
             task = await session.get(EmailTask, task_id)
             assert task is not None
             return task.status
+
+    async def _archive_task_professor(self, task_id: int) -> None:
+        async with self.session_factory() as session:
+            task = await session.get(EmailTask, task_id)
+            assert task is not None
+            professor = await session.get(Professor, task.professor_id)
+            assert professor is not None
+            professor.archived_at = datetime.now(UTC)
+            await session.commit()
 
     async def _get_delivery_reconciliation_state(
         self,

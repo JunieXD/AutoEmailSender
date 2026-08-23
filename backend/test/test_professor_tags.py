@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
+from sqlalchemy import event
 
 from test.migrated_database import create_migrated_sqlite_database
 from app.modules.professors.public import (
@@ -456,12 +457,117 @@ class ProfessorTagsApiTests(unittest.TestCase):
                 "tag_ids": [tag["id"]],
             },
         ).json()
+        usage_response = self.client.get(
+            f"/api/professors/tags/{tag['id']}/usage"
+        )
+        self.assertEqual(usage_response.status_code, 200, msg=usage_response.text)
 
-        delete_response = self.client.delete(f"/api/professors/tags/{tag['id']}")
+        delete_response = self.client.delete(
+            f"/api/professors/tags/{tag['id']}",
+            params={"impact_revision": usage_response.json()["revision"]},
+        )
         refreshed = self.client.get(f"/api/professors/{created['id']}").json()
 
         self.assertEqual(delete_response.status_code, 200, msg=delete_response.text)
         self.assertEqual(refreshed["tags"], [])
+
+    def test_delete_tag_rejects_changed_usage_after_confirmation(self) -> None:
+        tag = self.client.get("/api/professors/tags").json()[0]
+        usage = self.client.get(
+            f"/api/professors/tags/{tag['id']}/usage"
+        ).json()
+        created = self.client.post(
+            "/api/professors",
+            json={
+                "name": "确认后新增关联导师",
+                "email": "tag-delete-stale@example.edu",
+                "tag_ids": [tag["id"]],
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+
+        response = self.client.delete(
+            f"/api/professors/tags/{tag['id']}",
+            params={"impact_revision": usage["revision"]},
+        )
+
+        self.assertEqual(response.status_code, 409, msg=response.text)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "PROFESSOR_TAG_DELETE_PLAN_STALE",
+        )
+        self.assertEqual(
+            response.json()["detail"]["usage"]["professors"][0]["id"],
+            created.json()["id"],
+        )
+
+    def test_delete_tag_rechecks_usage_after_acquiring_delete_lock(self) -> None:
+        from app.core.database import get_engine
+
+        tag = self.client.get("/api/professors/tags").json()[0]
+        usage = self.client.get(
+            f"/api/professors/tags/{tag['id']}/usage"
+        ).json()
+        professor = self.client.post(
+            "/api/professors",
+            json={
+                "name": "并发关联导师",
+                "email": "tag-delete-lock@example.edu",
+                "tag_ids": [],
+            },
+        ).json()
+        link_once = True
+
+        def link_before_delete_lock(
+            _conn, _cursor, statement, _parameters, _context, _executemany
+        ):
+            nonlocal link_once
+            if not link_once:
+                return
+            if not statement.lstrip().upper().startswith("UPDATE PROFESSOR_TAGS"):
+                return
+            link_once = False
+            connection = sqlite3.connect(self.db_path)
+            try:
+                connection.execute(
+                    "INSERT INTO professor_tag_links (professor_id, tag_id) "
+                    "VALUES (?, ?)",
+                    (professor["id"], tag["id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+        engine = get_engine()
+        event.listen(
+            engine.sync_engine,
+            "before_cursor_execute",
+            link_before_delete_lock,
+        )
+        try:
+            response = self.client.delete(
+                f"/api/professors/tags/{tag['id']}",
+                params={"impact_revision": usage["revision"]},
+            )
+        finally:
+            event.remove(
+                engine.sync_engine,
+                "before_cursor_execute",
+                link_before_delete_lock,
+            )
+
+        self.assertEqual(response.status_code, 409, msg=response.text)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "PROFESSOR_TAG_DELETE_PLAN_STALE",
+        )
+        self.assertEqual(
+            response.json()["detail"]["usage"]["professors"][0]["id"],
+            professor["id"],
+        )
+        self.assertTrue(
+            any(item["id"] == tag["id"] for item in self.client.get("/api/professors/tags").json())
+        )
 
     def test_import_file_creates_missing_tags_and_preserves_tag_order(self) -> None:
         buffer = io.StringIO()

@@ -30,6 +30,7 @@ from .mutations import (
     import_professor_records,
     load_or_create_tags_by_names,
     load_tags_by_ids,
+    lock_professor_tag_for_delete,
     prepare_bulk_professor_archive_snapshot,
     prepare_bulk_professor_tags_snapshot,
     prepare_professor_import_snapshot,

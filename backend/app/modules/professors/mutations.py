@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import case, delete, insert, select
+from sqlalchemy import case, delete, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import serialize_api_datetime, utc_now
-from app.models import Professor, ProfessorTag, ProfessorTagLink
+from app.models import EmailTask, EmailTaskStatus, Professor, ProfessorTag, ProfessorTagLink
 from .schemas import (
     ProfessorBulkTagsPayload,
     ProfessorTagPayload,
@@ -158,8 +158,11 @@ async def archive_professor_record(
     actor: str,
 ) -> tuple[Professor, int]:
     professor = await get_professor_with_tags_or_raise(session, professor_id)
+    await _lock_professors_for_archive(session, [professor.id])
+    await session.refresh(professor, attribute_names=["archived_at"])
     affected_count = 0
     if professor.archived_at is None:
+        await _ensure_professors_have_no_pending_delivery(session, [professor.id])
         now = utc_now()
         professor.archived_at = now
         professor.updated_at = now
@@ -302,6 +305,31 @@ async def delete_professor_tag_record(
     }
 
 
+async def lock_professor_tag_for_delete(
+    session: AsyncSession,
+    tag_id: int,
+) -> None:
+    """Block new tag links while a confirmed deletion is revalidated."""
+
+    result = await session.execute(
+        update(ProfessorTag)
+        .where(ProfessorTag.id == tag_id)
+        .values(id=ProfessorTag.id)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise ProfessorMutationError(
+            404,
+            "PROFESSOR_TAG_NOT_FOUND",
+            "未找到标签",
+        )
+    await session.scalar(
+        select(ProfessorTag.id)
+        .where(ProfessorTag.id == tag_id)
+        .with_for_update()
+    )
+
+
 async def prepare_bulk_professor_archive_snapshot(
     session: AsyncSession,
     professor_ids: list[int],
@@ -366,10 +394,14 @@ async def bulk_archive_professor_records(
     ordered_ids, professors = await _resolve_bulk_professor_archive(
         session, professor_ids
     )
+    await _lock_professors_for_archive(session, ordered_ids)
+    for professor in professors:
+        await session.refresh(professor, attribute_names=["archived_at"])
     now = utc_now()
     affected_ids = [
         professor.id for professor in professors if professor.archived_at is None
     ]
+    await _ensure_professors_have_no_pending_delivery(session, affected_ids)
     for professor in professors:
         if professor.id not in affected_ids:
             continue
@@ -400,6 +432,62 @@ async def bulk_archive_professor_records(
             ],
         },
     }
+
+
+async def _lock_professors_for_archive(
+    session: AsyncSession,
+    professor_ids: list[int],
+) -> None:
+    """Serialize archive decisions with delivery claims for these professors."""
+
+    for professor_id_chunk in chunked_values(sorted(set(professor_ids))):
+        await session.execute(
+            update(Professor)
+            .where(Professor.id.in_(professor_id_chunk))
+            .values(updated_at=Professor.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+
+
+async def _ensure_professors_have_no_pending_delivery(
+    session: AsyncSession,
+    professor_ids: list[int],
+) -> None:
+    if not professor_ids:
+        return
+    pending: list[tuple[int, int, str]] = []
+    for professor_id_chunk in chunked_values(professor_ids):
+        pending.extend(
+            await session.execute(
+                select(EmailTask.professor_id, EmailTask.id, EmailTask.status)
+                .where(
+                    EmailTask.professor_id.in_(professor_id_chunk),
+                    EmailTask.batch_send_canceled_at.is_(None),
+                    EmailTask.status.in_(
+                        [
+                            EmailTaskStatus.APPROVED.value,
+                            EmailTaskStatus.SCHEDULED.value,
+                            EmailTaskStatus.SENDING.value,
+                        ]
+                    ),
+                )
+                .order_by(EmailTask.professor_id.asc(), EmailTask.id.asc())
+            )
+        )
+    if not pending:
+        return
+    professor_count = len({professor_id for professor_id, _, _ in pending})
+    task_ids = [task_id for _, task_id, _ in pending[:5]]
+    raise ProfessorMutationError(
+        409,
+        "PROFESSOR_ARCHIVE_PENDING_DELIVERY",
+        (
+            f"有 {professor_count} 位导师仍存在待发送或发送中的邮件"
+            f"（任务 ID：{'、'.join(str(task_id) for task_id in task_ids)}"
+            f"{' 等' if len(pending) > len(task_ids) else ''}）。"
+            "请先在任务中心取消发送，再移入回收站。"
+        ),
+    )
 
 
 async def set_professor_tags_record(

@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import clsx from "clsx";
 import {
   AlertTriangle,
+  ArchiveRestore,
   ChevronDown,
   CheckCircle2,
   Copy,
@@ -53,6 +54,7 @@ import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import {
   createIdentity,
   deleteIdentity,
+  getIdentityDeletionImpact,
   importIdentityTemplate,
   setDefaultIdentity,
   testIdentityImap,
@@ -65,12 +67,14 @@ import {
   createOutreachTemplate,
   duplicateOutreachTemplate,
   listOutreachTemplates,
+  restoreOutreachTemplate,
   setGlobalDefaultOutreachTemplate,
   updateOutreachTemplate,
 } from "@/lib/api/outreachTemplates";
 import {
   deleteMaterial,
   downloadMaterial,
+  getMaterialDeletionImpact,
   setPrimaryMaterial,
   uploadIdentityMaterial,
 } from "@/lib/api/materials";
@@ -88,8 +92,10 @@ import { getTestComposeStatus } from "@/lib/api/testComposeApi";
 import {
   MATERIAL_TYPE_LABELS,
   type IdentityDTO,
+  type IdentityDeletionImpactDTO,
   type IdentityMaterialDTO,
   type IdentityMaterialType,
+  type IdentityReferenceCountsDTO,
   type LLMProfileModelsResultDTO,
   type LLMProfileDeletionImpactDTO,
   type LLMProfileReferenceCountsDTO,
@@ -962,6 +968,7 @@ const OutreachTemplateModal = ({
   actingOnTemplate,
   loadingTemplates,
   templates,
+  archivedTemplates,
   editorId,
   form,
   identityLabel,
@@ -975,6 +982,7 @@ const OutreachTemplateModal = ({
   onClearIdentityDefault,
   onSetGlobalDefault,
   onDelete,
+  onRestore,
   onImport,
   onNameChange,
   onModeChange,
@@ -987,6 +995,7 @@ const OutreachTemplateModal = ({
   actingOnTemplate: boolean;
   loadingTemplates: boolean;
   templates: OutreachTemplateDTO[];
+  archivedTemplates: OutreachTemplateDTO[];
   editorId: EditorId;
   form: OutreachTemplateFormState;
   identityLabel: string;
@@ -1000,6 +1009,7 @@ const OutreachTemplateModal = ({
   onClearIdentityDefault: () => void;
   onSetGlobalDefault: (templateId: number) => void;
   onDelete: (template: OutreachTemplateDTO) => void;
+  onRestore: (template: OutreachTemplateDTO) => void;
   onImport: (file: File) => void;
   onNameChange: (value: string) => void;
   onModeChange: (value: OutreachGenerationMode) => void;
@@ -1251,6 +1261,35 @@ const OutreachTemplateModal = ({
                   </>
                 )}
               </div>
+              {archivedTemplates.length > 0 ? (
+                <div className="border-t border-stone-200 pt-3">
+                  <div className="text-xs font-semibold text-stone-500">
+                    已归档模板
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {archivedTemplates.map((template) => (
+                      <div
+                        key={template.id}
+                        className="flex items-center justify-between gap-2 border-b border-stone-100 py-2"
+                      >
+                        <span className="min-w-0 break-words text-sm text-stone-600">
+                          {template.name}
+                        </span>
+                        <button
+                          type="button"
+                          className="ui-icon-btn shrink-0"
+                          aria-label={`恢复模板“${template.name}”`}
+                          title="恢复模板"
+                          disabled={templateBusy}
+                          onClick={() => onRestore(template)}
+                        >
+                          <ArchiveRestore aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="grid min-w-0 gap-6">
@@ -1392,7 +1431,7 @@ const OutreachTemplateModal = ({
                     disabled={templateBusy}
                     className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    删除模板
+                    归档模板
                   </button>
                 </div>
               ) : null}
@@ -1704,6 +1743,144 @@ const LLM_REFERENCE_LABELS: Array<
   ["operation_logs", "操作日志"],
 ];
 
+const IDENTITY_REFERENCE_LABELS: Array<
+  [keyof IdentityReferenceCountsDTO, string]
+> = [
+  ["email_tasks", "邮件任务"],
+  ["email_logs", "邮件与通信记录"],
+  ["batch_tasks", "批量任务"],
+  ["test_compose_sessions", "测试写信会话"],
+  ["test_compose_messages", "测试邮件记录"],
+  ["match_analysis_jobs", "匹配分析任务"],
+  ["match_analysis_runs", "匹配运行记录"],
+  ["match_results", "导师匹配结果"],
+  ["delivery_attempts", "邮件投递尝试"],
+  ["email_observations", "邮件投递观测记录"],
+];
+
+const isIdentityDeletionImpact = (
+  value: unknown,
+): value is IdentityDeletionImpactDTO =>
+  typeof value === "object" &&
+  value !== null &&
+  "identity_id" in value &&
+  "revision" in value &&
+  typeof value.revision === "string" &&
+  "blockers" in value &&
+  Array.isArray(value.blockers);
+
+const IdentityDeletionDialog = ({
+  impact,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  impact: IdentityDeletionImpactDTO;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) => {
+  useDocumentScrollLock(true);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  const references = IDENTITY_REFERENCE_LABELS.filter(
+    ([key]) => impact.references[key] > 0,
+  );
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
+      <div
+        aria-describedby="identity-deletion-description"
+        aria-labelledby="identity-deletion-title"
+        aria-modal="true"
+        className="flex max-h-[min(88vh,46rem)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-stone-200 bg-white shadow-2xl"
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="identity-deletion-title" className="text-base font-semibold text-stone-950">
+              {impact.can_delete ? "删除身份配置" : "无法删除身份配置"}
+            </h2>
+            <p id="identity-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
+              “{impact.identity_name}” · {impact.email_address}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭"
+            className="ui-icon-btn shrink-0"
+            disabled={busy}
+            onClick={onClose}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          {impact.blockers.length > 0 && (
+            <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
+                <AlertTriangle aria-hidden="true" className="h-4 w-4" />
+                该身份已产生业务历史
+              </div>
+              <p className="mt-2 text-sm leading-6 text-rose-800">
+                为避免邮件、任务、匹配结果或投递审计被连带删除，系统不会物理删除这个身份。
+              </p>
+            </section>
+          )}
+
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">关联数据</h3>
+            {references.length > 0 ? (
+              <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
+                {references.map(([key, label]) => (
+                  <div key={key} className="flex items-center justify-between gap-4 border-b border-stone-100 py-1.5 text-sm">
+                    <dt className="text-stone-600">{label}</dt>
+                    <dd className="font-medium tabular-nums text-stone-900">
+                      {impact.references[key]}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="mt-2 text-sm text-stone-500">没有关联的业务历史。</p>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">处理方式</h3>
+            <ul className="mt-2 space-y-2 text-sm leading-6 text-stone-600">
+              {impact.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </section>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-stone-200 px-5 py-4">
+          <button type="button" className="ui-btn-secondary" disabled={busy} onClick={onClose}>
+            {impact.can_delete ? "取消" : "知道了"}
+          </button>
+          {impact.can_delete && (
+            <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
+              {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
+              {busy ? "正在删除" : "确认删除"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const isDeletionImpact = (value: unknown): value is LLMProfileDeletionImpactDTO =>
   typeof value === "object" &&
   value !== null &&
@@ -1911,6 +2088,11 @@ export const ProfilePage = () => {
     useState<OutreachTemplateFormState>(createEmptyOutreachTemplateForm());
   const [llmForm, setLlmForm] = useState<LLMFormState>(createEmptyLLMForm());
   const [submittingIdentity, setSubmittingIdentity] = useState(false);
+  const [loadingIdentityDeletionImpactId, setLoadingIdentityDeletionImpactId] =
+    useState<number | null>(null);
+  const [identityDeletionImpact, setIdentityDeletionImpact] =
+    useState<IdentityDeletionImpactDTO | null>(null);
+  const [deletingIdentity, setDeletingIdentity] = useState(false);
   const [savingOutreachTemplate, setSavingOutreachTemplate] = useState(false);
   const [actingOnOutreachTemplate, setActingOnOutreachTemplate] =
     useState(false);
@@ -1998,9 +2180,9 @@ export const ProfilePage = () => {
   const refreshOutreachTemplates = useCallback(async () => {
     setLoadingOutreachTemplates(true);
     try {
-      const templates = await listOutreachTemplates();
+      const templates = await listOutreachTemplates(true);
       setOutreachTemplates(templates);
-      return templates;
+      return templates.filter((template) => !template.archived_at);
     } catch (templateError) {
       notifyError(
         "模板加载失败",
@@ -2107,31 +2289,6 @@ export const ProfilePage = () => {
     void refreshOutreachTemplates();
   }, [refreshOutreachTemplates]);
 
-  const confirmDeleteTwice = async (
-    targetName: string,
-    finalDescription = "删除后无法恢复，请再确认一次。",
-  ) => {
-    const confirmedOnce = await confirm({
-      title: `确认删除${targetName}？`,
-      description: "这会移除当前内容，但还不会立即执行最终删除。",
-      confirmLabel: "继续删除",
-      cancelLabel: "先不删",
-      tone: "danger",
-    });
-
-    if (!confirmedOnce) {
-      return false;
-    }
-
-    return confirm({
-      title: `再次确认删除${targetName}`,
-      description: finalDescription,
-      confirmLabel: "确认删除",
-      cancelLabel: "返回",
-      tone: "danger",
-    });
-  };
-
   useEffect(() => {
     if (loading) {
       return;
@@ -2231,6 +2388,10 @@ export const ProfilePage = () => {
     : null;
   const activeOutreachTemplates = useMemo(
     () => outreachTemplates.filter((template) => !template.archived_at),
+    [outreachTemplates],
+  );
+  const archivedOutreachTemplates = useMemo(
+    () => outreachTemplates.filter((template) => Boolean(template.archived_at)),
     [outreachTemplates],
   );
   const identityDefaultOutreachTemplate =
@@ -2780,10 +2941,10 @@ export const ProfilePage = () => {
     template: OutreachTemplateDTO,
   ) => {
     const confirmed = await confirm({
-      title: `确认删除模板“${template.name}”？`,
+      title: `归档模板“${template.name}”？`,
       description:
-        "删除后取消默认关联；已创建任务不受影响。",
-      confirmLabel: "删除模板",
+        "归档后会取消默认关联并停止用于新任务；已创建任务和模板内容会保留，可稍后恢复。",
+      confirmLabel: "确认归档",
       cancelLabel: "取消",
       tone: "danger",
     });
@@ -2823,13 +2984,33 @@ export const ProfilePage = () => {
         beginOutreachTemplateCreation();
       }
       notifySuccess(
-        "模板已删除",
-        "已创建任务不受影响。",
+        "模板已归档",
+        "已创建任务不受影响，可在模板库中恢复。",
       );
     } catch (templateError) {
       notifyError(
-        "删除模板失败",
-        getActionErrorMessage(templateError, "删除发信模板失败"),
+        "归档模板失败",
+        getActionErrorMessage(templateError, "归档发信模板失败"),
+      );
+    } finally {
+      setActingOnOutreachTemplate(false);
+    }
+  };
+
+  const handleRestoreOutreachTemplate = async (
+    template: OutreachTemplateDTO,
+  ) => {
+    setActingOnOutreachTemplate(true);
+    try {
+      const restored = await restoreOutreachTemplate(template.id);
+      await refreshOutreachTemplates();
+      setTemplateEditorId(restored.id);
+      setOutreachTemplateForm(toOutreachTemplateForm(restored));
+      notifySuccess("模板已恢复", `“${restored.name}”已回到可用模板列表。`);
+    } catch (templateError) {
+      notifyError(
+        "恢复模板失败",
+        getActionErrorMessage(templateError, "恢复发信模板失败"),
       );
     } finally {
       setActingOnOutreachTemplate(false);
@@ -3039,6 +3220,62 @@ export const ProfilePage = () => {
       return null;
     } finally {
       setSubmittingIdentity(false);
+    }
+  };
+
+  const openIdentityDeletionImpact = async (identityId: number) => {
+    setLoadingIdentityDeletionImpactId(identityId);
+    try {
+      setIdentityDeletionImpact(await getIdentityDeletionImpact(identityId));
+    } catch (impactError) {
+      notifyError(
+        "无法检查删除影响",
+        getActionErrorMessage(impactError, "读取身份关联数据失败"),
+      );
+    } finally {
+      setLoadingIdentityDeletionImpactId(null);
+    }
+  };
+
+  const deleteSelectedIdentity = async () => {
+    const impact = identityDeletionImpact;
+    if (!impact?.can_delete || deletingIdentity) {
+      return;
+    }
+    setDeletingIdentity(true);
+    try {
+      await deleteIdentity(impact.identity_id, impact.revision);
+      await refreshSelections();
+      const emptyForm = createEmptyIdentityForm();
+      identityEditorIdRef.current = null;
+      identityFormRef.current = emptyForm;
+      identityFormBaselineRef.current = emptyForm;
+      setIdentityEditorId(null);
+      setIdentityForm(emptyForm);
+      setSmtpPasswordVisible(false);
+      setIdentityDeletionImpact(null);
+      notifySuccess(`已删除身份“${impact.identity_name}”`, "业务历史未受影响。");
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError) {
+        const updatedImpact =
+          typeof deleteError.details === "object" &&
+          deleteError.details !== null &&
+          "impact" in deleteError.details
+            ? deleteError.details.impact
+            : null;
+        if (isIdentityDeletionImpact(updatedImpact)) {
+          setIdentityDeletionImpact(updatedImpact);
+        }
+      }
+      notifyError(
+        deleteError instanceof ApiError &&
+          deleteError.code === "IDENTITY_DELETE_PLAN_STALE"
+          ? "关联状态已变化"
+          : "删除身份失败",
+        getActionErrorMessage(deleteError, "删除身份失败"),
+      );
+    } finally {
+      setDeletingIdentity(false);
     }
   };
 
@@ -3294,12 +3531,20 @@ export const ProfilePage = () => {
   };
 
   const handleDeleteMaterial = async (material: IdentityMaterialDTO) => {
-    if (!(await confirmDeleteTwice(`全局材料“${material.display_name}”（会从所有身份中移除）`))) {
-      return;
-    }
     setActingOnMaterial(true);
     try {
-      await deleteMaterial(material.id);
+      const impact = await getMaterialDeletionImpact(material.id);
+      const confirmed = await confirm({
+        title: `永久删除材料“${material.display_name}”？`,
+        description: impact.warnings.join("\n"),
+        confirmLabel: "确认永久删除",
+        cancelLabel: "先保留",
+        tone: "danger",
+      });
+      if (!confirmed) {
+        return;
+      }
+      await deleteMaterial(material.id, impact.deletion_fingerprint);
       await refreshSelections();
       notifySuccess(
         "删除材料成功",
@@ -3400,38 +3645,13 @@ export const ProfilePage = () => {
           )}
           <button
             type="button"
-            onClick={() => {
-              void (async () => {
-                if (
-                  !(await confirmDeleteTwice(
-                    `身份“${getIdentityProfileName(editingIdentity)}”`,
-                    "删除后无法恢复。该身份产生或同步的通信记录也可能从共享历史中永久消失。",
-                  ))
-                ) {
-                  return;
-                }
-                try {
-                  await deleteIdentity(editingIdentity.id);
-                  await refreshSelections();
-                  const emptyForm = createEmptyIdentityForm();
-                  identityEditorIdRef.current = null;
-                  identityFormRef.current = emptyForm;
-                  identityFormBaselineRef.current = emptyForm;
-                  setIdentityEditorId(null);
-                  setIdentityForm(emptyForm);
-                  setSmtpPasswordVisible(false);
-                  notifySuccess(`已删除身份“${getIdentityProfileName(editingIdentity)}”`);
-                } catch (deleteError) {
-                  notifyError(
-                    "删除身份失败",
-                    getActionErrorMessage(deleteError, "删除身份失败"),
-                  );
-                }
-              })();
-            }}
+            disabled={loadingIdentityDeletionImpactId === editingIdentity.id}
+            onClick={() => void openIdentityDeletionImpact(editingIdentity.id)}
             className="ui-btn-danger"
           >
-            删除
+            {loadingIdentityDeletionImpactId === editingIdentity.id
+              ? "检查关联数据…"
+              : "删除"}
           </button>
         </>
       )}
@@ -4162,6 +4382,7 @@ export const ProfilePage = () => {
         actingOnTemplate={actingOnOutreachTemplate}
         loadingTemplates={loadingOutreachTemplates}
         templates={activeOutreachTemplates}
+        archivedTemplates={archivedOutreachTemplates}
         editorId={templateEditorId}
         form={outreachTemplateForm}
         identityLabel={editingIdentity ? "当前身份" : "新身份"}
@@ -4189,6 +4410,7 @@ export const ProfilePage = () => {
           void handleSetGlobalDefaultTemplate(templateId)
         }
         onDelete={(template) => void handleDeleteOutreachTemplate(template)}
+        onRestore={(template) => void handleRestoreOutreachTemplate(template)}
         onImport={(file) => void handleTemplateFileImport(file)}
         onNameChange={(value) =>
           setOutreachTemplateForm((previous) => ({
@@ -4252,6 +4474,18 @@ export const ProfilePage = () => {
             }
           }}
           onConfirm={() => void retireSelectedLLM()}
+        />
+      )}
+      {identityDeletionImpact && (
+        <IdentityDeletionDialog
+          impact={identityDeletionImpact}
+          busy={deletingIdentity}
+          onClose={() => {
+            if (!deletingIdentity) {
+              setIdentityDeletionImpact(null);
+            }
+          }}
+          onConfirm={() => void deleteSelectedIdentity()}
         />
       )}
       {confirmDialog}

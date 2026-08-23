@@ -38,3 +38,8 @@ export const archiveOutreachTemplate = (templateId: number) =>
   apiFetch<OutreachTemplateDTO>(`/api/outreach-templates/${templateId}`, {
     method: 'DELETE',
   });
+
+export const restoreOutreachTemplate = (templateId: number) =>
+  apiFetch<OutreachTemplateDTO>(`/api/outreach-templates/${templateId}/restore`, {
+    method: 'POST',
+  });

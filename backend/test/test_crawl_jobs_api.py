@@ -1479,6 +1479,49 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "queued")
         self.assertEqual(self._count_page_chunks(job_id), 0)
 
+    def test_retry_crawl_job_clear_existing_data_preserves_token_audit(self) -> None:
+        create_response = self.client.post(
+            "/api/crawl-jobs",
+            json={
+                "university": "示例大学",
+                "school": "计算机学院",
+                "start_url": "https://example.edu/faculty",
+                "llm_profile_id": None,
+            },
+        )
+        self.assertEqual(create_response.status_code, 201, msg=create_response.text)
+        job_id = create_response.json()["id"]
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
+            connection.execute(
+                """
+                INSERT INTO crawl_worker_token_usages (
+                    job_id, worker_kind, work_item_id, claim_id, model_name,
+                    input_tokens, output_tokens, cached_tokens
+                )
+                VALUES (?, 'page', 'historical-page', 'historical-claim',
+                        'audit-model', 11, 7, 3)
+                """,
+                (job_id,),
+            )
+        self._set_job_status(job_id, "failed")
+
+        response = self.client.post(
+            f"/api/crawl-jobs/{job_id}/retry",
+            json={"clear_existing_data": True},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            usage = connection.execute(
+                """
+                SELECT input_tokens, output_tokens, cached_tokens
+                FROM crawl_worker_token_usages
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchall()
+        self.assertEqual(usage, [(11, 7, 3)])
+
     def test_retry_crawl_job_clears_previous_page_fetch_ledger(self) -> None:
         create_response = self.client.post(
             "/api/crawl-jobs",

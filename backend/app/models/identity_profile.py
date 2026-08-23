@@ -124,7 +124,6 @@ class IdentityProfile(Base):
     )
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="identity",
-        cascade="all, delete-orphan",
     )
     professor_match_results: Mapped[list["IdentityProfessorMatchResult"]] = (
         relationship(
@@ -136,9 +135,7 @@ class IdentityProfile(Base):
     )
     batch_tasks: Mapped[list["BatchTask"]] = relationship(
         back_populates="identity",
-        cascade="all, delete-orphan",
     )
     email_logs: Mapped[list["EmailLog"]] = relationship(
         back_populates="identity",
-        cascade="all, delete-orphan",
     )

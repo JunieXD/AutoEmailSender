@@ -96,7 +96,7 @@ export const ManagementProfessorRow = ({
           </div>
           {professor.archived_at ? (
             <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-              已删除
+              已归档
             </span>
           ) : null}
         </div>
@@ -138,7 +138,7 @@ export const ManagementProfessorRow = ({
           </div>
           {professor.archived_at ? (
             <div className="mt-2 text-xs text-amber-700">
-              删除于 {formatApiDateTime(professor.archived_at)}
+              归档于 {formatApiDateTime(professor.archived_at)}
             </div>
           ) : null}
         </FieldCell>
@@ -168,7 +168,7 @@ export const ManagementProfessorRow = ({
               className="ui-btn-danger justify-center whitespace-nowrap px-3 py-2"
             >
               <Archive className="h-4 w-4" />
-              删除
+              归档
             </button>
           )}
         </div>

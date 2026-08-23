@@ -6,28 +6,25 @@ from app.core.time import utc_now
 
 from time import perf_counter
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import delete, func, or_, select, update
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.models import (
-    EmailTask,
     IdentityCommunicationGroup,
     IdentityMaterial,
-    IdentityProfessorMatchResult,
     IdentityProfile,
+    ImapIdentitySyncLease,
+    ImapMailboxSyncState,
+    ImapProfessorSyncState,
     OutreachTemplate,
-    MatchAnalysisJob,
-    MatchAnalysisJobItem,
-    MatchAnalysisJobItemStatus,
-    MatchAnalysisJobStatus,
-    MatchAnalysisRun,
 )
 from .schemas import (
     ConnectionTestResult,
+    IdentityDeletionImpact,
     IdentityProfileCreate,
     IdentityProfileRead,
     IdentityProfileUpdate,
@@ -61,6 +58,7 @@ from app.modules.campaigns.public import (
 from app.modules.communications.public import explain_smtp_error
 
 from .serializer import serialize_identity
+from .deletion import build_identity_deletion_impact
 
 
 router = APIRouter(prefix="/api/identities", tags=["identities"])
@@ -224,12 +222,52 @@ async def update_identity_default_template(
     return await _serialize_identity_with_global_materials(session, saved)
 
 
+@router.get(
+    "/{identity_id}/deletion-impact",
+    response_model=IdentityDeletionImpact,
+)
+async def get_identity_deletion_impact(
+    identity_id: int,
+    session: AsyncSession = Depends(get_async_session),
+) -> IdentityDeletionImpact:
+    identity = await _get_identity(session, identity_id)
+    return await build_identity_deletion_impact(session, identity)
+
+
 @router.delete("/{identity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_identity(
     identity_id: int,
+    impact_revision: str = Query(..., min_length=64, max_length=64),
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
     identity = await _get_identity(session, identity_id)
+    # Acquire the database writer/row lock before the final impact check. SQLite
+    # serializes the following writes; PostgreSQL also protects this row until commit.
+    await session.execute(
+        update(IdentityProfile)
+        .where(IdentityProfile.id == identity_id)
+        .values(updated_at=IdentityProfile.updated_at),
+    )
+    impact = await build_identity_deletion_impact(session, identity)
+    if impact.revision != impact_revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "IDENTITY_DELETE_PLAN_STALE",
+                "message": "身份配置或关联数据已发生变化，请重新确认删除影响。",
+                "impact": impact.model_dump(mode="json"),
+            },
+        )
+    if not impact.can_delete:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "IDENTITY_DELETE_BLOCKED",
+                "message": "该身份仍关联业务历史。为避免删除邮件、任务或匹配记录，不能物理删除。",
+                "impact": impact.model_dump(mode="json"),
+            },
+        )
+
     was_default = identity.is_default
     communication_group_id = identity.communication_group_id
     cleared_match_source = False
@@ -259,6 +297,37 @@ async def delete_identity(
         .values(identity_id=None),
     )
 
+    # These rows are synchronization cursors and leases rather than user history.
+    # They must not keep an otherwise-unused identity alive.
+    await session.execute(
+        delete(ImapProfessorSyncState).where(
+            ImapProfessorSyncState.identity_id == identity_id
+        )
+    )
+    await session.execute(
+        delete(ImapMailboxSyncState).where(
+            ImapMailboxSyncState.identity_id == identity_id
+        )
+    )
+    await session.execute(
+        delete(ImapIdentitySyncLease).where(
+            ImapIdentitySyncLease.identity_id == identity_id
+        )
+    )
+
+    identity.current_primary_material_id = None
+    identity.communication_group_id = None
+    if was_default:
+        remaining = await session.scalar(
+            select(IdentityProfile)
+            .where(IdentityProfile.id != identity_id)
+            .order_by(IdentityProfile.created_at.asc(), IdentityProfile.id.asc())
+            .limit(1),
+        )
+        if remaining is not None:
+            remaining.is_default = True
+            remaining.updated_at = utc_now()
+
     await _record_identity_log(
         session,
         identity,
@@ -267,162 +336,57 @@ async def delete_identity(
             "was_default": was_default,
             "cleared_group_match_source": cleared_match_source,
             "preserved_source_material_ids": source_material_ids,
+            "deletion_impact_revision": impact.revision,
         },
     )
-    await _delete_identity_match_artifacts(session, identity_id)
-    await session.delete(identity)
-    await session.flush()
-    group_cleanup = None
-    if communication_group_id is not None:
-        group_cleanup = await cleanup_communication_group_after_identity_delete(
-            session,
-            group_id=communication_group_id,
-            removed_identity_id=identity_id,
-        )
-    if group_cleanup is not None:
-        await record_operation_log(
-            session,
-            category="identity",
-            event_name=(
-                "communication_group.deleted"
-                if group_cleanup.dissolved
-                else "communication_group.updated"
-            ),
-            entity_type="identity_communication_group",
-            entity_id=str(group_cleanup.group_id),
-            metadata={
-                "before_member_ids": list(group_cleanup.previous_member_ids),
-                "after_member_ids": (
-                    [] if group_cleanup.dissolved else list(group_cleanup.member_ids)
+    try:
+        await session.flush()
+        await session.delete(identity)
+        await session.flush()
+        group_cleanup = None
+        if communication_group_id is not None:
+            group_cleanup = await cleanup_communication_group_after_identity_delete(
+                session,
+                group_id=communication_group_id,
+                removed_identity_id=identity_id,
+            )
+        if group_cleanup is not None:
+            await record_operation_log(
+                session,
+                category="identity",
+                event_name=(
+                    "communication_group.deleted"
+                    if group_cleanup.dissolved
+                    else "communication_group.updated"
                 ),
-                "removed_identity_id": identity_id,
-                "cleared_match_source": cleared_match_source,
+                entity_type="identity_communication_group",
+                entity_id=str(group_cleanup.group_id),
+                metadata={
+                    "before_member_ids": list(group_cleanup.previous_member_ids),
+                    "after_member_ids": (
+                        []
+                        if group_cleanup.dissolved
+                        else list(group_cleanup.member_ids)
+                    ),
+                    "removed_identity_id": identity_id,
+                    "cleared_match_source": cleared_match_source,
+                },
+            )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        current_identity = await _get_identity(session, identity_id)
+        current_impact = await build_identity_deletion_impact(
+            session, current_identity
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "IDENTITY_DELETE_CONFLICT",
+                "message": "删除确认后出现了新的关联数据，身份未删除。请重新检查删除影响。",
+                "impact": current_impact.model_dump(mode="json"),
             },
-        )
-    await session.commit()
-
-    if was_default:
-        remaining = await session.scalar(
-            select(IdentityProfile).order_by(IdentityProfile.created_at.asc()).limit(1),
-        )
-        if remaining:
-            remaining.is_default = True
-            remaining.updated_at = utc_now()
-            await session.commit()
-
-
-async def _delete_identity_match_artifacts(
-    session: AsyncSession,
-    identity_id: int,
-) -> None:
-    """Remove match records that would otherwise keep a deleted identity/task alive.
-
-    SQLite does not enforce ``ON DELETE`` actions in the desktop runtime, so
-    cross-identity analysis records must be cleaned explicitly. PostgreSQL does
-    enforce the foreign keys, and the same cleanup is therefore required before
-    SQLAlchemy cascades the identity's email tasks. Task snapshots intentionally
-    retain ``match_source_identity_id`` as historical provenance.
-    """
-
-    now = utc_now()
-    task_ids = select(EmailTask.id).where(EmailTask.identity_id == identity_id)
-    active_source_job_ids = select(MatchAnalysisJob.id).where(
-        MatchAnalysisJob.match_source_identity_id == identity_id,
-        MatchAnalysisJob.status.in_(
-            [
-                MatchAnalysisJobStatus.QUEUED.value,
-                MatchAnalysisJobStatus.RUNNING.value,
-            ],
-        ),
-    )
-    await session.execute(
-        update(MatchAnalysisJobItem)
-        .where(
-            MatchAnalysisJobItem.job_id.in_(active_source_job_ids),
-            MatchAnalysisJobItem.status.in_(
-                [
-                    MatchAnalysisJobItemStatus.QUEUED.value,
-                    MatchAnalysisJobItemStatus.RUNNING.value,
-                ],
-            ),
-        )
-        .values(
-            status=MatchAnalysisJobItemStatus.CANCELED.value,
-            skip_reason="匹配依据身份已删除",
-            finished_at=now,
-            updated_at=now,
-        ),
-    )
-    await session.execute(
-        update(MatchAnalysisJob)
-        .where(MatchAnalysisJob.id.in_(active_source_job_ids))
-        .values(
-            status=MatchAnalysisJobStatus.CANCELED.value,
-            cancel_requested_at=now,
-            finished_at=now,
-            updated_at=now,
-            last_error="匹配依据身份已删除，任务已取消",
-        ),
-    )
-    run_ids = select(MatchAnalysisRun.id).where(
-        or_(
-            # A run normally belongs to the identity used as the match source.
-            MatchAnalysisRun.identity_id == identity_id,
-            # Legacy shared-group runs can reference an active identity's task
-            # while belonging to a different source identity. Deleting the task
-            # must still remove those historical linked runs.
-            MatchAnalysisRun.email_task_id.in_(task_ids),
-        ),
-    )
-    await session.execute(
-        update(MatchAnalysisJobItem)
-        .where(MatchAnalysisJobItem.match_analysis_run_id.in_(run_ids))
-        .values(match_analysis_run_id=None, updated_at=now),
-    )
-    await session.execute(
-        update(IdentityProfessorMatchResult)
-        .where(IdentityProfessorMatchResult.latest_analysis_run_id.in_(run_ids))
-        .values(latest_analysis_run_id=None, updated_at=now),
-    )
-    await session.execute(
-        update(IdentityProfessorMatchResult)
-        .where(IdentityProfessorMatchResult.source_email_task_id.in_(task_ids))
-        .values(source_email_task_id=None, updated_at=now),
-    )
-    await session.execute(
-        update(MatchAnalysisJobItem)
-        .where(MatchAnalysisJobItem.email_task_id.in_(task_ids))
-        .values(email_task_id=None, updated_at=now),
-    )
-    await session.execute(
-        delete(IdentityProfessorMatchResult).where(
-            IdentityProfessorMatchResult.identity_id == identity_id,
-        ),
-    )
-    await session.execute(
-        delete(MatchAnalysisRun).where(
-            MatchAnalysisRun.id.in_(run_ids),
-        ),
-    )
-    # Match-analysis jobs are identity-owned history, just like the email tasks
-    # that feed them.  Delete their items first because the job identity FK is
-    # non-null and has no database-level cascade in older installations.
-    owned_job_ids = select(MatchAnalysisJob.id).where(
-        MatchAnalysisJob.identity_id == identity_id,
-    )
-    await session.execute(
-        delete(MatchAnalysisJobItem).where(
-            MatchAnalysisJobItem.job_id.in_(owned_job_ids),
-        ),
-    )
-    await session.execute(
-        delete(MatchAnalysisJob).where(MatchAnalysisJob.id.in_(owned_job_ids)),
-    )
-    await session.execute(
-        update(MatchAnalysisJob)
-        .where(MatchAnalysisJob.match_source_identity_id == identity_id)
-        .values(match_source_identity_id=None, updated_at=now),
-    )
+        ) from exc
 
 
 @router.post("/{identity_id}/default", response_model=IdentityProfileRead)

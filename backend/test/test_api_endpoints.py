@@ -835,6 +835,44 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(len(restored_dashboard.json()), 1)
         self.assertEqual(restored_dashboard.json()[0]["name"], "张教授")
 
+    def test_professor_archive_blocks_pending_delivery_until_canceled(self) -> None:
+        identity_id = self._create_identity(
+            with_imap=False,
+            email_address="archive-delivery-guard@example.com",
+        )
+        llm_id = self._create_llm(name="导师归档保护模型")
+        professor_id = self._create_professor(
+            email="archive-delivery-guard-professor@example.edu"
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="scheduled",
+            primary_material_id=None,
+            approved_subject="待发送主题",
+            approved_body_text="待发送正文",
+        )
+
+        blocked = self.client.post(f"/api/professors/{professor_id}/archive")
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+        self.assertIn("请先在任务中心取消发送", blocked.json()["detail"])
+        self.assertIsNone(
+            self.client.get(f"/api/professors/{professor_id}").json()["archived_at"]
+        )
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE email_tasks SET status = 'canceled' WHERE id = ?",
+                (task_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        archived = self.client.post(f"/api/professors/{professor_id}/archive")
+        self.assertEqual(archived.status_code, 200, msg=archived.text)
+
     def test_professor_search_endpoints_and_invalid_cursor_contract(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         for name, email in (
@@ -1344,7 +1382,15 @@ class ApiEndpointTests(unittest.TestCase):
         template_id = identity["default_outreach_template_id"]
         self.assertIsNotNone(template_id)
 
-        delete_response = self.client.delete(f"/api/identities/{identity_id}")
+        impact_response = self.client.get(
+            f"/api/identities/{identity_id}/deletion-impact"
+        )
+        self.assertEqual(impact_response.status_code, 200, msg=impact_response.text)
+        self.assertTrue(impact_response.json()["can_delete"])
+        delete_response = self.client.delete(
+            f"/api/identities/{identity_id}",
+            params={"impact_revision": impact_response.json()["revision"]},
+        )
         self.assertEqual(delete_response.status_code, 204, msg=delete_response.text)
 
         template_response = self.client.get(
@@ -1372,6 +1418,68 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(replacement_response.json()["id"], identity_id)
         self.assertEqual(len(self.client.get("/api/outreach-templates").json()), 2)
+
+    def test_identity_delete_rechecks_references_and_preserves_business_history(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(
+            with_imap=False,
+            email_address="identity-delete-guard@example.com",
+        )
+        llm_id = self._create_llm(name="身份删除保护模型")
+        professor_id = self._create_professor(
+            email="identity-delete-guard-professor@example.edu"
+        )
+        initial_impact = self.client.get(
+            f"/api/identities/{identity_id}/deletion-impact"
+        )
+        self.assertEqual(initial_impact.status_code, 200, msg=initial_impact.text)
+        self.assertTrue(initial_impact.json()["can_delete"])
+
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="sent",
+            primary_material_id=None,
+        )
+        stale_delete = self.client.delete(
+            f"/api/identities/{identity_id}",
+            params={"impact_revision": initial_impact.json()["revision"]},
+        )
+        self.assertEqual(stale_delete.status_code, 409, msg=stale_delete.text)
+        self.assertEqual(
+            stale_delete.json()["detail"]["code"],
+            "IDENTITY_DELETE_PLAN_STALE",
+        )
+
+        current_impact = self.client.get(
+            f"/api/identities/{identity_id}/deletion-impact"
+        )
+        self.assertFalse(current_impact.json()["can_delete"])
+        self.assertEqual(current_impact.json()["references"]["email_tasks"], 1)
+        blocked_delete = self.client.delete(
+            f"/api/identities/{identity_id}",
+            params={"impact_revision": current_impact.json()["revision"]},
+        )
+        self.assertEqual(blocked_delete.status_code, 409, msg=blocked_delete.text)
+        self.assertEqual(
+            blocked_delete.json()["detail"]["code"],
+            "IDENTITY_DELETE_BLOCKED",
+        )
+        self.assertIn(
+            identity_id,
+            [item["id"] for item in self.client.get("/api/identities").json()],
+        )
+        connection = sqlite3.connect(self.db_path)
+        try:
+            task_count = connection.execute(
+                "SELECT COUNT(*) FROM email_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(task_count, 1)
 
     def test_global_default_template_is_snapshotted_by_workspace_and_test_compose(
         self,
@@ -5025,7 +5133,18 @@ class ApiEndpointTests(unittest.TestCase):
             [source_identity_id, target_identity_id],
         )
 
-        delete_source = self.client.delete(f"/api/identities/{source_identity_id}")
+        deletion_impact = self.client.get(
+            f"/api/identities/{source_identity_id}/deletion-impact"
+        )
+        self.assertEqual(
+            deletion_impact.status_code,
+            200,
+            msg=deletion_impact.text,
+        )
+        delete_source = self.client.delete(
+            f"/api/identities/{source_identity_id}",
+            params={"impact_revision": deletion_impact.json()["revision"]},
+        )
         self.assertEqual(delete_source.status_code, 204, msg=delete_source.text)
 
         surviving_catalog = self.client.get("/api/materials").json()

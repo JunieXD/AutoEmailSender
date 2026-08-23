@@ -542,6 +542,7 @@ describe("selection controls", () => {
         background_color: "#dcfce7",
       },
       professors: [],
+      revision: "tag-usage-revision",
     });
     vi.mocked(listProfessors).mockResolvedValue(dashboardProfessors);
     vi.mocked(listProfessorsForManagement).mockResolvedValue(managementProfessors);
@@ -1996,7 +1997,7 @@ describe("selection controls", () => {
 
     await waitFor(() => {
       expect(getProfessorTagUsage).toHaveBeenCalledWith(1);
-      expect(deleteProfessorTag).toHaveBeenCalledWith(1);
+      expect(deleteProfessorTag).toHaveBeenCalledWith(1, "tag-usage-revision");
     });
     expect(notifyMock.notifySuccess).toHaveBeenCalledWith(
       "删除标签成功",

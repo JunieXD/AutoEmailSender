@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
   ConnectionTestResultDTO,
+  IdentityDeletionImpactDTO,
   IdentityDTO,
   IdentityPayload,
   IdentityTemplateImportResultDTO,
@@ -29,10 +30,15 @@ export const updateIdentityDefaultOutreachTemplate = (
     body: JSON.stringify({ template_id: templateId }),
   });
 
-export const deleteIdentity = (identityId: number) =>
+export const getIdentityDeletionImpact = (identityId: number) =>
+  apiFetch<IdentityDeletionImpactDTO>(
+    `/api/identities/${identityId}/deletion-impact`,
+  );
+
+export const deleteIdentity = (identityId: number, impactRevision: string) =>
   apiFetch<void>(`/api/identities/${identityId}`, {
     method: 'DELETE',
-  });
+  }, { impact_revision: impactRevision });
 
 export const setDefaultIdentity = (identityId: number) =>
   apiFetch<IdentityDTO>(`/api/identities/${identityId}/default`, {

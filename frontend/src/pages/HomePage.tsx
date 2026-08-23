@@ -929,6 +929,7 @@ export const HomePage = () => {
   };
 
   const handleDeleteProfessorTag = async (tag: ProfessorTagDTO) => {
+    let usageRevision = "";
     let usageProfessors: Array<{
       id: number;
       name: string;
@@ -938,6 +939,7 @@ export const HomePage = () => {
     }> = [];
     try {
       const usage = await getProfessorTagUsage(tag.id);
+      usageRevision = usage.revision;
       usageProfessors = usage.professors;
     } catch (usageError) {
       const message =
@@ -973,7 +975,7 @@ export const HomePage = () => {
     }
 
     try {
-      const result = await deleteProfessorTag(tag.id);
+      const result = await deleteProfessorTag(tag.id, usageRevision);
       setProfessorTags((previous) =>
         previous.filter((item) => item.id !== tag.id),
       );

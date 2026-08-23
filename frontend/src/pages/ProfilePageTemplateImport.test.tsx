@@ -12,6 +12,7 @@ const mockedImportIdentityTemplate = vi.hoisted(() => vi.fn());
 const mockedListOutreachTemplates = vi.hoisted(() => vi.fn());
 const mockedCreateOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedArchiveOutreachTemplate = vi.hoisted(() => vi.fn());
+const mockedRestoreOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedUpdateIdentityDefaultOutreachTemplate = vi.hoisted(() => vi.fn());
 const mockedNotifyError = vi.hoisted(() => vi.fn());
 const mockedNotifyFormErrors = vi.hoisted(() => vi.fn());
@@ -66,12 +67,14 @@ vi.mock("@/lib/api/outreachTemplates", () => ({
   createOutreachTemplate: mockedCreateOutreachTemplate,
   duplicateOutreachTemplate: vi.fn(),
   listOutreachTemplates: mockedListOutreachTemplates,
+  restoreOutreachTemplate: mockedRestoreOutreachTemplate,
   setGlobalDefaultOutreachTemplate: vi.fn(),
   updateOutreachTemplate: vi.fn(),
 }));
 
 vi.mock("@/lib/api/materials", () => ({
   deleteMaterial: vi.fn(),
+  getMaterialDeletionImpact: vi.fn(),
   downloadMaterial: vi.fn(),
   setPrimaryMaterial: vi.fn(),
   uploadIdentityMaterial: vi.fn(),
@@ -199,6 +202,7 @@ describe("ProfilePage default template import", () => {
     mockedListOutreachTemplates.mockReset();
     mockedCreateOutreachTemplate.mockReset();
     mockedArchiveOutreachTemplate.mockReset();
+    mockedRestoreOutreachTemplate.mockReset();
     mockedUpdateIdentityDefaultOutreachTemplate.mockReset();
     mockedUpdateIdentityDefaultOutreachTemplate.mockResolvedValue({
       ...selectedIdentity,
@@ -373,7 +377,7 @@ describe("ProfilePage default template import", () => {
     expect(mockedCreateOutreachTemplate).not.toHaveBeenCalled();
   });
 
-  it("hides deleted templates from the template list", async () => {
+  it("separates archived templates from the active template list", async () => {
     mockedListOutreachTemplates.mockResolvedValue([
       {
         id: 1,
@@ -390,7 +394,7 @@ describe("ProfilePage default template import", () => {
       },
       {
         id: 2,
-        name: "已经删除的模板",
+        name: "已经归档的模板",
         recommended_generation_mode: "llm",
         subject: "历史主题",
         body_text: "历史正文",
@@ -407,9 +411,11 @@ describe("ProfilePage default template import", () => {
 
     expect(screen.getByLabelText("模板列表")).toHaveTextContent("现有模板");
     expect(screen.getByLabelText("模板列表")).not.toHaveTextContent(
-      "已经删除的模板",
+      "已经归档的模板",
     );
-    expect(mockedListOutreachTemplates).toHaveBeenCalledWith();
+    expect(screen.getByText("已归档模板")).toBeInTheDocument();
+    expect(screen.getByText("已经归档的模板")).toBeInTheDocument();
+    expect(mockedListOutreachTemplates).toHaveBeenCalledWith(true);
   });
 
   it("scrolls inside the template list when more than three templates exist", async () => {
@@ -437,7 +443,7 @@ describe("ProfilePage default template import", () => {
     );
   });
 
-  it("removes a deleted template from the list and keeps historical content intact", async () => {
+  it("archives a template while keeping historical content intact", async () => {
     const remainingTemplate = {
       id: 2,
       name: "保留模板",
@@ -463,7 +469,7 @@ describe("ProfilePage default template import", () => {
     mockedConfirm.mockResolvedValue(true);
 
     await openTemplateModal();
-    fireEvent.click(screen.getByRole("button", { name: "删除模板" }));
+    fireEvent.click(screen.getByRole("button", { name: "归档模板" }));
 
     await waitFor(() => {
       expect(mockedArchiveOutreachTemplate).toHaveBeenCalledWith(1);
@@ -475,8 +481,63 @@ describe("ProfilePage default template import", () => {
     });
     expect(screen.getByLabelText("模板列表")).toHaveTextContent("保留模板");
     expect(mockedNotifySuccess).toHaveBeenCalledWith(
-      "模板已删除",
-      "已创建任务不受影响。",
+      "模板已归档",
+      "已创建任务不受影响，可在模板库中恢复。",
+    );
+  });
+
+  it("restores an archived template to the active template list", async () => {
+    const activeTemplate = {
+      id: 1,
+      name: "现有模板",
+      recommended_generation_mode: "template" as const,
+      subject: "现有主题",
+      body_text: "现有正文",
+      body_html: "<p>现有正文</p>",
+      is_ready: true,
+      is_default: true,
+      archived_at: null,
+      created_at: "2026-04-22T00:00:00Z",
+      updated_at: "2026-04-22T00:00:00Z",
+    };
+    const archivedTemplate = {
+      ...activeTemplate,
+      id: 2,
+      name: "待恢复模板",
+      is_default: false,
+      archived_at: "2026-07-30T00:00:00Z",
+      updated_at: "2026-07-30T00:00:00Z",
+    };
+    const restoredTemplate = {
+      ...archivedTemplate,
+      archived_at: null,
+      updated_at: "2026-08-24T00:00:00Z",
+    };
+    mockedListOutreachTemplates
+      .mockResolvedValueOnce([activeTemplate, archivedTemplate])
+      .mockResolvedValue([activeTemplate, restoredTemplate]);
+    mockedRestoreOutreachTemplate.mockResolvedValue(restoredTemplate);
+
+    await openTemplateModal();
+    fireEvent.click(
+      screen.getByRole("button", { name: "恢复模板“待恢复模板”" }),
+    );
+
+    await waitFor(() => {
+      expect(mockedRestoreOutreachTemplate).toHaveBeenCalledWith(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("模板列表")).toHaveTextContent(
+        "待恢复模板",
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "恢复模板“待恢复模板”" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("待恢复模板")).toBeInTheDocument();
+    expect(mockedNotifySuccess).toHaveBeenCalledWith(
+      "模板已恢复",
+      "“待恢复模板”已回到可用模板列表。",
     );
   });
 
