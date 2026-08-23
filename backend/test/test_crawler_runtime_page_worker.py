@@ -141,6 +141,60 @@ class CrawlerRuntimePageWorkerTests(unittest.IsolatedAsyncioTestCase):
                 "responses",
             )
 
+    async def test_profile_entries_enable_public_dns_fallback(self) -> None:
+        _, task_id = await self._seed_page_task(
+            original_url="https://faculty.example.edu/zhang.html",
+            entry_type="profile",
+        )
+        contexts = []
+
+        async def capture_context(ctx, url):
+            contexts.append(ctx)
+            return PageSnapshot(
+                url=url,
+                fetch_method="http",
+                status="failed",
+                error_message="test fetch failure",
+            )
+
+        with patch(
+            "app.modules.crawler.runtime.page_worker.fetch_page_direct",
+            new=AsyncMock(side_effect=capture_context),
+        ):
+            await run_crawler_page_worker_once(
+                self.session_factory, task_id=task_id, worker_id="w1"
+            )
+
+        self.assertEqual(len(contexts), 1)
+        self.assertTrue(contexts[0].allow_public_dns_fallback)
+
+    async def test_directory_entries_keep_public_dns_fallback_disabled(self) -> None:
+        _, task_id = await self._seed_page_task(
+            original_url="https://faculty.example.edu/list.htm",
+            entry_type="list",
+        )
+        contexts = []
+
+        async def capture_context(ctx, url):
+            contexts.append(ctx)
+            return PageSnapshot(
+                url=url,
+                fetch_method="http",
+                status="failed",
+                error_message="test fetch failure",
+            )
+
+        with patch(
+            "app.modules.crawler.runtime.page_worker.fetch_page_direct",
+            new=AsyncMock(side_effect=capture_context),
+        ):
+            await run_crawler_page_worker_once(
+                self.session_factory, task_id=task_id, worker_id="w1"
+            )
+
+        self.assertEqual(len(contexts), 1)
+        self.assertFalse(contexts[0].allow_public_dns_fallback)
+
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
