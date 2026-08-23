@@ -13592,6 +13592,626 @@ class ApiEndpointTests(unittest.TestCase):
             generated["current_task"]["generated_content_text"],
         )
 
+    def test_llm_profile_retirement_clears_credentials_and_allows_name_reuse(
+        self,
+    ) -> None:
+        llm_id = self._create_llm(name="可退役模型")
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{llm_id}/deletion-impact"
+        )
+        self.assertEqual(impact.status_code, 200, msg=impact.text)
+        self.assertTrue(impact.json()["can_delete"])
+
+        retired = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": impact.json()["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+        self.assertTrue(retired.json()["ok"])
+        self.assertNotIn(
+            llm_id,
+            [profile["id"] for profile in self.client.get("/api/llm-profiles").json()],
+        )
+
+        with sqlite3.connect(self.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT api_key, api_base_url, matcher_prompt_template,
+                       writer_prompt_template, is_default, deleted_at
+                FROM llm_profiles
+                WHERE id = ?
+                """,
+                (llm_id,),
+            ).fetchone()
+        self.assertEqual(row[:5], ("", None, None, None, 0))
+        self.assertIsNotNone(row[5])
+
+        recreated = self.client.post(
+            "/api/llm-profiles",
+            json={
+                "name": "可退役模型",
+                "provider": "openai",
+                "api_base_url": "https://api.new.example/v1",
+                "api_key": "sk-new-key",
+                "model_name": "gpt-new",
+                "matcher_prompt_template": None,
+                "writer_prompt_template": None,
+                "temperature": 0.2,
+                "max_tokens": 2048,
+                "is_default": False,
+            },
+        )
+        self.assertEqual(recreated.status_code, 201, msg=recreated.text)
+        self.assertNotEqual(recreated.json()["id"], llm_id)
+        self.assertTrue(recreated.json()["is_default"])
+
+    def test_llm_profile_retirement_preserves_history_and_non_llm_compose_actions(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm(name="历史模型")
+        professor_id = self._create_professor(email="retired-history@example.edu")
+        email_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="review_required",
+            primary_material_id=None,
+            generated_subject="历史主题",
+            generated_content_text="历史正文",
+            generated_content_html="<p>历史正文</p>",
+            outreach_generation_mode="llm",
+        )
+        draft_payload = {
+            "subject": "测试主题",
+            "body_text": "测试正文",
+            "body_html": "<p>测试正文</p>",
+            "selected_material_ids": [],
+        }
+        saved = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/draft",
+            json=draft_payload,
+        )
+        self.assertEqual(saved.status_code, 200, msg=saved.text)
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_change_plans (
+                    id, action, status, request_fingerprint, snapshot, expires_at
+                )
+                VALUES (
+                    'retired-profile-plan', 'draft.generate',
+                    'awaiting_confirmation', ?, ?, datetime('now', '+1 hour')
+                )
+                """,
+                ("f" * 64, json.dumps({"request": {"llm_profile_id": llm_id}})),
+            )
+            connection.execute(
+                """
+                INSERT INTO agent_change_plans (
+                    id, action, status, request_fingerprint, snapshot, expires_at
+                )
+                VALUES (
+                    'unrelated-same-profile-id-plan', 'identity.update',
+                    'awaiting_confirmation', ?, ?, datetime('now', '+1 hour')
+                )
+                """,
+                ("e" * 64, json.dumps({"request": {"profile_id": llm_id}})),
+            )
+            connection.commit()
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{llm_id}/deletion-impact"
+        ).json()
+        self.assertEqual(impact["references"]["email_tasks"], 1)
+        self.assertEqual(impact["references"]["test_compose_sessions"], 1)
+        self.assertEqual(impact["references"]["agent_change_plans"], 1)
+        self.assertTrue(impact["can_delete"])
+        retired = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+        self.assertEqual(retired.json()["invalidated_plan_count"], 1)
+
+        with sqlite3.connect(self.db_path) as connection:
+            task_profile_id = connection.execute(
+                "SELECT llm_profile_id FROM email_tasks WHERE id = ?",
+                (email_task_id,),
+            ).fetchone()[0]
+            compose_count = connection.execute(
+                "SELECT COUNT(*) FROM test_compose_sessions WHERE llm_profile_id = ?",
+                (llm_id,),
+            ).fetchone()[0]
+            plan_state = connection.execute(
+                """
+                SELECT status, failure_message
+                FROM agent_change_plans
+                WHERE id = 'retired-profile-plan'
+                """
+            ).fetchone()
+            unrelated_plan_status = connection.execute(
+                """
+                SELECT status
+                FROM agent_change_plans
+                WHERE id = 'unrelated-same-profile-id-plan'
+                """
+            ).fetchone()[0]
+        self.assertEqual(task_profile_id, llm_id)
+        self.assertEqual(compose_count, 1)
+        self.assertEqual(plan_state[0], "canceled")
+        self.assertIn("模型配置已删除", plan_state[1])
+        self.assertEqual(unrelated_plan_status, "awaiting_confirmation")
+
+        task_thread = self.client.get(f"/api/email-tasks/{email_task_id}/thread")
+        self.assertEqual(task_thread.status_code, 200, msg=task_thread.text)
+        self.assertEqual(task_thread.json()["llm_profile"]["id"], llm_id)
+        history = self.client.get(f"/api/test-compose/{identity_id}/{llm_id}")
+        self.assertEqual(history.status_code, 200, msg=history.text)
+        resaved = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/draft",
+            json={**draft_payload, "subject": "退役后仍可保存"},
+        )
+        self.assertEqual(resaved.status_code, 200, msg=resaved.text)
+        with patch(
+            "app.modules.communications.test_compose.runtime.mail_runtime.send_email_to_recipient",
+            AsyncMock(
+                return_value=self._build_send_result(
+                    message_id="<retired-profile@example.com>",
+                    provider_payload={},
+                )
+            ),
+        ):
+            sent = self.client.post(
+                f"/api/test-compose/{identity_id}/{llm_id}/send",
+                json=draft_payload,
+            )
+        self.assertEqual(sent.status_code, 200, msg=sent.text)
+
+        generate = self.client.post(
+            f"/api/test-compose/{identity_id}/{llm_id}/generate-draft"
+        )
+        self.assertEqual(generate.status_code, 409, msg=generate.text)
+        self.assertIn("已删除", generate.json()["detail"])
+
+    def test_llm_profile_retirement_blocks_active_work_and_rejects_stale_plan(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm(name="运行中模型")
+        professor_id = self._create_professor(email="retire-running@example.edu")
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="generating_draft",
+            primary_material_id=None,
+            outreach_generation_mode="llm",
+        )
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{llm_id}/deletion-impact"
+        ).json()
+        self.assertFalse(impact["can_delete"])
+        self.assertEqual(impact["blockers"][0]["kind"], "draft_generation")
+        self.assertIn(task_id, impact["blockers"][0]["entity_ids"])
+        blocked = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+        self.assertEqual(blocked.json()["detail"]["code"], "LLM_PROFILE_IN_USE")
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE email_tasks SET status = 'draft_failed' WHERE id = ?",
+                (task_id,),
+            )
+            connection.commit()
+        stale = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+        self.assertEqual(
+            stale.json()["detail"]["code"],
+            "LLM_PROFILE_DELETE_PLAN_STALE",
+        )
+
+        refreshed = self.client.get(
+            f"/api/llm-profiles/{llm_id}/deletion-impact"
+        ).json()
+        self.assertTrue(refreshed["can_delete"])
+        retired = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": refreshed["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+
+    def test_llm_profile_retirement_blocks_interactive_model_requests(self) -> None:
+        from app.modules.llm.usage import (
+            begin_llm_profile_retirement,
+            end_llm_profile_retirement,
+            track_llm_profile_usage,
+        )
+
+        llm_id = self._create_llm(name="交互占用模型")
+        with track_llm_profile_usage(llm_id, "connectivity_test"):
+            impact = self.client.get(
+                f"/api/llm-profiles/{llm_id}/deletion-impact"
+            ).json()
+            self.assertFalse(impact["can_delete"])
+            self.assertEqual(
+                impact["blockers"][0]["kind"],
+                "interactive_connectivity_test",
+            )
+            blocked = self.client.delete(
+                f"/api/llm-profiles/{llm_id}",
+                params={"impact_revision": impact["revision"]},
+            )
+            self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+            self.assertEqual(
+                blocked.json()["detail"]["code"],
+                "LLM_PROFILE_IN_USE",
+            )
+
+        self.assertTrue(begin_llm_profile_retirement(llm_id))
+        try:
+            models = self.client.get(f"/api/llm-profiles/{llm_id}/models")
+            tested = self.client.post(f"/api/llm-profiles/{llm_id}/test")
+        finally:
+            end_llm_profile_retirement(llm_id)
+        for response in (models, tested):
+            self.assertEqual(response.status_code, 409, msg=response.text)
+            self.assertEqual(
+                response.json()["detail"]["code"],
+                "LLM_PROFILE_RETIRING",
+            )
+
+        refreshed = self.client.get(
+            f"/api/llm-profiles/{llm_id}/deletion-impact"
+        ).json()
+        retired = self.client.delete(
+            f"/api/llm-profiles/{llm_id}",
+            params={"impact_revision": refreshed["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+
+    def test_llm_profile_retirement_sanitizes_rebound_crawl_run_snapshots(
+        self,
+    ) -> None:
+        retired_llm_id = self._create_llm(name="抓取历史旧模型")
+        replacement_id = self._create_llm(name="抓取当前模型")
+        snapshot = {
+            "profile_id": retired_llm_id,
+            "profile_name": "抓取历史旧模型",
+            "provider": "openai",
+            "api_base_url": "https://secret-endpoint.example/v1",
+            "model_name": "gpt-old",
+            "matcher_prompt_template": "private matcher prompt",
+            "writer_prompt_template": "private writer prompt",
+            "temperature": 0.2,
+            "max_tokens": 2048,
+        }
+        with sqlite3.connect(self.db_path) as connection:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university, school, start_url, llm_profile_id, status
+                )
+                VALUES ('测试大学', '测试学院', 'https://example.edu', ?, 'completed')
+                RETURNING id
+                """,
+                (replacement_id,),
+            ).fetchone()[0]
+            run_id = connection.execute(
+                """
+                INSERT INTO crawl_job_runs (
+                    job_id, attempt_number, status, llm_runtime_snapshot
+                )
+                VALUES (?, 1, 'completed', ?)
+                RETURNING id
+                """,
+                (job_id, json.dumps(snapshot)),
+            ).fetchone()[0]
+            connection.commit()
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{retired_llm_id}/deletion-impact"
+        ).json()
+        self.assertEqual(impact["references"]["crawl_jobs"], 1)
+        self.assertEqual(impact["references"]["crawl_runs"], 1)
+        retired = self.client.delete(
+            f"/api/llm-profiles/{retired_llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+
+        with sqlite3.connect(self.db_path) as connection:
+            stored_snapshot = json.loads(
+                connection.execute(
+                    "SELECT llm_runtime_snapshot FROM crawl_job_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+        self.assertEqual(stored_snapshot["profile_id"], retired_llm_id)
+        self.assertEqual(stored_snapshot["model_name"], "gpt-old")
+        self.assertNotIn("api_base_url", stored_snapshot)
+        self.assertNotIn("matcher_prompt_template", stored_snapshot)
+        self.assertNotIn("writer_prompt_template", stored_snapshot)
+
+    def test_llm_profile_retirement_blocks_active_crawl_run_snapshot(self) -> None:
+        retired_llm_id = self._create_llm(name="抓取运行快照旧模型")
+        replacement_id = self._create_llm(name="抓取运行快照当前模型")
+        snapshot = {
+            "profile_id": retired_llm_id,
+            "profile_name": "抓取运行快照旧模型",
+            "provider": "openai",
+            "model_name": "gpt-old",
+        }
+        with sqlite3.connect(self.db_path) as connection:
+            job_id = connection.execute(
+                """
+                INSERT INTO crawl_jobs (
+                    university, school, start_url, llm_profile_id, status
+                )
+                VALUES ('测试大学', '测试学院', 'https://example.edu', ?, 'running')
+                RETURNING id
+                """,
+                (replacement_id,),
+            ).fetchone()[0]
+            run_id = connection.execute(
+                """
+                INSERT INTO crawl_job_runs (
+                    job_id, attempt_number, status, llm_runtime_snapshot
+                )
+                VALUES (?, 1, 'running', ?)
+                RETURNING id
+                """,
+                (job_id, json.dumps(snapshot)),
+            ).fetchone()[0]
+            connection.execute(
+                "UPDATE crawl_jobs SET current_run_id = ? WHERE id = ?",
+                (run_id, job_id),
+            )
+            connection.commit()
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{retired_llm_id}/deletion-impact"
+        ).json()
+        self.assertFalse(impact["can_delete"])
+        blocker = next(
+            item for item in impact["blockers"] if item["kind"] == "crawl_job"
+        )
+        self.assertIn(job_id, blocker["entity_ids"])
+
+        blocked = self.client.delete(
+            f"/api/llm-profiles/{retired_llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+        self.assertEqual(blocked.json()["detail"]["code"], "LLM_PROFILE_IN_USE")
+
+    def test_llm_profile_retirement_only_removes_unshared_adaptation_caches(
+        self,
+    ) -> None:
+        base_url = "https://api.example.com/v1"
+        model_name = "gpt-4o-mini"
+
+        def seed_caches() -> None:
+            with sqlite3.connect(self.db_path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO llm_endpoint_adaptation_cache (
+                        api_base_url, model_name, learned_endpoint_kind
+                    ) VALUES (?, ?, 'chat_completions')
+                    """,
+                    (base_url, model_name),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO thinking_adaptation_cache (
+                        api_base_url, model_name, endpoint_kind, learned_extra_body
+                    ) VALUES (?, ?, 'chat_completions', '{}')
+                    """,
+                    (base_url, model_name),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO llm_structured_output_adaptation_cache (
+                        api_base_url, model_name, endpoint_kind, probe_version,
+                        learned_mode
+                    ) VALUES (?, ?, 'chat_completions', 1, 'json_object')
+                    """,
+                    (base_url, model_name),
+                )
+                connection.commit()
+
+        def cache_counts() -> tuple[int, int, int]:
+            with sqlite3.connect(self.db_path) as connection:
+                return tuple(
+                    connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in (
+                        "llm_endpoint_adaptation_cache",
+                        "thinking_adaptation_cache",
+                        "llm_structured_output_adaptation_cache",
+                    )
+                )
+
+        unshared_id = self._create_llm(name="独占缓存模型")
+        seed_caches()
+        impact = self.client.get(
+            f"/api/llm-profiles/{unshared_id}/deletion-impact"
+        ).json()
+        retired = self.client.delete(
+            f"/api/llm-profiles/{unshared_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+        self.assertEqual(cache_counts(), (0, 0, 0))
+
+        shared_id = self._create_llm(name="共享缓存模型一")
+        self._create_llm(name="共享缓存模型二")
+        seed_caches()
+        shared_impact = self.client.get(
+            f"/api/llm-profiles/{shared_id}/deletion-impact"
+        ).json()
+        shared_retired = self.client.delete(
+            f"/api/llm-profiles/{shared_id}",
+            params={"impact_revision": shared_impact["revision"]},
+        )
+        self.assertEqual(shared_retired.status_code, 200, msg=shared_retired.text)
+        self.assertEqual(cache_counts(), (1, 1, 1))
+
+    def test_llm_profile_retirement_handles_default_replacement_explicitly(
+        self,
+    ) -> None:
+        first_id = self._create_llm(name="默认替代模型")
+        default_id = self._create_llm(name="待删除默认模型")
+        impact = self.client.get(
+            f"/api/llm-profiles/{default_id}/deletion-impact"
+        ).json()
+        self.assertTrue(impact["is_default"])
+
+        retired = self.client.delete(
+            f"/api/llm-profiles/{default_id}",
+            params={
+                "impact_revision": impact["revision"],
+                "replacement_default_profile_id": first_id,
+            },
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+        self.assertEqual(retired.json()["default_profile_id"], first_id)
+        active = self.client.get("/api/llm-profiles").json()
+        self.assertTrue(next(item for item in active if item["id"] == first_id)["is_default"])
+
+        no_default_id = self._create_llm(name="删除后无默认")
+        no_default_impact = self.client.get(
+            f"/api/llm-profiles/{no_default_id}/deletion-impact"
+        ).json()
+        retired_without_replacement = self.client.delete(
+            f"/api/llm-profiles/{no_default_id}",
+            params={"impact_revision": no_default_impact["revision"]},
+        )
+        self.assertEqual(
+            retired_without_replacement.status_code,
+            200,
+            msg=retired_without_replacement.text,
+        )
+        self.assertIsNone(retired_without_replacement.json()["default_profile_id"])
+        self.assertFalse(any(item["is_default"] for item in self.client.get("/api/llm-profiles").json()))
+
+    def test_llm_profile_retirement_protects_default_replacement_until_commit(
+        self,
+    ) -> None:
+        from app.modules.llm.usage import (
+            begin_llm_profile_retirement,
+            end_llm_profile_retirement,
+        )
+
+        replacement_id = self._create_llm(name="并发替代模型")
+        default_id = self._create_llm(name="并发待删除默认模型")
+        impact = self.client.get(
+            f"/api/llm-profiles/{default_id}/deletion-impact"
+        ).json()
+
+        self.assertTrue(begin_llm_profile_retirement(replacement_id))
+        try:
+            blocked = self.client.delete(
+                f"/api/llm-profiles/{default_id}",
+                params={
+                    "impact_revision": impact["revision"],
+                    "replacement_default_profile_id": replacement_id,
+                },
+            )
+        finally:
+            end_llm_profile_retirement(replacement_id)
+
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+        self.assertEqual(
+            blocked.json()["detail"]["code"],
+            "LLM_PROFILE_DEFAULT_REPLACEMENT_UNAVAILABLE",
+        )
+        active_ids = {
+            profile["id"] for profile in self.client.get("/api/llm-profiles").json()
+        }
+        self.assertIn(default_id, active_ids)
+        self.assertIn(replacement_id, active_ids)
+
+        retried = self.client.delete(
+            f"/api/llm-profiles/{default_id}",
+            params={
+                "impact_revision": impact["revision"],
+                "replacement_default_profile_id": replacement_id,
+            },
+        )
+        self.assertEqual(retried.status_code, 200, msg=retried.text)
+        self.assertEqual(retried.json()["default_profile_id"], replacement_id)
+
+    def test_paused_batch_requires_explicit_replacement_after_model_retirement(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        retired_llm_id = self._create_llm(name="活动旧模型")
+        replacement_id = self._create_llm(name="活动替代模型")
+        professor_id = self._create_professor(email="retired-batch@example.edu")
+        with sqlite3.connect(self.db_path) as connection:
+            batch_id = connection.execute(
+                """
+                INSERT INTO batch_tasks (
+                    identity_id, llm_profile_id, name, status, target_count,
+                    outreach_generation_mode, selected_material_ids
+                )
+                VALUES (?, ?, '暂停活动', 'paused', 1, 'llm', '[]')
+                RETURNING id
+                """,
+                (identity_id, retired_llm_id),
+            ).fetchone()[0]
+            connection.commit()
+        email_task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=retired_llm_id,
+            professor_id=professor_id,
+            status="draft_failed",
+            primary_material_id=None,
+            batch_task_id=batch_id,
+            source="batch",
+            outreach_generation_mode="llm",
+        )
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{retired_llm_id}/deletion-impact"
+        ).json()
+        self.assertTrue(impact["can_delete"])
+        retired = self.client.delete(
+            f"/api/llm-profiles/{retired_llm_id}",
+            params={"impact_revision": impact["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+
+        blocked = self.client.post(f"/api/batch-tasks/{batch_id}/resume")
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
+        self.assertEqual(
+            blocked.json()["detail"]["code"],
+            "CAMPAIGN_LLM_PROFILE_REPLACEMENT_REQUIRED",
+        )
+        resumed = self.client.post(
+            f"/api/batch-tasks/{batch_id}/resume",
+            params={"replacement_llm_profile_id": replacement_id},
+        )
+        self.assertEqual(resumed.status_code, 200, msg=resumed.text)
+        with sqlite3.connect(self.db_path) as connection:
+            batch_profile_id = connection.execute(
+                "SELECT llm_profile_id FROM batch_tasks WHERE id = ?",
+                (batch_id,),
+            ).fetchone()[0]
+            item_profile_id = connection.execute(
+                "SELECT llm_profile_id FROM email_tasks WHERE id = ?",
+                (email_task_id,),
+            ).fetchone()[0]
+        self.assertEqual((batch_profile_id, item_profile_id), (replacement_id, replacement_id))
+
     def _create_sent_professor_with_later_task(
         self,
         *,

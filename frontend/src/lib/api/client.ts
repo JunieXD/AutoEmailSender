@@ -5,10 +5,17 @@ let desktopBackendBaseUrlOverride: string | null = null;
 
 export class ApiError extends Error {
   status: number;
+  code: string | null;
+  details: unknown;
+  payload: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, payload: unknown = null) {
     super(message);
     this.status = status;
+    const metadata = getApiErrorMetadata(payload);
+    this.code = metadata.code;
+    this.details = metadata.details;
+    this.payload = payload;
   }
 }
 
@@ -150,7 +157,7 @@ async function executeApiFetchOnce<T>(
         message: sanitizeDiagnosticMessage(message),
       },
     });
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, data);
   }
 
   const data = await parseSuccess(response);
@@ -222,6 +229,16 @@ function formatDetailMessage(detail: unknown): string | undefined {
     return detail;
   }
 
+  if (
+    typeof detail === "object" &&
+    detail !== null &&
+    "message" in detail &&
+    typeof detail.message === "string" &&
+    detail.message.trim()
+  ) {
+    return detail.message;
+  }
+
   if (!Array.isArray(detail)) {
     return undefined;
   }
@@ -249,6 +266,31 @@ function formatDetailMessage(detail: unknown): string | undefined {
     .filter(Boolean);
 
   return messages.length > 0 ? messages.join("\uFF1B") : undefined;
+}
+
+function getApiErrorMetadata(data: unknown): {
+  code: string | null;
+  details: unknown;
+} {
+  if (typeof data !== "object" || data === null) {
+    return { code: null, details: null };
+  }
+
+  const envelope =
+    "detail" in data && typeof data.detail === "object" && data.detail !== null
+      ? data.detail
+      : "error" in data && typeof data.error === "object" && data.error !== null
+        ? data.error
+        : data;
+  const code =
+    "code" in envelope && typeof envelope.code === "string"
+      ? envelope.code
+      : null;
+  const details =
+    "details" in envelope && envelope.details !== undefined
+      ? envelope.details
+      : envelope;
+  return { code, details };
 }
 
 function normalizeValidationMessage(message: string): string {

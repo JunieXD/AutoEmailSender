@@ -1972,22 +1972,22 @@ async def _resolve_crawl_job_retry_llm_profile(
     job: CrawlJob,
     payload: CrawlJobRetryPayload,
 ) -> LLMProfile:
+    from app.modules.llm.public import (
+        get_active_llm_profile,
+        get_default_active_llm_profile,
+    )
+
     profile_id = payload.llm_profile_id or job.llm_profile_id
     if profile_id is not None:
-        profile = await session.get(LLMProfile, profile_id)
+        profile = await get_active_llm_profile(session, profile_id)
         if profile is None:
             raise AgentApiError(
-                status_code=404,
-                code="CRAWL_LLM_PROFILE_NOT_FOUND",
-                message="本次重试指定的模型配置不存在。",
+                status_code=409,
+                code="CRAWL_LLM_PROFILE_REPLACEMENT_REQUIRED",
+                message="原模型配置已删除，请为本次重试明确选择新的模型。",
             )
         return profile
-    profile = await session.scalar(
-        select(LLMProfile)
-        .where(LLMProfile.is_default.is_(True))
-        .order_by(LLMProfile.created_at.asc(), LLMProfile.id.asc())
-        .limit(1),
-    )
+    profile = await get_default_active_llm_profile(session)
     if profile is None:
         raise AgentApiError(
             status_code=409,

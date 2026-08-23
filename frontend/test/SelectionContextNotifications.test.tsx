@@ -337,6 +337,64 @@ describe("SelectionContext notifications", () => {
     });
   });
 
+  it("does not silently replace a stored llm profile that no longer exists", async () => {
+    window.localStorage.setItem("selected_llm_profile_id", "99");
+    listIdentities.mockResolvedValue([]);
+    listLLMProfiles.mockResolvedValue([
+      makeLlmProfile({ id: 1, name: "仍可用的默认模型", is_default: true }),
+    ]);
+
+    render(
+      <NotificationProvider>
+        <SelectionProvider>
+          <SelectionHarness />
+        </SelectionProvider>
+      </NotificationProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("no llm")).toBeInTheDocument();
+      expect(window.localStorage.getItem("selected_llm_profile_id")).toBeNull();
+    });
+  });
+
+  it("clears a retired selection across windows without choosing a fallback", async () => {
+    window.localStorage.setItem("selected_llm_profile_id", "1");
+    listIdentities.mockResolvedValue([]);
+    listLLMProfiles
+      .mockResolvedValueOnce([
+        makeLlmProfile({ id: 1, name: "即将退役", is_default: true }),
+        makeLlmProfile({ id: 2, name: "备用模型", is_default: false }),
+      ])
+      .mockResolvedValue([
+        makeLlmProfile({ id: 2, name: "备用模型", is_default: true }),
+      ]);
+
+    render(
+      <NotificationProvider>
+        <SelectionProvider>
+          <SelectionHarness />
+        </SelectionProvider>
+      </NotificationProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("即将退役")).toBeInTheDocument();
+    });
+
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "llm_profile_retired_event",
+        newValue: JSON.stringify({ profileId: 1, retiredAt: Date.now() }),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("no llm")).toBeInTheDocument();
+      expect(screen.queryByText("备用模型")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("selected_llm_profile_id")).toBeNull();
+    });
+  });
+
   it("derives a stable communication scope from the selected identity group", async () => {
     window.localStorage.setItem("selected_identity_id", "2");
     listIdentities.mockResolvedValue([

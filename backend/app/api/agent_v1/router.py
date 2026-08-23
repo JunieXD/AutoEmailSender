@@ -154,6 +154,11 @@ from app.modules.identities.public import (
     update_communication_group_record,
     upload_identity_material_record,
 )
+from app.modules.llm.public import (
+    LLMProfileRetiringError,
+    get_active_llm_profile,
+    track_llm_profile_usage,
+)
 from app.modules.professors.public import (
     CreateProfessorInformationEnrichmentJobRequest,
     ProfessorBulkTagsPayload,
@@ -2508,7 +2513,7 @@ async def list_agent_llm_profiles(
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentPage[AgentLLMProfileRead] | Response:
-    statement = select(LLMProfile)
+    statement = select(LLMProfile).where(LLMProfile.deleted_at.is_(None))
     if profile_id is not None:
         statement = statement.where(LLMProfile.id == profile_id)
     if provider is not None:
@@ -2538,7 +2543,7 @@ async def read_agent_llm_profile(
     profile_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentLLMProfileRead:
-    profile = await session.get(LLMProfile, profile_id)
+    profile = await get_active_llm_profile(session, profile_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="未找到 LLM 配置")
     return _serialize_llm_profile(profile)
@@ -2617,7 +2622,11 @@ async def fetch_agent_llm_profile_models(
         profile = await _get_agent_llm_profile_or_raise(session, profile_id)
     except ValueError as exc:
         raise _agent_llm_profile_error(exc) from exc
-    result = await fetch_llm_profile_models(profile)
+    try:
+        with track_llm_profile_usage(profile.id, "model_listing"):
+            result = await fetch_llm_profile_models(profile)
+    except LLMProfileRetiringError as exc:
+        raise _agent_llm_profile_retiring_error() from exc
     await _record_agent_llm_profile_event(
         session,
         profile,
@@ -2663,6 +2672,8 @@ async def test_agent_llm_profile(
             mutation=mutation,
             external_execution=True,
         )
+    except LLMProfileRetiringError as exc:
+        raise _agent_llm_profile_retiring_error() from exc
     except ValueError as exc:
         raise _agent_llm_profile_error(exc) from exc
 
@@ -5124,7 +5135,11 @@ async def _set_agent_default_llm_profile(
     profile_id: int,
 ) -> AgentLLMProfileRead:
     profile = await _get_agent_llm_profile_or_raise(session, profile_id)
-    profiles = list(await session.scalars(select(LLMProfile)))
+    profiles = list(
+        await session.scalars(
+            select(LLMProfile).where(LLMProfile.deleted_at.is_(None))
+        )
+    )
     now = utc_now()
     for candidate in profiles:
         is_default = candidate.id == profile.id
@@ -5196,16 +5211,17 @@ async def _test_agent_llm_profile(
     profile_id: int,
 ) -> AgentLLMProfileTestRead:
     profile = await _get_agent_llm_profile_or_raise(session, profile_id)
-    try:
-        adaptation = await ensure_llm_runtime_adaptation(session, profile)
-    except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
-        result = _build_agent_llm_adaptation_failure_probe_result(profile, exc)
-    else:
-        result = await probe_llm_profile(
-            profile,
-            session=session,
-            adaptation=adaptation,
-        )
+    with track_llm_profile_usage(profile.id, "connectivity_test"):
+        try:
+            adaptation = await ensure_llm_runtime_adaptation(session, profile)
+        except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
+            result = _build_agent_llm_adaptation_failure_probe_result(profile, exc)
+        else:
+            result = await probe_llm_profile(
+                profile,
+                session=session,
+                adaptation=adaptation,
+            )
     await _record_agent_llm_profile_event(
         session,
         profile,
@@ -5227,7 +5243,7 @@ async def _get_agent_llm_profile_or_raise(
     session: AsyncSession,
     profile_id: int,
 ) -> LLMProfile:
-    profile = await session.get(LLMProfile, profile_id)
+    profile = await get_active_llm_profile(session, profile_id)
     if profile is None:
         raise ValueError("未找到 LLM 配置")
     return profile
@@ -5359,6 +5375,15 @@ def _agent_llm_profile_error(error: ValueError) -> AgentApiError:
         status_code=404 if "未找到" in str(error) else 422,
         code="LLM_PROFILE_OPERATION_REJECTED",
         message=str(error),
+    )
+
+
+def _agent_llm_profile_retiring_error() -> AgentApiError:
+    return AgentApiError(
+        status_code=409,
+        code="LLM_PROFILE_RETIRING",
+        message="模型配置正在删除，请刷新后选择其他模型。",
+        retryable=True,
     )
 
 

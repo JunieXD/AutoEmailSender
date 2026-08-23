@@ -287,6 +287,7 @@
         "listLLMProfiles",
         "createLLMProfile",
         "updateLLMProfile",
+        "getLLMProfileDeletionImpact",
         "deleteLLMProfile",
         "setDefaultLLMProfile",
         "fetchLLMProfileModelsPreview",
@@ -307,6 +308,11 @@
           "status": "ui_only",
           "required_capabilities": ["llm-profiles.write"],
           "reason": "模型配置删除保留在桌面凭据管理流程中。"
+        },
+        "getLLMProfileDeletionImpact": {
+          "status": "ui_only",
+          "required_capabilities": ["llm-profiles.write"],
+          "reason": "删除影响预览是桌面凭据退役确认流程的一部分。"
         },
         "fetchLLMProfileModelsPreview": {
           "status": "ui_only",

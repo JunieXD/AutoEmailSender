@@ -104,6 +104,35 @@ describe("api client", () => {
     }
   });
 
+  it("preserves structured backend error codes and details", async () => {
+    const impact = {
+      profile_id: 2,
+      revision: "a".repeat(64),
+      blockers: [{ kind: "draft_generation", count: 1 }],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: "LLM_PROFILE_IN_USE",
+            message: "该模型仍被运行中的草稿任务使用。",
+            impact,
+          },
+        }),
+        { status: 409 },
+      ),
+    );
+
+    await expect(apiFetch("/api/llm-profiles/2")).rejects.toMatchObject<
+      ApiError
+    >({
+      status: 409,
+      code: "LLM_PROFILE_IN_USE",
+      message: "该模型仍被运行中的草稿任务使用。",
+      details: expect.objectContaining({ impact }),
+    });
+  });
+
   it("records failed HTTP responses without sensitive query details", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ detail: "Unauthorized" }), {

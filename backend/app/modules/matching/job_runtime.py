@@ -26,6 +26,7 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
+from app.modules.llm.public import get_active_llm_profile
 from app.services.match_results import (
     load_resolved_match_results,
     resolve_identity_match_scope,
@@ -115,9 +116,9 @@ async def create_match_analysis_job_record(
     if match_scope.source_identity.current_primary_material_id is None:
         raise ValueError("请到个人页设置默认材料")
 
-    llm_profile = await session.get(LLMProfile, llm_profile_id)
+    llm_profile = await get_active_llm_profile(session, llm_profile_id)
     if llm_profile is None:
-        raise ValueError("LLM 配置不存在")
+        raise ValueError("模型配置不存在或已删除")
 
     professors = await _load_active_match_analysis_professors(
         session,
@@ -660,6 +661,11 @@ async def _claim_next_match_analysis_item(
                         MatchAnalysisJob.status.in_(active_statuses),
                         MatchAnalysisJob.cancel_requested_at.is_(None),
                         MatchAnalysisJob.deleted_at.is_(None),
+                        MatchAnalysisJob.llm_profile_id.in_(
+                            select(LLMProfile.id).where(
+                                LLMProfile.deleted_at.is_(None)
+                            )
+                        ),
                     )
                     .order_by(
                         MatchAnalysisJob.item_last_dispatched_at.is_not(None).asc(),
@@ -688,6 +694,11 @@ async def _claim_next_match_analysis_item(
                             MatchAnalysisJob.status.in_(active_statuses),
                             MatchAnalysisJob.cancel_requested_at.is_(None),
                             MatchAnalysisJob.deleted_at.is_(None),
+                            MatchAnalysisJob.llm_profile_id.in_(
+                                select(LLMProfile.id).where(
+                                    LLMProfile.deleted_at.is_(None)
+                                )
+                            ),
                         )
                     ),
                 )

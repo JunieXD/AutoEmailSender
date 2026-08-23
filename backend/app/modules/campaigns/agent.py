@@ -41,6 +41,7 @@ from .drafts.fallback import (
 )
 from .status import sync_batch_task_completion
 from app.modules.identities.public import material_can_be_primary
+from app.modules.llm.public import get_active_llm_profile, llm_profile_is_active
 from app.services.operation_logs import record_operation_log
 from app.services.material_catalog import list_global_material_metadata
 from .templates.library import (
@@ -283,6 +284,7 @@ async def start_agent_campaign_draft_generation(
             code="CAMPAIGN_NO_PENDING_DRAFTS",
             message="该活动没有可启动的 AI 草稿任务。",
         )
+    _ensure_campaign_llm_active(campaign)
     campaign.status = BatchTaskStatus.RUNNING.value
     campaign.updated_at = utc_now()
     await record_operation_log(
@@ -579,6 +581,7 @@ async def retry_agent_campaign_item_draft(
             code="CAMPAIGN_ITEM_RESEARCH_DIRECTION_REQUIRED",
             message="请先补充导师研究方向，再使用 AI 重新生成草稿。",
         )
+    _ensure_campaign_llm_active(campaign)
     item.status = EmailTaskStatus.DISCOVERED.value
     item.last_error = None
     item.draft_generation_previous_status = None
@@ -970,7 +973,7 @@ async def _resolve_campaign_create_context(
             code="CAMPAIGN_IDENTITY_NOT_FOUND",
             message="未找到发件身份。",
         )
-    llm_profile = await session.get(LLMProfile, payload.llm_profile_id)
+    llm_profile = await get_active_llm_profile(session, payload.llm_profile_id)
     if llm_profile is None:
         raise AgentApiError(
             status_code=404,
@@ -1312,6 +1315,19 @@ async def _resolve_campaign_resume_context(
             EmailTaskStatus.SCHEDULED.value,
         }
     ]
+    has_pending_llm_drafts = any(
+        task.batch_send_canceled_at is None
+        and _task_uses_ai_rewrite(task)
+        and task.status
+        in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+            EmailTaskStatus.DRAFT_FAILED.value,
+        }
+        for task in campaign.email_tasks
+    )
+    if has_pending_llm_drafts:
+        _ensure_campaign_llm_active(campaign)
     return CampaignResumeContext(
         campaign=campaign,
         delivery_drafts=delivery_drafts,
@@ -2312,6 +2328,7 @@ def _campaign_can_start_draft_generation(campaign: BatchTask) -> bool:
     if (
         campaign.status not in CAMPAIGN_ALLOWED_ACTIVE_STATUSES
         or campaign.deleted_at is not None
+        or not llm_profile_is_active(campaign.llm_profile)
     ):
         return False
     if any(
@@ -2330,6 +2347,20 @@ def _campaign_can_start_draft_generation(campaign: BatchTask) -> bool:
         }
         and task.batch_send_canceled_at is None
         for task in campaign.email_tasks
+    )
+
+
+def _ensure_campaign_llm_active(campaign: BatchTask) -> None:
+    if llm_profile_is_active(campaign.llm_profile):
+        return
+    raise AgentApiError(
+        status_code=409,
+        code="CAMPAIGN_LLM_PROFILE_REPLACEMENT_REQUIRED",
+        message="原模型配置已删除，请在桌面端为待生成草稿选择新的模型后再继续活动。",
+        details={
+            "campaign_id": campaign.id,
+            "llm_profile_id": campaign.llm_profile_id,
+        },
     )
 
 

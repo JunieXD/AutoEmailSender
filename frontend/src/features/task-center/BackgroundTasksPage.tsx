@@ -46,6 +46,7 @@ import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNot
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { ApiError } from "@/lib/api/client";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
@@ -289,6 +290,7 @@ export const BackgroundTasksPage = ({
     identities = [],
     selectedIdentityId,
     selectedLlmProfileId,
+    selectedLlmProfile,
     setSelectedIdentityId,
   } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
@@ -2524,7 +2526,32 @@ export const BackgroundTasksPage = ({
           eventName: "tasks.batch_task_resume_submitted",
           data: diagnosticData,
         });
-        await resumeBatchTask(taskId);
+        try {
+          await resumeBatchTask(taskId);
+        } catch (resumeError) {
+          if (
+            !(resumeError instanceof ApiError) ||
+            resumeError.code !== "CAMPAIGN_LLM_PROFILE_REPLACEMENT_REQUIRED"
+          ) {
+            throw resumeError;
+          }
+          if (!selectedLlmProfile) {
+            throw new Error(
+              "原模型配置已删除。请先在顶部选择一个可用模型，再继续活动。",
+            );
+          }
+          const confirmed = await confirm({
+            title: "原模型配置已删除",
+            description: `待生成的 AI 草稿无法继续。是否改用当前选择的“${selectedLlmProfile.name}”（${selectedLlmProfile.model_name}）？已生成和已发送的历史内容不会改变。`,
+            confirmLabel: "改用此模型并继续",
+            cancelLabel: "暂不继续",
+            tone: "danger",
+          });
+          if (!confirmed) {
+            return;
+          }
+          await resumeBatchTask(taskId, selectedLlmProfile.id);
+        }
       } else {
         const confirmed = await confirm({
           title: "确认终止这个任务？",

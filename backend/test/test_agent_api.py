@@ -814,6 +814,69 @@ class AgentApiTests(unittest.TestCase):
         ):
             self.assertNotIn(secret, serialized)
 
+    def test_agent_llm_endpoints_do_not_expose_retired_profiles(self) -> None:
+        profile_id = self._create_llm_profile(name="Agent 待退役模型")
+        impact = self.client.get(
+            f"/api/llm-profiles/{profile_id}/deletion-impact",
+            headers=self._ui_headers(),
+        )
+        self.assertEqual(impact.status_code, 200, msg=impact.text)
+        retired = self.client.delete(
+            f"/api/llm-profiles/{profile_id}",
+            headers=self._ui_headers(),
+            params={"impact_revision": impact.json()["revision"]},
+        )
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+
+        listed = self._agent_get("/api/agent/v1/llm-profiles")
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        self.assertNotIn(
+            profile_id,
+            [item["id"] for item in listed.json()["items"]],
+        )
+        read = self.client.get(
+            f"/api/agent/v1/llm-profiles/{profile_id}",
+            headers=self._agent_headers(),
+        )
+        update = self.client.put(
+            f"/api/agent/v1/llm-profiles/{profile_id}/settings",
+            headers={
+                **self._agent_headers(),
+                "Idempotency-Key": "retired-llm-update",
+            },
+            json={"model_name": "must-not-update"},
+        )
+        self.assertEqual(read.status_code, 404, msg=read.text)
+        self.assertEqual(update.status_code, 404, msg=update.text)
+
+    def test_agent_llm_calls_report_retirement_conflict(self) -> None:
+        from app.modules.llm.usage import (
+            begin_llm_profile_retirement,
+            end_llm_profile_retirement,
+        )
+
+        profile_id = self._create_llm_profile(name="Agent 并发退役模型")
+        self.assertTrue(begin_llm_profile_retirement(profile_id))
+        try:
+            models = self.client.get(
+                f"/api/agent/v1/llm-profiles/{profile_id}/models",
+                headers=self._agent_headers(),
+            )
+            tested = self.client.post(
+                f"/api/agent/v1/llm-profiles/{profile_id}/test",
+                headers={
+                    **self._agent_headers(),
+                    "Idempotency-Key": "agent-retiring-llm-test",
+                },
+            )
+        finally:
+            end_llm_profile_retirement(profile_id)
+
+        for response in (models, tested):
+            self.assertEqual(response.status_code, 409, msg=response.text)
+            self.assertEqual(response.json()["error"]["code"], "LLM_PROFILE_RETIRING")
+            self.assertTrue(response.json()["error"]["retryable"])
+
     def test_agent_can_update_safe_identity_settings_without_exposing_credentials(
         self,
     ) -> None:

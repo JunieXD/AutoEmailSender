@@ -46,6 +46,7 @@ from app.modules.identities.public import (
     resolve_identity_communication_scope,
     serialize_material,
 )
+from app.modules.llm.public import get_active_llm_profile
 from app.services.match_results import (
     apply_match_result_view_to_task,
     load_resolved_match_result,
@@ -401,7 +402,11 @@ async def build_workspace_thread_for_task(
         raise HTTPException(status_code=404, detail="未找到邮件任务")
     professor = await _get_professor(session, current_task.professor_id)
     identity = await _get_identity(session, current_task.identity_id)
-    llm_profile = await _get_llm_profile(session, current_task.llm_profile_id)
+    llm_profile = await _get_llm_profile(
+        session,
+        current_task.llm_profile_id,
+        require_active=False,
+    )
     task_updated = _recover_legacy_sent_task_status(current_task)
     task_updated = (
         _backfill_task_primary_material_from_identity(current_task, identity)
@@ -616,10 +621,20 @@ async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProf
     return identity
 
 
-async def _get_llm_profile(session: AsyncSession, llm_profile_id: int) -> LLMProfile:
-    profile = await session.get(LLMProfile, llm_profile_id)
+async def _get_llm_profile(
+    session: AsyncSession,
+    llm_profile_id: int,
+    *,
+    require_active: bool = True,
+) -> LLMProfile:
+    profile = (
+        await get_active_llm_profile(session, llm_profile_id)
+        if require_active
+        else await session.get(LLMProfile, llm_profile_id)
+    )
     if not profile:
-        raise HTTPException(status_code=404, detail="未找到 LLM 配置")
+        detail = "模型配置不存在或已删除" if require_active else "未找到模型配置"
+        raise HTTPException(status_code=404, detail=detail)
     return profile
 
 

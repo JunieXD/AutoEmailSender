@@ -26,6 +26,12 @@ from app.models import (
     OutreachTemplate,
     Professor,
 )
+from app.modules.llm.public import (
+    DELETED_LLM_PROFILE_MESSAGE,
+    get_active_llm_profile,
+    llm_profile_is_active,
+    track_llm_profile_usage,
+)
 from app.modules.campaigns.public import (
     DRAFT_GENERATION_SOURCE_LLM,
     DRAFT_GENERATION_SOURCE_TEMPLATE,
@@ -278,9 +284,13 @@ async def generate_task_draft(
                     runtime_llm_profile.id,
                 )
                 runtime_settings = await get_runtime_settings(session)
-                adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
-                    session, runtime_llm_profile
-                )
+                with track_llm_profile_usage(
+                    runtime_llm_profile.id,
+                    "draft_generation_startup",
+                ):
+                    adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+                        session, runtime_llm_profile
+                    )
                 rewrite_preferences = llm_runtime.DraftRewritePreferences(
                     draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
                     draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
@@ -579,52 +589,60 @@ async def rewrite_task_draft(
         runtime_llm_profile = await _resolve_runtime_llm_profile(
             session, task, payload.llm_profile_id
         )
-        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
-            session, runtime_llm_profile
-        )
-        runtime_settings = await get_runtime_settings(session)
-        rewrite_preferences = llm_runtime.DraftRewritePreferences(
-            draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
-            draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
-            draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
-            draft_rewrite_length=runtime_settings.draft_rewrite_length,
-            draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
-            draft_template_preservation=runtime_settings.draft_template_preservation,
-            draft_custom_instruction=runtime_settings.draft_custom_instruction,
-            intended_research_direction=runtime_settings.intended_research_direction,
-        )
-        identity = task.identity
-        primary_material = task.primary_material
-        professor = task.professor
-        task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
+        with track_llm_profile_usage(
+            runtime_llm_profile.id,
+            "draft_rewrite_startup",
+        ):
+            adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+                session, runtime_llm_profile
+            )
+            runtime_settings = await get_runtime_settings(session)
+            rewrite_preferences = llm_runtime.DraftRewritePreferences(
+                draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
+                draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
+                draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
+                draft_rewrite_length=runtime_settings.draft_rewrite_length,
+                draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
+                draft_template_preservation=(
+                    runtime_settings.draft_template_preservation
+                ),
+                draft_custom_instruction=runtime_settings.draft_custom_instruction,
+                intended_research_direction=(
+                    runtime_settings.intended_research_direction
+                ),
+            )
+            identity = task.identity
+            primary_material = task.primary_material
+            professor = task.professor
+            task_identity = (task.professor_id, task.identity_id, runtime_llm_profile.id)
 
-        now = utc_now()
-        previous_status = task.status or EmailTaskStatus.REVIEW_REQUIRED.value
-        claim_result = await session.execute(
-            update(EmailTask)
-            .where(
-                EmailTask.id == task.id,
-                EmailTask.status != EmailTaskStatus.GENERATING_DRAFT.value,
+            now = utc_now()
+            previous_status = task.status or EmailTaskStatus.REVIEW_REQUIRED.value
+            claim_result = await session.execute(
+                update(EmailTask)
+                .where(
+                    EmailTask.id == task.id,
+                    EmailTask.status != EmailTaskStatus.GENERATING_DRAFT.value,
+                )
+                .values(
+                    llm_profile_id=runtime_llm_profile.id,
+                    draft_generation_previous_status=previous_status,
+                    draft_generation_started_at=now,
+                    draft_rewrite_source_subject=source_subject,
+                    draft_rewrite_source_body_text=source_body_text,
+                    draft_rewrite_source_body_html=source_body_html or None,
+                    draft_rewrite_source_selected_material_ids=selected_material_ids,
+                    selected_material_ids=selected_material_ids,
+                    status=EmailTaskStatus.GENERATING_DRAFT.value,
+                    last_error=None,
+                    updated_at=now,
+                )
             )
-            .values(
-                llm_profile_id=runtime_llm_profile.id,
-                draft_generation_previous_status=previous_status,
-                draft_generation_started_at=now,
-                draft_rewrite_source_subject=source_subject,
-                draft_rewrite_source_body_text=source_body_text,
-                draft_rewrite_source_body_html=source_body_html or None,
-                draft_rewrite_source_selected_material_ids=selected_material_ids,
-                selected_material_ids=selected_material_ids,
-                status=EmailTaskStatus.GENERATING_DRAFT.value,
-                last_error=None,
-                updated_at=now,
-            )
-        )
-        if claim_result.rowcount != 1:
-            await session.rollback()
-            raise ValueError("AI 正在改写当前草稿，请稍后刷新")
-        await session.commit()
-        await session.refresh(task)
+            if claim_result.rowcount != 1:
+                await session.rollback()
+                raise ValueError("AI 正在改写当前草稿，请稍后刷新")
+            await session.commit()
+            await session.refresh(task)
 
         try:
             generation = await asyncio.wait_for(
@@ -791,33 +809,38 @@ async def preview_task_draft(
         if detail:
             raise ValueError(detail)
 
-        runtime_settings = await get_runtime_settings(session)
-        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
-            session, runtime_llm_profile
-        )
-        rewrite_preferences = llm_runtime.DraftRewritePreferences(
-            draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
-            draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
-            draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
-            draft_rewrite_length=runtime_settings.draft_rewrite_length,
-            draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
-            draft_template_preservation=runtime_settings.draft_template_preservation,
-            draft_custom_instruction=runtime_settings.draft_custom_instruction,
-            intended_research_direction=runtime_settings.intended_research_direction,
-        )
-        return await llm_runtime.generate_draft_content(
-            identity=task.identity,
-            primary_material=task.primary_material,
-            llm_profile=runtime_llm_profile,
-            professor=task.professor,
-            available_materials=[],
-            custom_subject=template_subject,
-            custom_body=template_body,
-            custom_body_html=template_body_html,
-            rewrite_preferences=rewrite_preferences,
-            session=session,
-            adaptation=adaptation,
-        )
+        with track_llm_profile_usage(runtime_llm_profile.id, "draft_preview"):
+            runtime_settings = await get_runtime_settings(session)
+            adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+                session, runtime_llm_profile
+            )
+            rewrite_preferences = llm_runtime.DraftRewritePreferences(
+                draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
+                draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
+                draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
+                draft_rewrite_length=runtime_settings.draft_rewrite_length,
+                draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
+                draft_template_preservation=(
+                    runtime_settings.draft_template_preservation
+                ),
+                draft_custom_instruction=runtime_settings.draft_custom_instruction,
+                intended_research_direction=(
+                    runtime_settings.intended_research_direction
+                ),
+            )
+            return await llm_runtime.generate_draft_content(
+                identity=task.identity,
+                primary_material=task.primary_material,
+                llm_profile=runtime_llm_profile,
+                professor=task.professor,
+                available_materials=[],
+                custom_subject=template_subject,
+                custom_body=template_body,
+                custom_body_html=template_body_html,
+                rewrite_preferences=rewrite_preferences,
+                session=session,
+                adaptation=adaptation,
+            )
 
 
 async def update_task_primary_material(
@@ -1485,10 +1508,12 @@ async def _resolve_runtime_llm_profile(
     llm_profile_id: int | None,
 ) -> LLMProfile:
     if llm_profile_id is None or llm_profile_id == task.llm_profile_id:
+        if not llm_profile_is_active(task.llm_profile):
+            raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
         return task.llm_profile
-    profile = await session.get(LLMProfile, llm_profile_id)
+    profile = await get_active_llm_profile(session, llm_profile_id)
     if profile is None:
-        raise ValueError("未找到 LLM 配置")
+        raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
     return profile
 
 

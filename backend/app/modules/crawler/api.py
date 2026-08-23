@@ -32,6 +32,7 @@ from app.models import (
     CrawlWorkerTokenUsage,
     LLMProfile,
 )
+from app.modules.llm.public import get_active_llm_profile
 from .schemas import (
     CrawlCandidateRead,
     CrawlCandidateUpdatePayload,
@@ -405,7 +406,7 @@ async def enrich_crawl_candidates(
         raise HTTPException(status_code=400, detail="请至少选择一位候选导师")
     if (
         payload.llm_profile_id is not None
-        and await session.get(LLMProfile, payload.llm_profile_id) is None
+        and await get_active_llm_profile(session, payload.llm_profile_id) is None
     ):
         raise HTTPException(status_code=404, detail="模型配置不存在")
     try:

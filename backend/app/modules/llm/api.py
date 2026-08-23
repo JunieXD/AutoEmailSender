@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,10 +12,23 @@ from app.core.time import utc_now
 from app.models import LLMProfile
 from .schemas import (
     LLMProfileCreate,
+    LLMProfileDeletionImpact,
+    LLMProfileDeletionResult,
     LLMProfileModelsResult,
     LLMProfileRead,
     LLMProfileTestResult,
     LLMProfileUpdate,
+)
+from .availability import get_active_llm_profile
+from .deletion import (
+    LLMProfileDeletionError,
+    build_llm_profile_deletion_impact,
+    retire_llm_profile,
+)
+from .usage import (
+    LLMProfileRetiringError,
+    end_llm_profile_retirement,
+    track_llm_profile_usage,
 )
 from .runtime import (
     LLMProbeResult,
@@ -36,7 +50,9 @@ async def list_llm_profiles(
     session: AsyncSession = Depends(get_async_session),
 ) -> list[LLMProfile]:
     result = await session.execute(
-        select(LLMProfile).order_by(
+        select(LLMProfile)
+        .where(LLMProfile.deleted_at.is_(None))
+        .order_by(
             LLMProfile.is_default.desc(), LLMProfile.created_at.desc()
         ),
     )
@@ -48,7 +64,9 @@ async def create_llm_profile(
     payload: LLMProfileCreate,
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfile:
-    existing_count = await session.scalar(select(func.count(LLMProfile.id)))
+    existing_count = await session.scalar(
+        select(func.count(LLMProfile.id)).where(LLMProfile.deleted_at.is_(None))
+    )
     profile = LLMProfile(**payload.model_dump())
     if not existing_count:
         profile.is_default = True
@@ -84,30 +102,106 @@ async def update_llm_profile(
     return profile
 
 
-@router.delete("/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_llm_profile(
+@router.get(
+    "/{profile_id}/deletion-impact",
+    response_model=LLMProfileDeletionImpact,
+)
+async def get_llm_profile_deletion_impact(
     profile_id: int,
     session: AsyncSession = Depends(get_async_session),
-) -> None:
+) -> LLMProfileDeletionImpact:
     profile = await _get_profile(session, profile_id)
-    was_default = profile.is_default
-    await _record_llm_profile_log(
-        session,
-        profile,
-        "llm_profile.deleted",
-        metadata={"was_default": was_default},
-    )
-    await session.delete(profile)
-    await session.commit()
+    return await build_llm_profile_deletion_impact(session, profile)
 
-    if was_default:
-        remaining = await session.scalar(
-            select(LLMProfile).order_by(LLMProfile.created_at.asc()).limit(1),
+
+@router.delete("/{profile_id}", response_model=LLMProfileDeletionResult)
+async def delete_llm_profile(
+    profile_id: int,
+    impact_revision: str = Query(..., min_length=64, max_length=64),
+    replacement_default_profile_id: int | None = Query(default=None, ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> LLMProfileDeletionResult:
+    profile = await _get_profile(session, profile_id)
+    replacement_default_profile = None
+    if replacement_default_profile_id is not None:
+        replacement_default_profile = await get_active_llm_profile(
+            session,
+            replacement_default_profile_id,
         )
-        if remaining:
-            remaining.is_default = True
-            remaining.updated_at = utc_now()
+        if replacement_default_profile is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "LLM_PROFILE_DEFAULT_REPLACEMENT_INVALID",
+                    "message": "默认模型替代项不存在或已删除，请重新选择。",
+                },
+            )
+        if not profile.is_default:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "LLM_PROFILE_DEFAULT_REPLACEMENT_NOT_NEEDED",
+                    "message": "仅删除当前默认模型时可以指定默认替代项。",
+                },
+            )
+    retirement_started = False
+    try:
+        replacement_usage = (
+            track_llm_profile_usage(
+                replacement_default_profile.id,
+                "default_replacement",
+            )
+            if replacement_default_profile is not None
+            else nullcontext()
+        )
+        with replacement_usage:
+            try:
+                result = await retire_llm_profile(
+                    session,
+                    profile,
+                    expected_revision=impact_revision,
+                    replacement_default_profile=replacement_default_profile,
+                )
+                retirement_started = True
+            except LLMProfileDeletionError as exc:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": exc.code,
+                        "message": exc.message,
+                        "impact": exc.impact.model_dump(mode="json"),
+                    },
+                ) from exc
+            await _record_llm_profile_log(
+                session,
+                profile,
+                "llm_profile.deleted",
+                metadata={
+                    "references_preserved": result.references_preserved.model_dump(
+                        mode="json"
+                    ),
+                    "invalidated_plan_count": result.invalidated_plan_count,
+                    "default_profile_id": result.default_profile_id,
+                },
+            )
             await session.commit()
+            return result
+    except LLMProfileRetiringError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "LLM_PROFILE_DEFAULT_REPLACEMENT_UNAVAILABLE",
+                "message": "所选默认替代模型正在被删除，请重新查看并选择可用模型。",
+            },
+        ) from exc
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        if retirement_started:
+            end_llm_profile_retirement(profile.id)
 
 
 @router.post("/{profile_id}/default", response_model=LLMProfileRead)
@@ -187,7 +281,11 @@ async def fetch_models_for_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfileModelsResult:
     profile = await _get_profile(session, profile_id)
-    result = await fetch_llm_profile_models(profile)
+    try:
+        with track_llm_profile_usage(profile.id, "model_listing"):
+            result = await fetch_llm_profile_models(profile)
+    except LLMProfileRetiringError as exc:
+        raise _llm_profile_retiring_http_error() from exc
     await _record_llm_profile_log(
         session,
         profile,
@@ -231,15 +329,19 @@ async def test_llm_profile(
 ) -> LLMProfileTestResult:
     profile = await _get_profile(session, profile_id)
     try:
-        adaptation = await ensure_llm_runtime_adaptation(session, profile)
-    except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
-        result = _build_adaptation_failure_probe_result(profile, exc)
-    else:
-        result = await probe_llm_profile(
-            profile,
-            session=session,
-            adaptation=adaptation,
-        )
+        with track_llm_profile_usage(profile.id, "connectivity_test"):
+            try:
+                adaptation = await ensure_llm_runtime_adaptation(session, profile)
+            except (LLMRuntimeError, ThinkingAdaptationFailed) as exc:
+                result = _build_adaptation_failure_probe_result(profile, exc)
+            else:
+                result = await probe_llm_profile(
+                    profile,
+                    session=session,
+                    adaptation=adaptation,
+                )
+    except LLMProfileRetiringError as exc:
+        raise _llm_profile_retiring_http_error() from exc
     await _record_llm_profile_log(
         session,
         profile,
@@ -278,17 +380,29 @@ async def test_llm_profile(
 
 
 async def _get_profile(session: AsyncSession, profile_id: int) -> LLMProfile:
-    profile = await session.get(LLMProfile, profile_id)
+    profile = await get_active_llm_profile(session, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="未找到 LLM 配置")
     return profile
+
+
+def _llm_profile_retiring_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "LLM_PROFILE_RETIRING",
+            "message": "模型配置正在删除，请刷新后选择其他模型。",
+        },
+    )
 
 
 async def _clear_default_profiles(
     session: AsyncSession,
     exclude_id: int | None = None,
 ) -> None:
-    result = await session.execute(select(LLMProfile))
+    result = await session.execute(
+        select(LLMProfile).where(LLMProfile.deleted_at.is_(None))
+    )
     for profile in result.scalars():
         if exclude_id is not None and profile.id == exclude_id:
             continue
@@ -336,7 +450,6 @@ async def _record_llm_profile_log(
         "name": profile.name,
         "provider": profile.provider,
         "model_name": profile.model_name,
-        "api_base_url": _strip_url_query_and_fragment(profile.api_base_url),
         "is_default": profile.is_default,
     }
     if metadata:

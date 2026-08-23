@@ -120,6 +120,78 @@ class MigrationScriptTests(unittest.TestCase):
         )
         self.assertEqual(heads[0], get_head_revision(config))
 
+    def test_safe_llm_profile_retirement_migration_supports_name_reuse(self) -> None:
+        database_path = Path(self.temp_dir.name) / "llm_retirement.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260822_thinking_probe_v2"
+        migration_revision = "20260824_safe_llm_retire"
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            retired_id = connection.execute(
+                """
+                INSERT INTO llm_profiles (name, provider, api_key, model_name)
+                VALUES ('可复用名称', 'openai', 'sk-old', 'old-model')
+                RETURNING id
+                """
+            ).fetchone()[0]
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('llm_profiles')")
+            }
+            connection.execute(
+                "UPDATE llm_profiles SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (retired_id,),
+            )
+            active_id = connection.execute(
+                """
+                INSERT INTO llm_profiles (name, provider, api_key, model_name)
+                VALUES ('可复用名称', 'openai', 'sk-new', 'new-model')
+                RETURNING id
+                """
+            ).fetchone()[0]
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    """
+                    INSERT INTO llm_profiles (name, provider, api_key, model_name)
+                    VALUES ('可复用名称', 'openai', 'sk-duplicate', 'duplicate')
+                    """
+                )
+            connection.commit()
+            index_sql = connection.execute(
+                """
+                SELECT sql
+                FROM sqlite_master
+                WHERE type = 'index' AND name = 'uq_llm_profiles_active_name'
+                """
+            ).fetchone()[0]
+
+        self.assertIn("deleted_at", columns)
+        self.assertIn("WHERE deleted_at IS NULL", index_sql)
+        with self.assertRaisesRegex(RuntimeError, "Cannot downgrade safe LLM"):
+            run_alembic_in_process(env, "downgrade", previous_revision)
+
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("DELETE FROM llm_profiles WHERE id = ?", (retired_id,))
+            connection.commit()
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            downgraded_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('llm_profiles')")
+            }
+            active_name = connection.execute(
+                "SELECT name FROM llm_profiles WHERE id = ?",
+                (active_id,),
+            ).fetchone()[0]
+        self.assertNotIn("deleted_at", downgraded_columns)
+        self.assertEqual(active_name, "可复用名称")
+
     def test_crawl_enrichment_operation_migration_preserves_existing_jobs(self) -> None:
         database_path = Path(self.temp_dir.name) / "crawl_enrichment_operation.db"
         env = os.environ.copy()

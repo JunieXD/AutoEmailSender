@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import Boolean, Float, Integer, String, Text, text
+from sqlalchemy import Boolean, Float, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -19,9 +19,18 @@ if TYPE_CHECKING:
 
 class LLMProfile(Base):
     __tablename__ = "llm_profiles"
+    __table_args__ = (
+        Index(
+            "uq_llm_profiles_active_name",
+            "name",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -50,16 +59,18 @@ class LLMProfile(Base):
         server_default=text("CURRENT_TIMESTAMP"),
         onupdate=utc_now,
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        index=True,
+        nullable=True,
+    )
 
     email_tasks: Mapped[list["EmailTask"]] = relationship(
         back_populates="llm_profile",
-        cascade="all, delete-orphan",
     )
     batch_tasks: Mapped[list["BatchTask"]] = relationship(
         back_populates="llm_profile",
-        cascade="all, delete-orphan",
     )
     email_logs: Mapped[list["EmailLog"]] = relationship(
         back_populates="llm_profile",
-        cascade="all, delete-orphan",
     )

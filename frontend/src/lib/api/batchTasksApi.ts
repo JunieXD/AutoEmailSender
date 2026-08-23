@@ -148,10 +148,15 @@ export const pauseBatchTask = (taskId: number) =>
     method: 'POST',
   });
 
-export const resumeBatchTask = (taskId: number) =>
-  apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(`/api/batch-tasks/${taskId}/resume`, {
-    method: 'POST',
-  });
+export const resumeBatchTask = (
+  taskId: number,
+  replacementLlmProfileId?: number | null,
+) =>
+  apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(
+    `/api/batch-tasks/${taskId}/resume`,
+    { method: 'POST' },
+    { replacement_llm_profile_id: replacementLlmProfileId },
+  );
 
 export const stopBatchTask = (taskId: number) =>
   apiFetch<{ ok: boolean; task: BatchTaskCardDTO }>(`/api/batch-tasks/${taskId}/stop`, {

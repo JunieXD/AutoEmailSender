@@ -21,6 +21,12 @@ from app.models import (
     TestComposeMessage,
     TestComposeSession,
 )
+from app.modules.llm.public import (
+    DELETED_LLM_PROFILE_MESSAGE,
+    get_active_llm_profile,
+    llm_profile_is_active,
+    track_llm_profile_usage,
+)
 from .schemas import (
     TestComposeDraftRead,
     TestComposeDraftUpdateRequest,
@@ -181,40 +187,51 @@ async def generate_test_compose_draft(
             outreach_config.body_html_template or ""
         ).strip() or None
     else:
+        if not llm_profile_is_active(llm_profile):
+            raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
         primary_material = identity.current_primary_material
         if primary_material is None:
             raise ValueError("请到个人页设置默认材料后再生成测试草稿")
         ensure_material_extracted_text(primary_material)
         pseudo_professor = _build_self_recipient_professor(identity)
         runtime_settings = await get_runtime_settings(session)
-        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
-            session, llm_profile
-        )
-        rewrite_preferences = llm_runtime.DraftRewritePreferences(
-            draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
-            draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
-            draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
-            draft_rewrite_length=runtime_settings.draft_rewrite_length,
-            draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
-            draft_template_preservation=runtime_settings.draft_template_preservation,
-            draft_custom_instruction=runtime_settings.draft_custom_instruction,
-            intended_research_direction=runtime_settings.intended_research_direction,
-        )
-        generation = await llm_runtime.generate_draft_content(
-            identity=identity,
-            primary_material=primary_material,
-            llm_profile=llm_profile,
-            professor=pseudo_professor,
-            available_materials=[],
-            custom_subject=template_subject,
-            custom_body=template_body,
-            custom_body_html=template_body_html,
-            current_match=None,
-            max_tokens=runtime_settings.draft_max_tokens,
-            rewrite_preferences=rewrite_preferences,
-            session=session,
-            adaptation=adaptation,
-        )
+        active_llm_profile = await get_active_llm_profile(session, llm_profile_id)
+        if active_llm_profile is None:
+            raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
+        llm_profile = active_llm_profile
+        with track_llm_profile_usage(llm_profile.id, "test_compose"):
+            adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+                session, llm_profile
+            )
+            rewrite_preferences = llm_runtime.DraftRewritePreferences(
+                draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
+                draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
+                draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
+                draft_rewrite_length=runtime_settings.draft_rewrite_length,
+                draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
+                draft_template_preservation=(
+                    runtime_settings.draft_template_preservation
+                ),
+                draft_custom_instruction=runtime_settings.draft_custom_instruction,
+                intended_research_direction=(
+                    runtime_settings.intended_research_direction
+                ),
+            )
+            generation = await llm_runtime.generate_draft_content(
+                identity=identity,
+                primary_material=primary_material,
+                llm_profile=llm_profile,
+                professor=pseudo_professor,
+                available_materials=[],
+                custom_subject=template_subject,
+                custom_body=template_body,
+                custom_body_html=template_body_html,
+                current_match=None,
+                max_tokens=runtime_settings.draft_max_tokens,
+                rewrite_preferences=rewrite_preferences,
+                session=session,
+                adaptation=adaptation,
+            )
         compose_session.subject = generation.result.subject
         compose_session.body_text = generation.result.body_text
         compose_session.body_html = generation.result.body_html
@@ -550,10 +567,21 @@ async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProf
     return identity
 
 
-async def _get_llm_profile(session: AsyncSession, llm_profile_id: int) -> LLMProfile:
-    llm_profile = await session.get(LLMProfile, llm_profile_id)
+async def _get_llm_profile(
+    session: AsyncSession,
+    llm_profile_id: int,
+    *,
+    require_active: bool = False,
+) -> LLMProfile:
+    llm_profile = (
+        await get_active_llm_profile(session, llm_profile_id)
+        if require_active
+        else await session.get(LLMProfile, llm_profile_id)
+    )
     if not llm_profile:
-        raise ValueError("未找到 LLM 配置")
+        raise ValueError(
+            DELETED_LLM_PROFILE_MESSAGE if require_active else "未找到模型配置"
+        )
     return llm_profile
 
 

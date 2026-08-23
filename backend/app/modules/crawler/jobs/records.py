@@ -1366,14 +1366,19 @@ async def _resolve_and_refresh_llm_profile(
     trigger: str,
     actor: str | None,
 ) -> LLMProfile:
+    from app.modules.llm.public import (
+        get_active_llm_profile,
+        get_default_active_llm_profile,
+    )
+
     old_profile = (
-        await session.get(LLMProfile, job.llm_profile_id)
+        await get_active_llm_profile(session, job.llm_profile_id)
         if job.llm_profile_id
         else None
     )
     if requested_llm_profile_id is not None:
         profile_source = "explicit"
-        llm_profile = await session.get(LLMProfile, requested_llm_profile_id)
+        llm_profile = await get_active_llm_profile(session, requested_llm_profile_id)
         if llm_profile is None:
             raise CrawlJobRecordError(
                 status_code=404,
@@ -1383,14 +1388,15 @@ async def _resolve_and_refresh_llm_profile(
     elif old_profile is not None:
         profile_source = "job"
         llm_profile = old_profile
+    elif job.llm_profile_id is not None:
+        raise CrawlJobRecordError(
+            status_code=409,
+            code="CRAWL_LLM_PROFILE_REPLACEMENT_REQUIRED",
+            message="原模型配置已删除，请明确选择新的模型后再继续任务",
+        )
     else:
         profile_source = "global_default"
-        llm_profile = await session.scalar(
-            select(LLMProfile)
-            .where(LLMProfile.is_default.is_(True))
-            .order_by(LLMProfile.created_at.asc(), LLMProfile.id.asc())
-            .limit(1),
-        )
+        llm_profile = await get_default_active_llm_profile(session)
         if llm_profile is None:
             raise CrawlJobRecordError(
                 status_code=409,

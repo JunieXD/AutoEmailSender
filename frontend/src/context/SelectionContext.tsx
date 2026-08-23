@@ -41,6 +41,7 @@ interface SelectionContextValue {
 
 const IDENTITY_STORAGE_KEY = 'selected_identity_id';
 const LLM_STORAGE_KEY = 'selected_llm_profile_id';
+const LLM_RETIRED_EVENT_STORAGE_KEY = 'llm_profile_retired_event';
 
 const SelectionContext = createContext<SelectionContextValue | null>(null);
 
@@ -68,6 +69,7 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
   );
   const [loading, setLoading] = useState(true);
   const bootstrappedRef = useRef(false);
+  const llmSelectionInitializedRef = useRef(false);
 
   const refreshSelections = useCallback(async () => {
     if (!bootstrappedRef.current) {
@@ -120,22 +122,70 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
     if (loading) {
       return;
     }
-    if (
+    const selectedProfileExists =
       selectedLlmProfileId !== null &&
-      llmProfiles.some((item) => item.id === selectedLlmProfileId)
-    ) {
+      llmProfiles.some((item) => item.id === selectedLlmProfileId);
+    if (selectedProfileExists) {
+      llmSelectionInitializedRef.current = true;
       return;
     }
-    const stored = parseStoredId(LLM_STORAGE_KEY);
-    const fallbackId =
-      llmProfiles.find((item) => item.id === stored)?.id ??
-      llmProfiles.find((item) => item.is_default)?.id ??
-      llmProfiles[0]?.id ??
-      null;
-    if (fallbackId !== selectedLlmProfileId) {
-      setSelectedLlmProfileId(fallbackId);
+
+    if (!llmSelectionInitializedRef.current) {
+      llmSelectionInitializedRef.current = true;
+      const storedValue = window.localStorage.getItem(LLM_STORAGE_KEY);
+      const stored = parseStoredId(LLM_STORAGE_KEY);
+      const initialId =
+        storedValue === null
+          ? (llmProfiles.find((item) => item.is_default)?.id ??
+            llmProfiles[0]?.id ??
+            null)
+          : (llmProfiles.find((item) => item.id === stored)?.id ?? null);
+      if (initialId !== selectedLlmProfileId) {
+        setSelectedLlmProfileId(initialId);
+      }
+      return;
+    }
+
+    if (selectedLlmProfileId !== null) {
+      setSelectedLlmProfileId(null);
     }
   }, [llmProfiles, loading, selectedLlmProfileId]);
+
+  useEffect(() => {
+    const refreshAfterRetirement = (profileId: number) => {
+      setSelectedLlmProfileId((current) =>
+        current === profileId ? null : current,
+      );
+      void refreshSelections();
+    };
+    const handleRetirementEvent = (event: Event) => {
+      const profileId = (event as CustomEvent<{ profileId?: unknown }>).detail
+        ?.profileId;
+      if (typeof profileId === 'number') {
+        refreshAfterRetirement(profileId);
+      }
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== LLM_RETIRED_EVENT_STORAGE_KEY || !event.newValue) {
+        return;
+      }
+      try {
+        const profileId = (JSON.parse(event.newValue) as { profileId?: unknown })
+          .profileId;
+        if (typeof profileId === 'number') {
+          refreshAfterRetirement(profileId);
+        }
+      } catch {
+        // Ignore malformed cross-window notifications.
+      }
+    };
+    window.addEventListener('llm-profile-retired', handleRetirementEvent);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('llm-profile-retired', handleRetirementEvent);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [refreshSelections]);
 
   useEffect(() => {
     if (selectedIdentityId === null) {

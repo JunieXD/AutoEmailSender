@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.agent_revisions import revision_for
 from app.models import CrawlJob, LLMProfile
+from app.modules.llm.public import (
+    get_active_llm_profile,
+    get_default_active_llm_profile,
+)
 from .runs import get_or_create_current_crawl_job_run
 
 
@@ -52,16 +56,13 @@ async def resolve_crawl_job_runtime_profile(
     snapshot_profile_id = snapshot.get("profile_id") if snapshot is not None else None
     profile: LLMProfile | None = None
     if isinstance(snapshot_profile_id, int):
-        profile = await session.get(LLMProfile, snapshot_profile_id)
+        profile = await get_active_llm_profile(session, snapshot_profile_id)
     if profile is None and job.llm_profile_id is not None:
-        profile = await session.get(LLMProfile, job.llm_profile_id)
+        profile = await get_active_llm_profile(session, job.llm_profile_id)
+        if profile is None:
+            return None
     if profile is None:
-        profile = await session.scalar(
-            select(LLMProfile)
-            .where(LLMProfile.is_default.is_(True))
-            .order_by(LLMProfile.created_at.asc(), LLMProfile.id.asc())
-            .limit(1),
-        )
+        profile = await get_default_active_llm_profile(session)
     if profile is None:
         return None
     if snapshot is None or snapshot.get("profile_id") != profile.id:

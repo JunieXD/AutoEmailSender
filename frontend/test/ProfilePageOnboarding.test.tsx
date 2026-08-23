@@ -4,12 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { testIdentitySmtp, updateIdentity } from "@/lib/api/identities";
 import {
+  deleteLLMProfile,
+  getLLMProfileDeletionImpact,
   testLLMProfilePreview,
   updateLLMProfile,
 } from "@/lib/api/llmProfiles";
 import { setPrimaryMaterial } from "@/lib/api/materials";
 import { PROFILE_HELP_LINKS } from "@/lib/helpLinks";
-import type { IdentityDTO, LLMProfileDTO } from "@/types";
+import type {
+  IdentityDTO,
+  LLMProfileDeletionImpactDTO,
+  LLMProfileDTO,
+  LLMProfileReferenceCountsDTO,
+} from "@/types";
 
 const mockedUseSelectionContext = vi.hoisted(() => vi.fn());
 const mockedUseDesktopBackend = vi.hoisted(() => vi.fn());
@@ -130,6 +137,7 @@ vi.mock("@/lib/api/llmProfiles", () => ({
   createLLMProfile: vi.fn(),
   deleteLLMProfile: vi.fn(),
   fetchLLMProfileModelsPreview: vi.fn(),
+  getLLMProfileDeletionImpact: vi.fn(),
   setDefaultLLMProfile: vi.fn(),
   testLLMProfilePreview: vi.fn(),
   updateLLMProfile: vi.fn(),
@@ -205,6 +213,40 @@ const selectedLlmProfile: LLMProfileDTO = {
   created_at: "2026-04-22T00:00:00Z",
   updated_at: "2026-04-22T00:00:00Z",
 };
+
+const emptyLLMReferences: LLMProfileReferenceCountsDTO = {
+  batch_tasks: 0,
+  email_tasks: 0,
+  email_logs: 0,
+  match_analysis_jobs: 0,
+  match_analysis_job_items: 0,
+  match_analysis_runs: 0,
+  test_compose_sessions: 0,
+  test_compose_messages: 0,
+  crawl_jobs: 0,
+  crawl_runs: 0,
+  crawl_pages: 0,
+  crawl_candidates: 0,
+  crawl_token_usages: 0,
+  match_results: 0,
+  agent_change_plans: 0,
+  operation_logs: 0,
+};
+
+const makeDeletionImpact = (
+  overrides: Partial<LLMProfileDeletionImpactDTO> = {},
+): LLMProfileDeletionImpactDTO => ({
+  profile_id: selectedLlmProfile.id,
+  profile_name: selectedLlmProfile.name,
+  model_name: selectedLlmProfile.model_name,
+  is_default: true,
+  can_delete: true,
+  revision: "a".repeat(64),
+  references: emptyLLMReferences,
+  blockers: [],
+  warnings: [],
+  ...overrides,
+});
 
 const renderPage = () =>
   render(
@@ -338,6 +380,105 @@ describe("ProfilePage onboarding", () => {
       .toBeInTheDocument();
     expect(screen.getByText("先给自己发送一封测试邮件。"))
       .toBeInTheDocument();
+  });
+
+  it("shows concrete blockers instead of attempting an unsafe model deletion", async () => {
+    vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(
+      makeDeletionImpact({
+        can_delete: false,
+        references: {
+          ...emptyLLMReferences,
+          batch_tasks: 1,
+          email_tasks: 3,
+        },
+        blockers: [
+          {
+            kind: "draft_generation",
+            label: "正在生成或等待生成的 AI 草稿",
+            count: 2,
+            entity_ids: [41, 42],
+          },
+        ],
+      }),
+    );
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "暂时无法删除模型配置" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/正在生成或等待生成的 AI 草稿：2 项/)).toHaveTextContent(
+      "ID 41、42",
+    );
+    expect(screen.getByText("批量活动").parentElement).toHaveTextContent(
+      "批量活动1",
+    );
+    expect(screen.getByText("邮件任务").parentElement).toHaveTextContent(
+      "邮件任务3",
+    );
+    expect(screen.queryByRole("button", { name: "确认退役" })).not.toBeInTheDocument();
+    expect(deleteLLMProfile).not.toHaveBeenCalled();
+  });
+
+  it("retires a default model with the explicitly selected replacement", async () => {
+    const replacementProfile: LLMProfileDTO = {
+      ...selectedLlmProfile,
+      id: 2,
+      name: "备用模型",
+      model_name: "gpt-backup",
+      is_default: false,
+    };
+    const refreshSelections = vi.fn().mockResolvedValue(undefined);
+    const setSelectedLlmProfileId = vi.fn();
+    mockedUseSelectionContext.mockReturnValue({
+      identities: [selectedIdentity],
+      llmProfiles: [selectedLlmProfile, replacementProfile],
+      selectedIdentityId: selectedIdentity.id,
+      selectedLlmProfileId: selectedLlmProfile.id,
+      selectedIdentity,
+      selectedLlmProfile,
+      setSelectedIdentityId: vi.fn(),
+      setSelectedLlmProfileId,
+      refreshSelections,
+      loading: false,
+    });
+    const impact = makeDeletionImpact({
+      references: { ...emptyLLMReferences, email_logs: 4 },
+    });
+    vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(impact);
+    vi.mocked(deleteLLMProfile).mockResolvedValue({
+      ok: true,
+      profile_id: selectedLlmProfile.id,
+      profile_name: selectedLlmProfile.name,
+      references_preserved: impact.references,
+      invalidated_plan_count: 0,
+      default_profile_id: replacementProfile.id,
+    });
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    const replacementSelect = await screen.findByLabelText("删除后的默认模型");
+    fireEvent.change(replacementSelect, {
+      target: { value: String(replacementProfile.id) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认退役" }));
+
+    await waitFor(() => {
+      expect(deleteLLMProfile).toHaveBeenCalledWith(
+        selectedLlmProfile.id,
+        impact.revision,
+        replacementProfile.id,
+      );
+      expect(setSelectedLlmProfileId).toHaveBeenCalledWith(null);
+      expect(refreshSelections).toHaveBeenCalled();
+      expect(mockedNotifySuccess).toHaveBeenCalledWith(
+        "已退役模型配置“测试模型”",
+        expect.stringContaining("关联记录已完整保留"),
+      );
+    });
   });
 
   it("opens contextual setup guides from the summary, sections, and difficult fields", async () => {
@@ -770,7 +911,9 @@ describe("ProfilePage onboarding", () => {
       "true",
     );
     expect(await screen.findByLabelText("身份名称")).toHaveValue("博士申请配置");
-    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    });
   });
 
   it("toggles every setup card from its description", () => {

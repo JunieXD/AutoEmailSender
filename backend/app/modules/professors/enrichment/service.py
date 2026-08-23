@@ -30,6 +30,7 @@ from app.modules.crawler.public import (
     profile_text_cache,
     validate_safe_public_crawl_url,
 )
+from app.modules.llm.public import get_active_llm_profile
 from app.modules.professors.public import (
     is_valid_professor_email,
     normalize_professor_email,
@@ -138,9 +139,9 @@ async def create_professor_information_enrichment_job_record(
     if trigger_mode == CrawlJobTriggerMode.SINGLE.value and len(requested_ids) != 1:
         raise ValueError("单导师补全一次只能选择一位导师")
 
-    llm_profile = await session.get(LLMProfile, llm_profile_id)
+    llm_profile = await get_active_llm_profile(session, llm_profile_id)
     if llm_profile is None:
-        raise ValueError("所选模型配置不存在")
+        raise ValueError("所选模型配置不存在或已删除")
 
     professors: list[Professor] = []
     for professor_id_chunk in chunked_values(requested_ids):

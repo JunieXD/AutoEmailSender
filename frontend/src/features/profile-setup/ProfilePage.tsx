@@ -12,6 +12,7 @@ import {
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import {
+  AlertTriangle,
   ChevronDown,
   CheckCircle2,
   Copy,
@@ -24,6 +25,7 @@ import {
   Plus,
   Star,
   Send,
+  Trash2,
   Upload,
   X,
   XCircle,
@@ -76,10 +78,12 @@ import {
   createLLMProfile,
   deleteLLMProfile,
   fetchLLMProfileModelsPreview,
+  getLLMProfileDeletionImpact,
   setDefaultLLMProfile,
   testLLMProfilePreview,
   updateLLMProfile,
 } from "@/lib/api/llmProfiles";
+import { ApiError } from "@/lib/api/client";
 import { getTestComposeStatus } from "@/lib/api/testComposeApi";
 import {
   MATERIAL_TYPE_LABELS,
@@ -87,6 +91,8 @@ import {
   type IdentityMaterialDTO,
   type IdentityMaterialType,
   type LLMProfileModelsResultDTO,
+  type LLMProfileDeletionImpactDTO,
+  type LLMProfileReferenceCountsDTO,
   type LLMProfileTestResultDTO,
   type OutreachGenerationMode,
   type OutreachTemplateDTO,
@@ -1677,6 +1683,188 @@ const MaterialLibraryModal = ({
   );
 };
 
+const LLM_REFERENCE_LABELS: Array<
+  [keyof LLMProfileReferenceCountsDTO, string]
+> = [
+  ["batch_tasks", "批量活动"],
+  ["email_tasks", "邮件任务"],
+  ["email_logs", "邮件与通信记录"],
+  ["match_analysis_jobs", "匹配分析任务"],
+  ["match_analysis_job_items", "匹配分析明细"],
+  ["match_analysis_runs", "匹配运行记录"],
+  ["match_results", "导师匹配结果"],
+  ["test_compose_sessions", "测试写信会话"],
+  ["test_compose_messages", "测试邮件记录"],
+  ["crawl_jobs", "抓取与信息补全任务"],
+  ["crawl_runs", "抓取运行记录"],
+  ["crawl_pages", "抓取页面"],
+  ["crawl_candidates", "抓取候选数据"],
+  ["crawl_token_usages", "抓取 Token 记录"],
+  ["agent_change_plans", "Agent 待办与历史计划"],
+  ["operation_logs", "操作日志"],
+];
+
+const isDeletionImpact = (value: unknown): value is LLMProfileDeletionImpactDTO =>
+  typeof value === "object" &&
+  value !== null &&
+  "revision" in value &&
+  typeof value.revision === "string" &&
+  "blockers" in value &&
+  Array.isArray(value.blockers);
+
+const LLMDeletionDialog = ({
+  impact,
+  replacementProfiles,
+  replacementProfileId,
+  busy,
+  onReplacementChange,
+  onClose,
+  onConfirm,
+}: {
+  impact: LLMProfileDeletionImpactDTO;
+  replacementProfiles: Array<{
+    id: number;
+    name: string;
+    model_name: string;
+  }>;
+  replacementProfileId: number | null;
+  busy: boolean;
+  onReplacementChange: (profileId: number | null) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) => {
+  useDocumentScrollLock(true);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  const references = LLM_REFERENCE_LABELS.filter(
+    ([key]) => impact.references[key] > 0,
+  );
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
+      <div
+        aria-describedby="llm-deletion-description"
+        aria-labelledby="llm-deletion-title"
+        aria-modal="true"
+        className="flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-stone-200 bg-white shadow-2xl"
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="llm-deletion-title" className="text-base font-semibold text-stone-950">
+              {impact.can_delete ? "退役模型配置" : "暂时无法删除模型配置"}
+            </h2>
+            <p id="llm-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
+              “{impact.profile_name}” · {impact.model_name}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="关闭"
+            className="ui-icon-btn shrink-0"
+            disabled={busy}
+            onClick={onClose}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          {impact.blockers.length > 0 && (
+            <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
+                <AlertTriangle aria-hidden="true" className="h-4 w-4" />
+                以下操作结束前无法删除
+              </div>
+              <ul className="mt-2 space-y-2 text-sm text-rose-800">
+                {impact.blockers.map((blocker) => (
+                  <li key={blocker.kind}>
+                    {blocker.label}：{blocker.count} 项
+                    {blocker.entity_ids.length > 0
+                      ? `（ID ${blocker.entity_ids.join("、")}${blocker.count > blocker.entity_ids.length ? " 等" : ""}）`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section>
+            <h3 className="text-sm font-semibold text-stone-900">会保留的历史业务数据</h3>
+            {references.length > 0 ? (
+              <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
+                {references.map(([key, label]) => (
+                  <div key={key} className="flex items-center justify-between gap-4 border-b border-stone-100 py-1.5 text-sm">
+                    <dt className="text-stone-600">{label}</dt>
+                    <dd className="font-medium tabular-nums text-stone-900">
+                      {impact.references[key]}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="mt-2 text-sm text-stone-500">没有关联的历史业务数据。</p>
+            )}
+          </section>
+
+          {impact.is_default && impact.can_delete && (
+            <section>
+              <label htmlFor="llm-default-replacement" className="text-sm font-semibold text-stone-900">
+                删除后的默认模型
+              </label>
+              <select
+                id="llm-default-replacement"
+                className="ui-input mt-2 w-full"
+                disabled={busy}
+                value={replacementProfileId ?? ""}
+                onChange={(event) =>
+                  onReplacementChange(event.target.value ? Number(event.target.value) : null)
+                }
+              >
+                <option value="">暂不设置默认模型</option>
+                {replacementProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}（{profile.model_name}）
+                  </option>
+                ))}
+              </select>
+            </section>
+          )}
+
+          <section className="text-sm leading-6 text-stone-600">
+            <p>
+              配置退役后会清除本地 API Key、服务地址和自定义提示词。历史邮件、活动、匹配、抓取与 Token 记录不会删除。
+            </p>
+            <p className="mt-2">
+              暂停或失败的 AI 任务以后恢复时，必须明确选择新的模型；系统不会自动改用其他模型。
+            </p>
+          </section>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-stone-200 px-5 py-4">
+          <button type="button" className="ui-btn-secondary" disabled={busy} onClick={onClose}>
+            {impact.can_delete ? "取消" : "知道了"}
+          </button>
+          {impact.can_delete && (
+            <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
+              {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
+              {busy ? "正在退役" : "确认退役"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ProfilePage = () => {
   const {
     identities,
@@ -1727,6 +1915,15 @@ export const ProfilePage = () => {
   const [actingOnOutreachTemplate, setActingOnOutreachTemplate] =
     useState(false);
   const [submittingLLM, setSubmittingLLM] = useState(false);
+  const [loadingLLMDeletionImpactId, setLoadingLLMDeletionImpactId] = useState<
+    number | null
+  >(null);
+  const [llmDeletionImpact, setLlmDeletionImpact] =
+    useState<LLMProfileDeletionImpactDTO | null>(null);
+  const [replacementDefaultLLMId, setReplacementDefaultLLMId] = useState<
+    number | null
+  >(null);
+  const [retiringLLM, setRetiringLLM] = useState(false);
   const [importingTemplateFile, setImportingTemplateFile] = useState(false);
   const [testingIdentityConnection, setTestingIdentityConnection] = useState<
     "smtp" | "imap" | null
@@ -2926,14 +3123,18 @@ export const ProfilePage = () => {
 
     setSubmittingLLM(true);
     try {
+      const wasCreating = llmEditorId === "new";
       const payload = toLLMPayload(llmForm);
       const saved = isExistingEditorId(llmEditorId)
         ? await updateLLMProfile(llmEditorId, payload)
         : await createLLMProfile(payload);
+      if (wasCreating) {
+        setSelectedLlmProfileId(saved.id);
+      }
       await refreshSelections();
       setLlmEditorId(saved.id);
       setLlmForm(toLLMForm(saved));
-      notifySuccess(llmEditorId === "new" ? "模型配置已创建" : "模型配置已保存");
+      notifySuccess(wasCreating ? "模型配置已创建" : "模型配置已保存");
     } catch (saveError) {
       notifyError(
         "模型保存失败",
@@ -2941,6 +3142,77 @@ export const ProfilePage = () => {
       );
     } finally {
       setSubmittingLLM(false);
+    }
+  };
+
+  const openLLMDeletionImpact = async (profileId: number) => {
+    setLoadingLLMDeletionImpactId(profileId);
+    try {
+      const impact = await getLLMProfileDeletionImpact(profileId);
+      setReplacementDefaultLLMId(null);
+      setLlmDeletionImpact(impact);
+    } catch (impactError) {
+      notifyError(
+        "无法检查删除影响",
+        getActionErrorMessage(impactError, "读取模型配置关联数据失败"),
+      );
+    } finally {
+      setLoadingLLMDeletionImpactId(null);
+    }
+  };
+
+  const retireSelectedLLM = async () => {
+    const impact = llmDeletionImpact;
+    if (!impact?.can_delete || retiringLLM) {
+      return;
+    }
+    setRetiringLLM(true);
+    try {
+      const result = await deleteLLMProfile(
+        impact.profile_id,
+        impact.revision,
+        impact.is_default ? replacementDefaultLLMId : null,
+      );
+      if (selectedLlmProfileId === impact.profile_id) {
+        setSelectedLlmProfileId(null);
+      }
+      await refreshSelections();
+      setLlmDeletionImpact(null);
+      setReplacementDefaultLLMId(null);
+      setLlmEditorId(null);
+      setLlmForm(createEmptyLLMForm());
+      const preservedCount = Object.values(result.references_preserved).reduce(
+        (total, count) => total + count,
+        0,
+      );
+      notifySuccess(
+        `已退役模型配置“${result.profile_name}”`,
+        preservedCount > 0
+          ? `凭据已清除，${preservedCount} 条关联记录已完整保留。`
+          : "凭据已清除，历史数据未受影响。",
+      );
+    } catch (deleteError) {
+      if (deleteError instanceof ApiError) {
+        const updatedImpact =
+          typeof deleteError.details === "object" &&
+          deleteError.details !== null &&
+          "impact" in deleteError.details
+            ? deleteError.details.impact
+            : null;
+        if (isDeletionImpact(updatedImpact)) {
+          setLlmDeletionImpact(updatedImpact);
+          setReplacementDefaultLLMId(null);
+        }
+      }
+      notifyError(
+        deleteError instanceof ApiError &&
+          deleteError.code === "LLM_PROFILE_DELETE_PLAN_STALE"
+          ? "关联状态已变化"
+          : "删除模型配置失败",
+        getActionErrorMessage(deleteError, "删除模型配置失败"),
+      );
+    } finally {
+      setRetiringLLM(false);
     }
   };
 
@@ -3769,35 +4041,18 @@ export const ProfilePage = () => {
                   )}
                   <button
                     type="button"
-                    onClick={() => {
-                      void (async () => {
-                        if (
-                          !(await confirmDeleteTwice(
-                            `模型配置“${editingLLM.name}”`,
-                          ))
-                        ) {
-                          return;
-                        }
-                        try {
-                          await deleteLLMProfile(editingLLM.id);
-                          await refreshSelections();
-                          setLlmEditorId(null);
-                          setLlmForm(createEmptyLLMForm());
-                          notifySuccess(`已删除模型配置“${editingLLM.name}”`);
-                        } catch (deleteError) {
-                          notifyError(
-                            "删除模型配置失败",
-                            getActionErrorMessage(
-                              deleteError,
-                              "删除模型配置失败",
-                            ),
-                          );
-                        }
-                      })();
-                    }}
-                    className="ui-btn-danger"
+                    onClick={() => void openLLMDeletionImpact(editingLLM.id)}
+                    className="ui-btn-danger inline-flex items-center gap-2"
+                    disabled={loadingLLMDeletionImpactId === editingLLM.id}
                   >
-                    删除
+                    {loadingLLMDeletionImpactId === editingLLM.id ? (
+                      <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    {loadingLLMDeletionImpactId === editingLLM.id
+                      ? "正在检查"
+                      : "删除"}
                   </button>
                 </>
               )}
@@ -3979,6 +4234,24 @@ export const ProfilePage = () => {
           onClose={() => setMaterialModalOpen(false)}
           onSetPrimary={(material) => void handleSetPrimaryMaterial(material)}
           onDelete={(material) => void handleDeleteMaterial(material)}
+        />
+      )}
+      {llmDeletionImpact && (
+        <LLMDeletionDialog
+          impact={llmDeletionImpact}
+          replacementProfiles={llmProfiles.filter(
+            (profile) => profile.id !== llmDeletionImpact.profile_id,
+          )}
+          replacementProfileId={replacementDefaultLLMId}
+          busy={retiringLLM}
+          onReplacementChange={setReplacementDefaultLLMId}
+          onClose={() => {
+            if (!retiringLLM) {
+              setLlmDeletionImpact(null);
+              setReplacementDefaultLLMId(null);
+            }
+          }}
+          onConfirm={() => void retireSelectedLLM()}
         />
       )}
       {confirmDialog}

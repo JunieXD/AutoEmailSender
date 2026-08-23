@@ -38,6 +38,12 @@ from .adaptation.thinking import (
     resolve_thinking_extra_body,
     strip_thinking_keys,
 )
+from .availability import (
+    DELETED_LLM_PROFILE_MESSAGE,
+    get_active_llm_profile,
+    get_default_active_llm_profile,
+    llm_profile_is_active,
+)
 from .runtime import *  # noqa: F403
 from .schemas import (
     LLMProfileBase,
@@ -47,13 +53,16 @@ from .schemas import (
     LLMProfileTestResult,
     LLMProfileUpdate,
 )
+from .usage import LLMProfileRetiringError, track_llm_profile_usage
 
 __all__ = [
     *_runtime.__all__,
+    "DELETED_LLM_PROFILE_MESSAGE",
     "EndpointKind",
     "LLMProfileBase",
     "LLMProfileCreate",
     "LLMProfileModelsResult",
+    "LLMProfileRetiringError",
     "LLMProfileRead",
     "LLMProfileTestResult",
     "LLMProfileUpdate",
@@ -73,11 +82,14 @@ __all__ = [
     "get_cached_endpoint_kind",
     "get_cached_extra_body",
     "get_cached_structured_output_mode",
+    "get_active_llm_profile",
+    "get_default_active_llm_profile",
     "invalidate_endpoint_adaptation",
     "invalidate_structured_output_adaptation",
     "invalidate_thinking_adaptation",
     "is_structured_output_protocol_rejection",
     "is_thinking_mode_protocol_error",
+    "llm_profile_is_active",
     "merge_extra_body",
     "probe_and_learn_extra_body",
     "probe_structured_output_mode",
@@ -87,4 +99,5 @@ __all__ = [
     "resolve_thinking_extra_body",
     "strip_thinking_keys",
     "structured_output_adaptation_lock",
+    "track_llm_profile_usage",
 ]

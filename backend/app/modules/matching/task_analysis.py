@@ -21,6 +21,12 @@ from app.models import (
     MatchAnalysisRun,
     Professor,
 )
+from app.modules.llm.public import (
+    DELETED_LLM_PROFILE_MESSAGE,
+    get_active_llm_profile,
+    llm_profile_is_active,
+    track_llm_profile_usage,
+)
 from app.modules.communications.public import (
     load_email_task as _load_email_task,
 )
@@ -160,9 +166,9 @@ async def calculate_identity_professor_match(
         professor = await session.get(Professor, professor_id)
         if professor is None:
             raise ValueError("导师不存在")
-        llm_profile = await session.get(LLMProfile, llm_profile_id)
+        llm_profile = await get_active_llm_profile(session, llm_profile_id)
         if llm_profile is None:
-            raise ValueError("未找到 LLM 配置")
+            raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
 
         return await _calculate_identity_professor_match(
             session,
@@ -224,16 +230,20 @@ async def _calculate_identity_professor_match(
     if source_task is not None:
         source_task.llm_profile_id = llm_profile.id
     runtime_settings = await get_runtime_settings(session)
-    adaptation = await llm_runtime.ensure_llm_runtime_adaptation(session, llm_profile)
-    run = await _create_running_match_analysis_run(
-        session,
-        email_task_id=source_task.id if source_task is not None else None,
-        professor_id=professor.id,
-        match_identity=match_identity,
-        llm_profile_id=llm_profile.id,
-        primary_material=match_material,
-    )
-    await session.commit()
+    with track_llm_profile_usage(llm_profile.id, "match_analysis_startup"):
+        adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+            session,
+            llm_profile,
+        )
+        run = await _create_running_match_analysis_run(
+            session,
+            email_task_id=source_task.id if source_task is not None else None,
+            professor_id=professor.id,
+            match_identity=match_identity,
+            llm_profile_id=llm_profile.id,
+            primary_material=match_material,
+        )
+        await session.commit()
     try:
         generation = await llm_runtime.generate_match_evaluation(
             identity=match_identity,
@@ -490,8 +500,10 @@ async def _resolve_runtime_llm_profile(
     llm_profile_id: int | None,
 ) -> LLMProfile:
     if llm_profile_id is None or llm_profile_id == task.llm_profile_id:
+        if not llm_profile_is_active(task.llm_profile):
+            raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
         return task.llm_profile
-    profile = await session.get(LLMProfile, llm_profile_id)
+    profile = await get_active_llm_profile(session, llm_profile_id)
     if profile is None:
-        raise ValueError("未找到 LLM 配置")
+        raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
     return profile

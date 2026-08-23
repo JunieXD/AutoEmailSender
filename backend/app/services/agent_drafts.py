@@ -12,6 +12,7 @@ from app.models import (
     IdentityMaterial,
     LLMProfile,
 )
+from app.modules.llm.public import get_active_llm_profile
 from app.schemas.agent import (
     AgentDraftGenerateRequest,
     AgentDraftRegenerateRequest,
@@ -220,9 +221,9 @@ async def _configure_agent_draft(
             professor_id=task.professor_id,
         )
 
-        llm_profile = await session.get(LLMProfile, payload.llm_profile_id)
+        llm_profile = await get_active_llm_profile(session, payload.llm_profile_id)
         if llm_profile is None:
-            raise ValueError("未找到 LLM 配置")
+            raise ValueError("模型配置不存在或已删除")
         selected_template = (
             await get_outreach_template(session, payload.template_id)
             if payload.template_id is not None

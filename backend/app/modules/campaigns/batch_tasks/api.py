@@ -7,7 +7,7 @@ from datetime import datetime, time
 
 from app.core.time import as_utc_aware, local_now, utc_now
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, load_only, selectinload
@@ -65,6 +65,7 @@ from app.modules.campaigns.public import (
 )
 from app.modules.campaigns.status import email_task_is_not_user_removed_expression
 from app.modules.identities.public import material_can_be_primary
+from app.modules.llm.public import get_active_llm_profile
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
 from app.services.material_catalog import list_global_material_metadata
@@ -224,9 +225,9 @@ async def create_batch_task(
     if not identity:
         raise HTTPException(status_code=404, detail="未找到身份配置")
 
-    llm_profile = await session.get(LLMProfile, payload.llm_profile_id)
+    llm_profile = await get_active_llm_profile(session, payload.llm_profile_id)
     if not llm_profile:
-        raise HTTPException(status_code=404, detail="未找到 LLM 配置")
+        raise HTTPException(status_code=404, detail="模型配置不存在或已删除")
 
     requested_professor_ids = unique_positive_ids(payload.professor_ids)
     professors: list[Professor] = []
@@ -968,9 +969,53 @@ async def pause_batch_task(
 @router.post("/{task_id}/resume", response_model=BatchTaskActionResponse)
 async def resume_batch_task(
     task_id: int,
+    replacement_llm_profile_id: int | None = Query(default=None, ge=1),
     session: AsyncSession = Depends(get_async_session),
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
+    pending_llm_tasks = [
+        email_task
+        for email_task in task.email_tasks
+        if email_task.batch_send_canceled_at is None
+        and email_task.status
+        in {
+            EmailTaskStatus.DISCOVERED.value,
+            EmailTaskStatus.MATCHED.value,
+            EmailTaskStatus.DRAFT_FAILED.value,
+        }
+        and normalize_batch_item_generation_mode(email_task) == "llm"
+    ]
+    if replacement_llm_profile_id is not None:
+        replacement = await get_active_llm_profile(
+            session,
+            replacement_llm_profile_id,
+        )
+        if replacement is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "CAMPAIGN_LLM_PROFILE_REPLACEMENT_INVALID",
+                    "message": "用于继续活动的模型配置不存在或已删除。",
+                },
+            )
+        task.llm_profile_id = replacement.id
+        for email_task in pending_llm_tasks:
+            email_task.llm_profile_id = replacement.id
+            email_task.updated_at = utc_now()
+    elif pending_llm_tasks and await get_active_llm_profile(
+        session,
+        task.llm_profile_id,
+    ) is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CAMPAIGN_LLM_PROFILE_REPLACEMENT_REQUIRED",
+                "message": "原模型配置已删除，请选择新的模型后再继续活动。",
+                "campaign_id": task.id,
+                "llm_profile_id": task.llm_profile_id,
+                "pending_llm_draft_count": len(pending_llm_tasks),
+            },
+        )
     task.status = BatchTaskStatus.RUNNING.value
     task.updated_at = utc_now()
     expired = await expire_batch_task_if_needed(session, task, local_now())

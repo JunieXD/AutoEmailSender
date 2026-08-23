@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_session
-from app.modules.llm.public import LLMRuntimeError
+from app.modules.llm.public import (
+    DELETED_LLM_PROFILE_MESSAGE,
+    LLMProfileRetiringError,
+    LLMRuntimeError,
+)
 from .schemas import (
     TestComposeDraftUpdateRequest,
     TestComposeGenerateRequest,
@@ -136,7 +140,21 @@ async def _run_test_compose_action(
         return await action()
     except LLMRuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LLMProfileRetiringError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "LLM_PROFILE_RETIRING",
+                "message": str(exc),
+            },
+        ) from exc
     except ValueError as exc:
         detail = str(exc)
-        status_code = 404 if "未找到" in detail else 400
+        status_code = (
+            409
+            if detail == DELETED_LLM_PROFILE_MESSAGE
+            else 404
+            if "未找到" in detail
+            else 400
+        )
         raise HTTPException(status_code=status_code, detail=detail) from exc

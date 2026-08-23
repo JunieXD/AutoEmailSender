@@ -21,6 +21,7 @@ from app.models import (
     EmailTaskCancellationReason,
     EmailTaskSource,
     EmailTaskStatus,
+    LLMProfile,
     Professor,
 )
 from app.modules.campaigns.public import (
@@ -501,6 +502,9 @@ async def _claim_next_queued_llm_draft(
                     EmailTask.outreach_generation_mode
                 ),
                 EmailTask.primary_material_id.is_not(None),
+                BatchTask.llm_profile_id.in_(
+                    select(LLMProfile.id).where(LLMProfile.deleted_at.is_(None))
+                ),
                 func.trim(Professor.research_direction) != "",
                 BatchTask.status == BatchTaskStatus.RUNNING.value,
                 BatchTask.deleted_at.is_(None),

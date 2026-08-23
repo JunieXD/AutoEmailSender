@@ -34,6 +34,53 @@ class LLMProfileRead(LLMProfileBase):
     updated_at: datetime
 
 
+class LLMProfileReferenceCounts(ApiSchema):
+    batch_tasks: int = 0
+    email_tasks: int = 0
+    email_logs: int = 0
+    match_analysis_jobs: int = 0
+    match_analysis_job_items: int = 0
+    match_analysis_runs: int = 0
+    test_compose_sessions: int = 0
+    test_compose_messages: int = 0
+    crawl_jobs: int = 0
+    crawl_runs: int = 0
+    crawl_pages: int = 0
+    crawl_candidates: int = 0
+    crawl_token_usages: int = 0
+    match_results: int = 0
+    agent_change_plans: int = 0
+    operation_logs: int = 0
+
+
+class LLMProfileDeletionBlocker(ApiSchema):
+    kind: str
+    label: str
+    count: int
+    entity_ids: list[int] = Field(default_factory=list)
+
+
+class LLMProfileDeletionImpact(ApiSchema):
+    profile_id: int
+    profile_name: str
+    model_name: str
+    is_default: bool
+    can_delete: bool
+    revision: str
+    references: LLMProfileReferenceCounts
+    blockers: list[LLMProfileDeletionBlocker] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LLMProfileDeletionResult(ApiSchema):
+    ok: bool = True
+    profile_id: int
+    profile_name: str
+    references_preserved: LLMProfileReferenceCounts
+    invalidated_plan_count: int = 0
+    default_profile_id: int | None = None
+
+
 class LLMProfileTestResult(ApiSchema):
     ok: bool
     message: str
@@ -67,8 +114,12 @@ class LLMProfileModelsResult(ApiSchema):
 __all__ = [
     "LLMProfileBase",
     "LLMProfileCreate",
+    "LLMProfileDeletionBlocker",
+    "LLMProfileDeletionImpact",
+    "LLMProfileDeletionResult",
     "LLMProfileModelsResult",
     "LLMProfileRead",
+    "LLMProfileReferenceCounts",
     "LLMProfileTestResult",
     "LLMProfileUpdate",
 ]

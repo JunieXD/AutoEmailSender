@@ -162,6 +162,53 @@ export interface LLMProfilePayload {
   is_default: boolean;
 }
 
+export interface LLMProfileReferenceCountsDTO {
+  batch_tasks: number;
+  email_tasks: number;
+  email_logs: number;
+  match_analysis_jobs: number;
+  match_analysis_job_items: number;
+  match_analysis_runs: number;
+  test_compose_sessions: number;
+  test_compose_messages: number;
+  crawl_jobs: number;
+  crawl_runs: number;
+  crawl_pages: number;
+  crawl_candidates: number;
+  crawl_token_usages: number;
+  match_results: number;
+  agent_change_plans: number;
+  operation_logs: number;
+}
+
+export interface LLMProfileDeletionBlockerDTO {
+  kind: string;
+  label: string;
+  count: number;
+  entity_ids: number[];
+}
+
+export interface LLMProfileDeletionImpactDTO {
+  profile_id: number;
+  profile_name: string;
+  model_name: string;
+  is_default: boolean;
+  can_delete: boolean;
+  revision: string;
+  references: LLMProfileReferenceCountsDTO;
+  blockers: LLMProfileDeletionBlockerDTO[];
+  warnings: string[];
+}
+
+export interface LLMProfileDeletionResultDTO {
+  ok: boolean;
+  profile_id: number;
+  profile_name: string;
+  references_preserved: LLMProfileReferenceCountsDTO;
+  invalidated_plan_count: number;
+  default_profile_id: number | null;
+}
+
 export interface LLMProfileTestResultDTO {
   ok: boolean;
   message: string;
