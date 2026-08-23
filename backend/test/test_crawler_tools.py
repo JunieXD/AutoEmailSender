@@ -3144,8 +3144,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
-                return_value=True,
+                "app.modules.crawler.pages.tools._resolved_context_url_error",
+                return_value=None,
             ),
             patch(
                 "app.modules.crawler.pages.tools._should_offload_browser_fetch_to_thread",
@@ -3273,8 +3273,8 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools._is_resolved_allowed_crawl_url",
-                return_value=True,
+                "app.modules.crawler.pages.tools._resolved_context_url_error",
+                return_value=None,
             ),
             patch(
                 "app.modules.crawler.pages.tools._should_offload_browser_fetch_to_thread",
