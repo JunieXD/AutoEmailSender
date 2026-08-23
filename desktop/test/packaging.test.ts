@@ -197,6 +197,33 @@ describe("windows installer packaging", () => {
     expect(installerScript).toContain("Abort");
   });
 
+  it("skips the VC++ runtime install when a compatible runtime is already registered", () => {
+    const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
+
+    expect(installerScript).toContain("SetRegView 64");
+    expect(installerScript).toContain(
+      'ReadRegDWORD $R0 HKLM "SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64" "Installed"',
+    );
+    expect(installerScript).toContain("SetRegView 32");
+    expect(installerScript.indexOf("SetRegView 32")).toBeGreaterThan(
+      installerScript.indexOf("SetRegView 64"),
+    );
+    expect(installerScript.indexOf("vc_redist.x64.exe\" /install")).toBeGreaterThan(
+      installerScript.indexOf("${If} $R0 == 1"),
+    );
+  });
+
+  it("foregrounds the installer before requesting VC++ runtime elevation", () => {
+    const installerScript = readFileSync(path.resolve("build", "installer.nsh"), "utf8");
+
+    expect(installerScript).toContain("${IfNot} ${Silent}");
+    expect(installerScript).toContain("BringToFront");
+    expect(installerScript).toContain("MB_SETFOREGROUND");
+    expect(installerScript.indexOf("BringToFront")).toBeLessThan(
+      installerScript.indexOf("vc_redist.x64.exe\" /install"),
+    );
+  });
+
   it("separates quick Windows QA from uncached release integration checks", () => {
     const hostRunner = readFileSync(
       path.resolve("..", "scripts", "quality", "run-windows-vm-release-qa.sh"),

@@ -1,23 +1,43 @@
 !include LogicLib.nsh
 
 !macro customInstall
-  ${IfNot} ${FileExists} "$INSTDIR\resources\runtime\vc_redist.x64.exe"
-    MessageBox MB_ICONSTOP "缺少 Microsoft Visual C++ 运行库，无法完成安装。请重新下载安装包。"
-    Abort
-  ${EndIf}
+  ; VC++ 2015–2022 x64 运行库只在 HKLM 64 位视图留下 Installed 标记；
+  ; 已安装时直接跳过，避免每次更新都重新触发 UAC 提权弹窗。
+  SetRegView 64
+  ReadRegDWORD $R0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Installed"
+  ReadRegDWORD $R1 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Minor"
+  ReadRegDWORD $R2 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Bld"
+  ClearErrors
+  SetRegView 32
 
-  DetailPrint "正在安装 Microsoft Visual C++ x64 运行库…"
-  nsExec::ExecToLog '"$INSTDIR\resources\runtime\vc_redist.x64.exe" /install /quiet /norestart'
-  Pop $R0
-  ${If} $R0 == "0"
-    DetailPrint "Microsoft Visual C++ 运行库安装完成。"
-  ${ElseIf} $R0 == "1638"
-    DetailPrint "系统中已有兼容的 Microsoft Visual C++ 运行库。"
-  ${ElseIf} $R0 == "3010"
-    DetailPrint "Microsoft Visual C++ 运行库安装完成；系统稍后可能需要重启。"
+  ${If} $R0 == 1
+    DetailPrint "系统已安装 Microsoft Visual C++ x64 运行库（14.$R1.$R2），跳过安装。"
   ${Else}
-    MessageBox MB_ICONSTOP "Microsoft Visual C++ 运行库安装失败（退出码 $R0）。Auto Email Sender 尚未完成安装。"
-    Abort
+    ${IfNot} ${FileExists} "$INSTDIR\resources\runtime\vc_redist.x64.exe"
+      MessageBox MB_ICONSTOP "缺少 Microsoft Visual C++ 运行库，无法完成安装。请重新下载安装包。"
+      Abort
+    ${EndIf}
+
+    ; 交互模式下先把安装器带到前台并告知用户，UAC 授权窗口才能直接弹出，
+    ; 而不是只在任务栏闪烁，让用户误以为安装卡住。
+    ${IfNot} ${Silent}
+      BringToFront
+      MessageBox MB_ICONINFORMATION|MB_SETFOREGROUND "即将安装 Microsoft Visual C++ x64 运行库，请在弹出的用户账户控制（UAC）提示中选择“是”。"
+    ${EndIf}
+
+    DetailPrint "正在安装 Microsoft Visual C++ x64 运行库…"
+    nsExec::ExecToLog '"$INSTDIR\resources\runtime\vc_redist.x64.exe" /install /quiet /norestart'
+    Pop $R0
+    ${If} $R0 == "0"
+      DetailPrint "Microsoft Visual C++ 运行库安装完成。"
+    ${ElseIf} $R0 == "1638"
+      DetailPrint "系统中已有兼容的 Microsoft Visual C++ 运行库。"
+    ${ElseIf} $R0 == "3010"
+      DetailPrint "Microsoft Visual C++ 运行库安装完成；系统稍后可能需要重启。"
+    ${Else}
+      MessageBox MB_ICONSTOP "Microsoft Visual C++ 运行库安装失败（退出码 $R0）。Auto Email Sender 尚未完成安装。"
+      Abort
+    ${EndIf}
   ${EndIf}
 !macroend
 
