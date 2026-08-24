@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from html import unescape
 from html.parser import HTMLParser
 from math import ceil
 from typing import TYPE_CHECKING
@@ -21,6 +22,12 @@ if TYPE_CHECKING:
 _STRUCTURE_BOUNDARY_SENTINEL = "\u241eAES_BLOCK_BOUNDARY\u241e"
 _UNLABELED_RECORD_LINK_TEXT = "无文字链接"
 _GENERATED_MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]\n]+\]\([^\s)\n]+\)")
+_SCRIPT_NAVIGATION_CALL_PATTERN = re.compile(
+    r"(?is)\b(?:opennews|window\.open)\s*\(\s*(['\"])(?P<target>[^'\"]+)\1"
+)
+_SCRIPT_NAVIGATION_ASSIGNMENT_PATTERN = re.compile(
+    r"(?is)\b(?:window\.)?(?:top\.)?location(?:\.href)?\s*=\s*(['\"])(?P<target>[^'\"]+)\1"
+)
 MAX_CRAWL_HTML_CHARS = 1_000_000
 MAX_STRUCTURE_BOUNDARY_HTML_CHARS = 500_000
 MAX_STRUCTURE_BOUNDARY_TAG_MARKERS = 10_000
@@ -98,8 +105,12 @@ class _LinkTextHTMLParser(HTMLParser):
         if tag in self._BLOCK_TAGS:
             self.parts.append("\n")
         if tag == "a":
-            href = dict(attrs).get("href")
-            self.current_href = urljoin(self.base_url, href) if href else None
+            href = str(dict(attrs).get("href") or "").strip()
+            self.current_href = (
+                urljoin(self.base_url, href)
+                if _is_navigable_record_href(href)
+                else None
+            )
             self.current_anchor = []
         elif tag == "iframe":
             attributes = dict(attrs)
@@ -212,6 +223,13 @@ def html_to_link_enriched_text(
     prepared_html = html or ""
     if len(prepared_html) > MAX_CRAWL_HTML_CHARS:
         prepared_html = ""
+    if prepared_html and (
+        "onclick" in prepared_html.lower() or "javascript:" in prepared_html.lower()
+    ):
+        prepared_html = _materialize_script_navigation_links(
+            prepared_html,
+            base_url=source_url,
+        )
     if (
         preserve_structure_boundaries
         and prepared_html
@@ -227,6 +245,85 @@ def html_to_link_enriched_text(
     parser.feed(prepared_html)
     enriched = parser.text()
     return enriched or _normalize_lines(fallback_text)
+
+
+def _materialize_script_navigation_links(html: str, *, base_url: str) -> str:
+    """Expose narrowly recognizable JS navigations as ordinary record links.
+
+    Some school templates put a profile URL in ``onclick`` while the anchor
+    itself has ``href=javascript:void(0)``.  We do not execute JavaScript or
+    interpret arbitrary code here; only a quoted URL passed to a small set of
+    common navigation calls/assignments is materialized for the chunk model.
+    """
+
+    soup = parse_html(html)
+    changed = False
+    for anchor in soup.find_all("a"):
+        raw_href = str(anchor.get("href") or "").strip()
+        if _is_navigable_record_href(raw_href):
+            continue
+        script = str(anchor.get("onclick") or "").strip()
+        if not script and anchor.parent is not None:
+            script = str(anchor.parent.get("onclick") or "").strip()
+        target = _extract_script_navigation_target(script)
+        if target is None and raw_href.lower().startswith("javascript:"):
+            target = _extract_script_navigation_target(raw_href)
+        normalized_target = _normalize_script_navigation_target(
+            target,
+            base_url=base_url,
+        )
+        if normalized_target is None:
+            continue
+        anchor["href"] = normalized_target
+        if not _normalize_space(anchor.get_text(" ", strip=True)):
+            heading_label = _record_heading_label(anchor)
+            if heading_label:
+                anchor.append(make_navigable_string(heading_label))
+        changed = True
+    return str(soup) if changed else html
+
+
+def _extract_script_navigation_target(script: str) -> str | None:
+    normalized = unescape(script or "").strip()
+    if normalized.lower().startswith("javascript:"):
+        normalized = normalized[len("javascript:") :].lstrip()
+    for pattern in (
+        _SCRIPT_NAVIGATION_CALL_PATTERN,
+        _SCRIPT_NAVIGATION_ASSIGNMENT_PATTERN,
+    ):
+        match = pattern.search(normalized)
+        if match:
+            return match.group("target").strip()
+    return None
+
+
+def _normalize_script_navigation_target(
+    target: str | None,
+    *,
+    base_url: str,
+) -> str | None:
+    raw_target = str(target or "").strip()
+    if not raw_target or raw_target.startswith(("#", "data:", "mailto:")):
+        return None
+    absolute = urljoin(base_url, raw_target)
+    try:
+        parsed = urlsplit(absolute)
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    return absolute
+
+
+def _record_heading_label(anchor: Tag) -> str | None:
+    parent = anchor.parent
+    if parent is None:
+        return None
+    for heading in parent.find_all(["h1", "h2", "h3", "h4"], recursive=True):
+        label = _normalize_space(heading.get_text(" ", strip=True))
+        if label:
+            return label
+    return None
 
 
 def _inject_structure_boundaries(html: str, *, max_tokens: int, max_links: int) -> str:

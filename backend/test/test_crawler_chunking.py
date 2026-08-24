@@ -35,6 +35,52 @@ class CrawlerChunkingTests(unittest.TestCase):
         self.assertIn("[李四](https://cs.example.edu/li.htm)", chunks[0].content)
         self.assertNotIn("alert", chunks[0].content)
 
+    def test_link_enriched_text_materializes_safe_script_profile_links(self) -> None:
+        html = """
+        <ul>
+          <li>
+            <div onclick="opennews('../info/1051/1715.htm')">
+              <a href="javascript:void(0)" onclick="opennews('../info/1051/1715.htm')">
+                <img src="avatar.jpg" />
+              </a>
+              <h4>毕晓君</h4>
+              <h5>二级教授 博士生导师</h5>
+              <span>研究方向：人工智能</span>
+            </div>
+          </li>
+        </ul>
+        """
+
+        content = html_to_link_enriched_text(
+            "https://xingong.muc.edu.cn/szdw/xyjs.htm",
+            html,
+            "",
+        )
+
+        self.assertIn(
+            "[毕晓君](https://xingong.muc.edu.cn/info/1051/1715.htm)",
+            content,
+        )
+        self.assertNotIn("javascript:void", content)
+
+    def test_link_enriched_text_does_not_execute_or_expose_arbitrary_scripts(
+        self,
+    ) -> None:
+        html = """
+        <div onclick="alert('/secret.htm')">
+          <a href="javascript:void(0)" onclick="alert('/secret.htm')">张三</a>
+        </div>
+        """
+
+        content = html_to_link_enriched_text(
+            "https://cs.example.edu/faculty/list.htm",
+            html,
+            "张三",
+        )
+
+        self.assertNotIn("secret.htm", content)
+        self.assertNotIn("javascript:", content)
+
     def test_link_enriched_text_keeps_small_table_rows_as_lightweight_paragraphs(
         self,
     ) -> None:
