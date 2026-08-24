@@ -138,6 +138,7 @@ async def sync_template_to_default_identities(
             await session.scalars(
                 select(IdentityProfile).where(
                     IdentityProfile.default_outreach_template_id == template.id,
+                    IdentityProfile.deleted_at.is_(None),
                 )
             )
         )

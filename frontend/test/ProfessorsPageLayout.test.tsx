@@ -636,6 +636,20 @@ describe("ProfessorsPage layout", () => {
     expect(record.queryByRole("button", { name: "移入回收站" })).not.toBeInTheDocument();
   });
 
+  it("opens a linked archived professor search in the recycle bin", async () => {
+    renderPage("/professors?archive=archived&keyword=li%40example.edu");
+
+    await waitFor(() => {
+      expect(listProfessorsForManagement).toHaveBeenCalledWith("archived");
+    });
+    expect(screen.getByRole("textbox", { name: /^关键词/ })).toHaveValue(
+      "li@example.edu",
+    );
+    expect(screen.getByRole("button", { name: "回收站" })).toHaveClass(
+      "bg-primary",
+    );
+  });
+
   it("clears a professor personal note from the management row", async () => {
     renderPage();
 

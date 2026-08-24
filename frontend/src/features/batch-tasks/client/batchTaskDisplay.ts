@@ -47,6 +47,15 @@ export const getBatchTaskItemCancellationText = (item: BatchTaskItemDTO) => {
   if (item.cancellation_reason === "batch_stopped") {
     return "批量任务已终止";
   }
+  if (item.cancellation_reason === "professor_archived") {
+    return "导师已移入回收站";
+  }
+  if (item.cancellation_reason === "identity_retired") {
+    return "发件身份已退役";
+  }
+  if (item.cancellation_reason === "llm_profile_retired") {
+    return "模型配置已退役";
+  }
   return item.status === "canceled" ? "任务已取消" : null;
 };
 

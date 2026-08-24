@@ -32,7 +32,12 @@ async def resolve_identity_communication_scope(
     *,
     active_identity_id: int,
 ) -> IdentityCommunicationScope:
-    active_identity = await session.get(IdentityProfile, active_identity_id)
+    active_identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == active_identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if active_identity is None:
         raise ValueError("未找到身份配置")
 
@@ -48,6 +53,7 @@ async def resolve_identity_communication_scope(
             .where(
                 IdentityProfile.communication_group_id
                 == active_identity.communication_group_id,
+                IdentityProfile.deleted_at.is_(None),
             )
             .order_by(IdentityProfile.id.asc()),
         ),
@@ -81,7 +87,10 @@ async def cleanup_communication_group_after_identity_delete(
     remaining_members = list(
         await session.scalars(
             select(IdentityProfile)
-            .where(IdentityProfile.communication_group_id == group_id)
+            .where(
+                IdentityProfile.communication_group_id == group_id,
+                IdentityProfile.deleted_at.is_(None),
+            )
             .order_by(IdentityProfile.id.asc()),
         ),
     )

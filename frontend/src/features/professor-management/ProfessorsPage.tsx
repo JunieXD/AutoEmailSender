@@ -454,6 +454,8 @@ const ProfessorsPageLoadingSkeleton = () => (
 export const ProfessorsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedKeyword = searchParams.get("keyword")?.trim() ?? "";
+  const linkedArchiveFilter: ArchiveFilter | null =
+    searchParams.get("archive") === "archived" ? "archived" : null;
   const batchContributionMode =
     searchParams.get("community_contribution") === "batch";
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
@@ -463,12 +465,13 @@ export const ProfessorsPage = () => {
     useBackgroundTaskNotification();
   const storedState = useMemo(() => {
     const state = readStoredProfessorManagementState();
-    if (!linkedKeyword) {
+    if (!linkedKeyword && linkedArchiveFilter === null) {
       return state;
     }
+    const archiveFilter: ArchiveFilter = linkedArchiveFilter ?? "active";
     return {
       ...state,
-      archiveFilter: "active" as ArchiveFilter,
+      archiveFilter,
       filters: {
         ...createDefaultManagementFilters(),
         keyword: linkedKeyword,
@@ -476,7 +479,7 @@ export const ProfessorsPage = () => {
       advancedFiltersOpen: false,
       currentPage: 1,
     };
-  }, [linkedKeyword]);
+  }, [linkedArchiveFilter, linkedKeyword]);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>(
     storedState.archiveFilter,
   );
@@ -660,7 +663,7 @@ export const ProfessorsPage = () => {
   );
 
   useEffect(() => {
-    if (!linkedKeyword) {
+    if (!linkedKeyword && linkedArchiveFilter === null) {
       return;
     }
     const pending = pendingAgentSelectionLoadRef.current;
@@ -670,7 +673,7 @@ export const ProfessorsPage = () => {
         new Error("导师管理页已切换到链接筛选。"),
       );
     }
-    setArchiveFilter("active");
+    setArchiveFilter(linkedArchiveFilter ?? "active");
     setCurrentPage(1);
     setSelectedIds(new Set());
     agentSelectionRef.current = null;
@@ -684,9 +687,15 @@ export const ProfessorsPage = () => {
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
       next.delete("keyword");
+      next.delete("archive");
       return next;
     }, { replace: true });
-  }, [linkedKeyword, setSearchParams, settleAgentSelectionLoad]);
+  }, [
+    linkedArchiveFilter,
+    linkedKeyword,
+    setSearchParams,
+    settleAgentSelectionLoad,
+  ]);
   const loadProfessors = useCallback(
     async () => {
       const requestId = latestProfessorsRequestIdRef.current + 1;
@@ -1811,8 +1820,8 @@ export const ProfessorsPage = () => {
   ) => {
     const confirmed = await confirm({
       title: `将“${professor.name}”移入回收站？`,
-        description:
-          "移入回收站后，这位导师会从首页与正常列表中隐藏，但历史任务和通信会保留。若仍有待发送或发送中的邮件，系统会拒绝归档并提示先取消发送。",
+      description:
+        "移入回收站后，这位导师会从首页与正常列表中隐藏，历史任务和通信会保留。尚未完成的邮件、匹配分析和信息补全会自动取消；已经进入发送中的邮件会明确提示任务 ID 并暂时阻止归档。",
       confirmLabel: "确认移入",
       cancelLabel: "取消",
       tone: "danger",
@@ -1822,7 +1831,23 @@ export const ProfessorsPage = () => {
     }
     try {
       const result = await archiveProfessor(professor.id);
-      notifySuccess("操作成功", result.message);
+      const automaticActions = [
+        (result.canceled_email_task_ids?.length ?? 0) > 0
+          ? `邮件任务 ID ${result.canceled_email_task_ids?.join("、")}`
+          : null,
+        (result.canceled_match_analysis_item_ids?.length ?? 0) > 0
+          ? `匹配分析项 ID ${result.canceled_match_analysis_item_ids?.join("、")}`
+          : null,
+        (result.canceled_information_enrichment_task_ids?.length ?? 0) > 0
+          ? `信息补全项 ID ${result.canceled_information_enrichment_task_ids?.join("、")}`
+          : null,
+      ].filter(Boolean);
+      notifySuccess(
+        "操作成功",
+        automaticActions.length > 0
+          ? `${result.message}，并已取消${automaticActions.join("、")}。`
+          : result.message,
+      );
       await loadProfessors();
     } catch (archiveError) {
       notifyError(
@@ -1838,7 +1863,8 @@ export const ProfessorsPage = () => {
     }
     const confirmed = await confirm({
       title: `将选中的 ${selectedIds.size} 位导师移入回收站？`,
-      description: "移入后会从首页与正常列表中隐藏，但历史任务和通信不会删除。",
+      description:
+        "移入后会从首页与正常列表中隐藏，历史任务和通信不会删除；尚未完成的邮件、匹配分析和信息补全会自动取消。",
       confirmLabel: "确认移入",
       cancelLabel: "取消",
       tone: "danger",

@@ -45,6 +45,7 @@ import { KeepAliveLayout } from "@/components/organisms/KeepAliveLayout";
 const apiMocks = vi.hoisted(() => ({
   listBatchTasks: vi.fn(),
   listBatchTaskItems: vi.fn(),
+  getBatchTaskSummary: vi.fn(),
   getBatchTaskResendContext: vi.fn(),
   pauseBatchTask: vi.fn(),
   resumeBatchTask: vi.fn(),
@@ -119,6 +120,7 @@ const backgroundTaskNotificationMocks = vi.hoisted(() => ({
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const navigateMock = vi.hoisted(() => vi.fn());
 const selectionMock = vi.hoisted(() => ({
+  identities: [{ id: 1 }],
   selectedIdentityId: 1 as number | null,
   selectedLlmProfileId: 2 as number | null,
   setSelectedIdentityId: vi.fn(),
@@ -176,6 +178,7 @@ vi.mock("@/lib/useConfirmDialog", () => ({
 vi.mock("@/lib/api/batchTasksApi", () => ({
   listBatchTasks: apiMocks.listBatchTasks,
   listBatchTaskItems: apiMocks.listBatchTaskItems,
+  getBatchTaskSummary: apiMocks.getBatchTaskSummary,
   getBatchTaskResendContext: apiMocks.getBatchTaskResendContext,
   pauseBatchTask: apiMocks.pauseBatchTask,
   resumeBatchTask: apiMocks.resumeBatchTask,
@@ -280,6 +283,9 @@ vi.mock("@/features/email-deliveries/components/EmailDeliveryPlan", () => ({
       </button>
       <button type="button" onClick={() => onOpenBatchTask(1, 1)}>
         打开批量任务
+      </button>
+      <button type="button" onClick={() => onOpenBatchTask(99, 91)}>
+        打开退役身份批量任务
       </button>
     </div>
   ),
@@ -501,7 +507,7 @@ describe("CrawlJobCard", () => {
   });
 
   it.each(["queued", "running", "paused"] as const)(
-    "hides delete action for %s in the current list",
+    "shows delete action for %s in the current list",
     (status) => {
       render(
         <CrawlJobCard
@@ -523,7 +529,7 @@ describe("CrawlJobCard", () => {
         />,
       );
 
-      expect(screen.queryByRole("button", { name: "删除" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
     },
   );
 
@@ -1191,6 +1197,7 @@ beforeEach(() => {
   agentUiHandoffMocks.handlers.clear();
   apiMocks.listBatchTasks.mockResolvedValue([]);
   apiMocks.listBatchTaskItems.mockResolvedValue([]);
+  apiMocks.getBatchTaskSummary.mockResolvedValue(buildBatchTask());
   apiMocks.listOutreachTemplates.mockResolvedValue([]);
   apiMocks.listCrawlJobs.mockResolvedValue([]);
   apiMocks.listCrawlJobsPage.mockImplementation(
@@ -1482,6 +1489,28 @@ describe("TasksPage section isolation", () => {
     expect(
       await screen.findByRole("dialog", { name: "批量任务详情" }),
     ).toBeInTheDocument();
+  });
+
+  it("opens a retired identity batch task by id without selecting it for new work", async () => {
+    apiMocks.getBatchTaskSummary.mockResolvedValue(
+      buildBatchTask({ id: 91, identity_id: 99, status: "stopped" }),
+    );
+
+    render(
+      <RouterMemoryRouter initialEntries={["/tasks?section=delivery&view=history"]}>
+        <TasksPage />
+      </RouterMemoryRouter>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开退役身份批量任务" }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "批量任务详情" }),
+    ).toBeInTheDocument();
+    expect(apiMocks.getBatchTaskSummary).toHaveBeenCalledWith(91);
+    expect(selectionMock.setSelectedIdentityId).not.toHaveBeenCalledWith(99);
   });
 });
 
@@ -3884,6 +3913,21 @@ describe("batch task send queue copy", () => {
     );
 
     expect(text).toBe("发送窗口已过期");
+  });
+
+  it.each([
+    ["professor_archived", "导师已移入回收站"],
+    ["identity_retired", "发件身份已退役"],
+  ] as const)("describes %s cancellation explicitly", (reason, expected) => {
+    const text = getBatchTaskItemCancellationText(
+      buildBatchItem({
+        status: "canceled",
+        cancellation_reason: reason,
+        next_action: null,
+      }),
+    );
+
+    expect(text).toBe(expected);
   });
 
   it("keeps legacy canceled items without a reason understandable", () => {

@@ -307,6 +307,133 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["job"]["deleted_at"])
 
+    def test_queued_batch_job_is_canceled_on_delete_and_not_restarted_on_restore(
+        self,
+    ) -> None:
+        professor_id = self._create_professor(
+            name="回收站补全导师",
+            email="enrichment-trash@example.edu",
+            profile_url="https://example.edu/enrichment-trash",
+        )
+        created = self.client.post(
+            "/api/professor-information-enrichment-jobs",
+            json={
+                "professor_ids": [professor_id],
+                "llm_profile_id": self.llm_profile_id,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = created.json()["id"]
+        self.assertEqual(created.json()["status"], "queued")
+
+        deleted = self.client.delete(
+            f"/api/professor-information-enrichment-jobs/{job_id}"
+        )
+
+        self.assertEqual(deleted.status_code, 200, msg=deleted.text)
+        self.assertEqual(deleted.json()["job"]["status"], "canceled")
+        self.assertIsNotNone(deleted.json()["job"]["deleted_at"])
+        restored = self.client.post(
+            f"/api/professor-information-enrichment-jobs/{job_id}/restore"
+        )
+        self.assertEqual(restored.status_code, 200, msg=restored.text)
+        self.assertEqual(restored.json()["job"]["status"], "canceled")
+        self.assertIsNone(restored.json()["job"]["deleted_at"])
+
+    def test_archiving_professor_skips_queued_information_enrichment(self) -> None:
+        professor_id = self._create_professor(
+            name="归档中的补全导师",
+            email="archive-enrichment@example.edu",
+            profile_url="https://example.edu/archive-enrichment",
+        )
+        created = self.client.post(
+            "/api/professor-information-enrichment-jobs",
+            json={
+                "professor_ids": [professor_id],
+                "llm_profile_id": self.llm_profile_id,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = int(created.json()["id"])
+        items_before = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}/items"
+        )
+        self.assertEqual(items_before.status_code, 200, msg=items_before.text)
+        task_id = int(items_before.json()[0]["id"])
+
+        archived = self.client.post(f"/api/professors/{professor_id}/archive")
+
+        self.assertEqual(archived.status_code, 200, msg=archived.text)
+        self.assertEqual(
+            archived.json()["canceled_information_enrichment_task_ids"],
+            [task_id],
+        )
+        job = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}"
+        )
+        self.assertEqual(job.status_code, 200, msg=job.text)
+        self.assertEqual(job.json()["status"], "completed")
+        self.assertEqual(job.json()["skipped_count"], 1)
+        items_after = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}/items"
+        )
+        self.assertEqual(items_after.status_code, 200, msg=items_after.text)
+        self.assertEqual(items_after.json()[0]["status"], "skipped")
+        self.assertEqual(items_after.json()[0]["skip_reason"], "导师已移入回收站")
+
+        restored = self.client.post(f"/api/professors/{professor_id}/restore")
+        self.assertEqual(restored.status_code, 200, msg=restored.text)
+        self.assertEqual(
+            self.client.get(
+                f"/api/professor-information-enrichment-jobs/{job_id}/items"
+            ).json()[0]["status"],
+            "skipped",
+        )
+
+    def test_retiring_model_cancels_queued_information_enrichment(self) -> None:
+        professor_id = self._create_professor(
+            name="退役模型补全导师",
+            email="retired-model-enrichment@example.edu",
+            profile_url="https://example.edu/retired-model-enrichment",
+        )
+        created = self.client.post(
+            "/api/professor-information-enrichment-jobs",
+            json={
+                "professor_ids": [professor_id],
+                "llm_profile_id": self.llm_profile_id,
+            },
+        )
+        self.assertEqual(created.status_code, 201, msg=created.text)
+        job_id = int(created.json()["id"])
+
+        impact = self.client.get(
+            f"/api/llm-profiles/{self.llm_profile_id}/deletion-impact"
+        )
+        self.assertEqual(impact.status_code, 200, msg=impact.text)
+        self.assertTrue(impact.json()["can_delete"])
+        self.assertEqual(
+            impact.json()["automatic_actions"]["cancel_crawl_job_ids"],
+            [job_id],
+        )
+
+        retired = self.client.delete(
+            f"/api/llm-profiles/{self.llm_profile_id}",
+            params={"impact_revision": impact.json()["revision"]},
+        )
+
+        self.assertEqual(retired.status_code, 200, msg=retired.text)
+        self.assertEqual(retired.json()["canceled_crawl_job_ids"], [job_id])
+        job = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}"
+        )
+        self.assertEqual(job.status_code, 200, msg=job.text)
+        self.assertEqual(job.json()["status"], "canceled")
+        items = self.client.get(
+            f"/api/professor-information-enrichment-jobs/{job_id}/items"
+        )
+        self.assertEqual(items.status_code, 200, msg=items.text)
+        self.assertEqual(items.json()[0]["status"], "canceled")
+
     def test_cancel_clears_cached_profile_text_for_canceled_items(self) -> None:
         from app.modules.crawler.runtime.profile_text_cache import profile_text_cache
 

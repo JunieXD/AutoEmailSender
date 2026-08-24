@@ -29,6 +29,7 @@ from app.models import (
     ImapProfessorSyncState,
     Professor,
 )
+from app.modules.identities.public import get_active_identity_profile
 from .. import transport as mail_runtime
 from ..addresses import normalize_email_address, normalize_email_list
 from ..email_tasks import (
@@ -148,6 +149,7 @@ async def poll_for_replies_once(
             (
                 await session.execute(
                     select(IdentityProfile.id).where(
+                        IdentityProfile.deleted_at.is_(None),
                         IdentityProfile.imap_host.is_not(None),
                         IdentityProfile.imap_port.is_not(None),
                         IdentityProfile.imap_username.is_not(None),
@@ -176,6 +178,7 @@ async def poll_imap_history_once(
             (
                 await session.execute(
                     select(IdentityProfile.id).where(
+                        IdentityProfile.deleted_at.is_(None),
                         IdentityProfile.imap_host.is_not(None),
                         IdentityProfile.imap_port.is_not(None),
                         IdentityProfile.imap_username.is_not(None),
@@ -704,7 +707,7 @@ async def _sync_identity_incremental_once_unlocked(
     sent_folder = None
     incremental_paused = await is_imap_incremental_paused(session_factory, identity_id)
     async with session_factory() as session:
-        identity = await session.get(IdentityProfile, identity_id)
+        identity = await get_active_identity_profile(session, identity_id)
     if identity is not None and not incremental_paused:
         sent_folder = await get_cached_or_discover_sent_folder(
             session_factory, identity
@@ -748,7 +751,7 @@ async def sync_identity_history_once(
         return 0
 
     async with session_factory() as session:
-        identity = await session.get(IdentityProfile, identity_id)
+        identity = await get_active_identity_profile(session, identity_id)
     if identity is None:
         return 0
     if not _identity_has_imap_config(identity):
@@ -1351,7 +1354,7 @@ async def _sync_identity_targeted_history_once(
     for index, state in enumerate(states):
         try:
             async with session_factory() as session:
-                identity = await session.get(IdentityProfile, identity_id)
+                identity = await get_active_identity_profile(session, identity_id)
             if identity is None:
                 await mark_professor_scan_completed(
                     session_factory,
@@ -1893,7 +1896,7 @@ async def sync_identity_incremental_once(
 ) -> int:
     _validate_imap_folder_role(folder_role)
     async with session_factory() as session:
-        identity = await session.get(IdentityProfile, identity_id)
+        identity = await get_active_identity_profile(session, identity_id)
         if identity is None:
             return 0
         state = await _get_or_create_mailbox_state(
@@ -2081,7 +2084,7 @@ async def sync_workspace_professor_replies(
         if await _is_imap_identity_locked(identity_id):
             return 0
         async with session_factory() as session:
-            identity = await session.get(IdentityProfile, identity_id)
+            identity = await get_active_identity_profile(session, identity_id)
             professor = await session.get(Professor, professor_id)
         if identity is None or professor is None or not professor.email:
             return 0
@@ -2163,7 +2166,7 @@ async def repair_identity_replies(
     professor_email: str | None = None,
 ) -> int:
     async with session_factory() as session:
-        identity = await session.get(IdentityProfile, identity_id)
+        identity = await get_active_identity_profile(session, identity_id)
     if not identity:
         return 0
 

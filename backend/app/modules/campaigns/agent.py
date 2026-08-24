@@ -81,8 +81,13 @@ CAMPAIGN_DELETABLE_STATUSES = {
 CAMPAIGN_ITEM_REMOVABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
     EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.GENERATING_DRAFT.value,
     EmailTaskStatus.DRAFT_FAILED.value,
     EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SCHEDULE_MISSED.value,
+    EmailTaskStatus.CANCELED.value,
 }
 CAMPAIGN_ITEM_SEND_CANCELLABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
@@ -380,16 +385,60 @@ async def archive_agent_campaign(
     campaign_id: int,
 ) -> AgentCampaignRead:
     campaign = await _load_campaign_or_raise(session, campaign_id)
+    await session.execute(
+        update(BatchTask)
+        .where(BatchTask.id == campaign_id)
+        .values(updated_at=BatchTask.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    session.expire_all()
+    campaign = await _load_campaign_or_raise(session, campaign_id)
     if campaign.deleted_at is not None:
         return _serialize_campaign(campaign)
     sync_batch_task_completion(campaign)
-    if campaign.status not in CAMPAIGN_DELETABLE_STATUSES:
+    sending_item_ids = sorted(
+        task.id
+        for task in campaign.email_tasks
+        if task.status == EmailTaskStatus.SENDING.value
+    )
+    if sending_item_ids:
         raise AgentApiError(
             status_code=409,
-            code="CAMPAIGN_NOT_ARCHIVABLE",
-            message="请先停止或完成批量活动后再移入回收站。",
-            details={"campaign_id": campaign.id, "status": campaign.status},
+            code="CAMPAIGN_TRASH_SENDING",
+            message=(
+                f"批量活动 #{campaign.id} 暂时无法移入回收站：邮件任务 "
+                f"#{'、#'.join(str(item_id) for item_id in sending_item_ids[:10])}"
+                f"{' 等' if len(sending_item_ids) > 10 else ''} 正在发送。"
+                "请等待发送结果确认后再试。"
+            ),
+            details={
+                "campaign_id": campaign.id,
+                "email_task_ids": sending_item_ids,
+                "status": EmailTaskStatus.SENDING.value,
+            },
         )
+    if campaign.status not in CAMPAIGN_DELETABLE_STATUSES:
+        await stop_agent_campaign(session, campaign_id)
+    else:
+        now = utc_now()
+        for task in campaign.email_tasks:
+            if _is_user_removed_campaign_item(task):
+                continue
+            if task.status in {
+                EmailTaskStatus.SENDING.value,
+                EmailTaskStatus.SENT.value,
+                EmailTaskStatus.REPLY_DETECTED.value,
+                EmailTaskStatus.SEND_FAILED.value,
+            }:
+                continue
+            task.status = EmailTaskStatus.CANCELED.value
+            task.cancellation_reason = EmailTaskCancellationReason.BATCH_STOPPED.value
+            task.draft_generation_previous_status = None
+            task.draft_generation_started_at = None
+            task.draft_claim_id = None
+            task.draft_claimed_at = None
+            task.draft_lease_expires_at = None
+            task.updated_at = now
     now = utc_now()
     campaign.deleted_at = now
     campaign.updated_at = now
@@ -436,7 +485,6 @@ async def remove_agent_campaign_item(
             EmailTask.id == item.id,
             EmailTask.batch_task_id == campaign.id,
             EmailTask.source == EmailTaskSource.BATCH.value,
-            EmailTask.batch_send_canceled_at.is_(None),
             EmailTask.status.in_(CAMPAIGN_ITEM_REMOVABLE_STATUSES),
         )
         .values(
@@ -444,17 +492,32 @@ async def remove_agent_campaign_item(
             cancellation_reason=EmailTaskCancellationReason.USER_REMOVED.value,
             scheduled_at=None,
             draft_generation_previous_status=None,
+            draft_generation_started_at=None,
+            draft_claim_id=None,
+            draft_claimed_at=None,
+            draft_lease_expires_at=None,
             updated_at=now,
         )
         .execution_options(synchronize_session=False),
     )
     if result.rowcount != 1:
         await session.rollback()
+        current_item = await session.get(EmailTask, resolved_item_id)
+        current_status = current_item.status if current_item is not None else "missing"
         raise AgentApiError(
             status_code=409,
             code="CAMPAIGN_ITEM_NOT_REMOVABLE",
-            message="活动项状态已发生变化，不能从批量活动中移除。",
-            details={"campaign_id": campaign.id, "item_id": item.id},
+            message=(
+                f"批量活动 #{resolved_campaign_id} 的邮件任务 #{resolved_item_id} "
+                f"当前状态为 {current_status}，已进入发送流程、已有发送结果或状态已变化，"
+                "不能移除。请刷新活动详情查看该邮件。"
+            ),
+            details={
+                "campaign_id": resolved_campaign_id,
+                "item_id": resolved_item_id,
+                "status": current_status,
+                "surface": "任务中心 > 批量任务详情",
+            },
         )
     await session.execute(
         update(BatchTask)
@@ -965,7 +1028,10 @@ async def _resolve_campaign_create_context(
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == payload.identity_id),
+        .where(
+            IdentityProfile.id == payload.identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
     if identity is None:
         raise AgentApiError(

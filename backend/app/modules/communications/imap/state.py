@@ -1364,6 +1364,7 @@ async def _load_existing_professor_rows(
         .join(Professor, Professor.email.is_not(None))
         .where(
             IdentityProfile.imap_host.is_not(None),
+            IdentityProfile.deleted_at.is_(None),
             IdentityProfile.imap_port.is_not(None),
             IdentityProfile.imap_username.is_not(None),
             IdentityProfile.imap_password.is_not(None),

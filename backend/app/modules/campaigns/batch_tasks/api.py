@@ -64,7 +64,10 @@ from app.modules.campaigns.public import (
     sync_batch_task_completion,
 )
 from app.modules.campaigns.status import email_task_is_not_user_removed_expression
-from app.modules.identities.public import material_can_be_primary
+from app.modules.identities.public import (
+    get_active_identity_profile,
+    material_can_be_primary,
+)
 from app.modules.llm.public import get_active_llm_profile
 from app.services.match_results import load_resolved_match_results
 from app.services.operation_logs import record_operation_log
@@ -220,7 +223,10 @@ async def create_batch_task(
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == payload.identity_id),
+        .where(
+            IdentityProfile.id == payload.identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
     if not identity:
         raise HTTPException(status_code=404, detail="未找到身份配置")
@@ -973,6 +979,19 @@ async def resume_batch_task(
     session: AsyncSession = Depends(get_async_session),
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
+    if await get_active_identity_profile(session, task.identity_id) is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CAMPAIGN_IDENTITY_RETIRED",
+                "message": (
+                    f"批量任务 #{task.id} 使用的发件身份 #{task.identity_id} 已退役，"
+                    "不能继续执行。历史记录会保留；如需再次联系，请使用活动身份新建任务。"
+                ),
+                "batch_task_id": task.id,
+                "identity_id": task.identity_id,
+            },
+        )
     pending_llm_tasks = [
         email_task
         for email_task in task.email_tasks
@@ -1071,16 +1090,66 @@ BATCH_TASK_DELETABLE_STATUSES = {
 @router.post("/{task_id}/delete", response_model=BatchTaskActionResponse)
 async def delete_batch_task(
     task_id: int,
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> BatchTaskActionResponse:
     task = await _get_batch_task(session, task_id)
+    await session.execute(
+        update(BatchTask)
+        .where(BatchTask.id == task_id)
+        .values(updated_at=BatchTask.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(task, attribute_names=["status", "deleted_at", "email_tasks"])
     sync_batch_task_completion(task)
+    sending_item_ids = sorted(
+        email_task.id
+        for email_task in task.email_tasks
+        if email_task.status == EmailTaskStatus.SENDING.value
+    )
+    if sending_item_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "BATCH_TASK_TRASH_SENDING",
+                "message": (
+                    f"批量任务 #{task.id} 暂时无法移入回收站：邮件任务 "
+                    f"#{'、#'.join(str(item_id) for item_id in sending_item_ids[:10])}"
+                    f"{' 等' if len(sending_item_ids) > 10 else ''} 正在发送。"
+                    "请等待发送结果确认后再试。"
+                ),
+                "details": {
+                    "batch_task_id": task.id,
+                    "email_task_ids": sending_item_ids,
+                    "status": EmailTaskStatus.SENDING.value,
+                },
+            },
+        )
     serialized = _serialize_batch_task(task)
+    now = utc_now()
     if serialized.status not in BATCH_TASK_DELETABLE_STATUSES:
-        raise HTTPException(status_code=400, detail="请先中止/取消任务后再删除")
+        task.status = BatchTaskStatus.STOPPED.value
+    for email_task in task.email_tasks:
+        if _is_user_removed_batch_item(email_task):
+            continue
+        if email_task.status not in {
+            EmailTaskStatus.SENDING.value,
+            EmailTaskStatus.SENT.value,
+            EmailTaskStatus.REPLY_DETECTED.value,
+            EmailTaskStatus.SEND_FAILED.value,
+        }:
+            email_task.status = EmailTaskStatus.CANCELED.value
+            email_task.cancellation_reason = (
+                EmailTaskCancellationReason.BATCH_STOPPED.value
+            )
+            email_task.draft_generation_previous_status = None
+            email_task.draft_generation_started_at = None
+            email_task.draft_claim_id = None
+            email_task.draft_claimed_at = None
+            email_task.draft_lease_expires_at = None
+            email_task.updated_at = now
     previous_deleted_at = task.deleted_at
     if task.deleted_at is None:
-        now = utc_now()
         task.deleted_at = now
         task.updated_at = now
     await _record_batch_task_action(
@@ -1094,6 +1163,7 @@ async def delete_batch_task(
         },
     )
     await session.commit()
+    _cancel_running_batch_drafts(request, task_id)
     await session.refresh(task, attribute_names=["email_tasks"])
     return BatchTaskActionResponse(ok=True, task=_serialize_batch_task(task))
 
@@ -1312,7 +1382,6 @@ async def delete_batch_task_item(
         .where(
             EmailTask.id == item_id,
             EmailTask.batch_task_id == task_id,
-            EmailTask.batch_send_canceled_at.is_(None),
             EmailTask.status.in_(BATCH_TASK_ITEM_REMOVABLE_STATUSES),
         )
         .values(
@@ -1320,6 +1389,10 @@ async def delete_batch_task_item(
             cancellation_reason=EmailTaskCancellationReason.USER_REMOVED.value,
             scheduled_at=None,
             draft_generation_previous_status=None,
+            draft_generation_started_at=None,
+            draft_claim_id=None,
+            draft_claimed_at=None,
+            draft_lease_expires_at=None,
             updated_at=now,
         )
         .execution_options(synchronize_session=False),
@@ -1334,20 +1407,44 @@ async def delete_batch_task_item(
         )
         if current_item is None or _is_user_removed_batch_item(current_item):
             raise HTTPException(status_code=404, detail="未找到批量任务项")
-        if current_item.batch_send_canceled_at is not None:
-            raise HTTPException(
-                status_code=400, detail="该导师已取消发送，请先恢复发送"
-            )
         if current_item.status in {
             EmailTaskStatus.SENDING.value,
             EmailTaskStatus.SENT.value,
+            EmailTaskStatus.SEND_FAILED.value,
             EmailTaskStatus.REPLY_DETECTED.value,
         }:
             raise HTTPException(
-                status_code=400, detail="已发送或正在发送的邮件不能从批量任务中移除"
+                status_code=409,
+                detail={
+                    "code": "BATCH_TASK_ITEM_REMOVE_BLOCKED",
+                    "message": (
+                        f"批量任务 #{task_id} 的邮件任务 #{item_id} 当前状态为 "
+                        f"{current_item.status}，已进入发送流程或已有发送结果，"
+                        "不能从任务中移除。请在任务详情中查看该邮件。"
+                    ),
+                    "details": {
+                        "batch_task_id": task_id,
+                        "email_task_id": item_id,
+                        "status": current_item.status,
+                        "surface": "任务中心 > 批量任务详情",
+                    },
+                },
             )
         raise HTTPException(
-            status_code=400, detail="已批准、已排程或正在处理的邮件不能从批量任务中移除"
+            status_code=409,
+            detail={
+                "code": "BATCH_TASK_ITEM_REMOVE_BLOCKED",
+                "message": (
+                    f"批量任务 #{task_id} 的邮件任务 #{item_id} 状态已变为 "
+                    f"{current_item.status}，暂时无法移除。请刷新任务详情后重试。"
+                ),
+                "details": {
+                    "batch_task_id": task_id,
+                    "email_task_id": item_id,
+                    "status": current_item.status,
+                    "surface": "任务中心 > 批量任务详情",
+                },
+            },
         )
 
     await session.execute(
@@ -1449,8 +1546,13 @@ async def retry_batch_task_item_draft(
 BATCH_TASK_ITEM_REMOVABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
     EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.GENERATING_DRAFT.value,
     EmailTaskStatus.DRAFT_FAILED.value,
     EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SCHEDULE_MISSED.value,
+    EmailTaskStatus.CANCELED.value,
 }
 
 BATCH_TASK_ITEM_SEND_CANCELLABLE_STATUSES = {

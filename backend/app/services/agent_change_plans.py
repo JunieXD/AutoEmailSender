@@ -2640,6 +2640,7 @@ def _material_error(error: MaterialMutationError) -> AgentApiError:
         status_code=error.status_code,
         code=error.code,
         message=error.message,
+        details=error.details or {},
     )
 
 

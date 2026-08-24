@@ -5,7 +5,7 @@ import logging
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, insert, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -105,7 +105,12 @@ async def create_match_analysis_job_record(
     if not unique_professor_ids:
         raise ValueError("请选择要分析匹配度的导师")
 
-    identity = await session.get(IdentityProfile, identity_id)
+    identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if identity is None:
         raise ValueError("身份不存在")
     match_scope = await resolve_identity_match_scope(
@@ -588,8 +593,20 @@ async def delete_match_analysis_job_record(
     job = await session.get(MatchAnalysisJob, job_id)
     if job is None:
         raise ValueError("匹配分析任务不存在")
-    if job.status not in MATCH_ANALYSIS_JOB_DELETABLE_STATUSES:
-        raise ValueError("请先中止/取消任务后再删除")
+    if job.status in {
+        MatchAnalysisJobStatus.QUEUED.value,
+        MatchAnalysisJobStatus.RUNNING.value,
+    }:
+        await request_match_analysis_job_cancel_record(
+            session,
+            job_id,
+            event_name="match_analysis_job.trash_cancel_requested",
+            actor=actor,
+        )
+    elif job.status not in MATCH_ANALYSIS_JOB_DELETABLE_STATUSES:
+        raise ValueError(
+            f"匹配分析任务 #{job.id} 当前状态为 {job.status}，暂时无法移入回收站"
+        )
     previous_deleted_at = job.deleted_at
     if job.deleted_at is None:
         now = utc_now()
@@ -661,6 +678,16 @@ async def _claim_next_match_analysis_item(
                         MatchAnalysisJob.status.in_(active_statuses),
                         MatchAnalysisJob.cancel_requested_at.is_(None),
                         MatchAnalysisJob.deleted_at.is_(None),
+                        MatchAnalysisJob.identity_id.in_(
+                            select(IdentityProfile.id).where(
+                                IdentityProfile.deleted_at.is_(None)
+                            )
+                        ),
+                        MatchAnalysisJob.match_source_identity_id.in_(
+                            select(IdentityProfile.id).where(
+                                IdentityProfile.deleted_at.is_(None)
+                            )
+                        ),
                         MatchAnalysisJob.llm_profile_id.in_(
                             select(LLMProfile.id).where(
                                 LLMProfile.deleted_at.is_(None)
@@ -694,6 +721,16 @@ async def _claim_next_match_analysis_item(
                             MatchAnalysisJob.status.in_(active_statuses),
                             MatchAnalysisJob.cancel_requested_at.is_(None),
                             MatchAnalysisJob.deleted_at.is_(None),
+                            MatchAnalysisJob.identity_id.in_(
+                                select(IdentityProfile.id).where(
+                                    IdentityProfile.deleted_at.is_(None)
+                                )
+                            ),
+                            MatchAnalysisJob.match_source_identity_id.in_(
+                                select(IdentityProfile.id).where(
+                                    IdentityProfile.deleted_at.is_(None)
+                                )
+                            ),
                             MatchAnalysisJob.llm_profile_id.in_(
                                 select(LLMProfile.id).where(
                                     LLMProfile.deleted_at.is_(None)
@@ -947,14 +984,82 @@ async def _match_analysis_claim_is_current(
     now = utc_now()
     async with session_factory() as session:
         current = await session.scalar(
-            select(MatchAnalysisJobItem.id).where(
+            select(MatchAnalysisJobItem.id)
+            .join(
+                Professor,
+                Professor.id == MatchAnalysisJobItem.professor_id,
+            )
+            .where(
                 MatchAnalysisJobItem.id == claim.item_id,
                 MatchAnalysisJobItem.status == MatchAnalysisJobItemStatus.RUNNING.value,
                 MatchAnalysisJobItem.claim_id == claim.claim_id,
                 MatchAnalysisJobItem.lease_expires_at > now,
+                Professor.archived_at.is_(None),
             )
         )
         return current is not None
+
+
+async def skip_professor_match_analysis_items_record(
+    session: AsyncSession,
+    professor_ids: list[int],
+    *,
+    now: datetime | None = None,
+) -> list[int]:
+    """Stop unfinished match work for archived professors and preserve history."""
+
+    resolved_ids = unique_positive_ids(professor_ids)
+    if not resolved_ids:
+        return []
+    resolved_now = now or utc_now()
+    rows = list(
+        await session.execute(
+            select(
+                MatchAnalysisJobItem.id,
+                MatchAnalysisJobItem.job_id,
+            )
+            .where(
+                MatchAnalysisJobItem.professor_id.in_(resolved_ids),
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJobItemStatus.RUNNING.value,
+                    ]
+                ),
+            )
+            .order_by(MatchAnalysisJobItem.id.asc())
+        )
+    )
+    item_ids = [int(row.id) for row in rows]
+    if not item_ids:
+        return []
+    for item_id_chunk in chunked_values(item_ids):
+        await session.execute(
+            update(MatchAnalysisJobItem)
+            .where(
+                MatchAnalysisJobItem.id.in_(item_id_chunk),
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJobItemStatus.RUNNING.value,
+                    ]
+                ),
+            )
+            .values(
+                status=MatchAnalysisJobItemStatus.SKIPPED.value,
+                skip_reason="导师已移入回收站，匹配分析已取消",
+                error_message=None,
+                claim_id=None,
+                claimed_at=None,
+                lease_expires_at=None,
+                finished_at=resolved_now,
+                updated_at=resolved_now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+    for job_id in dict.fromkeys(int(row.job_id) for row in rows):
+        await _refresh_match_analysis_job_summary_record(session, job_id)
+    return item_ids
 
 
 async def _run_match_analysis_job_item(
@@ -1356,113 +1461,110 @@ async def _refresh_match_analysis_job_summary(
     job_id: int,
 ) -> None:
     async with session_factory() as session:
-        job = await session.get(MatchAnalysisJob, job_id)
-        if job is None:
-            return
-
-        items = list(
-            await session.scalars(
-                select(MatchAnalysisJobItem).where(
-                    MatchAnalysisJobItem.job_id == job_id
-                )
-            )
-        )
-        succeeded_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.SUCCEEDED.value
-        )
-        failed_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.FAILED.value
-        )
-        skipped_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.SKIPPED.value
-        )
-        canceled_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.CANCELED.value
-        )
-        running_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.RUNNING.value
-        )
-        queued_count = sum(
-            1
-            for item in items
-            if item.status == MatchAnalysisJobItemStatus.QUEUED.value
-        )
-
-        job.succeeded_count = succeeded_count
-        job.failed_count = failed_count
-        job.skipped_count = skipped_count
-        job.total_prompt_tokens = sum(item.prompt_tokens for item in items)
-        job.total_completion_tokens = sum(item.completion_tokens for item in items)
-        job.total_cached_tokens = sum(item.cached_tokens for item in items)
-        job.total_tokens = sum(item.total_tokens for item in items)
-        job.updated_at = utc_now()
-        job.finished_at = None
-
-        if queued_count > 0 or running_count > 0:
-            job.status = (
-                MatchAnalysisJobStatus.RUNNING.value
-                if running_count > 0
-                else MatchAnalysisJobStatus.QUEUED.value
-            )
-            await session.commit()
-            return
-
-        job.finished_at = job.updated_at
-
-        if canceled_count > 0:
-            job.status = MatchAnalysisJobStatus.CANCELED.value
-        elif (
-            failed_count == 0
-            and queued_count == 0
-            and running_count == 0
-            and succeeded_count > 0
-        ):
-            job.status = MatchAnalysisJobStatus.COMPLETED.value
-        elif succeeded_count > 0:
-            job.status = MatchAnalysisJobStatus.PARTIAL_FAILED.value
-        else:
-            job.status = MatchAnalysisJobStatus.FAILED.value
-
-        if job.status == MatchAnalysisJobStatus.FAILED.value and skipped_count == len(
-            items
-        ):
-            job.last_error = "没有可分析导师"
-
-        await record_operation_log(
-            session,
-            category="match_analysis",
-            event_name=f"match_analysis_job.{job.status}",
-            level="error"
-            if job.status == MatchAnalysisJobStatus.FAILED.value
-            else "info",
-            message=job.last_error,
-            entity_type="match_analysis_job",
-            entity_id=str(job.id),
-            metadata={
-                "name": job.name,
-                "status": job.status,
-                "target_count": job.target_count,
-                "succeeded_count": succeeded_count,
-                "failed_count": failed_count,
-                "skipped_count": skipped_count,
-                "canceled_count": canceled_count,
-                "total_prompt_tokens": job.total_prompt_tokens,
-                "total_completion_tokens": job.total_completion_tokens,
-                "total_cached_tokens": job.total_cached_tokens,
-                "total_tokens": job.total_tokens,
-            },
-        )
+        await _refresh_match_analysis_job_summary_record(session, job_id)
         await session.commit()
+
+
+async def _refresh_match_analysis_job_summary_record(
+    session: AsyncSession,
+    job_id: int,
+) -> None:
+    job = await session.get(MatchAnalysisJob, job_id)
+    if job is None:
+        return
+
+    items = list(
+        await session.scalars(
+            select(MatchAnalysisJobItem).where(
+                MatchAnalysisJobItem.job_id == job_id
+            )
+        )
+    )
+    succeeded_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.SUCCEEDED.value
+    )
+    failed_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.FAILED.value
+    )
+    skipped_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.SKIPPED.value
+    )
+    canceled_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.CANCELED.value
+    )
+    running_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.RUNNING.value
+    )
+    queued_count = sum(
+        1
+        for item in items
+        if item.status == MatchAnalysisJobItemStatus.QUEUED.value
+    )
+
+    job.succeeded_count = succeeded_count
+    job.failed_count = failed_count
+    job.skipped_count = skipped_count
+    job.total_prompt_tokens = sum(item.prompt_tokens for item in items)
+    job.total_completion_tokens = sum(item.completion_tokens for item in items)
+    job.total_cached_tokens = sum(item.cached_tokens for item in items)
+    job.total_tokens = sum(item.total_tokens for item in items)
+    job.updated_at = utc_now()
+    job.finished_at = None
+
+    if queued_count > 0 or running_count > 0:
+        job.status = (
+            MatchAnalysisJobStatus.RUNNING.value
+            if running_count > 0
+            else MatchAnalysisJobStatus.QUEUED.value
+        )
+        return
+
+    job.finished_at = job.updated_at
+
+    if canceled_count > 0:
+        job.status = MatchAnalysisJobStatus.CANCELED.value
+    elif failed_count == 0 and succeeded_count > 0:
+        job.status = MatchAnalysisJobStatus.COMPLETED.value
+    elif succeeded_count > 0:
+        job.status = MatchAnalysisJobStatus.PARTIAL_FAILED.value
+    else:
+        job.status = MatchAnalysisJobStatus.FAILED.value
+
+    if job.status == MatchAnalysisJobStatus.FAILED.value and skipped_count == len(items):
+        job.last_error = "没有可分析导师"
+
+    await record_operation_log(
+        session,
+        category="match_analysis",
+        event_name=f"match_analysis_job.{job.status}",
+        level="error" if job.status == MatchAnalysisJobStatus.FAILED.value else "info",
+        message=job.last_error,
+        entity_type="match_analysis_job",
+        entity_id=str(job.id),
+        metadata={
+            "name": job.name,
+            "status": job.status,
+            "target_count": job.target_count,
+            "succeeded_count": succeeded_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "canceled_count": canceled_count,
+            "total_prompt_tokens": job.total_prompt_tokens,
+            "total_completion_tokens": job.total_completion_tokens,
+            "total_cached_tokens": job.total_cached_tokens,
+            "total_tokens": job.total_tokens,
+        },
+    )
 
 
 async def _record_match_analysis_job_log(

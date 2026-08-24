@@ -58,6 +58,13 @@ class LLMProfileDeletionBlocker(ApiSchema):
     label: str
     count: int
     entity_ids: list[int] = Field(default_factory=list)
+    surface: str
+
+
+class LLMProfileDeletionAutomaticActions(ApiSchema):
+    cancel_email_task_ids: list[int] = Field(default_factory=list)
+    cancel_match_analysis_job_ids: list[int] = Field(default_factory=list)
+    cancel_crawl_job_ids: list[int] = Field(default_factory=list)
 
 
 class LLMProfileDeletionImpact(ApiSchema):
@@ -68,6 +75,7 @@ class LLMProfileDeletionImpact(ApiSchema):
     can_delete: bool
     revision: str
     references: LLMProfileReferenceCounts
+    automatic_actions: LLMProfileDeletionAutomaticActions
     blockers: list[LLMProfileDeletionBlocker] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -79,6 +87,9 @@ class LLMProfileDeletionResult(ApiSchema):
     references_preserved: LLMProfileReferenceCounts
     invalidated_plan_count: int = 0
     default_profile_id: int | None = None
+    canceled_email_task_ids: list[int] = Field(default_factory=list)
+    canceled_match_analysis_job_ids: list[int] = Field(default_factory=list)
+    canceled_crawl_job_ids: list[int] = Field(default_factory=list)
 
 
 class LLMProfileTestResult(ApiSchema):
@@ -115,6 +126,7 @@ __all__ = [
     "LLMProfileBase",
     "LLMProfileCreate",
     "LLMProfileDeletionBlocker",
+    "LLMProfileDeletionAutomaticActions",
     "LLMProfileDeletionImpact",
     "LLMProfileDeletionResult",
     "LLMProfileModelsResult",

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from app.core.time import utc_now
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 
 class IdentityProfile(Base):
     __tablename__ = "identity_profiles"
+    __table_args__ = (
+        Index(
+            "uq_identity_profiles_active_email_address",
+            "email_address",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -30,7 +39,6 @@ class IdentityProfile(Base):
     sender_name: Mapped[str] = mapped_column(String(100), nullable=False)
     email_address: Mapped[str] = mapped_column(
         String(255),
-        unique=True,
         nullable=False,
     )
     smtp_host: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -101,6 +109,11 @@ class IdentityProfile(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
         onupdate=utc_now,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(),
+        index=True,
+        nullable=True,
     )
 
     source_materials: Mapped[list["IdentityMaterial"]] = relationship(

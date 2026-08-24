@@ -1284,6 +1284,7 @@ async def continue_task_manually(
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
+        _ensure_task_allows_new_contact(task)
         await _ensure_no_manual_child_exists(session, task.id)
         if (
             task.status != EmailTaskStatus.CANCELED.value
@@ -1338,6 +1339,7 @@ async def start_follow_up_task(
         task = await _load_email_task(session, task_id)
         if not task:
             raise ValueError(f"EmailTask {task_id} 不存在")
+        _ensure_task_allows_new_contact(task)
         await _ensure_no_manual_child_exists(session, task.id)
         if task.status not in {
             EmailTaskStatus.SENT.value,
@@ -1525,6 +1527,23 @@ async def _ensure_no_manual_child_exists(
     )
     if existing_child_id is not None:
         raise ValueError("该任务已创建过手动子任务，不能重复派生")
+
+
+def _ensure_task_allows_new_contact(task: EmailTask) -> None:
+    if task.professor.archived_at is not None:
+        raise ValueError(
+            f"导师 #{task.professor_id} 已移入回收站，不能创建新的联系任务"
+        )
+    if task.identity.deleted_at is not None:
+        raise ValueError(
+            f"发件身份 #{task.identity_id} 已退役，不能创建新的联系任务；"
+            "请使用活动身份新建任务"
+        )
+    if task.llm_profile.deleted_at is not None:
+        raise ValueError(
+            f"模型配置 #{task.llm_profile_id} 已退役，不能创建新的联系任务；"
+            "历史记录仍会保留，请选择活动模型新建任务"
+        )
 
 
 async def _get_manual_child_task_id(

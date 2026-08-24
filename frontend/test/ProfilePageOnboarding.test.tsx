@@ -244,6 +244,11 @@ const makeDeletionImpact = (
   can_delete: true,
   revision: "a".repeat(64),
   references: emptyLLMReferences,
+  automatic_actions: {
+    cancel_email_task_ids: [],
+    cancel_match_analysis_job_ids: [],
+    cancel_crawl_job_ids: [],
+  },
   blockers: [],
   warnings: [],
   ...overrides,
@@ -398,6 +403,7 @@ describe("ProfilePage onboarding", () => {
             label: "正在生成或等待生成的 AI 草稿",
             count: 2,
             entity_ids: [41, 42],
+            surface: "任务中心 > 发送计划或批量任务详情",
           },
         ],
       }),
@@ -456,6 +462,9 @@ describe("ProfilePage onboarding", () => {
       references_preserved: impact.references,
       invalidated_plan_count: 0,
       default_profile_id: replacementProfile.id,
+      canceled_email_task_ids: [],
+      canceled_match_analysis_job_ids: [],
+      canceled_crawl_job_ids: [],
     });
 
     renderPage();
@@ -480,6 +489,30 @@ describe("ProfilePage onboarding", () => {
         expect.stringContaining("关联记录已完整保留"),
       );
     });
+  });
+
+  it("shows queued work that will be canceled automatically", async () => {
+    vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(
+      makeDeletionImpact({
+        automatic_actions: {
+          cancel_email_task_ids: [31],
+          cancel_match_analysis_job_ids: [41],
+          cancel_crawl_job_ids: [51],
+        },
+      }),
+    );
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "确认退役后会自动取消" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("待生成邮件任务 ID 31")).toBeInTheDocument();
+    expect(screen.getByText("匹配任务 ID 41")).toBeInTheDocument();
+    expect(screen.getByText("抓取或信息补全任务 ID 51")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认退役" })).toBeInTheDocument();
   });
 
   it("opens contextual setup guides from the summary, sections, and difficult fields", async () => {

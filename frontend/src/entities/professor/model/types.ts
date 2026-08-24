@@ -241,6 +241,9 @@ export interface ProfessorActionResultDTO {
   ok: boolean;
   affected_count: number;
   message: string;
+  canceled_email_task_ids?: number[];
+  canceled_match_analysis_item_ids?: number[];
+  canceled_information_enrichment_task_ids?: number[];
 }
 
 export type ProfessorInformationEnrichmentJobStatus =

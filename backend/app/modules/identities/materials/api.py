@@ -139,7 +139,10 @@ async def _upload_material(
             actor="ui",
         )
     except MaterialMutationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_material_error_detail(exc),
+        ) from exc
     await session.commit()
     await session.refresh(material)
     return serialize_material(
@@ -170,7 +173,10 @@ async def set_primary_material(
             actor="ui",
         )
     except MaterialMutationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_material_error_detail(exc),
+        ) from exc
     await session.commit()
     target_identity_id = (
         identity_id if identity_id is not None else material.identity_id
@@ -200,7 +206,10 @@ async def set_identity_primary_material(
             actor="ui",
         )
     except MaterialMutationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_material_error_detail(exc),
+        ) from exc
     await session.commit()
     return serialize_material(
         material,
@@ -220,7 +229,10 @@ async def get_material_deletion_impact(
     try:
         snapshot = await prepare_material_deletion_snapshot(session, material_id)
     except MaterialMutationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_material_error_detail(exc),
+        ) from exc
     return MaterialDeletionImpactRead.model_validate(snapshot)
 
 
@@ -243,7 +255,10 @@ async def delete_material(
             expected_fingerprint=expected_fingerprint,
         )
     except MaterialMutationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_material_error_detail(exc),
+        ) from exc
     await session.commit()
     delete_file(result.file_path)
 
@@ -261,6 +276,16 @@ async def open_material(
     response = FileResponse(file_path, media_type=material.mime_type)
     response.headers["Content-Disposition"] = "inline"
     return response
+
+
+def _material_error_detail(exc: MaterialMutationError) -> str | dict[str, object]:
+    if exc.details is None:
+        return exc.message
+    return {
+        "code": exc.code,
+        "message": exc.message,
+        "details": exc.details,
+    }
 
 
 @router.get("/materials/{material_id}/download")
@@ -292,7 +317,12 @@ async def _get_material(session: AsyncSession, material_id: int) -> IdentityMate
 async def _get_identity_or_404(session: AsyncSession, identity_id: int) -> None:
     from app.models import IdentityProfile
 
-    if await session.get(IdentityProfile, identity_id) is None:
+    if await session.scalar(
+        select(IdentityProfile.id).where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    ) is None:
         raise HTTPException(status_code=404, detail="未找到身份配置")
 
 

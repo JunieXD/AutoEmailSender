@@ -2267,17 +2267,48 @@ export const BackgroundTasksPage = ({
       return;
     }
     const requestedTask = tasks.find((task) => task.id === requestedBatchTaskId);
-    if (!requestedTask) {
-      return;
+    let canceled = false;
+    const openRequestedTask = (task: BatchTaskCardDTO) => {
+      if (canceled) {
+        return;
+      }
+      setSelectedBatchTask(task);
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("batch_task_id");
+        return next;
+      }, { replace: true });
+    };
+    if (requestedTask) {
+      openRequestedTask(requestedTask);
+      return () => {
+        canceled = true;
+      };
     }
-    setSelectedBatchTask(requestedTask);
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.delete("batch_task_id");
-      return next;
-    }, { replace: true });
+    void getBatchTaskSummary(requestedBatchTaskId)
+      .then(openRequestedTask)
+      .catch((loadError: unknown) => {
+        if (canceled) {
+          return;
+        }
+        notifyError(
+          "无法打开批量任务",
+          loadError instanceof Error
+            ? loadError.message
+            : `未找到批量任务 #${requestedBatchTaskId}`,
+        );
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete("batch_task_id");
+          return next;
+        }, { replace: true });
+      });
+    return () => {
+      canceled = true;
+    };
   }, [
     activeTab,
+    notifyError,
     requestedBatchTaskId,
     setSearchParams,
     taskCenterSection,
@@ -4119,7 +4150,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先停止尚未完成的工作。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4156,7 +4187,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteCrawlJob = async (job: CrawlJobSummaryDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的工作。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4193,7 +4224,7 @@ export const BackgroundTasksPage = ({
   const handleDeleteMatchJob = async (job: MatchAnalysisJobDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先请求取消尚未完成的分析。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4232,7 +4263,7 @@ export const BackgroundTasksPage = ({
   ) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。",
+      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的补全。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",

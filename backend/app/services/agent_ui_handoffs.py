@@ -125,7 +125,12 @@ async def create_professor_selection_ui_handoff(
                 message="首页只能展示未归档导师；请改用 professors.management 界面。",
             )
         if request.identity_id is not None:
-            identity = await session.get(IdentityProfile, request.identity_id)
+            identity = await session.scalar(
+                select(IdentityProfile).where(
+                    IdentityProfile.id == request.identity_id,
+                    IdentityProfile.deleted_at.is_(None),
+                )
+            )
             if identity is None:
                 raise AgentApiError(
                     status_code=404,

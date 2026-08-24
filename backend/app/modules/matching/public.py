@@ -14,6 +14,7 @@ from .job_runtime import (
     run_queued_match_analysis_jobs_once,
     serialize_match_analysis_job,
     serialize_match_analysis_job_item,
+    skip_professor_match_analysis_items_record,
 )
 from .schemas import (
     CreateMatchAnalysisJobRequest,
@@ -63,4 +64,5 @@ __all__ = [
     "run_queued_match_analysis_jobs_once",
     "serialize_match_analysis_job",
     "serialize_match_analysis_job_item",
+    "skip_professor_match_analysis_items_record",
 ]

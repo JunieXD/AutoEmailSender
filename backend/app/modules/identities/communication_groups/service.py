@@ -217,6 +217,7 @@ async def _load_selected_identities(
             await session.scalars(
                 select(IdentityProfile).where(
                     IdentityProfile.id.in_(identity_id_chunk),
+                    IdentityProfile.deleted_at.is_(None),
                 ),
             ),
         )
@@ -262,6 +263,7 @@ async def _expand_conflicting_group_members(
         group_members = await session.scalars(
             select(IdentityProfile).where(
                 IdentityProfile.communication_group_id.in_(group_id_chunk),
+                IdentityProfile.deleted_at.is_(None),
             ),
         )
         for identity in group_members:
@@ -279,6 +281,7 @@ async def _raise_group_conflict(
             await session.scalars(
                 select(IdentityProfile).where(
                     IdentityProfile.communication_group_id.in_(group_id_chunk),
+                    IdentityProfile.deleted_at.is_(None),
                 ),
             ),
         )

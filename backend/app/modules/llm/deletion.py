@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
@@ -15,6 +15,7 @@ from app.models import (
     BatchTask,
     BatchTaskStatus,
     CrawlJob,
+    CrawlJobKind,
     CrawlJobRun,
     CrawlJobStatus,
     CrawlCandidate,
@@ -22,6 +23,7 @@ from app.models import (
     CrawlWorkerTokenUsage,
     EmailLog,
     EmailTask,
+    EmailTaskCancellationReason,
     EmailTaskStatus,
     IdentityProfessorMatchResult,
     LLMEndpointAdaptationCache,
@@ -47,6 +49,7 @@ from app.modules.llm.usage import (
 
 from .schemas import (
     LLMProfileDeletionBlocker,
+    LLMProfileDeletionAutomaticActions,
     LLMProfileDeletionImpact,
     LLMProfileDeletionResult,
     LLMProfileReferenceCounts,
@@ -61,6 +64,7 @@ INTERACTIVE_USAGE_LABELS = {
     "draft_preview": "正在生成的草稿预览",
     "draft_rewrite_startup": "正在启动的草稿改写",
     "match_analysis_startup": "正在启动的匹配分析",
+    "match_analysis": "正在执行的匹配分析",
     "model_listing": "正在读取的模型列表",
     "test_compose": "正在生成的测试写信草稿",
 }
@@ -78,12 +82,13 @@ async def build_llm_profile_deletion_impact(
     include_retirement_in_progress: bool = True,
 ) -> LLMProfileDeletionImpact:
     references = await _reference_counts(session, profile.id)
+    automatic_actions = await _automatic_actions(session, profile.id)
     blockers = await _deletion_blockers(
         session,
         profile.id,
         include_retirement_in_progress=include_retirement_in_progress,
     )
-    revision = _deletion_revision(profile, references, blockers)
+    revision = _deletion_revision(profile, references, automatic_actions, blockers)
     return LLMProfileDeletionImpact(
         profile_id=profile.id,
         profile_name=profile.name,
@@ -92,10 +97,12 @@ async def build_llm_profile_deletion_impact(
         can_delete=not blockers,
         revision=revision,
         references=references,
+        automatic_actions=automatic_actions,
         blockers=blockers,
         warnings=[
             "活动、邮件、通信、匹配、抓取和 Token 用量历史都会保留。",
             "暂停、失败或已取消任务再次运行时必须选择可用模型，不会自动改用默认模型。",
+            "排队中的 AI 草稿、匹配、抓取和信息补全会自动取消；正在执行的外部请求结束前仍会阻止退役。",
             "应用会清除本地可执行凭据；服务商侧密钥仍建议同步撤销或轮换。",
         ],
     )
@@ -169,6 +176,50 @@ async def retire_llm_profile(
                 impact=locked_impact,
             )
         now = utc_now()
+        actions = locked_impact.automatic_actions
+        await _cancel_waiting_draft_tasks(
+            session,
+            actions.cancel_email_task_ids,
+            now=now,
+        )
+        if actions.cancel_match_analysis_job_ids:
+            from app.modules.matching.public import (
+                request_match_analysis_job_cancel_record,
+            )
+
+            for job_id in actions.cancel_match_analysis_job_ids:
+                await request_match_analysis_job_cancel_record(
+                    session,
+                    job_id,
+                    event_name="match_analysis_job.llm_profile_retired",
+                    actor="desktop_ui",
+                )
+        if actions.cancel_crawl_job_ids:
+            from app.modules.crawler.public import cancel_faculty_crawl_job_record
+            from app.modules.professors.public import (
+                request_professor_information_enrichment_cancel,
+            )
+
+            for job_id in actions.cancel_crawl_job_ids:
+                job = await session.get(CrawlJob, job_id)
+                if job is None:
+                    continue
+                if job.job_kind == CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+                    await request_professor_information_enrichment_cancel(
+                        session,
+                        job,
+                        event_name=(
+                            "professor_information_enrichment.llm_profile_retired"
+                        ),
+                        actor="desktop_ui",
+                    )
+                else:
+                    await cancel_faculty_crawl_job_record(
+                        session,
+                        job_id,
+                        event_name="crawl_job.llm_profile_retired",
+                        actor="desktop_ui",
+                    )
         invalidated_plan_count = await _invalidate_pending_change_plans(
             session,
             profile_id=profile.id,
@@ -216,6 +267,9 @@ async def retire_llm_profile(
             references_preserved=impact.references,
             invalidated_plan_count=invalidated_plan_count,
             default_profile_id=current_default_profile_id,
+            canceled_email_task_ids=actions.cancel_email_task_ids,
+            canceled_match_analysis_job_ids=actions.cancel_match_analysis_job_ids,
+            canceled_crawl_job_ids=actions.cancel_crawl_job_ids,
         )
     except BaseException:
         end_llm_profile_retirement(profile.id)
@@ -358,25 +412,10 @@ async def _deletion_blockers(
     active_draft_ids = list(
         await session.scalars(
             select(EmailTask.id)
-            .join(BatchTask, BatchTask.id == EmailTask.batch_task_id, isouter=True)
             .where(
                 EmailTask.llm_profile_id == profile_id,
                 EmailTask.batch_send_canceled_at.is_(None),
-                (
-                    (EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value)
-                    | (
-                        BatchTask.status == BatchTaskStatus.RUNNING.value
-                    )
-                    & EmailTask.status.in_(
-                        [
-                            EmailTaskStatus.DISCOVERED.value,
-                            EmailTaskStatus.MATCHED.value,
-                        ]
-                    )
-                    & batch_item_uses_llm_generation_column(
-                        EmailTask.outreach_generation_mode
-                    )
-                ),
+                EmailTask.status == EmailTaskStatus.GENERATING_DRAFT.value,
             )
             .order_by(EmailTask.id.asc())
         )
@@ -384,8 +423,9 @@ async def _deletion_blockers(
     _append_blocker(
         blockers,
         kind="draft_generation",
-        label="正在生成或等待生成的 AI 草稿",
+        label="正在生成的 AI 草稿",
         ids=active_draft_ids,
+        surface="任务中心 > 发送计划或批量任务详情",
     )
     active_match_job_ids = list(
         await session.scalars(
@@ -395,7 +435,6 @@ async def _deletion_blockers(
                 MatchAnalysisJob.deleted_at.is_(None),
                 MatchAnalysisJob.status.in_(
                     [
-                        MatchAnalysisJobStatus.QUEUED.value,
                         MatchAnalysisJobStatus.RUNNING.value,
                     ]
                 ),
@@ -406,8 +445,9 @@ async def _deletion_blockers(
     _append_blocker(
         blockers,
         kind="match_analysis",
-        label="排队或运行中的匹配分析",
+        label="运行中的匹配分析",
         ids=active_match_job_ids,
+        surface="任务中心 > 匹配任务",
     )
     active_match_run_ids = list(
         await session.scalars(
@@ -424,6 +464,7 @@ async def _deletion_blockers(
         kind="match_analysis_run",
         label="正在执行的单次匹配分析",
         ids=active_match_run_ids,
+        surface="任务中心 > 匹配任务",
     )
     active_crawl_rows = list(
         await session.execute(
@@ -436,7 +477,7 @@ async def _deletion_blockers(
             .where(
                 CrawlJob.deleted_at.is_(None),
                 CrawlJob.status.in_(
-                    [CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value]
+                    [CrawlJobStatus.RUNNING.value]
                 ),
             )
             .order_by(CrawlJob.id.asc())
@@ -451,8 +492,9 @@ async def _deletion_blockers(
     _append_blocker(
         blockers,
         kind="crawl_job",
-        label="排队或运行中的抓取/信息补全任务",
+        label="运行中的抓取/信息补全任务",
         ids=active_crawl_job_ids,
+        surface="任务中心 > 智能抓取或信息补全",
     )
     for kind, count in sorted(get_llm_profile_usage_counts(profile_id).items()):
         if count <= 0:
@@ -463,6 +505,7 @@ async def _deletion_blockers(
                 label=INTERACTIVE_USAGE_LABELS.get(kind, "正在进行的模型请求"),
                 count=count,
                 entity_ids=[],
+                surface="当前操作，无需另行定位；等待操作结束后重试",
             )
         )
     if (
@@ -475,9 +518,144 @@ async def _deletion_blockers(
                 label="另一个删除请求正在处理此模型配置",
                 count=1,
                 entity_ids=[],
+                surface="模型配置页面；等待当前退役请求结束后刷新",
             )
         )
     return blockers
+
+
+async def _automatic_actions(
+    session: AsyncSession,
+    profile_id: int,
+) -> LLMProfileDeletionAutomaticActions:
+    cancel_email_task_ids = list(
+        await session.scalars(
+            select(EmailTask.id)
+            .join(BatchTask, BatchTask.id == EmailTask.batch_task_id)
+            .where(
+                EmailTask.llm_profile_id == profile_id,
+                EmailTask.batch_send_canceled_at.is_(None),
+                BatchTask.status == BatchTaskStatus.RUNNING.value,
+                EmailTask.status.in_(
+                    [
+                        EmailTaskStatus.DISCOVERED.value,
+                        EmailTaskStatus.MATCHED.value,
+                    ]
+                ),
+                batch_item_uses_llm_generation_column(
+                    EmailTask.outreach_generation_mode
+                ),
+            )
+            .order_by(EmailTask.id.asc())
+        )
+    )
+    cancel_match_analysis_job_ids = list(
+        await session.scalars(
+            select(MatchAnalysisJob.id)
+            .where(
+                MatchAnalysisJob.llm_profile_id == profile_id,
+                MatchAnalysisJob.deleted_at.is_(None),
+                MatchAnalysisJob.status == MatchAnalysisJobStatus.QUEUED.value,
+            )
+            .order_by(MatchAnalysisJob.id.asc())
+        )
+    )
+    queued_crawl_rows = list(
+        await session.execute(
+            select(
+                CrawlJob.id,
+                CrawlJob.llm_profile_id,
+                CrawlJobRun.llm_runtime_snapshot,
+            )
+            .outerjoin(CrawlJobRun, CrawlJobRun.id == CrawlJob.current_run_id)
+            .where(
+                CrawlJob.deleted_at.is_(None),
+                CrawlJob.status == CrawlJobStatus.QUEUED.value,
+            )
+            .order_by(CrawlJob.id.asc())
+        )
+    )
+    cancel_crawl_job_ids = [
+        int(job_id)
+        for job_id, job_profile_id, snapshot in queued_crawl_rows
+        if job_profile_id == profile_id
+        or _crawl_snapshot_profile_id(snapshot) == profile_id
+    ]
+    return LLMProfileDeletionAutomaticActions(
+        cancel_email_task_ids=[int(item) for item in cancel_email_task_ids],
+        cancel_match_analysis_job_ids=[
+            int(item) for item in cancel_match_analysis_job_ids
+        ],
+        cancel_crawl_job_ids=cancel_crawl_job_ids,
+    )
+
+
+async def _cancel_waiting_draft_tasks(
+    session: AsyncSession,
+    task_ids: list[int],
+    *,
+    now: datetime,
+) -> None:
+    if not task_ids:
+        return
+    canceled_rows = list(
+        await session.execute(
+            update(EmailTask)
+            .where(
+                EmailTask.id.in_(task_ids),
+                EmailTask.status.in_(
+                    [
+                        EmailTaskStatus.DISCOVERED.value,
+                        EmailTaskStatus.MATCHED.value,
+                    ]
+                ),
+            )
+            .values(
+                status=EmailTaskStatus.CANCELED.value,
+                cancellation_reason=(
+                    EmailTaskCancellationReason.LLM_PROFILE_RETIRED.value
+                ),
+                draft_generation_previous_status=None,
+                draft_generation_started_at=None,
+                draft_claim_id=None,
+                draft_claimed_at=None,
+                draft_lease_expires_at=None,
+                updated_at=now,
+            )
+            .returning(EmailTask.id, EmailTask.batch_task_id)
+            .execution_options(synchronize_session=False)
+        )
+    )
+    canceled_by_batch: dict[int, int] = {}
+    for _task_id, batch_task_id in canceled_rows:
+        if batch_task_id is None:
+            continue
+        canceled_by_batch[int(batch_task_id)] = (
+            canceled_by_batch.get(int(batch_task_id), 0) + 1
+        )
+    for batch_task_id, canceled_count in canceled_by_batch.items():
+        await session.execute(
+            update(BatchTask)
+            .where(BatchTask.id == batch_task_id)
+            .values(
+                target_count=case(
+                    (
+                        BatchTask.target_count > canceled_count,
+                        BatchTask.target_count - canceled_count,
+                    ),
+                    else_=0,
+                ),
+                status=case(
+                    (
+                        BatchTask.target_count <= canceled_count,
+                        BatchTaskStatus.COMPLETED.value,
+                    ),
+                    else_=BatchTask.status,
+                ),
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
 
 
 def _append_blocker(
@@ -486,6 +664,7 @@ def _append_blocker(
     kind: str,
     label: str,
     ids: list[int],
+    surface: str,
 ) -> None:
     if not ids:
         return
@@ -495,6 +674,7 @@ def _append_blocker(
             label=label,
             count=len(ids),
             entity_ids=ids[:MAX_BLOCKER_IDS],
+            surface=surface,
         )
     )
 
@@ -502,6 +682,7 @@ def _append_blocker(
 def _deletion_revision(
     profile: LLMProfile,
     references: LLMProfileReferenceCounts,
+    automatic_actions: LLMProfileDeletionAutomaticActions,
     blockers: list[LLMProfileDeletionBlocker],
 ) -> str:
     payload = {
@@ -509,6 +690,7 @@ def _deletion_revision(
         "updated_at": _serialize_datetime(profile.updated_at),
         "is_default": profile.is_default,
         "references": references.model_dump(mode="json"),
+        "automatic_actions": automatic_actions.model_dump(mode="json"),
         "blockers": [item.model_dump(mode="json") for item in blockers],
     }
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")

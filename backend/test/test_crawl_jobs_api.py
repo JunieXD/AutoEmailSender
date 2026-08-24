@@ -330,9 +330,12 @@ class CrawlJobsApiTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 201, msg=blocked.text)
         blocked_job_id = blocked.json()["id"]
 
-        blocked = self.client.post(f"/api/crawl-jobs/{blocked_job_id}/delete")
-        self.assertEqual(blocked.status_code, 400)
-        self.assertIn("请先中止/取消任务后再删除", blocked.json()["detail"])
+        deleted_active = self.client.post(
+            f"/api/crawl-jobs/{blocked_job_id}/delete"
+        )
+        self.assertEqual(deleted_active.status_code, 200, msg=deleted_active.text)
+        self.assertEqual(deleted_active.json()["status"], "canceled")
+        self.assertIsNotNone(deleted_active.json()["deleted_at"])
 
         for status in [
             "needs_review",
@@ -365,12 +368,6 @@ class CrawlJobsApiTests(unittest.TestCase):
             repeated_delete = self.client.post(f"/api/crawl-jobs/{job_id}/delete")
             self.assertEqual(repeated_delete.status_code, 200, msg=repeated_delete.text)
 
-        canceled = self.client.post(f"/api/crawl-jobs/{blocked_job_id}/cancel")
-        self.assertEqual(canceled.status_code, 200, msg=canceled.text)
-        deleted = self.client.post(f"/api/crawl-jobs/{blocked_job_id}/delete")
-        self.assertEqual(deleted.status_code, 200, msg=deleted.text)
-        self.assertIsNotNone(deleted.json()["deleted_at"])
-
         current = self.client.get("/api/crawl-jobs")
         self.assertEqual(current.status_code, 200)
         self.assertEqual(current.json(), [])
@@ -382,6 +379,7 @@ class CrawlJobsApiTests(unittest.TestCase):
         restored = self.client.post(f"/api/crawl-jobs/{blocked_job_id}/restore")
         self.assertEqual(restored.status_code, 200, msg=restored.text)
         self.assertIsNone(restored.json()["deleted_at"])
+        self.assertEqual(restored.json()["status"], "canceled")
 
         repeated_restore = self.client.post(f"/api/crawl-jobs/{blocked_job_id}/restore")
         self.assertEqual(repeated_restore.status_code, 200, msg=repeated_restore.text)

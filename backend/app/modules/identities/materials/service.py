@@ -61,6 +61,7 @@ class MaterialMutationError(ValueError):
     status_code: int
     code: str
     message: str
+    details: dict[str, object] | None = None
 
     def __str__(self) -> str:
         return self.message
@@ -220,7 +221,10 @@ async def get_identity_for_materials_or_raise(
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == identity_id),
+        .where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
     if identity is None:
         raise MaterialMutationError(404, "IDENTITY_NOT_FOUND", "未找到身份配置")
@@ -520,10 +524,24 @@ def _ensure_material_deletion_allowed(
         and _material_reference_blocks_deletion(task)
     ]
     if blocking_tasks:
+        blockers = [
+            {
+                "kind": "email_task",
+                "id": task.id,
+                "status": task.status,
+                "batch_task_id": task.batch_task_id,
+            }
+            for task in sorted(blocking_tasks, key=lambda item: item.id)
+        ]
         raise MaterialMutationError(
-            400,
+            409,
             "MATERIAL_DELETION_BLOCKED",
-            "当前材料仍被已批准、定时或发送中的任务使用",
+            _material_deletion_blocker_message(blockers),
+            details={
+                "material_id": material_id,
+                "blockers": blockers,
+                "surface": "任务中心",
+            },
         )
 
     unknown_referencing_tasks = [
@@ -534,10 +552,24 @@ def _ensure_material_deletion_allowed(
         and _task_references_material(task, material_id)
     ]
     if unknown_referencing_tasks:
+        blockers = [
+            {
+                "kind": "email_task",
+                "id": task.id,
+                "status": task.status,
+                "batch_task_id": task.batch_task_id,
+            }
+            for task in sorted(unknown_referencing_tasks, key=lambda item: item.id)
+        ]
         raise MaterialMutationError(
-            400,
+            409,
             "MATERIAL_DELETION_BLOCKED",
-            "当前材料仍被未完成任务使用",
+            _material_deletion_blocker_message(blockers),
+            details={
+                "material_id": material_id,
+                "blockers": blockers,
+                "surface": "任务中心",
+            },
         )
 
     completed_ids = set(completed_batch_task_ids)
@@ -550,11 +582,43 @@ def _ensure_material_deletion_allowed(
         ):
             continue
         if _batch_task_references_material(batch_task, material_id):
+            blocker = {
+                "kind": "batch_task",
+                "id": batch_task.id,
+                "status": batch_task.status,
+            }
             raise MaterialMutationError(
-                400,
+                409,
                 "MATERIAL_DELETION_BLOCKED",
-                "当前材料仍被可继续批量任务使用",
+                _material_deletion_blocker_message([blocker]),
+                details={
+                    "material_id": material_id,
+                    "blockers": [blocker],
+                    "surface": "任务中心",
+                },
             )
+
+
+def _material_deletion_blocker_message(
+    blockers: list[dict[str, object]],
+) -> str:
+    shown = blockers[:10]
+    labels = []
+    for blocker in shown:
+        entity_label = "邮件任务" if blocker["kind"] == "email_task" else "批量任务"
+        batch_suffix = (
+            f"，所属批量任务 #{blocker['batch_task_id']}"
+            if blocker.get("batch_task_id") is not None
+            else ""
+        )
+        labels.append(
+            f"{entity_label} #{blocker['id']}（状态 {blocker['status']}{batch_suffix}）"
+        )
+    suffix = " 等" if len(blockers) > len(shown) else ""
+    return (
+        f"暂时无法永久删除：{'、'.join(labels)}{suffix} 仍在使用该材料。"
+        "请到任务中心取消发送或停止对应任务后再试。"
+    )
 
 
 def _completed_batch_task_ids(batch_tasks: list[BatchTask]) -> list[int]:

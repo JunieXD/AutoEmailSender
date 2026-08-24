@@ -462,6 +462,38 @@ class BatchDraftGenerationRuntimeTests(unittest.TestCase):
         self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
         mocked_generate.assert_not_awaited()
 
+    def test_archived_professor_task_is_not_claimed_for_generation(self) -> None:
+        task_ids = self._run_async(
+            self._create_batch_with_tasks([EmailTaskStatus.DISCOVERED.value])
+        )
+
+        async def archive_professor() -> None:
+            async with self.session_factory() as session:
+                task = await session.get(EmailTask, task_ids[0])
+                assert task is not None
+                professor = await session.get(Professor, task.professor_id)
+                assert professor is not None
+                professor.archived_at = datetime.now(UTC)
+                await session.commit()
+
+        self._run_async(archive_professor())
+        with patch(
+            "app.modules.workspace.tasks.runtime.llm_runtime.generate_draft_content",
+            new=AsyncMock(side_effect=AssertionError("已归档导师不应生成草稿")),
+        ) as mocked_generate:
+            processed = self._run_async(
+                run_queued_batch_drafts_once(
+                    self.session_factory,
+                    concurrency=1,
+                    coordinator=BatchDraftGenerationCoordinator(),
+                ),
+            )
+
+        task = self._run_async(self._get_task(task_ids[0]))
+        self.assertEqual(processed, 0)
+        self.assertEqual(task.status, EmailTaskStatus.DISCOVERED.value)
+        mocked_generate.assert_not_awaited()
+
     def test_items_missing_professor_research_direction_use_template_fallback(
         self,
     ) -> None:

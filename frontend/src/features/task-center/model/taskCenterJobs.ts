@@ -30,17 +30,9 @@ export const CRAWL_JOB_STATUS_TONES: Record<CrawlJobStatusDTO, string> = {
   canceled: "border-stone-200 bg-stone-100 text-stone-600",
 };
 
-export const canDeleteCrawlJob = (job: CrawlJobSummaryDTO) =>
-  job.status === "needs_review" ||
-  job.status === "partially_completed" ||
-  job.status === "completed" ||
-  job.status === "failed" ||
-  job.status === "canceled";
+export const canDeleteCrawlJob: (job: CrawlJobSummaryDTO) => boolean = () => true;
 
-export const canDeleteBatchTask = (task: BatchTaskCardDTO) =>
-  task.status === "stopped" ||
-  task.status === "completed" ||
-  task.status === "expired";
+export const canDeleteBatchTask: (task: BatchTaskCardDTO) => boolean = () => true;
 
 export const canOpenBatchResend = (
   task: BatchTaskCardDTO,
@@ -48,16 +40,8 @@ export const canOpenBatchResend = (
 ) =>
   view === "current" && ["expired", "stopped", "completed"].includes(task.status);
 
-export const canDeleteMatchJob = (job: MatchAnalysisJobDTO) =>
-  job.status === "completed" ||
-  job.status === "partial_failed" ||
-  job.status === "failed" ||
-  job.status === "canceled";
+export const canDeleteMatchJob: (job: MatchAnalysisJobDTO) => boolean = () => true;
 
-export const canDeleteInformationEnrichmentJob = (
+export const canDeleteInformationEnrichmentJob: (
   job: ProfessorInformationEnrichmentJobDTO,
-) =>
-  job.status === "partially_completed" ||
-  job.status === "completed" ||
-  job.status === "failed" ||
-  job.status === "canceled";
+) => boolean = () => true;

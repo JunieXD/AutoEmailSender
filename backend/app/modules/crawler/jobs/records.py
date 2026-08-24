@@ -1098,10 +1098,11 @@ async def delete_faculty_crawl_job_record(
 ) -> CrawlJob:
     job = await get_faculty_crawl_job_or_raise(session, job_id)
     if job.status not in CRAWL_JOB_DELETABLE_STATUSES:
-        raise CrawlJobRecordError(
-            status_code=400,
-            code="CRAWL_JOB_NOT_DELETABLE",
-            message="请先中止/取消任务后再删除",
+        job = await cancel_faculty_crawl_job_record(
+            session,
+            job_id,
+            event_name="crawl_job.trash_cancel_requested",
+            actor=actor,
         )
     previous_deleted_at = job.deleted_at
     if job.deleted_at is None:

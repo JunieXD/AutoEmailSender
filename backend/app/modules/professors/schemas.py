@@ -399,3 +399,6 @@ class ProfessorActionResult(ApiSchema):
     ok: bool
     affected_count: int
     message: str
+    canceled_email_task_ids: list[int] = Field(default_factory=list)
+    canceled_match_analysis_item_ids: list[int] = Field(default_factory=list)
+    canceled_information_enrichment_task_ids: list[int] = Field(default_factory=list)

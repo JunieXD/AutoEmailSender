@@ -47,6 +47,10 @@ from app.services.match_results import (
 INTERRUPTED_MATCH_ANALYSIS_RUN_ERROR = "匹配分析因桌面端进程中断而停止"
 
 
+def _professor_archived_message(professor_id: int) -> str:
+    return f"导师 #{professor_id} 已在回收站，无法继续匹配分析"
+
+
 def _has_professor_match_evidence(professor: Professor) -> bool:
     return bool((professor.research_direction or "").strip()) or any(
         str(paper).strip() for paper in professor.recent_papers or []
@@ -193,6 +197,8 @@ async def _calculate_identity_professor_match(
     force: bool,
     cancel_requested: Callable[[], Awaitable[bool]] | None,
 ) -> MatchCalculationActionResult:
+    if professor.archived_at is not None:
+        raise ValueError(_professor_archived_message(professor.id))
     try:
         match_material = await _resolve_match_primary_material(session, match_identity)
     except ValueError:
@@ -245,16 +251,17 @@ async def _calculate_identity_professor_match(
         )
         await session.commit()
     try:
-        generation = await llm_runtime.generate_match_evaluation(
-            identity=match_identity,
-            primary_material=match_material,
-            llm_profile=llm_profile,
-            professor=professor,
-            available_materials=[],
-            intended_research_direction=runtime_settings.intended_research_direction,
-            session=session,
-            adaptation=adaptation,
-        )
+        with track_llm_profile_usage(llm_profile.id, "match_analysis"):
+            generation = await llm_runtime.generate_match_evaluation(
+                identity=match_identity,
+                primary_material=match_material,
+                llm_profile=llm_profile,
+                professor=professor,
+                available_materials=[],
+                intended_research_direction=runtime_settings.intended_research_direction,
+                session=session,
+                adaptation=adaptation,
+            )
     except asyncio.CancelledError:
         _mark_match_analysis_run_failed(
             run,
@@ -307,6 +314,24 @@ async def _calculate_identity_professor_match(
             source_task.updated_at = utc_now()
         await session.commit()
         raise MatchCalculationCanceledError("匹配分析任务已取消")
+
+    professor_is_active = await session.scalar(
+        select(Professor.id).where(
+            Professor.id == professor.id,
+            Professor.archived_at.is_(None),
+        )
+    )
+    if professor_is_active is None:
+        message = _professor_archived_message(professor.id)
+        _mark_match_analysis_run_failed(
+            run,
+            error_kind="professor_archived",
+            error_message=message,
+        )
+        if source_task is not None:
+            source_task.updated_at = utc_now()
+        await session.commit()
+        raise ValueError(message)
 
     result = generation.result
     run.status = "succeeded"

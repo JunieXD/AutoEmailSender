@@ -192,6 +192,82 @@ class MigrationScriptTests(unittest.TestCase):
         self.assertNotIn("deleted_at", downgraded_columns)
         self.assertEqual(active_name, "可复用名称")
 
+    def test_safe_identity_retirement_migration_supports_email_reuse(self) -> None:
+        database_path = Path(self.temp_dir.name) / "identity_retirement.db"
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+        previous_revision = "20260824_safe_llm_retire"
+        migration_revision = "20260824_safe_identity_retire"
+
+        def insert_identity(
+            connection: sqlite3.Connection,
+            email_address: str,
+        ) -> int:
+            cursor = connection.execute(
+                """
+                INSERT INTO identity_profiles (
+                    name, profile_name, sender_name, email_address,
+                    smtp_host, smtp_username, smtp_password
+                )
+                VALUES ('迁移测试身份', '迁移测试身份', '迁移测试身份', ?,
+                        'smtp.example.com', ?, 'secret')
+                """,
+                (email_address, email_address),
+            )
+            return int(cursor.lastrowid)
+
+        self._run_alembic(env, "upgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            retired_id = insert_identity(connection, "reusable-identity@example.com")
+            connection.commit()
+
+        self._run_alembic(env, "upgrade", migration_revision)
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('identity_profiles')")
+            }
+            connection.execute(
+                "UPDATE identity_profiles SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (retired_id,),
+            )
+            active_id = insert_identity(connection, "reusable-identity@example.com")
+            with self.assertRaises(sqlite3.IntegrityError):
+                insert_identity(connection, "reusable-identity@example.com")
+            connection.commit()
+            index_sql = connection.execute(
+                """
+                SELECT sql
+                FROM sqlite_master
+                WHERE type = 'index'
+                  AND name = 'uq_identity_profiles_active_email_address'
+                """
+            ).fetchone()[0]
+
+        self.assertIn("deleted_at", columns)
+        self.assertIn("WHERE deleted_at IS NULL", index_sql)
+        with self.assertRaisesRegex(RuntimeError, "Cannot downgrade safe identity"):
+            run_alembic_in_process(env, "downgrade", previous_revision)
+
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "DELETE FROM identity_profiles WHERE id = ?",
+                (retired_id,),
+            )
+            connection.commit()
+        self._run_alembic(env, "downgrade", previous_revision)
+        with sqlite3.connect(database_path) as connection:
+            downgraded_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info('identity_profiles')")
+            }
+            active_email = connection.execute(
+                "SELECT email_address FROM identity_profiles WHERE id = ?",
+                (active_id,),
+            ).fetchone()[0]
+        self.assertNotIn("deleted_at", downgraded_columns)
+        self.assertEqual(active_email, "reusable-identity@example.com")
+
     def test_crawl_enrichment_operation_migration_preserves_existing_jobs(self) -> None:
         database_path = Path(self.temp_dir.name) / "crawl_enrichment_operation.db"
         env = os.environ.copy()

@@ -30,10 +30,12 @@ from app.models import (
 )
 from app.modules.llm import runtime as llm_runtime
 from app.modules.matching.public import (
+    calculate_identity_professor_match,
     create_match_analysis_job,
     request_match_analysis_job_cancel,
     run_queued_match_analysis_jobs_once,
 )
+from app.modules.professors.mutations import archive_professor_record
 from app.modules.matching.job_runtime import (
     _MatchAnalysisItemClaim,
     _claim_next_match_analysis_item,
@@ -96,6 +98,117 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
         self.assertEqual([item.status for item in items], ["queued", "skipped"])
         self.assertIsNone(items[0].email_task_id)
         self.assertEqual(items[1].skip_reason, "缺少研究方向或近期论文")
+
+    def test_archived_professor_cannot_start_direct_match_analysis(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        self._run_async(self._archive_professor(professor_ids[0]))
+
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
+        ) as mocked_generation:
+            with self.assertRaisesRegex(
+                ValueError,
+                rf"导师 #{professor_ids[0]} 已在回收站",
+            ):
+                self._run_async(
+                    calculate_identity_professor_match(
+                        self.session_factory,
+                        active_identity_id=identity_id,
+                        professor_id=professor_ids[0],
+                        llm_profile_id=llm_profile_id,
+                    ),
+                )
+
+        mocked_generation.assert_not_awaited()
+        self.assertEqual(self._run_async(self._list_match_analysis_runs()), [])
+        self.assertEqual(self._run_async(self._list_canonical_match_results()), [])
+
+    def test_archiving_professor_skips_queued_match_item(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+
+        archive_result = self._run_async(self._archive_professor(professor_ids[0]))
+        with patch(
+            "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+            AsyncMock(return_value=self._build_match_evaluation_result(match_score=88)),
+        ) as mocked_generation:
+            processed = self._run_async(
+                run_queued_match_analysis_jobs_once(
+                    self.session_factory,
+                    item_concurrency=1,
+                ),
+            )
+
+        [item] = self._run_async(self._get_job_items(job.id))
+        stored_job = self._run_async(self._get_job(job.id))
+        self.assertEqual(archive_result[3], [item.id])
+        self.assertEqual(processed, 0)
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.SKIPPED.value)
+        self.assertIn("回收站", item.skip_reason or "")
+        self.assertEqual(stored_job.status, MatchAnalysisJobStatus.FAILED.value)
+        self.assertEqual(stored_job.skipped_count, 1)
+        mocked_generation.assert_not_awaited()
+
+    def test_archiving_professor_fences_late_match_result(self) -> None:
+        identity_id, llm_profile_id, professor_ids = self._run_async(
+            self._seed_create_job_data(),
+        )
+        job = self._run_async(
+            create_match_analysis_job(
+                self.session_factory,
+                identity_id=identity_id,
+                llm_profile_id=llm_profile_id,
+                professor_ids=[professor_ids[0]],
+            ),
+        )
+
+        async def scenario() -> tuple[int, tuple[object, ...]]:
+            generation_started = asyncio.Event()
+            release_generation = asyncio.Event()
+
+            async def delayed_generation(**_kwargs):
+                generation_started.set()
+                await release_generation.wait()
+                return self._build_match_evaluation_result(match_score=96)
+
+            with patch(
+                "app.modules.matching.task_analysis.llm_runtime.generate_match_evaluation",
+                AsyncMock(side_effect=delayed_generation),
+            ):
+                worker = asyncio.create_task(
+                    run_queued_match_analysis_jobs_once(
+                        self.session_factory,
+                        item_concurrency=1,
+                    ),
+                )
+                await asyncio.wait_for(generation_started.wait(), timeout=2)
+                archived = await self._archive_professor(professor_ids[0])
+                release_generation.set()
+                processed = await asyncio.wait_for(worker, timeout=3)
+                return processed, archived
+
+        processed, archive_result = self._run_async(scenario())
+        [item] = self._run_async(self._get_job_items(job.id))
+        runs = self._run_async(self._list_match_analysis_runs())
+        self.assertEqual(processed, 1)
+        self.assertEqual(archive_result[3], [item.id])
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.SKIPPED.value)
+        self.assertEqual(self._run_async(self._list_canonical_match_results()), [])
+        self.assertEqual(len(runs), 1)
+        self.assertFalse(runs[0].success)
+        self.assertIn(runs[0].error_kind, {"canceled", "professor_archived"})
 
     def test_create_job_uses_local_time_in_default_name(self) -> None:
         identity_id, llm_profile_id, professor_ids = self._run_async(
@@ -1114,6 +1227,17 @@ class MatchAnalysisJobRuntimeTests(unittest.TestCase):
             job = await session.get(MatchAnalysisJob, job_id)
             assert job is not None
             return job
+
+    async def _archive_professor(self, professor_id: int) -> tuple[object, ...]:
+        async with self.session_factory() as session:
+            result = await archive_professor_record(
+                session,
+                professor_id,
+                event_name="test.professor.archived",
+                actor="test",
+            )
+            await session.commit()
+            return result
 
     async def _get_email_task(self, task_id: int) -> EmailTask:
         async with self.session_factory() as session:

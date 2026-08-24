@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.identities.public import (
+    RETIRED_IDENTITY_MESSAGE,
     build_material_download_name,
     ensure_material_extracted_text,
     serialize_material,
+    track_identity_profile_usage,
 )
 from app.models import (
     IdentityMaterial,
@@ -199,39 +201,40 @@ async def generate_test_compose_draft(
         if active_llm_profile is None:
             raise ValueError(DELETED_LLM_PROFILE_MESSAGE)
         llm_profile = active_llm_profile
-        with track_llm_profile_usage(llm_profile.id, "test_compose"):
-            adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
-                session, llm_profile
-            )
-            rewrite_preferences = llm_runtime.DraftRewritePreferences(
-                draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
-                draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
-                draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
-                draft_rewrite_length=runtime_settings.draft_rewrite_length,
-                draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
-                draft_template_preservation=(
-                    runtime_settings.draft_template_preservation
-                ),
-                draft_custom_instruction=runtime_settings.draft_custom_instruction,
-                intended_research_direction=(
-                    runtime_settings.intended_research_direction
-                ),
-            )
-            generation = await llm_runtime.generate_draft_content(
-                identity=identity,
-                primary_material=primary_material,
-                llm_profile=llm_profile,
-                professor=pseudo_professor,
-                available_materials=[],
-                custom_subject=template_subject,
-                custom_body=template_body,
-                custom_body_html=template_body_html,
-                current_match=None,
-                max_tokens=runtime_settings.draft_max_tokens,
-                rewrite_preferences=rewrite_preferences,
-                session=session,
-                adaptation=adaptation,
-            )
+        with track_identity_profile_usage(identity.id, "test_compose_draft"):
+            with track_llm_profile_usage(llm_profile.id, "test_compose"):
+                adaptation = await llm_runtime.ensure_llm_runtime_adaptation(
+                    session, llm_profile
+                )
+                rewrite_preferences = llm_runtime.DraftRewritePreferences(
+                    draft_rewrite_intensity=runtime_settings.draft_rewrite_intensity,
+                    draft_rewrite_tone=runtime_settings.draft_rewrite_tone,
+                    draft_rewrite_formality=runtime_settings.draft_rewrite_formality,
+                    draft_rewrite_length=runtime_settings.draft_rewrite_length,
+                    draft_rewrite_specificity=runtime_settings.draft_rewrite_specificity,
+                    draft_template_preservation=(
+                        runtime_settings.draft_template_preservation
+                    ),
+                    draft_custom_instruction=runtime_settings.draft_custom_instruction,
+                    intended_research_direction=(
+                        runtime_settings.intended_research_direction
+                    ),
+                )
+                generation = await llm_runtime.generate_draft_content(
+                    identity=identity,
+                    primary_material=primary_material,
+                    llm_profile=llm_profile,
+                    professor=pseudo_professor,
+                    available_materials=[],
+                    custom_subject=template_subject,
+                    custom_body=template_body,
+                    custom_body_html=template_body_html,
+                    current_match=None,
+                    max_tokens=runtime_settings.draft_max_tokens,
+                    rewrite_preferences=rewrite_preferences,
+                    session=session,
+                    adaptation=adaptation,
+                )
         compose_session.subject = generation.result.subject
         compose_session.body_text = generation.result.body_text
         compose_session.body_html = generation.result.body_html
@@ -322,15 +325,16 @@ async def send_test_compose_message(
     )
 
     try:
-        result = await mail_runtime.send_email_to_recipient(
-            identity=identity,
-            recipient_name=TEST_RECIPIENT_NAME,
-            recipient_email=identity.email_address,
-            subject=subject,
-            body_text=body_text,
-            body_html=body_html,
-            attachments=attachments,
-        )
+        with track_identity_profile_usage(identity.id, "test_compose_send"):
+            result = await mail_runtime.send_email_to_recipient(
+                identity=identity,
+                recipient_name=TEST_RECIPIENT_NAME,
+                recipient_email=identity.email_address,
+                subject=subject,
+                body_text=body_text,
+                body_html=body_html,
+                attachments=attachments,
+            )
         message = TestComposeMessage(
             session_id=compose_session.id,
             identity_id=identity_id,
@@ -560,10 +564,13 @@ async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProf
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == identity_id),
+        .where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
     if not identity:
-        raise ValueError("未找到身份配置")
+        raise ValueError(RETIRED_IDENTITY_MESSAGE)
     return identity
 
 

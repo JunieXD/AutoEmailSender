@@ -103,6 +103,10 @@ const DELIVERY_STATUS_OPTIONS: Record<
     { value: 'replied', label: '已回复' },
     { value: 'canceled_schedule', label: '已取消定时' },
     { value: 'canceled_send', label: '已取消发送' },
+    { value: 'removed_from_batch', label: '已从批量任务移除' },
+    { value: 'professor_archived', label: '导师已移入回收站' },
+    { value: 'identity_retired', label: '发件身份已退役' },
+    { value: 'llm_profile_retired', label: '模型配置已退役' },
   ],
 };
 
@@ -120,6 +124,10 @@ const DELIVERY_STATUS_TONES: Record<EmailDeliveryStatus, string> = {
   replied: 'border-teal-200 bg-teal-50 text-teal-700',
   canceled_schedule: 'border-stone-200 bg-stone-100 text-stone-600',
   canceled_send: 'border-stone-200 bg-stone-100 text-stone-600',
+  removed_from_batch: 'border-stone-200 bg-stone-100 text-stone-600',
+  professor_archived: 'border-stone-200 bg-stone-100 text-stone-600',
+  identity_retired: 'border-stone-200 bg-stone-100 text-stone-600',
+  llm_profile_retired: 'border-stone-200 bg-stone-100 text-stone-600',
 };
 
 const DELIVERY_STATUS_VIEWS: Record<EmailDeliveryStatus, EmailDeliveryView> = {
@@ -136,6 +144,10 @@ const DELIVERY_STATUS_VIEWS: Record<EmailDeliveryStatus, EmailDeliveryView> = {
   replied: 'history',
   canceled_schedule: 'history',
   canceled_send: 'history',
+  removed_from_batch: 'history',
+  professor_archived: 'history',
+  identity_retired: 'history',
+  llm_profile_retired: 'history',
 };
 
 const DEFAULT_DELIVERY_SORTS: Record<EmailDeliveryView, EmailDeliverySort> = {
@@ -295,7 +307,12 @@ const DeliveryStatusBadge = ({ item }: { item: EmailDeliveryItemDTO }) => (
       <AlertTriangle className="h-3.5 w-3.5" />
     ) : item.status === 'sent' || item.status === 'replied' ? (
       <CheckCircle2 className="h-3.5 w-3.5" />
-    ) : item.status === 'canceled_schedule' || item.status === 'canceled_send' ? (
+    ) : item.status === 'canceled_schedule' ||
+      item.status === 'canceled_send' ||
+      item.status === 'removed_from_batch' ||
+      item.status === 'professor_archived' ||
+      item.status === 'identity_retired' ||
+      item.status === 'llm_profile_retired' ? (
       <Ban className="h-3.5 w-3.5" />
     ) : (
       <Clock3 className="h-3.5 w-3.5" />
@@ -731,6 +748,11 @@ export const EmailDeliveryPlan = ({
   const openSource = (item: EmailDeliveryItemDTO) => {
     if (item.source === 'batch' && item.batch_task_id) {
       onOpenBatchTask(item.identity_id, item.batch_task_id);
+      return;
+    }
+    if (item.professor_archived_at) {
+      const keyword = item.professor_email?.trim() || item.professor_name;
+      navigate(`/professors?archive=archived&keyword=${encodeURIComponent(keyword)}`);
       return;
     }
     setSelectedIdentityId(item.identity_id);
@@ -1324,10 +1346,18 @@ export const EmailDeliveryPlan = ({
                   立即发送
                 </button>
               ) : null}
-              <button type="button" onClick={() => openSource(selectedItem)} className="ui-btn-secondary">
-                <ExternalLink className="h-4 w-4" />
-                {selectedItem.source === 'manual' ? '打开工作区' : '打开所属批次'}
-              </button>
+              {selectedItem.source === 'batch' ||
+              selectedItem.professor_archived_at ||
+              !selectedItem.identity_retired_at ? (
+                <button type="button" onClick={() => openSource(selectedItem)} className="ui-btn-secondary">
+                  <ExternalLink className="h-4 w-4" />
+                  {selectedItem.source === 'batch'
+                    ? '打开所属批次'
+                    : selectedItem.professor_archived_at
+                      ? '查看回收站导师'
+                      : '打开工作区'}
+                </button>
+              ) : null}
               {selectedItem.can_reschedule ? (
                 <button type="button" onClick={() => openReschedule(selectedItem)} className="ui-btn-primary">
                   <CalendarClock className="h-4 w-4" />

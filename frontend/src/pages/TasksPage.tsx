@@ -27,7 +27,11 @@ const sectionLoadingFallback = (
 
 export const TasksPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { selectedIdentityId, setSelectedIdentityId } = useSelectionContext();
+  const {
+    identities = [],
+    selectedIdentityId,
+    setSelectedIdentityId,
+  } = useSelectionContext();
   const [pendingCrawlJobHandoff, setPendingCrawlJobHandoff] =
     useState<PendingCrawlJobHandoff | null>(null);
   const crawlHandoffTokenRef = useRef(0);
@@ -71,7 +75,9 @@ export const TasksPage = () => {
 
   const openBatchTask = useCallback(
     (identityId: number, batchTaskId: number) => {
-      setSelectedIdentityId(identityId);
+      if (identities.some((identity) => identity.id === identityId)) {
+        setSelectedIdentityId(identityId);
+      }
       setSearchParams((current) => {
         const next = new URLSearchParams(current);
         next.set("section", "background");
@@ -80,7 +86,7 @@ export const TasksPage = () => {
         return next;
       });
     },
-    [setSearchParams, setSelectedIdentityId],
+    [identities, setSearchParams, setSelectedIdentityId],
   );
 
   useAgentUiHandoffSurface("tasks.center", async (handoff) => {

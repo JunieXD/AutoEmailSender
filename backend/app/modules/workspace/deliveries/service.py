@@ -52,6 +52,10 @@ DELIVERY_STATUS_FILTERS = {
     "replied",
     "canceled_schedule",
     "canceled_send",
+    "removed_from_batch",
+    "professor_archived",
+    "identity_retired",
+    "llm_profile_retired",
 }
 DEFAULT_DELIVERY_SORTS = {
     "upcoming": "scheduled_asc",
@@ -116,8 +120,14 @@ def _history_condition():
         EmailTask.batch_send_canceled_at.is_not(None),
         and_(
             EmailTask.status == EmailTaskStatus.CANCELED.value,
-            EmailTask.cancellation_reason
-            == EmailTaskCancellationReason.USER_REMOVED.value,
+            EmailTask.cancellation_reason.in_(
+                {
+                    EmailTaskCancellationReason.USER_REMOVED.value,
+                    EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value,
+                    EmailTaskCancellationReason.IDENTITY_RETIRED.value,
+                    EmailTaskCancellationReason.LLM_PROFILE_RETIRED.value,
+                },
+            ),
         ),
     )
 
@@ -201,6 +211,30 @@ def _status_condition(status: str):
         return EmailTask.schedule_canceled_at.is_not(None)
     if status == "canceled_send":
         return EmailTask.batch_send_canceled_at.is_not(None)
+    if status == "removed_from_batch":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.USER_REMOVED.value,
+        )
+    if status == "professor_archived":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value,
+        )
+    if status == "identity_retired":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.IDENTITY_RETIRED.value,
+        )
+    if status == "llm_profile_retired":
+        return and_(
+            EmailTask.status == EmailTaskStatus.CANCELED.value,
+            EmailTask.cancellation_reason
+            == EmailTaskCancellationReason.LLM_PROFILE_RETIRED.value,
+        )
     raise ValueError("未知发送状态筛选")
 
 
@@ -455,6 +489,39 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
     if task.status == EmailTaskStatus.SCHEDULE_MISSED.value:
         return "schedule_missed", "错过计划", "应用未在计划时间运行，请重新决定发送时间"
     if task.status == EmailTaskStatus.CANCELED.value:
+        if task.cancellation_reason == EmailTaskCancellationReason.USER_REMOVED.value:
+            return (
+                "removed_from_batch",
+                "已从批量任务移除",
+                "该发送项已从所属批量任务移除，历史记录仍保留",
+            )
+        if (
+            task.cancellation_reason
+            == EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value
+        ):
+            return (
+                "professor_archived",
+                "导师已移入回收站",
+                "导师已移入回收站，因此这封邮件未发送",
+            )
+        if (
+            task.cancellation_reason
+            == EmailTaskCancellationReason.IDENTITY_RETIRED.value
+        ):
+            return (
+                "identity_retired",
+                "发件身份已退役",
+                "发件身份已退役，因此这封邮件未发送",
+            )
+        if (
+            task.cancellation_reason
+            == EmailTaskCancellationReason.LLM_PROFILE_RETIRED.value
+        ):
+            return (
+                "llm_profile_retired",
+                "模型配置已退役",
+                "生成草稿所需的模型配置已退役，因此这封邮件未发送",
+            )
         if (
             task.cancellation_reason
             in {
@@ -530,9 +597,11 @@ def _serialize_delivery(
         professor_id=task.professor_id,
         professor_name=task.professor.name,
         professor_email=task.professor.email,
+        professor_archived_at=task.professor.archived_at,
         identity_id=task.identity_id,
         identity_name=task.identity.profile_name,
         sender_email=task.identity.email_address,
+        identity_retired_at=task.identity.deleted_at,
         subject=task.approved_subject
         or task.generated_subject
         or task.outreach_template_subject,
@@ -567,6 +636,7 @@ def _serialize_delivery(
             EmailTaskStatus.SENDING.value,
             EmailTaskStatus.SENT.value,
             EmailTaskStatus.REPLY_DETECTED.value,
+            EmailTaskStatus.CANCELED.value,
         },
     )
 

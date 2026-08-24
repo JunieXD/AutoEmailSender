@@ -35,9 +35,11 @@ class EmailDeliveryItemRead(ApiSchema):
     professor_id: int
     professor_name: str
     professor_email: str | None
+    professor_archived_at: datetime | None
     identity_id: int
     identity_name: str
     sender_email: str
+    identity_retired_at: datetime | None
     subject: str | None
     attachment_count: int = 0
     attachment_size_bytes: int = 0

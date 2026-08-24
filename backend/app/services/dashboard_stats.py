@@ -99,7 +99,12 @@ async def build_dashboard_overview(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> DashboardOverviewRead:
-    identity = await session.get(IdentityProfile, identity_id)
+    identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if identity is None:
         raise ValueError("未找到身份")
     communication_scope = await resolve_identity_communication_scope(

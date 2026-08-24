@@ -406,7 +406,10 @@ async def _load_identity_for_matching(
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == identity_id),
+        .where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
 
 

@@ -80,9 +80,11 @@ const buildItem = (
   professor_id: 21,
   professor_name: '张老师',
   professor_email: 'mentor@example.edu',
+  professor_archived_at: null,
   identity_id: 1,
   identity_name: '申请身份 A',
   sender_email: 'a@example.com',
+  identity_retired_at: null,
   subject: '博士申请咨询',
   attachment_count: 1,
   attachment_size_bytes: 1024,
@@ -371,6 +373,122 @@ describe('EmailDeliveryPlan', () => {
       '邮件状态已更新',
       '已切换到“历史”查看。',
     );
+  });
+
+  it.each([
+    ['removed_from_batch', '已从批量任务移除'],
+    ['professor_archived', '导师已移入回收站'],
+    ['identity_retired', '发件身份已退役'],
+    ['llm_profile_retired', '模型配置已退役'],
+  ] as const)('shows the %s deletion outcome in history', async (status, label) => {
+    apiMocks.listEmailDeliveries.mockResolvedValue(
+      buildList({
+        items: [
+          buildItem({
+            status,
+            status_label: label,
+            status_description: `${label}，因此这封邮件未发送`,
+            professor_archived_at:
+              status === 'professor_archived' ? '2099-08-08T02:00:00Z' : null,
+            identity_retired_at:
+              status === 'identity_retired' ? '2099-08-08T02:00:00Z' : null,
+            scheduled_at: null,
+            can_reschedule: false,
+            can_cancel: false,
+            can_send_now: false,
+            can_edit: false,
+          }),
+        ],
+        counts: { upcoming: 0, attention: 0, history: 1 },
+        total_count: 1,
+        total_pages: 1,
+      }),
+    );
+
+    renderPlan('/tasks?section=delivery&view=history');
+
+    expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+    if (status === 'professor_archived') {
+      expect(
+        screen.getByRole('button', { name: '查看回收站导师' }),
+      ).toBeInTheDocument();
+    }
+    if (status === 'identity_retired') {
+      expect(
+        screen.queryByRole('button', { name: '打开工作区' }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it('keeps a sent result while linking a subsequently archived professor to the recycle bin', async () => {
+    apiMocks.listEmailDeliveries.mockResolvedValue(
+      buildList({
+        items: [
+          buildItem({
+            status: 'sent',
+            status_label: '已发送',
+            status_description: '邮件已成功交给发件服务器',
+            professor_archived_at: '2099-08-09T02:00:00Z',
+            scheduled_at: null,
+            sent_at: '2099-08-08T02:00:00Z',
+            can_reschedule: false,
+            can_cancel: false,
+            can_send_now: false,
+            can_edit: false,
+          }),
+        ],
+        counts: { upcoming: 0, attention: 0, history: 1 },
+        total_count: 1,
+        total_pages: 1,
+      }),
+    );
+
+    renderPlan('/tasks?section=delivery&view=history');
+
+    expect((await screen.findAllByText('已发送')).length).toBeGreaterThan(0);
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+    expect(
+      screen.getByRole('button', { name: '查看回收站导师' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a sent result without offering an invalid workspace for a retired identity', async () => {
+    apiMocks.listEmailDeliveries.mockResolvedValue(
+      buildList({
+        items: [
+          buildItem({
+            status: 'sent',
+            status_label: '已发送',
+            status_description: '邮件已成功交给发件服务器',
+            identity_retired_at: '2099-08-09T02:00:00Z',
+            scheduled_at: null,
+            sent_at: '2099-08-08T02:00:00Z',
+            can_reschedule: false,
+            can_cancel: false,
+            can_send_now: false,
+            can_edit: false,
+          }),
+        ],
+        counts: { upcoming: 0, attention: 0, history: 1 },
+        total_count: 1,
+        total_pages: 1,
+      }),
+    );
+
+    renderPlan('/tasks?section=delivery&view=history');
+
+    expect((await screen.findAllByText('已发送')).length).toBeGreaterThan(0);
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+    expect(
+      screen.queryByRole('button', { name: '打开工作区' }),
+    ).not.toBeInTheDocument();
   });
 
   it('does not overlap polling requests while the previous request is running', async () => {

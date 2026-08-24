@@ -183,6 +183,11 @@ async def delete_llm_profile(
                     ),
                     "invalidated_plan_count": result.invalidated_plan_count,
                     "default_profile_id": result.default_profile_id,
+                    "canceled_email_task_ids": result.canceled_email_task_ids,
+                    "canceled_match_analysis_job_ids": (
+                        result.canceled_match_analysis_job_ids
+                    ),
+                    "canceled_crawl_job_ids": result.canceled_crawl_job_ids,
                 },
             )
             await session.commit()

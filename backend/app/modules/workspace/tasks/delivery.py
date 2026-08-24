@@ -167,12 +167,17 @@ async def dispatch_due_tasks_once(
                             EmailTask.batch_task_id == BatchTask.id,
                             isouter=True,
                         )
+                        .join(
+                            IdentityProfile,
+                            IdentityProfile.id == EmailTask.identity_id,
+                        )
                         .where(
                             or_(
                                 EmailTask.status == EmailTaskStatus.APPROVED.value,
                                 EmailTask.status == EmailTaskStatus.SCHEDULED.value,
                             ),
                             EmailTask.batch_send_canceled_at.is_(None),
+                            IdentityProfile.deleted_at.is_(None),
                             or_(
                                 EmailTask.scheduled_at.is_(None),
                                 EmailTask.scheduled_at <= now_utc,
@@ -309,7 +314,10 @@ async def _reserve_identity_send_window(
     next_send_after = now + timedelta(
         seconds=random.uniform(min_seconds, max_seconds),
     )
-    conditions = [IdentityProfile.id == identity.id]
+    conditions = [
+        IdentityProfile.id == identity.id,
+        IdentityProfile.deleted_at.is_(None),
+    ]
     if require_window_open:
         conditions.append(
             or_(
@@ -619,6 +627,40 @@ async def dispatch_email_task(
             task.updated_at = utc_now()
             await session.commit()
             return True
+
+        identity_lock = await session.execute(
+            update(IdentityProfile)
+            .where(
+                IdentityProfile.id == task.identity_id,
+                IdentityProfile.deleted_at.is_(None),
+            )
+            .values(updated_at=IdentityProfile.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        if identity_lock.rowcount != 1:
+            task.status = EmailTaskStatus.CANCELED.value
+            task.cancellation_reason = (
+                EmailTaskCancellationReason.IDENTITY_RETIRED.value
+            )
+            task.scheduled_at = None
+            task.updated_at = utc_now()
+            await session.commit()
+            return True
+
+        if task.batch_task is not None:
+            batch_lock = await session.execute(
+                update(BatchTask)
+                .where(
+                    BatchTask.id == task.batch_task.id,
+                    BatchTask.status == BatchTaskStatus.RUNNING.value,
+                    BatchTask.deleted_at.is_(None),
+                )
+                .values(updated_at=BatchTask.updated_at)
+                .execution_options(synchronize_session=False)
+            )
+            if batch_lock.rowcount != 1:
+                await session.rollback()
+                return False
 
         claimed_at = as_utc_aware(now) if now is not None else utc_now()
         if _is_task_scheduled_for_future(task, claimed_at):

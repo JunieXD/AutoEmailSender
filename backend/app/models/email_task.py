@@ -59,6 +59,8 @@ class EmailTaskCancellationReason(StrEnum):
     SCHEDULE_EXPIRED = "schedule_expired"
     USER_REMOVED = "user_removed"
     PROFESSOR_ARCHIVED = "professor_archived"
+    IDENTITY_RETIRED = "identity_retired"
+    LLM_PROFILE_RETIRED = "llm_profile_retired"
 
 
 class EmailTask(Base):

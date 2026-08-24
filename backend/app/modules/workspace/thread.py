@@ -614,7 +614,10 @@ async def _get_identity(session: AsyncSession, identity_id: int) -> IdentityProf
         .options(
             selectinload(IdentityProfile.current_primary_material),
         )
-        .where(IdentityProfile.id == identity_id),
+        .where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        ),
     )
     if not identity:
         raise HTTPException(status_code=404, detail="未找到身份配置")

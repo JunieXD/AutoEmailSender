@@ -4,9 +4,8 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-
-from fastapi import HTTPException
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -459,7 +458,7 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             ),
         )
 
-    def test_deleting_shared_match_source_is_blocked_and_preserves_match_history(
+    def test_retiring_shared_match_source_preserves_match_history(
         self,
     ) -> None:
         source_identity_id, active_identity_id, _ = self._run_async(
@@ -497,8 +496,8 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             ),
         )
 
-        self.assertIsNotNone(state["source_identity"])
-        self.assertIsNotNone(state["active_communication_group_id"])
+        self.assertIsNotNone(state["source_identity"].deleted_at)
+        self.assertIsNone(state["active_communication_group_id"])
         self.assertEqual(len(state["canonical_results"]), 1)
         self.assertEqual(len(state["runs"]), 1)
         self.assertEqual(
@@ -506,10 +505,10 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(len([item for item in state["job_item_run_ids"] if item]), 1)
         self.assertEqual(state["task_match_source_identity_id"], source_identity_id)
-        self.assertEqual(state["resolved_match_reason"], generation.result.match_reason)
-        self.assertEqual(state["delete_status_code"], 409)
+        self.assertIsNone(state["resolved_match_reason"])
+        self.assertEqual(state["delete_status_code"], 204)
 
-    def test_deleting_active_identity_is_blocked_and_preserves_shared_task_history(
+    def test_retiring_active_identity_preserves_shared_task_history(
         self,
     ) -> None:
         source_identity_id, active_identity_id, _ = self._run_async(
@@ -546,15 +545,16 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 identity = await session.get(IdentityProfile, active_identity_id)
                 assert identity is not None
                 impact = await build_identity_deletion_impact(session, identity)
-                with self.assertRaises(HTTPException) as raised:
-                    await delete_identity(
-                        active_identity_id,
-                        impact_revision=impact.revision,
-                        session=session,
-                    )
+                await delete_identity(
+                    active_identity_id,
+                    request=SimpleNamespace(
+                        app=SimpleNamespace(state=SimpleNamespace())
+                    ),
+                    impact_revision=impact.revision,
+                    session=session,
+                )
                 source_identity = await session.get(IdentityProfile, source_identity_id)
                 return {
-                    "delete_status_code": raised.exception.status_code,
                     "active_identity": await session.get(
                         IdentityProfile, active_identity_id
                     ),
@@ -571,9 +571,10 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 }
 
         state = self._run_async(scenario())
-        self.assertEqual(state["delete_status_code"], 409)
         self.assertIsNotNone(state["active_identity"])
+        self.assertIsNotNone(state["active_identity"].deleted_at)
         self.assertIsNotNone(state["source_identity"])
+        self.assertIsNone(state["source_identity"].deleted_at)
         results = state["results"]
         self.assertEqual(len(results), 1)
         self.assertIsNotNone(results[0].source_email_task_id)
@@ -582,8 +583,10 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
         self.assertEqual(len(state["items"]), 1)
         self.assertEqual(len(state["jobs"]), 1)
         self.assertEqual(len(state["tasks"]), 1)
+        self.assertEqual(state["tasks"][0].status, "canceled")
+        self.assertEqual(state["tasks"][0].cancellation_reason, "identity_retired")
 
-    def test_deleting_match_source_is_blocked_without_canceling_queued_job(self) -> None:
+    def test_retiring_match_source_cancels_queued_job_and_preserves_history(self) -> None:
         source_identity_id, active_identity_id, _ = self._run_async(
             self._configure_shared_match_source(),
         )
@@ -616,13 +619,14 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 identity = await session.get(IdentityProfile, source_identity_id)
                 assert identity is not None
                 impact = await build_identity_deletion_impact(session, identity)
-                with self.assertRaises(HTTPException) as raised:
-                    await delete_identity(
-                        source_identity_id,
-                        impact_revision=impact.revision,
-                        session=session,
-                    )
-                self.assertEqual(raised.exception.status_code, 409)
+                await delete_identity(
+                    source_identity_id,
+                    request=SimpleNamespace(
+                        app=SimpleNamespace(state=SimpleNamespace())
+                    ),
+                    impact_revision=impact.revision,
+                    session=session,
+                )
                 saved_job = await session.get(MatchAnalysisJob, job.id)
                 saved_item = await session.get(MatchAnalysisJobItem, item.id)
                 assert saved_job is not None
@@ -632,17 +636,18 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
                 return saved_job, saved_item
 
         job, item = self._run_async(scenario())
-        self.assertEqual(job.status, "queued")
+        self.assertEqual(job.status, "canceled")
+        self.assertIsNotNone(job.cancel_requested_at)
         self.assertEqual(job.match_source_identity_id, source_identity_id)
         self.assertEqual(
             serialize_match_analysis_job(job).match_source_identity_id,
             source_identity_id,
         )
-        self.assertIsNone(job.cancel_requested_at)
+        self.assertIsNotNone(job.cancel_requested_at)
         self.assertIsNone(job.last_error)
-        self.assertEqual(item.status, MatchAnalysisJobItemStatus.QUEUED.value)
+        self.assertEqual(item.status, MatchAnalysisJobItemStatus.CANCELED.value)
         self.assertIsNone(item.skip_reason)
-        self.assertIsNone(item.finished_at)
+        self.assertIsNotNone(item.finished_at)
 
     def test_deleting_analysis_material_keeps_result_but_marks_it_stale(self) -> None:
         generation = llm_runtime.GeneratedMatchEvaluation(
@@ -1043,16 +1048,13 @@ class MatchAnalysisRuntimeTests(unittest.TestCase):
             identity = await session.get(IdentityProfile, source_identity_id)
             assert identity is not None
             impact = await build_identity_deletion_impact(session, identity)
-            try:
-                await delete_identity(
-                    source_identity_id,
-                    impact_revision=impact.revision,
-                    session=session,
-                )
-            except HTTPException as exc:
-                delete_status_code = exc.status_code
-            else:  # pragma: no cover - deletion must remain guarded.
-                delete_status_code = 204
+            await delete_identity(
+                source_identity_id,
+                request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace())),
+                impact_revision=impact.revision,
+                session=session,
+            )
+            delete_status_code = 204
             task = await session.get(EmailTask, self.email_task_id)
             assert task is not None
             active_identity = await session.get(IdentityProfile, active_identity_id)

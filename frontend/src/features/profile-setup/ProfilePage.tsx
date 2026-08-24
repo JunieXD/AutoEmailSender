@@ -104,6 +104,7 @@ import {
   type OutreachTemplateDTO,
 } from "@/types";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { buildMaterialDeletionConfirmationDescription } from "./client/materialDeletionImpact";
 import {
   PROFILE_SETUP_STAGES,
   TEMPLATE_FILE_ACCEPT,
@@ -1756,6 +1757,7 @@ const IDENTITY_REFERENCE_LABELS: Array<
   ["match_results", "导师匹配结果"],
   ["delivery_attempts", "邮件投递尝试"],
   ["email_observations", "邮件投递观测记录"],
+  ["agent_change_plans", "Agent 操作计划"],
 ];
 
 const isIdentityDeletionImpact = (
@@ -1807,7 +1809,7 @@ const IdentityDeletionDialog = ({
         <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
           <div className="min-w-0">
             <h2 id="identity-deletion-title" className="text-base font-semibold text-stone-950">
-              {impact.can_delete ? "删除身份配置" : "无法删除身份配置"}
+              {impact.can_delete ? "退役身份配置" : "暂时无法退役身份配置"}
             </h2>
             <p id="identity-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
               “{impact.identity_name}” · {impact.email_address}
@@ -1829,16 +1831,29 @@ const IdentityDeletionDialog = ({
             <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
                 <AlertTriangle aria-hidden="true" className="h-4 w-4" />
-                该身份已产生业务历史
+                以下操作结束前无法退役
               </div>
               <p className="mt-2 text-sm leading-6 text-rose-800">
-                为避免邮件、任务、匹配结果或投递审计被连带删除，系统不会物理删除这个身份。
+                正在执行的操作可能已进入外部发送或并发写入阶段，请先定位并结束对应任务。
               </p>
+              <ul className="mt-2 space-y-2 text-sm text-rose-800">
+                {impact.blockers.map((blocker) => (
+                  <li key={blocker.kind}>
+                    {blocker.label}：{blocker.count} 项
+                    {blocker.entity_ids.length > 0
+                      ? `（ID ${blocker.entity_ids.join("、")}${blocker.count > blocker.entity_ids.length ? " 等" : ""}）`
+                      : ""}
+                    <span className="mt-0.5 block text-xs text-rose-700">
+                      定位：{blocker.surface}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </section>
           )}
 
           <section>
-            <h3 className="text-sm font-semibold text-stone-900">关联数据</h3>
+            <h3 className="text-sm font-semibold text-stone-900">会保留的历史业务数据</h3>
             {references.length > 0 ? (
               <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
                 {references.map(([key, label]) => (
@@ -1854,6 +1869,29 @@ const IdentityDeletionDialog = ({
               <p className="mt-2 text-sm text-stone-500">没有关联的业务历史。</p>
             )}
           </section>
+
+          {(impact.automatic_actions.cancel_email_task_ids.length > 0 ||
+            impact.automatic_actions.stop_batch_task_ids.length > 0 ||
+            impact.automatic_actions.cancel_match_analysis_job_ids.length > 0 ||
+            impact.automatic_actions.invalidate_agent_change_plan_ids.length > 0) && (
+            <section>
+              <h3 className="text-sm font-semibold text-stone-900">确认后自动处理</h3>
+              <ul className="mt-2 space-y-2 text-sm leading-6 text-stone-600">
+                {impact.automatic_actions.cancel_email_task_ids.length > 0 && (
+                  <li>取消未开始发送的邮件任务：ID {impact.automatic_actions.cancel_email_task_ids.join("、")}</li>
+                )}
+                {impact.automatic_actions.stop_batch_task_ids.length > 0 && (
+                  <li>停止仍可继续的批量任务：ID {impact.automatic_actions.stop_batch_task_ids.join("、")}</li>
+                )}
+                {impact.automatic_actions.cancel_match_analysis_job_ids.length > 0 && (
+                  <li>取消匹配分析任务：ID {impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}</li>
+                )}
+                {impact.automatic_actions.invalidate_agent_change_plan_ids.length > 0 && (
+                  <li>作废关联的待确认 Agent 计划：ID {impact.automatic_actions.invalidate_agent_change_plan_ids.join("、")}</li>
+                )}
+              </ul>
+            </section>
+          )}
 
           <section>
             <h3 className="text-sm font-semibold text-stone-900">处理方式</h3>
@@ -1872,7 +1910,7 @@ const IdentityDeletionDialog = ({
           {impact.can_delete && (
             <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
-              {busy ? "正在删除" : "确认删除"}
+              {busy ? "正在退役" : "确认退役"}
             </button>
           )}
         </div>
@@ -1924,6 +1962,17 @@ const LLMDeletionDialog = ({
   const references = LLM_REFERENCE_LABELS.filter(
     ([key]) => impact.references[key] > 0,
   );
+  const automaticActions = [
+    impact.automatic_actions.cancel_email_task_ids.length > 0
+      ? `待生成邮件任务 ID ${impact.automatic_actions.cancel_email_task_ids.join("、")}`
+      : null,
+    impact.automatic_actions.cancel_match_analysis_job_ids.length > 0
+      ? `匹配任务 ID ${impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}`
+      : null,
+    impact.automatic_actions.cancel_crawl_job_ids.length > 0
+      ? `抓取或信息补全任务 ID ${impact.automatic_actions.cancel_crawl_job_ids.join("、")}`
+      : null,
+  ].filter((item): item is string => item !== null);
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
@@ -1968,7 +2017,23 @@ const LLMDeletionDialog = ({
                     {blocker.entity_ids.length > 0
                       ? `（ID ${blocker.entity_ids.join("、")}${blocker.count > blocker.entity_ids.length ? " 等" : ""}）`
                       : ""}
+                    <span className="mt-0.5 block text-xs text-rose-700">
+                      定位：{blocker.surface}
+                    </span>
                   </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {automaticActions.length > 0 && (
+            <section className="border-l-4 border-amber-500 bg-amber-50 px-4 py-3">
+              <h3 className="text-sm font-semibold text-amber-950">
+                确认退役后会自动取消
+              </h3>
+              <ul className="mt-2 space-y-1 text-sm text-amber-900">
+                {automaticActions.map((item) => (
+                  <li key={item}>{item}</li>
                 ))}
               </ul>
             </section>
@@ -3254,7 +3319,10 @@ export const ProfilePage = () => {
       setIdentityForm(emptyForm);
       setSmtpPasswordVisible(false);
       setIdentityDeletionImpact(null);
-      notifySuccess(`已删除身份“${impact.identity_name}”`, "业务历史未受影响。");
+      notifySuccess(
+        `已退役身份“${impact.identity_name}”`,
+        "运行凭据已清除，业务历史和材料均已保留。",
+      );
     } catch (deleteError) {
       if (deleteError instanceof ApiError) {
         const updatedImpact =
@@ -3271,8 +3339,8 @@ export const ProfilePage = () => {
         deleteError instanceof ApiError &&
           deleteError.code === "IDENTITY_DELETE_PLAN_STALE"
           ? "关联状态已变化"
-          : "删除身份失败",
-        getActionErrorMessage(deleteError, "删除身份失败"),
+          : "退役身份失败",
+        getActionErrorMessage(deleteError, "退役身份失败"),
       );
     } finally {
       setDeletingIdentity(false);
@@ -3536,7 +3604,7 @@ export const ProfilePage = () => {
       const impact = await getMaterialDeletionImpact(material.id);
       const confirmed = await confirm({
         title: `永久删除材料“${material.display_name}”？`,
-        description: impact.warnings.join("\n"),
+        description: buildMaterialDeletionConfirmationDescription(impact),
         confirmLabel: "确认永久删除",
         cancelLabel: "先保留",
         tone: "danger",

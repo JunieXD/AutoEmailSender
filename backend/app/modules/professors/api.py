@@ -703,7 +703,13 @@ async def archive_professor(
     session: AsyncSession = Depends(get_async_session),
 ) -> ProfessorActionResult:
     try:
-        _, affected_count = await archive_professor_record(
+        (
+            _,
+            affected_count,
+            canceled_email_task_ids,
+            canceled_match_analysis_item_ids,
+            canceled_information_enrichment_task_ids,
+        ) = await archive_professor_record(
             session,
             professor_id,
             event_name="professor.archived",
@@ -717,6 +723,11 @@ async def archive_professor(
         ok=True,
         affected_count=affected_count,
         message="导师已移入回收站",
+        canceled_email_task_ids=canceled_email_task_ids,
+        canceled_match_analysis_item_ids=canceled_match_analysis_item_ids,
+        canceled_information_enrichment_task_ids=(
+            canceled_information_enrichment_task_ids
+        ),
     )
 
 
@@ -740,6 +751,13 @@ async def bulk_archive_professors(
         ok=True,
         affected_count=affected_count,
         message=f"已将 {affected_count} 位导师移入回收站",
+        canceled_email_task_ids=list(result["canceled_email_task_ids"]),
+        canceled_match_analysis_item_ids=list(
+            result["canceled_match_analysis_item_ids"]
+        ),
+        canceled_information_enrichment_task_ids=list(
+            result["canceled_information_enrichment_task_ids"]
+        ),
     )
 
 

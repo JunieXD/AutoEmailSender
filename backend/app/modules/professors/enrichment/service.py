@@ -956,7 +956,12 @@ async def delete_professor_information_enrichment_job_record(
     if job is None or not job.task_center_visible:
         raise ValueError("信息补全任务不存在")
     if job.status not in DELETABLE_JOB_STATUSES:
-        raise ValueError("请先取消任务后再删除")
+        await request_professor_information_enrichment_cancel(
+            session,
+            job,
+            event_name="professor_information_enrichment.trash_cancel_requested",
+            actor=actor,
+        )
     previous_deleted_at = job.deleted_at
     if job.deleted_at is None:
         job.deleted_at = utc_now()

@@ -6,20 +6,16 @@ from app.core.time import utc_now
 
 from time import perf_counter
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import delete, func, select, update
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.models import (
-    IdentityCommunicationGroup,
     IdentityMaterial,
     IdentityProfile,
-    ImapIdentitySyncLease,
-    ImapMailboxSyncState,
-    ImapProfessorSyncState,
     OutreachTemplate,
 )
 from .schemas import (
@@ -32,9 +28,6 @@ from .schemas import (
 )
 from app.modules.campaigns.public import IdentityDefaultOutreachTemplateUpdate
 from app.services.material_catalog import list_global_material_metadata
-from ..communication_groups.public import (
-    cleanup_communication_group_after_identity_delete,
-)
 from app.modules.communications.public import (
     clear_identity_sent_folder_discovery_cache_in_session,
     test_imap_connection,
@@ -58,7 +51,16 @@ from app.modules.campaigns.public import (
 from app.modules.communications.public import explain_smtp_error
 
 from .serializer import serialize_identity
-from .deletion import build_identity_deletion_impact
+from .deletion import (
+    IdentityDeletionError,
+    build_identity_deletion_impact,
+    retire_identity_profile,
+)
+from .usage import (
+    IdentityProfileRetiringError,
+    end_identity_profile_retirement,
+    track_identity_profile_usage,
+)
 
 
 router = APIRouter(prefix="/api/identities", tags=["identities"])
@@ -91,7 +93,11 @@ async def create_identity(
     payload: IdentityProfileCreate,
     session: AsyncSession = Depends(get_async_session),
 ) -> IdentityProfileRead:
-    existing_count = await session.scalar(select(func.count(IdentityProfile.id)))
+    existing_count = await session.scalar(
+        select(func.count(IdentityProfile.id)).where(
+            IdentityProfile.deleted_at.is_(None)
+        )
+    )
     data = _normalize_identity_payload(payload)
     requested_template_id = data.pop("default_outreach_template_id", None)
     template_was_explicit = "default_outreach_template_id" in payload.model_fields_set
@@ -237,6 +243,7 @@ async def get_identity_deletion_impact(
 @router.delete("/{identity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_identity(
     identity_id: int,
+    request: Request,
     impact_revision: str = Query(..., min_length=64, max_length=64),
     session: AsyncSession = Depends(get_async_session),
 ) -> None:
@@ -245,148 +252,39 @@ async def delete_identity(
     # serializes the following writes; PostgreSQL also protects this row until commit.
     await session.execute(
         update(IdentityProfile)
-        .where(IdentityProfile.id == identity_id)
+        .where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
         .values(updated_at=IdentityProfile.updated_at),
     )
-    impact = await build_identity_deletion_impact(session, identity)
-    if impact.revision != impact_revision:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "IDENTITY_DELETE_PLAN_STALE",
-                "message": "身份配置或关联数据已发生变化，请重新确认删除影响。",
-                "impact": impact.model_dump(mode="json"),
-            },
-        )
-    if not impact.can_delete:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "IDENTITY_DELETE_BLOCKED",
-                "message": "该身份仍关联业务历史。为避免删除邮件、任务或匹配记录，不能物理删除。",
-                "impact": impact.model_dump(mode="json"),
-            },
-        )
-
-    was_default = identity.is_default
-    communication_group_id = identity.communication_group_id
-    cleared_match_source = False
-    if communication_group_id is not None:
-        communication_group = await session.get(
-            IdentityCommunicationGroup,
-            communication_group_id,
-        )
-        if (
-            communication_group is not None
-            and communication_group.match_source_identity_id == identity_id
-        ):
-            communication_group.match_source_identity_id = None
-            communication_group.updated_at = utc_now()
-            cleared_match_source = True
-
-    source_material_ids = list(
-        await session.scalars(
-            select(IdentityMaterial.id).where(
-                IdentityMaterial.identity_id == identity_id
-            ),
-        ),
-    )
-    await session.execute(
-        update(IdentityMaterial)
-        .where(IdentityMaterial.identity_id == identity_id)
-        .values(identity_id=None),
-    )
-
-    # These rows are synchronization cursors and leases rather than user history.
-    # They must not keep an otherwise-unused identity alive.
-    await session.execute(
-        delete(ImapProfessorSyncState).where(
-            ImapProfessorSyncState.identity_id == identity_id
-        )
-    )
-    await session.execute(
-        delete(ImapMailboxSyncState).where(
-            ImapMailboxSyncState.identity_id == identity_id
-        )
-    )
-    await session.execute(
-        delete(ImapIdentitySyncLease).where(
-            ImapIdentitySyncLease.identity_id == identity_id
-        )
-    )
-
-    identity.current_primary_material_id = None
-    identity.communication_group_id = None
-    if was_default:
-        remaining = await session.scalar(
-            select(IdentityProfile)
-            .where(IdentityProfile.id != identity_id)
-            .order_by(IdentityProfile.created_at.asc(), IdentityProfile.id.asc())
-            .limit(1),
-        )
-        if remaining is not None:
-            remaining.is_default = True
-            remaining.updated_at = utc_now()
-
-    await _record_identity_log(
-        session,
-        identity,
-        "identity.deleted",
-        metadata={
-            "was_default": was_default,
-            "cleared_group_match_source": cleared_match_source,
-            "preserved_source_material_ids": source_material_ids,
-            "deletion_impact_revision": impact.revision,
-        },
-    )
+    retirement_acquired = False
     try:
-        await session.flush()
-        await session.delete(identity)
-        await session.flush()
-        group_cleanup = None
-        if communication_group_id is not None:
-            group_cleanup = await cleanup_communication_group_after_identity_delete(
-                session,
-                group_id=communication_group_id,
-                removed_identity_id=identity_id,
-            )
-        if group_cleanup is not None:
-            await record_operation_log(
-                session,
-                category="identity",
-                event_name=(
-                    "communication_group.deleted"
-                    if group_cleanup.dissolved
-                    else "communication_group.updated"
-                ),
-                entity_type="identity_communication_group",
-                entity_id=str(group_cleanup.group_id),
-                metadata={
-                    "before_member_ids": list(group_cleanup.previous_member_ids),
-                    "after_member_ids": (
-                        []
-                        if group_cleanup.dissolved
-                        else list(group_cleanup.member_ids)
-                    ),
-                    "removed_identity_id": identity_id,
-                    "cleared_match_source": cleared_match_source,
-                },
-            )
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        current_identity = await _get_identity(session, identity_id)
-        current_impact = await build_identity_deletion_impact(
-            session, current_identity
+        result = await retire_identity_profile(
+            session,
+            identity,
+            expected_revision=impact_revision,
         )
+        retirement_acquired = True
+        await session.commit()
+    except IdentityDeletionError as exc:
+        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "code": "IDENTITY_DELETE_CONFLICT",
-                "message": "删除确认后出现了新的关联数据，身份未删除。请重新检查删除影响。",
-                "impact": current_impact.model_dump(mode="json"),
+                "code": exc.code,
+                "message": exc.message,
+                "impact": exc.impact.model_dump(mode="json"),
             },
         ) from exc
+    finally:
+        if retirement_acquired:
+            end_identity_profile_retirement(identity_id)
+
+    runtime_manager = getattr(request.app.state, "runtime_manager", None)
+    if runtime_manager is not None:
+        for batch_task_id in result.stopped_batch_task_ids:
+            runtime_manager.cancel_batch_draft_generation(batch_task_id)
 
 
 @router.post("/{identity_id}/default", response_model=IdentityProfileRead)
@@ -411,7 +309,11 @@ async def smtp_test(
 ) -> ConnectionTestResult:
     identity = await _get_identity(session, identity_id)
     started_at = perf_counter()
-    ok, message = await test_smtp_connection(identity)
+    try:
+        with track_identity_profile_usage(identity.id, "smtp_test"):
+            ok, message = await test_smtp_connection(identity)
+    except IdentityProfileRetiringError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     duration_ms = int((perf_counter() - started_at) * 1000)
     await _record_identity_log(
         session,
@@ -441,7 +343,11 @@ async def imap_test(
 ) -> ConnectionTestResult:
     identity = await _get_identity(session, identity_id)
     started_at = perf_counter()
-    ok, message = await test_imap_connection(identity)
+    try:
+        with track_identity_profile_usage(identity.id, "imap_test"):
+            ok, message = await test_imap_connection(identity)
+    except IdentityProfileRetiringError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     duration_ms = int((perf_counter() - started_at) * 1000)
     await _record_identity_log(
         session,
@@ -497,8 +403,10 @@ async def _import_identity_template_from_upload(
 
 
 def _identity_query():
-    return select(IdentityProfile).options(
-        selectinload(IdentityProfile.current_primary_material),
+    return (
+        select(IdentityProfile)
+        .options(selectinload(IdentityProfile.current_primary_material))
+        .where(IdentityProfile.deleted_at.is_(None))
     )
 
 
@@ -550,7 +458,9 @@ async def _clear_default_identities(
     session: AsyncSession,
     exclude_id: int | None = None,
 ) -> None:
-    result = await session.execute(select(IdentityProfile))
+    result = await session.execute(
+        select(IdentityProfile).where(IdentityProfile.deleted_at.is_(None))
+    )
     for identity in result.scalars():
         if exclude_id is not None and identity.id == exclude_id:
             continue
@@ -566,6 +476,7 @@ async def _ensure_identity_email_available(
 ) -> None:
     statement = select(IdentityProfile.id).where(
         IdentityProfile.email_address == email_address,
+        IdentityProfile.deleted_at.is_(None),
     )
     if exclude_id is not None:
         statement = statement.where(IdentityProfile.id != exclude_id)
@@ -582,6 +493,7 @@ def _raise_email_conflict_if_needed(exc: IntegrityError) -> None:
     if (
         "identity_profiles.email_address" in message
         or "uq_identity_profiles_email_address" in message
+        or "uq_identity_profiles_active_email_address" in message
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

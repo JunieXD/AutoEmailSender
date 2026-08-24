@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import case, delete, insert, select, update
+from sqlalchemy import case, delete, func, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +12,20 @@ from sqlalchemy.orm import selectinload
 
 from app.core.query_chunks import chunked_values, unique_positive_ids
 from app.core.time import serialize_api_datetime, utc_now
-from app.models import EmailTask, EmailTaskStatus, Professor, ProfessorTag, ProfessorTagLink
+from app.models import (
+    CrawlCandidateEnrichmentTask,
+    CrawlCandidateEnrichmentTaskStatus,
+    CrawlJob,
+    CrawlJobKind,
+    EmailTask,
+    EmailTaskCancellationReason,
+    EmailTaskStatus,
+    MatchAnalysisJobItem,
+    MatchAnalysisJobItemStatus,
+    Professor,
+    ProfessorTag,
+    ProfessorTagLink,
+)
 from .schemas import (
     ProfessorBulkTagsPayload,
     ProfessorTagPayload,
@@ -52,6 +66,31 @@ class ProfessorImportMutationResult:
 class ProfessorBulkTagsMutationResult:
     professor_ids: list[int]
     affected_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfessorDeliveryImpact:
+    cancel_task_ids: list[int]
+    blocking_rows: list[tuple[int, int, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfessorBackgroundWorkImpact:
+    match_analysis_item_ids: list[int]
+    information_enrichment_task_ids: list[int]
+
+
+PROFESSOR_ARCHIVE_CANCEL_STATUSES = {
+    EmailTaskStatus.DISCOVERED.value,
+    EmailTaskStatus.MATCHED.value,
+    EmailTaskStatus.GENERATING_DRAFT.value,
+    EmailTaskStatus.DRAFT_FAILED.value,
+    EmailTaskStatus.REVIEW_REQUIRED.value,
+    EmailTaskStatus.APPROVED.value,
+    EmailTaskStatus.SCHEDULED.value,
+    EmailTaskStatus.SCHEDULE_MISSED.value,
+    EmailTaskStatus.SEND_FAILED.value,
+}
 
 
 async def get_or_create_professor_by_email(
@@ -156,25 +195,53 @@ async def archive_professor_record(
     *,
     event_name: str,
     actor: str,
-) -> tuple[Professor, int]:
+) -> tuple[Professor, int, list[int], list[int], list[int]]:
     professor = await get_professor_with_tags_or_raise(session, professor_id)
     await _lock_professors_for_archive(session, [professor.id])
     await session.refresh(professor, attribute_names=["archived_at"])
     affected_count = 0
+    canceled_email_task_ids: list[int] = []
+    canceled_match_analysis_item_ids: list[int] = []
+    canceled_information_enrichment_task_ids: list[int] = []
     if professor.archived_at is None:
-        await _ensure_professors_have_no_pending_delivery(session, [professor.id])
         now = utc_now()
+        canceled_email_task_ids = await _cancel_pending_professor_deliveries(
+            session,
+            [professor.id],
+            now=now,
+        )
         professor.archived_at = now
         professor.updated_at = now
+        (
+            canceled_match_analysis_item_ids,
+            canceled_information_enrichment_task_ids,
+        ) = await _stop_pending_professor_background_work(
+            session,
+            [professor.id],
+            now=now,
+        )
         affected_count = 1
     await record_professor_event(
         session,
         professor,
         event_name,
         actor=actor,
-        metadata={"affected_count": affected_count},
+        metadata={
+            "affected_count": affected_count,
+            "canceled_email_task_ids": canceled_email_task_ids,
+            "canceled_match_analysis_item_ids": canceled_match_analysis_item_ids,
+            "canceled_information_enrichment_task_ids": (
+                canceled_information_enrichment_task_ids
+            ),
+        },
     )
-    return professor, affected_count
+    return (
+        professor,
+        affected_count,
+        canceled_email_task_ids,
+        canceled_match_analysis_item_ids,
+        canceled_information_enrichment_task_ids,
+    )
 
 
 async def restore_professor_record(
@@ -354,10 +421,33 @@ async def prepare_bulk_professor_archive_snapshot(
     ]
     affected_count = sum(item["will_archive"] for item in items)
     already_archived_count = len(items) - affected_count
+    affected_ids = [
+        int(item["id"]) for item in items if bool(item["will_archive"])
+    ]
+    delivery_impact = await _professor_delivery_impact(session, affected_ids)
+    background_work_impact = await _professor_background_work_impact(
+        session,
+        affected_ids,
+    )
+    _raise_professor_archive_blockers(delivery_impact.blocking_rows)
     warnings = []
     if already_archived_count:
         warnings.append(
             f"其中 {already_archived_count} 位导师已在回收站中，不会重复移动。"
+        )
+    if delivery_impact.cancel_task_ids:
+        warnings.append(
+            f"归档时会自动取消 {len(delivery_impact.cancel_task_ids)} 个尚未开始发送的邮件任务。"
+        )
+    if background_work_impact.match_analysis_item_ids:
+        warnings.append(
+            "归档时会自动取消 "
+            f"{len(background_work_impact.match_analysis_item_ids)} 个尚未完成的匹配分析项。"
+        )
+    if background_work_impact.information_enrichment_task_ids:
+        warnings.append(
+            "归档时会自动取消 "
+            f"{len(background_work_impact.information_enrichment_task_ids)} 个尚未完成的信息补全项。"
         )
     return {
         "snapshot_version": "1",
@@ -367,6 +457,15 @@ async def prepare_bulk_professor_archive_snapshot(
             "affected_count": affected_count,
             "already_archived_count": already_archived_count,
             "professors": items,
+            "automatic_actions": {
+                "cancel_email_task_ids": delivery_impact.cancel_task_ids,
+                "cancel_match_analysis_item_ids": (
+                    background_work_impact.match_analysis_item_ids
+                ),
+                "cancel_information_enrichment_task_ids": (
+                    background_work_impact.information_enrichment_task_ids
+                ),
+            },
         },
         "warnings": warnings,
         "state": {
@@ -401,12 +500,24 @@ async def bulk_archive_professor_records(
     affected_ids = [
         professor.id for professor in professors if professor.archived_at is None
     ]
-    await _ensure_professors_have_no_pending_delivery(session, affected_ids)
+    canceled_email_task_ids = await _cancel_pending_professor_deliveries(
+        session,
+        affected_ids,
+        now=now,
+    )
     for professor in professors:
         if professor.id not in affected_ids:
             continue
         professor.archived_at = now
         professor.updated_at = now
+    (
+        canceled_match_analysis_item_ids,
+        canceled_information_enrichment_task_ids,
+    ) = await _stop_pending_professor_background_work(
+        session,
+        affected_ids,
+        now=now,
+    )
     await record_operation_log(
         session,
         category="user_action",
@@ -416,12 +527,22 @@ async def bulk_archive_professor_records(
             "actor": actor,
             "requested_count": len(ordered_ids),
             "affected_count": len(affected_ids),
+            "canceled_email_task_ids": canceled_email_task_ids,
+            "canceled_match_analysis_item_ids": canceled_match_analysis_item_ids,
+            "canceled_information_enrichment_task_ids": (
+                canceled_information_enrichment_task_ids
+            ),
             **_ids_metadata(ordered_ids),
         },
     )
     return {
         "professor_ids": ordered_ids,
         "affected_count": len(affected_ids),
+        "canceled_email_task_ids": canceled_email_task_ids,
+        "canceled_match_analysis_item_ids": canceled_match_analysis_item_ids,
+        "canceled_information_enrichment_task_ids": (
+            canceled_information_enrichment_task_ids
+        ),
         "post_state": {
             "professors": [
                 {
@@ -449,12 +570,12 @@ async def _lock_professors_for_archive(
         )
 
 
-async def _ensure_professors_have_no_pending_delivery(
+async def _professor_delivery_impact(
     session: AsyncSession,
     professor_ids: list[int],
-) -> None:
+) -> _ProfessorDeliveryImpact:
     if not professor_ids:
-        return
+        return _ProfessorDeliveryImpact(cancel_task_ids=[], blocking_rows=[])
     pending: list[tuple[int, int, str]] = []
     for professor_id_chunk in chunked_values(professor_ids):
         pending.extend(
@@ -465,8 +586,7 @@ async def _ensure_professors_have_no_pending_delivery(
                     EmailTask.batch_send_canceled_at.is_(None),
                     EmailTask.status.in_(
                         [
-                            EmailTaskStatus.APPROVED.value,
-                            EmailTaskStatus.SCHEDULED.value,
+                            *PROFESSOR_ARCHIVE_CANCEL_STATUSES,
                             EmailTaskStatus.SENDING.value,
                         ]
                     ),
@@ -474,20 +594,210 @@ async def _ensure_professors_have_no_pending_delivery(
                 .order_by(EmailTask.professor_id.asc(), EmailTask.id.asc())
             )
         )
-    if not pending:
-        return
-    professor_count = len({professor_id for professor_id, _, _ in pending})
-    task_ids = [task_id for _, task_id, _ in pending[:5]]
-    raise ProfessorMutationError(
-        409,
-        "PROFESSOR_ARCHIVE_PENDING_DELIVERY",
-        (
-            f"有 {professor_count} 位导师仍存在待发送或发送中的邮件"
-            f"（任务 ID：{'、'.join(str(task_id) for task_id in task_ids)}"
-            f"{' 等' if len(pending) > len(task_ids) else ''}）。"
-            "请先在任务中心取消发送，再移入回收站。"
-        ),
+    return _ProfessorDeliveryImpact(
+        cancel_task_ids=[
+            task_id
+            for _, task_id, task_status in pending
+            if task_status in PROFESSOR_ARCHIVE_CANCEL_STATUSES
+        ],
+        blocking_rows=[
+            row for row in pending if row[2] == EmailTaskStatus.SENDING.value
+        ],
     )
+
+
+async def _cancel_pending_professor_deliveries(
+    session: AsyncSession,
+    professor_ids: list[int],
+    *,
+    now: datetime,
+) -> list[int]:
+    impact = await _professor_delivery_impact(session, professor_ids)
+    _raise_professor_archive_blockers(impact.blocking_rows)
+
+    cancel_task_ids = impact.cancel_task_ids
+    if cancel_task_ids:
+        await session.execute(
+            update(EmailTask)
+            .where(
+                EmailTask.id.in_(cancel_task_ids),
+                EmailTask.status.in_(PROFESSOR_ARCHIVE_CANCEL_STATUSES),
+            )
+            .values(
+                status=EmailTaskStatus.CANCELED.value,
+                cancellation_reason=(
+                    EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value
+                ),
+                scheduled_at=None,
+                draft_generation_previous_status=None,
+                draft_generation_started_at=None,
+                draft_claim_id=None,
+                draft_claimed_at=None,
+                draft_lease_expires_at=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+    return cancel_task_ids
+
+
+async def _professor_background_work_impact(
+    session: AsyncSession,
+    professor_ids: list[int],
+) -> _ProfessorBackgroundWorkImpact:
+    if not professor_ids:
+        return _ProfessorBackgroundWorkImpact([], [])
+    match_analysis_item_ids = list(
+        await session.scalars(
+            select(MatchAnalysisJobItem.id)
+            .where(
+                MatchAnalysisJobItem.professor_id.in_(professor_ids),
+                MatchAnalysisJobItem.status.in_(
+                    [
+                        MatchAnalysisJobItemStatus.QUEUED.value,
+                        MatchAnalysisJobItemStatus.RUNNING.value,
+                    ]
+                ),
+            )
+            .order_by(MatchAnalysisJobItem.id.asc())
+        )
+    )
+    information_enrichment_task_ids = list(
+        await session.scalars(
+            select(CrawlCandidateEnrichmentTask.id)
+            .where(
+                CrawlCandidateEnrichmentTask.professor_id.in_(professor_ids),
+                CrawlCandidateEnrichmentTask.status.in_(
+                    [
+                        CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                        CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                        CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                    ]
+                ),
+            )
+            .order_by(CrawlCandidateEnrichmentTask.id.asc())
+        )
+    )
+    return _ProfessorBackgroundWorkImpact(
+        match_analysis_item_ids=[int(item) for item in match_analysis_item_ids],
+        information_enrichment_task_ids=[
+            int(item) for item in information_enrichment_task_ids
+        ],
+    )
+
+
+async def _stop_pending_professor_background_work(
+    session: AsyncSession,
+    professor_ids: list[int],
+    *,
+    now: datetime,
+) -> tuple[list[int], list[int]]:
+    if not professor_ids:
+        return [], []
+
+    from app.modules.matching.public import (
+        skip_professor_match_analysis_items_record,
+    )
+
+    match_analysis_item_ids = await skip_professor_match_analysis_items_record(
+        session,
+        professor_ids,
+        now=now,
+    )
+    enrichment_rows = list(
+        await session.execute(
+            select(
+                CrawlCandidateEnrichmentTask.id,
+                CrawlCandidateEnrichmentTask.job_id,
+            )
+            .where(
+                CrawlCandidateEnrichmentTask.professor_id.in_(professor_ids),
+                CrawlCandidateEnrichmentTask.status.in_(
+                    [
+                        CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                        CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                        CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                    ]
+                ),
+            )
+            .order_by(CrawlCandidateEnrichmentTask.id.asc())
+        )
+    )
+    enrichment_task_ids = [int(row.id) for row in enrichment_rows]
+    if enrichment_task_ids:
+        for task_id_chunk in chunked_values(enrichment_task_ids):
+            await session.execute(
+                update(CrawlCandidateEnrichmentTask)
+                .where(
+                    CrawlCandidateEnrichmentTask.id.in_(task_id_chunk),
+                    CrawlCandidateEnrichmentTask.status.in_(
+                        [
+                            CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                            CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                            CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                        ]
+                    ),
+                )
+                .values(
+                    status=CrawlCandidateEnrichmentTaskStatus.SKIPPED.value,
+                    skip_reason="导师已移入回收站",
+                    last_error=None,
+                    worker_id=None,
+                    claimed_at=None,
+                    lease_expires_at=None,
+                    finished_at=now,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+
+        from .enrichment.service import finalize_professor_information_enrichment_job
+
+        for job_id in dict.fromkeys(int(row.job_id) for row in enrichment_rows):
+            job = await session.get(CrawlJob, job_id)
+            if job is None or job.job_kind != CrawlJobKind.PROFESSOR_ENRICHMENT.value:
+                continue
+            active_count = await session.scalar(
+                select(func.count())
+                .select_from(CrawlCandidateEnrichmentTask)
+                .where(
+                    CrawlCandidateEnrichmentTask.job_id == job_id,
+                    CrawlCandidateEnrichmentTask.status.in_(
+                        [
+                            CrawlCandidateEnrichmentTaskStatus.PENDING.value,
+                            CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
+                            CrawlCandidateEnrichmentTaskStatus.FAILED_RETRYABLE.value,
+                        ]
+                    ),
+                )
+            )
+            if int(active_count or 0) == 0:
+                await finalize_professor_information_enrichment_job(
+                    session,
+                    job,
+                    now=now,
+                )
+    return match_analysis_item_ids, enrichment_task_ids
+
+
+def _raise_professor_archive_blockers(
+    blocking_rows: list[tuple[int, int, str]],
+) -> None:
+    if blocking_rows:
+        shown = blocking_rows[:10]
+        details = "、".join(
+            f"导师 #{professor_id} 的邮件任务 #{task_id}（{task_status}）"
+            for professor_id, task_id, task_status in shown
+        )
+        suffix = " 等" if len(blocking_rows) > len(shown) else ""
+        raise ProfessorMutationError(
+            409,
+            "PROFESSOR_ARCHIVE_SENDING_DELIVERY",
+            (
+                f"暂时无法移入回收站：{details}{suffix} 已进入发送流程。"
+                "请在任务中心等待这些任务完成或确认发送结果后再试。"
+            ),
+        )
 
 
 async def set_professor_tags_record(

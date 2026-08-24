@@ -4646,8 +4646,16 @@ class AgentApiTests(unittest.TestCase):
             f"/api/agent/v1/materials/{material_id}/prepare-delete",
             headers=self._agent_headers(),
         )
-        self.assertEqual(blocked.status_code, 400, msg=blocked.text)
+        self.assertEqual(blocked.status_code, 409, msg=blocked.text)
         self.assertEqual(blocked.json()["error"]["code"], "MATERIAL_DELETION_BLOCKED")
+        self.assertEqual(
+            blocked.json()["error"]["details"]["blockers"][0]["status"],
+            "approved",
+        )
+        self.assertIsInstance(
+            blocked.json()["error"]["details"]["blockers"][0]["id"],
+            int,
+        )
 
     def test_template_archive_change_plan_requires_confirmation_and_executes_once(
         self,

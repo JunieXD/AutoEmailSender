@@ -93,6 +93,7 @@ export interface IdentityReferenceCountsDTO {
   match_results: number;
   delivery_attempts: number;
   email_observations: number;
+  agent_change_plans: number;
 }
 
 export interface IdentityDeletionBlockerDTO {
@@ -100,6 +101,7 @@ export interface IdentityDeletionBlockerDTO {
   label: string;
   count: number;
   entity_ids: Array<number | string>;
+  surface: string;
 }
 
 export interface IdentityDeletionImpactDTO {
@@ -111,6 +113,12 @@ export interface IdentityDeletionImpactDTO {
   revision: string;
   references: IdentityReferenceCountsDTO;
   blockers: IdentityDeletionBlockerDTO[];
+  automatic_actions: {
+    cancel_email_task_ids: number[];
+    stop_batch_task_ids: number[];
+    cancel_match_analysis_job_ids: number[];
+    invalidate_agent_change_plan_ids: string[];
+  };
   preserved_material_count: number;
   communication_group_id: number | null;
   warnings: string[];
@@ -250,6 +258,7 @@ export interface LLMProfileDeletionBlockerDTO {
   label: string;
   count: number;
   entity_ids: number[];
+  surface: string;
 }
 
 export interface LLMProfileDeletionImpactDTO {
@@ -260,6 +269,11 @@ export interface LLMProfileDeletionImpactDTO {
   can_delete: boolean;
   revision: string;
   references: LLMProfileReferenceCountsDTO;
+  automatic_actions: {
+    cancel_email_task_ids: number[];
+    cancel_match_analysis_job_ids: number[];
+    cancel_crawl_job_ids: number[];
+  };
   blockers: LLMProfileDeletionBlockerDTO[];
   warnings: string[];
 }
@@ -271,6 +285,9 @@ export interface LLMProfileDeletionResultDTO {
   references_preserved: LLMProfileReferenceCountsDTO;
   invalidated_plan_count: number;
   default_profile_id: number | null;
+  canceled_email_task_ids: number[];
+  canceled_match_analysis_job_ids: number[];
+  canceled_crawl_job_ids: number[];
 }
 
 export interface LLMProfileTestResultDTO {
@@ -591,7 +608,13 @@ export type WorkspaceTaskStatus =
   | 'canceled';
 
 export type WorkspaceTaskStatusLabelKey = WorkspaceTaskStatus;
-export type WorkspaceTaskCancellationReason = 'batch_stopped' | 'schedule_expired' | 'user_removed';
+export type WorkspaceTaskCancellationReason =
+  | 'batch_stopped'
+  | 'schedule_expired'
+  | 'user_removed'
+  | 'professor_archived'
+  | 'identity_retired'
+  | 'llm_profile_retired';
 
 export type EmailDeliveryView = 'upcoming' | 'attention' | 'history';
 export type EmailDeliverySourceFilter = 'all' | 'manual' | 'batch';
@@ -620,7 +643,11 @@ export type EmailDeliveryStatus =
   | 'sent'
   | 'replied'
   | 'canceled_schedule'
-  | 'canceled_send';
+  | 'canceled_send'
+  | 'removed_from_batch'
+  | 'professor_archived'
+  | 'identity_retired'
+  | 'llm_profile_retired';
 
 export interface EmailDeliveryItemDTO {
   id: number;
@@ -631,9 +658,11 @@ export interface EmailDeliveryItemDTO {
   professor_id: number;
   professor_name: string;
   professor_email: string | null;
+  professor_archived_at: string | null;
   identity_id: number;
   identity_name: string;
   sender_email: string;
+  identity_retired_at: string | null;
   subject: string | null;
   attachment_count: number;
   attachment_size_bytes: number;

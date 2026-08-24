@@ -1331,7 +1331,12 @@ async def sync_agent_communications(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentCommunicationSyncRead:
-    identity = await session.get(IdentityProfile, payload.identity_id)
+    identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == payload.identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if identity is None:
         raise HTTPException(status_code=404, detail="未找到身份配置")
     if not _identity_has_imap_config(identity):
@@ -2098,7 +2103,13 @@ async def list_agent_materials(
         )
     if (
         target_identity_id is not None
-        and await session.get(IdentityProfile, target_identity_id) is None
+        and await session.scalar(
+            select(IdentityProfile.id).where(
+                IdentityProfile.id == target_identity_id,
+                IdentityProfile.deleted_at.is_(None),
+            )
+        )
+        is None
     ):
         raise HTTPException(status_code=404, detail="未找到身份配置")
     resolved_source_identity_id = (
@@ -2168,7 +2179,13 @@ async def read_agent_material(
         raise HTTPException(status_code=404, detail="未找到材料")
     if (
         target_identity_id is not None
-        and await session.get(IdentityProfile, target_identity_id) is None
+        and await session.scalar(
+            select(IdentityProfile.id).where(
+                IdentityProfile.id == target_identity_id,
+                IdentityProfile.deleted_at.is_(None),
+            )
+        )
+        is None
     ):
         raise HTTPException(status_code=404, detail="未找到身份配置")
     return _serialize_material(
@@ -2302,7 +2319,7 @@ async def list_agent_identities(
     limit: int = Query(default=100, ge=1, le=500),
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentPage[AgentIdentityRead] | Response:
-    statement = select(IdentityProfile)
+    statement = select(IdentityProfile).where(IdentityProfile.deleted_at.is_(None))
     if identity_id is not None:
         statement = statement.where(IdentityProfile.id == identity_id)
     if is_default is not None:
@@ -2351,7 +2368,12 @@ async def read_agent_identity(
     identity_id: int,
     session: AsyncSession = Depends(get_async_session),
 ) -> AgentIdentityRead:
-    identity = await session.get(IdentityProfile, identity_id)
+    identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if identity is None:
         raise HTTPException(status_code=404, detail="未找到身份配置")
     return _serialize_identity(identity)
@@ -5392,7 +5414,11 @@ async def _set_agent_default_identity(
     identity_id: int,
 ) -> AgentIdentityRead:
     identity = await _get_agent_identity_or_raise(session, identity_id)
-    identities = list(await session.scalars(select(IdentityProfile)))
+    identities = list(
+        await session.scalars(
+            select(IdentityProfile).where(IdentityProfile.deleted_at.is_(None))
+        )
+    )
     now = utc_now()
     for candidate in identities:
         is_default = candidate.id == identity.id
@@ -5574,7 +5600,12 @@ async def _get_agent_identity_or_raise(
     session: AsyncSession,
     identity_id: int,
 ) -> IdentityProfile:
-    identity = await session.get(IdentityProfile, identity_id)
+    identity = await session.scalar(
+        select(IdentityProfile).where(
+            IdentityProfile.id == identity_id,
+            IdentityProfile.deleted_at.is_(None),
+        )
+    )
     if identity is None:
         raise ValueError("未找到身份配置")
     return identity
@@ -6047,6 +6078,7 @@ def _agent_material_error(error: MaterialMutationError) -> AgentApiError:
         status_code=error.status_code,
         code=error.code,
         message=error.message,
+        details=error.details or {},
     )
 
 
@@ -6114,7 +6146,7 @@ async def _archive_agent_professor(
     session: AsyncSession,
     professor_id: int,
 ) -> AgentProfessorRead:
-    professor, _ = await archive_professor_record(
+    professor, _, _, _, _ = await archive_professor_record(
         session,
         professor_id,
         event_name="agent_cli.professor.archived",

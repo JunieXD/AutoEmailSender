@@ -21,6 +21,7 @@ from app.models import (
     EmailTaskCancellationReason,
     EmailTaskSource,
     EmailTaskStatus,
+    IdentityProfile,
     LLMProfile,
     Professor,
 )
@@ -433,6 +434,7 @@ async def materialize_missing_research_template_fallbacks(
                         EmailTask.outreach_generation_mode,
                     ),
                     EmailTask.primary_material_id.is_not(None),
+                    Professor.archived_at.is_(None),
                     or_(
                         Professor.research_direction.is_(None),
                         func.trim(Professor.research_direction) == "",
@@ -462,6 +464,25 @@ async def materialize_missing_research_template_fallbacks(
                     EmailTask.id == task.id,
                     EmailTask.status == task.status,
                     EmailTask.batch_send_canceled_at.is_(None),
+                    EmailTask.professor_id.in_(
+                        select(Professor.id).where(Professor.archived_at.is_(None))
+                    ),
+                    EmailTask.batch_task_id.in_(
+                        select(BatchTask.id).where(
+                            BatchTask.status == BatchTaskStatus.RUNNING.value,
+                            BatchTask.deleted_at.is_(None),
+                            BatchTask.llm_profile_id.in_(
+                                select(LLMProfile.id).where(
+                                    LLMProfile.deleted_at.is_(None)
+                                )
+                            ),
+                            BatchTask.identity_id.in_(
+                                select(IdentityProfile.id).where(
+                                    IdentityProfile.deleted_at.is_(None)
+                                )
+                            ),
+                        )
+                    ),
                 )
                 .values(
                     generated_subject=fallback.subject,
@@ -492,7 +513,7 @@ async def _claim_next_queued_llm_draft(
 ) -> BatchDraftClaim | None:
     async with _BATCH_DRAFT_CLAIM_LOCK:
         async with session_factory() as session:
-            eligibility = (
+            task_eligibility = (
                 EmailTask.source == EmailTaskSource.BATCH.value,
                 EmailTask.status.in_(
                     [EmailTaskStatus.DISCOVERED.value, EmailTaskStatus.MATCHED.value]
@@ -502,10 +523,19 @@ async def _claim_next_queued_llm_draft(
                     EmailTask.outreach_generation_mode
                 ),
                 EmailTask.primary_material_id.is_not(None),
+                Professor.archived_at.is_(None),
+                func.trim(Professor.research_direction) != "",
+            )
+            batch_eligibility = (
+                *task_eligibility,
                 BatchTask.llm_profile_id.in_(
                     select(LLMProfile.id).where(LLMProfile.deleted_at.is_(None))
                 ),
-                func.trim(Professor.research_direction) != "",
+                BatchTask.identity_id.in_(
+                    select(IdentityProfile.id).where(
+                        IdentityProfile.deleted_at.is_(None)
+                    )
+                ),
                 BatchTask.status == BatchTaskStatus.RUNNING.value,
                 BatchTask.deleted_at.is_(None),
             )
@@ -513,7 +543,7 @@ async def _claim_next_queued_llm_draft(
                 select(BatchTask)
                 .join(EmailTask, EmailTask.batch_task_id == BatchTask.id)
                 .join(Professor, EmailTask.professor_id == Professor.id)
-                .where(*eligibility)
+                .where(*batch_eligibility)
                 .order_by(
                     case((BatchTask.draft_last_dispatched_at.is_(None), 0), else_=1),
                     BatchTask.draft_last_dispatched_at.asc(),
@@ -535,8 +565,7 @@ async def _claim_next_queued_llm_draft(
                 .join(Professor, EmailTask.professor_id == Professor.id)
                 .where(
                     EmailTask.batch_task_id == batch_task.id,
-                    *eligibility[:-3],
-                    func.trim(Professor.research_direction) != "",
+                    *task_eligibility,
                 )
                 .order_by(EmailTask.created_at.asc(), EmailTask.id.asc())
                 .limit(1)
@@ -553,6 +582,25 @@ async def _claim_next_queued_llm_draft(
                     EmailTask.status == task.status,
                     EmailTask.batch_send_canceled_at.is_(None),
                     EmailTask.draft_claim_id.is_(None),
+                    EmailTask.professor_id.in_(
+                        select(Professor.id).where(Professor.archived_at.is_(None))
+                    ),
+                    EmailTask.batch_task_id.in_(
+                        select(BatchTask.id).where(
+                            BatchTask.status == BatchTaskStatus.RUNNING.value,
+                            BatchTask.deleted_at.is_(None),
+                            BatchTask.llm_profile_id.in_(
+                                select(LLMProfile.id).where(
+                                    LLMProfile.deleted_at.is_(None)
+                                )
+                            ),
+                            BatchTask.identity_id.in_(
+                                select(IdentityProfile.id).where(
+                                    IdentityProfile.deleted_at.is_(None)
+                                )
+                            ),
+                        )
+                    ),
                 )
                 .values(
                     outreach_generation_mode=normalize_batch_item_generation_mode(task),

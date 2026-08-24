@@ -75,6 +75,7 @@ class IdentityReferenceCounts(ApiSchema):
     match_results: int = 0
     delivery_attempts: int = 0
     email_observations: int = 0
+    agent_change_plans: int = 0
 
 
 class IdentityDeletionBlocker(ApiSchema):
@@ -82,6 +83,14 @@ class IdentityDeletionBlocker(ApiSchema):
     label: str
     count: int
     entity_ids: list[int | str]
+    surface: str
+
+
+class IdentityDeletionAutomaticActions(ApiSchema):
+    cancel_email_task_ids: list[int]
+    stop_batch_task_ids: list[int]
+    cancel_match_analysis_job_ids: list[int]
+    invalidate_agent_change_plan_ids: list[str]
 
 
 class IdentityDeletionImpact(ApiSchema):
@@ -93,6 +102,7 @@ class IdentityDeletionImpact(ApiSchema):
     revision: str
     references: IdentityReferenceCounts
     blockers: list[IdentityDeletionBlocker]
+    automatic_actions: IdentityDeletionAutomaticActions
     preserved_material_count: int
     communication_group_id: int | None
     warnings: list[str]

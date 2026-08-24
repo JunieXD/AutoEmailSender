@@ -302,6 +302,49 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(located_history_result.total_count, 1)
         self.assertEqual(located_history_result.items[0].status, "sent")
 
+    async def test_sent_delivery_preserves_status_and_reports_retired_relations(
+        self,
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self.session_factory() as session:
+            identity = self._identity("已退役身份", "retired@example.com")
+            identity.deleted_at = now
+            professor = Professor(
+                name="已归档导师",
+                email="archived@example.edu",
+                archived_at=now,
+            )
+            llm_profile = self._profile()
+            session.add_all([identity, professor, llm_profile])
+            await session.flush()
+            task = EmailTask(
+                professor_id=professor.id,
+                identity_id=identity.id,
+                llm_profile_id=llm_profile.id,
+                source=EmailTaskSource.MANUAL.value,
+                status=EmailTaskStatus.SENT.value,
+                sent_at=now - timedelta(days=1),
+            )
+            session.add(task)
+            await session.commit()
+
+            result = await list_email_deliveries(
+                session,
+                view="history",
+                page=1,
+                page_size=20,
+                identity_id=None,
+                source="all",
+                status=None,
+                query=None,
+                task_id=task.id,
+            )
+
+        self.assertEqual(result.total_count, 1)
+        self.assertEqual(result.items[0].status, "sent")
+        self.assertEqual(result.items[0].professor_archived_at, now)
+        self.assertEqual(result.items[0].identity_retired_at, now)
+
     async def test_approved_delivery_with_schedule_is_reported_as_waiting(self) -> None:
         now = datetime.now(UTC)
         async with self.session_factory() as session:
@@ -535,6 +578,115 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             filtered_counts,
             {"draft_failed": 1, "batch_stopped": 1, "schedule_expired": 1},
+        )
+
+    async def test_deletion_cancellations_are_visible_and_filterable_in_history(
+        self,
+    ) -> None:
+        async with self.session_factory() as session:
+            identity = self._identity("历史身份", "history@example.com")
+            llm_profile = self._profile()
+            batch_task = BatchTask(
+                identity=identity,
+                llm_profile=llm_profile,
+                name="历史批次",
+                status=BatchTaskStatus.STOPPED.value,
+            )
+            professors = [
+                Professor(name="已移除导师", email="removed@example.edu"),
+                Professor(name="已归档导师", email="archived@example.edu"),
+                Professor(name="身份退役导师", email="retired@example.edu"),
+            ]
+            session.add_all([batch_task, *professors])
+            await session.flush()
+            reasons = (
+                EmailTaskCancellationReason.USER_REMOVED.value,
+                EmailTaskCancellationReason.PROFESSOR_ARCHIVED.value,
+                EmailTaskCancellationReason.IDENTITY_RETIRED.value,
+            )
+            session.add_all(
+                [
+                    EmailTask(
+                        professor_id=professor.id,
+                        identity_id=identity.id,
+                        llm_profile_id=llm_profile.id,
+                        source=EmailTaskSource.BATCH.value,
+                        batch_task_id=batch_task.id,
+                        status=EmailTaskStatus.CANCELED.value,
+                        cancellation_reason=reason,
+                    )
+                    for professor, reason in zip(professors, reasons, strict=True)
+                ],
+            )
+            await session.commit()
+
+            history = await list_email_deliveries(
+                session,
+                view="history",
+                page=1,
+                page_size=20,
+                identity_id=None,
+                source="all",
+                status=None,
+                query=None,
+                task_id=None,
+            )
+            filtered_counts = {}
+            for status in (
+                "removed_from_batch",
+                "professor_archived",
+                "identity_retired",
+            ):
+                filtered = await list_email_deliveries(
+                    session,
+                    view="history",
+                    page=1,
+                    page_size=20,
+                    identity_id=None,
+                    source="all",
+                    status=status,
+                    query=None,
+                    task_id=None,
+                )
+                filtered_counts[status] = filtered.total_count
+
+        items_by_name = {item.professor_name: item for item in history.items}
+        self.assertEqual(history.counts.history, 3)
+        self.assertEqual(history.total_count, 3)
+        self.assertEqual(
+            items_by_name["已移除导师"].status,
+            "removed_from_batch",
+        )
+        self.assertEqual(
+            items_by_name["已移除导师"].status_label,
+            "已从批量任务移除",
+        )
+        self.assertFalse(items_by_name["已移除导师"].can_edit)
+        self.assertEqual(
+            items_by_name["已归档导师"].status,
+            "professor_archived",
+        )
+        self.assertEqual(
+            items_by_name["已归档导师"].status_label,
+            "导师已移入回收站",
+        )
+        self.assertFalse(items_by_name["已归档导师"].can_edit)
+        self.assertEqual(
+            items_by_name["身份退役导师"].status,
+            "identity_retired",
+        )
+        self.assertEqual(
+            items_by_name["身份退役导师"].status_label,
+            "发件身份已退役",
+        )
+        self.assertFalse(items_by_name["身份退役导师"].can_edit)
+        self.assertEqual(
+            filtered_counts,
+            {
+                "removed_from_batch": 1,
+                "professor_archived": 1,
+                "identity_retired": 1,
+            },
         )
 
     async def test_reschedule_conflict_and_cancel_preserve_history(self) -> None:
