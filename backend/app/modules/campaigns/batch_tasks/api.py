@@ -985,8 +985,8 @@ async def resume_batch_task(
             detail={
                 "code": "CAMPAIGN_IDENTITY_RETIRED",
                 "message": (
-                    f"批量任务 #{task.id} 使用的发件身份 #{task.identity_id} 已退役，"
-                    "不能继续执行。历史记录会保留；如需再次联系，请使用活动身份新建任务。"
+                    f"批量任务 #{task.id} 使用的发件身份 #{task.identity_id} 已删除，"
+                    "不能继续执行。历史记录会保留；如需再次联系，请选择其他发件身份新建任务。"
                 ),
                 "batch_task_id": task.id,
                 "identity_id": task.identity_id,

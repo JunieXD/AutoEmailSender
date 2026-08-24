@@ -815,7 +815,7 @@ class AgentApiTests(unittest.TestCase):
             self.assertNotIn(secret, serialized)
 
     def test_agent_llm_endpoints_do_not_expose_retired_profiles(self) -> None:
-        profile_id = self._create_llm_profile(name="Agent 待退役模型")
+        profile_id = self._create_llm_profile(name="Agent 待删除模型")
         impact = self.client.get(
             f"/api/llm-profiles/{profile_id}/deletion-impact",
             headers=self._ui_headers(),
@@ -855,7 +855,7 @@ class AgentApiTests(unittest.TestCase):
             end_llm_profile_retirement,
         )
 
-        profile_id = self._create_llm_profile(name="Agent 并发退役模型")
+        profile_id = self._create_llm_profile(name="Agent 并发删除模型")
         self.assertTrue(begin_llm_profile_retirement(profile_id))
         try:
             models = self.client.get(

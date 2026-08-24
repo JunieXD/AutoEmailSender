@@ -1809,7 +1809,7 @@ const IdentityDeletionDialog = ({
         <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
           <div className="min-w-0">
             <h2 id="identity-deletion-title" className="text-base font-semibold text-stone-950">
-              {impact.can_delete ? "退役身份配置" : "暂时无法退役身份配置"}
+              {impact.can_delete ? "删除身份配置" : "暂时无法删除身份配置"}
             </h2>
             <p id="identity-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
               “{impact.identity_name}” · {impact.email_address}
@@ -1831,10 +1831,10 @@ const IdentityDeletionDialog = ({
             <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
                 <AlertTriangle aria-hidden="true" className="h-4 w-4" />
-                以下操作结束前无法退役
+                以下操作结束前无法删除
               </div>
               <p className="mt-2 text-sm leading-6 text-rose-800">
-                正在执行的操作可能已进入外部发送或并发写入阶段，请先定位并结束对应任务。
+                这些操作正在执行，直接删除可能导致邮件发送或任务结果异常。请按提示找到并处理对应任务。
               </p>
               <ul className="mt-2 space-y-2 text-sm text-rose-800">
                 {impact.blockers.map((blocker) => (
@@ -1853,7 +1853,7 @@ const IdentityDeletionDialog = ({
           )}
 
           <section>
-            <h3 className="text-sm font-semibold text-stone-900">会保留的历史业务数据</h3>
+            <h3 className="text-sm font-semibold text-stone-900">保留的历史数据</h3>
             {references.length > 0 ? (
               <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
                 {references.map(([key, label]) => (
@@ -1910,7 +1910,7 @@ const IdentityDeletionDialog = ({
           {impact.can_delete && (
             <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
-              {busy ? "正在退役" : "确认退役"}
+              {busy ? "正在删除" : "确认删除"}
             </button>
           )}
         </div>
@@ -1964,13 +1964,13 @@ const LLMDeletionDialog = ({
   );
   const automaticActions = [
     impact.automatic_actions.cancel_email_task_ids.length > 0
-      ? `待生成邮件任务 ID ${impact.automatic_actions.cancel_email_task_ids.join("、")}`
+      ? `等待生成草稿的邮件任务：ID ${impact.automatic_actions.cancel_email_task_ids.join("、")}`
       : null,
     impact.automatic_actions.cancel_match_analysis_job_ids.length > 0
-      ? `匹配任务 ID ${impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}`
+      ? `匹配分析任务：ID ${impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}`
       : null,
     impact.automatic_actions.cancel_crawl_job_ids.length > 0
-      ? `抓取或信息补全任务 ID ${impact.automatic_actions.cancel_crawl_job_ids.join("、")}`
+      ? `智能抓取或信息补全任务：ID ${impact.automatic_actions.cancel_crawl_job_ids.join("、")}`
       : null,
   ].filter((item): item is string => item !== null);
 
@@ -1986,7 +1986,7 @@ const LLMDeletionDialog = ({
         <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
           <div className="min-w-0">
             <h2 id="llm-deletion-title" className="text-base font-semibold text-stone-950">
-              {impact.can_delete ? "退役模型配置" : "暂时无法删除模型配置"}
+              {impact.can_delete ? "删除模型配置" : "暂时无法删除模型配置"}
             </h2>
             <p id="llm-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
               “{impact.profile_name}” · {impact.model_name}
@@ -2029,7 +2029,7 @@ const LLMDeletionDialog = ({
           {automaticActions.length > 0 && (
             <section className="border-l-4 border-amber-500 bg-amber-50 px-4 py-3">
               <h3 className="text-sm font-semibold text-amber-950">
-                确认退役后会自动取消
+                确认删除后会自动取消
               </h3>
               <ul className="mt-2 space-y-1 text-sm text-amber-900">
                 {automaticActions.map((item) => (
@@ -2040,7 +2040,7 @@ const LLMDeletionDialog = ({
           )}
 
           <section>
-            <h3 className="text-sm font-semibold text-stone-900">会保留的历史业务数据</h3>
+            <h3 className="text-sm font-semibold text-stone-900">保留的历史数据</h3>
             {references.length > 0 ? (
               <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
                 {references.map(([key, label]) => (
@@ -2083,10 +2083,10 @@ const LLMDeletionDialog = ({
 
           <section className="text-sm leading-6 text-stone-600">
             <p>
-              配置退役后会清除本地 API Key、服务地址和自定义提示词。历史邮件、活动、匹配、抓取与 Token 记录不会删除。
+              删除后，本地保存的 API Key、服务地址和自定义提示词会一并清除。历史邮件、批量活动、匹配分析、智能抓取和 Token 用量记录仍会保留。
             </p>
             <p className="mt-2">
-              暂停或失败的 AI 任务以后恢复时，必须明确选择新的模型；系统不会自动改用其他模型。
+              暂停或失败的 AI 任务再次运行前，需要重新选择模型。系统不会自动使用其他模型。
             </p>
           </section>
         </div>
@@ -2098,7 +2098,7 @@ const LLMDeletionDialog = ({
           {impact.can_delete && (
             <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
-              {busy ? "正在退役" : "确认退役"}
+              {busy ? "正在删除" : "确认删除"}
             </button>
           )}
         </div>
@@ -3320,8 +3320,8 @@ export const ProfilePage = () => {
       setSmtpPasswordVisible(false);
       setIdentityDeletionImpact(null);
       notifySuccess(
-        `已退役身份“${impact.identity_name}”`,
-        "运行凭据已清除，业务历史和材料均已保留。",
+        `已删除身份配置“${impact.identity_name}”`,
+        "邮箱密码已清除，历史任务、通信记录和材料均已保留。",
       );
     } catch (deleteError) {
       if (deleteError instanceof ApiError) {
@@ -3339,8 +3339,8 @@ export const ProfilePage = () => {
         deleteError instanceof ApiError &&
           deleteError.code === "IDENTITY_DELETE_PLAN_STALE"
           ? "关联状态已变化"
-          : "退役身份失败",
-        getActionErrorMessage(deleteError, "退役身份失败"),
+          : "删除身份配置失败",
+        getActionErrorMessage(deleteError, "删除身份配置失败"),
       );
     } finally {
       setDeletingIdentity(false);
@@ -3491,10 +3491,10 @@ export const ProfilePage = () => {
         0,
       );
       notifySuccess(
-        `已退役模型配置“${result.profile_name}”`,
+        `已删除模型配置“${result.profile_name}”`,
         preservedCount > 0
-          ? `凭据已清除，${preservedCount} 条关联记录已完整保留。`
-          : "凭据已清除，历史数据未受影响。",
+          ? `API Key 已清除，${preservedCount} 条关联记录已保留。`
+          : "API Key 已清除，历史数据未受影响。",
       );
     } catch (deleteError) {
       if (deleteError instanceof ApiError) {

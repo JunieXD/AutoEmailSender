@@ -378,8 +378,8 @@ describe('EmailDeliveryPlan', () => {
   it.each([
     ['removed_from_batch', '已从批量任务移除'],
     ['professor_archived', '导师已移入回收站'],
-    ['identity_retired', '发件身份已退役'],
-    ['llm_profile_retired', '模型配置已退役'],
+    ['identity_retired', '发件身份已删除'],
+    ['llm_profile_retired', '模型配置已删除'],
   ] as const)('shows the %s deletion outcome in history', async (status, label) => {
     apiMocks.listEmailDeliveries.mockResolvedValue(
       buildList({

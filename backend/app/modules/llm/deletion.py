@@ -100,10 +100,10 @@ async def build_llm_profile_deletion_impact(
         automatic_actions=automatic_actions,
         blockers=blockers,
         warnings=[
-            "活动、邮件、通信、匹配、抓取和 Token 用量历史都会保留。",
-            "暂停、失败或已取消任务再次运行时必须选择可用模型，不会自动改用默认模型。",
-            "排队中的 AI 草稿、匹配、抓取和信息补全会自动取消；正在执行的外部请求结束前仍会阻止退役。",
-            "应用会清除本地可执行凭据；服务商侧密钥仍建议同步撤销或轮换。",
+            "批量活动、邮件、通信、匹配分析、智能抓取和 Token 用量记录都会保留。",
+            "暂停、失败或已取消的任务再次运行前，需要重新选择模型。系统不会自动使用默认模型。",
+            "等待生成草稿、匹配分析、智能抓取和信息补全的任务会自动取消。正在执行的模型请求结束前，暂时无法删除配置。",
+            "本地保存的 API Key 会被清除。如需彻底停用该密钥，还需前往服务商平台删除或更换。",
         ],
     )
 
@@ -492,7 +492,7 @@ async def _deletion_blockers(
     _append_blocker(
         blockers,
         kind="crawl_job",
-        label="运行中的抓取/信息补全任务",
+        label="正在运行的智能抓取或信息补全任务",
         ids=active_crawl_job_ids,
         surface="任务中心 > 智能抓取或信息补全",
     )
@@ -518,7 +518,7 @@ async def _deletion_blockers(
                 label="另一个删除请求正在处理此模型配置",
                 count=1,
                 entity_ids=[],
-                surface="模型配置页面；等待当前退役请求结束后刷新",
+                surface="模型配置页面；等待当前删除操作完成后刷新",
             )
         )
     return blockers

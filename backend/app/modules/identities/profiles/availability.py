@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import IdentityProfile
 
 
-RETIRED_IDENTITY_MESSAGE = "发件身份已退役，请选择其他身份"
+RETIRED_IDENTITY_MESSAGE = "发件身份已删除，请选择其他发件身份"
 
 
 def identity_profile_is_active(identity: IdentityProfile | None) -> bool:

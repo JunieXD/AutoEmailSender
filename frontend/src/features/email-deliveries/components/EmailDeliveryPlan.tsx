@@ -105,8 +105,8 @@ const DELIVERY_STATUS_OPTIONS: Record<
     { value: 'canceled_send', label: '已取消发送' },
     { value: 'removed_from_batch', label: '已从批量任务移除' },
     { value: 'professor_archived', label: '导师已移入回收站' },
-    { value: 'identity_retired', label: '发件身份已退役' },
-    { value: 'llm_profile_retired', label: '模型配置已退役' },
+    { value: 'identity_retired', label: '发件身份已删除' },
+    { value: 'llm_profile_retired', label: '模型配置已删除' },
   ],
 };
 

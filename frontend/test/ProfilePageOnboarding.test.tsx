@@ -400,7 +400,7 @@ describe("ProfilePage onboarding", () => {
         blockers: [
           {
             kind: "draft_generation",
-            label: "正在生成或等待生成的 AI 草稿",
+            label: "正在生成的 AI 草稿",
             count: 2,
             entity_ids: [41, 42],
             surface: "任务中心 > 发送计划或批量任务详情",
@@ -416,7 +416,7 @@ describe("ProfilePage onboarding", () => {
     expect(
       await screen.findByRole("heading", { name: "暂时无法删除模型配置" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/正在生成或等待生成的 AI 草稿：2 项/)).toHaveTextContent(
+    expect(screen.getByText(/正在生成的 AI 草稿：2 项/)).toHaveTextContent(
       "ID 41、42",
     );
     expect(screen.getByText("批量活动").parentElement).toHaveTextContent(
@@ -425,7 +425,7 @@ describe("ProfilePage onboarding", () => {
     expect(screen.getByText("邮件任务").parentElement).toHaveTextContent(
       "邮件任务3",
     );
-    expect(screen.queryByRole("button", { name: "确认退役" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认删除" })).not.toBeInTheDocument();
     expect(deleteLLMProfile).not.toHaveBeenCalled();
   });
 
@@ -474,7 +474,7 @@ describe("ProfilePage onboarding", () => {
     fireEvent.change(replacementSelect, {
       target: { value: String(replacementProfile.id) },
     });
-    fireEvent.click(screen.getByRole("button", { name: "确认退役" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
 
     await waitFor(() => {
       expect(deleteLLMProfile).toHaveBeenCalledWith(
@@ -485,8 +485,8 @@ describe("ProfilePage onboarding", () => {
       expect(setSelectedLlmProfileId).toHaveBeenCalledWith(null);
       expect(refreshSelections).toHaveBeenCalled();
       expect(mockedNotifySuccess).toHaveBeenCalledWith(
-        "已退役模型配置“测试模型”",
-        expect.stringContaining("关联记录已完整保留"),
+        "已删除模型配置“测试模型”",
+        expect.stringContaining("关联记录已保留"),
       );
     });
   });
@@ -507,12 +507,12 @@ describe("ProfilePage onboarding", () => {
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
     expect(
-      await screen.findByRole("heading", { name: "确认退役后会自动取消" }),
+      await screen.findByRole("heading", { name: "确认删除后会自动取消" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("待生成邮件任务 ID 31")).toBeInTheDocument();
-    expect(screen.getByText("匹配任务 ID 41")).toBeInTheDocument();
-    expect(screen.getByText("抓取或信息补全任务 ID 51")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "确认退役" })).toBeInTheDocument();
+    expect(screen.getByText("等待生成草稿的邮件任务：ID 31")).toBeInTheDocument();
+    expect(screen.getByText("匹配分析任务：ID 41")).toBeInTheDocument();
+    expect(screen.getByText("智能抓取或信息补全任务：ID 51")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeInTheDocument();
   });
 
   it("opens contextual setup guides from the summary, sections, and difficult fields", async () => {

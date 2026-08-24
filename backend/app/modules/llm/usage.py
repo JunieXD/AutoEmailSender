@@ -20,7 +20,7 @@ def track_llm_profile_usage(profile_id: int, kind: str) -> Iterator[None]:
     with _lock:
         if profile_id in _retiring_profile_ids:
             raise LLMProfileRetiringError(
-                "模型配置正在退役，请刷新后选择其他模型。"
+                "该模型配置正在删除，请稍后刷新并选择其他模型。"
             )
         usages = _active_usages.setdefault(profile_id, Counter())
         usages[kind] += 1

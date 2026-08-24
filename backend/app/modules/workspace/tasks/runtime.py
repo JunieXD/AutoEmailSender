@@ -1536,13 +1536,13 @@ def _ensure_task_allows_new_contact(task: EmailTask) -> None:
         )
     if task.identity.deleted_at is not None:
         raise ValueError(
-            f"发件身份 #{task.identity_id} 已退役，不能创建新的联系任务；"
-            "请使用活动身份新建任务"
+            f"发件身份 #{task.identity_id} 已删除，不能创建新的联系任务；"
+            "请选择其他发件身份新建任务"
         )
     if task.llm_profile.deleted_at is not None:
         raise ValueError(
-            f"模型配置 #{task.llm_profile_id} 已退役，不能创建新的联系任务；"
-            "历史记录仍会保留，请选择活动模型新建任务"
+            f"模型配置 #{task.llm_profile_id} 已删除，不能创建新的联系任务；"
+            "历史记录仍会保留，请选择其他模型新建任务"
         )
 
 

@@ -307,7 +307,7 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         now = datetime.now(UTC)
         async with self.session_factory() as session:
-            identity = self._identity("已退役身份", "retired@example.com")
+            identity = self._identity("已删除身份", "retired@example.com")
             identity.deleted_at = now
             professor = Professor(
                 name="已归档导师",
@@ -595,7 +595,7 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
             professors = [
                 Professor(name="已移除导师", email="removed@example.edu"),
                 Professor(name="已归档导师", email="archived@example.edu"),
-                Professor(name="身份退役导师", email="retired@example.edu"),
+                Professor(name="身份删除导师", email="retired@example.edu"),
             ]
             session.add_all([batch_task, *professors])
             await session.flush()
@@ -672,14 +672,14 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(items_by_name["已归档导师"].can_edit)
         self.assertEqual(
-            items_by_name["身份退役导师"].status,
+            items_by_name["身份删除导师"].status,
             "identity_retired",
         )
         self.assertEqual(
-            items_by_name["身份退役导师"].status_label,
-            "发件身份已退役",
+            items_by_name["身份删除导师"].status_label,
+            "发件身份已删除",
         )
-        self.assertFalse(items_by_name["身份退役导师"].can_edit)
+        self.assertFalse(items_by_name["身份删除导师"].can_edit)
         self.assertEqual(
             filtered_counts,
             {

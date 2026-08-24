@@ -285,7 +285,7 @@ vi.mock("@/features/email-deliveries/components/EmailDeliveryPlan", () => ({
         打开批量任务
       </button>
       <button type="button" onClick={() => onOpenBatchTask(99, 91)}>
-        打开退役身份批量任务
+        打开已删除身份的批量任务
       </button>
     </div>
   ),
@@ -1503,7 +1503,7 @@ describe("TasksPage section isolation", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "打开退役身份批量任务" }),
+      screen.getByRole("button", { name: "打开已删除身份的批量任务" }),
     );
 
     expect(
@@ -3917,7 +3917,7 @@ describe("batch task send queue copy", () => {
 
   it.each([
     ["professor_archived", "导师已移入回收站"],
-    ["identity_retired", "发件身份已退役"],
+    ["identity_retired", "发件身份已删除"],
   ] as const)("describes %s cancellation explicitly", (reason, expected) => {
     const text = getBatchTaskItemCancellationText(
       buildBatchItem({

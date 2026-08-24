@@ -510,8 +510,8 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
         ):
             return (
                 "identity_retired",
-                "发件身份已退役",
-                "发件身份已退役，因此这封邮件未发送",
+                "发件身份已删除",
+                "发件身份已删除，因此这封邮件未发送",
             )
         if (
             task.cancellation_reason
@@ -519,8 +519,8 @@ def _delivery_status(task: EmailTask) -> tuple[str, str, str]:
         ):
             return (
                 "llm_profile_retired",
-                "模型配置已退役",
-                "生成草稿所需的模型配置已退役，因此这封邮件未发送",
+                "模型配置已删除",
+                "生成草稿所需的模型配置已删除，因此这封邮件未发送",
             )
         if (
             task.cancellation_reason

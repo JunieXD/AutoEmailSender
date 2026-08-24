@@ -20,7 +20,7 @@ def track_identity_profile_usage(identity_id: int, kind: str) -> Iterator[None]:
     with _lock:
         if identity_id in _retiring_identity_ids:
             raise IdentityProfileRetiringError(
-                "发件身份正在退役，请刷新后选择其他身份。"
+                "该发件身份正在删除，请稍后刷新并选择其他发件身份。"
             )
         usages = _active_usages.setdefault(identity_id, Counter())
         usages[kind] += 1

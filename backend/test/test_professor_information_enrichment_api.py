@@ -392,7 +392,7 @@ class ProfessorInformationEnrichmentApiTests(unittest.TestCase):
 
     def test_retiring_model_cancels_queued_information_enrichment(self) -> None:
         professor_id = self._create_professor(
-            name="退役模型补全导师",
+            name="已删除模型补全导师",
             email="retired-model-enrichment@example.edu",
             profile_url="https://example.edu/retired-model-enrichment",
         )

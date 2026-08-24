@@ -142,7 +142,7 @@ async def build_identity_deletion_impact(
     warnings = [
         "身份会从可选列表移除，SMTP/IMAP 密码会从本地数据库清除。",
         "邮件、通信、投递、匹配、测试写信和任务历史都会保留。",
-        "独立发信模板与该身份上传的材料会继续保留在材料库中。",
+        "独立的发信模板和该身份上传的材料会继续保留在材料库中。",
     ]
     if automatic_actions.cancel_email_task_ids:
         warnings.append(
@@ -161,7 +161,7 @@ async def build_identity_deletion_impact(
             f"会作废 {len(automatic_actions.invalidate_agent_change_plan_ids)} 个尚未确认的 Agent 操作计划。"
         )
     if identity.communication_group_id is not None:
-        warnings.append("该身份会退出通信共享组；不足两个成员的共享组会自动解散。")
+        warnings.append("该身份会退出通信共享组。成员不足两个时，共享组会自动解散。")
 
     revision_payload = {
         "identity_id": identity.id,
@@ -206,7 +206,7 @@ async def retire_identity_profile(
     if impact.revision != expected_revision:
         raise IdentityDeletionError(
             code="IDENTITY_DELETE_PLAN_STALE",
-            message="身份配置或关联状态已发生变化，请重新确认退役影响。",
+            message="身份配置或关联状态已发生变化，请重新查看删除影响后再确认。",
             impact=impact,
         )
     if impact.blockers:
@@ -241,7 +241,7 @@ async def retire_identity_profile(
                 )
             raise IdentityDeletionError(
                 code="IDENTITY_DELETE_PLAN_STALE",
-                message="身份配置或关联状态已发生变化，请重新确认退役影响。",
+                message="身份配置或关联状态已发生变化，请重新查看删除影响后再确认。",
                 impact=locked_impact,
             )
 
@@ -409,7 +409,7 @@ async def _deletion_blockers(
     _append_blocker(
         blockers,
         kind="sending_email_tasks",
-        label="已进入发送中的邮件任务",
+        label="已进入发送流程的邮件任务",
         ids=sending_ids,
         surface="任务中心 > 发送计划",
     )
@@ -431,10 +431,10 @@ async def _deletion_blockers(
         blockers.append(
             IdentityDeletionBlocker(
                 kind="retirement_in_progress",
-                label="另一个退役请求正在处理此身份",
+                label="另一个删除请求正在处理此身份",
                 count=1,
                 entity_ids=[],
-                surface="身份配置页面；等待当前退役请求结束后刷新",
+                surface="身份配置页面；等待当前删除操作完成后刷新",
             )
         )
     return blockers
@@ -564,7 +564,7 @@ async def _invalidate_pending_change_plans(
             continue
         plan.status = "canceled"
         plan.canceled_at = now
-        plan.failure_message = "关联发件身份已退役，请重新发起操作"
+        plan.failure_message = "关联发件身份已删除，请重新发起操作"
         plan.updated_at = now
         invalidated.append(plan.id)
     return sorted(invalidated)
@@ -631,8 +631,8 @@ def _blocker_message(
         )
         summaries.append(f"{blocker.label} {blocker.count} 项{ids}")
     return (
-        f"发件身份“{identity_name}”暂时无法退役：{'；'.join(summaries)}。"
-        "请在任务中心定位上述任务，等待发送/生成结束或先取消对应操作。"
+        f"发件身份“{identity_name}”暂时无法删除：{'；'.join(summaries)}。"
+        "请按提示找到对应任务，等待操作结束或先取消任务。"
     )
 
 

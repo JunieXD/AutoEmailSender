@@ -363,7 +363,7 @@ describe("SelectionContext notifications", () => {
     listIdentities.mockResolvedValue([]);
     listLLMProfiles
       .mockResolvedValueOnce([
-        makeLlmProfile({ id: 1, name: "即将退役", is_default: true }),
+        makeLlmProfile({ id: 1, name: "即将删除", is_default: true }),
         makeLlmProfile({ id: 2, name: "备用模型", is_default: false }),
       ])
       .mockResolvedValue([
@@ -378,7 +378,7 @@ describe("SelectionContext notifications", () => {
       </NotificationProvider>,
     );
     await waitFor(() => {
-      expect(screen.getByText("即将退役")).toBeInTheDocument();
+      expect(screen.getByText("即将删除")).toBeInTheDocument();
     });
 
     window.dispatchEvent(

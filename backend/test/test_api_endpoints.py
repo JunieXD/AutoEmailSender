@@ -1616,7 +1616,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="replacement-default@example.com",
         )
-        llm_id = self._create_llm(name="身份退役自动取消模型")
+        llm_id = self._create_llm(name="身份删除自动取消模型")
         professor_id = self._create_professor(
             email="identity-retire-scheduled@example.edu"
         )
@@ -1677,7 +1677,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="retire-reversible-work@example.com",
         )
-        llm_id = self._create_llm(name="身份退役可取消工作模型")
+        llm_id = self._create_llm(name="身份删除可取消工作模型")
         professor_ids = [
             self._create_professor(email="retire-generating@example.edu"),
             self._create_professor(email="retire-send-failed@example.edu"),
@@ -1766,7 +1766,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="identity-retire-sending@example.com",
         )
-        llm_id = self._create_llm(name="身份退役发送保护模型")
+        llm_id = self._create_llm(name="身份删除发送保护模型")
         professor_id = self._create_professor(
             email="identity-retire-sending@example.edu"
         )
@@ -1807,7 +1807,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="retired-batch-identity@example.com",
         )
-        llm_id = self._create_llm(name="身份退役批量任务模型")
+        llm_id = self._create_llm(name="身份删除批量任务模型")
         professor_id = self._create_professor(
             email="retired-batch-professor@example.edu"
         )
@@ -1854,7 +1854,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="retired-history-follow-up@example.com",
         )
-        llm_id = self._create_llm(name="退役身份历史派生保护模型")
+        llm_id = self._create_llm(name="已删除身份历史派生保护模型")
         professor_id = self._create_professor(
             email="retired-history-follow-up@example.edu"
         )
@@ -1879,7 +1879,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(followed_up.status_code, 400, msg=followed_up.text)
-        self.assertIn(f"发件身份 #{identity_id} 已退役", followed_up.json()["detail"])
+        self.assertIn(f"发件身份 #{identity_id} 已删除", followed_up.json()["detail"])
         with sqlite3.connect(self.db_path) as connection:
             child_count = connection.execute(
                 "SELECT COUNT(*) FROM email_tasks WHERE parent_task_id = ?",
@@ -1892,7 +1892,7 @@ class ApiEndpointTests(unittest.TestCase):
             with_imap=False,
             email_address="retired-llm-history-follow-up@example.com",
         )
-        llm_id = self._create_llm(name="历史跟进待退役模型")
+        llm_id = self._create_llm(name="历史跟进待删除模型")
         self._create_llm(name="历史跟进活动模型")
         professor_id = self._create_professor(
             email="retired-llm-history-follow-up@example.edu"
@@ -1919,7 +1919,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(followed_up.status_code, 400, msg=followed_up.text)
         self.assertIn(
-            f"模型配置 #{llm_id} 已退役",
+            f"模型配置 #{llm_id} 已删除",
             followed_up.json()["detail"],
         )
         with sqlite3.connect(self.db_path) as connection:
@@ -14309,7 +14309,7 @@ class ApiEndpointTests(unittest.TestCase):
     def test_llm_profile_retirement_clears_credentials_and_allows_name_reuse(
         self,
     ) -> None:
-        llm_id = self._create_llm(name="可退役模型")
+        llm_id = self._create_llm(name="可删除模型")
 
         impact = self.client.get(
             f"/api/llm-profiles/{llm_id}/deletion-impact"
@@ -14344,7 +14344,7 @@ class ApiEndpointTests(unittest.TestCase):
         recreated = self.client.post(
             "/api/llm-profiles",
             json={
-                "name": "可退役模型",
+                "name": "可删除模型",
                 "provider": "openai",
                 "api_base_url": "https://api.new.example/v1",
                 "api_key": "sk-new-key",
@@ -14465,7 +14465,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200, msg=history.text)
         resaved = self.client.post(
             f"/api/test-compose/{identity_id}/{llm_id}/draft",
-            json={**draft_payload, "subject": "退役后仍可保存"},
+            json={**draft_payload, "subject": "删除后仍可保存"},
         )
         self.assertEqual(resaved.status_code, 200, msg=resaved.text)
         with patch(

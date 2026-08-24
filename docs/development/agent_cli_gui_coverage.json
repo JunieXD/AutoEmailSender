@@ -318,7 +318,7 @@
         "getLLMProfileDeletionImpact": {
           "status": "ui_only",
           "required_capabilities": ["llm-profiles.write"],
-          "reason": "删除影响预览是桌面凭据退役确认流程的一部分。"
+          "reason": "删除影响预览是桌面端删除模型配置确认流程的一部分。"
         },
         "fetchLLMProfileModelsPreview": {
           "status": "ui_only",
