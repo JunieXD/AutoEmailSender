@@ -35,6 +35,10 @@ import { KeywordSearchScopeSelect } from '@/components/molecules/KeywordSearchSc
 import { MultiSelectFilter } from '@/components/molecules/MultiSelectFilter';
 import { Pagination } from '@/components/molecules/Pagination';
 import { SelectionToggleButton } from '@/components/molecules/SelectionToggleButton';
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from '@/components/atoms/modalStyles';
 import { TopBarSelectMenu } from '@/components/atoms/TopBarSelectMenu';
 import { useNotification } from '@/context/NotificationContext';
 import {
@@ -526,12 +530,12 @@ const CommunityMentorDetailDialog = ({
       role="dialog"
       aria-modal="true"
       aria-label={`导师详情：${record.name}`}
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-stone-50 shadow-2xl"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[90vh] w-full max-w-4xl flex-col`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >
@@ -552,7 +556,7 @@ const CommunityMentorDetailDialog = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl p-2 text-stone-500 transition hover:bg-stone-100 hover:text-stone-900"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900"
             aria-label="关闭导师详情"
           >
             <X className="h-5 w-5" />
@@ -2243,8 +2247,8 @@ export const CommunityMentorsPage = () => {
       />
 
       {previewPayload ? (
-        <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/40 p-2 backdrop-blur-sm sm:p-4">
-          <div className="flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-y-auto rounded-[26px] border border-white/60 bg-stone-50 shadow-2xl md:max-h-[92vh] md:overflow-hidden">
+        <div role="dialog" aria-modal="true" aria-label="社区导师导入预览" className={`${MODAL_BACKDROP_CLASS_NAME} z-[90] p-2 sm:p-4`}>
+          <div className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-y-auto md:max-h-[92vh] md:overflow-hidden`}>
             <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 py-3 sm:px-5 sm:py-4 md:static">
               <div className="min-w-0">
                 <h2 className="text-xl font-semibold text-stone-950">导入预览</h2>

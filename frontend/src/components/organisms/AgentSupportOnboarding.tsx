@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { Bot, Loader2, Terminal } from "lucide-react";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
 import type { DesktopAgentSupportStatus } from "@/types/desktop";
 
@@ -75,8 +79,8 @@ export function AgentSupportOnboarding() {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-950/35 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="agent-support-onboarding-title">
-      <div className="w-full max-w-lg rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl">
+    <div className={`${MODAL_BACKDROP_CLASS_NAME} z-[100] px-4`} role="dialog" aria-modal="true" aria-labelledby="agent-support-onboarding-title">
+      <div className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-lg p-6`}>
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
           <Bot className="h-5 w-5" />
         </div>

@@ -42,6 +42,10 @@ import { SelectionToggleButton } from "@/components/molecules/SelectionToggleBut
 import { ProfessorEditDialog } from "@/components/molecules/ProfessorEditDialog";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
@@ -7273,14 +7277,15 @@ export const BackgroundTasksPage = ({
         />
       ) : null}      {selectedCandidateDetail ? (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/35 p-4"
+          className={`${MODAL_BACKDROP_CLASS_NAME} z-[60]`}
           onClick={candidateDetailLayer.onBackdropClick}
           onMouseDown={candidateDetailLayer.onBackdropMouseDown}
         >
           <section
             role="dialog"
+            aria-modal="true"
             aria-label="候选导师详情"
-            className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[90vh] w-full max-w-3xl flex-col`}
             onClick={candidateDetailLayer.onContentClick}
             onMouseDown={candidateDetailLayer.onContentMouseDown}
           >

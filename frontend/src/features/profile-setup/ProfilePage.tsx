@@ -36,6 +36,10 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
 import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
 import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
@@ -1783,6 +1787,17 @@ const IdentityDeletionDialog = ({
   onConfirm: () => void;
 }) => {
   useDocumentScrollLock(true);
+  const dismiss = useCallback(() => {
+    if (!busy) {
+      onClose();
+    }
+  }, [busy, onClose]);
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } = useDismissableLayerClick(dismiss);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) {
@@ -1798,37 +1813,49 @@ const IdentityDeletionDialog = ({
   );
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
+    <div
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
+    >
       <div
         aria-describedby="identity-deletion-description"
         aria-labelledby="identity-deletion-title"
         aria-modal="true"
-        className="flex max-h-[min(88vh,46rem)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-stone-200 bg-white shadow-2xl"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[min(88vh,46rem)] w-full max-w-2xl flex-col`}
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
         role="dialog"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
-          <div className="min-w-0">
-            <h2 id="identity-deletion-title" className="text-base font-semibold text-stone-950">
-              {impact.can_delete ? "删除身份配置" : "暂时无法删除身份配置"}
-            </h2>
-            <p id="identity-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
-              “{impact.identity_name}” · {impact.email_address}
-            </p>
+        <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
+        <div className="relative flex items-start justify-between gap-4 border-b border-stone-200/80 px-6 py-6">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600 shadow-sm shadow-red-100/80">
+              <AlertTriangle aria-hidden="true" className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 id="identity-deletion-title" className="text-lg font-semibold tracking-[0.01em] text-stone-900">
+                {impact.can_delete ? "删除身份配置" : "暂时无法删除身份配置"}
+              </h2>
+              <p id="identity-deletion-description" className="mt-2 text-sm leading-6 text-stone-600">
+                “{impact.identity_name}” · {impact.email_address}
+              </p>
+            </div>
           </div>
           <button
             type="button"
-            aria-label="关闭"
-            className="ui-icon-btn shrink-0"
+            aria-label="关闭确认弹层"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={busy}
-            onClick={onClose}
+            onClick={dismiss}
           >
             <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
           {impact.blockers.length > 0 && (
-            <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
+            <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
                 <AlertTriangle aria-hidden="true" className="h-4 w-4" />
                 以下操作结束前无法删除
@@ -1903,12 +1930,12 @@ const IdentityDeletionDialog = ({
           </section>
         </div>
 
-        <div className="flex flex-wrap justify-end gap-2 border-t border-stone-200 px-5 py-4">
-          <button type="button" className="ui-btn-secondary" disabled={busy} onClick={onClose}>
+        <div className="relative flex flex-wrap justify-end gap-3 border-t border-stone-200/80 px-6 py-5">
+          <button type="button" className="ui-btn-secondary rounded-2xl" disabled={busy} onClick={dismiss}>
             {impact.can_delete ? "取消" : "知道了"}
           </button>
           {impact.can_delete && (
-            <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
+            <button type="button" className="ui-btn-danger rounded-2xl" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
               {busy ? "正在删除" : "确认删除"}
             </button>
@@ -1987,7 +2014,7 @@ const LLMDeletionDialog = ({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
     >
@@ -1995,7 +2022,7 @@ const LLMDeletionDialog = ({
         aria-describedby="llm-deletion-description"
         aria-labelledby="llm-deletion-title"
         aria-modal="true"
-        className="relative flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
         role="dialog"
@@ -2107,13 +2134,13 @@ const LLMDeletionDialog = ({
 
           <section className="rounded-2xl border border-stone-200/80 bg-white/70 px-4 py-4 text-sm leading-6 text-stone-600">
             <p>
-              删除后，本地保存的 API Key 和服务地址会被清除；如配置过模型级提示词，也会一并清除。
+              API Key、服务地址和模型级提示词会被清除。
             </p>
             <p className="mt-2">
-              材料与模板中的发信模板独立保存，不受影响。历史邮件、批量活动、匹配分析、智能抓取和 Token 用量记录仍会保留。
+              发信模板不会删除。历史邮件、任务和分析记录会保留。
             </p>
             <p className="mt-2">
-              使用该配置的暂停或失败 AI 任务不会自动继续；再次运行时，需要确认使用届时选中的可用模型。
+              暂停或失败的任务不会自动继续。再次运行时，请选择可用模型。
             </p>
           </section>
           </div>

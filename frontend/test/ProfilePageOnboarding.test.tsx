@@ -495,8 +495,8 @@ describe("ProfilePage onboarding", () => {
     vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(
       makeDeletionImpact({
         warnings: [
-          "本地保存的 API Key 和服务地址会被清除；如配置过模型级提示词，也会一并清除。",
-          "材料与模板中的发信模板独立保存，不受影响。",
+          "API Key、服务地址和模型级提示词会被清除。",
+          "发信模板不会删除。",
         ],
       }),
     );
@@ -505,9 +505,8 @@ describe("ProfilePage onboarding", () => {
     openSetupSection("模型配置");
     fireEvent.click(await screen.findByRole("button", { name: "删除" }));
 
-    expect(
-      await screen.findByText(/材料与模板中的发信模板独立保存，不受影响/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("发信模板不会删除。历史邮件、任务和分析记录会保留。"))
+      .toBeInTheDocument();
     const dialog = screen.getByRole("dialog", { name: "删除模型配置" });
     expect(dialog).toHaveClass("rounded-[30px]");
     expect(dialog).toHaveClass(
@@ -517,7 +516,7 @@ describe("ProfilePage onboarding", () => {
       screen.getByRole("button", { name: "关闭确认弹层" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/使用该配置的暂停或失败 AI 任务不会自动继续/),
+      screen.getByText(/暂停或失败的任务不会自动继续/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/自定义提示词会一并清除/)).not.toBeInTheDocument();
   });

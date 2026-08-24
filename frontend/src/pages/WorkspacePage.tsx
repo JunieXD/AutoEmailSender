@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Link, Navigate, useBeforeUnload, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, Loader2, X } from 'lucide-react';
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from '@/components/atoms/modalStyles';
 import { WorkspaceComposerDock } from '@/components/organisms/WorkspaceComposerDock';
 import { WorkspaceMessageThread } from '@/components/organisms/WorkspaceMessageThread';
 import { WorkspaceSidebar } from '@/components/organisms/WorkspaceSidebar';
@@ -369,12 +373,12 @@ const ScheduleSendDialog = ({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
     >
       <div
-        className="relative w-full max-w-md overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-md`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { Check, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import type { ProfessorTagDTO, ProfessorTagPayloadDTO } from "@/types";
 
 type ProfessorTagAssignmentDialogProps = {
@@ -96,7 +100,7 @@ export const ProfessorTagAssignmentDialog = ({
       role="dialog"
       aria-label="添加导师标签"
       aria-modal="true"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[80]`}
       onClick={() => {
         if (!busy) {
           onClose();
@@ -104,7 +108,7 @@ export const ProfessorTagAssignmentDialog = ({
       }}
     >
       <div
-        className="w-full max-w-lg rounded-[28px] border border-stone-200 bg-white p-5 shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-lg p-6`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">

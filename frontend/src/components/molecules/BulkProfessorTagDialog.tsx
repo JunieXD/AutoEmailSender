@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { Check, Loader2, Plus, Tags, Trash2 } from "lucide-react";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import type {
   ProfessorBulkTagModeDTO,
   ProfessorTagDTO,
@@ -122,7 +126,7 @@ export const BulkProfessorTagDialog = ({
       role="dialog"
       aria-label="批量修改导师标签"
       aria-modal="true"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[80]`}
       onClick={() => {
         if (!busy) {
           onClose();
@@ -130,7 +134,7 @@ export const BulkProfessorTagDialog = ({
       }}
     >
       <div
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="shrink-0 px-5 pt-5">

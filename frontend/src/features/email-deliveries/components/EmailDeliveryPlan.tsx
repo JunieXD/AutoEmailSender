@@ -42,6 +42,10 @@ import { formatApiDateTime, parseApiDateTime } from '@/lib/dateTime';
 import { formatFileSize } from '@/lib/formatFileSize';
 import { useConfirmDialog } from '@/lib/useConfirmDialog';
 import { useDismissableLayerClick } from '@/lib/useDismissableLayerClick';
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from '@/components/atoms/modalStyles';
 import { useDocumentScrollLock } from '@/lib/useDocumentScrollLock';
 import { usePaginationState } from '@/lib/usePaginationState';
 import type {
@@ -1372,12 +1376,12 @@ export const EmailDeliveryPlan = ({
 
       {rescheduleItem ? (
         <div
-          className="fixed inset-0 z-[95] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-sm"
+          className={`${MODAL_BACKDROP_CLASS_NAME} z-[95]`}
           onClick={rescheduleLayer.onBackdropClick}
           onMouseDown={rescheduleLayer.onBackdropMouseDown}
         >
           <div
-            className="w-full max-w-md rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl"
+            className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-md p-6`}
             onClick={rescheduleLayer.onContentClick}
             onMouseDown={rescheduleLayer.onContentMouseDown}
           >

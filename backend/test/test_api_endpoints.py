@@ -14320,13 +14320,13 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertTrue(impact_payload["can_delete"])
         self.assertTrue(
             any(
-                "发信模板独立保存" in warning
+                "发信模板不会删除" in warning
                 for warning in impact_payload["warnings"]
             )
         )
         self.assertTrue(
             any(
-                "不会自动继续" in warning
+                "暂停或失败的任务不会自动继续" in warning
                 for warning in impact_payload["warnings"]
             )
         )

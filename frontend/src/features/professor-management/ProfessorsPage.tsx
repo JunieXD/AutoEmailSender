@@ -36,6 +36,10 @@ import {
   Users,
 } from "lucide-react";
 import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagDialog";
 import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
 import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
@@ -362,13 +366,13 @@ const ModalShell = ({
       role="dialog"
       aria-label={title}
       aria-modal="true"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[80]`}
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
     >
       <div
         className={clsx(
-          "relative w-full overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.96))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]",
+          `${MODAL_SURFACE_CLASS_NAME} w-full`,
           maxWidthClassName,
         )}
         onClick={onContentClick}

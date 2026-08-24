@@ -4,6 +4,10 @@ import { useId } from "react";
 import clsx from "clsx";
 import { AlertTriangle, X } from "lucide-react";
 
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 
 export type ConfirmDialogTone = "danger" | "neutral";
@@ -70,7 +74,7 @@ export const ConfirmDialog = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
     >
@@ -78,7 +82,7 @@ export const ConfirmDialog = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >

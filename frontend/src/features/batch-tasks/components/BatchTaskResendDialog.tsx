@@ -1,4 +1,8 @@
 import { Loader2, RotateCcw, X } from 'lucide-react';
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from '@/components/atoms/modalStyles';
 import { formatApiDateTime } from '@/lib/dateTime';
 import {
   getOutreachGenerationModeLabel,
@@ -45,11 +49,12 @@ export const BatchTaskResendDialog = ({
   const regenerateCount = selectedItems.length - reusableCount;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/35 p-4">
+    <div className={`${MODAL_BACKDROP_CLASS_NAME} z-[70]`}>
       <section
         role="dialog"
+        aria-modal="true"
         aria-label="重新发起未成功项"
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[90vh] w-full max-w-3xl flex-col`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
           <div>

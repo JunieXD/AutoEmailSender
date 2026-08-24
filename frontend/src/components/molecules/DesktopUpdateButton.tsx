@@ -17,6 +17,10 @@ import {
   openExternalHttpUrl,
 } from "@/lib/externalUrls";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import type { DesktopUpdateDownloadMode, DesktopUpdateStatus } from "@/types/desktop";
 
 const PENDING_UPDATE_KEY = "desktop_pending_update_version";
@@ -347,7 +351,7 @@ function DesktopUpdateReleaseNotesDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
       role="presentation"
       onClick={onBackdropClick}
       onMouseDown={onBackdropMouseDown}
@@ -356,7 +360,7 @@ function DesktopUpdateReleaseNotesDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="desktop-update-release-title"
-        className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-stone-200/80 bg-white shadow-[0_34px_90px_-32px_rgba(41,37,36,0.55)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-2xl`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >

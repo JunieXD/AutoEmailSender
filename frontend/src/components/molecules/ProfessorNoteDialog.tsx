@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
+import {
+  MODAL_BACKDROP_CLASS_NAME,
+  MODAL_SURFACE_CLASS_NAME,
+} from "@/components/atoms/modalStyles";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 
 type ProfessorNoteDialogProfessor = {
@@ -68,7 +72,7 @@ export const ProfessorNoteDialog = ({
       role="dialog"
       aria-label="编辑个人备注"
       aria-modal="true"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      className={`${MODAL_BACKDROP_CLASS_NAME} z-[80]`}
       onClick={(event) => {
         if (!saving) {
           onBackdropClick(event);
@@ -77,7 +81,7 @@ export const ProfessorNoteDialog = ({
       onMouseDown={onBackdropMouseDown}
     >
       <div
-        className="w-full max-w-lg rounded-[28px] border border-stone-200 bg-white p-5 shadow-[0_28px_72px_-32px_rgba(41,37,36,0.55)]"
+        className={`${MODAL_SURFACE_CLASS_NAME} w-full max-w-lg p-6`}
         onClick={onContentClick}
         onMouseDown={onContentMouseDown}
       >
