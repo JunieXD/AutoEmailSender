@@ -134,25 +134,34 @@ export const SelectionProvider = ({ children }: PropsWithChildren) => {
       llmSelectionInitializedRef.current = true;
       const storedValue = window.localStorage.getItem(LLM_STORAGE_KEY);
       const stored = parseStoredId(LLM_STORAGE_KEY);
+      const fallbackId =
+        llmProfiles.find((item) => item.is_default)?.id ??
+        llmProfiles[0]?.id ??
+        null;
       const initialId =
-        storedValue === null
-          ? (llmProfiles.find((item) => item.is_default)?.id ??
-            llmProfiles[0]?.id ??
-            null)
-          : (llmProfiles.find((item) => item.id === stored)?.id ?? null);
+        storedValue !== null && llmProfiles.some((item) => item.id === stored)
+          ? stored
+          : fallbackId;
       if (initialId !== selectedLlmProfileId) {
         setSelectedLlmProfileId(initialId);
       }
       return;
     }
 
-    if (selectedLlmProfileId !== null) {
-      setSelectedLlmProfileId(null);
+    const fallbackId =
+      llmProfiles.find((item) => item.is_default)?.id ??
+      llmProfiles[0]?.id ??
+      null;
+    if (fallbackId !== selectedLlmProfileId) {
+      setSelectedLlmProfileId(fallbackId);
     }
   }, [llmProfiles, loading, selectedLlmProfileId]);
 
   useEffect(() => {
     const refreshAfterRetirement = (profileId: number) => {
+      setLlmProfiles((current) =>
+        current.filter((profile) => profile.id !== profileId),
+      );
       setSelectedLlmProfileId((current) =>
         current === profileId ? null : current,
       );

@@ -482,7 +482,7 @@ describe("ProfilePage onboarding", () => {
         impact.revision,
         replacementProfile.id,
       );
-      expect(setSelectedLlmProfileId).toHaveBeenCalledWith(null);
+      expect(setSelectedLlmProfileId).toHaveBeenCalledWith(replacementProfile.id);
       expect(refreshSelections).toHaveBeenCalled();
       expect(mockedNotifySuccess).toHaveBeenCalledWith(
         "已删除模型配置“测试模型”",
@@ -507,6 +507,17 @@ describe("ProfilePage onboarding", () => {
 
     expect(
       await screen.findByText(/材料与模板中的发信模板独立保存，不受影响/),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "删除模型配置" });
+    expect(dialog).toHaveClass("rounded-[30px]");
+    expect(dialog).toHaveClass(
+      "bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))]",
+    );
+    expect(
+      screen.getByRole("button", { name: "关闭确认弹层" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/使用该配置的暂停或失败 AI 任务不会自动继续/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/自定义提示词会一并清除/)).not.toBeInTheDocument();
   });

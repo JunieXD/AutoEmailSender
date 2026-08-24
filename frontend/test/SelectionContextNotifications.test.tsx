@@ -337,7 +337,7 @@ describe("SelectionContext notifications", () => {
     });
   });
 
-  it("does not silently replace a stored llm profile that no longer exists", async () => {
+  it("falls back to an available llm profile when the stored one no longer exists", async () => {
     window.localStorage.setItem("selected_llm_profile_id", "99");
     listIdentities.mockResolvedValue([]);
     listLLMProfiles.mockResolvedValue([
@@ -353,12 +353,12 @@ describe("SelectionContext notifications", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("no llm")).toBeInTheDocument();
-      expect(window.localStorage.getItem("selected_llm_profile_id")).toBeNull();
+      expect(screen.getByText("仍可用的默认模型")).toBeInTheDocument();
+      expect(window.localStorage.getItem("selected_llm_profile_id")).toBe("1");
     });
   });
 
-  it("clears a retired selection across windows without choosing a fallback", async () => {
+  it("selects an available fallback after a model is retired in another window", async () => {
     window.localStorage.setItem("selected_llm_profile_id", "1");
     listIdentities.mockResolvedValue([]);
     listLLMProfiles
@@ -389,9 +389,8 @@ describe("SelectionContext notifications", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("no llm")).toBeInTheDocument();
-      expect(screen.queryByText("备用模型")).not.toBeInTheDocument();
-      expect(window.localStorage.getItem("selected_llm_profile_id")).toBeNull();
+      expect(screen.getByText("备用模型")).toBeInTheDocument();
+      expect(window.localStorage.getItem("selected_llm_profile_id")).toBe("2");
     });
   });
 

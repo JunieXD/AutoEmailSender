@@ -14324,6 +14324,12 @@ class ApiEndpointTests(unittest.TestCase):
                 for warning in impact_payload["warnings"]
             )
         )
+        self.assertTrue(
+            any(
+                "不会自动继续" in warning
+                for warning in impact_payload["warnings"]
+            )
+        )
 
         retired = self.client.delete(
             f"/api/llm-profiles/{llm_id}",

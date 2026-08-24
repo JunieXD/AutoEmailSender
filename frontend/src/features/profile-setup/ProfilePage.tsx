@@ -1949,6 +1949,17 @@ const LLMDeletionDialog = ({
   onConfirm: () => void;
 }) => {
   useDocumentScrollLock(true);
+  const dismiss = useCallback(() => {
+    if (!busy) {
+      onClose();
+    }
+  }, [busy, onClose]);
+  const {
+    onBackdropClick,
+    onBackdropMouseDown,
+    onContentClick,
+    onContentMouseDown,
+  } = useDismissableLayerClick(dismiss);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) {
@@ -1975,37 +1986,50 @@ const LLMDeletionDialog = ({
   ].filter((item): item is string => item !== null);
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/35 p-4 backdrop-blur-md"
+      onClick={onBackdropClick}
+      onMouseDown={onBackdropMouseDown}
+    >
       <div
         aria-describedby="llm-deletion-description"
         aria-labelledby="llm-deletion-title"
         aria-modal="true"
-        className="flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-stone-200 bg-white shadow-2xl"
+        className="relative flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[30px] border border-stone-200/80 bg-[linear-gradient(180deg,rgba(255,252,246,0.98),rgba(255,245,233,0.95))] shadow-[0_34px_90px_-32px_rgba(41,37,36,0.5)]"
+        onClick={onContentClick}
+        onMouseDown={onContentMouseDown}
         role="dialog"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
-          <div className="min-w-0">
-            <h2 id="llm-deletion-title" className="text-base font-semibold text-stone-950">
-              {impact.can_delete ? "删除模型配置" : "暂时无法删除模型配置"}
-            </h2>
-            <p id="llm-deletion-description" className="mt-1 text-sm leading-6 text-stone-600">
-              “{impact.profile_name}” · {impact.model_name}
-            </p>
+        <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
+        <div className="relative flex min-h-0 flex-col px-6 py-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600 shadow-sm shadow-red-100/80">
+                <AlertTriangle aria-hidden="true" className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="llm-deletion-title" className="text-lg font-semibold tracking-[0.01em] text-stone-900">
+                  {impact.can_delete ? "删除模型配置" : "暂时无法删除模型配置"}
+                </h2>
+                <p id="llm-deletion-description" className="mt-2 text-sm leading-6 text-stone-600">
+                  “{impact.profile_name}” · {impact.model_name}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="关闭确认弹层"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={busy}
+              onClick={dismiss}
+            >
+              <X aria-hidden="true" className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            aria-label="关闭"
-            className="ui-icon-btn shrink-0"
-            disabled={busy}
-            onClick={onClose}
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <div className="relative min-h-0 flex-1 space-y-5 overflow-y-auto pr-1 pt-6">
           {impact.blockers.length > 0 && (
-            <section className="border-l-4 border-rose-500 bg-rose-50 px-4 py-3">
+            <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
                 <AlertTriangle aria-hidden="true" className="h-4 w-4" />
                 以下操作结束前无法删除
@@ -2027,7 +2051,7 @@ const LLMDeletionDialog = ({
           )}
 
           {automaticActions.length > 0 && (
-            <section className="border-l-4 border-amber-500 bg-amber-50 px-4 py-3">
+            <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
               <h3 className="text-sm font-semibold text-amber-950">
                 确认删除后会自动取消
               </h3>
@@ -2039,7 +2063,7 @@ const LLMDeletionDialog = ({
             </section>
           )}
 
-          <section>
+          <section className="rounded-2xl border border-stone-200/80 bg-white/70 px-4 py-4">
             <h3 className="text-sm font-semibold text-stone-900">保留的历史数据</h3>
             {references.length > 0 ? (
               <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
@@ -2058,7 +2082,7 @@ const LLMDeletionDialog = ({
           </section>
 
           {impact.is_default && impact.can_delete && (
-            <section>
+            <section className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
               <label htmlFor="llm-default-replacement" className="text-sm font-semibold text-stone-900">
                 删除后的默认模型
               </label>
@@ -2081,7 +2105,7 @@ const LLMDeletionDialog = ({
             </section>
           )}
 
-          <section className="text-sm leading-6 text-stone-600">
+          <section className="rounded-2xl border border-stone-200/80 bg-white/70 px-4 py-4 text-sm leading-6 text-stone-600">
             <p>
               删除后，本地保存的 API Key 和服务地址会被清除；如配置过模型级提示词，也会一并清除。
             </p>
@@ -2089,21 +2113,32 @@ const LLMDeletionDialog = ({
               材料与模板中的发信模板独立保存，不受影响。历史邮件、批量活动、匹配分析、智能抓取和 Token 用量记录仍会保留。
             </p>
             <p className="mt-2">
-              暂停或失败的 AI 任务再次运行前，需要重新选择模型。系统不会自动使用其他模型。
+              使用该配置的暂停或失败 AI 任务不会自动继续；再次运行时，需要确认使用届时选中的可用模型。
             </p>
           </section>
-        </div>
+          </div>
 
-        <div className="flex flex-wrap justify-end gap-2 border-t border-stone-200 px-5 py-4">
-          <button type="button" className="ui-btn-secondary" disabled={busy} onClick={onClose}>
+          <div className="relative mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={busy}
+            onClick={dismiss}
+          >
             {impact.can_delete ? "取消" : "知道了"}
           </button>
           {impact.can_delete && (
-            <button type="button" className="ui-btn-danger inline-flex items-center gap-2" disabled={busy} onClick={onConfirm}>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-red-200/90 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={busy}
+              onClick={onConfirm}
+            >
               {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
               {busy ? "正在删除" : "确认删除"}
             </button>
           )}
+          </div>
         </div>
       </div>
     </div>
@@ -3482,7 +3517,12 @@ export const ProfilePage = () => {
         impact.is_default ? replacementDefaultLLMId : null,
       );
       if (selectedLlmProfileId === impact.profile_id) {
-        setSelectedLlmProfileId(null);
+        const nextProfileId =
+          result.default_profile_id ??
+          replacementDefaultLLMId ??
+          llmProfiles.find((profile) => profile.id !== impact.profile_id)?.id ??
+          null;
+        setSelectedLlmProfileId(nextProfileId);
       }
       await refreshSelections();
       setLlmDeletionImpact(null);
