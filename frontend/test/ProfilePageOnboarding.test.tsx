@@ -491,6 +491,26 @@ describe("ProfilePage onboarding", () => {
     });
   });
 
+  it("explains that independent outreach templates are retained", async () => {
+    vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(
+      makeDeletionImpact({
+        warnings: [
+          "本地保存的 API Key 和服务地址会被清除；如配置过模型级提示词，也会一并清除。",
+          "材料与模板中的发信模板独立保存，不受影响。",
+        ],
+      }),
+    );
+
+    renderPage();
+    openSetupSection("模型配置");
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+
+    expect(
+      await screen.findByText(/材料与模板中的发信模板独立保存，不受影响/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/自定义提示词会一并清除/)).not.toBeInTheDocument();
+  });
+
   it("shows queued work that will be canceled automatically", async () => {
     vi.mocked(getLLMProfileDeletionImpact).mockResolvedValue(
       makeDeletionImpact({

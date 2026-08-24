@@ -14309,17 +14309,25 @@ class ApiEndpointTests(unittest.TestCase):
     def test_llm_profile_retirement_clears_credentials_and_allows_name_reuse(
         self,
     ) -> None:
+        identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm(name="可删除模型")
 
         impact = self.client.get(
             f"/api/llm-profiles/{llm_id}/deletion-impact"
         )
         self.assertEqual(impact.status_code, 200, msg=impact.text)
-        self.assertTrue(impact.json()["can_delete"])
+        impact_payload = impact.json()
+        self.assertTrue(impact_payload["can_delete"])
+        self.assertTrue(
+            any(
+                "发信模板独立保存" in warning
+                for warning in impact_payload["warnings"]
+            )
+        )
 
         retired = self.client.delete(
             f"/api/llm-profiles/{llm_id}",
-            params={"impact_revision": impact.json()["revision"]},
+            params={"impact_revision": impact_payload["revision"]},
         )
         self.assertEqual(retired.status_code, 200, msg=retired.text)
         self.assertTrue(retired.json()["ok"])
@@ -14340,6 +14348,20 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row[:5], ("", None, None, None, 0))
         self.assertIsNotNone(row[5])
+
+        identities = self.client.get("/api/identities")
+        self.assertEqual(identities.status_code, 200, msg=identities.text)
+        identity = next(
+            item for item in identities.json() if item["id"] == identity_id
+        )
+        self.assertEqual(
+            identity["outreach_template_subject"], "申请与{{name}}老师交流"
+        )
+        self.assertIn("老师您好", identity["outreach_template_body_text"])
+        self.assertIsNotNone(identity["default_outreach_template_id"])
+        templates = self.client.get("/api/outreach-templates")
+        self.assertEqual(templates.status_code, 200, msg=templates.text)
+        self.assertEqual(len(templates.json()), 1)
 
         recreated = self.client.post(
             "/api/llm-profiles",

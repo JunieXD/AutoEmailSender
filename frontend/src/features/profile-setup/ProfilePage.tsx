@@ -2083,7 +2083,10 @@ const LLMDeletionDialog = ({
 
           <section className="text-sm leading-6 text-stone-600">
             <p>
-              删除后，本地保存的 API Key、服务地址和自定义提示词会一并清除。历史邮件、批量活动、匹配分析、智能抓取和 Token 用量记录仍会保留。
+              删除后，本地保存的 API Key 和服务地址会被清除；如配置过模型级提示词，也会一并清除。
+            </p>
+            <p className="mt-2">
+              材料与模板中的发信模板独立保存，不受影响。历史邮件、批量活动、匹配分析、智能抓取和 Token 用量记录仍会保留。
             </p>
             <p className="mt-2">
               暂停或失败的 AI 任务再次运行前，需要重新选择模型。系统不会自动使用其他模型。
