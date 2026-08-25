@@ -490,6 +490,11 @@ export interface CreateBatchTaskRequestDTO {
   resend_content_strategy?: BatchTaskResendContentStrategy;
 }
 
+export interface BatchTaskAttachmentDefaultsDTO {
+  identity_id: number;
+  selected_material_ids: number[];
+}
+
 export type MatchAnalysisJobStatus =
   | 'queued'
   | 'running'

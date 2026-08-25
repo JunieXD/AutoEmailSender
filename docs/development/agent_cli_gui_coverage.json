@@ -12,6 +12,7 @@
       "id": "batch-tasks",
       "source": "lib/api/batchTasksApi.ts",
       "exported_actions": [
+        "getBatchTaskAttachmentDefaults",
         "listBatchTasks",
         "createBatchTask",
         "getBatchTaskSummary",

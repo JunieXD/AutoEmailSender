@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
+  BatchTaskAttachmentDefaultsDTO,
   BatchTaskBulkApproveDraftsResultDTO,
   BatchTaskCardDTO,
   BatchTaskItemDTO,
@@ -11,6 +12,13 @@ import type {
   TaskListView,
   WorkspaceThreadDTO,
 } from '@/types';
+
+export const getBatchTaskAttachmentDefaults = (identityId: number) =>
+  apiFetch<BatchTaskAttachmentDefaultsDTO>(
+    '/api/batch-tasks/attachment-defaults',
+    undefined,
+    { identity_id: identityId },
+  );
 
 export const listBatchTasks = (params?: {
   identityId?: number | null;

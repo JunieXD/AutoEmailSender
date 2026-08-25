@@ -7039,6 +7039,140 @@ class ApiEndpointTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row, ("running", None, "sending"))
 
+    def test_batch_attachment_defaults_use_latest_current_task_per_identity(
+        self,
+    ) -> None:
+        first_identity_id = self._create_identity(
+            with_imap=False,
+            email_address="first-batch-defaults@example.com",
+        )
+        second_identity_id = self._create_identity(
+            with_imap=False,
+            email_address="second-batch-defaults@example.com",
+        )
+        llm_id = self._create_llm()
+        recent_material_id = self._upload_material(
+            first_identity_id,
+            filename="recent-batch-default.pdf",
+            content=b"recent batch default",
+            material_type="portfolio",
+        )
+        older_material_id = self._upload_material(
+            first_identity_id,
+            filename="older-batch-default.pdf",
+            content=b"older batch default",
+            material_type="transcript",
+        )
+
+        self._insert_batch_task_with_material(
+            identity_id=first_identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[older_material_id],
+        )
+        self._insert_batch_task_with_material(
+            identity_id=first_identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[
+                recent_material_id,
+                999999,
+                recent_material_id,
+            ],
+        )
+        self._insert_batch_task_with_material(
+            identity_id=first_identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[older_material_id],
+            deleted=True,
+        )
+        self._insert_batch_task_with_material(
+            identity_id=second_identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[older_material_id],
+        )
+
+        first_response = self.client.get(
+            "/api/batch-tasks/attachment-defaults",
+            params={"identity_id": first_identity_id},
+        )
+        second_response = self.client.get(
+            "/api/batch-tasks/attachment-defaults",
+            params={"identity_id": second_identity_id},
+        )
+
+        self.assertEqual(first_response.status_code, 200, msg=first_response.text)
+        self.assertEqual(
+            first_response.json(),
+            {
+                "identity_id": first_identity_id,
+                "selected_material_ids": [recent_material_id],
+            },
+        )
+        self.assertEqual(second_response.status_code, 200, msg=second_response.text)
+        self.assertEqual(
+            second_response.json()["selected_material_ids"],
+            [older_material_id],
+        )
+
+    def test_batch_attachment_defaults_do_not_skip_latest_empty_selection(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        material_id = self._upload_material(
+            identity_id,
+            filename="older-selected-batch-default.pdf",
+            content=b"older selected batch default",
+            material_type="portfolio",
+        )
+        self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[material_id],
+        )
+        self._insert_batch_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            status="completed",
+            primary_material_id=None,
+            selected_material_ids=[],
+        )
+
+        response = self.client.get(
+            "/api/batch-tasks/attachment-defaults",
+            params={"identity_id": identity_id},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["selected_material_ids"], [])
+
+    def test_batch_attachment_defaults_are_empty_without_history_and_validate_identity(
+        self,
+    ) -> None:
+        identity_id = self._create_identity(with_imap=False)
+
+        response = self.client.get(
+            "/api/batch-tasks/attachment-defaults",
+            params={"identity_id": identity_id},
+        )
+        missing_response = self.client.get(
+            "/api/batch-tasks/attachment-defaults",
+            params={"identity_id": 999999},
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.text)
+        self.assertEqual(response.json()["selected_material_ids"], [])
+        self.assertEqual(missing_response.status_code, 404, msg=missing_response.text)
+
     def test_batch_tasks_list_is_identity_scoped_not_llm_scoped(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         first_llm_id = self._create_llm()

@@ -11,7 +11,10 @@ import { SubjectTemplateInput } from '@/components/molecules/SubjectTemplateInpu
 import { TaskDateSelector } from '@/components/molecules/TaskDateSelector';
 import { useNotification } from '@/context/NotificationContext';
 import { safeRecordUserAction } from '@/lib/diagnosticUserActions';
-import { createBatchTask } from '@/lib/api/batchTasksApi';
+import {
+  createBatchTask,
+  getBatchTaskAttachmentDefaults,
+} from '@/lib/api/batchTasksApi';
 import { listOutreachTemplates } from '@/lib/api/outreachTemplates';
 import {
   clearCreateTaskNavigationHandoff,
@@ -136,15 +139,28 @@ export const CreateTaskPage = () => {
   const [emailsPerWindow, setEmailsPerWindow] = useState('10');
   const [primaryMaterialId, setPrimaryMaterialId] = useState<number | null>(null);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
+  const [loadingAttachmentDefaults, setLoadingAttachmentDefaults] = useState(false);
   const loadedProfessorsKeyRef = useRef<string | null>(null);
   const loadedProfessorsSelectionKeyRef = useRef<string | null>(null);
   const activeProfessorsRequestKeyRef = useRef<string | null>(null);
   const latestProfessorsRequestIdRef = useRef(0);
+  const latestAttachmentDefaultsRequestIdRef = useRef(0);
   const templateInitializationKeyRef = useRef<string | null>(null);
   const resendCleanupTimeoutRef = useRef<number | null>(null);
   const targetMentorsStartRef = useRef<HTMLElement | null>(null);
   const isResendPrefillActive =
     resendPrefillContext !== null && resendPrefillContext.identityId === selectedIdentityId;
+  const resendSelectedMaterialIdsKey = useMemo(() => {
+    if (!isResendPrefillActive || !resendPrefillContext || !selectedIdentity) {
+      return '';
+    }
+    const availableMaterialIds = new Set(
+      selectedIdentity.materials.map((material) => material.id),
+    );
+    return resendPrefillContext.defaults.selected_material_ids
+      .filter((materialId) => availableMaterialIds.has(materialId))
+      .join(',');
+  }, [isResendPrefillActive, resendPrefillContext, selectedIdentity]);
   const requiresDraftGeneration =
     !isResendPrefillActive ||
     resendContentStrategy !== 'reuse' ||
@@ -269,7 +285,6 @@ export const CreateTaskPage = () => {
       templateInitializationKeyRef.current = null;
       setSelectedOutreachTemplateId(null);
       setPrimaryMaterialId(null);
-      setSelectedMaterialIds([]);
       setTaskMode('llm');
       setResendContentStrategy('reuse');
       setSubject('');
@@ -286,7 +301,6 @@ export const CreateTaskPage = () => {
         ? selectedIdentity.current_primary_material.id
         : null;
     setPrimaryMaterialId(nextPrimaryMaterialId);
-    setSelectedMaterialIds([]);
     setTaskMode(selectedIdentity.outreach_generation_mode ?? 'llm');
     setSubject(selectedIdentity.outreach_template_subject ?? '');
     const nextTemplateBodyText = selectedIdentity.outreach_template_body_text ?? '';
@@ -325,7 +339,6 @@ export const CreateTaskPage = () => {
           ? resendPrefillContext.defaults.primary_material_id
           : null,
       );
-      setSelectedMaterialIds(resendPrefillContext.defaults.selected_material_ids.filter((id) => materialIds.has(id)));
     } else if (resendPrefillContext) {
       writeCreateTaskNavigationHandoff(selectedProfessorIds);
     }
@@ -334,6 +347,66 @@ export const CreateTaskPage = () => {
     resendPrefillContext,
     selectedIdentity,
     selectedProfessorIds,
+  ]);
+
+  useEffect(() => {
+    const requestId = latestAttachmentDefaultsRequestIdRef.current + 1;
+    latestAttachmentDefaultsRequestIdRef.current = requestId;
+
+    if (!selectedIdentityId) {
+      setSelectedMaterialIds([]);
+      setLoadingAttachmentDefaults(false);
+      return;
+    }
+
+    if (isResendPrefillActive) {
+      setSelectedMaterialIds(
+        resendSelectedMaterialIdsKey
+          ? resendSelectedMaterialIdsKey.split(',').map(Number)
+          : [],
+      );
+      setLoadingAttachmentDefaults(false);
+      return;
+    }
+
+    setSelectedMaterialIds([]);
+    setLoadingAttachmentDefaults(true);
+    const loadAttachmentDefaults = async () => {
+      try {
+        const defaults = await getBatchTaskAttachmentDefaults(selectedIdentityId);
+        if (latestAttachmentDefaultsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSelectedMaterialIds(defaults.selected_material_ids);
+      } catch (loadError) {
+        if (latestAttachmentDefaultsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSelectedMaterialIds([]);
+        notifyError(
+          '加载上次批量附件失败',
+          loadError instanceof Error
+            ? loadError.message
+            : '加载上次批量附件失败，本次将不预选附件',
+        );
+      } finally {
+        if (latestAttachmentDefaultsRequestIdRef.current === requestId) {
+          setLoadingAttachmentDefaults(false);
+        }
+      }
+    };
+
+    void loadAttachmentDefaults();
+    return () => {
+      if (latestAttachmentDefaultsRequestIdRef.current === requestId) {
+        latestAttachmentDefaultsRequestIdRef.current += 1;
+      }
+    };
+  }, [
+    isResendPrefillActive,
+    notifyError,
+    resendSelectedMaterialIdsKey,
+    selectedIdentityId,
   ]);
 
   useEffect(() => {
@@ -1024,6 +1097,12 @@ export const CreateTaskPage = () => {
 
               <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4">
                 <div className="text-sm font-medium text-stone-900">随信附件</div>
+                {loadingAttachmentDefaults ? (
+                  <p className="mt-2 flex items-center gap-2 text-xs text-stone-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    正在读取上次批量任务的附件…
+                  </p>
+                ) : null}
                 {selectedIdentity.materials.length === 0 ? (
                   <p className="mt-3 text-sm text-stone-500">暂无可选材料。</p>
                 ) : (
@@ -1041,6 +1120,7 @@ export const CreateTaskPage = () => {
                               selected={checked}
                               semantics="checkbox"
                               size="md"
+                              disabled={loadingAttachmentDefaults}
                               onToggle={() => {
                                 setSelectedMaterialIds((previous) =>
                                   previous.includes(material.id)
@@ -1073,7 +1153,7 @@ export const CreateTaskPage = () => {
                 <button
                   type="button"
                   onClick={() => void handleSubmit()}
-                  disabled={submitting}
+                  disabled={submitting || loadingAttachmentDefaults}
                   className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

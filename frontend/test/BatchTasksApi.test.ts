@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deleteBatchTask,
+  getBatchTaskAttachmentDefaults,
   getBatchTaskResendContext,
   restoreBatchTask,
   rewriteBatchTaskItemDraft,
@@ -34,6 +35,18 @@ describe("batchTasksApi", () => {
     await getBatchTaskResendContext(12);
 
     expect(mockedApiFetch).toHaveBeenCalledWith("/api/batch-tasks/12/resend-context");
+  });
+
+  it("fetches batch attachment defaults for the selected identity", async () => {
+    mockedApiFetch.mockResolvedValue({});
+
+    await getBatchTaskAttachmentDefaults(3);
+
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/api/batch-tasks/attachment-defaults",
+      undefined,
+      { identity_id: 3 },
+    );
   });
 
   it("updates outreach config through the scoped batch item URL", async () => {

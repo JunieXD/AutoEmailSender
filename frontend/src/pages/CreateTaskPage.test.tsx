@@ -8,6 +8,7 @@ import { CreateTaskPage } from "./CreateTaskPage";
 const navigateMock = vi.fn();
 const listProfessorsMock = vi.fn();
 const createBatchTaskMock = vi.fn();
+const getBatchTaskAttachmentDefaultsMock = vi.fn();
 const listOutreachTemplatesMock = vi.fn();
 const confirmMock = vi.fn();
 const notifyMock = {
@@ -128,6 +129,8 @@ vi.mock("@/entities/professor/api/professors", () => ({
 
 vi.mock("@/lib/api/batchTasksApi", () => ({
   createBatchTask: (...args: unknown[]) => createBatchTaskMock(...args),
+  getBatchTaskAttachmentDefaults: (...args: unknown[]) =>
+    getBatchTaskAttachmentDefaultsMock(...args),
 }));
 
 vi.mock("@/lib/api/outreachTemplates", () => ({
@@ -188,6 +191,10 @@ describe("CreateTaskPage", () => {
     createBatchTaskMock.mockResolvedValue({
       id: 1,
       name: "批量任务",
+    });
+    getBatchTaskAttachmentDefaultsMock.mockResolvedValue({
+      identity_id: selectedIdentity.id,
+      selected_material_ids: [],
     });
     listOutreachTemplatesMock.mockResolvedValue([]);
     confirmMock.mockResolvedValue(true);
@@ -357,7 +364,7 @@ describe("CreateTaskPage", () => {
   });
 
 
-  it("submits null selected materials by default for new batch tasks", async () => {
+  it("submits null selected materials when recent batch defaults are empty", async () => {
     render(
       <MemoryRouter>
         <CreateTaskPage />
@@ -373,6 +380,117 @@ describe("CreateTaskPage", () => {
         selected_material_ids: null,
       }),
     );
+  });
+
+  it("preselects attachments from the latest batch task", async () => {
+    getBatchTaskAttachmentDefaultsMock.mockResolvedValue({
+      identity_id: selectedIdentity.id,
+      selected_material_ids: [7],
+    });
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
+    expect(getBatchTaskAttachmentDefaultsMock).toHaveBeenCalledWith(
+      selectedIdentity.id,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selected_material_ids: [7],
+      }),
+    );
+  });
+
+  it("lets the user clear inherited batch attachments", async () => {
+    getBatchTaskAttachmentDefaultsMock.mockResolvedValue({
+      identity_id: selectedIdentity.id,
+      selected_material_ids: [7],
+    });
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    const attachmentToggle = screen.getByRole("checkbox");
+    await waitFor(() => expect(attachmentToggle).toBeChecked());
+    fireEvent.click(attachmentToggle);
+    expect(attachmentToggle).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ }));
+
+    await waitFor(() => expect(createBatchTaskMock).toHaveBeenCalledTimes(1));
+    expect(createBatchTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selected_material_ids: null,
+      }),
+    );
+  });
+
+  it("prevents submission while attachment defaults are loading", async () => {
+    type AttachmentDefaults = {
+      identity_id: number;
+      selected_material_ids: number[];
+    };
+    let resolveDefaults!: (value: AttachmentDefaults) => void;
+    getBatchTaskAttachmentDefaultsMock.mockReturnValue(
+      new Promise<AttachmentDefaults>((resolve) => {
+        resolveDefaults = resolve;
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    expect(screen.getByText("正在读取上次批量任务的附件…")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ })).toBeDisabled();
+
+    resolveDefaults({
+      identity_id: selectedIdentity.id,
+      selected_material_ids: [7],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("checkbox")).toBeEnabled();
+      expect(screen.getByRole("checkbox")).toBeChecked();
+      expect(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ })).toBeEnabled();
+    });
+  });
+
+  it("falls back to no attachments when defaults fail to load", async () => {
+    getBatchTaskAttachmentDefaultsMock.mockRejectedValue(
+      new Error("默认附件接口不可用"),
+    );
+
+    render(
+      <MemoryRouter>
+        <CreateTaskPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(selectedProfessor.name)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(notifyMock.notifyError).toHaveBeenCalledWith(
+        "加载上次批量附件失败",
+        "默认附件接口不可用",
+      );
+    });
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /\u521b\u5efa\u4efb\u52a1/ })).toBeEnabled();
   });
 
   it("submits user selected materials for batch tasks", async () => {
@@ -458,6 +576,7 @@ describe("CreateTaskPage", () => {
     );
 
     expect(await screen.findByText("张明")).toBeInTheDocument();
+    expect(getBatchTaskAttachmentDefaultsMock).not.toHaveBeenCalled();
     expect(screen.getByText(/已从「过期任务」带入 1 位导师/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("重新发起 - 过期任务")).toBeInTheDocument();
     expect(

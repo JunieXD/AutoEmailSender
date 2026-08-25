@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.modules.campaigns.public import (
     BatchTaskActionResponse,
+    BatchTaskAttachmentDefaultsRead,
     BatchTaskBulkApproveDraftsRequest,
     BatchTaskBulkApproveDraftsResponse,
     BatchTaskCardRead,
@@ -119,6 +120,49 @@ class BatchTaskCardMetrics:
     failed_count: int = 0
     replied_count: int = 0
     canceled_send_count: int = 0
+
+
+@router.get(
+    "/attachment-defaults",
+    response_model=BatchTaskAttachmentDefaultsRead,
+)
+async def get_batch_task_attachment_defaults(
+    identity_id: int = Query(..., ge=1),
+    session: AsyncSession = Depends(get_async_session),
+) -> BatchTaskAttachmentDefaultsRead:
+    identity = await get_active_identity_profile(session, identity_id)
+    if identity is None:
+        raise HTTPException(status_code=404, detail="未找到身份配置")
+
+    stored_ids = await session.scalar(
+        select(BatchTask.selected_material_ids)
+        .where(
+            BatchTask.identity_id == identity.id,
+            BatchTask.deleted_at.is_(None),
+        )
+        .order_by(BatchTask.created_at.desc(), BatchTask.id.desc())
+        .limit(1),
+    )
+    if not isinstance(stored_ids, list):
+        stored_ids = []
+
+    available_material_ids = set(await session.scalars(select(IdentityMaterial.id)))
+    selected_material_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for material_id in stored_ids:
+        if (
+            type(material_id) is not int
+            or material_id not in available_material_ids
+            or material_id in seen_ids
+        ):
+            continue
+        selected_material_ids.append(material_id)
+        seen_ids.add(material_id)
+
+    return BatchTaskAttachmentDefaultsRead(
+        identity_id=identity.id,
+        selected_material_ids=selected_material_ids,
+    )
 
 
 @router.get("", response_model=list[BatchTaskCardRead])

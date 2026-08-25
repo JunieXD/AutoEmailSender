@@ -33,6 +33,7 @@ from .scheduling import (
 )
 from .schemas import (
     BatchTaskActionResponse,
+    BatchTaskAttachmentDefaultsRead,
     BatchTaskBulkApproveDraftsRequest,
     BatchTaskBulkApproveDraftsResponse,
     BatchTaskCardRead,

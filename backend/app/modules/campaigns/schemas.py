@@ -66,6 +66,11 @@ class BatchTaskCardRead(ApiSchema):
     deleted_at: datetime | None
 
 
+class BatchTaskAttachmentDefaultsRead(ApiSchema):
+    identity_id: int
+    selected_material_ids: list[int]
+
+
 class BatchTaskItemRead(ApiSchema):
     id: int
     professor_id: int
