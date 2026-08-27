@@ -1319,6 +1319,31 @@ class CrawlerToolTests(unittest.TestCase):
         )
         self.assertEqual(public_dns_mock.call_count, 2)
 
+    def test_resolved_crawl_url_policy_rechecks_proxy_fake_ip_with_public_dns(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "app.modules.crawler.pages.url_safety.socket.getaddrinfo",
+                return_value=[
+                    (0, 0, 0, "", ("198.18.0.1", 443)),
+                ],
+            ),
+            patch(
+                "app.modules.crawler.pages.url_safety.resolve_public_dns_host_ips",
+                return_value=("93.184.216.34",),
+            ) as public_dns_mock,
+        ):
+            self.assertTrue(
+                _is_resolved_allowed_crawl_url(
+                    "https://faculty.example.edu/list.htm",
+                    "https://people.example.edu/zhang.html",
+                    allow_public_dns_fallback=True,
+                )
+            )
+
+        self.assertEqual(public_dns_mock.call_count, 2)
+
     def test_public_dns_recheck_still_rejects_private_answers(self) -> None:
         crawler_tools._resolve_public_dns_host_ips.cache_clear()
         response = SimpleNamespace(

@@ -108,7 +108,7 @@ async def run_crawler_page_worker_once(
             university=job.university,
             school=job.school,
             start_url=job.start_url,
-            allow_public_dns_fallback=job.entry_type == "profile",
+            allow_public_dns_fallback=True,
             crawl_run_id=job.current_run_id,
         )
 

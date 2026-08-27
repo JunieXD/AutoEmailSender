@@ -168,7 +168,7 @@ class CrawlerRuntimePageWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(contexts), 1)
         self.assertTrue(contexts[0].allow_public_dns_fallback)
 
-    async def test_directory_entries_keep_public_dns_fallback_disabled(self) -> None:
+    async def test_directory_entries_enable_public_dns_fallback(self) -> None:
         _, task_id = await self._seed_page_task(
             original_url="https://faculty.example.edu/list.htm",
             entry_type="list",
@@ -193,7 +193,7 @@ class CrawlerRuntimePageWorkerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(contexts), 1)
-        self.assertFalse(contexts[0].allow_public_dns_fallback)
+        self.assertTrue(contexts[0].allow_public_dns_fallback)
 
     async def asyncSetUp(self) -> None:
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
