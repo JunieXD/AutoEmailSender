@@ -2,6 +2,7 @@ import type { ProfessorDashboardItemDTO } from "@/types";
 
 export type ProfessorDashboardSortKey =
   | "latest"
+  | "updatedAtDesc"
   | "matchScoreDesc"
   | "sentCountDesc"
   | "nameAsc"
@@ -10,16 +11,22 @@ export type ProfessorDashboardSortKey =
 
 export type ProfessorDashboardSortDirection = "asc" | "desc";
 
+export const DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY: ProfessorDashboardSortKey =
+  "updatedAtDesc";
+
 const isProfessorDashboardTimeSortKey = (
   sortKey: ProfessorDashboardSortKey,
-): sortKey is "lastSentAt" | "lastRepliedAt" =>
-  sortKey === "lastSentAt" || sortKey === "lastRepliedAt";
+): sortKey is "updatedAtDesc" | "lastSentAt" | "lastRepliedAt" =>
+  sortKey === "updatedAtDesc" ||
+  sortKey === "lastSentAt" ||
+  sortKey === "lastRepliedAt";
 
 export const DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS: Record<
   ProfessorDashboardSortKey,
   ProfessorDashboardSortDirection
 > = {
   latest: "desc",
+  updatedAtDesc: "desc",
   matchScoreDesc: "desc",
   sentCountDesc: "desc",
   nameAsc: "asc",
@@ -32,6 +39,7 @@ export const PROFESSOR_DASHBOARD_SORT_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "latest", label: "导入时间" },
+  { value: "updatedAtDesc", label: "更新时间" },
   { value: "matchScoreDesc", label: "匹配度" },
   { value: "sentCountDesc", label: "发送次数" },
   { value: "nameAsc", label: "姓名" },
@@ -66,10 +74,12 @@ const compareOptionalNumber = (
 
 const getTimeSortValue = (
   professor: ProfessorDashboardItemDTO,
-  sortKey: "lastSentAt" | "lastRepliedAt",
+  sortKey: "updatedAtDesc" | "lastSentAt" | "lastRepliedAt",
 ) => {
   const rawValue =
-    sortKey === "lastSentAt"
+    sortKey === "updatedAtDesc"
+      ? professor.updated_at
+      : sortKey === "lastSentAt"
       ? professor.last_sent_at
       : professor.last_replied_at;
   if (!rawValue) {
@@ -82,7 +92,7 @@ const getTimeSortValue = (
 
 const sortByOptionalTime = (
   professors: ProfessorDashboardItemDTO[],
-  sortKey: "lastSentAt" | "lastRepliedAt",
+  sortKey: "updatedAtDesc" | "lastSentAt" | "lastRepliedAt",
   direction: ProfessorDashboardSortDirection,
 ) =>
   professors

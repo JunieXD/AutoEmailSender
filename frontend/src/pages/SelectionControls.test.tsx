@@ -158,6 +158,7 @@ const createDashboardProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  updated_at: "2026-05-01T00:00:00Z",
   tags: [],
 });
 
@@ -409,6 +410,12 @@ const filterDashboardProfessors = <Item extends ProfessorDashboardItemDTO>(
     filtered.sort(
       (left, right) =>
         direction * (left.sent_count - right.sent_count) || left.id - right.id,
+    );
+  } else if (payload.sort_key === "updatedAtDesc") {
+    filtered.sort(
+      (left, right) =>
+        direction * left.updated_at.localeCompare(right.updated_at) ||
+        left.id - right.id,
     );
   } else if (
     payload.sort_key === "lastSentAt" ||
@@ -1115,6 +1122,63 @@ describe("selection controls", () => {
     expect(
       screen.queryByRole("button", { name: "最近回复在前" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("sorts home professors by update time by default", async () => {
+    vi.mocked(listProfessors).mockResolvedValue([
+      {
+        ...createDashboardProfessor(211, "Earlier Updated Mentor"),
+        updated_at: "2026-06-01T08:05:00Z",
+      },
+      {
+        ...createDashboardProfessor(212, "Recently Updated Mentor"),
+        updated_at: "2026-06-02T09:12:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent(
+        "更新时间 ↓",
+      );
+    });
+    expect(searchDashboardProfessors).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sort_key: "updatedAtDesc",
+        sort_direction: "desc",
+      }),
+    );
+    expect(
+      screen.getAllByTestId(/dashboard-professor-row-/).map((row) => row.dataset.testid),
+    ).toEqual([
+      "dashboard-professor-row-212",
+      "dashboard-professor-row-211",
+    ]);
+  });
+
+  it("sorts management professors by update time by default", async () => {
+    render(
+      <MemoryRouter>
+        <ProfessorsPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "排序" })).toHaveTextContent(
+        "更新时间 ↓",
+      );
+    });
+    expect(searchManagementProfessors).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sort_key: "updatedAtDesc",
+        sort_direction: "desc",
+      }),
+    );
   });
 
   it("uses the same green highlight for sent-time sorting", async () => {

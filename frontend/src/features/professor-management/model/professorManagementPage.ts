@@ -5,6 +5,7 @@ import {
 } from "@/features/professor-management/client/filterManagementProfessors";
 import {
   DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
   type ProfessorManagementSortDirection,
   type ProfessorManagementSortKey,
@@ -104,7 +105,7 @@ export const readStoredProfessorManagementState = () => {
     archiveFilter: "active" as ArchiveFilter,
     filters: createDefaultManagementFilters(),
     advancedFiltersOpen: false,
-    sortKey: "latest" as ProfessorManagementSortKey,
+    sortKey: DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
     sortDirections: { ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS },
     currentPage: 1,
   };

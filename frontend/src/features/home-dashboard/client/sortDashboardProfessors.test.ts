@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorDashboardItemDTO } from "@/types";
 import {
+  DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY,
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
   sortDashboardProfessors,
   type ProfessorDashboardSortDirection,
@@ -25,6 +26,7 @@ const buildProfessor = (
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  updated_at: "2026-05-01T00:00:00Z",
   tags: [],
   ...overrides,
 });
@@ -39,9 +41,14 @@ const namesFor = (
   );
 
 describe("sortDashboardProfessors", () => {
+  it("defaults to recently updated professors first", () => {
+    expect(DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY).toBe("updatedAtDesc");
+  });
+
   it("uses neutral field labels because direction is selected separately", () => {
     expect(PROFESSOR_DASHBOARD_SORT_OPTIONS).toEqual([
       { value: "latest", label: "导入时间" },
+      { value: "updatedAtDesc", label: "更新时间" },
       { value: "matchScoreDesc", label: "匹配度" },
       { value: "sentCountDesc", label: "发送次数" },
       { value: "nameAsc", label: "姓名" },
@@ -72,6 +79,24 @@ describe("sortDashboardProfessors", () => {
       "Second",
       "First",
     ]);
+  });
+
+  it("sorts by updated time in either direction", () => {
+    const professors = [
+      buildProfessor({
+        id: 1,
+        name: "Old",
+        updated_at: "2026-06-01T09:00:00Z",
+      }),
+      buildProfessor({
+        id: 2,
+        name: "New",
+        updated_at: "2026-06-02T09:00:00Z",
+      }),
+    ];
+
+    expect(namesFor("updatedAtDesc", professors)).toEqual(["New", "Old"]);
+    expect(namesFor("updatedAtDesc", professors, "asc")).toEqual(["Old", "New"]);
   });
 
   it("sorts by match score descending and places null scores last", () => {

@@ -53,6 +53,16 @@ class ProfessorPaginationTests(unittest.TestCase):
         asyncio.run(self.engine.dispose())
         self.temp_dir.cleanup()
 
+    def test_page_requests_default_to_recently_updated_first(self) -> None:
+        self.assertEqual(
+            ProfessorDashboardPageRequest(identity_id=1).sort_key,
+            "updatedAtDesc",
+        )
+        self.assertEqual(
+            ProfessorManagementPageRequest().sort_key,
+            "updatedAtDesc",
+        )
+
     def test_empty_page_has_stable_pagination_metadata(self) -> None:
         async def run() -> None:
             async with self.session_factory() as session:
@@ -187,10 +197,19 @@ class ProfessorPaginationTests(unittest.TestCase):
                     ],
                 )
                 await session.commit()
-                for sort_key in ("latest", "lastSentAt", "lastRepliedAt"):
+                for sort_key in (
+                    "latest",
+                    "updatedAtDesc",
+                    "lastSentAt",
+                    "lastRepliedAt",
+                ):
                     with self.subTest(sort_key=sort_key):
-                        page_number = 21 if sort_key == "latest" else 1
-                        page_size = 10 if sort_key == "latest" else 1
+                        page_number = (
+                            21 if sort_key in {"latest", "updatedAtDesc"} else 1
+                        )
+                        page_size = (
+                            10 if sort_key in {"latest", "updatedAtDesc"} else 1
+                        )
                         first = await list_dashboard_professor_page(
                             session,
                             ProfessorDashboardPageRequest(
@@ -225,6 +244,62 @@ class ProfessorPaginationTests(unittest.TestCase):
                         offset_ids = [item.id for item in by_offset.items]
                         self.assertEqual(cursor_ids, offset_ids)
                         self.assertTrue(set(first_ids).isdisjoint(cursor_ids))
+
+        asyncio.run(run())
+
+    def test_dashboard_sorts_recently_edited_professor_by_updated_at(self) -> None:
+        async def run() -> None:
+            identity_id, _ = await self._seed_dashboard_data()
+            async with self.session_factory() as session:
+                manually_edited = Professor(
+                    name="手动补充研究方向导师",
+                    email="manually-edited@example.edu",
+                    university="更新时间大学",
+                    updated_at=datetime(2020, 8, 1, tzinfo=UTC),
+                )
+                previously_latest = Professor(
+                    name="原最新导师",
+                    email="previously-latest@example.edu",
+                    university="更新时间大学",
+                    updated_at=datetime(2020, 8, 2, tzinfo=UTC),
+                )
+                session.add_all([manually_edited, previously_latest])
+                await session.commit()
+
+                manually_edited.research_direction = "手动补充的研究方向"
+                await session.commit()
+
+                descending = await list_dashboard_professor_page(
+                    session,
+                    ProfessorDashboardPageRequest(
+                        identity_id=identity_id,
+                        universities=["更新时间大学"],
+                        sort_key="updatedAtDesc",
+                        sort_direction="desc",
+                    ),
+                )
+                ascending = await list_dashboard_professor_page(
+                    session,
+                    ProfessorDashboardPageRequest(
+                        identity_id=identity_id,
+                        universities=["更新时间大学"],
+                        sort_key="updatedAtDesc",
+                        sort_direction="asc",
+                    ),
+                )
+
+            self.assertEqual(
+                [item.name for item in descending.items],
+                ["手动补充研究方向导师", "原最新导师"],
+            )
+            self.assertEqual(
+                [item.name for item in ascending.items],
+                ["原最新导师", "手动补充研究方向导师"],
+            )
+            self.assertEqual(
+                descending.items[0].updated_at,
+                manually_edited.updated_at,
+            )
 
         asyncio.run(run())
 

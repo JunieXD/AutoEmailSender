@@ -8,6 +8,9 @@ export type ProfessorManagementSortKey =
 
 export type ProfessorManagementSortDirection = "asc" | "desc";
 
+export const DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY: ProfessorManagementSortKey =
+  "updatedAtDesc";
+
 export const DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS: Record<
   ProfessorManagementSortKey,
   ProfessorManagementSortDirection

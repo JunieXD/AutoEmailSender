@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProfessorManagementItemDTO } from "@/types";
 import {
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
   sortManagementProfessors,
   type ProfessorManagementSortDirection,
@@ -41,6 +42,10 @@ const namesFor = (
   );
 
 describe("sortManagementProfessors", () => {
+  it("defaults to recently updated professors first", () => {
+    expect(DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY).toBe("updatedAtDesc");
+  });
+
   it("uses neutral field labels because direction is selected separately", () => {
     expect(PROFESSOR_MANAGEMENT_SORT_OPTIONS).toEqual([
       { value: "latest", label: "导入时间" },

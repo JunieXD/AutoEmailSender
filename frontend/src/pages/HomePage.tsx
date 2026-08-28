@@ -56,6 +56,7 @@ import {
 } from "@/features/professor-management/client/bulkTagConfirmCopy";
 import {
   DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS,
+  DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY,
   PROFESSOR_DASHBOARD_SORT_OPTIONS,
   type ProfessorDashboardSortDirection,
   type ProfessorDashboardSortKey,
@@ -360,7 +361,9 @@ export const HomePage = () => {
     readStoredDashboardFilters(dashboardFiltersSessionKey),
   );
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
-  const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>("latest");
+  const [sortKey, setSortKey] = useState<ProfessorDashboardSortKey>(
+    DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY,
+  );
   const [sortDirections, setSortDirections] = useState<
     Record<ProfessorDashboardSortKey, ProfessorDashboardSortDirection>
   >(() => ({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS }));
@@ -732,7 +735,7 @@ export const HomePage = () => {
     if (selectedOnly) {
       setFilters(createDefaultDashboardFilters());
       setAdvancedFiltersOpen(false);
-      setSortKey("latest");
+      setSortKey(DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY);
       setSortDirections({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS });
       setCurrentPage(1);
     }
@@ -1184,7 +1187,7 @@ export const HomePage = () => {
 
   const resetAllFilters = () => {
     setFilters(createDefaultDashboardFilters());
-    setSortKey("latest");
+    setSortKey(DEFAULT_PROFESSOR_DASHBOARD_SORT_KEY);
     setSortDirections({ ...DEFAULT_PROFESSOR_DASHBOARD_SORT_DIRECTIONS });
   };
 

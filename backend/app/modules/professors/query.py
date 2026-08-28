@@ -1081,6 +1081,8 @@ def _dashboard_sort_expression(
     request: ProfessorDashboardPageRequest,
     expressions: dict[str, Any],
 ):
+    if request.sort_key == "updatedAtDesc":
+        return Professor.updated_at, False, True
     if request.sort_key == "matchScoreDesc":
         return expressions["match_score"], True, False
     if request.sort_key == "sentCountDesc":
@@ -1235,6 +1237,7 @@ async def list_dashboard_professor_page(
                 last_replied_at=(
                     contact_status.last_replied_at if contact_status else None
                 ),
+                updated_at=professor.updated_at,
                 personal_note=professor.personal_note,
                 tags=[_serialize_tag(tag) for tag in professor.tags],
             ),

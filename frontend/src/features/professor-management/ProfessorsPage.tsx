@@ -131,6 +131,7 @@ import {
 } from "@/features/professor-management/client/bulkTagConfirmCopy";
 import {
   DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
   PROFESSOR_MANAGEMENT_SORT_OPTIONS,
   type ProfessorManagementSortDirection,
   type ProfessorManagementSortKey,
@@ -685,7 +686,7 @@ export const ProfessorsPage = () => {
     setSelectedAllQueryKey(null);
     selectedAllIdsRef.current = [];
     setAdvancedFiltersOpen(false);
-    setSortKey("latest");
+    setSortKey(DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY);
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
     setFilters({ ...createDefaultManagementFilters(), keyword: linkedKeyword });
     setSearchParams((previous) => {
@@ -853,7 +854,7 @@ export const ProfessorsPage = () => {
       setArchiveFilter(handoff.payload.archive_scope);
       setFilters(createDefaultManagementFilters());
       setAdvancedFiltersOpen(false);
-      setSortKey("latest");
+      setSortKey(DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY);
       setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
       setCurrentPage(1);
     }
@@ -1182,7 +1183,7 @@ export const ProfessorsPage = () => {
   const resetAllFilters = () => {
     setCurrentPage(1);
     setFilters(createDefaultManagementFilters());
-    setSortKey("latest");
+    setSortKey(DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY);
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
   };
 

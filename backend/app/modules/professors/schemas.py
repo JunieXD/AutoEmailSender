@@ -40,6 +40,7 @@ ProfessorKeywordSearchScope = Literal[
 ProfessorSortDirection = Literal["asc", "desc"]
 ProfessorDashboardSortKey = Literal[
     "latest",
+    "updatedAtDesc",
     "matchScoreDesc",
     "sentCountDesc",
     "nameAsc",
@@ -128,6 +129,7 @@ class ProfessorDashboardItemRead(ApiSchema):
     has_active_schedule: bool = False
     last_sent_at: datetime | None = None
     last_replied_at: datetime | None = None
+    updated_at: datetime
     personal_note: str | None = None
     tags: list[ProfessorTagRead] = Field(default_factory=list)
 
@@ -206,7 +208,7 @@ class ProfessorDashboardPageRequest(ProfessorPageRequestBase):
     min_match_score: int | None = Field(default=None, ge=0, le=100)
     max_match_score: int | None = Field(default=None, ge=0, le=100)
     match_score_missing: bool = False
-    sort_key: ProfessorDashboardSortKey = "latest"
+    sort_key: ProfessorDashboardSortKey = "updatedAtDesc"
 
 
 class ProfessorManagementPageRequest(ProfessorPageRequestBase):
@@ -224,7 +226,7 @@ class ProfessorManagementPageRequest(ProfessorPageRequestBase):
             "tag",
         ],
     )
-    sort_key: ProfessorManagementSortKey = "latest"
+    sort_key: ProfessorManagementSortKey = "updatedAtDesc"
 
 
 class ProfessorDashboardPageRead(ApiSchema):

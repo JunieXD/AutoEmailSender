@@ -312,6 +312,7 @@ async def _build_dashboard_professor_items(
                 last_replied_at=contact_status.last_replied_at
                 if contact_status
                 else None,
+                updated_at=professor.updated_at,
                 personal_note=professor.personal_note,
                 tags=_serialize_professor_tags(professor),
             )

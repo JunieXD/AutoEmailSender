@@ -19,6 +19,7 @@ const professor: ProfessorDashboardItemDTO = {
   status: "not_contacted",
   last_sent_at: null,
   last_replied_at: null,
+  updated_at: "2026-05-01T00:00:00Z",
   tags: [
     {
       id: 1,

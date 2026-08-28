@@ -20,6 +20,7 @@ export interface ProfessorDashboardItemDTO {
   has_active_schedule?: boolean;
   last_sent_at: string | null;
   last_replied_at: string | null;
+  updated_at: string;
   tags: ProfessorTagDTO[];
 }
 
@@ -85,6 +86,7 @@ export interface ProfessorDashboardPageRequestDTO {
   match_score_missing: boolean;
   sort_key:
     | 'latest'
+    | 'updatedAtDesc'
     | 'matchScoreDesc'
     | 'sentCountDesc'
     | 'nameAsc'
