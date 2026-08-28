@@ -64,7 +64,7 @@ import {
 
 const EMPTY_DELIVERY_LIST: EmailDeliveryListDTO = {
   items: [],
-  counts: { upcoming: 0, attention: 0, history: 0 },
+  counts: { upcoming: 0, history: 0 },
   page: 1,
   page_size: 20,
   total_count: 0,
@@ -74,14 +74,12 @@ const EMPTY_DELIVERY_LIST: EmailDeliveryListDTO = {
 const DELIVERY_PAGE_CACHE_LIMIT = 20;
 const DELIVERY_REFRESH_INTERVALS: Record<EmailDeliveryView, number> = {
   upcoming: 5_000,
-  attention: 10_000,
   history: 30_000,
 };
 const DELIVERY_SEARCH_REFRESH_INTERVAL = 30_000;
 
 const DELIVERY_VIEW_LABELS: Record<EmailDeliveryView, string> = {
-  upcoming: '即将发送',
-  attention: '需处理',
+  upcoming: '待发送',
   history: '历史',
 };
 
@@ -95,14 +93,12 @@ const DELIVERY_STATUS_OPTIONS: Record<
     { value: 'batch_paused', label: '批次已暂停' },
     { value: 'sending', label: '正在发送' },
   ],
-  attention: [
+  history: [
     { value: 'send_failed', label: '发送失败' },
     { value: 'schedule_missed', label: '错过计划' },
     { value: 'draft_failed', label: '草稿生成失败' },
     { value: 'batch_stopped', label: '批量任务已终止' },
     { value: 'schedule_expired', label: '发送窗口已过期' },
-  ],
-  history: [
     { value: 'sent', label: '已发送' },
     { value: 'replied', label: '已回复' },
     { value: 'canceled_schedule', label: '已取消定时' },
@@ -139,11 +135,11 @@ const DELIVERY_STATUS_VIEWS: Record<EmailDeliveryStatus, EmailDeliveryView> = {
   send_asap: 'upcoming',
   batch_paused: 'upcoming',
   sending: 'upcoming',
-  send_failed: 'attention',
-  schedule_missed: 'attention',
-  draft_failed: 'attention',
-  batch_stopped: 'attention',
-  schedule_expired: 'attention',
+  send_failed: 'history',
+  schedule_missed: 'history',
+  draft_failed: 'history',
+  batch_stopped: 'history',
+  schedule_expired: 'history',
   sent: 'history',
   replied: 'history',
   canceled_schedule: 'history',
@@ -154,9 +150,16 @@ const DELIVERY_STATUS_VIEWS: Record<EmailDeliveryStatus, EmailDeliveryView> = {
   llm_profile_retired: 'history',
 };
 
+const DELIVERY_FAILURE_STATUSES = new Set<EmailDeliveryStatus>([
+  'send_failed',
+  'schedule_missed',
+  'draft_failed',
+  'batch_stopped',
+  'schedule_expired',
+]);
+
 const DEFAULT_DELIVERY_SORTS: Record<EmailDeliveryView, EmailDeliverySort> = {
   upcoming: 'scheduled_asc',
-  attention: 'updated_desc',
   history: 'event_desc',
 };
 
@@ -210,12 +213,8 @@ const DELIVERY_SORT_FIELD_OPTIONS: Record<
     { value: 'scheduled', label: '计划时间' },
     { value: 'updated', label: '更新时间' },
   ],
-  attention: [
-    { value: 'updated', label: '问题时间' },
-    { value: 'scheduled', label: '原计划时间' },
-  ],
   history: [
-    { value: 'event', label: '完成时间' },
+    { value: 'event', label: '记录时间' },
   ],
 };
 
@@ -240,18 +239,14 @@ const VIEW_EMPTY_COPY: Record<
     title: '暂无待发送邮件',
     description: '在工作区完成草稿并设置发送时间。',
   },
-  attention: {
-    title: '暂无发送问题',
-    description: '发送失败或错过计划的邮件会显示在这里。',
-  },
   history: {
     title: '暂无发送历史',
-    description: '已发送和已取消的邮件会保留在这里。',
+    description: '已发送、已取消和发送失败的邮件会保留在这里。',
   },
 };
 
-const isDeliveryView = (value: string | null): value is EmailDeliveryView =>
-  value === 'upcoming' || value === 'attention' || value === 'history';
+const parseDeliveryView = (value: string | null): EmailDeliveryView =>
+  value === 'history' || value === 'attention' ? 'history' : 'upcoming';
 
 const isSourceFilter = (
   value: string | null,
@@ -339,9 +334,7 @@ export const EmailDeliveryPlan = ({
   const { identities = [], setSelectedIdentityId } = useSelectionContext();
   const { notifyError, notifySuccess } = useNotification();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
-  const view = isDeliveryView(searchParams.get('view'))
-    ? searchParams.get('view') as EmailDeliveryView
-    : 'upcoming';
+  const view = parseDeliveryView(searchParams.get('view'));
   const source = isSourceFilter(searchParams.get('source'))
     ? searchParams.get('source') as EmailDeliverySourceFilter
     : 'all';
@@ -464,6 +457,12 @@ export const EmailDeliveryPlan = ({
   useEffect(() => {
     setSearchValue(query);
   }, [query]);
+
+  useEffect(() => {
+    if (searchParams.get('view') === 'attention') {
+      updateSearchParams({ view: 'history', sort: null });
+    }
+  }, [searchParams, updateSearchParams]);
 
   useEffect(() => {
     setSortDirections((previous) =>
@@ -1273,7 +1272,7 @@ export const EmailDeliveryPlan = ({
                 </div>
               </div>
 
-              {DELIVERY_STATUS_VIEWS[selectedItem.status] === 'attention' ? (
+              {DELIVERY_FAILURE_STATUSES.has(selectedItem.status) ? (
                 <section className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
                   <h3 className="text-sm font-semibold text-red-900">
                     {selectedItem.last_error ? '失败原因' : '未发送原因'}

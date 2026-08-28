@@ -621,7 +621,7 @@ export type WorkspaceTaskCancellationReason =
   | 'identity_retired'
   | 'llm_profile_retired';
 
-export type EmailDeliveryView = 'upcoming' | 'attention' | 'history';
+export type EmailDeliveryView = 'upcoming' | 'history';
 export type EmailDeliverySourceFilter = 'all' | 'manual' | 'batch';
 export type EmailDeliverySearchField =
   | 'recipient_name'

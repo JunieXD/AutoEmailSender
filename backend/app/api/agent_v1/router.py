@@ -210,7 +210,7 @@ from app.modules.workspace.deliveries.schemas import (
     EmailDeliveryRescheduleRequest,
     EmailDeliverySort,
     EmailDeliverySource,
-    EmailDeliveryView,
+    EmailDeliveryViewQuery,
 )
 from app.modules.workspace.deliveries.service import (
     list_email_deliveries,
@@ -1554,7 +1554,7 @@ async def refresh_agent_workspace_replies(
 
 @router.get("/deliveries", response_model=AgentEmailDeliveryPageRead)
 async def list_agent_email_deliveries(
-    view: EmailDeliveryView = Query(default="upcoming"),
+    view: EmailDeliveryViewQuery = Query(default="upcoming"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
     identity_id: int | None = Query(default=None, ge=1),

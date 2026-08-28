@@ -12,7 +12,7 @@ from .schemas import (
     EmailDeliveryRescheduleRequest,
     EmailDeliverySort,
     EmailDeliverySource,
-    EmailDeliveryView,
+    EmailDeliveryViewQuery,
 )
 from .service import (
     cancel_email_delivery,
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/email-deliveries", tags=["email-deliveries"])
 
 @router.get("", response_model=EmailDeliveryListRead)
 async def list_deliveries(
-    view: EmailDeliveryView = Query(default="upcoming"),
+    view: EmailDeliveryViewQuery = Query(default="upcoming"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     identity_id: int | None = Query(default=None),

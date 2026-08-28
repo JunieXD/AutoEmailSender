@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 from app.schemas.base import ApiSchema
 
 
-EmailDeliveryView = Literal["upcoming", "attention", "history"]
+EmailDeliveryView = Literal["upcoming", "history"]
+EmailDeliveryViewQuery = Literal["upcoming", "attention", "history"]
 EmailDeliverySource = Literal["all", "manual", "batch"]
 EmailDeliverySort = Literal[
     "scheduled_asc",
@@ -22,7 +23,6 @@ EmailDeliverySort = Literal[
 
 class EmailDeliveryViewCountsRead(ApiSchema):
     upcoming: int = 0
-    attention: int = 0
     history: int = 0
 
 

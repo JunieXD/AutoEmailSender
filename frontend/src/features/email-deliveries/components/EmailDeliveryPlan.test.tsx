@@ -114,7 +114,7 @@ const buildList = (
   overrides: Partial<EmailDeliveryListDTO> = {},
 ): EmailDeliveryListDTO => ({
   items: [buildItem()],
-  counts: { upcoming: 250, attention: 3, history: 80 },
+  counts: { upcoming: 250, history: 83 },
   page: 1,
   page_size: 20,
   total_count: 250,
@@ -185,7 +185,9 @@ describe('EmailDeliveryPlan', () => {
       }),
       expect.any(AbortSignal),
     );
-    expect(screen.getByRole('button', { name: /即将发送\s*250/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /待发送\s*250/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /历史\s*83/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /需处理/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/时间按 .* 显示/)).not.toBeInTheDocument();
     expect(screen.queryByText('发送服务运行中')).not.toBeInTheDocument();
     expect(screen.queryByText('应用关闭期间不会发送')).not.toBeInTheDocument();
@@ -296,16 +298,16 @@ describe('EmailDeliveryPlan', () => {
       );
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /需处理\s*3/ }));
+    fireEvent.click(screen.getByRole('button', { name: /历史\s*83/ }));
 
     await waitFor(() => {
       expect(apiMocks.listEmailDeliveries).toHaveBeenCalledWith(
-        expect.objectContaining({ view: 'attention', sort: 'updated_desc' }),
+        expect.objectContaining({ view: 'history', sort: 'event_desc' }),
         expect.any(AbortSignal),
       );
     });
     expect(screen.getByRole('button', { name: '发送计划排序' })).toHaveTextContent(
-      '问题时间 ↓',
+      '记录时间 ↓',
     );
   });
 
@@ -353,7 +355,7 @@ describe('EmailDeliveryPlan', () => {
               can_edit: false,
             }),
           ],
-          counts: { upcoming: 249, attention: 3, history: 81 },
+          counts: { upcoming: 249, history: 84 },
           page: params.page,
           page_size: params.pageSize,
           total_count: 1,
@@ -399,7 +401,7 @@ describe('EmailDeliveryPlan', () => {
             can_edit: false,
           }),
         ],
-        counts: { upcoming: 0, attention: 0, history: 1 },
+        counts: { upcoming: 0, history: 1 },
         total_count: 1,
         total_pages: 1,
       }),
@@ -440,7 +442,7 @@ describe('EmailDeliveryPlan', () => {
             can_edit: false,
           }),
         ],
-        counts: { upcoming: 0, attention: 0, history: 1 },
+        counts: { upcoming: 0, history: 1 },
         total_count: 1,
         total_pages: 1,
       }),
@@ -474,7 +476,7 @@ describe('EmailDeliveryPlan', () => {
             can_edit: false,
           }),
         ],
-        counts: { upcoming: 0, attention: 0, history: 1 },
+        counts: { upcoming: 0, history: 1 },
         total_count: 1,
         total_pages: 1,
       }),
@@ -527,7 +529,7 @@ describe('EmailDeliveryPlan', () => {
         }
         return Promise.resolve(buildList({
           items: [buildItem({
-            subject: params.view === 'upcoming' ? '已缓存的即将发送邮件' : '需处理邮件',
+            subject: params.view === 'upcoming' ? '已缓存的待发送邮件' : '历史邮件',
           })],
           page: params.page,
           page_size: params.pageSize,
@@ -536,15 +538,15 @@ describe('EmailDeliveryPlan', () => {
     );
 
     const { unmount } = renderPlan();
-    expect((await screen.findAllByText('已缓存的即将发送邮件')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('已缓存的待发送邮件')).length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('button', { name: /需处理\s*3/ }));
-    expect((await screen.findAllByText('需处理邮件')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: /历史\s*83/ }));
+    expect((await screen.findAllByText('历史邮件')).length).toBeGreaterThan(0);
 
     keepUpcomingRefreshPending = true;
-    fireEvent.click(screen.getByRole('button', { name: /即将发送\s*250/ }));
+    fireEvent.click(screen.getByRole('button', { name: /待发送\s*250/ }));
 
-    expect((await screen.findAllByText('已缓存的即将发送邮件')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('已缓存的待发送邮件')).length).toBeGreaterThan(0);
     expect(screen.queryByText('正在加载发送计划…')).not.toBeInTheDocument();
     unmount();
   });
@@ -567,14 +569,23 @@ describe('EmailDeliveryPlan', () => {
             can_send_now: false,
           }),
         ],
-        counts: { upcoming: 0, attention: 1, history: 0 },
+        counts: { upcoming: 0, history: 1 },
         total_count: 1,
         total_pages: 1,
       }),
     );
 
-    renderPlan('/tasks?section=delivery&view=attention');
+    renderPlan('/tasks?section=delivery&view=attention&sort=updated_desc');
     await screen.findAllByText('草稿生成失败');
+    expect(apiMocks.listEmailDeliveries).toHaveBeenCalledWith(
+      expect.objectContaining({ view: 'history', sort: 'event_desc' }),
+      expect.any(AbortSignal),
+    );
+    expect(screen.getByRole('button', { name: /历史\s*1/ })).toHaveAttribute(
+      'class',
+      expect.stringContaining('bg-primary'),
+    );
+    expect(screen.queryByRole('button', { name: /需处理/ })).not.toBeInTheDocument();
     expect(screen.queryByText(rawError)).not.toBeInTheDocument();
     screen.getAllByText('博士申请咨询').forEach((subject) => {
       fireEvent.click(subject);

@@ -288,8 +288,7 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_page.total_pages, 2)
         self.assertEqual(len(first_page.items), 20)
         self.assertEqual(first_page.counts.upcoming, 25)
-        self.assertEqual(first_page.counts.attention, 2)
-        self.assertEqual(first_page.counts.history, 2)
+        self.assertEqual(first_page.counts.history, 4)
         self.assertEqual(second_page.total_count, 25)
         self.assertEqual(len(second_page.items), 5)
         self.assertEqual(search_result.total_count, 1)
@@ -344,6 +343,57 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.items[0].status, "sent")
         self.assertEqual(result.items[0].professor_archived_at, now)
         self.assertEqual(result.items[0].identity_retired_at, now)
+
+    async def test_history_pagination_is_stable_when_event_times_match(self) -> None:
+        event_time = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+        async with self.session_factory() as session:
+            identity = self._identity("分页身份", "pagination@example.com")
+            llm_profile = self._profile()
+            session.add_all([identity, llm_profile])
+            await session.flush()
+            professors = [
+                Professor(
+                    name=f"分页导师 {index:02d}",
+                    email=f"pagination-{index:02d}@example.edu",
+                )
+                for index in range(25)
+            ]
+            session.add_all(professors)
+            await session.flush()
+            tasks = [
+                EmailTask(
+                    professor_id=professor.id,
+                    identity_id=identity.id,
+                    llm_profile_id=llm_profile.id,
+                    source=EmailTaskSource.MANUAL.value,
+                    status=EmailTaskStatus.SENT.value,
+                    sent_at=event_time,
+                    updated_at=event_time,
+                )
+                for professor in professors
+            ]
+            session.add_all(tasks)
+            await session.commit()
+            expected_ids = sorted((task.id for task in tasks), reverse=True)
+
+            actual_ids: list[int] = []
+            for page in range(1, 4):
+                result = await list_email_deliveries(
+                    session,
+                    view="history",
+                    page=page,
+                    page_size=10,
+                    identity_id=None,
+                    source="all",
+                    status=None,
+                    query=None,
+                    task_id=None,
+                )
+                self.assertEqual(result.total_pages, 3)
+                actual_ids.extend(item.id for item in result.items)
+
+        self.assertEqual(actual_ids, expected_ids)
+        self.assertEqual(len(actual_ids), len(set(actual_ids)))
 
     async def test_approved_delivery_with_schedule_is_reported_as_waiting(self) -> None:
         now = datetime.now(UTC)
@@ -473,7 +523,9 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
             " ".join(str(row) for row in attention_plan),
         )
 
-    async def test_attention_statuses_explain_the_actual_unsent_reason(self) -> None:
+    async def test_failure_statuses_are_merged_into_history_and_remain_filterable(
+        self,
+    ) -> None:
         async with self.session_factory() as session:
             identity = self._identity("原因测试身份", "reason@example.com")
             llm_profile = self._profile()
@@ -534,12 +586,13 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
                 status=None,
                 query=None,
                 task_id=None,
+                sort="updated_desc",
             )
             all_items = []
             for page in range(1, result.total_pages + 1):
                 page_result = await list_email_deliveries(
                     session,
-                    view="attention",
+                    view="history",
                     page=page,
                     page_size=1,
                     identity_id=None,
@@ -553,7 +606,7 @@ class EmailDeliveryManagementTests(unittest.IsolatedAsyncioTestCase):
             for status in ("draft_failed", "batch_stopped", "schedule_expired"):
                 filtered_result = await list_email_deliveries(
                     session,
-                    view="attention",
+                    view="history",
                     page=1,
                     page_size=1,
                     identity_id=None,

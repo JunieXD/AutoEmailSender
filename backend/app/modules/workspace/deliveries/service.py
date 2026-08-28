@@ -30,7 +30,8 @@ from .schemas import (
 )
 
 
-DELIVERY_VIEWS = {"upcoming", "attention", "history"}
+DELIVERY_VIEWS = {"upcoming", "history"}
+LEGACY_DELIVERY_VIEWS = {"attention"}
 DELIVERY_SOURCES = {"all", "manual", "batch"}
 DELIVERY_SEARCH_FIELDS = {
     "recipient_name",
@@ -59,12 +60,10 @@ DELIVERY_STATUS_FILTERS = {
 }
 DEFAULT_DELIVERY_SORTS = {
     "upcoming": "scheduled_asc",
-    "attention": "updated_desc",
     "history": "event_desc",
 }
 DELIVERY_SORTS_BY_VIEW = {
     "upcoming": {"scheduled_asc", "scheduled_desc", "updated_desc"},
-    "attention": {"updated_desc", "updated_asc", "scheduled_asc"},
     "history": {"event_desc", "event_asc"},
 }
 MINIMUM_RESCHEDULE_DELAY = timedelta(minutes=1)
@@ -110,6 +109,7 @@ def _attention_condition():
 
 def _history_condition():
     return or_(
+        _attention_condition(),
         EmailTask.status.in_(
             {
                 EmailTaskStatus.SENT.value,
@@ -135,10 +135,16 @@ def _history_condition():
 def _view_condition(view: str):
     if view == "upcoming":
         return _upcoming_condition()
-    if view == "attention":
-        return _attention_condition()
     if view == "history":
         return _history_condition()
+    raise ValueError("未知发送计划视图")
+
+
+def _normalize_delivery_view(view: str) -> str:
+    if view in LEGACY_DELIVERY_VIEWS:
+        return "history"
+    if view in DELIVERY_VIEWS:
+        return view
     raise ValueError("未知发送计划视图")
 
 
@@ -361,8 +367,14 @@ async def list_email_deliveries(
     sort: str | None = None,
     search_fields: tuple[str, ...] | None = None,
 ) -> EmailDeliveryListRead:
-    if view not in DELIVERY_VIEWS:
-        raise ValueError("未知发送计划视图")
+    legacy_attention_view = view in LEGACY_DELIVERY_VIEWS
+    view = _normalize_delivery_view(view)
+    if legacy_attention_view:
+        sort = {
+            "updated_desc": "event_desc",
+            "updated_asc": "event_asc",
+            "scheduled_asc": "event_desc",
+        }.get(sort, sort)
     if source not in DELIVERY_SOURCES:
         raise ValueError("未知发送来源筛选")
     if status is not None and status not in DELIVERY_STATUS_FILTERS:
@@ -388,13 +400,11 @@ async def list_email_deliveries(
     search_joins_batch = has_query and "batch_name" in resolved_search_fields
     all_delivery_condition = or_(
         _upcoming_condition(),
-        _attention_condition(),
         _history_condition(),
     )
     counts_statement = _joined_from(
         select(
             func.sum(case((_upcoming_condition(), 1), else_=0)).label("upcoming"),
-            func.sum(case((_attention_condition(), 1), else_=0)).label("attention"),
             func.sum(case((_history_condition(), 1), else_=0)).label("history"),
         ).select_from(EmailTask),
         join_professor=search_joins_professor,
@@ -403,7 +413,6 @@ async def list_email_deliveries(
     counts_row = (await session.execute(counts_statement)).one()
     counts = EmailDeliveryViewCountsRead(
         upcoming=int(counts_row.upcoming or 0),
-        attention=int(counts_row.attention or 0),
         history=int(counts_row.history or 0),
     )
 
