@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { compareVersions } from "./check-release-version.mjs";
-import { validateSparklePublicKey } from "../packaging/configure-sparkle-info.mjs";
 import {
   assertRequiredDelta,
   assertSparkleAppcastSignature,
+  assertSparkleEnclosureSignature,
   getMacDmgVersion,
   normalizeReleaseTag,
 } from "./prepare-sparkle-release.mjs";
@@ -18,28 +18,34 @@ import {
 const RELEASE_WORKFLOW_NAME = "Release Desktop";
 const WEBSITE_WORKFLOW_NAME = "Deploy Website";
 const WEBSITE_PUBLIC_ROOT = "https://juniexd.github.io/AutoEmailSender";
-const ED25519_SPKI_PUBLIC_KEY_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 function fail(message) {
   throw new Error(message);
 }
 
-function assertSparkleEnclosureSignature(contents, signatureValue, publicKey) {
-  const signature = Buffer.from(signatureValue, "base64");
-  if (signature.length !== 64) fail("Sparkle enclosure 签名格式无效。 ");
-  const publicKeyBytes = Buffer.from(validateSparklePublicKey(publicKey), "base64");
-  const publicKeyObject = createPublicKey({
-    key: Buffer.concat([ED25519_SPKI_PUBLIC_KEY_PREFIX, publicKeyBytes]),
-    format: "der",
-    type: "spki",
-  });
-  if (!verify(null, contents, publicKeyObject, signature)) {
-    fail("Sparkle enclosure 未通过 Ed25519 签名验证。 ");
-  }
-}
-
 function commandOutput(command, args, options = {}) {
   return execFileSync(command, args, { encoding: "utf8", ...options }).trim();
+}
+
+function execFileInherited(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${command} 执行失败，退出码 ${code ?? "unknown"}。`));
+      }
+    });
+  });
+}
+
+async function settleAllOrThrow(tasks) {
+  const results = await Promise.allSettled(tasks);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) throw failure.reason;
+  return results.map((result) => result.value);
 }
 
 function ghJson(args) {
@@ -150,7 +156,12 @@ function jobMap(run) {
   return new Map((run.jobs ?? []).map((job) => [job.name, job.conclusion]));
 }
 
-export function assertReleaseWorkflowRuns(candidate, promotion, expectedSha) {
+export function assertReleaseWorkflowRuns(
+  candidate,
+  promotion,
+  expectedSha,
+  { requireCliGate = true } = {},
+) {
   for (const [label, run] of [["候选", candidate], ["提升", promotion]]) {
     if (run.workflowName !== RELEASE_WORKFLOW_NAME || run.status !== "completed" || run.conclusion !== "success") {
       fail(`${label} workflow 未成功完成。`);
@@ -158,14 +169,21 @@ export function assertReleaseWorkflowRuns(candidate, promotion, expectedSha) {
     if (run.headSha !== expectedSha) fail(`${label} workflow SHA 与候选不一致。`);
   }
   const candidateJobs = jobMap(candidate);
-  for (const name of ["preflight", "build-windows", "build-macos", "certify"]) {
+  const candidateJobNames = [
+    "preflight",
+    ...(requireCliGate ? ["cli-gate"] : []),
+    "build-windows",
+    "build-macos",
+    "certify",
+  ];
+  for (const name of candidateJobNames) {
     if (candidateJobs.get(name) !== "success") fail(`候选 job ${name} 未成功。`);
   }
   if (candidateJobs.get("publish") !== "skipped") fail("候选 run 不应执行 publish job。");
 
   const promotionJobs = jobMap(promotion);
   if (promotionJobs.get("publish") !== "success") fail("提升 run 的 publish job 未成功。 ");
-  for (const name of ["preflight", "build-windows", "build-macos", "certify"]) {
+  for (const name of candidateJobNames) {
     if (promotionJobs.get(name) !== "skipped") fail(`提升 run 的 ${name} job 应为 skipped。`);
   }
 }
@@ -340,8 +358,60 @@ async function main() {
   try {
     const candidateDirectory = path.join(tempRoot, "candidate");
     const publicDirectory = path.join(tempRoot, "public");
-    execFileSync("gh", ["run", "download", options.candidateRun, "--repo", options.repository, "--name", "release-candidate", "--dir", candidateDirectory], { stdio: "inherit" });
-    execFileSync("gh", ["release", "download", tag, "--repo", options.repository, "--dir", publicDirectory], { stdio: "inherit" });
+    const previousDirectory = path.join(tempRoot, "previous");
+    const latestAppcastPath = path.join(tempRoot, "latest-appcast.xml");
+    const downloadsStartedAt = Date.now();
+    const latestAppcastAndPreviousDmg = (async () => {
+      await download(
+        `https://github.com/${options.repository}/releases/latest/download/appcast.xml`,
+        latestAppcastPath,
+      );
+      const appcast = await readFile(latestAppcastPath);
+      const previousDmg = selectPreviousSparkleDmg(
+        appcast.toString("utf8"),
+        version,
+        options.repository,
+      );
+      await mkdir(previousDirectory, { recursive: true });
+      await execFileInherited("gh", [
+        "release",
+        "download",
+        previousDmg.tag,
+        "--repo",
+        options.repository,
+        "--pattern",
+        previousDmg.name,
+        "--dir",
+        previousDirectory,
+      ]);
+      return { appcast, previousDmg };
+    })();
+    const [, , latest] = await settleAllOrThrow([
+      execFileInherited("gh", [
+        "run",
+        "download",
+        options.candidateRun,
+        "--repo",
+        options.repository,
+        "--name",
+        "release-candidate",
+        "--dir",
+        candidateDirectory,
+      ]),
+      execFileInherited("gh", [
+        "release",
+        "download",
+        tag,
+        "--repo",
+        options.repository,
+        "--dir",
+        publicDirectory,
+      ]),
+      latestAppcastAndPreviousDmg,
+    ]);
+    console.log(
+      `[timing] 并行下载候选证据、公开资产与上一版 DMG：${((Date.now() - downloadsStartedAt) / 1000).toFixed(1)}s`,
+    );
     const manifestPath = await findFile(candidateDirectory, "release-candidate.json");
     if (!manifestPath) fail("候选 run 缺少 release-candidate.json。");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -350,7 +420,15 @@ async function main() {
     const runFields = "workflowName,headSha,status,conclusion,jobs";
     const candidate = ghJson(["run", "view", options.candidateRun, "--repo", options.repository, "--json", runFields]);
     const promotion = ghJson(["run", "view", options.promotionRun, "--repo", options.repository, "--json", runFields]);
-    assertReleaseWorkflowRuns(candidate, promotion, manifest.releaseSha);
+    const taggedReleaseWorkflow = execFileSync("git", [
+      "-C",
+      options.repoRoot,
+      "show",
+      `${manifest.releaseSha}:.github/workflows/release.yml`,
+    ], { encoding: "utf8" });
+    assertReleaseWorkflowRuns(candidate, promotion, manifest.releaseSha, {
+      requireCliGate: /\n  cli-gate:\s*\n/.test(taggedReleaseWorkflow),
+    });
     console.log("[ok] 候选与提升 workflow 拓扑、状态和 SHA 一致。 ");
 
     if (remoteTagSha(options.repoRoot, tag) !== manifest.releaseSha) fail(`远端 tag ${tag} 未指向候选 SHA。`);
@@ -363,14 +441,9 @@ async function main() {
     if (createHash("sha256").update(taggedNotes).digest("hex") !== manifest.releaseNotes?.sha256) fail("tagged release notes 与候选摘要不一致。 ");
 
     const appcastPath = path.join(publicDirectory, "appcast.xml");
-    const latestAppcastPath = path.join(tempRoot, "latest-appcast.xml");
-    await download(`https://github.com/${options.repository}/releases/latest/download/appcast.xml`, latestAppcastPath);
     if (await sha256(appcastPath) !== await sha256(latestAppcastPath)) fail("releases/latest appcast.xml 不是当前公开资产。 ");
-    const appcast = await readFile(latestAppcastPath);
+    const { appcast, previousDmg } = latest;
     const appcastText = appcast.toString("utf8");
-    const previousDmg = selectPreviousSparkleDmg(appcastText, version, options.repository);
-    const previousDirectory = path.join(tempRoot, "previous");
-    execFileSync("gh", ["release", "download", previousDmg.tag, "--repo", options.repository, "--pattern", previousDmg.name, "--dir", previousDirectory], { stdio: "inherit" });
     const publicKey = extractMountedPublicKey(path.join(previousDirectory, previousDmg.name));
     assertSparkleAppcastSignature(appcast, publicKey);
     const enclosures = extractCurrentSparkleEnclosures(appcastText, version, options.repository, tag);

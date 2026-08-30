@@ -185,9 +185,13 @@ describe("windows installer packaging", () => {
       workflow.indexOf("Install frontend dependencies"),
     );
     expect(workflow).toContain("preflight:");
+    expect(workflow).toContain("cli-gate:");
     expect(workflow).toContain("node scripts/release/release-preflight.mjs");
+    expect(workflow).toMatch(/cli-gate:[\s\S]*?needs: preflight[\s\S]*?Test Agent CLI/);
     expect(workflow).toMatch(/build-windows:[\s\S]*?runs-on: windows-latest\n    needs: preflight/);
     expect(workflow).toMatch(/build-macos:[\s\S]*?runs-on: macos-latest\n    needs: preflight/);
+    expect(workflow).toContain("Restore verified historical Sparkle DMGs");
+    expect(workflow).toContain('--previous-dmg-cache "$RUNNER_TEMP/auto-email-sender-sparkle-dmgs"');
     expect(workflow).toContain("working-directory: desktop\n        run: npm run dist:prepared");
     expect(workflow).toContain("build-cli.ps1 -Clean -SkipSync");
     expect(workflow).toContain("build-backend.ps1 -Clean -SkipSync");

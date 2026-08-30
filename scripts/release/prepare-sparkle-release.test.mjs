@@ -27,10 +27,16 @@ import {
   normalizeGitHubAssetName,
   normalizeReleaseTag,
   rewriteAppcastAssetNames,
+  stagePreviousDmgAssets,
 } from "./prepare-sparkle-release.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const ed25519Pkcs8SeedPrefix = Buffer.from("302e020100300506032b657004220420", "hex");
+const placeholderSignature = Buffer.alloc(64, 1).toString("base64");
+
+function enclosureAttributes(length = 1) {
+  return `length="${length}" sparkle:edSignature="${placeholderSignature}"`;
+}
 
 function signAppcastForTest(appcast, privateKey) {
   const contents = Buffer.from(appcast, "utf8");
@@ -87,13 +93,13 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
       <channel>
         <item>
           <sparkle:version>2.3.9</sparkle:version>
-          <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.9/AutoEmailSender-2.3.9-arm64.dmg" />
+          <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.9/AutoEmailSender-2.3.9-arm64.dmg" ${enclosureAttributes(239)} />
           <sparkle:deltas>
             <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.9/from-2.3.8.delta" />
           </sparkle:deltas>
         </item>
         <item>
-          <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.8/AutoEmailSender-2.3.8-arm64.dmg?download=1&amp;source=feed" />
+          <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.8/AutoEmailSender-2.3.8-arm64.dmg?download=1&amp;source=feed" ${enclosureAttributes(238)} />
         </item>
         <item>
           <enclosure url="https://example.com/JunieXD/AutoEmailSender/releases/download/v2.3.7/foreign.dmg" />
@@ -102,14 +108,24 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
     </rss>`;
 
   assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
-    { tag: "v2.3.9", name: "AutoEmailSender-2.3.9-arm64.dmg" },
-    { tag: "v2.3.8", name: "AutoEmailSender-2.3.8-arm64.dmg" },
+    {
+      tag: "v2.3.9",
+      name: "AutoEmailSender-2.3.9-arm64.dmg",
+      length: 239,
+      signature: placeholderSignature,
+    },
+    {
+      tag: "v2.3.8",
+      name: "AutoEmailSender-2.3.8-arm64.dmg",
+      length: 238,
+      signature: placeholderSignature,
+    },
   ]);
 });
 
 test("limits delta source downloads to the most recent three unique DMGs", () => {
   const items = [9, 8, 8, 7, 6].map(
-    (patch) => `<item><enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.${patch}/AutoEmailSender-2.3.${patch}-arm64.dmg" /></item>`,
+    (patch) => `<item><enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.${patch}/AutoEmailSender-2.3.${patch}-arm64.dmg" ${enclosureAttributes(patch)} /></item>`,
   );
   const assets = extractPreviousDmgAssets(`<channel>${items.join("")}</channel>`, "JunieXD/AutoEmailSender");
 
@@ -120,17 +136,108 @@ test("recovers historical release tags after Sparkle rewrites retained download 
   const appcast = `
     <channel>
       <item>
-        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.1-arm64.dmg" />
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.1-arm64.dmg" ${enclosureAttributes(241)} />
       </item>
       <item>
-        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.0-arm64.dmg" />
+        <enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.4.1/AutoEmailSender-2.4.0-arm64.dmg" ${enclosureAttributes(240)} />
       </item>
     </channel>`;
 
   assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
-    { tag: "v2.4.1", name: "AutoEmailSender-2.4.1-arm64.dmg" },
-    { tag: "v2.4.0", name: "AutoEmailSender-2.4.0-arm64.dmg" },
+    {
+      tag: "v2.4.1",
+      name: "AutoEmailSender-2.4.1-arm64.dmg",
+      length: 241,
+      signature: placeholderSignature,
+    },
+    {
+      tag: "v2.4.0",
+      name: "AutoEmailSender-2.4.0-arm64.dmg",
+      length: 240,
+      signature: placeholderSignature,
+    },
   ]);
+});
+
+test("reuses only signed historical DMGs and redownloads a corrupted cache entry", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "sparkle-dmg-cache-test-"));
+  try {
+    const cacheDirectory = path.join(tempRoot, "cache");
+    const firstWorkDirectory = path.join(tempRoot, "work-1");
+    const secondWorkDirectory = path.join(tempRoot, "work-2");
+    const thirdWorkDirectory = path.join(tempRoot, "work-3");
+    for (const directory of [cacheDirectory, firstWorkDirectory, secondWorkDirectory, thirdWorkDirectory]) {
+      mkdirSync(directory, { recursive: true });
+    }
+
+    const privateSeed = Buffer.alloc(32, 13);
+    const privateKey = createPrivateKey({
+      key: Buffer.concat([ed25519Pkcs8SeedPrefix, privateSeed]),
+      format: "der",
+      type: "pkcs8",
+    });
+    const publicKey = deriveSparklePublicKey(privateSeed.toString("base64"));
+    const contentsByName = new Map([
+      ["AutoEmailSender-9.9.8-arm64.dmg", Buffer.from("previous-998")],
+      ["AutoEmailSender-9.9.7-arm64.dmg", Buffer.from("previous-997")],
+    ]);
+    const assets = [...contentsByName].map(([name, contents]) => ({
+      tag: `v${name.match(/-(\d+\.\d+\.\d+)-/)?.[1]}`,
+      name,
+      length: contents.length,
+      signature: sign(null, contents, privateKey).toString("base64"),
+    }));
+    const downloadCalls = [];
+    const downloadAsset = async (asset, destination) => {
+      downloadCalls.push(asset.name);
+      writeFileSync(path.join(destination, asset.name), contentsByName.get(asset.name));
+    };
+    writeFileSync(
+      path.join(cacheDirectory, "AutoEmailSender-9.9.6-arm64.dmg"),
+      "stale-baseline",
+    );
+
+    await stagePreviousDmgAssets({
+      assets,
+      workDirectory: firstWorkDirectory,
+      cacheDirectory,
+      publicKey,
+      downloadAsset,
+    });
+    assert.deepEqual(downloadCalls.sort(), [...contentsByName.keys()].sort());
+    assert.deepEqual(readdirSync(cacheDirectory).sort(), [...contentsByName.keys()].sort());
+
+    downloadCalls.length = 0;
+    await stagePreviousDmgAssets({
+      assets,
+      workDirectory: secondWorkDirectory,
+      cacheDirectory,
+      publicKey,
+      downloadAsset,
+    });
+    assert.deepEqual(downloadCalls, []);
+
+    const corruptedName = assets[0].name;
+    writeFileSync(
+      path.join(cacheDirectory, corruptedName),
+      Buffer.alloc(assets[0].length, "x"),
+    );
+    downloadCalls.length = 0;
+    await stagePreviousDmgAssets({
+      assets,
+      workDirectory: thirdWorkDirectory,
+      cacheDirectory,
+      publicKey,
+      downloadAsset,
+    });
+    assert.deepEqual(downloadCalls, [corruptedName]);
+    assert.equal(
+      readFileSync(path.join(thirdWorkDirectory, corruptedName), "utf8"),
+      contentsByName.get(corruptedName).toString("utf8"),
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("requires a delta from the newest clean Sparkle baseline", () => {

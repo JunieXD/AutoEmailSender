@@ -61,10 +61,17 @@ test("requires the certify topology for candidates and publish-only topology for
     conclusion: "success",
     jobs: Object.entries(jobs).map(([name, conclusion]) => ({ name, conclusion })),
   });
-  const candidate = run({ preflight: "success", "build-windows": "success", "build-macos": "success", certify: "success", publish: "skipped" });
-  const promotion = run({ preflight: "skipped", "build-windows": "skipped", "build-macos": "skipped", certify: "skipped", publish: "success" });
+  const candidate = run({ preflight: "success", "cli-gate": "success", "build-windows": "success", "build-macos": "success", certify: "success", publish: "skipped" });
+  const promotion = run({ preflight: "skipped", "cli-gate": "skipped", "build-windows": "skipped", "build-macos": "skipped", certify: "skipped", publish: "success" });
   assert.doesNotThrow(() => assertReleaseWorkflowRuns(candidate, promotion, sha));
   assert.throws(() => assertReleaseWorkflowRuns(candidate, run({ publish: "success", preflight: "success" }), sha), /应为 skipped/);
+
+  const legacyCandidate = run({ preflight: "success", "build-windows": "success", "build-macos": "success", certify: "success", publish: "skipped" });
+  const legacyPromotion = run({ preflight: "skipped", "build-windows": "skipped", "build-macos": "skipped", certify: "skipped", publish: "success" });
+  assert.doesNotThrow(() =>
+    assertReleaseWorkflowRuns(legacyCandidate, legacyPromotion, sha, { requireCliGate: false }),
+  );
+  assert.throws(() => assertReleaseWorkflowRuns(legacyCandidate, legacyPromotion, sha), /cli-gate/);
 });
 
 test("requires the public asset set and sizes to match the candidate", () => {

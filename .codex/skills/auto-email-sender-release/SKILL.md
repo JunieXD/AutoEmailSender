@@ -51,7 +51,9 @@ Run the release entrypoint without a promotion ID:
 
 This prepares and pushes the exact release commit, dispatches `release.yml` with `publish=false`, and does not create a tag or Release. Confirm the workflow `headSha` equals the committed SHA.
 
-The workflow must pass its cheap Ubuntu preflight before Windows/macOS jobs. It builds signed artifacts, records their names/sizes/SHA-256 values and toolchains, and emits `release-candidate.json`. Keep the candidate workflow run ID.
+The workflow must pass its cheap Ubuntu metadata and release-contract preflight before Windows/macOS jobs. The complete Agent CLI gate then runs as a separate required job in parallel with both platform builds; `certify` must depend on all three. It builds signed artifacts, records their names/sizes/SHA-256 values and toolchains, and emits `release-candidate.json`. Keep the candidate workflow run ID.
+
+The macOS job may reuse the rolling historical-DMG cache to avoid fetching all three delta baselines from their Releases on every candidate. Treat restored cache bytes as untrusted: first verify the signed previous appcast, then verify each cached DMG's exact length and enclosure Ed25519 signature. Delete and redownload only invalid or missing entries; never accept a cache hit by tag or filename alone. Record the cache hit/download counts and the historical-DMG versus `generate_appcast` timings; a hosted-runner cache still transfers bytes and should be retained only while measured wall-clock savings justify its restore/save cost.
 
 On the project Mac, obtain one successful formal Windows VM QA result for this frozen SHA while certification runs:
 
@@ -78,7 +80,7 @@ For Sparkle, normalize asset names and rewrite URLs before the final whole-feed 
 
 ## 4. Verify
 
-Wait for the exact promotion run. In a normal candidate run, require `preflight`, `build-windows`, `build-macos`, and `certify` to succeed and `publish` to be skipped. In the promotion run, require only `publish` to succeed and all four candidate jobs to be skipped.
+Wait for the exact promotion run. In a normal candidate run, require `preflight`, `cli-gate`, `build-windows`, `build-macos`, and `certify` to succeed and `publish` to be skipped. In the promotion run, require only `publish` to succeed and all five candidate jobs to be skipped. When re-verifying a release from before `cli-gate` existed, let the verifier derive the required legacy topology from that tagged workflow; never waive a current job manually.
 
 Run the deterministic public verification entrypoint on the project Mac; it downloads the candidate report and public assets, extracts the public key from the previous client, verifies hashes and Sparkle signatures, rebuilds the tagged Skill ZIP, checks the website deployment when applicable, reports concise evidence, and removes temporary files:
 
@@ -105,7 +107,7 @@ Inspect the tagged repository Skill and downloaded ZIP against the tested canoni
 
 Do not promote when any of these is true:
 
-- Cheap preflight, relevant impact checks, formal Windows candidate QA, or macOS certification is missing or belongs to another SHA.
+- Cheap preflight, required CLI gate, relevant impact checks, formal Windows candidate QA, or macOS certification is missing or belongs to another SHA.
 - `release-candidate.json`, release-note hash, run ID, artifact digest, asset name, or draft URL differs from the candidate.
 - The final appcast was changed after signing or fails whole-feed verification.
 - A required delta from the latest clean baseline is absent without an investigated, documented reason.

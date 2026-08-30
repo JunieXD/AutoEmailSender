@@ -1,6 +1,17 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createPrivateKey, createPublicKey, verify } from "node:crypto";
-import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -80,6 +91,22 @@ export function assertSparkleAppcastSignature(appcast, publicKey) {
   }
 }
 
+export function assertSparkleEnclosureSignature(contents, signatureValue, publicKey) {
+  const signature = Buffer.from(signatureValue, "base64");
+  if (signature.length !== 64) {
+    throw new Error("Sparkle enclosure 签名格式无效。 ");
+  }
+  const publicKeyBytes = Buffer.from(validateSparklePublicKey(publicKey), "base64");
+  const publicKeyObject = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PUBLIC_KEY_PREFIX, publicKeyBytes]),
+    format: "der",
+    type: "spki",
+  });
+  if (!verify(null, contents, publicKeyObject, signature)) {
+    throw new Error("Sparkle enclosure 未通过 Ed25519 签名验证。 ");
+  }
+}
+
 export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_DELTAS) {
   const itemBlocks = appcast.match(/<item\b[\s\S]*?<\/item>/gi) ?? [];
   const assets = [];
@@ -97,9 +124,16 @@ export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_
       continue;
     }
 
-    const asset = parseGitHubReleaseAssetUrl(decodeXmlAttribute(enclosure[1] ?? enclosure[2]), repository);
+    const attributes = xmlAttributes(enclosure[0]);
+    const asset = parseGitHubReleaseAssetUrl(attributes.url ?? "", repository);
     if (asset === null || !asset.name.toLowerCase().endsWith(".dmg")) {
       continue;
+    }
+
+    const length = Number.parseInt(attributes.length ?? "", 10);
+    const signature = attributes["sparkle:edSignature"];
+    if (!Number.isSafeInteger(length) || length <= 0 || !signature) {
+      throw new Error(`历史 Sparkle DMG 缺少有效的长度或签名：${asset.name}`);
     }
 
     // generate_appcast rewrites every retained item's download prefix to the
@@ -115,7 +149,7 @@ export function extractPreviousDmgAssets(appcast, repository, maximum = MAXIMUM_
       continue;
     }
     seen.add(key);
-    assets.push(asset);
+    assets.push({ ...asset, length, signature });
     if (assets.length >= maximum) {
       break;
     }
@@ -297,6 +331,14 @@ function decodeXmlAttribute(value) {
     .replaceAll("&amp;", "&");
 }
 
+function xmlAttributes(tag) {
+  const attributes = {};
+  for (const match of tag.matchAll(/([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attributes[match[1]] = decodeXmlAttribute(match[2] ?? match[3]);
+  }
+  return attributes;
+}
+
 function parseGitHubReleaseAssetUrl(value, repository) {
   let url;
   try {
@@ -338,6 +380,7 @@ function parseArguments(argv) {
     outputDirectory: "",
     generateAppcastPath: "",
     signUpdatePath: "",
+    previousDmgCacheDirectory: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -371,6 +414,9 @@ function parseArguments(argv) {
         break;
       case "--sign-update":
         options.signUpdatePath = path.resolve(value);
+        break;
+      case "--previous-dmg-cache":
+        options.previousDmgCacheDirectory = path.resolve(value);
         break;
       default:
         throw new Error(`未知参数：${argument}`);
@@ -429,6 +475,23 @@ function runInherited(command, args, input) {
   }
 }
 
+function runInheritedAsync(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: childEnvironmentWithoutPrivateKey(),
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${command} 执行失败，退出码 ${code ?? "unknown"}。`));
+      }
+    });
+  });
+}
+
 async function assertEmptyOutputDirectory(outputDirectory) {
   await mkdir(outputDirectory, { recursive: true });
   const entries = await readdir(outputDirectory);
@@ -437,7 +500,99 @@ async function assertEmptyOutputDirectory(outputDirectory) {
   }
 }
 
-async function downloadPreviousUpdates(workDirectory, repository) {
+async function verifyHistoricalDmg(filePath, asset, publicKey) {
+  const fileStat = await stat(filePath);
+  if (!fileStat.isFile() || fileStat.size !== asset.length) {
+    throw new Error(`历史 Sparkle DMG 长度不一致：${asset.name}`);
+  }
+  assertSparkleEnclosureSignature(await readFile(filePath), asset.signature, publicKey);
+}
+
+function historicalDmgPath(directory, asset) {
+  if (path.basename(asset.name) !== asset.name || getMacDmgVersion(asset.name) === null) {
+    throw new Error(`历史 Sparkle DMG 文件名无效：${asset.name}`);
+  }
+  return path.join(directory, asset.name);
+}
+
+async function pruneHistoricalDmgCache(cacheDirectory, expectedNames) {
+  const expected = new Set(expectedNames);
+  for (const entry of await readdir(cacheDirectory, { withFileTypes: true })) {
+    if (
+      entry.isFile() &&
+      getMacDmgVersion(entry.name) !== null &&
+      !expected.has(entry.name)
+    ) {
+      await rm(path.join(cacheDirectory, entry.name), { force: true });
+    }
+  }
+}
+
+export async function stagePreviousDmgAssets({
+  assets,
+  workDirectory,
+  cacheDirectory,
+  publicKey,
+  downloadAsset,
+}) {
+  if (cacheDirectory) {
+    await mkdir(cacheDirectory, { recursive: true });
+  }
+
+  const misses = [];
+  let cacheHits = 0;
+  for (const asset of assets) {
+    const workPath = historicalDmgPath(workDirectory, asset);
+    if (!cacheDirectory) {
+      misses.push(asset);
+      continue;
+    }
+
+    const cachePath = historicalDmgPath(cacheDirectory, asset);
+    try {
+      await verifyHistoricalDmg(cachePath, asset, publicKey);
+      await copyFile(cachePath, workPath);
+      cacheHits += 1;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn(`[cache] 历史 DMG 缓存无效，将重新下载：${asset.name}`);
+      }
+      await rm(cachePath, { force: true });
+      misses.push(asset);
+    }
+  }
+
+  const downloadResults = await Promise.allSettled(
+    misses.map((asset) => downloadAsset(asset, workDirectory)),
+  );
+  const downloadFailure = downloadResults.find((result) => result.status === "rejected");
+  if (downloadFailure) {
+    throw downloadFailure.reason;
+  }
+  // Each DMG is roughly 250 MB. Verify them sequentially so parallel downloads
+  // do not turn into three simultaneous in-memory Ed25519 verification buffers.
+  for (const asset of misses) {
+    const workPath = historicalDmgPath(workDirectory, asset);
+    await verifyHistoricalDmg(workPath, asset, publicKey);
+    if (cacheDirectory) {
+      const cachePath = historicalDmgPath(cacheDirectory, asset);
+      const temporaryCachePath = `${cachePath}.tmp-${process.pid}`;
+      try {
+        await copyFile(workPath, temporaryCachePath);
+        await rename(temporaryCachePath, cachePath);
+      } finally {
+        await rm(temporaryCachePath, { force: true });
+      }
+    }
+  }
+
+  if (cacheDirectory) {
+    await pruneHistoricalDmgCache(cacheDirectory, assets.map((asset) => asset.name));
+  }
+  console.log(`[cache] 历史 DMG：命中 ${cacheHits} 个，下载 ${misses.length} 个。`);
+}
+
+async function downloadPreviousUpdates(workDirectory, repository, publicKey, cacheDirectory) {
   const latestRelease = JSON.parse(
     runCaptured("gh", ["release", "view", "--repo", repository, "--json", "tagName,assets"]),
   );
@@ -460,24 +615,30 @@ async function downloadPreviousUpdates(workDirectory, repository) {
   ]);
 
   const appcastPath = path.join(workDirectory, "appcast.xml");
+  const previousAppcast = await readFile(appcastPath);
+  assertSparkleAppcastSignature(previousAppcast, publicKey);
   const previousAssets = extractPreviousDmgAssets(
-    await readFile(appcastPath, "utf8"),
+    previousAppcast.toString("utf8"),
     repository,
   );
-  for (const asset of previousAssets) {
-    runInherited("gh", [
-      "release",
-      "download",
-      asset.tag,
-      "--repo",
-      repository,
-      "--pattern",
-      asset.name,
-      "--dir",
-      workDirectory,
-      "--skip-existing",
-    ]);
-  }
+  await stagePreviousDmgAssets({
+    assets: previousAssets,
+    workDirectory,
+    cacheDirectory,
+    publicKey,
+    downloadAsset: (asset, destination) =>
+      runInheritedAsync("gh", [
+        "release",
+        "download",
+        asset.tag,
+        "--repo",
+        repository,
+        "--pattern",
+        asset.name,
+        "--dir",
+        destination,
+      ]),
+  });
   return previousAssets;
 }
 
@@ -513,11 +674,18 @@ async function prepareSparkleRelease(options) {
       path.join(workDirectory, currentDmgName.replace(/\.dmg$/i, ".md")),
     );
 
+    const previousUpdatesStartedAt = Date.now();
     const previousUpdates = await downloadPreviousUpdates(
       workDirectory,
       options.repository,
+      configuredPublicKey,
+      options.previousDmgCacheDirectory,
+    );
+    console.log(
+      `[timing] 验证并准备历史 Sparkle DMG：${((Date.now() - previousUpdatesStartedAt) / 1000).toFixed(1)}s`,
     );
     const downloadUrlPrefix = `https://github.com/${options.repository}/releases/download/${tag}/`;
+    const generateAppcastStartedAt = Date.now();
     runInherited(
       options.generateAppcastPath,
       [
@@ -535,6 +703,9 @@ async function prepareSparkleRelease(options) {
         workDirectory,
       ],
       `${privateKey}\n`,
+    );
+    console.log(
+      `[timing] generate_appcast：${((Date.now() - generateAppcastStartedAt) / 1000).toFixed(1)}s`,
     );
 
     const generatedAppcastPath = path.join(workDirectory, "appcast.xml");

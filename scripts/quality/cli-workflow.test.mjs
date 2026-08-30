@@ -92,8 +92,10 @@ test("release tags gate platform builds on one Ubuntu CLI contract suite", () =>
     "release workflow must run the platform-independent CLI suite once",
   );
   assert.equal(releaseWorkflow.match(/- name: Install Agent CLI dependencies/g)?.length, 2);
+  assert.match(releaseWorkflow, /cli-gate:[\s\S]*needs: preflight[\s\S]*- name: Test Agent CLI/);
   assert.match(releaseWorkflow, /build-windows:[\s\S]*needs: preflight/);
   assert.match(releaseWorkflow, /build-macos:[\s\S]*needs: preflight/);
+  assert.match(releaseWorkflow, /certify:[\s\S]*needs:\n      - cli-gate/);
   assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.ps1 -Clean -SkipSync/);
   assert.match(releaseWorkflow, /\.\/scripts\/build\/build-cli\.sh --clean/);
 });

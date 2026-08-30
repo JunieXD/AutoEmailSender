@@ -64,7 +64,6 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: |
-            cli/uv.lock
             backend/uv.lock
 
       - name: Validate frozen release candidate
@@ -108,12 +107,6 @@ jobs:
           pwsh -NoProfile -File scripts/release/prepare-release.test.ps1
           pwsh -NoProfile -File scripts/release/release-script.test.ps1
 
-      - name: Test Agent CLI
-        working-directory: cli
-        run: |
-          uv sync --dev
-          uv run --no-sync python -m unittest discover test
-
       - name: Test backend release contracts
         working-directory: backend
         run: |
@@ -122,6 +115,35 @@ jobs:
             test.test_backend_build_script \
             test.test_crawl_mentors_skill_contract \
             test.test_crawl_mentors_skill_package
+
+  cli-gate:
+    if: github.event_name == 'push' || inputs.candidate_run_id == ''
+    runs-on: ubuntu-latest
+    needs: preflight
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: cli/uv.lock
+
+      - name: Test Agent CLI
+        working-directory: cli
+        run: |
+          uv sync --dev
+          uv run --no-sync python -m unittest discover test
 
   build-windows:
     if: github.event_name == 'push' || inputs.candidate_run_id == ''
@@ -300,6 +322,14 @@ jobs:
           SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: npm run dist:mac
 
+      - name: Restore verified historical Sparkle DMGs
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/auto-email-sender-sparkle-dmgs
+          key: sparkle-dmgs-v1-${{ runner.os }}-${{ env.RELEASE_TAG }}
+          restore-keys: |
+            sparkle-dmgs-v1-${{ runner.os }}-
+
       - name: Generate signed appcast and deltas
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -308,6 +338,7 @@ jobs:
         run: >-
           node scripts/release/prepare-sparkle-release.mjs
           --release-tag "$RELEASE_TAG"
+          --previous-dmg-cache "$RUNNER_TEMP/auto-email-sender-sparkle-dmgs"
           --output-dir desktop/release/sparkle-publish
 
       - name: Record macOS candidate evidence
@@ -338,6 +369,7 @@ jobs:
     if: github.event_name == 'push' || inputs.candidate_run_id == ''
     runs-on: ubuntu-latest
     needs:
+      - cli-gate
       - build-windows
       - build-macos
 
@@ -424,6 +456,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - preflight
+      - cli-gate
       - build-windows
       - build-macos
       - certify
