@@ -51,6 +51,7 @@ import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useConfirmDialog } from "@/lib/useConfirmDialog";
 import { ApiError } from "@/lib/api/client";
+import { saveDraft } from "@/lib/api/emailTasksApi";
 import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
 import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
 import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
@@ -162,6 +163,10 @@ import {
 } from "@/lib/externalUrls";
 import { textToEmailHtml } from "@/lib/richEmail";
 import {
+  normalizeTemplatePlaceholderHtmlForCompare,
+  prepareTemplateEditorHtml,
+} from "@/lib/templatePlaceholders";
+import {
   BATCH_TASK_STATUS_LABELS,
   MATERIAL_TYPE_LABELS,
   MATCH_ANALYSIS_JOB_STATUS_LABELS,
@@ -269,10 +274,55 @@ export { CrawlJobCard, TaskListViewSwitch } from "./components/TaskCenterCards";
 
 type BatchReviewItemActionType = "template" | "regenerate" | "delete" | "submit";
 type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
+type BatchReviewDraftSnapshot = {
+  subject: string;
+  bodyHtml: string;
+  selectedMaterialIds: number[];
+};
+type BatchReviewDraftBaseline = {
+  itemId: number;
+  snapshot: BatchReviewDraftSnapshot;
+};
 type BatchSendItemAction = {
   itemId: number;
   kind: "cancel" | "restore";
 };
+
+const buildBatchReviewDraftSnapshot = ({
+  subject,
+  contentText,
+  contentHtml,
+  selectedMaterialIds,
+}: {
+  subject: string;
+  contentText: string;
+  contentHtml: string;
+  selectedMaterialIds: number[];
+}): BatchReviewDraftSnapshot => {
+  const bodyText = deriveBatchReviewText(contentText, contentHtml);
+  const displayHtml = contentHtml.trim() || (bodyText ? textToEmailHtml(bodyText) : "");
+
+  return {
+    subject,
+    bodyHtml: displayHtml
+      ? normalizeTemplatePlaceholderHtmlForCompare(
+          prepareTemplateEditorHtml(displayHtml),
+        )
+      : "",
+    selectedMaterialIds: [...selectedMaterialIds].sort((left, right) => left - right),
+  };
+};
+
+const areBatchReviewDraftSnapshotsEqual = (
+  left: BatchReviewDraftSnapshot,
+  right: BatchReviewDraftSnapshot,
+) =>
+  left.subject === right.subject &&
+  left.bodyHtml === right.bodyHtml &&
+  left.selectedMaterialIds.length === right.selectedMaterialIds.length &&
+  left.selectedMaterialIds.every(
+    (materialId, index) => materialId === right.selectedMaterialIds[index],
+  );
 
 export type PendingCrawlJobHandoff = {
   token: number;
@@ -345,6 +395,7 @@ export const BackgroundTasksPage = ({
   const [batchReviewThread, setBatchReviewThread] =
     useState<WorkspaceThreadDTO | null>(null);
   const [batchReviewLoading, setBatchReviewLoading] = useState(false);
+  const [batchReviewSaving, setBatchReviewSaving] = useState(false);
   const [batchBulkApprovalLoading, setBatchBulkApprovalLoading] = useState(false);
   const [batchReviewItemActions, setBatchReviewItemActions] =
     useState<BatchReviewItemActions>({});
@@ -606,6 +657,8 @@ export const BackgroundTasksPage = ({
   const latestBatchTaskDetailsRequestIdRef = useRef(0);
   const batchTaskSummarySignatureRef = useRef<string | null>(null);
   const latestBatchReviewRequestIdRef = useRef(0);
+  const batchReviewDraftBaselineRef = useRef<BatchReviewDraftBaseline | null>(null);
+  const batchReviewSavingRef = useRef(false);
   const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
   const latestMatchJobDetailsRequestIdRef = useRef(0);
@@ -3210,9 +3263,12 @@ export const BackgroundTasksPage = ({
 
   const resetBatchDraftReview = () => {
     latestBatchReviewRequestIdRef.current += 1;
+    batchReviewDraftBaselineRef.current = null;
+    batchReviewSavingRef.current = false;
     setBatchReviewItemId(null);
     setBatchReviewThread(null);
     setBatchReviewLoading(false);
+    setBatchReviewSaving(false);
     setBatchReviewItemActions({});
     setBatchReviewSubject("");
     setBatchReviewContentText("");
@@ -3227,6 +3283,18 @@ export const BackgroundTasksPage = ({
     setBatchReviewContentText(draft.text);
     setBatchReviewContentHtml(draft.html);
     setBatchReviewSelectedMaterialIds(draft.selectedMaterialIds);
+    batchReviewDraftBaselineRef.current =
+      thread.current_task.id === null
+        ? null
+        : {
+            itemId: thread.current_task.id,
+            snapshot: buildBatchReviewDraftSnapshot({
+              subject: draft.subject,
+              contentText: draft.text,
+              contentHtml: draft.html,
+              selectedMaterialIds: draft.selectedMaterialIds,
+            }),
+          };
   };
 
   const ensureBatchReviewThreadMatchesItem = (
@@ -3242,8 +3310,71 @@ export const BackgroundTasksPage = ({
     }
   };
 
+  const handleBatchReviewContentChange = (value: RichEmailValue) => {
+    setBatchReviewContentHtml(value.html);
+    setBatchReviewContentText(value.text);
+  };
+
+  const buildBatchReviewPayload = () => ({
+    subject: batchReviewSubject.trim() || null,
+    body_text:
+      batchReviewContentText.trim() ||
+      deriveBatchReviewText("", batchReviewContentHtml),
+    body_html: batchReviewContentHtml || null,
+    selected_material_ids: batchReviewSelectedMaterialIds,
+  });
+
+  const saveActiveBatchReviewDraftIfChanged = async () => {
+    if (!selectedBatchTask || !activeBatchReviewItem || !batchReviewThread) {
+      return true;
+    }
+
+    const itemId = batchReviewThread.current_task.id;
+    if (itemId === null) {
+      notifyError("草稿未保存", "当前草稿信息不完整，请刷新后重试。");
+      return false;
+    }
+    const baseline = batchReviewDraftBaselineRef.current;
+    const currentSnapshot = buildBatchReviewDraftSnapshot({
+      subject: batchReviewSubject,
+      contentText: batchReviewContentText,
+      contentHtml: batchReviewContentHtml,
+      selectedMaterialIds: batchReviewSelectedMaterialIds,
+    });
+    if (
+      baseline?.itemId === itemId &&
+      areBatchReviewDraftSnapshotsEqual(baseline.snapshot, currentSnapshot)
+    ) {
+      return true;
+    }
+    if (batchReviewSavingRef.current) {
+      return false;
+    }
+
+    batchReviewSavingRef.current = true;
+    setBatchReviewSaving(true);
+    try {
+      const thread = await saveDraft(itemId, buildBatchReviewPayload());
+      ensureBatchReviewThreadMatchesItem(
+        thread,
+        activeBatchReviewItem,
+        selectedBatchTask,
+      );
+      syncBatchDraftReview(thread);
+      return true;
+    } catch (actionError) {
+      const message =
+        actionError instanceof Error ? actionError.message : "保存草稿失败";
+      notifyError("草稿未保存", `${message}。请重试后再切换。`);
+      return false;
+    } finally {
+      batchReviewSavingRef.current = false;
+      setBatchReviewSaving(false);
+    }
+  };
+
   const openBatchDraftReview = async (item: BatchTaskItemDTO) => {
-    if (!selectedBatchTask) {
+    if (!selectedBatchTask || batchReviewSavingRef.current) {
       return;
     }
     if (
@@ -3260,6 +3391,15 @@ export const BackgroundTasksPage = ({
     const isSwitchingItem = batchReviewThread !== null;
     const requestId = latestBatchReviewRequestIdRef.current + 1;
     latestBatchReviewRequestIdRef.current = requestId;
+    setBatchReviewLoading(false);
+    if (isSwitchingItem) {
+      if (!(await saveActiveBatchReviewDraftIfChanged())) {
+        return;
+      }
+      if (latestBatchReviewRequestIdRef.current !== requestId) {
+        return;
+      }
+    }
     if (!isSwitchingItem) {
       setBatchReviewItemId(item.id);
     }
@@ -3290,19 +3430,16 @@ export const BackgroundTasksPage = ({
     }
   };
 
-  const handleBatchReviewContentChange = (value: RichEmailValue) => {
-    setBatchReviewContentHtml(value.html);
-    setBatchReviewContentText(value.text);
+  const handleReturnToBatchTaskDetails = async () => {
+    if (batchReviewSavingRef.current) {
+      return;
+    }
+    latestBatchReviewRequestIdRef.current += 1;
+    setBatchReviewLoading(false);
+    if (await saveActiveBatchReviewDraftIfChanged()) {
+      resetBatchDraftReview();
+    }
   };
-
-  const buildBatchReviewPayload = () => ({
-    subject: batchReviewSubject.trim() || null,
-    body_text:
-      batchReviewContentText.trim() ||
-      deriveBatchReviewText("", batchReviewContentHtml),
-    body_html: batchReviewContentHtml || null,
-    selected_material_ids: batchReviewSelectedMaterialIds,
-  });
   const batchReviewAttachmentTotalBytes = getSelectedAttachmentTotalBytes(
     batchReviewThread?.material_options ?? [],
     batchReviewSelectedMaterialIds,
@@ -4010,6 +4147,20 @@ export const BackgroundTasksPage = ({
     lastBatchTaskDetailsLoadErrorRef.current = null;
   };
 
+  const requestCloseBatchTaskDetails = async () => {
+    if (batchReviewSavingRef.current) {
+      return;
+    }
+    if (batchReviewItemId !== null) {
+      latestBatchReviewRequestIdRef.current += 1;
+      setBatchReviewLoading(false);
+      if (!(await saveActiveBatchReviewDraftIfChanged())) {
+        return;
+      }
+    }
+    closeBatchTaskDetails();
+  };
+
   const closeMatchJobDetails = () => {
     latestMatchJobDetailsRequestIdRef.current += 1;
     setSelectedMatchJob(null);
@@ -4059,7 +4210,9 @@ export const BackgroundTasksPage = ({
   const closeSelectedCandidateDetail = useCallback(() => {
     void requestCloseSelectedCandidateDetail();
   }, [requestCloseSelectedCandidateDetail]);
-  const batchTaskDetailsLayer = useDismissableLayerClick(closeBatchTaskDetails);
+  const batchTaskDetailsLayer = useDismissableLayerClick(() => {
+    void requestCloseBatchTaskDetails();
+  });
   const matchJobDetailsLayer = useDismissableLayerClick(closeMatchJobDetails);
   const informationEnrichmentDetailsLayer = useDismissableLayerClick(
     closeInformationEnrichmentDetails,
@@ -5090,17 +5243,23 @@ export const BackgroundTasksPage = ({
                 {batchDraftReviewOpen ? (
                   <button
                     type="button"
-                    onClick={resetBatchDraftReview}
-                    className="ui-btn-secondary"
+                    onClick={() => void handleReturnToBatchTaskDetails()}
+                    disabled={batchReviewSaving}
+                    className="ui-btn-secondary disabled:cursor-wait disabled:opacity-60"
                   >
-                    <ChevronLeft className="h-4 w-4" />
-                    返回详情
+                    {batchReviewSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ChevronLeft className="h-4 w-4" />
+                    )}
+                    {batchReviewSaving ? "正在保存" : "返回详情"}
                   </button>
                 ) : null}
                 <button
                   type="button"
-                  onClick={closeBatchTaskDetails}
-                  className="ui-btn-secondary"
+                  onClick={() => void requestCloseBatchTaskDetails()}
+                  disabled={batchReviewSaving}
+                  className="ui-btn-secondary disabled:cursor-wait disabled:opacity-60"
                   aria-label="关闭"
                 >
                   <X className="h-4 w-4" />
@@ -5125,7 +5284,15 @@ export const BackgroundTasksPage = ({
                           {batchReviewQueueItems.length} 封草稿等待处理
                         </p>
                       </div>
-                      {batchReviewLoading && !batchReviewThread ? (
+                      {batchReviewSaving ? (
+                        <span
+                          role="status"
+                          className="inline-flex items-center gap-1.5 text-xs text-stone-500"
+                        >
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          保存中
+                        </span>
+                      ) : batchReviewLoading && !batchReviewThread ? (
                         <Loader2 className="h-4 w-4 animate-spin text-stone-400" />
                       ) : null}
                     </div>
@@ -5156,7 +5323,7 @@ export const BackgroundTasksPage = ({
                           <button
                             type="button"
                             onClick={() => void openBatchDraftReview(item)}
-                            disabled={itemBusyGenerating}
+                            disabled={itemBusyGenerating || batchReviewSaving}
                             className="min-w-0 flex-1 px-4 py-3 text-left disabled:cursor-wait"
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -5195,7 +5362,9 @@ export const BackgroundTasksPage = ({
                             type="button"
                             aria-label="移除草稿"
                             onClick={() => void handleDeleteBatchDraftItem(item)}
-                            disabled={itemDeleting || itemBusyGenerating}
+                            disabled={
+                              itemDeleting || itemBusyGenerating || batchReviewSaving
+                            }
                             className="flex w-11 shrink-0 items-center justify-center border-l border-stone-100 text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -5317,6 +5486,7 @@ export const BackgroundTasksPage = ({
                                           : "暂无可用模板"
                                   }
                                   disabled={
+                                    batchReviewSaving ||
                                     Boolean(activeBatchReviewAction) ||
                                     loadingBatchReviewOutreachTemplates ||
                                     !batchReviewOutreachTemplatesLoaded ||
@@ -5349,12 +5519,14 @@ export const BackgroundTasksPage = ({
                               value={batchReviewSubject}
                               onChange={setBatchReviewSubject}
                               placeholder="给导师的邮件主题"
+                              disabled={batchReviewSaving}
                             />
                             <EmailTemplateEditor
                               key={`batch-review-body-${batchReviewThread.current_task.id}`}
                               label="邮件正文"
                               html={batchReviewEditorHtml}
                               onChange={handleBatchReviewContentChange}
+                              disabled={batchReviewSaving}
                             />
                           </div>
                         </div>
@@ -5381,6 +5553,7 @@ export const BackgroundTasksPage = ({
                                         selected={checked}
                                         semantics="checkbox"
                                         size="sm"
+                                        disabled={batchReviewSaving}
                                         onToggle={() =>
                                           setBatchReviewSelectedMaterialIds((current) =>
                                             checked
@@ -5424,7 +5597,11 @@ export const BackgroundTasksPage = ({
                               <button
                                 type="button"
                                 onClick={() => void handleRegenerateBatchDraft()}
-                                disabled={Boolean(activeBatchReviewAction) || !batchReviewThread}
+                                disabled={
+                                  batchReviewSaving ||
+                                  Boolean(activeBatchReviewAction) ||
+                                  !batchReviewThread
+                                }
                                 className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 {batchReviewUsesTemplateDraft ? (
@@ -5439,7 +5616,11 @@ export const BackgroundTasksPage = ({
                               <button
                                 type="button"
                                 onClick={() => void handleApproveBatchDraft()}
-                                disabled={Boolean(activeBatchReviewAction) || !batchReviewCanSubmit}
+                                disabled={
+                                  batchReviewSaving ||
+                                  Boolean(activeBatchReviewAction) ||
+                                  !batchReviewCanSubmit
+                                }
                                 className="ui-btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 <CheckCircle2 className="h-4 w-4" />
@@ -5449,7 +5630,11 @@ export const BackgroundTasksPage = ({
                                 <button
                                   type="button"
                                   onClick={() => void handleSendBatchDraftNow()}
-                                  disabled={Boolean(activeBatchReviewAction) || !batchReviewCanSubmit}
+                                  disabled={
+                                    batchReviewSaving ||
+                                    Boolean(activeBatchReviewAction) ||
+                                    !batchReviewCanSubmit
+                                  }
                                   className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   <Mail className="h-4 w-4" />

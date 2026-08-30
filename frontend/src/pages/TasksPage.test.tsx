@@ -99,6 +99,7 @@ const apiMocks = vi.hoisted(() => ({
   updateProfessor: vi.fn(),
   getWorkspaceThread: vi.fn(),
   getEmailTaskThread: vi.fn(),
+  saveDraft: vi.fn(),
   regenerateDraft: vi.fn(),
   approveDraft: vi.fn(),
   approveAndSend: vi.fn(),
@@ -263,6 +264,7 @@ vi.mock("@/lib/api/workspacesApi", () => ({
 
 vi.mock("@/lib/api/emailTasksApi", () => ({
   getEmailTaskThread: apiMocks.getEmailTaskThread,
+  saveDraft: apiMocks.saveDraft,
   regenerateDraft: apiMocks.regenerateDraft,
   approveDraft: apiMocks.approveDraft,
   approveAndSend: apiMocks.approveAndSend,
@@ -3274,6 +3276,263 @@ describe("TasksPage batch draft review", () => {
     const matchCard = screen.getByRole("region", { name: "匹配摘要" });
     expect(within(matchCard).getByText("匹配分 77")).toBeInTheDocument();
     expect(within(matchCard).getByText("第二位导师匹配摘要")).toBeInTheDocument();
+    expect(apiMocks.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("saves changed batch review content before switching professors", async () => {
+    const task = buildBatchTask({
+      name: "切换前保存草稿任务",
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_id: 21,
+      professor_name: "第一位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_id: 22,
+      professor_name: "第二位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const firstThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 21,
+        name: firstItem.professor_name,
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: firstItem.id,
+        batch_task_id: task.id,
+        generated_subject: "第一封原主题",
+        generated_content_text: "第一封原正文",
+        generated_content_html: "<p>第一封原正文</p>",
+      },
+    });
+    const savedFirstThread = buildWorkspaceThread({
+      professor: firstThread.professor,
+      current_task: {
+        ...firstThread.current_task,
+        approved_subject: "第一封修改后主题",
+        approved_body_text: "第一封修改后正文",
+        approved_body_html: "<p>第一封修改后正文</p>",
+        selected_material_ids: [],
+        draft: {
+          subject: "第一封修改后主题",
+          body_text: "第一封修改后正文",
+          body_html: "<p>第一封修改后正文</p>",
+          source: "saved",
+          sendable: true,
+          editable: true,
+        },
+      },
+    });
+    const secondThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        id: 22,
+        name: secondItem.professor_name,
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: secondItem.id,
+        batch_task_id: task.id,
+        generated_subject: "第二封主题",
+        generated_content_text: "第二封正文",
+        generated_content_html: "<p>第二封正文</p>",
+      },
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([firstItem, secondItem]);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(firstThread)
+      .mockResolvedValueOnce(secondThread)
+      .mockResolvedValueOnce(savedFirstThread);
+    apiMocks.saveDraft.mockResolvedValue(savedFirstThread);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+    expect(await screen.findByLabelText("邮件主题")).toHaveValue("第一封原主题");
+
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "第一封修改后主题" },
+    });
+    fireEvent.change(screen.getByLabelText("邮件正文"), {
+      target: { value: "<p>第一封修改后正文</p>" },
+    });
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "随信附件" })).getByRole(
+        "checkbox",
+        { name: "选择附件 简历.pdf" },
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
+
+    await waitFor(() => {
+      expect(apiMocks.saveDraft).toHaveBeenCalledWith(firstItem.id, {
+        subject: "第一封修改后主题",
+        body_text: "第一封修改后正文",
+        body_html: "<p>第一封修改后正文</p>",
+        selected_material_ids: [],
+      });
+    });
+    expect(await screen.findByDisplayValue("第二封主题")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /第一位导师/ }));
+    expect(await screen.findByDisplayValue("第一封修改后主题")).toBeInTheDocument();
+    expect(screen.getByLabelText("邮件正文")).toHaveValue(
+      "<p>第一封修改后正文</p>",
+    );
+    expect(apiMocks.saveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not save a batch review draft when edits are reverted", async () => {
+    const task = buildBatchTask({
+      name: "还原编辑后切换任务",
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_name: "第一位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_name: "第二位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const firstThread = buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: firstItem.id,
+        batch_task_id: task.id,
+        generated_subject: "原主题",
+        generated_content_text: "原正文",
+        generated_content_html: "<p>原正文</p>",
+      },
+    });
+    const secondThread = buildWorkspaceThread({
+      professor: {
+        ...buildWorkspaceThread().professor,
+        name: secondItem.professor_name,
+      },
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: secondItem.id,
+        batch_task_id: task.id,
+      },
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([firstItem, secondItem]);
+    apiMocks.getBatchTaskItemThread
+      .mockResolvedValueOnce(firstThread)
+      .mockResolvedValueOnce(secondThread);
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+    expect(await screen.findByLabelText("邮件主题")).toHaveValue("原主题");
+
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "临时主题" },
+    });
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "原主题" },
+    });
+    fireEvent.change(screen.getByLabelText("邮件正文"), {
+      target: { value: "<p>临时正文</p>" },
+    });
+    fireEvent.change(screen.getByLabelText("邮件正文"), {
+      target: { value: "<p>原正文</p>" },
+    });
+    const attachmentCheckbox = within(
+      screen.getByRole("region", { name: "随信附件" }),
+    ).getByRole("checkbox", { name: "选择附件 简历.pdf" });
+    fireEvent.click(attachmentCheckbox);
+    fireEvent.click(attachmentCheckbox);
+    fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
+
+    expect(await screen.findByText(`${task.name} · 第二位导师`)).toBeInTheDocument();
+    expect(apiMocks.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current batch review draft open when auto-save fails", async () => {
+    const task = buildBatchTask({
+      name: "自动保存失败任务",
+      review_required_count: 2,
+      approved_count: 0,
+    });
+    const firstItem = buildBatchItem({
+      id: 11,
+      professor_name: "第一位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const secondItem = buildBatchItem({
+      id: 12,
+      professor_name: "第二位导师",
+      status: "review_required",
+      next_action: "review_draft",
+    });
+    const firstThread = buildWorkspaceThread({
+      current_task: {
+        ...buildWorkspaceThread().current_task,
+        id: firstItem.id,
+        batch_task_id: task.id,
+        generated_subject: "原主题",
+      },
+    });
+    apiMocks.listBatchTasks.mockResolvedValue([task]);
+    apiMocks.listBatchTaskItems.mockResolvedValue([firstItem, secondItem]);
+    apiMocks.getBatchTaskItemThread.mockResolvedValue(firstThread);
+    apiMocks.saveDraft.mockRejectedValue(new Error("网络暂时不可用"));
+
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(task.name)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "审核草稿" }))[0]);
+    expect(await screen.findByLabelText("邮件主题")).toHaveValue("原主题");
+    fireEvent.change(screen.getByLabelText("邮件主题"), {
+      target: { value: "未保存的主题" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /第二位导师/ }));
+
+    await waitFor(() => {
+      expect(notificationMocks.notifyError).toHaveBeenCalledWith(
+        "草稿未保存",
+        "网络暂时不可用。请重试后再切换。",
+      );
+    });
+    expect(apiMocks.getBatchTaskItemThread).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("邮件主题")).toHaveValue("未保存的主题");
+    expect(screen.getByText(`${task.name} · 第一位导师`)).toBeInTheDocument();
   });
 
   it("regenerates and deletes batch review drafts from the review panel", async () => {
