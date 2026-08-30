@@ -629,6 +629,7 @@ export const BackgroundTasksPage = ({
   const crawlPagesStartRef = useRef<HTMLElement | null>(null);
   const crawlCandidatesStartRef = useRef<HTMLElement | null>(null);
   const crawlCandidateFirstItemRef = useRef<HTMLDivElement | null>(null);
+  const batchReviewQueueScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTaskListView = taskListViews[activeTab];
   const activeTaskListFilters = taskListFilters[activeTab];
   const tasksRequestKey =
@@ -2215,6 +2216,12 @@ export const BackgroundTasksPage = ({
     setBatchGeneratingItemPage,
     setBatchReviewItemPage,
   ]);
+
+  useEffect(() => {
+    if (batchReviewQueueScrollRef.current) {
+      batchReviewQueueScrollRef.current.scrollTop = 0;
+    }
+  }, [batchReviewItemPageSize, safeBatchReviewItemPage]);
 
   useEffect(() => {
     if (
@@ -5122,7 +5129,12 @@ export const BackgroundTasksPage = ({
                         <Loader2 className="h-4 w-4 animate-spin text-stone-400" />
                       ) : null}
                     </div>
-                    <div className="mt-4 space-y-2">
+                    <div
+                      ref={batchReviewQueueScrollRef}
+                      role="list"
+                      aria-label="待审核草稿列表"
+                      className="mt-4 max-h-[min(50rem,calc(100dvh-16rem))] space-y-2 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
+                    >
                       {visibleBatchReviewQueueItems.map((item) => {
                         const itemGeneratingDraft =
                           item.status === "generating_draft";
@@ -5134,6 +5146,7 @@ export const BackgroundTasksPage = ({
                         return (
                         <div
                           key={item.id}
+                          role="listitem"
                           className={
                             item.id === batchReviewItemId
                               ? "flex w-full items-stretch overflow-hidden rounded-2xl border border-primary/25 bg-white shadow-sm"
@@ -5198,6 +5211,7 @@ export const BackgroundTasksPage = ({
                       ariaLabel="待审核草稿分页"
                       pageSizeAriaLabel="待审核草稿每页数量"
                       variant="compact"
+                      layout="stacked"
                       pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
                       unitLabel="封"
                       itemLabel="封草稿"

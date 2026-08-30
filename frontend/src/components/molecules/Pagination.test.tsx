@@ -68,6 +68,38 @@ describe("Pagination", () => {
     expect(screen.queryByRole("button", { name: "跳页" })).not.toBeInTheDocument();
   });
 
+  it("stacks controls without squeezing the summary in narrow containers", () => {
+    render(
+      <Pagination
+        page={1}
+        pageSize={10}
+        totalCount={20}
+        ariaLabel="侧栏分页"
+        variant="compact"
+        layout="stacked"
+        itemLabel="封草稿"
+        unitLabel="封"
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("navigation", { name: "侧栏分页" })).toHaveClass(
+      "flex-col",
+      "items-stretch",
+    );
+    expect(screen.getByText("显示 1-10 / 20 封草稿")).toHaveClass(
+      "whitespace-nowrap",
+    );
+    expect(screen.getByRole("group", { name: "翻页按钮" })).toHaveClass(
+      "inline-flex",
+      "gap-1",
+    );
+    expect(screen.getByRole("group", { name: "翻页按钮" })).not.toHaveClass(
+      "w-full",
+      "justify-between",
+    );
+  });
+
   it("keeps the page-size control without showing disabled navigation for one page", () => {
     render(
       <Pagination

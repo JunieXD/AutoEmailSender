@@ -2570,6 +2570,13 @@ describe("TasksPage batch draft review", () => {
     });
     expect(apiMocks.getWorkspaceThread).not.toHaveBeenCalled();
     expect(await screen.findByText("批量审核草稿")).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: "待审核草稿列表" }),
+    ).toHaveClass(
+      "max-h-[min(50rem,calc(100dvh-16rem))]",
+      "overflow-y-auto",
+      "overscroll-contain",
+    );
     expect(screen.getByLabelText("邮件主题")).toHaveValue("申请与老师交流");
     expect(screen.getByLabelText("邮件正文")).toHaveValue(
       "<p>老师您好，我想交流。</p>",

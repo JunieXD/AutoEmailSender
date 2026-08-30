@@ -33,6 +33,7 @@ type PaginationProps = {
   onChange: (change: PaginationChange) => void;
   ariaLabel: string;
   variant?: "standard" | "compact";
+  layout?: "responsive" | "stacked";
   pageSizeOptions?: readonly number[];
   unitLabel?: string;
   itemLabel?: string;
@@ -63,6 +64,7 @@ export const Pagination = ({
   onChange,
   ariaLabel,
   variant = "standard",
+  layout = "responsive",
   pageSizeOptions = PAGE_SIZE_OPTIONS,
   unitLabel = "条",
   itemLabel = "条",
@@ -269,13 +271,27 @@ export const Pagination = ({
   return (
     <nav
       aria-label={ariaLabel}
-      className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${className ?? ""}`}
+      className={`flex flex-col gap-3 ${
+        layout === "stacked"
+          ? "items-stretch"
+          : "sm:flex-row sm:items-center sm:justify-between"
+      } ${className ?? ""}`}
     >
-      <div className="text-xs tabular-nums text-stone-500 sm:text-sm">
+      <div
+        className={`text-xs tabular-nums text-stone-500 sm:text-sm ${
+          layout === "stacked" ? "whitespace-nowrap" : ""
+        }`}
+      >
         {summary ?? `显示 ${startItem}-${endItem} / ${safeTotalCount} ${itemLabel}`}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={
+          layout === "stacked"
+            ? "flex flex-col items-start gap-2"
+            : "flex flex-wrap items-center gap-2"
+        }
+      >
         <PageSizeSelector
           value={safePageSize}
           onChange={changePageSize}
