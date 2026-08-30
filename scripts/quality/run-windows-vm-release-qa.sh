@@ -26,12 +26,15 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
+source "$script_dir/windows-vm-host-utils.sh"
 vm_name="${AUTO_EMAIL_SENDER_WINDOWS_VM_NAME:-Windows 11}"
 guest_checkout="${AUTO_EMAIL_SENDER_WINDOWS_QA_CHECKOUT:-C:\Users\junie\Projects\AutoEmailSender-Windows-QA}"
 host_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR:-$HOME/Parallels Shared}"
 guest_transfer_dir="${AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR:-Z:}"
 guest_transfer_dir="${guest_transfer_dir//\\//}"
 guest_transfer_dir="${guest_transfer_dir%/}"
+ready_timeout_seconds="${AUTO_EMAIL_SENDER_WINDOWS_QA_READY_TIMEOUT_SECONDS:-90}"
+ready_interval_seconds="${AUTO_EMAIL_SENDER_WINDOWS_QA_READY_INTERVAL_SECONDS:-3}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This host runner requires macOS with Parallels Desktop." >&2
@@ -69,9 +72,18 @@ probe_path="$host_transfer_dir/$probe_name"
 guest_runner_path="$guest_transfer_dir/$runner_name"
 guest_bundle_path="$guest_transfer_dir/$bundle_name"
 guest_probe_path="$guest_transfer_dir/$probe_name"
+vm_started_by_runner=0
 
 cleanup() {
+  local exit_code="$?"
   rm -f -- "$bundle_path" "$runner_path" "$probe_path"
+  if ((vm_started_by_runner)); then
+    echo "Restoring the Parallels VM to its initial stopped state."
+    if ! prlctl stop "$vm_name" >/dev/null; then
+      echo "Warning: failed to stop Parallels VM $vm_name after QA." >&2
+    fi
+  fi
+  return "$exit_code"
 }
 trap cleanup EXIT
 
@@ -79,15 +91,17 @@ vm_status="$(prlctl status "$vm_name" 2>&1 || true)"
 if [[ "$vm_status" != *"running"* ]]; then
   echo "Starting Parallels VM: $vm_name"
   prlctl start "$vm_name"
+  vm_started_by_runner=1
 fi
 
 touch "$probe_path"
-if ! prlctl exec "$vm_name" --current-user powershell.exe \
-  -NoLogo \
-  -NoProfile \
-  -Command "if (-not (Test-Path -LiteralPath '$guest_probe_path')) { exit 1 }"
+if ! wait_for_windows_vm_ready \
+  "$vm_name" \
+  "$guest_probe_path" \
+  "$ready_timeout_seconds" \
+  "$ready_interval_seconds"
 then
-  echo "The Parallels shared-folder mapping is unavailable." >&2
+  echo "The Parallels guest or shared-folder mapping did not become ready within ${ready_timeout_seconds}s." >&2
   echo "Host path: $host_transfer_dir" >&2
   echo "Guest path: $guest_transfer_dir" >&2
   echo "Configure the mapping or set the AUTO_EMAIL_SENDER_WINDOWS_QA_*_TRANSFER_DIR variables." >&2

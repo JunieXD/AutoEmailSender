@@ -2,13 +2,14 @@
 set -euo pipefail
 
 usage() {
-  echo "用法: scripts/release.sh <version> [--promote-run <run-id>] [--dry-run] [--skip-verify] [--repo-root <path>]" >&2
+  echo "用法: scripts/release.sh <version> [--promote-run <run-id>] [--quality-evidence <path>] [--dry-run] [--skip-verify] [--repo-root <path>]" >&2
 }
 
 version=""
 dry_run=0
 skip_verify=0
 promote_run_id=""
+quality_evidence_path=""
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 release_version_checker="$script_dir/check-release-version.mjs"
@@ -30,6 +31,14 @@ while (($#)); do
         exit 2
       fi
       promote_run_id="$2"
+      shift 2
+      ;;
+    --quality-evidence)
+      if (($# < 2)); then
+        usage
+        exit 2
+      fi
+      quality_evidence_path="$2"
       shift 2
       ;;
     --repo-root)
@@ -155,6 +164,29 @@ copy_release_notes() {
   cp "$curated_release_notes_path" "$desktop_release_notes_path"
 }
 
+quality_suites=""
+
+load_quality_evidence() {
+  if [[ -z "$quality_evidence_path" ]]; then
+    return 0
+  fi
+  if [[ -n "$promote_run_id" ]]; then
+    echo "--quality-evidence 只用于候选认证前的本地验证。" >&2
+    exit 2
+  fi
+  quality_suites="$(
+    node "$script_dir/quality-evidence.mjs" \
+      --evidence "$quality_evidence_path" \
+      --repo-root "$repo_root"
+  )"
+  echo "[reuse] 已加载绑定当前 SHA 和工具链的全仓质量证据。"
+}
+
+quality_suite_passed() {
+  local suite="$1"
+  [[ $'\n'"$quality_suites"$'\n' == *$'\n'"$suite"$'\n'* ]]
+}
+
 invoke_verification() {
   if ((skip_verify)); then
     echo "[skip] 跳过发布前验证"
@@ -164,7 +196,11 @@ invoke_verification() {
   echo "=== 验证 frontend ==="
   (
     cd "$repo_root/frontend"
-    invoke_checked_command "frontend: npm test" npm test
+    if quality_suite_passed "frontend"; then
+      echo "[reuse] frontend tests 已由全仓质量证据覆盖"
+    else
+      invoke_checked_command "frontend: npm test" npm test
+    fi
     invoke_checked_command "frontend: npm run lint" npm run lint
     invoke_checked_command "frontend: npm run build" npm run build
   )
@@ -173,20 +209,28 @@ invoke_verification() {
   (
     cd "$repo_root/backend"
     invoke_checked_command "backend: uv sync --dev" uv sync --dev
-    invoke_checked_command "backend: uv run python -m unittest test.test_desktop_runtime" \
-      uv run python -m unittest test.test_desktop_runtime
-    invoke_checked_command "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" \
-      uv run python -m unittest test.test_database_schema test.test_migrations_runtime
-    invoke_checked_command "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" \
-      uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
+    if quality_suite_passed "backend"; then
+      echo "[reuse] backend tests 已由全仓质量证据覆盖"
+    else
+      invoke_checked_command "backend: uv run python -m unittest test.test_desktop_runtime" \
+        uv run python -m unittest test.test_desktop_runtime
+      invoke_checked_command "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" \
+        uv run python -m unittest test.test_database_schema test.test_migrations_runtime
+      invoke_checked_command "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" \
+        uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
+    fi
   )
 
   echo "=== 验证 cli ==="
   (
     cd "$repo_root/cli"
     invoke_checked_command "cli: uv sync --dev" uv sync --dev
-    invoke_checked_command "cli: uv run python -m unittest discover test" \
-      uv run python -m unittest discover test
+    if quality_suite_passed "cli"; then
+      echo "[reuse] CLI tests 已由全仓质量证据覆盖"
+    else
+      invoke_checked_command "cli: uv run python -m unittest discover test" \
+        uv run python -m unittest discover test
+    fi
   )
   invoke_checked_command "cli: frozen binary" \
     "$repo_root/scripts/build-cli.sh" --clean
@@ -194,7 +238,11 @@ invoke_verification() {
   echo "=== 验证 desktop ==="
   (
     cd "$repo_root/desktop"
-    invoke_checked_command "desktop: npm test" npm test
+    if quality_suite_passed "desktop"; then
+      echo "[reuse] desktop tests 已由全仓质量证据覆盖"
+    else
+      invoke_checked_command "desktop: npm test" npm test
+    fi
   )
 }
 
@@ -224,6 +272,7 @@ set_npm_version() {
 assert_release_version
 assert_clean_repository
 assert_release_notes
+load_quality_evidence
 
 if [[ -n "$promote_run_id" ]]; then
   if ((skip_verify)); then

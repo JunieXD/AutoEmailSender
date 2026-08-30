@@ -116,6 +116,33 @@ assert_contains "$output" "fake CLI build --clean" "release.sh 没有验证 CLI 
 assert_contains "$output" "[dry-run] uv version 9.9.9 --no-sync in cli" "release.sh dry-run 没有预演 CLI 版本更新。"
 assert_contains "$output" "候选认证成功后，使用 --promote-run" "release.sh dry-run 没有说明认证后提升流程。"
 
+quality_evidence_path="$temp_root/quality-evidence.json"
+node -e '
+const fs = require("node:fs");
+const [output, nodeVersion, npmVersion, pythonVersion, uvVersion] = process.argv.slice(1);
+fs.writeFileSync(output, JSON.stringify({
+  schemaVersion: 1,
+  kind: "auto-email-sender-quality-evidence",
+  gitSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  generatedAt: new Date().toISOString(),
+  toolchain: { node: nodeVersion, npm: npmVersion, python: pythonVersion, uv: uvVersion },
+  passedSuites: ["backend", "cli", "desktop", "frontend", "website"],
+}));
+' "$quality_evidence_path" "$(node --version)" "$(npm --version)" "$(uv run --project "$release_repo/backend" --no-sync python --version)" "$(uv --version)"
+
+rm -f "$uv_calls_path"
+"$release_script" 9.9.9 --dry-run --quality-evidence "$quality_evidence_path" --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
+output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"
+assert_contains "$output" "[reuse] 已加载绑定当前 SHA 和工具链的全仓质量证据" "release.sh 没有加载有效的全仓质量证据。"
+assert_contains "$output" "[reuse] frontend tests 已由全仓质量证据覆盖" "release.sh 没有复用 frontend suite。"
+assert_contains "$output" "[reuse] backend tests 已由全仓质量证据覆盖" "release.sh 没有复用 backend suite。"
+assert_contains "$output" "[reuse] CLI tests 已由全仓质量证据覆盖" "release.sh 没有复用 CLI suite。"
+assert_contains "$output" "[reuse] desktop tests 已由全仓质量证据覆盖" "release.sh 没有复用 desktop suite。"
+if [[ "$output" == *"fake npm test"* || "$(cat "$uv_calls_path")" == *"unittest"* ]]; then
+  printf '%s\n%s\n' "release.sh 不应重跑质量证据已经覆盖的测试。" "$output" >&2
+  exit 1
+fi
+
 rm -f "$uv_calls_path"
 "$release_script" 9.9.9 --skip-verify --repo-root "$release_repo" > "$stdout_path" 2> "$stderr_path"
 output="$(cat "$stdout_path")"$'\n'"$(cat "$stderr_path")"

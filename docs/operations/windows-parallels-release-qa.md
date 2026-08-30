@@ -17,6 +17,8 @@
 
 宿主 runner 在传输前会创建临时探针，确认上述 Mac 目录和 Windows 路径确实指向同一共享目录。若以后修改共享名称或盘符，可分别通过 `AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR` 和 `AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR` 覆盖默认值，不需要修改脚本。Parallels 只需共享这个专用目录，不需要开启桌面、文稿、下载目录或整个 Mac 用户目录共享。
 
+runner 启动原本关闭的 VM 后会等待 Parallels Tools 和共享目录就绪，默认最多 90 秒、每 3 秒探测一次。可通过 `AUTO_EMAIL_SENDER_WINDOWS_QA_READY_TIMEOUT_SECONDS` 和 `AUTO_EMAIL_SENDER_WINDOWS_QA_READY_INTERVAL_SECONDS` 调整，但不要用缩短等待来掩盖 VM 启动故障。runner 会记录初始电源状态：原本运行的 VM 在结束后保持运行；由 runner 启动的 VM 在成功或失败后都会恢复为关闭状态。
+
 VM 已长期配置 Git for Windows 2.55、Node.js 24、npm 11、`C:\Users\junie\DevTools\uv\uv.exe`、uv 管理的 Python 3.12，以及 Microsoft Visual C++ x64 Runtime。发布 QA 固定使用 `C:\Users\junie\DevTools\node-v24.19.0-win-x64`，使 Node、Python、Electron 和发布目标都按 x64 Windows 包验证；系统另有 ARM64 Node，但 runner 不使用它。Windows 打包会下载、校验微软签名并把官方 x64 Redistributable 放入 NSIS，由安装程序安装；安装器会先读取 HKLM 64 位视图下 `SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64` 的 `Installed` 标记，已安装则跳过（避免每次更新重复触发 UAC 授权），未安装才运行 vc_redist 并前置弹出授权提示。因此预装了运行库的 VM 只覆盖跳过路径；如需验证真实安装路径，要在干净快照上卸载 x64 VC++ 运行库后再跑安装器。VM 中预装运行库的另一个用途是支撑开发工具链（`greenlet` 等依赖 MSVCP140.dll）。
 
 ## 何时运行
@@ -75,6 +77,8 @@ Windows 侧会先结束可执行路径位于专用 QA checkout 内的残留应�
 7. 启动 `win-unpacked`，验证 v3 认证运行握手、重复 CLI 状态查询、进程退出后的安全失效，以及重启后生成新 `runtime_id`。
 
 失败会阻止发布。先判断是产品缺陷、锁文件/打包缺陷还是 VM 环境损坏，不要手工向 `node_modules` 塞包后把结果记为通过。VM runner 为 Electron 与 electron-builder 使用可访问的镜像，但 npm 依赖仍严格来自锁文件；修改镜像不能掩盖校验和或架构错误。
+
+性能门禁接近阈值且同时出现整机暂停、虚拟机调度停顿等环境证据时，保留第一次失败，不修改阈值。先对同一个冻结可执行文件运行原命令的聚焦 benchmark；可增加 `--samples` 做诊断，但诊断不能替代正式门禁。只有同一 SHA、工具链、输入和阈值均未变化，并且 GitHub Windows runner 或宿主证据不支持产品回归时，才允许再运行一次完整正式 QA。第二次仍失败或聚焦测试稳定复现时必须停止发布；禁止使用 `--skip-thresholds` 生成发布证据。
 
 ## 数据与清理
 

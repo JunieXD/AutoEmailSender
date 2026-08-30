@@ -10,8 +10,6 @@ export function buildReleaseNotes(version) {
   return [
     `# ${version}`,
     "",
-    "## 更新内容",
-    "",
     "### 新增功能",
     "",
     "### 体验优化",

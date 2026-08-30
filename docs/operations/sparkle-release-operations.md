@@ -85,6 +85,16 @@ v2.4.0 和 v2.4.1 的 DMG 含有旧式代码签名扩展属性，Sparkle 无法�
 
 ## 发布后检查
 
+优先运行统一验收命令，不要临时拼接下载、哈希和验签命令：
+
+```bash
+./scripts/verify-release.sh <version> \
+  --candidate-run <candidate-run-id> \
+  --promotion-run <promotion-run-id>
+```
+
+脚本从上一版公开 DMG 的应用包中读取 `SUPublicEDKey`，不会读取或输出私钥；随后核对候选报告、公开资产、latest appcast、feed/enclosure 签名、必要 delta、Skill ZIP 和对应 website 部署。appcast 可能保留历史 `<item>`，且历史完整 DMG 的 URL 可能被 Sparkle 改写到当前 tag；验收时必须先按精确的 `<sparkle:version>` 选中当前 item，不能只按 `/download/v<version>/` URL 前缀筛选。
+
 确认 GitHub Release 至少包含：
 
 - `AutoEmailSender-Setup-x.y.z.exe`、对应 blockmap 和 `latest.yml`

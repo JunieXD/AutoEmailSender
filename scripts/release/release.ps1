@@ -6,6 +6,7 @@ param(
   [switch]$DryRun,
   [switch]$SkipVerify,
   [string]$PromoteRun = "",
+  [string]$QualityEvidence = "",
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 )
 
@@ -106,6 +107,30 @@ function Copy-ReleaseNotes {
   Copy-Item -LiteralPath $CuratedReleaseNotesPath -Destination $DesktopReleaseNotesPath -Force
 }
 
+$QualitySuites = [System.Collections.Generic.HashSet[string]]::new(
+  [System.StringComparer]::Ordinal
+)
+
+function Import-QualityEvidence {
+  if (-not $QualityEvidence) {
+    return
+  }
+  if ($PromoteRun) {
+    throw "QualityEvidence 只用于候选认证前的本地验证。"
+  }
+  $evidenceScript = Join-Path $PSScriptRoot "quality-evidence.mjs"
+  $verifiedSuites = @(& node $evidenceScript --evidence $QualityEvidence --repo-root $RepoRoot)
+  if ($LASTEXITCODE -ne 0) {
+    throw "全仓质量证据无效。"
+  }
+  foreach ($suite in $verifiedSuites) {
+    if ($suite) {
+      [void]$QualitySuites.Add($suite.Trim())
+    }
+  }
+  Write-Host "[reuse] 已加载绑定当前 SHA 和工具链的全仓质量证据。"
+}
+
 function Invoke-Verification {
   if ($SkipVerify) {
     Write-Host "[skip] 跳过发布前验证"
@@ -115,7 +140,11 @@ function Invoke-Verification {
   Write-Host "=== 验证 frontend ==="
   Push-Location (Join-Path $RepoRoot "frontend")
   try {
-    Invoke-CheckedCommand "frontend: npm test" { npm test }
+    if ($QualitySuites.Contains("frontend")) {
+      Write-Host "[reuse] frontend tests 已由全仓质量证据覆盖"
+    } else {
+      Invoke-CheckedCommand "frontend: npm test" { npm test }
+    }
     Invoke-CheckedCommand "frontend: npm run lint" { npm run lint }
     Invoke-CheckedCommand "frontend: npm run build" { npm run build }
   } finally {
@@ -126,14 +155,18 @@ function Invoke-Verification {
   Push-Location (Join-Path $RepoRoot "backend")
   try {
     Invoke-CheckedCommand "backend: uv sync --dev" { uv sync --dev }
-    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_desktop_runtime" {
-      uv run python -m unittest test.test_desktop_runtime
-    }
-    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" {
-      uv run python -m unittest test.test_database_schema test.test_migrations_runtime
-    }
-    Invoke-CheckedCommand "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" {
-      uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
+    if ($QualitySuites.Contains("backend")) {
+      Write-Host "[reuse] backend tests 已由全仓质量证据覆盖"
+    } else {
+      Invoke-CheckedCommand "backend: uv run python -m unittest test.test_desktop_runtime" {
+        uv run python -m unittest test.test_desktop_runtime
+      }
+      Invoke-CheckedCommand "backend: uv run python -m unittest test.test_database_schema test.test_migrations_runtime" {
+        uv run python -m unittest test.test_database_schema test.test_migrations_runtime
+      }
+      Invoke-CheckedCommand "backend: uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" {
+        uv run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package
+      }
     }
   } finally {
     Pop-Location
@@ -143,8 +176,12 @@ function Invoke-Verification {
   Push-Location (Join-Path $RepoRoot "cli")
   try {
     Invoke-CheckedCommand "cli: uv sync --dev" { uv sync --dev }
-    Invoke-CheckedCommand "cli: uv run python -m unittest discover test" {
-      uv run python -m unittest discover test
+    if ($QualitySuites.Contains("cli")) {
+      Write-Host "[reuse] CLI tests 已由全仓质量证据覆盖"
+    } else {
+      Invoke-CheckedCommand "cli: uv run python -m unittest discover test" {
+        uv run python -m unittest discover test
+      }
     }
   } finally {
     Pop-Location
@@ -156,7 +193,11 @@ function Invoke-Verification {
   Write-Host "=== 验证 desktop ==="
   Push-Location (Join-Path $RepoRoot "desktop")
   try {
-    Invoke-CheckedCommand "desktop: npm test" { npm test }
+    if ($QualitySuites.Contains("desktop")) {
+      Write-Host "[reuse] desktop tests 已由全仓质量证据覆盖"
+    } else {
+      Invoke-CheckedCommand "desktop: npm test" { npm test }
+    }
   } finally {
     Pop-Location
   }
@@ -192,6 +233,7 @@ function Set-NpmVersion {
 Assert-ReleaseVersion
 Assert-CleanRepository
 Assert-ReleaseNotes
+Import-QualityEvidence
 
 if ($PromoteRun) {
   if ($SkipVerify) {

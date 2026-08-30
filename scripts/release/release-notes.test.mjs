@@ -9,7 +9,7 @@ describe("release notes generator", () => {
     const notes = buildReleaseNotes("v2.0.2");
 
     expect(notes).toContain("# v2.0.2");
-    expect(notes).toContain("## 更新内容");
+    expect(notes).not.toContain("## 更新内容");
     expect(notes).toContain("### 新增功能");
     expect(notes).toContain("### 体验优化");
     expect(notes).toContain("### 问题修复");

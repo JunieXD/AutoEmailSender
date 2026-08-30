@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import io
+import json
 import os
 import queue
 import shutil
@@ -16,6 +18,8 @@ from typing import TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HEARTBEAT_SECONDS = 10.0
+QUALITY_EVIDENCE_SCHEMA_VERSION = 1
+QUALITY_EVIDENCE_KIND = "auto-email-sender-quality-evidence"
 
 
 @dataclass(frozen=True)
@@ -344,7 +348,78 @@ def _run_all(args: argparse.Namespace) -> int:
     total_duration = _format_duration(time.monotonic() - started_at)
     failures = sum(not passed for _, passed, _ in results)
     print(f"  total: {total_duration} | failures: {failures}", flush=True)
+    if failures == 0 and args.write_evidence is not None:
+        _write_quality_evidence(args.write_evidence, selected)
     return 1 if failures else 0
+
+
+def _captured_command(arguments: list[str]) -> str:
+    completed = subprocess.run(
+        arguments,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+    )
+    return completed.stdout.strip()
+
+
+def _build_quality_evidence(
+    suites: list[str],
+    *,
+    git_sha: str,
+    toolchain: dict[str, str],
+    generated_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": QUALITY_EVIDENCE_SCHEMA_VERSION,
+        "kind": QUALITY_EVIDENCE_KIND,
+        "gitSha": git_sha,
+        "generatedAt": generated_at
+        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "toolchain": toolchain,
+        "passedSuites": sorted(set(suites)),
+    }
+
+
+def _write_quality_evidence(output_path: Path, suites: list[str]) -> None:
+    for arguments in (
+        ["git", "-C", str(REPO_ROOT), "diff", "--quiet"],
+        ["git", "-C", str(REPO_ROOT), "diff", "--cached", "--quiet"],
+    ):
+        if subprocess.run(arguments, check=False).returncode != 0:
+            raise SystemExit("refusing to write quality evidence for tracked changes")
+
+    evidence = _build_quality_evidence(
+        suites,
+        git_sha=_captured_command(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"]
+        ),
+        toolchain={
+            "node": _captured_command([_executable("node"), "--version"]),
+            "npm": _captured_command([_executable("npm"), "--version"]),
+            "python": _captured_command(
+                [
+                    _executable("uv"),
+                    "run",
+                    "--project",
+                    str(REPO_ROOT / "backend"),
+                    "--no-sync",
+                    "python",
+                    "--version",
+                ]
+            ),
+            "uv": _captured_command([_executable("uv"), "--version"]),
+        },
+    )
+    resolved_output = output_path.expanduser().resolve()
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+    resolved_output.write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[evidence] wrote {resolved_output}", flush=True)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -360,6 +435,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--heartbeat", type=float, default=DEFAULT_HEARTBEAT_SECONDS)
     parser.add_argument(
         "--slowest", type=int, default=0, help="show N slowest unittest cases"
+    )
+    parser.add_argument(
+        "--write-evidence",
+        type=Path,
+        help="write short-lived SHA/toolchain-bound evidence after all selected suites pass",
     )
     parser.add_argument(
         "--internal-unittest", action="store_true", help=argparse.SUPPRESS

@@ -16,6 +16,8 @@ const stableWrappers = new Map([
   ["prepare-release.sh", "release/prepare-release.sh"],
   ["release.ps1", "release\\release.ps1"],
   ["release.sh", "release/release.sh"],
+  ["verify-release.ps1", "release\\verify-release.ps1"],
+  ["verify-release.sh", "release/verify-release.mjs"],
 ]);
 
 test("script root contains only documented stable wrappers", async () => {

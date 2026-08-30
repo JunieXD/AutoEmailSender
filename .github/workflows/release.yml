@@ -84,16 +84,21 @@ jobs:
         run: >-
           node --test
           scripts/release/check-release-version.test.mjs
+          scripts/release/quality-evidence.test.mjs
           scripts/release/release-candidate.test.mjs
           scripts/release/release-impact.test.mjs
           scripts/release/release-preflight.test.mjs
           scripts/release/prepare-sparkle-release.test.mjs
+          scripts/release/verify-release.test.mjs
           scripts/release/verify-sparkle-draft-assets.test.mjs
           scripts/packaging/configure-sparkle-info.test.mjs
           scripts/packaging/sanitize-macos-bundle.test.mjs
           scripts/quality/cli-workflow.test.mjs
           scripts/quality/script-topology.test.mjs
           scripts/quality/document-topology.test.mjs
+
+      - name: Test Windows VM host readiness helper
+        run: bash scripts/quality/windows-vm-host-utils.test.sh
 
       - name: Test POSIX and PowerShell release entrypoints
         shell: bash

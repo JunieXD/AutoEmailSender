@@ -7,6 +7,8 @@ description: "Use when preparing, certifying, publishing, recovering, monitoring
 
 Use one state machine for every release: **Prepare -> Certify -> Promote -> Verify**. A normal release builds expensive artifacts once during Certify; Promote only publishes those exact certified artifacts.
 
+An explicit request such as `发布 2.6.4` authorizes the complete state machine, including Promote after every gate passes. Requests to prepare, inspect, certify, or verify authorize only the named stage. Reconfirm only if the version, target repository, public asset set, or recovery plan changes; never infer approval to reuse or replace an already public version.
+
 Before macOS or Sparkle work, read `docs/operations/sparkle-release-operations.md`. On the project Mac, read `docs/operations/windows-parallels-release-qa.md` before Windows QA. When writing or reviewing the public announcement, read [release-notes.md](references/release-notes.md).
 
 ## 1. Prepare
@@ -17,7 +19,7 @@ Before macOS or Sparkle work, read `docs/operations/sparkle-release-operations.m
 4. Run the shell-appropriate prepare command:
    - POSIX: `./scripts/prepare-release.sh <version>`
    - PowerShell: `pwsh -NoLogo -NoProfile -File .\scripts\prepare-release.ps1 <version>`
-5. Find the prior release with `git describe --tags --abbrev=0 --match "v*" HEAD^`. Inspect commits, changed paths, product/packaging diffs, tests, repository Skills, and owner docs through `HEAD`. Write `docs/releases/v<version>.md` using the release-note reference.
+5. Find the prior release with `git describe --tags --abbrev=0 --match "v*" HEAD^`. Inspect commits, changed paths, product/packaging diffs, tests, repository Skills, and owner docs through `HEAD`. Write `docs/releases/v<version>.md` using the release-note reference. The generated and final template must start its change categories directly with `### 新增功能`; do not add an intervening `## 更新内容`.
 6. Plan the minimum checks for any follow-up change:
 
    ```bash
@@ -28,6 +30,17 @@ Before macOS or Sparkle work, read `docs/operations/sparkle-release-operations.m
 7. For `crawl-mentors-to-xlsx` changes, verify the canonical `.agents` Skill, Claude forwarding entry, contract/package tests, generated ZIP structure, and public installation guide. The Skill shares the app version and Release as `crawl-mentors-to-xlsx-v<version>.zip`; it is never embedded in installers or released through a marketplace.
 
 ## 2. Certify
+
+Treat `release.sh` / `release.ps1` as the canonical local release gate; do not routinely precede it with a separate full-repository test run. If a full repository gate was already required or run, write short-lived evidence and let the release entrypoint reuse only overlapping test suites while still running lint, production builds, and frozen-package checks:
+
+```bash
+rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py \
+  --write-evidence .git/release-quality-evidence.json
+./scripts/release.sh <version> --quality-evidence .git/release-quality-evidence.json
+# PowerShell: .\scripts\release.ps1 <version> -QualityEvidence .git\release-quality-evidence.json
+```
+
+Evidence must match the current SHA and toolchain and be less than 24 hours old. Never hand-edit it; omit the option and run the normal gate when it is absent or invalid.
 
 Run the release entrypoint without a promotion ID:
 
@@ -40,7 +53,7 @@ This prepares and pushes the exact release commit, dispatches `release.yml` with
 
 The workflow must pass its cheap Ubuntu preflight before Windows/macOS jobs. It builds signed artifacts, records their names/sizes/SHA-256 values and toolchains, and emits `release-candidate.json`. Keep the candidate workflow run ID.
 
-On the project Mac, run formal Windows VM QA exactly once for this frozen SHA while certification runs:
+On the project Mac, obtain one successful formal Windows VM QA result for this frozen SHA while certification runs:
 
 ```bash
 rtk bash scripts/quality/run-windows-vm-release-qa.sh
@@ -52,7 +65,7 @@ Do not edit code, version metadata, or release notes after certification. If any
 
 ## 3. Promote
 
-After the candidate workflow, formal Windows VM QA, release note review, and user approval all pass, publish the same artifacts:
+After the candidate workflow, formal Windows VM QA, release note review, and the authorization rule above all pass, publish the same artifacts:
 
 ```bash
 ./scripts/release.sh <version> --promote-run <candidate-run-id>
@@ -65,7 +78,18 @@ For Sparkle, normalize asset names and rewrite URLs before the final whole-feed 
 
 ## 4. Verify
 
-Wait for the exact promotion run and require the certification/download/publish jobs to succeed. Confirm the remote tag targets the certified SHA and the Release is public with:
+Wait for the exact promotion run. In a normal candidate run, require `preflight`, `build-windows`, `build-macos`, and `certify` to succeed and `publish` to be skipped. In the promotion run, require only `publish` to succeed and all four candidate jobs to be skipped.
+
+Run the deterministic public verification entrypoint on the project Mac; it downloads the candidate report and public assets, extracts the public key from the previous client, verifies hashes and Sparkle signatures, rebuilds the tagged Skill ZIP, checks the website deployment when applicable, reports concise evidence, and removes temporary files:
+
+```bash
+./scripts/verify-release.sh <version> \
+  --candidate-run <candidate-run-id> \
+  --promotion-run <promotion-run-id>
+# PowerShell: .\scripts\verify-release.ps1 <version> -CandidateRun <id> -PromotionRun <id>
+```
+
+Do not replace this command with ad-hoc downloads unless diagnosing its failure. Confirm the remote tag targets the certified SHA and the Release is public with:
 
 - Windows EXE, blockmap, and `latest.yml`
 - Apple Silicon DMG
@@ -73,9 +97,9 @@ Wait for the exact promotion run and require the certification/download/publish 
 - signed `appcast.xml`
 - zero to three justified Sparkle deltas
 
-Download the public `releases/latest/download/appcast.xml`; verify its whole-feed signature with the public key embedded in the previous client. Verify current DMG/delta enclosure signatures and account for every missing delta. From the v2.5.3 clean baseline onward, the latest clean prior version must produce a delta.
+Download the public `releases/latest/download/appcast.xml`; verify its whole-feed signature with the public key embedded in the previous client. Select the `<item>` whose `<sparkle:version>` exactly equals the released version before reading its DMG/delta enclosures; a historical item may contain URLs under the current release prefix. Verify only the selected item's enclosure signatures and account for every missing delta. From the v2.5.3 clean baseline onward, the latest clean prior version must produce a delta.
 
-Inspect the tagged repository Skill and downloaded ZIP against the tested canonical manifest. If `website/**` changed, require the exact commit's deployment and public guide checks. When functional update QA is in scope, isolate it from daily data as described in the Sparkle operations guide.
+Inspect the tagged repository Skill and downloaded ZIP against the tested canonical manifest. If `website/**` changed in the release range, require the successful deployment of the latest commit in that range that changes `website/**`; this need not be the release metadata SHA. Check the public guide and benchmark pages. When functional update QA is in scope, isolate it from daily data as described in the Sparkle operations guide.
 
 ## Hard Stops
 
@@ -93,6 +117,8 @@ Never use `--skip-verify` / `-SkipVerify` unless the user explicitly accepts the
 ## Failure Recovery
 
 Classify a failure before retrying. Run the focused failing test first. For a follow-up commit, run `release-impact.mjs` from the last certified SHA to `HEAD`; rerun only reported checks, but certify new artifacts whenever packaged inputs changed.
+
+For a plausible environmental performance or VM scheduling failure, preserve the original failure and keep thresholds unchanged. Rerun the focused benchmark with the same executable and inputs; a larger-sample diagnostic may supplement but not replace it. Require corroborating evidence from the GitHub runner or host telemetry. When SHA, toolchain, inputs, and thresholds are unchanged, permit at most one additional full formal VM run. If it fails again or the focused result reproduces the regression, stop and treat it as a product or environment defect. Never use a skip flag or relax a threshold to obtain release evidence.
 
 If desktop test behavior depends on stale build output, run `npm run clean` in `desktop` and rerun the source test before editing. Treat tests discovered under `desktop/dist` as a topology defect. Update a stale fixture minimally only when production behavior is intentional; do not patch around a product bug.
 

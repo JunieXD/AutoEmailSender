@@ -3,6 +3,9 @@ from __future__ import annotations
 import unittest
 
 from scripts.quality.run_all_tests import (
+    QUALITY_EVIDENCE_KIND,
+    QUALITY_EVIDENCE_SCHEMA_VERSION,
+    _build_quality_evidence,
     _concise_failure_output,
     _format_duration,
     _progress_interval,
@@ -48,6 +51,18 @@ class RunAllTestsHelpersTests(unittest.TestCase):
             _concise_failure_output(lines),
             "======================================================================\nERROR: test_example",
         )
+
+    def test_quality_evidence_is_stable_and_deduplicates_suites(self) -> None:
+        evidence = _build_quality_evidence(
+            ["frontend", "backend", "frontend"],
+            git_sha="a" * 40,
+            toolchain={"node": "v24.0.0"},
+            generated_at="2026-08-30T00:00:00Z",
+        )
+
+        self.assertEqual(evidence["schemaVersion"], QUALITY_EVIDENCE_SCHEMA_VERSION)
+        self.assertEqual(evidence["kind"], QUALITY_EVIDENCE_KIND)
+        self.assertEqual(evidence["passedSuites"], ["backend", "frontend"])
 
 
 if __name__ == "__main__":

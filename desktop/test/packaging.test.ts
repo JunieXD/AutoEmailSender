@@ -229,6 +229,10 @@ describe("windows installer packaging", () => {
       path.resolve("..", "scripts", "quality", "run-windows-vm-release-qa.sh"),
       "utf8",
     );
+    const hostUtils = readFileSync(
+      path.resolve("..", "scripts", "quality", "windows-vm-host-utils.sh"),
+      "utf8",
+    );
     const guestRunner = readFileSync(
       path.resolve("..", "scripts", "quality", "run-windows-release-qa.ps1"),
       "utf8",
@@ -245,7 +249,10 @@ describe("windows installer packaging", () => {
     expect(hostRunner).toContain('-PreviousRevision "$guest_revision"');
     expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_HOST_TRANSFER_DIR");
     expect(hostRunner).toContain("AUTO_EMAIL_SENDER_WINDOWS_QA_GUEST_TRANSFER_DIR");
-    expect(hostRunner).toContain("Test-Path -LiteralPath '$guest_probe_path'");
+    expect(hostRunner).toContain("wait_for_windows_vm_ready");
+    expect(hostRunner).toContain('prlctl stop "$vm_name"');
+    expect(hostUtils).toContain("Test-Path -LiteralPath '$guest_probe_path'");
+    expect(hostUtils).toContain("maximum_attempts");
     expect(hostRunner).not.toContain('$HOME/Desktop');
     expect(hostRunner).not.toContain("Z:/Desktop");
     expect(guestRunner).toContain("[switch]$ForceFull");

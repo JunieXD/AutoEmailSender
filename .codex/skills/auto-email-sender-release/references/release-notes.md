@@ -9,7 +9,7 @@ Keep these sections and order:
 3. `### 问题修复`
 4. `## 安装说明`
 
-Do not add `## 本次更新`, `## 自动更新`, `## 导师抓取 Skill`, developer-only sections, raw commit lists, or sub-bullets.
+Do not add `## 更新内容`, `## 本次更新`, `## 自动更新`, `## 导师抓取 Skill`, developer-only sections, raw commit lists, or sub-bullets.
 
 ## Writing Rules
 
