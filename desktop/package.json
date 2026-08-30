@@ -1,6 +1,6 @@
 {
   "name": "auto-email-sender-desktop",
-  "version": "2.6.2",
+  "version": "2.6.3",
   "private": true,
   "allowScripts": {
     "electron-winstaller@5.4.0": true,
