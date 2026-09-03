@@ -1691,9 +1691,10 @@ export const WorkspacePage = () => {
           </div>
 
           <section
+            data-workspace-conversation
             className={clsx(
               'order-2 flex flex-col overflow-hidden rounded-[36px] border border-stone-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(255,252,247,0.98))] shadow-[0_24px_54px_-36px_rgba(41,37,36,0.34)] lg:order-1',
-              !hasVisibleMessages && 'lg:self-start',
+              (!composerExpanded || !hasVisibleMessages) && 'lg:self-start',
             )}
           >
             {currentTask ? (

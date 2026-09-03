@@ -540,12 +540,35 @@ describe("WorkspacePage draft saving", () => {
   });
 
   it("keeps the professor sidebar visible while the composer expands", async () => {
+    apiMocks.getWorkspaceThread.mockResolvedValueOnce(
+      buildWorkspaceThread({
+        messages: [
+          {
+            id: 301,
+            direction: "sent",
+            subject: "研究申请",
+            content: "老师您好",
+            content_html: "<p>老师您好</p>",
+            rfc_message_id: "<sent-301@example.com>",
+            failure_summary: null,
+            delivery_status: "succeeded",
+            reply_headers: null,
+            prompt_tokens: null,
+            completion_tokens: null,
+            total_tokens: null,
+            created_at: "2026-09-03T12:00:00Z",
+            source_identities: [],
+          },
+        ],
+      }),
+    );
     renderWorkspace();
 
     const editButton = await screen.findByRole("button", { name: "编辑草稿" });
     const workspacePage = document.querySelector("[data-workspace-page]");
     const workspaceContainer = document.querySelector("[data-workspace-container]");
     const workspaceLayout = document.querySelector("[data-workspace-layout]");
+    const workspaceConversation = document.querySelector("[data-workspace-conversation]");
     const workspaceSidebar = document.querySelector("[data-workspace-sidebar]");
 
     expect(workspacePage).toHaveClass("min-h-full");
@@ -560,6 +583,7 @@ describe("WorkspacePage draft saving", () => {
       "xl:grid-cols-[minmax(0,1fr)_19rem]",
       "2xl:grid-cols-[minmax(0,1fr)_20rem]",
     );
+    expect(workspaceConversation).toHaveClass("lg:self-start");
     expect(workspaceSidebar).not.toHaveClass("hidden");
 
     fireEvent.click(editButton);
@@ -570,12 +594,14 @@ describe("WorkspacePage draft saving", () => {
       "xl:grid-cols-[minmax(0,1fr)_19rem]",
       "2xl:grid-cols-[minmax(0,1fr)_20rem]",
     );
+    expect(workspaceConversation).not.toHaveClass("lg:self-start");
     expect(workspaceSidebar).not.toHaveClass("hidden");
     expect(document.querySelector("[data-composer-shell]")).toHaveClass("max-w-none");
 
     fireEvent.click(screen.getByRole("button", { name: "收起" }));
 
     expect(workspaceLayout).toHaveAttribute("data-workspace-layout", "overview");
+    expect(workspaceConversation).toHaveClass("lg:self-start");
     expect(workspaceSidebar).not.toHaveClass("hidden");
   });
 
