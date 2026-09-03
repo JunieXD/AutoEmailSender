@@ -102,6 +102,7 @@ const buildItem = (
   retry_count: 0,
   created_at: '2099-08-07T01:00:00Z',
   updated_at: '2099-08-07T01:30:00Z',
+  expected_updated_at: '2099-08-07T01:30:00.123456+00:00',
   can_reschedule: true,
   can_cancel: true,
   can_send_now: true,
@@ -323,7 +324,7 @@ describe('EmailDeliveryPlan', () => {
     await waitFor(() => {
       expect(apiMocks.rescheduleEmailDelivery).toHaveBeenCalledWith(101, {
         scheduled_at: new Date('2099-08-09T10:30').toISOString(),
-        expected_updated_at: '2099-08-07T01:30:00Z',
+        expected_updated_at: '2099-08-07T01:30:00.123456+00:00',
       });
     });
     expect(notificationMocks.notifySuccess).toHaveBeenCalledWith(
@@ -331,6 +332,199 @@ describe('EmailDeliveryPlan', () => {
       expect.stringContaining('张老师'),
     );
     expect(apiMocks.listEmailDeliveries.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('keeps located details behind the reschedule dialog during polling', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderPlan('/tasks?section=delivery&view=upcoming&task_id=101');
+
+    expect(
+      await screen.findByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改时间' }));
+
+    expect(
+      screen.getByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('修改发送时间')).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('修改发送时间')).toBeInTheDocument();
+  });
+
+  it('refreshes the open reschedule dialog version before submitting', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let requestCount = 0;
+    apiMocks.listEmailDeliveries.mockImplementation(
+      async (params: { page: number; pageSize: number }) => {
+        requestCount += 1;
+        return buildList({
+          items: [
+            buildItem({
+              expected_updated_at:
+                requestCount === 1
+                  ? '2099-08-07T01:30:00.123456+00:00'
+                  : '2099-08-07T01:31:00.654321+00:00',
+            }),
+          ],
+          page: params.page,
+          page_size: params.pageSize,
+        });
+      },
+    );
+    renderPlan('/tasks?section=delivery&view=upcoming&task_id=101');
+    expect(
+      await screen.findByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改时间' }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    fireEvent.change(screen.getByLabelText('新的发送时间'), {
+      target: { value: '2099-08-09T10:30' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认修改' }));
+
+    await waitFor(() => {
+      expect(apiMocks.rescheduleEmailDelivery).toHaveBeenCalledWith(
+        101,
+        expect.objectContaining({
+          expected_updated_at: '2099-08-07T01:31:00.654321+00:00',
+        }),
+      );
+    });
+  });
+
+  it('closes the reschedule dialog if polling makes the action unavailable', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let requestCount = 0;
+    apiMocks.listEmailDeliveries.mockImplementation(
+      async (params: { page: number; pageSize: number }) => {
+        requestCount += 1;
+        return buildList({
+          items: [
+            buildItem(
+              requestCount === 1
+                ? {}
+                : {
+                    status: 'sending',
+                    status_label: '正在发送',
+                    can_reschedule: false,
+                    can_cancel: false,
+                    can_send_now: false,
+                  },
+            ),
+          ],
+          page: params.page,
+          page_size: params.pageSize,
+        });
+      },
+    );
+    renderPlan('/tasks?section=delivery&view=upcoming&task_id=101');
+    expect(
+      await screen.findByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改时间' }));
+    expect(screen.getByText('修改发送时间')).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('修改发送时间')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('正在发送').length).toBeGreaterThan(0);
+  });
+
+  it('does not reopen a dismissed located detail on the next poll', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderPlan('/tasks?section=delivery&view=upcoming&task_id=101');
+
+    expect(
+      await screen.findByRole('dialog', { name: '发送项详情' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭发送项详情' }));
+    expect(
+      screen.queryByRole('dialog', { name: '发送项详情' }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.queryByRole('dialog', { name: '发送项详情' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('submits a reschedule at most once while the request is pending', async () => {
+    let resolveReschedule: ((value: { ok: boolean; task_id: number; message: string }) => void) | undefined;
+    apiMocks.rescheduleEmailDelivery.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveReschedule = resolve;
+      }),
+    );
+    renderPlan();
+    await screen.findAllByText('博士申请咨询');
+
+    fireEvent.click(screen.getAllByRole('button', { name: '改期' })[0]);
+    fireEvent.change(screen.getByLabelText('新的发送时间'), {
+      target: { value: '2099-08-09T10:30' },
+    });
+    const submit = screen.getByRole('button', { name: '确认修改' });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(apiMocks.rescheduleEmailDelivery).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveReschedule?.({ ok: true, task_id: 101, message: '发送时间已更新' });
+      await Promise.resolve();
+    });
+  });
+
+  it('uses the lossless item version when canceling a manual schedule', async () => {
+    renderPlan();
+    await screen.findAllByText('博士申请咨询');
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '取消定时' }));
+
+    await waitFor(() => {
+      expect(apiMocks.cancelEmailDelivery).toHaveBeenCalledWith(
+        101,
+        '2099-08-07T01:30:00.123456+00:00',
+      );
+    });
+  });
+
+  it('uses the lossless item version when sending immediately', async () => {
+    renderPlan();
+    await screen.findAllByText('博士申请咨询');
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 张老师 的发送详情' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: '立即发送' }));
+
+    await waitFor(() => {
+      expect(apiMocks.sendEmailDeliveryNow).toHaveBeenCalledWith(
+        101,
+        '2099-08-07T01:30:00.123456+00:00',
+      );
+    });
   });
 
   it('locates a delivery across views when its status changed', async () => {

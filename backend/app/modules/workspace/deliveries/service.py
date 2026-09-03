@@ -632,6 +632,7 @@ def _serialize_delivery(
         retry_count=task.retry_count,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        expected_updated_at=task.updated_at.isoformat(),
         can_reschedule=is_manual and task.status in manual_mutable_statuses,
         can_cancel=(
             (is_manual and task.status in manual_mutable_statuses)

@@ -377,6 +377,8 @@ export const EmailDeliveryPlan = ({
   const [actingTaskId, setActingTaskId] = useState<number | null>(null);
   const requestIdRef = useRef(0);
   const activeRequestRef = useRef<AbortController | null>(null);
+  const actionInFlightRef = useRef(false);
+  const autoOpenedTaskIdRef = useRef<number | null>(null);
   const pageCacheRef = useRef(new Map<string, EmailDeliveryListDTO>());
   const listStartRef = useRef<HTMLElement | null>(null);
   const lastLoadErrorRef = useRef<string | null>(null);
@@ -519,6 +521,9 @@ export const EmailDeliveryPlan = ({
         if (requestIdRef.current !== requestId) {
           return;
         }
+        const refreshedItemsById = new Map(
+          nextData.items.map((item) => [item.id, item]),
+        );
         cachePage(requestCacheKey, nextData);
         setData(nextData);
         if (nextData.page !== page) {
@@ -526,9 +531,16 @@ export const EmailDeliveryPlan = ({
         }
         setSelectedItem((current) =>
           current
-            ? nextData.items.find((item) => item.id === current.id) ?? current
+            ? refreshedItemsById.get(current.id) ?? current
             : current,
         );
+        setRescheduleItem((current) => {
+          if (!current) {
+            return current;
+          }
+          const refreshed = refreshedItemsById.get(current.id);
+          return refreshed?.can_reschedule ? refreshed : null;
+        });
         lastLoadErrorRef.current = null;
       } catch (error) {
         if (requestIdRef.current !== requestId) {
@@ -586,12 +598,19 @@ export const EmailDeliveryPlan = ({
   }, [loadDeliveries, refreshInterval]);
 
   useEffect(() => {
-    if (!locatedTaskId || data.items.length === 0) {
+    if (!locatedTaskId) {
+      autoOpenedTaskIdRef.current = null;
+      return;
+    }
+    if (data.items.length === 0) {
       return;
     }
     const located = data.items.find((item) => item.id === locatedTaskId);
     if (located) {
-      setSelectedItem(located);
+      if (!rescheduleItem && autoOpenedTaskIdRef.current !== locatedTaskId) {
+        autoOpenedTaskIdRef.current = locatedTaskId;
+        setSelectedItem(located);
+      }
       const locatedView = DELIVERY_STATUS_VIEWS[located.status];
       if (locatedView !== view) {
         updateSearchParams({ view: locatedView, sort: null });
@@ -601,7 +620,14 @@ export const EmailDeliveryPlan = ({
         );
       }
     }
-  }, [data.items, locatedTaskId, notifySuccess, updateSearchParams, view]);
+  }, [
+    data.items,
+    locatedTaskId,
+    notifySuccess,
+    rescheduleItem,
+    updateSearchParams,
+    view,
+  ]);
 
   useDocumentScrollLock(Boolean(selectedItem || rescheduleItem));
   const closeDetails = useCallback(() => setSelectedItem(null), []);
@@ -624,7 +650,6 @@ export const EmailDeliveryPlan = ({
   };
 
   const openReschedule = (item: EmailDeliveryItemDTO) => {
-    setSelectedItem(null);
     setRescheduleItem(item);
     setRescheduleValue(toLocalDateTimeInput(item.scheduled_at));
     setRescheduleMinValue(
@@ -636,6 +661,9 @@ export const EmailDeliveryPlan = ({
     if (!rescheduleItem) {
       return;
     }
+    if (actionInFlightRef.current) {
+      return;
+    }
     const nextDate = new Date(rescheduleValue);
     if (
       Number.isNaN(nextDate.getTime()) ||
@@ -644,11 +672,12 @@ export const EmailDeliveryPlan = ({
       notifyError('无法修改发送时间', '新的发送时间必须晚于当前时间至少 1 分钟。');
       return;
     }
+    actionInFlightRef.current = true;
     setActingTaskId(rescheduleItem.id);
     try {
       const result = await rescheduleEmailDelivery(rescheduleItem.id, {
         scheduled_at: nextDate.toISOString(),
-        expected_updated_at: rescheduleItem.updated_at,
+        expected_updated_at: rescheduleItem.expected_updated_at,
       });
       notifySuccess(
         result.message,
@@ -663,11 +692,15 @@ export const EmailDeliveryPlan = ({
         error instanceof Error ? error.message : '请刷新后重试',
       );
     } finally {
+      actionInFlightRef.current = false;
       setActingTaskId(null);
     }
   };
 
   const handleCancel = async (item: EmailDeliveryItemDTO) => {
+    if (actionInFlightRef.current) {
+      return;
+    }
     const confirmed = await confirm({
       title: item.source === 'manual' ? '取消这封定时邮件？' : '取消这位导师的发送？',
       description:
@@ -681,12 +714,16 @@ export const EmailDeliveryPlan = ({
     if (!confirmed) {
       return;
     }
+    if (actionInFlightRef.current) {
+      return;
+    }
+    actionInFlightRef.current = true;
     setActingTaskId(item.id);
     try {
       if (item.source === 'batch' && item.batch_task_id) {
         await cancelBatchTaskItemSend(item.batch_task_id, item.id);
       } else {
-        await cancelEmailDelivery(item.id, item.updated_at);
+        await cancelEmailDelivery(item.id, item.expected_updated_at);
       }
       notifySuccess(
         item.source === 'manual' ? '已取消定时' : '已取消该封发送',
@@ -698,14 +735,16 @@ export const EmailDeliveryPlan = ({
     } catch (error) {
       notifyError('取消发送失败', error instanceof Error ? error.message : '请刷新后重试');
     } finally {
+      actionInFlightRef.current = false;
       setActingTaskId(null);
     }
   };
 
   const handleRestore = async (item: EmailDeliveryItemDTO) => {
-    if (!item.batch_task_id) {
+    if (!item.batch_task_id || actionInFlightRef.current) {
       return;
     }
+    actionInFlightRef.current = true;
     setActingTaskId(item.id);
     try {
       await restoreBatchTaskItemSend(item.batch_task_id, item.id);
@@ -715,11 +754,15 @@ export const EmailDeliveryPlan = ({
     } catch (error) {
       notifyError('恢复发送失败', error instanceof Error ? error.message : '请刷新后重试');
     } finally {
+      actionInFlightRef.current = false;
       setActingTaskId(null);
     }
   };
 
   const handleSendNow = async (item: EmailDeliveryItemDTO) => {
+    if (actionInFlightRef.current) {
+      return;
+    }
     const confirmed = await confirm({
       title: '确认立即发送？',
       description: `将立即使用 ${item.identity_name}（${item.sender_email}）发送给 ${item.professor_name}（${item.professor_email ?? '未填写邮箱'}）。邮件进入发送流程后无法撤回。`,
@@ -730,9 +773,13 @@ export const EmailDeliveryPlan = ({
     if (!confirmed) {
       return;
     }
+    if (actionInFlightRef.current) {
+      return;
+    }
+    actionInFlightRef.current = true;
     setActingTaskId(item.id);
     try {
-      const result = await sendEmailDeliveryNow(item.id, item.updated_at);
+      const result = await sendEmailDeliveryNow(item.id, item.expected_updated_at);
       if (result.ok) {
         notifySuccess('邮件已发送', `已发送给 ${item.professor_name}。`);
       } else {
@@ -744,6 +791,7 @@ export const EmailDeliveryPlan = ({
     } catch (error) {
       notifyError('立即发送失败', error instanceof Error ? error.message : '请刷新后重试');
     } finally {
+      actionInFlightRef.current = false;
       setActingTaskId(null);
     }
   };

@@ -57,6 +57,9 @@ class EmailDeliveryItemRead(ApiSchema):
     retry_count: int
     created_at: datetime
     updated_at: datetime
+    # ``updated_at`` is a human-facing timestamp serialized at second precision.
+    # Mutations need the lossless database value for optimistic concurrency.
+    expected_updated_at: str
     can_reschedule: bool
     can_cancel: bool
     can_send_now: bool

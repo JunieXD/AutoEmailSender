@@ -1591,13 +1591,7 @@ async def list_agent_email_deliveries(
             message=str(exc),
         ) from exc
     return AgentEmailDeliveryPageRead(
-        items=[
-            {
-                **item.model_dump(),
-                "expected_updated_at": item.updated_at.isoformat(),
-            }
-            for item in result.items
-        ],
+        items=result.items,
         next_cursor=str(result.page + 1) if result.page < result.total_pages else None,
         has_more=result.page < result.total_pages,
         page=result.page,

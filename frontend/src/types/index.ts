@@ -685,6 +685,7 @@ export interface EmailDeliveryItemDTO {
   retry_count: number;
   created_at: string;
   updated_at: string;
+  expected_updated_at: string;
   can_reschedule: boolean;
   can_cancel: boolean;
   can_send_now: boolean;

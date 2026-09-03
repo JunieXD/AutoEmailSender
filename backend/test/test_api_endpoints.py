@@ -95,6 +95,83 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["page_size"], 1)
 
+    def test_email_delivery_mutations_use_lossless_concurrency_token(self) -> None:
+        identity_id = self._create_identity(with_imap=False)
+        llm_id = self._create_llm()
+        professor_id = self._create_professor(
+            email="delivery-concurrency@example.edu"
+        )
+        task_id = self._insert_email_task_with_material(
+            identity_id=identity_id,
+            llm_id=llm_id,
+            professor_id=professor_id,
+            status="scheduled",
+            primary_material_id=None,
+            approved_subject="并发令牌测试",
+            approved_body_text="测试正文",
+        )
+        exact_updated_at = "2026-09-03 11:47:51.386236"
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                """
+                UPDATE email_tasks
+                SET scheduled_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                ("2099-09-04 12:50:00.000000", exact_updated_at, task_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        listed = self.client.get(
+            "/api/email-deliveries",
+            params={"view": "upcoming", "task_id": task_id},
+        )
+
+        self.assertEqual(listed.status_code, 200, msg=listed.text)
+        item = listed.json()["items"][0]
+        self.assertEqual(item["updated_at"], "2026-09-03T11:47:51Z")
+        self.assertEqual(
+            item["expected_updated_at"],
+            "2026-09-03T11:47:51.386236+00:00",
+        )
+
+        stale = self.client.patch(
+            f"/api/email-deliveries/{task_id}/schedule",
+            json={
+                "scheduled_at": "2099-09-05T12:50:00Z",
+                "expected_updated_at": item["updated_at"],
+            },
+        )
+
+        self.assertEqual(stale.status_code, 409, msg=stale.text)
+
+        rescheduled = self.client.patch(
+            f"/api/email-deliveries/{task_id}/schedule",
+            json={
+                "scheduled_at": "2099-09-05T12:50:00Z",
+                "expected_updated_at": item["expected_updated_at"],
+            },
+        )
+
+        self.assertEqual(rescheduled.status_code, 200, msg=rescheduled.text)
+        refreshed = self.client.get(
+            "/api/email-deliveries",
+            params={"view": "upcoming", "task_id": task_id},
+        ).json()["items"][0]
+        self.assertNotEqual(
+            refreshed["expected_updated_at"], item["expected_updated_at"]
+        )
+
+        canceled = self.client.post(
+            f"/api/email-deliveries/{task_id}/cancel",
+            json={"expected_updated_at": refreshed["expected_updated_at"]},
+        )
+
+        self.assertEqual(canceled.status_code, 200, msg=canceled.text)
+
     def test_identity_and_llm_connectivity_endpoints(self) -> None:
         identity_id = self._create_identity(with_imap=False)
         llm_id = self._create_llm()

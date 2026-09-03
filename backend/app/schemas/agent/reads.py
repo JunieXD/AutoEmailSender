@@ -456,11 +456,7 @@ class AgentCampaignBulkApproveRead(ApiSchema):
 
 
 class AgentEmailDeliveryItemRead(EmailDeliveryItemRead):
-    # ApiSchema intentionally renders ordinary display timestamps at second
-    # precision.  Optimistic concurrency must retain the database precision,
-    # so expose a dedicated round-trippable token instead of overloading the
-    # human-facing ``updated_at`` field.
-    expected_updated_at: str
+    """Agent projection of the shared, lossless delivery read model."""
 
 
 class AgentEmailDeliveryPageRead(ApiSchema):
