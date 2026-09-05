@@ -107,7 +107,7 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
       </channel>
     </rss>`;
 
-  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender", 3), [
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
     {
       tag: "v2.3.9",
       name: "AutoEmailSender-2.3.9-arm64.dmg",
@@ -123,13 +123,13 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
   ]);
 });
 
-test("downloads only the latest delta baseline by default", () => {
+test("downloads the latest three unique delta baselines by default", () => {
   const items = [9, 8, 8, 7, 6].map(
     (patch) => `<item><enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.${patch}/AutoEmailSender-2.3.${patch}-arm64.dmg" ${enclosureAttributes(patch)} /></item>`,
   );
   const assets = extractPreviousDmgAssets(`<channel>${items.join("")}</channel>`, "JunieXD/AutoEmailSender");
 
-  assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9"]);
+  assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9", "v2.3.8", "v2.3.7"]);
 });
 
 test("recovers historical release tags after Sparkle rewrites retained download URLs", () => {
@@ -143,7 +143,7 @@ test("recovers historical release tags after Sparkle rewrites retained download 
       </item>
     </channel>`;
 
-  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender", 3), [
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
     {
       tag: "v2.4.1",
       name: "AutoEmailSender-2.4.1-arm64.dmg",
@@ -398,8 +398,8 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { privateKey += chunk; });
 process.stdin.on("end", () => {
   if (privateKey.trim() !== process.env.EXPECTED_PRIVATE_KEY) process.exit(3);
-  if (process.argv[process.argv.indexOf("--maximum-deltas") + 1] !== "1") process.exit(5);
-  if (process.argv[process.argv.indexOf("--maximum-versions") + 1] !== "2") process.exit(6);
+  if (process.argv[process.argv.indexOf("--maximum-deltas") + 1] !== "3") process.exit(5);
+  if (process.argv[process.argv.indexOf("--maximum-versions") + 1] !== "4") process.exit(6);
   const workDirectory = process.argv.at(-1);
   const appcastPath = path.join(workDirectory, "appcast.xml");
   fs.writeFileSync(appcastPath, [
@@ -427,6 +427,8 @@ process.stdin.on("end", () => {
       process.execPath,
       [
         path.join(scriptDirectory, "prepare-sparkle-release.mjs"),
+        "--repo-root",
+        tempRoot,
         "--release-tag",
         "v9.9.9",
         "--release-dir",
@@ -454,6 +456,10 @@ process.stdin.on("end", () => {
     );
 
     assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      readFileSync(path.join(tempRoot, "data", "release-cache", "sparkle-dmgs", "AutoEmailSender-9.9.9-arm64.dmg")),
+      readFileSync(path.join(releaseDirectory, "AutoEmailSender-9.9.9-arm64.dmg")),
+    );
     assert.deepEqual(readdirSync(outputDirectory).sort(), [
       "Auto.Email.Sender9.9.9-9.9.8.delta",
       "AutoEmailSender-9.9.9-arm64.dmg",

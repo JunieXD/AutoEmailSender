@@ -317,9 +317,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/auto-email-sender-sparkle-dmgs
-          key: sparkle-dmgs-v2-${{ runner.os }}-${{ env.RELEASE_TAG }}
+          key: sparkle-dmgs-v1-${{ runner.os }}-${{ env.RELEASE_TAG }}
           restore-keys: |
-            sparkle-dmgs-v2-${{ runner.os }}-
+            sparkle-dmgs-v1-${{ runner.os }}-
 
       - name: Generate signed appcast and deltas
         env:

@@ -50,7 +50,7 @@ PowerShell has matching `scripts/*.ps1` entrypoints with `-PromoteRun`, `-Candid
 
 ## Sparkle and recovery
 
-Read `docs/operations/sparkle-release-operations.md` for macOS signing and isolated update QA. Generate a delta only from the previous release; older clients use the signed full DMG. Final appcast URLs must be fixed before signing; verify the whole feed and enclosure signatures against actual draft assets, uploading the feed last. Secret values must stay out of files, arguments and logs. Routine releases do not rotate keys or replace public assets.
+Read `docs/operations/sparkle-release-operations.md` for macOS signing and isolated update QA. Generate deltas for the latest three releases. Local runs reuse `data/release-cache/sparkle-dmgs/` by default, including the newly built DMG retained for next time; keep this cache between releases. CI restores the same rolling cache through Actions. Final appcast URLs must be fixed before signing; verify the whole feed and enclosure signatures against actual draft assets, uploading the feed last. Secret values must stay out of files, arguments and logs. Routine releases do not rotate keys or replace public assets.
 
 Diagnose a failed check before retrying. Preserve the failure and thresholds; an environmental failure may justify a repeat with the same inputs, not repeated attempts until green. Use impact checks after fixes. Stale desktop build output can be removed with `npm run clean` before repeating the affected source test.
 

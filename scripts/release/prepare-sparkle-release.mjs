@@ -21,8 +21,7 @@ import { compareVersions } from "./check-release-version.mjs";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDirectory, "..", "..");
 const DEFAULT_REPOSITORY = "JunieXD/AutoEmailSender";
-// Older clients use the signed full DMG; only the previous version needs a delta.
-const MAXIMUM_DELTAS = 1;
+const MAXIMUM_DELTAS = 3;
 const REQUIRED_DELTA_BASELINE_VERSION = "2.5.3";
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 const ED25519_SPKI_PUBLIC_KEY_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -424,6 +423,7 @@ function parseArguments(argv) {
     }
   }
 
+  options.previousDmgCacheDirectory ||= path.join(options.repoRoot, "data", "release-cache", "sparkle-dmgs");
   options.releaseDirectory ||= path.join(options.repoRoot, "desktop", "release");
   options.releaseNotesPath ||= path.join(options.repoRoot, "desktop", "release-notes.md");
   options.outputDirectory ||= path.join(options.releaseDirectory, "sparkle-publish");
@@ -769,6 +769,14 @@ async function prepareSparkleRelease(options) {
         path.join(options.outputDirectory, deltaFile),
       );
     }
+
+    // Keep the newly built DMG for the next release instead of downloading it again.
+    await mkdir(options.previousDmgCacheDirectory, { recursive: true });
+    await copyFile(currentDmgPath, path.join(options.previousDmgCacheDirectory, currentDmgName));
+    await pruneHistoricalDmgCache(options.previousDmgCacheDirectory, [
+      currentDmgName,
+      ...previousUpdates.slice(0, MAXIMUM_DELTAS - 1).map((asset) => asset.name),
+    ]);
 
     console.log(
       `Sparkle 发布产物已准备完成：读取 ${previousUpdates.length} 个旧版本，生成 ${deltaFiles.length} 个差分包。` +
