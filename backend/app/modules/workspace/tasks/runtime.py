@@ -582,7 +582,7 @@ async def rewrite_task_draft(
         else:
             selected_material_ids = list(payload.selected_material_ids)
         await _validate_selected_material_ids(
-            session, task.identity_id, selected_material_ids
+            session, selected_material_ids
         )
         ensure_material_extracted_text(task.primary_material)
 
@@ -861,7 +861,7 @@ async def update_task_primary_material(
             raise ValueError("已发送或已回信任务不能再切换 AI 写信参考材料")
 
         material = await _validate_primary_material_id(
-            session, task.identity_id, primary_material_id
+            session, primary_material_id
         )
         task.primary_material_id = material.id
         task.approved_subject = None
@@ -1390,7 +1390,7 @@ async def _snapshot_approval(
     payload: EmailTaskApprovalRequest,
 ) -> None:
     await _validate_selected_material_ids(
-        session, task.identity_id, payload.selected_material_ids
+        session, payload.selected_material_ids
     )
 
     task.approved_subject = (payload.subject or task.generated_subject or "").strip()
@@ -1413,7 +1413,7 @@ async def _snapshot_saved_draft(
     payload: EmailTaskApprovalRequest,
 ) -> None:
     await _validate_selected_material_ids(
-        session, task.identity_id, payload.selected_material_ids
+        session, payload.selected_material_ids
     )
 
     body_text = payload.body_text.strip()
@@ -1461,10 +1461,8 @@ def restore_workspace_rewrite_source(
 
 async def _validate_primary_material_id(
     session: AsyncSession,
-    identity_id: int,
     primary_material_id: int,
 ) -> IdentityMaterial:
-    del identity_id
     material = await session.scalar(
         select(IdentityMaterial).where(
             IdentityMaterial.id == primary_material_id,
@@ -1479,10 +1477,8 @@ async def _validate_primary_material_id(
 
 async def _validate_selected_material_ids(
     session: AsyncSession,
-    identity_id: int,
     material_ids: list[int] | None,
 ) -> None:
-    del identity_id
     if material_ids is None:
         return
     if any(material_id < 1 for material_id in material_ids):

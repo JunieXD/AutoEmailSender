@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_async_session
 from app.models import OperationLog
+from app.services.operation_logs import build_operation_log_filters
 from app.schemas.diagnostics import (
     DiagnosticFileRead,
     OperationLogExportResponse,
@@ -42,7 +43,7 @@ async def list_operation_logs(
     end_at: datetime | None = None,
     session: AsyncSession = Depends(get_async_session),
 ) -> OperationLogListResponse:
-    filters = _build_operation_log_filters(
+    filters = build_operation_log_filters(
         level=level,
         category=category,
         event_name=event_name,
@@ -94,7 +95,7 @@ async def export_operation_logs(
         "start_at": start_at.isoformat() if start_at else None,
         "end_at": end_at.isoformat() if end_at else None,
     }
-    filters = _build_operation_log_filters(
+    filters = build_operation_log_filters(
         level=level,
         category=category,
         event_name=event_name,
@@ -134,37 +135,6 @@ async def export_crawler_debug_jsonl(job_id: int) -> FileResponse:
         media_type="application/jsonl; charset=utf-8",
         filename=debug_file.name,
     )
-
-
-def _build_operation_log_filters(
-    *,
-    level: str | None,
-    category: str | None,
-    event_name: str | None,
-    request_id: str | None,
-    entity_type: str | None,
-    entity_id: str | None,
-    start_at: datetime | None,
-    end_at: datetime | None,
-) -> list[object]:
-    filters: list[object] = []
-    if level is not None:
-        filters.append(OperationLog.level == level)
-    if category is not None:
-        filters.append(OperationLog.category == category)
-    if event_name is not None:
-        filters.append(OperationLog.event_name == event_name)
-    if request_id is not None:
-        filters.append(OperationLog.request_id == request_id)
-    if entity_type is not None:
-        filters.append(OperationLog.entity_type == entity_type)
-    if entity_id is not None:
-        filters.append(OperationLog.entity_id == entity_id)
-    if start_at is not None:
-        filters.append(OperationLog.created_at >= start_at)
-    if end_at is not None:
-        filters.append(OperationLog.created_at < end_at)
-    return filters
 
 
 def read_startup_logs() -> list[DiagnosticFileRead]:

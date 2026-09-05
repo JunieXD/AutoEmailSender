@@ -16,10 +16,7 @@ async def run_sqlite_maintenance_once(
     """Run bounded, online SQLite maintenance without blocking normal startup."""
 
     settings = get_settings()
-    incremental_vacuum_pages = max(
-        0,
-        int(getattr(settings, "sqlite_incremental_vacuum_pages", 2000)),
-    )
+    incremental_vacuum_pages = settings.sqlite_incremental_vacuum_pages
     async with session_factory() as session:
         bind = session.get_bind()
         if bind.dialect.name != "sqlite":

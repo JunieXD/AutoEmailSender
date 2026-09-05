@@ -53,7 +53,6 @@ def list_match_analysis_jobs(
         },
         fetch_all=all_items,
         fields=fields,
-        guide_topic="matching",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -89,7 +88,6 @@ def create_match_analysis_job(
             "professor_ids": professor_ids,
             "name": name,
         },
-        guide_topic="matching",
         human_formatter=format_detail,
     )
 
@@ -103,7 +101,6 @@ def get_match_analysis_job(
         ctx,
         command="matching.jobs.get",
         path=f"/api/agent/v1/matching/jobs/{job_id}",
-        guide_topic="matching",
         human_formatter=format_detail,
     )
 
@@ -128,7 +125,6 @@ def list_match_analysis_job_items(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="matching",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -152,7 +148,6 @@ def cancel_match_analysis_job(
         ctx,
         command="matching.jobs.cancel",
         path=f"/api/agent/v1/matching/jobs/{job_id}/cancel",
-        guide_topic="matching",
         human_formatter=format_detail,
     )
 
@@ -166,7 +161,6 @@ def retry_failed_match_analysis_job(
         ctx,
         command="matching.jobs.retry-failed",
         path=f"/api/agent/v1/matching/jobs/{job_id}/retry-failed",
-        guide_topic="matching",
         human_formatter=format_detail,
     )
 
@@ -180,7 +174,6 @@ def delete_match_analysis_job(
         ctx,
         command="matching.jobs.delete",
         path=f"/api/agent/v1/matching/jobs/{job_id}/delete",
-        guide_topic="matching",
         human_formatter=format_detail,
     )
 
@@ -194,6 +187,5 @@ def restore_match_analysis_job(
         ctx,
         command="matching.jobs.restore",
         path=f"/api/agent/v1/matching/jobs/{job_id}/restore",
-        guide_topic="matching",
         human_formatter=format_detail,
     )

@@ -1,3 +1,4 @@
+import { usePageBounds } from '@/lib/usePaginationState';
 import {
   memo,
   type ReactNode,
@@ -1528,17 +1529,11 @@ export const CommunityMentorsPage = () => {
     currentPreviewPage * PREVIEW_RECORDS_PER_PAGE,
   );
 
-  useEffect(() => {
-    setCatalogUnitPage((current) => Math.min(current, totalCatalogUnitPages));
-  }, [totalCatalogUnitPages]);
+  usePageBounds(setCatalogUnitPage, filteredCatalogUnits.length, catalogUnitPageSize);
 
-  useEffect(() => {
-    setRecordPage((current) => Math.min(current, totalRecordPages));
-  }, [totalRecordPages]);
+  usePageBounds(setRecordPage, visibleRecords.length, recordPageSize);
 
-  useEffect(() => {
-    setPreviewPage((current) => Math.min(current, totalPreviewPages));
-  }, [totalPreviewPages]);
+  usePageBounds(setPreviewPage, filteredPreviewRecords.length, PREVIEW_RECORDS_PER_PAGE);
 
   useEffect(() => {
     setPreviewBulkField((current) => {

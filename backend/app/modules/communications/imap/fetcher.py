@@ -9,6 +9,9 @@ from email.utils import parseaddr
 from typing import Any
 
 
+from .errors import format_imap_response_detail, imap_status_text
+
+
 @dataclass(slots=True)
 class ParsedTextParts:
     body_text: str | None
@@ -165,44 +168,12 @@ def fetch_message_headers_payloads_by_uid_range(
         f"{start_uid}:{end_uid}",
         "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM TO CC BCC SUBJECT DATE IN-REPLY-TO REFERENCES X-AUTOEMAILSENDER-DELIVERY-ID)] INTERNALDATE)",
     )
-    if _imap_status_text(status).upper() != "OK":
-        detail = _format_imap_response_detail(status, payload)
+    if imap_status_text(status).upper() != "OK":
+        detail = format_imap_response_detail(status, payload)
         raise ImapFetchCommandError(f"IMAP header range fetch failed: {detail}")
     if not payload:
         return []
     return _split_header_fetch_payload_by_uid_range(list(payload), start_uid, end_uid)
-
-
-def _imap_status_text(status: object) -> str:
-    if isinstance(status, (bytes, bytearray)):
-        return bytes(status).decode("utf-8", errors="ignore")
-    return str(status)
-
-
-def _format_imap_response_detail(status: object, payload: object) -> str:
-    status_text = _imap_status_text(status)
-    payload_text = _format_imap_payload_text(payload)
-    if payload_text:
-        return f"{status_text}: {payload_text}"
-    return status_text
-
-
-def _format_imap_payload_text(payload: object) -> str:
-    if not payload:
-        return ""
-    items = payload if isinstance(payload, (list, tuple)) else [payload]
-    parts: list[str] = []
-    for item in items:
-        if isinstance(item, (bytes, bytearray)):
-            text = bytes(item).decode("utf-8", errors="ignore")
-        elif isinstance(item, tuple):
-            text = " ".join(_format_imap_payload_text(part) for part in item)
-        else:
-            text = str(item)
-        text = text.strip()
-        if text:
-            parts.append(text)
-    return " ".join(parts)[:500]
 
 
 def fetch_text_body_parts_by_uid(client: object, uid: int) -> ParsedTextParts:

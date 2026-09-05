@@ -4,12 +4,14 @@ import asyncio
 import logging
 import unittest
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.config import get_settings
 from app.models import (
     Base,
     EmailDeliveryAttempt,
@@ -65,6 +67,15 @@ from app.modules.communications.ingestion import build_reconciliation_fingerprin
 
 class ImapSyncRuntimeTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self.imap_settings = replace(
+            get_settings(),
+            imap_history_batch_size=200,
+            imap_history_command_budget_per_minute=120,
+            imap_history_command_rate_per_minute=40,
+            imap_history_queue_settle_seconds=0,
+            imap_history_bulk_header_limit=5000,
+            imap_fetch_batch_size=20,
+        )
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
         self._run_async(self._create_schema())
@@ -941,8 +952,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -974,12 +986,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as legacy_range_scan_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -1036,8 +1042,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -1069,12 +1076,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as legacy_range_scan_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -3035,8 +3036,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -3075,12 +3077,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -3152,8 +3148,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
@@ -3169,7 +3166,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 result = await _sync_recent_sent_history_once(
                     self.session_factory,
                     self._build_identity(),
@@ -3362,8 +3358,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             )
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_recent_mailbox_message_headers_since",
                     new=AsyncMock(
@@ -3381,7 +3378,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as body_fetch_mock,
             ):
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 result = await _sync_recent_sent_history_once(
                     self.session_factory,
                     self._build_identity(),
@@ -3430,8 +3426,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -3451,12 +3448,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(side_effect=RuntimeError("boom")),
                 ),
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -3556,8 +3547,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -3587,12 +3579,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as legacy_scan_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -3785,8 +3771,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -3820,12 +3807,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ),
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 await sync_identity_history_once(self.session_factory, identity_id)
 
             return sorted(targeted_states)
@@ -3892,8 +3873,9 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=self.imap_settings,
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value="Sent"),
@@ -3919,12 +3901,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as legacy_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 120
-                settings_mock.return_value.imap_history_command_rate_per_minute = 40
-                settings_mock.return_value.imap_history_queue_settle_seconds = 0
-                settings_mock.return_value.imap_history_bulk_header_limit = 5000
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -4333,8 +4309,12 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_command_budget_per_minute=1,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.get_cached_or_discover_sent_folder",
                     new=AsyncMock(return_value=None),
@@ -4346,8 +4326,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     ),
                 ) as header_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 200
-                settings_mock.return_value.imap_history_command_budget_per_minute = 1
                 detected = await sync_identity_history_once(
                     self.session_factory, identity_id
                 )
@@ -4660,8 +4638,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=1,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
@@ -4673,9 +4656,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 1
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )
@@ -4856,8 +4836,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=1,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
@@ -4869,9 +4854,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 1
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )
@@ -4926,8 +4908,14 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             ]
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=2,
+                        imap_fetch_batch_size=1,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
@@ -4939,9 +4927,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 2
-                settings_mock.return_value.imap_fetch_batch_size = 1
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )
@@ -4992,17 +4977,19 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=20,
+                        imap_throttle_backoff_seconds=86400,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(side_effect=RuntimeError("Too many requests")),
                 ) as header_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 20
-                settings_mock.return_value.imap_throttle_backoff_seconds = 86400
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )
@@ -5065,8 +5052,14 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
             ]
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=2,
+                        imap_fetch_batch_size=1,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
@@ -5078,9 +5071,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(return_value=[]),
                 ) as body_fetch_mock,
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 2
-                settings_mock.return_value.imap_fetch_batch_size = 1
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )
@@ -5149,8 +5139,13 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.communications.imap.sync.get_settings"
-                ) as settings_mock,
+                    "app.modules.communications.imap.sync.get_settings",
+                    return_value=replace(
+                        self.imap_settings,
+                        imap_history_batch_size=50,
+                        imap_history_command_budget_per_minute=8,
+                    ),
+                ),
                 patch(
                     "app.modules.communications.imap.sync.mail_runtime.fetch_professor_history_mailbox_message_headers_with_command_count",
                     new=AsyncMock(
@@ -5164,9 +5159,6 @@ class ImapSyncRuntimeTestCase(unittest.TestCase):
                     new=AsyncMock(side_effect=fake_body_fetch),
                 ),
             ):
-                settings_mock.return_value.imap_history_batch_size = 50
-                settings_mock.return_value.imap_history_command_budget_per_minute = 8
-                settings_mock.return_value.imap_fetch_batch_size = 20
                 detected = await _sync_identity_targeted_history_once(
                     self.session_factory, identity_id
                 )

@@ -103,6 +103,29 @@ class CommunityDataError(RuntimeError):
         super().__init__(message)
         self.code = code
 
+    @property
+    def status_code(self) -> int:
+        if self.code in {
+            "COMMUNITY_DATA_VERSION_CHANGED",
+            "COMMUNITY_DATA_REQUIRES_NEWER_APP",
+            "COMMUNITY_DATA_IDENTITY_CONFLICT",
+            "COMMUNITY_DATA_LIFECYCLE_BLOCKED",
+            "COMMUNITY_DATA_PREVIEW_STALE",
+        }:
+            return 409
+        elif self.code in {
+            "COMMUNITY_DATA_SELECTION_INVALID",
+            "COMMUNITY_DATA_PATH_INVALID",
+            "COMMUNITY_DATA_CONFIG_INVALID",
+            "COMMUNITY_DATA_FIELD_CHOICE_INVALID",
+            "COMMUNITY_DATA_TOO_LARGE",
+        }:
+            return 400
+        elif self.code == "COMMUNITY_DATA_UNAVAILABLE":
+            return 503
+        else:
+            return 502
+
 
 @dataclass(frozen=True, slots=True)
 class CommunityCatalogBundle:

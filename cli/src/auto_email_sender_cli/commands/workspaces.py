@@ -37,7 +37,6 @@ def get_workspace(
             "identity_id": identity_id,
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="workspaces",
         human_formatter=format_detail,
     )
 
@@ -62,7 +61,6 @@ def ensure_workspace_task(
             "identity_id": identity_id,
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="workspaces",
         human_formatter=format_detail,
     )
 
@@ -87,7 +85,6 @@ def refresh_workspace_replies(
             "identity_id": identity_id,
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="workspaces",
         human_formatter=format_detail,
         use_idempotency_key=True,
     )

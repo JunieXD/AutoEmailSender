@@ -101,7 +101,7 @@ async function executeApiRequest<T>(
           ...diagnosticData,
           durationMs: elapsedMs(startedAt),
           errorType: getThrownErrorType(lastError),
-          error: sanitizeDiagnosticMessage(getThrownErrorMessage(lastError)),
+          error: getThrownErrorMessage(lastError),
         },
       });
     }
@@ -129,20 +129,6 @@ async function executeApiFetchOnce<T>(
     headers,
   });
 
-  if (response.status === 204) {
-    recordApiDiagnosticEvent({
-      level: "info",
-      eventName: "api.request_succeeded",
-      data: {
-        method,
-        path: stripQueryAndHash(apiPath),
-        status: response.status,
-        durationMs: elapsedMs(startedAt),
-      },
-    });
-    return undefined as T;
-  }
-
   if (!response.ok) {
     const data = await readResponseData(response);
     const message = getApiErrorMessage(data);
@@ -154,13 +140,13 @@ async function executeApiFetchOnce<T>(
         path: stripQueryAndHash(apiPath),
         status: response.status,
         durationMs: elapsedMs(startedAt),
-        message: sanitizeDiagnosticMessage(message),
+        message,
       },
     });
     throw new ApiError(response.status, message, data);
   }
 
-  const data = await parseSuccess(response);
+  const data = response.status === 204 ? (undefined as T) : await parseSuccess(response);
   recordApiDiagnosticEvent({
     level: "info",
     eventName: "api.request_succeeded",
@@ -331,28 +317,6 @@ function shouldRetryDesktopNetworkError(error: unknown): boolean {
   );
 }
 
-function sanitizeDiagnosticMessage(message: string): string {
-  try {
-    const withoutSensitiveUrls = message.replace(/https?:\/\/[^\s"'<>]+/gi, (value) =>
-      stripUrlQueryAndHash(value),
-    );
-    const withoutAuthHeaders = withoutSensitiveUrls.replace(
-      /\bauthorization\s*[:=]\s*Bearer\s+[^\s,;&]+/gi,
-      "[Redacted]",
-    );
-    const withoutSensitiveKeyValues = withoutAuthHeaders.replace(
-      /\b(?:token|api[_-]?key|password|secret|authorization|cookie|smtpPassword)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
-      "[Redacted]",
-    );
-
-    return withoutSensitiveKeyValues.length > 300
-      ? `${withoutSensitiveKeyValues.slice(0, 300)}…`
-      : withoutSensitiveKeyValues;
-  } catch {
-    return "[Unserializable]";
-  }
-}
-
 function recordApiDiagnosticEvent(input: {
   level: "info" | "error";
   eventName: "api.request_succeeded" | "api.request_failed" | "api.request_errored";
@@ -383,13 +347,6 @@ function stripQueryAndHash(path: string): string {
   return url.pathname;
 }
 
-function stripUrlQueryAndHash(value: string): string {
-  const url = new URL(value);
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-}
-
 function getDesktopBackendBaseUrl(): string | null {
   const desktopApi = window.autoEmailSender;
   const baseUrl =
@@ -400,7 +357,7 @@ function getDesktopBackendBaseUrl(): string | null {
 }
 
 function getDesktopBackendStartupErrorMessage(status: Extract<DesktopBackendStatus, { state: "error" }>): string {
-  if (status.state === "error" && status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
+  if (status.databaseError?.code === "DATABASE_REQUIRES_NEWER_APP") {
     return [
       `当前数据需要 AutoEmailSender ${status.databaseError.minimumSupportedAppVersion} 或更高版本。`,
       "请升级到新版继续使用。若必须回退旧版，请从升级前备份恢复数据库。",

@@ -44,7 +44,6 @@ def list_faculty_crawl_jobs(
         params={"view": view, "cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -89,7 +88,6 @@ def create_faculty_crawl_job(
             "entry_type": entry_type,
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -113,7 +111,6 @@ def create_many_faculty_crawl_jobs(
         command="crawler.jobs.create-many",
         path="/api/agent/v1/crawler/jobs/create-many",
         json_body={"items": _read_batch_items(items_file)},
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -127,7 +124,6 @@ def get_faculty_crawl_job(
         ctx,
         command="crawler.jobs.get",
         path=f"/api/agent/v1/crawler/jobs/{job_id}",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -165,7 +161,6 @@ def list_faculty_crawl_pages(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -199,7 +194,6 @@ def list_faculty_crawl_job_events(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -231,7 +225,6 @@ def list_faculty_crawl_candidates(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="crawler",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -320,7 +313,6 @@ def update_faculty_crawl_candidate(
         path=f"/api/agent/v1/crawler/candidates/{candidate_id}",
         method="PATCH",
         json_body=payload,
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -391,7 +383,6 @@ def prepare_faculty_crawl_candidate_approval(
                 "exclude_ids": exclude_candidate_ids,
             },
         },
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -419,7 +410,6 @@ def prepare_faculty_crawl_job_retry(
             "clear_existing_data": not keep_existing_data,
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -493,7 +483,6 @@ def enrich_faculty_crawl_candidates(
             },
             "llm_profile_id": llm_profile_id,
         },
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -560,7 +549,6 @@ def enrich_many_faculty_crawl_jobs(
                 for job_id in job_ids
             ],
         },
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -600,7 +588,6 @@ def pause_faculty_crawl_job(
         ctx,
         command="crawler.jobs.pause",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/pause",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -620,7 +607,6 @@ def resume_faculty_crawl_job(
         json_body={"llm_profile_id": llm_profile_id}
         if llm_profile_id is not None
         else None,
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -634,7 +620,6 @@ def cancel_faculty_crawl_job(
         ctx,
         command="crawler.jobs.cancel",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/cancel",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -648,7 +633,6 @@ def resume_faculty_crawl_job_review(
         ctx,
         command="crawler.jobs.resume-review",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/resume-review",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -662,7 +646,6 @@ def delete_faculty_crawl_job(
         ctx,
         command="crawler.jobs.delete",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/delete",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )
 
@@ -676,6 +659,5 @@ def restore_faculty_crawl_job(
         ctx,
         command="crawler.jobs.restore",
         path=f"/api/agent/v1/crawler/jobs/{job_id}/restore",
-        guide_topic="crawler",
         human_formatter=format_detail,
     )

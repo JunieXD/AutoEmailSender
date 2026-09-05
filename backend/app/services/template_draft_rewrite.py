@@ -606,20 +606,6 @@ def _render_template_text(text: str, context: dict[str, str]) -> str:
     return PLACEHOLDER_PATTERN.sub(replace, text)
 
 
-def _apply_dominant_font_style(
-    soup: BeautifulSoup, style: DraftRewriteFontStyle
-) -> None:
-    for tag in soup.find_all(True):
-        if _is_within_table(tag):
-            continue
-        current_style = str(tag.get("style", ""))
-        updated_style = _merge_font_style(current_style, style)
-        if updated_style:
-            tag["style"] = updated_style
-        elif "style" in tag.attrs:
-            del tag.attrs["style"]
-
-
 def _is_within_table(tag: Tag) -> bool:
     if tag.name == "table":
         return True

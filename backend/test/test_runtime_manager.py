@@ -73,6 +73,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 60,
                     "crawler_worker_count": 2,
@@ -157,6 +158,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 60,
                     "crawler_worker_count": 1,
@@ -214,6 +216,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 60,
                     "crawler_worker_count": 2,
@@ -447,6 +450,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 60,
                     "crawler_worker_count": 1,
@@ -510,6 +514,7 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 300,
                     "crawler_worker_count": 1,
@@ -543,34 +548,6 @@ class RuntimeManagerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         await manager.stop()
-
-    async def test_worker_startup_settings_only_contains_restart_bound_values(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            db_path = Path(temp_dir) / "runtime-manager-defaults.db"
-            engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
-            async with engine.begin() as connection:
-                await connection.run_sync(Base.metadata.create_all)
-
-            session_factory = async_sessionmaker(engine, expire_on_commit=False)
-            manager = RuntimeManager(session_factory)
-            settings_stub = type(
-                "SettingsStub",
-                (),
-                {
-                    "match_analysis_job_worker_count": 1,
-                    "match_analysis_job_interval_seconds": 10,
-                },
-            )()
-
-            try:
-                resolved = await manager._resolve_worker_startup_settings(settings_stub)
-            finally:
-                await engine.dispose()
-
-        self.assertFalse(hasattr(resolved, "crawler_worker_count"))
-        self.assertEqual(resolved.match_analysis_job_worker_count, 1)
 
     async def test_match_analysis_worker_uses_runtime_item_concurrency(self) -> None:
         session = object()

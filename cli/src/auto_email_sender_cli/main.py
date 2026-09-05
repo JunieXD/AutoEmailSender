@@ -639,7 +639,6 @@ def guide_command(
         command="guide",
         data=guide,
         human_text=human,
-        guide_topic=str(guide["topic"]),
     )
 
 

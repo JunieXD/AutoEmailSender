@@ -243,7 +243,6 @@ def run_read_command(
     command: str,
     path: str,
     params: dict[str, object] | None = None,
-    guide_topic: str = "overview",
     human_formatter: HumanFormatter | None = None,
     fetch_all: bool = False,
     fields: str | None = None,
@@ -320,7 +319,6 @@ def run_read_command(
                 command=command,
                 data=data,
                 human_text=f"已将完整集合逐页导出到：{exported_file}",
-                guide_topic=guide_topic,
                 app_version=client.descriptor.app_version,
                 request_id=getattr(client, "last_request_id", None),
                 continuation_input=_without_none(params),
@@ -386,14 +384,13 @@ def run_read_command(
                 if exported_file is not None
                 else human_text
             ),
-            guide_topic=guide_topic,
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None),
             continuation_input=_without_none(params),
         )
         return data
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic=guide_topic)
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -406,7 +403,6 @@ def run_write_command(
     params: dict[str, object] | None = None,
     json_body: object | None = None,
     fields: str | None = None,
-    guide_topic: str = "overview",
     human_formatter: HumanFormatter | None = None,
     timeout: float = 360.0,
     use_idempotency_key: bool = True,
@@ -456,13 +452,12 @@ def run_write_command(
             command=command,
             data=data,
             human_text=human_formatter(data) if human_formatter else None,
-            guide_topic=guide_topic,
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None) or request_id,
         )
         return data
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic=guide_topic)
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 

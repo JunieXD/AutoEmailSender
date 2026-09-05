@@ -6,13 +6,12 @@ import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.backend_error_logging import write_backend_worker_error_log
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.sqlite_maintenance import run_sqlite_maintenance_once
 from app.models import AppSetting
 from app.modules.campaigns.public import (
@@ -42,15 +41,6 @@ SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS = 30.0
 class RuntimeWorkerStartupSettings:
     match_analysis_job_worker_count: int
     match_analysis_job_interval_seconds: int
-
-
-def _positive_int(value: Any, fallback: int) -> int:
-    if isinstance(value, bool):
-        return max(1, fallback)
-    try:
-        return max(1, int(value))
-    except (TypeError, ValueError):
-        return max(1, fallback)
 
 
 async def _load_worker_runtime_settings(session: AsyncSession) -> AppSetting | None:
@@ -86,16 +76,12 @@ class RuntimeManager:
 
     async def _resolve_worker_startup_settings(
         self,
-        settings: object,
+        settings: Settings,
     ) -> RuntimeWorkerStartupSettings:
         fallback = RuntimeWorkerStartupSettings(
-            match_analysis_job_worker_count=_positive_int(
-                getattr(settings, "match_analysis_job_worker_count", 1),
-                1,
-            ),
-            match_analysis_job_interval_seconds=_positive_int(
-                getattr(settings, "match_analysis_job_interval_seconds", 10),
-                10,
+            match_analysis_job_worker_count=max(1, settings.match_analysis_job_worker_count),
+            match_analysis_job_interval_seconds=max(
+                1, settings.match_analysis_job_interval_seconds,
             ),
         )
 
@@ -109,20 +95,14 @@ class RuntimeManager:
         if runtime_settings is None:
             return fallback
 
-        try:
-            return RuntimeWorkerStartupSettings(
-                match_analysis_job_worker_count=_positive_int(
-                    runtime_settings.match_analysis_job_worker_count,
-                    fallback.match_analysis_job_worker_count,
-                ),
-                match_analysis_job_interval_seconds=_positive_int(
-                    runtime_settings.match_analysis_job_interval_seconds,
-                    fallback.match_analysis_job_interval_seconds,
-                ),
-            )
-        except Exception:
-            logger.exception("运行时 worker 设置字段不完整，已回退到环境配置")
-            return fallback
+        return RuntimeWorkerStartupSettings(
+            match_analysis_job_worker_count=max(
+                1, runtime_settings.match_analysis_job_worker_count,
+            ),
+            match_analysis_job_interval_seconds=max(
+                1, runtime_settings.match_analysis_job_interval_seconds,
+            ),
+        )
 
     async def start(self) -> None:
         if self._tasks:
@@ -177,7 +157,7 @@ class RuntimeManager:
             asyncio.create_task(
                 self._loop(
                     "sqlite-maintenance",
-                    getattr(settings, "sqlite_maintenance_interval_seconds", 21_600),
+                    settings.sqlite_maintenance_interval_seconds,
                     run_sqlite_maintenance_once,
                     initial_delay_seconds=SQLITE_MAINTENANCE_INITIAL_DELAY_SECONDS,
                 ),

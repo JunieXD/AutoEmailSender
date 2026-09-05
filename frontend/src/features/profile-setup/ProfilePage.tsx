@@ -2606,7 +2606,6 @@ export const ProfilePage = () => {
   }, [editingIdentity, optimisticMaterial]);
   const setupIdentity =
     displayIdentity ??
-    editingIdentity ??
     selectedIdentity ??
     defaultIdentity ??
     identities[0] ??

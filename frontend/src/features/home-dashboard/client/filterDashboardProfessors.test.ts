@@ -11,7 +11,6 @@ import {
   NO_FIELD_FILTER_VALUE,
   NO_MATCH_SCORE_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
-  pruneDashboardFilters,
   type DashboardFilterState,
 } from "./filterDashboardProfessors";
 
@@ -457,49 +456,9 @@ describe("filterDashboardProfessors", () => {
     expect(instituteOptions.departments).toEqual(["Robotics"]);
   });
 
-  it("prunes filters when upstream organization selections change", () => {
-    const pruned = pruneDashboardFilters(professors, {
-      ...createDefaultDashboardFilters(),
-      universities: ["MIT", "Unknown"],
-      schools: ["AI Institute", "School of Medicine"],
-        departments: ["EECS", "Unknown"],
-        titles: ["教授", "不存在"],
-        tagIds: ["404"],
-      });
 
-    expect(pruned.universities).toEqual(["MIT"]);
-    expect(pruned.schools).toEqual(["AI Institute"]);
-    expect(pruned.departments).toEqual([]);
-    expect(pruned.titles).toEqual(["教授"]);
-    expect(pruned.tagIds).toEqual([]);
 
-    const schoolPruned = pruneDashboardFilters(professors, {
-      ...createDefaultDashboardFilters(),
-      universities: ["MIT"],
-      schools: ["AI Institute"],
-      departments: ["EECS", "Robotics"],
-    });
 
-    expect(schoolPruned.departments).toEqual(["Robotics"]);
-  });
-
-  it("keeps no-value selections while pruning dependent options", () => {
-    const pruned = pruneDashboardFilters(
-      [buildProfessor({ id: 4, name: "Missing" })],
-      {
-        ...createDefaultDashboardFilters(),
-        universities: [NO_FIELD_FILTER_VALUE],
-        schools: [NO_FIELD_FILTER_VALUE],
-        departments: [NO_FIELD_FILTER_VALUE],
-        titles: [NO_FIELD_FILTER_VALUE],
-      },
-    );
-
-    expect(pruned.universities).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.schools).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.departments).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.titles).toEqual([NO_FIELD_FILTER_VALUE]);
-  });
 
   it("matches selected options against trimmed dashboard fields", () => {
     const professorsWithWhitespace = [

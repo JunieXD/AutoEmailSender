@@ -10,7 +10,6 @@ import {
   normalizeManagementKeywordSearchScopes,
   NO_FIELD_FILTER_VALUE,
   NO_TAG_FILTER_VALUE,
-  pruneManagementFilters,
   type ProfessorManagementFilterState,
   type ProfessorManagementKeywordSearchScope,
 } from "./filterManagementProfessors";
@@ -480,53 +479,9 @@ describe("filterManagementProfessors", () => {
     ).toBe(2);
   });
 
-  it("prunes filters when universities or options disappear", () => {
-    const pruned = pruneManagementFilters(professors, {
-      ...createDefaultManagementFilters(),
-      keyword: "",
-      universities: ["MIT", "Unknown"],
-      schools: ["AI Institute", "School of Medicine"],
-      departments: ["EECS", "Unknown"],
-      titles: ["教授", "不存在"],
-      tagIds: ["404"],
-    });
 
-    expect(pruned.universities).toEqual(["MIT"]);
-    expect(pruned.schools).toEqual(["AI Institute"]);
-    expect(pruned.departments).toEqual([]);
 
-    const schoolPruned = pruneManagementFilters(professors, {
-      ...createDefaultManagementFilters(),
-      keyword: "",
-      universities: ["MIT"],
-      schools: ["AI Institute"],
-      departments: ["EECS", "Robotics"],
-      titles: [],
-      tagIds: [],
-    });
 
-    expect(schoolPruned.departments).toEqual(["Robotics"]);
-    expect(pruned.titles).toEqual(["教授"]);
-    expect(pruned.tagIds).toEqual([]);
-  });
-
-  it("keeps no-value selections while pruning dependent options", () => {
-    const pruned = pruneManagementFilters(
-      [buildProfessor({ id: 4, name: "Missing" })],
-      {
-        ...createDefaultManagementFilters(),
-        universities: [NO_FIELD_FILTER_VALUE],
-        schools: [NO_FIELD_FILTER_VALUE],
-        departments: [NO_FIELD_FILTER_VALUE],
-        titles: [NO_FIELD_FILTER_VALUE],
-      },
-    );
-
-    expect(pruned.universities).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.schools).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.departments).toEqual([NO_FIELD_FILTER_VALUE]);
-    expect(pruned.titles).toEqual([NO_FIELD_FILTER_VALUE]);
-  });
 
   it("does not mutate the input array", () => {
     const input = [...professors];

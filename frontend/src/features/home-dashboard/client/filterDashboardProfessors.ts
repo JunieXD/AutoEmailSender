@@ -254,9 +254,6 @@ const matchesAnyTag = (
   return tags.some((tag) => selectedSet.has(String(tag.id)));
 };
 
-const arraysEqual = (left: string[], right: string[]): boolean =>
-  left.length === right.length && left.every((value, index) => value === right[index]);
-
 const parseMatchScoreBoundary = (value: string): number | null => {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -339,57 +336,4 @@ export const filterDashboardProfessors = (
       matchScoreMatched
     );
   });
-};
-
-export const pruneDashboardFilters = (
-  professors: ProfessorDashboardItemDTO[],
-  filters: DashboardFilterState,
-): DashboardFilterState => {
-  const allOptions = buildDashboardFilterOptions(professors);
-  const universities = filters.universities.filter(
-    (value) =>
-      value === NO_FIELD_FILTER_VALUE || allOptions.universities.includes(value),
-  );
-  const schoolOptions = buildDashboardFilterOptions(professors, {
-    universities,
-    schools: [],
-  }).schools;
-  const schools = filters.schools.filter(
-    (value) => value === NO_FIELD_FILTER_VALUE || schoolOptions.includes(value),
-  );
-  const departmentOptions = buildDashboardFilterOptions(professors, {
-    universities,
-    schools,
-  }).departments;
-  const departments = filters.departments.filter(
-    (value) =>
-      value === NO_FIELD_FILTER_VALUE || departmentOptions.includes(value),
-  );
-  const titles = filters.titles.filter(
-    (value) => value === NO_FIELD_FILTER_VALUE || allOptions.titles.includes(value),
-  );
-  const validTagIds = new Set([
-    ...allOptions.tags.map((tag) => String(tag.id)),
-    NO_TAG_FILTER_VALUE,
-  ]);
-  const tagIds = (filters.tagIds ?? []).filter((value) => validTagIds.has(value));
-
-  if (
-    arraysEqual(universities, filters.universities) &&
-    arraysEqual(schools, filters.schools) &&
-    arraysEqual(departments, filters.departments) &&
-    arraysEqual(titles, filters.titles) &&
-    arraysEqual(tagIds, filters.tagIds)
-  ) {
-    return filters;
-  }
-
-  return {
-    ...filters,
-    universities,
-    schools,
-    departments,
-    titles,
-    tagIds,
-  };
 };

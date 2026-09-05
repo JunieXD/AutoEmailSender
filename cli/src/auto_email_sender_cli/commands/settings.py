@@ -26,7 +26,6 @@ def get_runtime_settings(ctx: typer.Context) -> None:
         ctx,
         command="settings.get",
         path="/api/agent/v1/settings",
-        guide_topic="settings",
         human_formatter=format_detail,
     )
 
@@ -140,7 +139,7 @@ def update_runtime_settings(
             exit_code=2,
         )
         emit_error(
-            context, command="settings.update", error=error, guide_topic="settings"
+            context, command="settings.update", error=error
         )
         raise typer.Exit(error.exit_code)
 
@@ -182,13 +181,12 @@ def update_runtime_settings(
             command="settings.update",
             data=data,
             human_text=format_detail(data),
-            guide_topic="settings",
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None) or request_id,
         )
     except CliError as error:
         emit_error(
-            context, command="settings.update", error=error, guide_topic="settings"
+            context, command="settings.update", error=error
         )
         raise typer.Exit(error.exit_code) from error
 

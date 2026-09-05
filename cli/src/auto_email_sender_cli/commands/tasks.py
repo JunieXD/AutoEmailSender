@@ -35,7 +35,6 @@ def cancel_task_schedule(
         ctx,
         command="tasks.cancel-schedule",
         path=f"/api/agent/v1/tasks/{task_id}/cancel-schedule",
-        guide_topic="tasks",
         human_formatter=format_detail,
     )
 
@@ -49,7 +48,6 @@ def continue_task_manually(
         ctx,
         command="tasks.continue-manually",
         path=f"/api/agent/v1/tasks/{task_id}/continue-manually",
-        guide_topic="tasks",
         human_formatter=format_detail,
     )
 
@@ -63,7 +61,6 @@ def start_task_follow_up(
         ctx,
         command="tasks.start-follow-up",
         path=f"/api/agent/v1/tasks/{task_id}/start-follow-up",
-        guide_topic="tasks",
         human_formatter=format_detail,
     )
 
@@ -82,7 +79,6 @@ def set_task_primary_material(
         command="tasks.set-primary-material",
         path=f"/api/agent/v1/tasks/{task_id}/primary-material",
         json_body={"primary_material_id": material_id},
-        guide_topic="tasks",
         human_formatter=format_detail,
     )
 
@@ -145,7 +141,6 @@ def set_task_outreach_config(
         command="tasks.set-outreach-config",
         path=f"/api/agent/v1/tasks/{task_id}/outreach-config",
         json_body=payload,
-        guide_topic="tasks",
         human_formatter=format_detail,
     )
 
@@ -163,7 +158,6 @@ def calculate_task_match(
         command="tasks.calculate-match",
         path=f"/api/agent/v1/tasks/{task_id}/calculate-match",
         json_body={"llm_profile_id": llm_profile_id},
-        guide_topic="tasks",
         human_formatter=format_detail,
         timeout=360.0,
     )

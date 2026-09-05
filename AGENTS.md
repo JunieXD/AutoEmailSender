@@ -1,72 +1,66 @@
 # Repository Guidelines
 
-- Use Node.js 24 (the CI baseline), Python 3.12, and `uv`.
-- Manage Python dependencies with `uv`. For Node workspaces, use `npm ci` for clean installs from committed lockfiles; use `npm install` only when intentionally changing dependencies, and commit both `package.json` and `package-lock.json`.
+- Use Node.js 24, Python 3.12 and `uv`. Prefix shell commands with `rtk` (`rtk proxy` for unsupported commands).
+- Install Python dependencies with `uv sync --dev`; use `npm ci` in Node workspaces. Use `npm install` when changing dependencies and update both package files.
+- If `.codegraph/` exists, use `codegraph explore "<file, symbol or question>"` before searching for code. Do not create an index unless requested.
 
-<!-- CODEGRAPH_START -->
-## CodeGraph
+## Layout
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+- `backend/app/modules/`: domain logic; `api/` and `services/`: remaining HTTP adapters and shared services. Migrations: `backend/alembic/versions/`.
+- `frontend/src/`: React UI, feature logic and API clients.
+- `desktop/`: Electron main/preload and packaging. `cli/`: Agent API client. `contracts/`: shared protocols.
+- `website/`: VitePress site. `scripts/`: build, release, quality and data tools. Documentation starts at `docs/README.md`.
 
-- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+## Changes
 
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->
+Follow nearby code style: UTF-8, Python 4-space indentation, TypeScript 2-space indentation and frontend `@/` imports.
+Validate external inputs at their boundary; use the resulting types internally. Add abstractions, compatibility branches and retries only for a concrete requirement.
+Test observable behavior and meaningful failure cases. Avoid tests that duplicate implementation, freeze prose or directory layouts, or merely repeat type checking.
+Update existing documentation when behavior changes; routine work does not need a new plan or acceptance report.
+Schema changes need an Alembic revision and migration coverage. Keep secrets, local databases, generated crawl data and dependencies out of Git; update `.env.example` for configuration changes.
+Prefer focused `type(scope): summary` commits. PRs should explain behavior and validation.
 
-## Project Structure & Module Organization
+## Development and verification
 
-- `frontend/` contains the Vite + React UI. App code is in `frontend/src`, with routes in `pages`, reusable UI in `components/{atoms,molecules,organisms}`, feature logic in `features`, and shared helpers in `lib`.
-- `backend/` contains the FastAPI service. Application code is organized under `app/{api,services,models,schemas,core,agents}`, Alembic migrations live under `alembic/`, `dev_entry.py` starts local development, and `desktop_entry.py` is used by the desktop runtime.
-- `desktop/` contains the Electron shell, preload code, desktop tests, and Windows/macOS packaging configuration.
-- `website/` contains the VitePress documentation site, public screenshots, and website-specific tests.
-- `scripts/` contains release, packaging, icon-generation, and release-note helper scripts.
-- `backend/test/`, `frontend/test/`, `frontend/src/**/*.test.*`, `desktop/test/`, and `website/test/` contain the active automated tests.
-- `docs/` is owner-based: active guidance lives under `architecture/`, `product/`, `development/`, and `operations/`; published notes live under `releases/`, historical plans under `archive/`, and images under `screenshots/`. Start at `docs/README.md`. `data/` holds local runtime data and exports.
+Run commands from the relevant workspace:
 
-## Build, Test, and Development Commands
+| Workspace | Development | Verification |
+| --- | --- | --- |
+| backend | `uv run python dev_entry.py` | `uv run python -m unittest test.test_<module>` |
+| frontend | `npm run dev` | `npm run lint`, `npm run test -- <file>`, `npm run build` |
+| desktop | `npm run dev` (requires frontend dev server) | `npm run typecheck`, `npm run test` |
+| cli | `uv run auto-email-sender --help` | `uv run python -m unittest discover test` |
+| website | `npm run docs:dev` | `npm run test`, `npm run build` |
 
-- `cd frontend && npm ci`: install frontend dependencies from the lockfile.
-- `cd frontend && npm run dev`: start the Vite dev server on `http://127.0.0.1:5173`.
-- `cd frontend && npm run build`: run TypeScript compilation and create the production bundle.
-- `cd frontend && npm run lint`: run ESLint across TS/TSX files.
-- `cd frontend && npm run test`: run the frontend Vitest suite.
-- `cd backend && uv sync --dev`: create or refresh the Python environment, including development and packaging tools.
-- `cd backend && uv run alembic upgrade head`: apply database migrations before running the web app against an existing data directory.
-- `cd backend && uv run python dev_entry.py`: run the FastAPI API locally on `http://127.0.0.1:8010`.
-- `cd backend && uv run python -m unittest discover test`: run the backend unittest suite.
-- `pwsh -NoProfile -File scripts/install-backend-playwright.ps1`: from the repository root, sync backend dependencies and install the packaged Playwright Chromium runtime used by crawler and desktop builds. On POSIX without PowerShell, run `cd backend && PLAYWRIGHT_BROWSERS_PATH=ms-playwright uv run python -m playwright install --only-shell chromium` after `uv sync --dev`.
-- `cd desktop && npm ci`: install Electron workspace dependencies from the lockfile.
-- `cd desktop && npm run typecheck`: type-check Electron main and preload TypeScript configs.
-- `cd desktop && npm run test`: run desktop Vitest tests.
-- `cd desktop && npm run dev`: build and launch Electron after the frontend Vite server is running; Electron starts the backend automatically.
-- `cd website && npm ci`: install documentation site dependencies from the lockfile.
-- `cd website && npm run docs:dev`: start the VitePress documentation server on `127.0.0.1`.
-- `cd website && npm run build`: build the documentation site.
-- `cd website && npm run test`: run website Vitest tests.
+Apply migrations with `cd backend && uv run alembic upgrade head` before using an existing development database.
+For a full test run: `rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py`.
+For release and packaging work, use `.codex/skills/auto-email-sender-release/SKILL.md` and the relevant guides under `docs/operations/`.
 
-## Coding Style & Naming Conventions
+<!-- ZVEC_GREP_START -->
+## zvec-grep
 
-- Use UTF-8 for source files, Markdown, and terminal output to avoid Chinese text corruption.
-- TypeScript and TSX follow the existing React + Vite style: 2-space indentation, PascalCase component files such as `HomePage.tsx`, camelCase utilities/hooks such as `useMentorFilters.ts`, and `@/` imports for `frontend/src`.
-- Python uses 4-space indentation, snake_case module names, and explicit typing for FastAPI handlers and support code where practical.
-- Electron code in `desktop/src` uses TypeScript modules and keeps main-process, preload, and platform integration logic separated.
+Choose the evidence source before the retrieval mode.
 
-## Testing Guidelines
+### Workspace evidence
+- Use the current workspace as the evidence source when the user asks about local material, prior context establishes it as relevant, or the question concerns how the current project works—even if the workspace is not mentioned explicitly.
+- A workspace may contain any mix of code, documents, configuration, and data.
+- Do not use workspace retrieval for unrelated open-world questions, current external facts, or web content that does not depend on local evidence.
 
-- For a full repository test run, use `rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py` so progress remains live through RTK. It suppresses successful test logs and prints detailed output only for failures. Use `--slowest N` only when diagnosing test duration.
-- Frontend tests use Vitest with node and jsdom projects. Run `npm run lint` plus the relevant `npm run test`, `npm run test:node`, or `npm run test:dom` command for touched UI and client logic.
-- Backend tests use `unittest` with `test_*.py` naming under `backend/test`. Keep new tests deterministic and avoid live-network dependencies unless they are clearly experimental.
-- Database model or schema changes must include an Alembic revision under `backend/alembic/versions` and tests covering migration or schema behavior.
-- Desktop and website tests use Vitest. For desktop changes, run `npm run typecheck` and `npm run test`; for website changes, run `npm run test` and `npm run build`.
-- For packaging or release changes on POSIX, run `cd frontend && npm run test:release-notes`, `bash scripts/release/prepare-release.test.sh`, `bash scripts/release/release-script.test.sh`, and the relevant packaging tests (`cd desktop && npm run test -- packaging.test.ts` and `cd frontend && npm run test -- desktopPackaging.test.ts`). On Windows, run the corresponding `.ps1` tests under `scripts/release/` with `pwsh -NoProfile -File`.
+### Retrieval routing
+- When an exact word, phrase, name, date, identifier, filename, path, configuration key, error message, source fragment, literal, or regex is known and locating its occurrences is sufficient, use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg`.
+- Use `zvec_grep_search` when wording or location is unknown, or when the answer requires semantic, conceptual, fuzzy, or paraphrase discovery; relationships, chronology, causality, architecture, or data or control flow; or comparison or synthesis across files, sections, or documents.
+- For a mixed task with exact anchors that still requires relationships or cross-file synthesis, call `zvec_grep_search` with the concept and anchors, then use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg` for focused follow-up.
+- When no sufficient exact anchor is available and the user asks whether conceptually related material exists locally, make at most one focused `zvec_grep_search` probe using the question plus distinctive names, dates, or terms. This probe does not apply to exact quotations, configuration keys, filenames, regexes, or exhaustive occurrence requests. Continue only when results are relevant; otherwise stop and report that the indexed workspace did not establish the answer.
+- Before broad file reads or delegating workspace discovery, use the appropriate search route. Do not delegate solely to locate material, and stop when the evidence is sufficient.
 
-## Commit & Pull Request Guidelines
+### Search evidence
+- Search results include bounded source snippets. Treat a sufficient snippet as already-read evidence, and read a cited file only when a required detail falls outside the snippet.
 
-- Recent history mixes Chinese summaries with Conventional Commit prefixes. Prefer `type(scope): summary`, for example `feat(frontend): add mentor filter state` or `docs: update database design`.
-- Keep each commit focused on one logical change. PRs should explain the change, list verification commands, link related issues, and include UI screenshots when needed.
+### Freshness and index lifecycle
+- Pass a daemon-visible absolute `root` on every zvec-grep workspace call.
+- Read `freshness` and `background_refresh` from search results without a status preflight.
+- When results are `served_from_current_index`, use them when sufficient instead of waiting for the background refresh.
+- If the index is missing but exact or regex lookup can answer the task, use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg`.
+- Creating, rebuilding, or dropping a persistent index requires an explicit user request or authorization; never do so silently.
 
-## Security & Configuration Tips
-
-- Never commit `.env`, API keys, `.venv`, `node_modules`, or generated crawler output.
-- When adding configuration, update the corresponding `.env.example` file and keep local-only output under `data/` or ignored test output folders.
+<!-- ZVEC_GREP_END -->

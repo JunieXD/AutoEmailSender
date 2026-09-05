@@ -302,7 +302,6 @@ def list_materials(
             "cursor": cursor,
             "limit": limit,
         },
-        guide_topic="materials",
         fetch_all=all_items,
         fields=fields,
         human_formatter=lambda data: format_page(
@@ -343,7 +342,6 @@ def get_material(
             "target_identity_id": target_identity_id,
             "include_text": include_text,
         },
-        guide_topic="materials",
         human_formatter=format_detail,
     )
 
@@ -408,7 +406,6 @@ def upload_material(
             command="materials.upload",
             data=data,
             human_text=format_detail(data),
-            guide_topic="materials",
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None) or request_id,
         )
@@ -419,12 +416,12 @@ def upload_material(
             exit_code=2,
         )
         emit_error(
-            context, command="materials.upload", error=error, guide_topic="materials"
+            context, command="materials.upload", error=error
         )
         raise typer.Exit(error.exit_code) from exc
     except CliError as error:
         emit_error(
-            context, command="materials.upload", error=error, guide_topic="materials"
+            context, command="materials.upload", error=error
         )
         raise typer.Exit(error.exit_code) from error
 
@@ -447,7 +444,6 @@ def set_primary_material(
         command="materials.set-primary",
         path=f"/api/agent/v1/materials/{material_id}/set-primary",
         params={"identity_id": identity_id},
-        guide_topic="materials",
         human_formatter=format_detail,
     )
 
@@ -498,11 +494,10 @@ def download_material(
                 "size_bytes": len(content),
             },
             human_text=f"已下载材料到：\n{destination}",
-            guide_topic="materials",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="materials")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -515,7 +510,6 @@ def prepare_material_delete(
         ctx,
         command="materials.prepare-delete",
         path=f"/api/agent/v1/materials/{material_id}/prepare-delete",
-        guide_topic="materials",
         human_formatter=format_detail,
     )
 
@@ -644,7 +638,6 @@ def update_identity_settings(
         path=f"/api/agent/v1/identities/{identity_id}/settings",
         method="PUT",
         json_body=payload,
-        guide_topic="identities",
         human_formatter=format_detail,
     )
 
@@ -658,7 +651,6 @@ def set_default_identity(
         ctx,
         command="identities.set-default",
         path=f"/api/agent/v1/identities/{identity_id}/default",
-        guide_topic="identities",
         human_formatter=format_detail,
     )
 
@@ -682,7 +674,6 @@ def set_identity_default_template(
         command="identities.set-default-template",
         path=f"/api/agent/v1/identities/{identity_id}/default-template",
         json_body={"template_id": None if clear_template else template_id},
-        guide_topic="identities",
         human_formatter=format_detail,
     )
 
@@ -696,7 +687,6 @@ def test_identity_smtp(
         ctx,
         command="identities.test-smtp",
         path=f"/api/agent/v1/identities/{identity_id}/smtp-test",
-        guide_topic="identities",
         human_formatter=format_detail,
     )
 
@@ -710,7 +700,6 @@ def test_identity_imap(
         ctx,
         command="identities.test-imap",
         path=f"/api/agent/v1/identities/{identity_id}/imap-test",
-        guide_topic="identities",
         human_formatter=format_detail,
     )
 
@@ -790,7 +779,6 @@ def update_llm_profile_settings(
         path=f"/api/agent/v1/llm-profiles/{profile_id}/settings",
         method="PUT",
         json_body=payload,
-        guide_topic="llm-profiles",
         human_formatter=format_detail,
     )
 
@@ -804,7 +792,6 @@ def set_default_llm_profile(
         ctx,
         command="llm-profiles.set-default",
         path=f"/api/agent/v1/llm-profiles/{profile_id}/default",
-        guide_topic="llm-profiles",
         human_formatter=format_detail,
     )
 
@@ -818,7 +805,6 @@ def fetch_llm_profile_models(
         ctx,
         command="llm-profiles.models",
         path=f"/api/agent/v1/llm-profiles/{profile_id}/models",
-        guide_topic="llm-profiles",
         human_formatter=format_detail,
         timeout=360.0,
     )
@@ -833,7 +819,6 @@ def test_llm_profile(
         ctx,
         command="llm-profiles.test",
         path=f"/api/agent/v1/llm-profiles/{profile_id}/test",
-        guide_topic="llm-profiles",
         human_formatter=format_detail,
     )
 

@@ -27,7 +27,6 @@ def get_test_email_status(
         ctx,
         command="test-email.status",
         path=f"/api/agent/v1/test-email/{identity_id}/status",
-        guide_topic="test-email",
         human_formatter=format_detail,
     )
 
@@ -42,7 +41,6 @@ def get_test_email_thread(
         ctx,
         command="test-email.get",
         path=f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}",
-        guide_topic="test-email",
         human_formatter=format_detail,
     )
 
@@ -70,7 +68,6 @@ def generate_test_email_draft(
         command="test-email.generate",
         path=f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/generate-draft",
         json_body=payload,
-        guide_topic="test-email",
         human_formatter=format_detail,
         timeout=360.0,
     )
@@ -113,7 +110,6 @@ def save_test_email_draft(
         path=f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/draft",
         method="PUT",
         json_body=payload,
-        guide_topic="test-email",
         human_formatter=format_detail,
     )
 
@@ -154,7 +150,6 @@ def prepare_test_email_send(
         command="test-email.prepare-send",
         path=f"/api/agent/v1/test-email/{identity_id}/{llm_profile_id}/prepare-send",
         json_body=payload,
-        guide_topic="test-email",
         human_formatter=format_detail,
         timeout=90.0,
     )

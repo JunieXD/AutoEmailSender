@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -30,35 +30,16 @@ def get_engine() -> AsyncEngine:
     return engine
 
 
-def _configure_sqlite_connection_pragmas(engine: AsyncEngine, settings: object) -> None:
-    busy_timeout_ms = max(0, int(getattr(settings, "sqlite_busy_timeout_ms", 5000)))
-    wal_enabled = bool(getattr(settings, "sqlite_wal_enabled", True))
-    foreign_keys_enabled = bool(
-        getattr(settings, "sqlite_foreign_keys_enabled", True),
-    )
-    synchronous = str(getattr(settings, "sqlite_synchronous", "NORMAL")).upper()
-    if synchronous not in {"OFF", "NORMAL", "FULL", "EXTRA"}:
-        synchronous = "NORMAL"
-    cache_size_kib = max(1, int(getattr(settings, "sqlite_cache_size_mib", 64))) * 1024
-    mmap_size_bytes = (
-        max(0, int(getattr(settings, "sqlite_mmap_size_mib", 256))) * 1024 * 1024
-    )
-    wal_autocheckpoint_pages = max(
-        1,
-        int(getattr(settings, "sqlite_wal_autocheckpoint_pages", 1000)),
-    )
-    journal_size_limit_bytes = (
-        max(1, int(getattr(settings, "sqlite_journal_size_limit_mib", 64)))
-        * 1024
-        * 1024
-    )
-    slow_query_seconds = (
-        max(
-            0,
-            int(getattr(settings, "sqlite_slow_query_ms", 250)),
-        )
-        / 1000
-    )
+def _configure_sqlite_connection_pragmas(engine: AsyncEngine, settings: Settings) -> None:
+    busy_timeout_ms = settings.sqlite_busy_timeout_ms
+    wal_enabled = settings.sqlite_wal_enabled
+    foreign_keys_enabled = settings.sqlite_foreign_keys_enabled
+    synchronous = settings.sqlite_synchronous
+    cache_size_kib = settings.sqlite_cache_size_mib * 1024
+    mmap_size_bytes = settings.sqlite_mmap_size_mib * 1024 * 1024
+    wal_autocheckpoint_pages = settings.sqlite_wal_autocheckpoint_pages
+    journal_size_limit_bytes = settings.sqlite_journal_size_limit_mib * 1024 * 1024
+    slow_query_seconds = settings.sqlite_slow_query_ms / 1000
 
     @event.listens_for(engine.sync_engine, "connect")
     def set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]

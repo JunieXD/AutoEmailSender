@@ -180,6 +180,7 @@ class CrawlerRuntimeRuntimeRoutingTests(unittest.IsolatedAsyncioTestCase):
                 "SettingsStub",
                 (),
                 {
+                    "sqlite_maintenance_interval_seconds": 21_600,
                     "dispatcher_interval_seconds": 30,
                     "imap_poll_interval_seconds": 60,
                     "crawler_worker_count": 1,

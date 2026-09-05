@@ -43,7 +43,6 @@ def read_dashboard_overview(
             "start_date": start_date,
             "end_date": end_date,
         },
-        guide_topic="insights",
         human_formatter=format_detail,
     )
 
@@ -86,7 +85,6 @@ def list_token_usage_records(
             "start_at": start_at,
             "end_at": end_at,
         },
-        guide_topic="insights",
         fetch_all=all_items,
         fields=fields,
         human_formatter=format_detail,
@@ -131,7 +129,6 @@ def read_token_usage_chart(
             "start_at": start_at,
             "end_at": end_at,
         },
-        guide_topic="insights",
         human_formatter=format_detail,
     )
 
@@ -164,6 +161,5 @@ def read_token_usage_visualization(
             "start_at": start_at,
             "end_at": end_at,
         },
-        guide_topic="insights",
         human_formatter=format_detail,
     )

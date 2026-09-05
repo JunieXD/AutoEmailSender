@@ -56,7 +56,6 @@ def list_campaigns(
         },
         fetch_all=all_items,
         fields=fields,
-        guide_topic="campaigns",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -81,7 +80,6 @@ def get_campaign(
         ctx,
         command="campaigns.get",
         path=f"/api/agent/v1/campaigns/{campaign_id}",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -95,7 +93,6 @@ def get_campaign_resend_context(
         ctx,
         command="campaigns.resend-context",
         path=f"/api/agent/v1/campaigns/{campaign_id}/resend-context",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -120,7 +117,6 @@ def list_campaign_items(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="campaigns",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -232,7 +228,6 @@ def prepare_campaign_create(
             "emails_per_window": emails_per_window,
             "scheduled_dates": scheduled_dates or [],
         },
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -247,7 +242,6 @@ def get_campaign_item_thread(
         ctx,
         command="campaigns.item-thread",
         path=f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/thread",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -288,7 +282,6 @@ def approve_campaign_item_draft(
             "body_html": body_html,
             **attachment_payload,
         },
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -313,7 +306,6 @@ def approve_campaign_drafts(
         command="campaigns.approve-drafts",
         path=f"/api/agent/v1/campaigns/{campaign_id}/approve-drafts",
         json_body={"item_ids": item_ids},
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -327,7 +319,6 @@ def start_campaign_drafts(
         ctx,
         command="campaigns.start-drafts",
         path=f"/api/agent/v1/campaigns/{campaign_id}/start-drafts",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -341,7 +332,6 @@ def pause_campaign(
         ctx,
         command="campaigns.pause",
         path=f"/api/agent/v1/campaigns/{campaign_id}/pause",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -355,7 +345,6 @@ def stop_campaign(
         ctx,
         command="campaigns.stop",
         path=f"/api/agent/v1/campaigns/{campaign_id}/stop",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -369,7 +358,6 @@ def archive_campaign(
         ctx,
         command="campaigns.archive",
         path=f"/api/agent/v1/campaigns/{campaign_id}/archive",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -383,7 +371,6 @@ def restore_campaign(
         ctx,
         command="campaigns.restore",
         path=f"/api/agent/v1/campaigns/{campaign_id}/restore",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -398,7 +385,6 @@ def remove_campaign_item(
         ctx,
         command="campaigns.remove-item",
         path=f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/remove",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -413,7 +399,6 @@ def cancel_campaign_item_send(
         ctx,
         command="campaigns.cancel-item-send",
         path=f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/cancel-send",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -430,7 +415,6 @@ def prepare_campaign_item_send_restore(
         path=(
             f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/prepare-restore-send"
         ),
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -445,7 +429,6 @@ def retry_campaign_item_draft(
         ctx,
         command="campaigns.retry-item-draft",
         path=f"/api/agent/v1/campaigns/{campaign_id}/items/{item_id}/retry-draft",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -459,7 +442,6 @@ def prepare_campaign_resume(
         ctx,
         command="campaigns.prepare-resume",
         path=f"/api/agent/v1/campaigns/{campaign_id}/prepare-resume",
-        guide_topic="campaigns",
         human_formatter=format_detail,
     )
 
@@ -482,6 +464,5 @@ def prepare_campaign_send(
         command="campaigns.prepare-send",
         path=f"/api/agent/v1/campaigns/{campaign_id}/prepare-send",
         json_body={"item_ids": item_ids},
-        guide_topic="sending",
         human_formatter=format_detail,
     )

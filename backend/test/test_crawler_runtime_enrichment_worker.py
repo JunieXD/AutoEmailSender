@@ -151,7 +151,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ):
             runtime_session_factory = async_sessionmaker(
                 self.engine,
@@ -215,7 +215,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
@@ -244,7 +244,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(CandidateEnrichmentPayload(), None)),
+            new=AsyncMock(return_value=(CandidateEnrichmentPayload(), None, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
@@ -662,7 +662,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
         payload = CandidateEnrichmentPayload(email="zhang@example.edu")
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ) as enrich_mock:
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
@@ -1126,7 +1126,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 task.status = CrawlCandidateEnrichmentTaskStatus.PENDING.value
                 task.worker_id = None
                 await session.commit()
-            return payload, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0}
+            return payload, {"input_tokens": 10, "output_tokens": 5, "cached_tokens": 0}, None
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
@@ -1175,7 +1175,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 task.worker_id = None
                 job.status = CrawlJobStatus.CANCELED.value
                 await session.commit()
-            return payload, None
+            return payload, None, None
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
@@ -1213,7 +1213,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
                 )
             assert cache_key is not None
             crawler_runtime_enrichment_worker._PROFILE_TEXT_CACHE.put(cache_key, "张三")
-            return payload, {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0}
+            return payload, {"input_tokens": 1, "output_tokens": 1, "cached_tokens": 0}, None
 
         async def cancel_before_final_commit(*_args, **_kwargs):
             async with self.session_factory() as session:
@@ -1306,7 +1306,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory, task_id=task_id, worker_id="w1"
@@ -1749,7 +1749,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory, task_id=task_id, worker_id="w1"
@@ -1895,7 +1895,7 @@ class CrawlerRuntimeEnrichmentWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, usage)),
+            new=AsyncMock(return_value=(payload, usage, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory, task_id=task_id, worker_id="w1"

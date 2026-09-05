@@ -398,7 +398,7 @@ async def create_professor_bulk_archive_change_plan(
             )
         except ProfessorMutationError as exc:
             raise _professor_error(exc) from exc
-        snapshot["bulk_archive_fingerprint"] = _bulk_archive_snapshot_fingerprint(
+        snapshot["bulk_archive_fingerprint"] = _request_state_summary_fingerprint(
             snapshot
         )
         summary = snapshot.get("summary")
@@ -446,7 +446,7 @@ async def create_professor_tag_delete_change_plan(
             snapshot = await prepare_professor_tag_delete_snapshot(session, tag_id)
         except ProfessorMutationError as exc:
             raise _professor_error(exc) from exc
-        snapshot["tag_delete_fingerprint"] = _tag_delete_snapshot_fingerprint(snapshot)
+        snapshot["tag_delete_fingerprint"] = _request_state_summary_fingerprint(snapshot)
         return await _create_change_plan(
             session,
             action=PROFESSOR_TAG_DELETE_ACTION,
@@ -493,7 +493,7 @@ async def create_professor_import_change_plan(
             parsed,
             filename=filename,
         )
-        snapshot["import_fingerprint"] = _professor_import_snapshot_fingerprint(
+        snapshot["import_fingerprint"] = _request_state_summary_fingerprint(
             snapshot
         )
         now = utc_now()
@@ -567,7 +567,7 @@ async def create_community_mentor_import_change_plan(
         except CommunityDataError as exc:
             raise _community_import_error(exc) from exc
         snapshot["community_import_fingerprint"] = (
-            _community_import_snapshot_fingerprint(
+            _request_state_fingerprint(
                 snapshot,
             )
         )
@@ -617,7 +617,7 @@ async def create_test_email_send_change_plan(
             )
         except ValueError as exc:
             raise _test_email_error(exc) from exc
-        snapshot["test_email_send_fingerprint"] = _test_email_send_snapshot_fingerprint(
+        snapshot["test_email_send_fingerprint"] = _request_state_summary_fingerprint(
             snapshot
         )
         warnings = snapshot.setdefault("warnings", [])
@@ -772,7 +772,7 @@ async def create_crawl_job_retry_change_plan(
                 return _serialize_change_plan(existing, idempotent_replay=True)
 
         snapshot = await _prepare_crawl_job_retry_snapshot(session, job_id, payload)
-        snapshot["retry_fingerprint"] = _crawl_job_retry_snapshot_fingerprint(snapshot)
+        snapshot["retry_fingerprint"] = _request_state_fingerprint(snapshot)
         now = utc_now()
         plan = AgentChangePlan(
             id=_new_change_plan_id(),
@@ -1335,7 +1335,7 @@ async def _execute_professor_bulk_archive(
         )
     except ProfessorMutationError as exc:
         raise _bulk_archive_plan_stale_error() from exc
-    if expected_fingerprint != _bulk_archive_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_summary_fingerprint(current_snapshot):
         raise _bulk_archive_plan_stale_error()
     try:
         result = await bulk_archive_professor_records(
@@ -1368,7 +1368,7 @@ async def _execute_professor_tag_delete(
         current_snapshot = await prepare_professor_tag_delete_snapshot(session, tag_id)
     except ProfessorMutationError as exc:
         raise _tag_delete_plan_stale_error() from exc
-    if expected_fingerprint != _tag_delete_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_summary_fingerprint(current_snapshot):
         raise _tag_delete_plan_stale_error()
     try:
         result = await delete_professor_tag_record(
@@ -1404,7 +1404,7 @@ async def _execute_professor_import(
         )
     except (ProfessorMutationError, ValueError) as exc:
         raise _professor_import_plan_stale_error() from exc
-    if expected_fingerprint != _professor_import_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_summary_fingerprint(current_snapshot):
         raise _professor_import_plan_stale_error()
 
     try:
@@ -1445,7 +1445,7 @@ async def _execute_community_mentor_import(
         )
     except CommunityDataError as exc:
         raise _community_import_error(exc) from exc
-    if expected_fingerprint != _community_import_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_fingerprint(current_snapshot):
         raise _community_import_plan_stale_error()
 
     try:
@@ -1682,7 +1682,7 @@ async def _execute_test_email_send(
         )
     except ValueError as exc:
         raise _test_email_error(exc) from exc
-    if expected_fingerprint != _test_email_send_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_summary_fingerprint(current_snapshot):
         raise _test_email_send_plan_stale_error()
 
     try:
@@ -1872,7 +1872,7 @@ async def _execute_crawl_job_retry(
         )
     except AgentApiError as exc:
         raise _crawl_job_retry_plan_stale_error() from exc
-    if expected_fingerprint != _crawl_job_retry_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _request_state_fingerprint(current_snapshot):
         raise _crawl_job_retry_plan_stale_error()
     try:
         job = await retry_faculty_crawl_job_record(
@@ -2060,15 +2060,6 @@ def _crawl_job_retry_request_from_snapshot(
     return job_id, CrawlJobRetryPayload(
         clear_existing_data=clear_existing_data,
         llm_profile_id=llm_profile_id,
-    )
-
-
-def _crawl_job_retry_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "state": snapshot.get("state"),
-        },
     )
 
 
@@ -2436,6 +2427,10 @@ def _template_archive_snapshot_fingerprint(
     )
 
 
+def _request_state_summary_fingerprint(snapshot: dict[str, object]) -> str:
+    return fingerprint({key: snapshot.get(key) for key in ("request", "state", "summary")})
+
+
 def _bulk_tags_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
     return fingerprint(
         {
@@ -2445,51 +2440,11 @@ def _bulk_tags_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
     )
 
 
-def _bulk_archive_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "summary": snapshot.get("summary"),
-            "state": snapshot.get("state"),
-        },
-    )
-
-
-def _tag_delete_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "summary": snapshot.get("summary"),
-            "state": snapshot.get("state"),
-        },
-    )
-
-
-def _professor_import_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "summary": snapshot.get("summary"),
-            "state": snapshot.get("state"),
-        },
-    )
-
-
-def _community_import_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
+def _request_state_fingerprint(snapshot: dict[str, object]) -> str:
     return fingerprint(
         {
             "request": snapshot.get("request"),
             "state": snapshot.get("state"),
-        },
-    )
-
-
-def _test_email_send_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "state": snapshot.get("state"),
-            "summary": snapshot.get("summary"),
         },
     )
 
@@ -2697,28 +2652,8 @@ def _professor_import_plan_stale_error() -> AgentApiError:
 
 
 def _community_import_error(error: CommunityDataError) -> AgentApiError:
-    if error.code in {
-        "COMMUNITY_DATA_VERSION_CHANGED",
-        "COMMUNITY_DATA_REQUIRES_NEWER_APP",
-        "COMMUNITY_DATA_IDENTITY_CONFLICT",
-        "COMMUNITY_DATA_LIFECYCLE_BLOCKED",
-        "COMMUNITY_DATA_PREVIEW_STALE",
-    }:
-        status_code = 409
-    elif error.code in {
-        "COMMUNITY_DATA_SELECTION_INVALID",
-        "COMMUNITY_DATA_PATH_INVALID",
-        "COMMUNITY_DATA_CONFIG_INVALID",
-        "COMMUNITY_DATA_FIELD_CHOICE_INVALID",
-        "COMMUNITY_DATA_TOO_LARGE",
-    }:
-        status_code = 400
-    elif error.code == "COMMUNITY_DATA_UNAVAILABLE":
-        status_code = 503
-    else:
-        status_code = 502
     return AgentApiError(
-        status_code=status_code,
+        status_code=error.status_code,
         code=error.code,
         message=str(error),
     )

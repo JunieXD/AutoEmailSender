@@ -120,27 +120,6 @@ def _raise_http_record_error(error: CrawlJobRecordError) -> None:
     raise HTTPException(status_code=error.status_code, detail=message) from error
 
 
-def _iter_unique_start_urls_for_page_tasks(job: CrawlJob) -> list[tuple[str, str]]:
-    urls = job.start_urls or [job.start_url]
-    unique: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for url in urls:
-        if not isinstance(url, str):
-            continue
-        stripped = url.strip()
-        if not stripped:
-            continue
-        normalized_url = normalize_url(stripped)
-        if normalized_url in seen:
-            continue
-        seen.add(normalized_url)
-        unique.append((stripped, normalized_url))
-    if unique:
-        return unique
-    fallback_url = job.start_url.strip()
-    return [(fallback_url, normalize_url(fallback_url))]
-
-
 @router.post("", response_model=CrawlJobRead, status_code=status.HTTP_201_CREATED)
 async def create_crawl_job(
     payload: CrawlJobCreatePayload,
@@ -586,24 +565,6 @@ async def _build_crawl_job_summaries(
         for job in jobs
         for metrics in [build_crawl_job_metrics(job)]
     ]
-
-
-async def _count_by_job_id(
-    session: AsyncSession,
-    job_id_column: object,
-    job_ids: list[int],
-) -> dict[int, int]:
-    counts: dict[int, int] = {}
-    for job_id_chunk in chunked_values(unique_positive_ids(job_ids)):
-        rows = (
-            await session.execute(
-                select(job_id_column, func.count())
-                .where(job_id_column.in_(job_id_chunk))
-                .group_by(job_id_column),
-            )
-        ).all()
-        counts.update({int(job_id): int(count) for job_id, count in rows})
-    return counts
 
 
 async def _count_unique_crawl_pages_by_job_id(

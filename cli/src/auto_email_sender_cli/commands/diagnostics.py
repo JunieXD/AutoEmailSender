@@ -68,7 +68,6 @@ def list_diagnostics_logs(
             limit=limit,
             offset=offset,
         ),
-        guide_topic="diagnostics",
         human_formatter=format_detail,
         fetch_all=all_items,
         fields=fields,
@@ -127,11 +126,10 @@ def export_diagnostics_logs(
             command=command,
             data={"output": destination.as_posix(), "total": total},
             human_text=f"已导出诊断日志到：\n{destination}",
-            guide_topic="diagnostics",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="diagnostics")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -164,11 +162,10 @@ def download_crawler_debug_log(
                 "size_bytes": len(content),
             },
             human_text=f"已导出抓取调试日志到：\n{destination}",
-            guide_topic="diagnostics",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="diagnostics")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 

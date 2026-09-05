@@ -868,11 +868,6 @@ async def trigger_crawler(
     }
 
 
-def _ensure_professor_email_valid(email: str) -> None:
-    if not is_valid_professor_email(email):
-        raise HTTPException(status_code=400, detail="邮箱格式不正确")
-
-
 async def _record_professor_log(
     session: AsyncSession,
     professor: Professor,

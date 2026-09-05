@@ -2,7 +2,7 @@
 
 The active documentation is organized by ownership:
 
-- `architecture/`: module boundaries, dependency rules, and the modularization execution record.
+- `architecture/`: module ownership, dependency conventions, and process boundaries.
 - `product/`: current product behavior and feature design baselines.
 - `development/`: implementation notes, engineering plans, acceptance reports, and machine-checked contract data.
 - `operations/`: local operations, data publication, packaging, and release procedures.

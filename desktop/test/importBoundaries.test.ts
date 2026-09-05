@@ -82,12 +82,6 @@ const processBoundaryViolations = (graph: Map<string, Set<string>>): string[] =>
       if (source !== "preload.ts" && target === "preload.ts") {
         violations.push(`${source} -> ${target}: preload must remain a process boundary`);
       }
-      if (source === "main.ts" && target !== "main/bootstrap/application.ts") {
-        violations.push(`${source} -> ${target}: main entrypoint may only call the application bootstrap`);
-      }
-      if (source === "preload.ts" && target !== "preload/bridge.ts") {
-        violations.push(`${source} -> ${target}: preload may only depend on bridge contracts`);
-      }
       if (
         source.startsWith("preload/") &&
         !target.startsWith("contracts/") &&
@@ -143,15 +137,6 @@ const importCycles = (graph: Map<string, Set<string>>): string[] => {
 };
 
 describe("desktop process and import boundaries", () => {
-  it("keeps only stable process entrypoints at the source root", () => {
-    const rootSourceFiles = sourceFiles
-      .filter((file) => path.dirname(file) === srcRoot)
-      .map(toRelative)
-      .sort();
-
-    expect(rootSourceFiles).toEqual(["main.ts", "preload.ts"]);
-  });
-
   it("keeps main and preload dependencies pointed in the correct direction", () => {
     expect(processBoundaryViolations(dependencyGraph())).toEqual([]);
   });
@@ -160,19 +145,4 @@ describe("desktop process and import boundaries", () => {
     expect(importCycles(dependencyGraph())).toEqual([]);
   });
 
-  it("keeps the main entrypoint limited to bootstrap invocation", () => {
-    const source = readFileSync(path.resolve(srcRoot, "main.ts"), "utf8");
-    const sourceFile = ts.createSourceFile(
-      "main.ts",
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-
-    expect(sourceFile.statements).toHaveLength(2);
-    expect(ts.isImportDeclaration(sourceFile.statements[0])).toBe(true);
-    expect(ts.isExpressionStatement(sourceFile.statements[1])).toBe(true);
-    expect(source).toContain("bootstrapDesktopApplication();");
-  });
 });

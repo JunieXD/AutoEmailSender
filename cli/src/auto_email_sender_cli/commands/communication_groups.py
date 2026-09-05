@@ -37,7 +37,6 @@ def list_communication_groups(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="communication-groups",
         human_formatter=lambda data: format_page(
             data,
             columns=(("id", "ID"), ("members", "成员")),
@@ -54,7 +53,6 @@ def get_communication_group(
         ctx,
         command="communication-groups.get",
         path=f"/api/agent/v1/communication-groups/{group_id}",
-        guide_topic="communication-groups",
         human_formatter=format_detail,
     )
 
@@ -93,7 +91,6 @@ def create_communication_group(
         command="communication-groups.create",
         path="/api/agent/v1/communication-groups",
         json_body=json_body,
-        guide_topic="communication-groups",
         human_formatter=format_detail,
     )
 
@@ -149,7 +146,6 @@ def update_communication_group(
         method="PUT",
         path=f"/api/agent/v1/communication-groups/{group_id}",
         json_body=json_body,
-        guide_topic="communication-groups",
         human_formatter=format_detail,
     )
 
@@ -163,6 +159,5 @@ def delete_communication_group(
         ctx,
         command="communication-groups.delete",
         path=f"/api/agent/v1/communication-groups/{group_id}/delete",
-        guide_topic="communication-groups",
         human_formatter=format_detail,
     )

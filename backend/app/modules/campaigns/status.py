@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.query_chunks import chunked_values
 from app.core.time import as_utc_aware, utc_now
 
 from app.models import (
@@ -13,7 +15,15 @@ from app.models import (
     EmailTask,
     EmailTaskCancellationReason,
     EmailTaskStatus,
+    IdentityMaterial,
 )
+
+
+BATCH_TASK_DELETABLE_STATUSES = {
+    BatchTaskStatus.STOPPED.value,
+    BatchTaskStatus.COMPLETED.value,
+    BatchTaskStatus.EXPIRED.value,
+}
 
 
 BATCH_TASK_COMPLETED_ITEM_STATUSES = {
@@ -87,3 +97,44 @@ def sync_batch_task_completion(task: BatchTask, *, now: datetime | None = None) 
     task.status = BatchTaskStatus.COMPLETED.value
     task.updated_at = resolved_now
     return True
+
+
+async def sanitize_batch_task_material_references_before_restore(
+    session: AsyncSession, task: BatchTask
+) -> None:
+    material_ids = set(task.selected_material_ids or [])
+    if task.primary_material_id is not None:
+        material_ids.add(task.primary_material_id)
+    if not material_ids:
+        return
+
+    existing_material_ids: set[int] = set()
+    for material_id_chunk in chunked_values(material_ids):
+        existing_material_ids.update(
+            await session.scalars(
+                select(IdentityMaterial.id).where(
+                    IdentityMaterial.id.in_(material_id_chunk),
+                ),
+            ),
+        )
+    removed_primary = (
+        task.primary_material_id is not None
+        and task.primary_material_id not in existing_material_ids
+    )
+    updated = False
+    if removed_primary:
+        task.primary_material_id = None
+        if task.status not in BATCH_TASK_DELETABLE_STATUSES:
+            task.status = BatchTaskStatus.STOPPED.value
+        updated = True
+    if task.selected_material_ids is not None:
+        filtered_material_ids = [
+            material_id
+            for material_id in task.selected_material_ids
+            if material_id in existing_material_ids
+        ]
+        if filtered_material_ids != task.selected_material_ids:
+            task.selected_material_ids = filtered_material_ids
+            updated = True
+    if updated:
+        task.updated_at = utc_now()

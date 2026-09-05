@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import {
   clampPageSize,
   getStoredPageSize,
+  getTotalPages,
   PAGE_SIZE,
   setStoredPageSize,
   type PaginationChange,
@@ -41,3 +42,13 @@ export const usePaginationState = ({
     onChange,
   };
 };
+
+export function usePageBounds(
+  setPage: Dispatch<SetStateAction<number>>,
+  totalItems: number,
+  pageSize: number,
+) {
+  useEffect(() => {
+    setPage((page) => Math.min(page, getTotalPages(totalItems, pageSize)));
+  }, [setPage, totalItems, pageSize]);
+}

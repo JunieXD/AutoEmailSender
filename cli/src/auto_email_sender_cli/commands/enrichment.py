@@ -43,7 +43,6 @@ def list_professor_information_enrichment_jobs(
         params={"view": view, "cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="enrichment",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -77,7 +76,6 @@ def create_professor_information_enrichment_job(
             "llm_profile_id": llm_profile_id,
             "name": name,
         },
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )
 
@@ -91,7 +89,6 @@ def get_professor_information_enrichment_job(
         ctx,
         command="enrichment.jobs.get",
         path=f"/api/agent/v1/enrichment/jobs/{job_id}",
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )
 
@@ -116,7 +113,6 @@ def list_professor_information_enrichment_job_items(
         params={"cursor": cursor, "limit": limit},
         fetch_all=all_items,
         fields=fields,
-        guide_topic="enrichment",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -140,7 +136,6 @@ def cancel_professor_information_enrichment_job(
         ctx,
         command="enrichment.jobs.cancel",
         path=f"/api/agent/v1/enrichment/jobs/{job_id}/cancel",
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )
 
@@ -154,7 +149,6 @@ def retry_failed_professor_information_enrichment_job(
         ctx,
         command="enrichment.jobs.retry-failed",
         path=f"/api/agent/v1/enrichment/jobs/{job_id}/retry-failed",
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )
 
@@ -168,7 +162,6 @@ def delete_professor_information_enrichment_job(
         ctx,
         command="enrichment.jobs.delete",
         path=f"/api/agent/v1/enrichment/jobs/{job_id}/delete",
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )
 
@@ -182,6 +175,5 @@ def restore_professor_information_enrichment_job(
         ctx,
         command="enrichment.jobs.restore",
         path=f"/api/agent/v1/enrichment/jobs/{job_id}/restore",
-        guide_topic="enrichment",
         human_formatter=format_detail,
     )

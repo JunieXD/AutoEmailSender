@@ -87,46 +87,43 @@ def build_command_contract(
     parser while the surrounding contract remains stable for Agents.
     """
 
-    normalized = command
-    spec = get_operation_spec(normalized)
-    supports_list = supports_pagination(normalized)
-    contract: dict[str, object] = {
-        "command": normalized,
-        "contract_version": CONTRACT_VERSION,
-        "resource": discovery_resource(normalized),
-        "operation": capability_operation(normalized),
-        "input": _input_contract(normalized, parameters, input_file_examples),
-        "output": _output_contract(normalized, supports_list),
-        "effects": spec.effects.to_dict() if spec is not None else _fallback_effects(),
-        "preconditions": (
-            spec.preconditions.to_dict()
-            if spec is not None
-            else _fallback_preconditions()
-        ),
-        "trust": spec.trust.to_dict() if spec is not None else _fallback_trust(),
-        "state_transitions": (
-            [item.to_dict() for item in spec.state_transitions]
-            if spec is not None
-            else []
-        ),
-        "errors": [item.to_dict() for item in spec.errors] if spec is not None else [],
-        "next_actions": (
-            [item.to_dict() for item in spec.next_actions] if spec is not None else []
-        ),
-        "idempotency": spec.idempotency.to_dict()
-        if spec is not None
-        else _fallback_idempotency(),
-        "lifecycle": (
-            {
+    spec = get_operation_spec(command)
+    if spec is None:
+        semantics = {
+            "effects": _fallback_effects(),
+            "preconditions": _fallback_preconditions(),
+            "trust": _fallback_trust(),
+            "state_transitions": [],
+            "errors": [],
+            "next_actions": [],
+            "idempotency": _fallback_idempotency(),
+            "lifecycle": _fallback_lifecycle(),
+            "next_steps": next_steps,
+        }
+    else:
+        semantics = {
+            "effects": spec.effects.to_dict(),
+            "preconditions": spec.preconditions.to_dict(),
+            "trust": spec.trust.to_dict(),
+            "state_transitions": [item.to_dict() for item in spec.state_transitions],
+            "errors": [item.to_dict() for item in spec.errors],
+            "next_actions": [item.to_dict() for item in spec.next_actions],
+            "idempotency": spec.idempotency.to_dict(),
+            "lifecycle": {
                 "introduced_in": spec.introduced_in,
                 "deprecated": spec.deprecated,
                 "replaced_by": list(spec.replaced_by),
-            }
-            if spec is not None
-            else _fallback_lifecycle()
-        ),
-        # Keep the earlier human-oriented fields for protocol v2 clients.
-        "next_steps": list(spec.next_steps) if spec is not None else next_steps,
+            },
+            "next_steps": list(spec.next_steps),
+        }
+    contract: dict[str, object] = {
+        "command": command,
+        "contract_version": CONTRACT_VERSION,
+        "resource": discovery_resource(command),
+        "operation": capability_operation(command),
+        "input": _input_contract(command, parameters, input_file_examples),
+        "output": _output_contract(command, supports_pagination(command)),
+        **semantics,
     }
     contract["contract_revision"] = command_contract_revision(contract)
     return contract

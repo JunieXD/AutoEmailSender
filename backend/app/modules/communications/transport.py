@@ -29,6 +29,7 @@ from app.core.config import get_settings
 from app.models import IdentityProfile, Professor
 from .addresses import normalize_email_address, normalize_email_list
 from .imap.errors import is_provider_throttle_error
+from .imap.errors import format_imap_response_detail, imap_status_text
 from .imap.rate_limiter import acquire_history_imap_command_slot_sync
 from .imap.fetcher import (
     ImapFetchedMessage,
@@ -891,15 +892,6 @@ def _fetch_incremental_mailbox_messages_sync(
     return max_seen_uid, messages, uidvalidity
 
 
-def _fetch_incremental_inbox_messages_sync(
-    identity: IdentityProfile,
-    last_seen_uid: int | None,
-) -> tuple[int | None, list[ImapFetchedMessage]]:
-    return _fetch_incremental_mailbox_messages_sync(
-        identity, DEFAULT_IMAP_FOLDER, last_seen_uid
-    )
-
-
 def _fetch_professor_history_mailbox_messages_sync(
     identity: IdentityProfile,
     folder: str,
@@ -929,23 +921,6 @@ def _fetch_professor_history_mailbox_messages_sync(
     finally:
         _logout_imap_client(client)
     return messages
-
-
-def _fetch_professor_history_mailbox_message_headers_sync(
-    identity: IdentityProfile,
-    folder: str,
-    professor_email: str,
-    folder_role: str,
-) -> list[ImapFetchedMessage]:
-    result = _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
-        identity,
-        folder,
-        professor_email,
-        folder_role,
-        None,
-        None,
-    )
-    return result.messages
 
 
 def _fetch_professor_history_mailbox_message_headers_with_command_count_sync(
@@ -1353,18 +1328,6 @@ def _fetch_mailbox_messages_by_uid_sync(
     return messages
 
 
-def _fetch_professor_history_inbox_messages_sync(
-    identity: IdentityProfile,
-    professor_email: str,
-) -> list[ImapFetchedMessage]:
-    return _fetch_professor_history_mailbox_messages_sync(
-        identity,
-        DEFAULT_IMAP_FOLDER,
-        professor_email,
-        "inbox",
-    )
-
-
 def _search_professor_history_uids(
     identity: IdentityProfile,
     client: IMAP4 | IMAP4_SSL,
@@ -1470,8 +1433,8 @@ def _get_selected_mailbox_high_water_uid(
 
     acquire_history_imap_command_slot_sync(identity, "SEARCH")
     status, payload = client.uid("SEARCH", None, "UID 1:*")
-    if _imap_status_text(status).upper() != "OK":
-        detail = _format_imap_response_detail(status, payload)
+    if imap_status_text(status).upper() != "OK":
+        detail = format_imap_response_detail(status, payload)
         raise MailRuntimeError(f"IMAP high-water UID search failed: {detail}")
     if not payload:
         return None, 1
@@ -1480,38 +1443,6 @@ def _get_selected_mailbox_high_water_uid(
     if not uids:
         return 0, 1
     return max(uids), 1
-
-
-def _imap_status_text(status: object) -> str:
-    if isinstance(status, (bytes, bytearray)):
-        return bytes(status).decode("utf-8", errors="ignore")
-    return str(status)
-
-
-def _format_imap_response_detail(status: object, payload: object) -> str:
-    status_text = _imap_status_text(status)
-    payload_text = _format_imap_payload_text(payload)
-    if payload_text:
-        return f"{status_text}: {payload_text}"
-    return status_text
-
-
-def _format_imap_payload_text(payload: object) -> str:
-    if not payload:
-        return ""
-    items = payload if isinstance(payload, (list, tuple)) else [payload]
-    parts: list[str] = []
-    for item in items:
-        if isinstance(item, (bytes, bytearray)):
-            text = bytes(item).decode("utf-8", errors="ignore")
-        elif isinstance(item, tuple):
-            text = " ".join(_format_imap_payload_text(part) for part in item)
-        else:
-            text = str(item)
-        text = text.strip()
-        if text:
-            parts.append(text)
-    return " ".join(parts)[:500]
 
 
 def _get_selected_mailbox_uidnext(client: IMAP4 | IMAP4_SSL) -> int | None:
@@ -1707,11 +1638,6 @@ def _parse_fetched_body(
             raw_body.decode(fallback_charset, errors="replace")
         )
     return body_text, body_html
-
-
-def _headers_indicate_multipart(raw_headers: bytes) -> bool:
-    parsed = BytesParser(policy=policy.default).parsebytes(raw_headers)
-    return parsed.get_content_maintype().lower() == "multipart"
 
 
 def _parse_fetched_headers(

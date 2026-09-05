@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { usePaginationState } from "./usePaginationState";
+import { usePageBounds, usePaginationState } from "./usePaginationState";
 
 describe("usePaginationState", () => {
   beforeEach(() => {
@@ -53,5 +54,23 @@ describe("usePaginationState", () => {
 
     expect(result.current.page).toBe(1);
     expect(result.current.pageSize).toBe(100);
+  });
+});
+
+describe("usePageBounds", () => {
+  it("keeps the page in range as results and page size change", () => {
+    const { result, rerender } = renderHook(({ total, size }) => {
+      const [page, setPage] = useState(5);
+      usePageBounds(setPage, total, size);
+      return page;
+    }, { initialProps: { total: 100, size: 10 } });
+
+    expect(result.current).toBe(5);
+    rerender({ total: 25, size: 10 });
+    expect(result.current).toBe(3);
+    rerender({ total: 25, size: 20 });
+    expect(result.current).toBe(2);
+    rerender({ total: 0, size: 20 });
+    expect(result.current).toBe(1);
   });
 });

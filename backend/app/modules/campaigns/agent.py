@@ -40,6 +40,10 @@ from .drafts.fallback import (
     professor_has_research_direction,
 )
 from .status import sync_batch_task_completion
+from app.modules.campaigns.status import (
+    BATCH_TASK_DELETABLE_STATUSES,
+    sanitize_batch_task_material_references_before_restore,
+)
 from app.modules.identities.public import material_can_be_primary
 from app.modules.llm.public import get_active_llm_profile, llm_profile_is_active
 from app.services.operation_logs import record_operation_log
@@ -73,7 +77,7 @@ CAMPAIGN_DISPATCHABLE_STATUSES = {
     EmailTaskStatus.SCHEDULED.value,
     EmailTaskStatus.SENDING.value,
 }
-CAMPAIGN_DELETABLE_STATUSES = {
+BATCH_TASK_DELETABLE_STATUSES = {
     BatchTaskStatus.STOPPED.value,
     BatchTaskStatus.COMPLETED.value,
     BatchTaskStatus.EXPIRED.value,
@@ -417,7 +421,7 @@ async def archive_agent_campaign(
                 "status": EmailTaskStatus.SENDING.value,
             },
         )
-    if campaign.status not in CAMPAIGN_DELETABLE_STATUSES:
+    if campaign.status not in BATCH_TASK_DELETABLE_STATUSES:
         await stop_agent_campaign(session, campaign_id)
     else:
         now = utc_now()
@@ -457,7 +461,7 @@ async def restore_agent_campaign(
     campaign = await _load_campaign_or_raise(session, campaign_id)
     if campaign.deleted_at is None:
         return _serialize_campaign(campaign)
-    await _sanitize_campaign_material_references_before_restore(session, campaign)
+    await sanitize_batch_task_material_references_before_restore(session, campaign)
     campaign.deleted_at = None
     campaign.updated_at = utc_now()
     await _record_campaign_action(
@@ -680,7 +684,7 @@ async def execute_campaign_resume_snapshot(
         raise _invalid_campaign_snapshot_error()
     context = await _resolve_campaign_resume_context(session, campaign_id)
     current_snapshot = _build_campaign_resume_snapshot(context)
-    if expected_fingerprint != _campaign_resume_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _campaign_snapshot_fingerprint(current_snapshot):
         raise _campaign_resume_plan_stale_error(campaign_id)
 
     now = utc_now()
@@ -732,7 +736,7 @@ async def execute_campaign_restore_send_snapshot(
         item_id,
     )
     current_snapshot = _build_campaign_restore_send_snapshot(context)
-    if expected_fingerprint != _campaign_restore_send_snapshot_fingerprint(
+    if expected_fingerprint != _campaign_snapshot_fingerprint(
         current_snapshot
     ):
         raise _campaign_restore_send_plan_stale_error(campaign_id, item_id)
@@ -782,7 +786,7 @@ async def execute_campaign_create_snapshot(
         raise _invalid_campaign_snapshot_error()
     context = await _resolve_campaign_create_context(session, payload)
     current_snapshot = _build_campaign_create_snapshot(context)
-    if expected_fingerprint != _campaign_create_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _campaign_snapshot_fingerprint(current_snapshot):
         raise _campaign_create_plan_stale_error()
 
     batch_task = BatchTask(
@@ -954,7 +958,7 @@ async def execute_campaign_send_snapshot(
         scheduled_at_values=scheduled_at_values,
     )
     current_snapshot = _build_campaign_send_snapshot(context, payload)
-    if expected_fingerprint != _campaign_send_snapshot_fingerprint(current_snapshot):
+    if expected_fingerprint != _campaign_snapshot_fingerprint(current_snapshot):
         raise _campaign_send_plan_stale_error(campaign_id)
 
     now = utc_now()
@@ -1275,13 +1279,13 @@ def _build_campaign_create_snapshot(
         "summary": summary,
         "warnings": warnings,
     }
-    snapshot["campaign_create_fingerprint"] = _campaign_create_snapshot_fingerprint(
+    snapshot["campaign_create_fingerprint"] = _campaign_snapshot_fingerprint(
         snapshot
     )
     return snapshot
 
 
-def _campaign_create_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
+def _campaign_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
     return fingerprint(
         {
             "request": snapshot.get("request"),
@@ -1659,19 +1663,10 @@ def _build_campaign_send_snapshot(
             "执行后无法通过同一计划再次创建重复发送。",
         ],
     }
-    snapshot["campaign_send_fingerprint"] = _campaign_send_snapshot_fingerprint(
+    snapshot["campaign_send_fingerprint"] = _campaign_snapshot_fingerprint(
         snapshot
     )
     return snapshot
-
-
-def _campaign_send_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "state": snapshot.get("state"),
-        },
-    )
 
 
 def _build_campaign_resume_snapshot(
@@ -1707,19 +1702,10 @@ def _build_campaign_resume_snapshot(
             "已取消发送的活动项不会因恢复活动而自动恢复；需要单独创建恢复发送计划。",
         ],
     }
-    snapshot["campaign_resume_fingerprint"] = _campaign_resume_snapshot_fingerprint(
+    snapshot["campaign_resume_fingerprint"] = _campaign_snapshot_fingerprint(
         snapshot,
     )
     return snapshot
-
-
-def _campaign_resume_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "state": snapshot.get("state"),
-        },
-    )
 
 
 def _campaign_resume_request_from_snapshot(snapshot: dict[str, object]) -> int:
@@ -1769,18 +1755,9 @@ def _build_campaign_restore_send_snapshot(
         ],
     }
     snapshot["campaign_restore_send_fingerprint"] = (
-        _campaign_restore_send_snapshot_fingerprint(snapshot)
+        _campaign_snapshot_fingerprint(snapshot)
     )
     return snapshot
-
-
-def _campaign_restore_send_snapshot_fingerprint(snapshot: dict[str, object]) -> str:
-    return fingerprint(
-        {
-            "request": snapshot.get("request"),
-            "state": snapshot.get("state"),
-        },
-    )
 
 
 def _campaign_restore_send_request_from_snapshot(
@@ -2147,46 +2124,6 @@ def _ensure_campaign_item_send_action_allowed(
             code="CAMPAIGN_ITEM_SCHEDULE_MISSING",
             message="该活动项缺少原定发送时间，不能修改发送计划。",
         )
-
-
-async def _sanitize_campaign_material_references_before_restore(
-    session: AsyncSession,
-    campaign: BatchTask,
-) -> None:
-    material_ids = set(campaign.selected_material_ids or [])
-    if campaign.primary_material_id is not None:
-        material_ids.add(campaign.primary_material_id)
-    if not material_ids:
-        return
-    existing_material_ids: set[int] = set()
-    for material_id_chunk in chunked_values(material_ids):
-        existing_material_ids.update(
-            await session.scalars(
-                select(IdentityMaterial.id).where(
-                    IdentityMaterial.id.in_(material_id_chunk),
-                ),
-            ),
-        )
-    updated = False
-    if (
-        campaign.primary_material_id is not None
-        and campaign.primary_material_id not in existing_material_ids
-    ):
-        campaign.primary_material_id = None
-        if campaign.status not in CAMPAIGN_DELETABLE_STATUSES:
-            campaign.status = BatchTaskStatus.STOPPED.value
-        updated = True
-    if campaign.selected_material_ids is not None:
-        filtered_ids = [
-            material_id
-            for material_id in campaign.selected_material_ids
-            if material_id in existing_material_ids
-        ]
-        if filtered_ids != campaign.selected_material_ids:
-            campaign.selected_material_ids = filtered_ids
-            updated = True
-    if updated:
-        campaign.updated_at = utc_now()
 
 
 async def _record_campaign_action(

@@ -12,7 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.query_chunks import chunked_values
 from app.core.time import as_utc_aware, utc_now
 from app.models import (
@@ -767,7 +767,7 @@ async def sync_identity_history_once(
         identity_id=identity_id,
         sent_folder=sent_folder,
         history_start_date=window.start_date,
-        settle_seconds=_int_setting(settings, "imap_history_queue_settle_seconds", 0),
+        settle_seconds=settings.imap_history_queue_settle_seconds,
     )
     queue_summary = await get_recent_v2_due_summary(session_factory, identity_id)
     if queue_summary.professor_count <= 0:
@@ -884,10 +884,10 @@ async def sync_identity_history_once(
     return sent_discovery.detected + targeted_detected
 
 
-def _recent_v2_targeted_professor_limit(settings) -> int:
+def _recent_v2_targeted_professor_limit(settings: Settings) -> int:
     effective_rate = min(
-        _int_setting(settings, "imap_history_command_budget_per_minute", 120),
-        _int_setting(settings, "imap_history_command_rate_per_minute", 40),
+        settings.imap_history_command_budget_per_minute,
+        settings.imap_history_command_rate_per_minute,
     )
     reserved_search_budget = max(1, effective_rate * 75 // 100)
     return max(1, reserved_search_budget // 2)
@@ -897,25 +897,18 @@ def _should_use_recent_v2_bulk_sent(
     *,
     professor_count: int,
     recent_sent_uid_count: int,
-    settings,
+    settings: Settings,
 ) -> bool:
     if professor_count <= _recent_v2_targeted_professor_limit(settings):
         return False
-    if recent_sent_uid_count > _int_setting(
-        settings, "imap_history_bulk_header_limit", 5000
-    ):
+    if recent_sent_uid_count > settings.imap_history_bulk_header_limit:
         return False
-    header_batch_size = max(1, _int_setting(settings, "imap_fetch_batch_size", 20))
+    header_batch_size = max(1, settings.imap_fetch_batch_size)
     bulk_command_cost = (
         1 + (recent_sent_uid_count + header_batch_size - 1) // header_batch_size
     )
     targeted_sent_command_cost = professor_count
     return bulk_command_cost < targeted_sent_command_cost
-
-
-def _int_setting(settings, name: str, default: int) -> int:
-    value = getattr(settings, name, default)
-    return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
 async def _sync_recent_sent_history_once(

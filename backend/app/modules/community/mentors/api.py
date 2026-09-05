@@ -257,24 +257,4 @@ def _parse_professor_ids(value: str) -> list[int]:
 
 
 def _community_http_error(exc: CommunityDataError) -> HTTPException:
-    if exc.code in {
-        "COMMUNITY_DATA_VERSION_CHANGED",
-        "COMMUNITY_DATA_REQUIRES_NEWER_APP",
-        "COMMUNITY_DATA_IDENTITY_CONFLICT",
-        "COMMUNITY_DATA_LIFECYCLE_BLOCKED",
-        "COMMUNITY_DATA_PREVIEW_STALE",
-    }:
-        status_code = 409
-    elif exc.code in {
-        "COMMUNITY_DATA_SELECTION_INVALID",
-        "COMMUNITY_DATA_PATH_INVALID",
-        "COMMUNITY_DATA_CONFIG_INVALID",
-        "COMMUNITY_DATA_FIELD_CHOICE_INVALID",
-        "COMMUNITY_DATA_TOO_LARGE",
-    }:
-        status_code = 400
-    elif exc.code == "COMMUNITY_DATA_UNAVAILABLE":
-        status_code = 503
-    else:
-        status_code = 502
-    return HTTPException(status_code=status_code, detail=str(exc))
+    return HTTPException(status_code=exc.status_code, detail=str(exc))

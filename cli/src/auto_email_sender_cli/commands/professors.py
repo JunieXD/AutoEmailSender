@@ -234,7 +234,6 @@ def prepare_professor_import(
             command=command,
             data=data,
             human_text=format_detail(data),
-            guide_topic="safety",
             app_version=client.descriptor.app_version,
             request_id=getattr(client, "last_request_id", None) or request_id,
         )
@@ -244,10 +243,10 @@ def prepare_professor_import(
             message=f"无法读取导师导入文件：{exc}",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="safety")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from exc
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="safety")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -263,7 +262,6 @@ def get_community_catalog(
         command="professors.community.catalog",
         path="/api/agent/v1/community-mentors/catalog",
         params={"refresh": refresh},
-        guide_topic="community",
         human_formatter=format_detail,
         timeout=90.0,
     )
@@ -288,7 +286,6 @@ def list_community_records(
         command="professors.community.records",
         path="/api/agent/v1/community-mentors/records",
         json_body={"dataset_version": dataset_version, "unit_paths": unit_paths},
-        guide_topic="community",
         human_formatter=format_detail,
         timeout=90.0,
         use_idempotency_key=False,
@@ -323,7 +320,6 @@ def preview_community_import(
             "unit_paths": unit_paths,
             "record_ids": record_ids,
         },
-        guide_topic="community",
         human_formatter=format_detail,
         timeout=90.0,
         use_idempotency_key=False,
@@ -352,7 +348,7 @@ def prepare_community_import(
             message=f"无法读取社区导师导入文件：{exc}",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         error = CliError(
@@ -360,7 +356,7 @@ def prepare_community_import(
             message="社区导师导入文件必须是 UTF-8 编码的 JSON 对象。",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from exc
     if not isinstance(payload, dict):
         error = CliError(
@@ -368,14 +364,13 @@ def prepare_community_import(
             message="社区导师导入文件必须是一个 JSON 对象。",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code)
     run_write_command(
         ctx,
         command=command,
         path="/api/agent/v1/community-mentors/prepare-import",
         json_body=payload,
-        guide_topic="community",
         human_formatter=format_detail,
         timeout=90.0,
     )
@@ -412,7 +407,7 @@ def export_community_share_package(
             message="--professor-id 与 --professor-id-file 不能同时使用。",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code)
     if professor_id_file is not None:
         try:
@@ -432,7 +427,7 @@ def export_community_share_package(
                 message=f"导师 ID 文件无效：{exc}",
                 exit_code=2,
             )
-            emit_error(context, command=command, error=error, guide_topic="community")
+            emit_error(context, command=command, error=error)
             raise typer.Exit(error.exit_code) from exc
         if any(professor_id < 1 for professor_id in professor_ids):
             error = CliError(
@@ -440,7 +435,7 @@ def export_community_share_package(
                 message="导师 ID 必须是正整数。",
                 exit_code=2,
             )
-            emit_error(context, command=command, error=error, guide_topic="community")
+            emit_error(context, command=command, error=error)
             raise typer.Exit(error.exit_code)
     if len(set(professor_ids)) != len(professor_ids):
         error = CliError(
@@ -448,7 +443,7 @@ def export_community_share_package(
             message="导师 ID 不能重复；请先冻结并去重选择文件。",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code)
     if not professor_ids:
         error = CliError(
@@ -456,7 +451,7 @@ def export_community_share_package(
             message="请至少指定一位要导出的导师。",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code)
     try:
         validate_context_options(
@@ -503,11 +498,10 @@ def export_community_share_package(
                 "size_bytes": len(content),
             },
             human_text=f"已导出社区共享包到：\n{destination}",
-            guide_topic="community",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -583,7 +577,7 @@ def export_community_share_batch(
             message=f"社区批量导出文件无效：{exc}",
             exit_code=2,
         )
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from exc
 
     try:
@@ -722,11 +716,10 @@ def export_community_share_batch(
                 "professor_count": sum(int(item["professor_count"]) for item in state["items"] if item["status"] == "succeeded"),
             },
             human_text=f"已批量导出 {len(successful_inputs)} 个社区投稿单位到：\n{destination}",
-            guide_topic="community",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="community")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 
 
@@ -946,7 +939,6 @@ def prepare_bulk_professor_archive(
         command="professors.prepare-bulk-archive",
         path="/api/agent/v1/professors/prepare-bulk-archive",
         json_body=json_body,
-        guide_topic="safety",
         human_formatter=format_detail,
     )
 
@@ -1176,7 +1168,6 @@ def prepare_professor_tag_delete(
         ctx,
         command="professors.tags.prepare-delete",
         path=f"/api/agent/v1/professor-tags/{tag_id}/prepare-delete",
-        guide_topic="safety",
         human_formatter=format_detail,
     )
 
@@ -1227,6 +1218,5 @@ def prepare_bulk_professor_tags(
             "mode": mode,
             "tag_ids": tag_ids,
         },
-        guide_topic="safety",
         human_formatter=format_detail,
     )

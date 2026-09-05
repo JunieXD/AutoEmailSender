@@ -25,7 +25,7 @@ import {
 import { listProfessors } from '@/entities/professor/api/professors';
 import { getTotalPages, PAGE_SIZE } from '@/lib/pagination';
 import { textToEmailHtml } from '@/lib/richEmail';
-import { usePaginationState } from '@/lib/usePaginationState';
+import { usePageBounds, usePaginationState } from '@/lib/usePaginationState';
 import { useSelectionContext } from '@/context/SelectionContext';
 import { getTaskModeCopy } from '@/features/create-task/client/taskCopy';
 import { buildBatchCreateConfirmDescription } from '@/features/create-task/client/batchCreateConfirmDescription';
@@ -571,15 +571,12 @@ export const CreateTaskPage = () => {
     targetMentorsPage,
     targetMentorsTotalPages,
   );
-  const visibleTargetMentors = useMemo(() => professors, [professors]);
 
   useEffect(() => {
     setTargetMentorsPage(1);
   }, [professorsSelectionKey, setTargetMentorsPage]);
 
-  useEffect(() => {
-    setTargetMentorsPage((currentPage) => Math.min(currentPage, targetMentorsTotalPages));
-  }, [setTargetMentorsPage, targetMentorsTotalPages]);
+  usePageBounds(setTargetMentorsPage, totalProfessorCount, targetMentorsPageSize);
 
   const selectedOutreachTemplate =
     outreachTemplates.find(
@@ -1176,7 +1173,7 @@ export const CreateTaskPage = () => {
               </div>
             </div>
             <div className="mt-4 space-y-3">
-              {visibleTargetMentors.map((professor) => (
+              {professors.map((professor) => (
                 <div key={professor.id} className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-3">
                   <div className="font-medium text-stone-900">{professor.name}</div>
                   <div className="mt-1 text-sm text-stone-500">

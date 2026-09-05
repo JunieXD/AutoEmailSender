@@ -156,7 +156,7 @@ import {
   isBatchTaskItemMissingResearchDirection,
 } from "@/features/batch-tasks/client/batchTaskDisplay";
 import { getPageItems, getTotalPages } from "@/lib/pagination";
-import { usePaginationState } from "@/lib/usePaginationState";
+import { usePageBounds, usePaginationState } from "@/lib/usePaginationState";
 import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
@@ -2103,172 +2103,21 @@ export const BackgroundTasksPage = ({
     notifyError,
   ]);
 
-  useEffect(() => {
-    setBatchPage((currentPage) =>
-      Math.min(currentPage, getTotalPages(tasks.length, batchPageSize)),
-    );
-  }, [batchPageSize, setBatchPage, tasks.length]);
-
-  useEffect(() => {
-    setCrawlPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(displayedCrawlJobTotalCount, crawlPageSize),
-      ),
-    );
-  }, [crawlPageSize, displayedCrawlJobTotalCount, setCrawlPage]);
-
-  useEffect(() => {
-    setMatchPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(matchAnalysisJobs.length, matchPageSize),
-      ),
-    );
-  }, [matchAnalysisJobs.length, matchPageSize, setMatchPage]);
-
-  useEffect(() => {
-    setInformationEnrichmentPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(
-          displayedInformationEnrichmentJobTotalCount,
-          informationEnrichmentPageSize,
-        ),
-      ),
-    );
-  }, [
-    displayedInformationEnrichmentJobTotalCount,
-    informationEnrichmentPageSize,
-    setInformationEnrichmentPage,
-  ]);
-
-  useEffect(() => {
-    setMatchJobItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(matchJobItemTotalCount, matchJobItemPageSize),
-      ),
-    );
-  }, [matchJobItemPageSize, matchJobItemTotalCount, setMatchJobItemPage]);
-
-  useEffect(() => {
-    setInformationEnrichmentItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(
-          informationEnrichmentItemTotalCount,
-          informationEnrichmentItemPageSize,
-        ),
-      ),
-    );
-  }, [
-    informationEnrichmentItemPageSize,
-    informationEnrichmentItemTotalCount,
-    setInformationEnrichmentItemPage,
-  ]);
-
-  useEffect(() => {
-    setCrawlEventPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(crawlExecutionLogEvents.length, crawlEventPageSize),
-      ),
-    );
-  }, [crawlEventPageSize, crawlExecutionLogEvents.length, setCrawlEventPage]);
-
-  useEffect(() => {
-    setCrawlDetailPagePage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(crawlJobPages.length, crawlDetailPagePageSize),
-      ),
-    );
-  }, [crawlDetailPagePageSize, crawlJobPages.length, setCrawlDetailPagePage]);
-
-  useEffect(() => {
-    setCrawlCandidatePage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(
-          filteredCrawlJobCandidates.length,
-          crawlCandidatePageSize,
-        ),
-      ),
-    );
-  }, [
-    crawlCandidatePageSize,
-    filteredCrawlJobCandidates.length,
-    setCrawlCandidatePage,
-  ]);
-
-  useEffect(() => {
-    setBatchSentItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(sentBatchTaskItems.length, batchSentItemPageSize),
-      ),
-    );
-  }, [batchSentItemPageSize, sentBatchTaskItems.length, setBatchSentItemPage]);
-
-  useEffect(() => {
-    setBatchPendingItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(pendingBatchTaskItems.length, batchPendingItemPageSize),
-      ),
-    );
-  }, [
-    batchPendingItemPageSize,
-    pendingBatchTaskItems.length,
-    setBatchPendingItemPage,
-  ]);
-
-  useEffect(() => {
-    setBatchGeneratingItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(
-          generatingDraftBatchTaskItems.length,
-          batchGeneratingItemPageSize,
-        ),
-      ),
-    );
-    setBatchDraftFailedItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(
-          draftFailedBatchTaskItems.length,
-          batchDraftFailedItemPageSize,
-        ),
-      ),
-    );
-    setBatchFailedItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(failedBatchTaskItems.length, batchFailedItemPageSize),
-      ),
-    );
-    setBatchReviewItemPage((currentPage) =>
-      Math.min(
-        currentPage,
-        getTotalPages(batchReviewQueueItems.length, batchReviewItemPageSize),
-      ),
-    );
-  }, [
-    batchDraftFailedItemPageSize,
-    batchFailedItemPageSize,
-    batchGeneratingItemPageSize,
-    batchReviewItemPageSize,
-    batchReviewQueueItems.length,
-    draftFailedBatchTaskItems.length,
-    failedBatchTaskItems.length,
-    generatingDraftBatchTaskItems.length,
-    setBatchDraftFailedItemPage,
-    setBatchFailedItemPage,
-    setBatchGeneratingItemPage,
-    setBatchReviewItemPage,
-  ]);
+  usePageBounds(setBatchPage, tasks.length, batchPageSize);
+  usePageBounds(setCrawlPage, displayedCrawlJobTotalCount, crawlPageSize);
+  usePageBounds(setMatchPage, matchAnalysisJobs.length, matchPageSize);
+  usePageBounds(setInformationEnrichmentPage, displayedInformationEnrichmentJobTotalCount, informationEnrichmentPageSize);
+  usePageBounds(setMatchJobItemPage, matchJobItemTotalCount, matchJobItemPageSize);
+  usePageBounds(setInformationEnrichmentItemPage, informationEnrichmentItemTotalCount, informationEnrichmentItemPageSize);
+  usePageBounds(setCrawlEventPage, crawlExecutionLogEvents.length, crawlEventPageSize);
+  usePageBounds(setCrawlDetailPagePage, crawlJobPages.length, crawlDetailPagePageSize);
+  usePageBounds(setCrawlCandidatePage, filteredCrawlJobCandidates.length, crawlCandidatePageSize);
+  usePageBounds(setBatchSentItemPage, sentBatchTaskItems.length, batchSentItemPageSize);
+  usePageBounds(setBatchPendingItemPage, pendingBatchTaskItems.length, batchPendingItemPageSize);
+  usePageBounds(setBatchGeneratingItemPage, generatingDraftBatchTaskItems.length, batchGeneratingItemPageSize);
+  usePageBounds(setBatchDraftFailedItemPage, draftFailedBatchTaskItems.length, batchDraftFailedItemPageSize);
+  usePageBounds(setBatchFailedItemPage, failedBatchTaskItems.length, batchFailedItemPageSize);
+  usePageBounds(setBatchReviewItemPage, batchReviewQueueItems.length, batchReviewItemPageSize);
 
   useEffect(() => {
     if (batchReviewQueueScrollRef.current) {

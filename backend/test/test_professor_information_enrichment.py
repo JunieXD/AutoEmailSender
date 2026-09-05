@@ -380,7 +380,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         }
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, usage)),
+            new=AsyncMock(return_value=(payload, usage, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,
@@ -440,7 +440,7 @@ class ProfessorInformationEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch(
             "app.modules.crawler.runtime.enrichment_worker.enrich_candidate_once_with_usage",
-            new=AsyncMock(return_value=(payload, None)),
+            new=AsyncMock(return_value=(payload, None, None)),
         ):
             processed = await run_crawler_enrichment_worker_once(
                 self.session_factory,

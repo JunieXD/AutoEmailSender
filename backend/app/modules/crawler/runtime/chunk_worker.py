@@ -574,10 +574,3 @@ def _lease_expired(lease_expires_at: datetime | None) -> bool:
     if lease_expires_at is None:
         return False
     return as_utc_aware(lease_expires_at) <= utc_now()
-
-
-def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None

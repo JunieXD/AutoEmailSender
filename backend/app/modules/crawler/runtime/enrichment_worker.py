@@ -329,9 +329,7 @@ async def run_crawler_enrichment_worker_once(
         model_name = None
         if job is not None:
             profile = await _resolve_llm_profile(session, job)
-            model_name = (
-                getattr(profile, "model_name", None) if profile is not None else None
-            )
+            model_name = profile.model_name if profile is not None else None
         job_id = task.job_id
         candidate_id = candidate.id
         enrichment_started_at = task.started_at
@@ -355,21 +353,12 @@ async def run_crawler_enrichment_worker_once(
             session_factory,
             candidate_id=candidate_id,
         )
-        enrichment_result = await enrich_candidate_once_with_usage(
+        payload, usage, raw_model_text = await enrich_candidate_once_with_usage(
             session_factory,
             candidate_id=candidate_id,
             fresh_after=enrichment_started_at,
             prefer_compact_input=prefer_compact_input,
         )
-        raw_model_text = None
-        if isinstance(enrichment_result, tuple):
-            if len(enrichment_result) >= 3:
-                payload, usage, raw_model_text = enrichment_result[:3]
-            else:
-                payload, usage = enrichment_result
-        else:
-            payload = enrichment_result
-            usage = None
         if not await _enrichment_task_can_commit(
             session_factory, task_id=task_id, worker_id=worker_id
         ):
@@ -388,9 +377,7 @@ async def run_crawler_enrichment_worker_once(
             payload={
                 "candidate_id": candidate.id,
                 "profile_url": candidate.profile_url,
-                "raw_payload": payload.model_dump()
-                if hasattr(payload, "model_dump")
-                else payload,
+                "raw_payload": payload.model_dump(),
                 "raw_model_text": raw_model_text,
                 "token_usage": dict(usage) if usage is not None else None,
             },

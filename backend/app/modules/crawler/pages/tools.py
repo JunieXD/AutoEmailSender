@@ -1915,11 +1915,6 @@ def _browser_fetch_options_for_intent(
     return BrowserFetchOptions(wait_until=wait_until, wait_for=selected_wait_for)
 
 
-def _browser_fetch_options_for_goal(goal: str) -> BrowserFetchOptions:
-    _ = goal
-    return _browser_fetch_options_for_intent("generic")
-
-
 def _playwright_launch_options() -> dict[str, object]:
     return {
         "headless": True,
@@ -3831,11 +3826,6 @@ def _format_exception_for_snapshot(exc: BaseException, context: str) -> str:
     return f"{context}: {type(exc).__name__}"
 
 
-def _format_message_with_fallback(message: str, fallback: str) -> str:
-    message = message.strip()
-    return message or fallback
-
-
 def _clean_required(value: object) -> str:
     cleaned = str(value).strip() if value is not None else ""
     if not cleaned:
@@ -3906,34 +3896,6 @@ def _clamp_confidence(value: object) -> float:
     if number is None:
         return 0.0
     return min(1.0, max(0.0, number))
-
-
-async def _load_existing_candidate_emails(
-    session: AsyncSession, job_id: int
-) -> set[str]:
-    result = await session.scalars(
-        select(CrawlCandidate.email).where(
-            CrawlCandidate.job_id == job_id,
-            CrawlCandidate.email.is_not(None),
-        )
-    )
-    return {email.lower() for email in result if email}
-
-
-async def _load_existing_candidate_profile_urls(
-    session: AsyncSession, job_id: int
-) -> set[str]:
-    result = await session.scalars(
-        select(CrawlCandidate.profile_url).where(
-            CrawlCandidate.job_id == job_id,
-            CrawlCandidate.profile_url.is_not(None),
-        )
-    )
-    return {
-        normalized
-        for profile_url in result
-        if (normalized := normalize_candidate_profile_url(profile_url))
-    }
 
 
 async def ensure_crawl_job_can_continue(session: AsyncSession, job_id: int) -> None:

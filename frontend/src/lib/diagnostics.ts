@@ -35,17 +35,6 @@ const maxStoredEvents = 500;
 const maxDiagnosticStringLength = 300;
 const redactedValue = "[Redacted]";
 const unserializableValue = "[Unserializable]";
-const sensitiveKeys = new Set([
-  "token",
-  "accesstoken",
-  "refreshtoken",
-  "apikey",
-  "password",
-  "secret",
-  "authorization",
-  "cookie",
-  "smtppassword",
-]);
 const sensitiveKeyFragments = [
   "token",
   "secret",
@@ -53,9 +42,6 @@ const sensitiveKeyFragments = [
   "authorization",
   "cookie",
   "apikey",
-  "accesstoken",
-  "refreshtoken",
-  "smtppassword",
 ];
 const payloadKeys = new Set(["body", "requestbody", "responsebody", "rawbody", "payload"]);
 
@@ -298,7 +284,6 @@ function readObjectValue(value: object, key: string): unknown {
 function shouldRedactKey(key: string): boolean {
   const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
   return (
-    sensitiveKeys.has(normalizedKey) ||
     payloadKeys.has(normalizedKey) ||
     sensitiveKeyFragments.some((fragment) => normalizedKey.includes(fragment))
   );

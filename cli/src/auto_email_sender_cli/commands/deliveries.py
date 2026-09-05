@@ -103,7 +103,6 @@ def list_deliveries(
         },
         fetch_all=all_items,
         fields=fields,
-        guide_topic="tasks",
         human_formatter=lambda data: format_page(
             data,
             columns=(
@@ -144,6 +143,5 @@ def reschedule_delivery(
             "scheduled_at": scheduled_at,
             "expected_updated_at": expected_updated_at,
         },
-        guide_topic="tasks",
         human_formatter=format_detail,
     )

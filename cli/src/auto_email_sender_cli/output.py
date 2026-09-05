@@ -65,15 +65,10 @@ class CliContext:
 def build_meta(
     *,
     command: str,
-    guide_topic: str = "overview",
     app_version: str | None = None,
     warnings: list[str] | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    # ``guide_topic`` remains an internal compatibility parameter while older
-    # command handlers migrate.  Repeating a prose guide hint in every result
-    # wastes context and makes a static manual appear authoritative.
-    _ = guide_topic
     meta: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "protocol_version": PROTOCOL_VERSION,
@@ -94,7 +89,6 @@ def emit_success(
     command: str,
     data: Any,
     human_text: str | None = None,
-    guide_topic: str = "overview",
     app_version: str | None = None,
     warnings: list[str] | None = None,
     request_id: str | None = None,
@@ -120,7 +114,6 @@ def emit_success(
         response_request_id = None
     meta = build_meta(
         command=command,
-        guide_topic=guide_topic,
         app_version=app_version,
         warnings=warnings,
         request_id=response_request_id,
@@ -206,7 +199,6 @@ def emit_error(
     *,
     command: str,
     error: CliError,
-    guide_topic: str = "troubleshooting",
 ) -> None:
     payload: dict[str, Any] = {
         "code": error.code,
@@ -223,7 +215,6 @@ def emit_error(
         "error": payload,
         "_meta": build_meta(
             command=command,
-            guide_topic=guide_topic,
             request_id=context.request_id,
         ),
     }

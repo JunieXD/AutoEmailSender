@@ -29,7 +29,6 @@ def show_plan(
         ctx,
         command="plans.show",
         path=f"/api/agent/v1/plans/{plan_id}",
-        guide_topic="sending",
         human_formatter=format_detail,
     )
 
@@ -64,7 +63,6 @@ def execute_plan(
             cli_context(ctx),
             command="plans.execute",
             error=error,
-            guide_topic="sending",
         )
         raise typer.Exit(error.exit_code)
     run_write_command(
@@ -79,7 +77,6 @@ def execute_plan(
                 else {}
             ),
         },
-        guide_topic="sending",
         human_formatter=format_detail,
     )
 
@@ -93,6 +90,5 @@ def cancel_plan(
         ctx,
         command="plans.cancel",
         path=f"/api/agent/v1/plans/{plan_id}/cancel",
-        guide_topic="sending",
         human_formatter=format_detail,
     )

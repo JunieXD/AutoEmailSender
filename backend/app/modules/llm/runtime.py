@@ -21,9 +21,7 @@ if TYPE_CHECKING:
 from app.core.config import get_settings
 from app.models import IdentityMaterial, IdentityProfile, LLMProfile, Professor
 from app.modules.campaigns.public import build_template_context
-from app.services.beautiful_soup import parse_html
 from app.services.html_text import html_to_text
-from app.modules.communications.public import text_to_html
 from app.services.rich_text import (
     normalize_email_html,
     render_rich_text_document,
@@ -309,7 +307,7 @@ def _sanitize_log_text(value: str) -> str:
         while url and url[-1] in ".,);]":
             trailing = f"{url[-1]}{trailing}"
             url = url[:-1]
-        return f"{_strip_url_query_and_fragment(url) or url}{trailing}"
+        return f"{sanitize_llm_url(url) or url}{trailing}"
 
     return _LOG_URL_PATTERN.sub(replace_url, value)
 
@@ -323,7 +321,7 @@ def _is_tls_bad_record_mac_error(exc: BaseException) -> bool:
     return any(marker in haystack for marker in _LLM_TLS_ERROR_MARKERS)
 
 
-def _strip_url_query_and_fragment(url: str | None) -> str | None:
+def sanitize_llm_url(url: str | None) -> str | None:
     if url is None:
         return None
     parsed = urlsplit(url)
@@ -356,10 +354,10 @@ def _log_llm_http_exception(
         "event": "llm_http_request_failed",
         "provider": profile.provider,
         "model_name": profile.model_name,
-        "api_base_url": _strip_url_query_and_fragment(
+        "api_base_url": sanitize_llm_url(
             resolve_base_url(profile.api_base_url)
         ),
-        "request_url": _strip_url_query_and_fragment(request_url),
+        "request_url": sanitize_llm_url(request_url),
         "endpoint_kind": endpoint_kind,
         "tls_mode": tls_mode,
         "will_retry": will_retry,
@@ -390,7 +388,7 @@ async def _record_endpoint_protocol_switch(
     attempted_urls = [
         sanitized
         for url in completion.attempted_urls
-        if (sanitized := _strip_url_query_and_fragment(url)) is not None
+        if (sanitized := sanitize_llm_url(url)) is not None
     ]
     metadata = {
         "old_endpoint_kind": protocol_error.failed_endpoint_kind,
@@ -398,7 +396,7 @@ async def _record_endpoint_protocol_switch(
         "reason": reason,
         "retried": True,
         "endpoint_kind": completion.endpoint_kind,
-        "request_url": _strip_url_query_and_fragment(completion.request_url),
+        "request_url": sanitize_llm_url(completion.request_url),
         "attempted_urls": attempted_urls,
     }
     _append_llm_runtime_log(
@@ -408,7 +406,7 @@ async def _record_endpoint_protocol_switch(
                 "event": "llm_endpoint_protocol_switched",
                 "provider": profile.provider,
                 "model_name": profile.model_name,
-                "api_base_url": _strip_url_query_and_fragment(
+                "api_base_url": sanitize_llm_url(
                     resolve_base_url(profile.api_base_url)
                 ),
                 **metadata,
@@ -741,46 +739,6 @@ class GeneratedDraftContent:
 
 
 StructuredResultT = TypeVar("StructuredResultT", bound=BaseModel)
-
-
-async def _legacy_probe_llm_profile(profile: LLMProfile) -> LLMProbeResult:
-    base_url = resolve_base_url(profile.api_base_url)
-    try:
-        payload = {
-            "model": profile.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "只回复 OK",
-                },
-            ],
-            "temperature": 0,
-            "max_tokens": min(profile.max_tokens or DEFAULT_LLM_MAX_TOKENS, 8),
-        }
-        if is_deepseek_profile(profile):
-            payload["thinking"] = {"type": "disabled"}
-        completion = await request_chat_completion(profile, payload)
-    except LLMRuntimeError as exc:
-        return LLMProbeResult(
-            ok=False,
-            message=str(exc),
-            resolved_base_url=base_url,
-            request_url=exc.request_url,
-            attempted_urls=exc.attempted_urls,
-            endpoint_kind=exc.endpoint_kind,
-            response_preview=None,
-        )
-
-    preview = completion.content.strip().replace("\n", " ")[:200]
-    return LLMProbeResult(
-        ok=True,
-        message="模型连通性测试成功",
-        resolved_base_url=base_url,
-        request_url=completion.request_url,
-        attempted_urls=[completion.request_url] if completion.request_url else [],
-        endpoint_kind=completion.endpoint_kind,
-        response_preview=preview or None,
-    )
 
 
 async def generate_match_evaluation(
@@ -2791,16 +2749,6 @@ def parse_completion_usage(raw_usage: object) -> ChatCompletionUsage | None:
     )
 
 
-def _normalize_match_evaluation_result(
-    result: MatchEvaluationResult,
-) -> MatchEvaluationResult:
-    result.match_reason = _normalize_text_field(result.match_reason, "match_reason")
-    result.fit_points = _normalize_string_list(result.fit_points, 5)
-    result.risk_points = _normalize_string_list(result.risk_points, 5)
-    result.keywords = _normalize_string_list(result.keywords, 6)
-    return result
-
-
 def _draft_generation_wire_to_result(
     result: DraftGenerationWireResult,
 ) -> DraftGenerationResult:
@@ -2879,19 +2827,6 @@ def _normalize_text_field(value: str, field_name: str) -> str:
     return cleaned
 
 
-def _normalize_html_field(value: str, fallback_text: str) -> str:
-    cleaned = value.strip()
-    if not cleaned:
-        return text_to_html(fallback_text)
-    if "<" not in cleaned or ">" not in cleaned:
-        return text_to_html(cleaned)
-
-    soup = parse_html(cleaned)
-    if not soup.get_text(" ", strip=True):
-        raise LLMRuntimeError("模型返回的 body_html 缺少可见正文")
-    return str(soup)
-
-
 def _normalize_string_list(values: list[str], max_items: int) -> list[str]:
     normalized: list[str] = []
     for value in values:
@@ -2902,19 +2837,6 @@ def _normalize_string_list(values: list[str], max_items: int) -> list[str]:
         normalized.append(cleaned)
         if len(normalized) >= max_items:
             break
-    return normalized
-
-
-def _normalize_integer_list(values: list[int]) -> list[int]:
-    normalized: list[int] = []
-    for value in values:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            continue
-        if parsed in normalized:
-            continue
-        normalized.append(parsed)
     return normalized
 
 
@@ -2936,6 +2858,7 @@ def _coerce_token_count(value: object) -> int | None:
 
 
 __all__ = [
+    "sanitize_llm_url",
     "DEFAULT_BASE_URL",
     "DEFAULT_LLM_MAX_TOKENS",
     "DEFAULT_LLM_TEMPERATURE",

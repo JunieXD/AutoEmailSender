@@ -53,7 +53,6 @@ def get_draft(
         ctx,
         command="drafts.get",
         path=f"/api/agent/v1/drafts/{task_id}",
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -111,7 +110,6 @@ def generate_draft(
             "body_text": body_text,
             "body_html": body_html,
         },
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -149,7 +147,6 @@ def save_draft(
             "body_html": body_html,
             **attachment_payload,
         },
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -167,7 +164,6 @@ def regenerate_draft(
         command="drafts.regenerate",
         path=f"/api/agent/v1/drafts/{task_id}/regenerate",
         json_body={"llm_profile_id": llm_profile_id},
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -207,7 +203,6 @@ def approve_draft(
             "body_html": body_html,
             **attachment_payload,
         },
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -248,7 +243,6 @@ def rewrite_draft(
             "llm_profile_id": llm_profile_id,
             **attachment_payload,
         },
-        guide_topic="drafts",
         human_formatter=format_detail,
     )
 
@@ -274,6 +268,5 @@ def prepare_send(
             "delivery": delivery.value,
             "scheduled_at": scheduled_at,
         },
-        guide_topic="sending",
         human_formatter=format_detail,
     )

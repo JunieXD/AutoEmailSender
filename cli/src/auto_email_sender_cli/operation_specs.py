@@ -12,7 +12,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, replace
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+from collections.abc import Iterable
+
+if TYPE_CHECKING:
+    from auto_email_sender_cli.capabilities import Capability
 
 IdempotencyMode = Literal[
     "not_applicable",
@@ -1472,26 +1476,11 @@ def operation_manifest_commands() -> frozenset[str]:
 
 
 def validate_operation_manifest(
-    capabilities: object,
+    capabilities: Iterable[Capability],
 ) -> list[str]:
-    """Check that the legacy registry and semantic manifest cannot drift.
-
-    ``capabilities`` deliberately uses structural access to keep this module
-    dependency-free.  The caller supplies the tuple from ``capabilities.py``.
-    """
-
+    """Check that the command registry and semantic manifest agree."""
     errors: list[str] = []
-    command_records: dict[str, object] = {}
-    try:
-        iterator = iter(capabilities)  # type: ignore[arg-type]
-    except TypeError:
-        return ["invalid:capabilities"]
-    for capability in iterator:
-        command = getattr(capability, "command", None)
-        if not isinstance(command, str):
-            errors.append("invalid:capability.command")
-            continue
-        command_records[command] = capability
+    command_records = {capability.command: capability for capability in capabilities}
     capability_commands = set(command_records)
     spec_commands = set(OPERATION_SPECS)
     for command in sorted(capability_commands - spec_commands):
@@ -1501,15 +1490,13 @@ def validate_operation_manifest(
     for command in sorted(capability_commands & spec_commands):
         capability = command_records[command]
         spec = OPERATION_SPECS[command]
-        if bool(getattr(capability, "mutates", False)) != spec.effects.mutates:
+        if capability.mutates != spec.effects.mutates:
             errors.append(f"mismatch:{command}:mutates")
-        if bool(
-            getattr(capability, "external_action", False)
-        ) != effect_has_external_action(
+        if capability.external_action != effect_has_external_action(
             spec.effects,
         ):
             errors.append(f"mismatch:{command}:external_action")
         participates_in_plan = spec.effects.plan_role in {"producer", "consumer"}
-        if bool(getattr(capability, "requires_plan", False)) != participates_in_plan:
+        if capability.requires_plan != participates_in_plan:
             errors.append(f"mismatch:{command}:plan_role")
     return errors

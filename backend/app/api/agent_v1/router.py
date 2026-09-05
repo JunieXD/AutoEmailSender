@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, TypeVar
-from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import (
     APIRouter,
@@ -333,6 +332,7 @@ from app.modules.matching.public import (
 )
 from app.modules.crawler.public import crawler_debug_file_path
 from app.services.operation_logs import (
+    build_operation_log_filters,
     record_operation_log,
     sanitize_diagnostic_metadata,
     sanitize_diagnostic_text,
@@ -347,6 +347,7 @@ from app.modules.llm.public import (
     fetch_llm_profile_models,
     probe_llm_profile,
     resolve_base_url,
+    sanitize_llm_url,
 )
 from app.modules.communications.public import explain_smtp_error
 from app.modules.crawler.public import (
@@ -3690,7 +3691,7 @@ async def list_agent_operation_logs(
     fields: str | None = Query(default=None, max_length=4_000),
     session: AsyncSession = Depends(get_async_session),
 ) -> OperationLogListResponse | Response:
-    filters = _agent_operation_log_filters(
+    filters = build_operation_log_filters(
         level=level,
         category=category,
         event_name=event_name,
@@ -3738,7 +3739,7 @@ async def export_agent_operation_logs(
     end_at: datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
 ) -> OperationLogExportResponse:
-    filters = _agent_operation_log_filters(
+    filters = build_operation_log_filters(
         level=level,
         category=category,
         event_name=event_name,
@@ -5327,8 +5328,8 @@ def _serialize_agent_llm_profile_models(
         profile_id=profile_id,
         ok=result.ok,
         message=sanitize_user_visible_error(result.message),
-        resolved_base_url=_sanitize_agent_llm_url(result.resolved_base_url),
-        request_url=_sanitize_agent_llm_url(result.request_url),
+        resolved_base_url=sanitize_llm_url(result.resolved_base_url),
+        request_url=sanitize_llm_url(result.request_url),
         attempted_urls=_sanitize_agent_llm_urls(result.attempted_urls),
         endpoint_kind=result.endpoint_kind,
         status_code=result.status_code,
@@ -5347,8 +5348,8 @@ def _serialize_agent_llm_profile_test(
         profile_id=profile_id,
         ok=result.ok,
         message=sanitize_user_visible_error(result.message),
-        resolved_base_url=_sanitize_agent_llm_url(result.resolved_base_url),
-        request_url=_sanitize_agent_llm_url(result.request_url),
+        resolved_base_url=sanitize_llm_url(result.resolved_base_url),
+        request_url=sanitize_llm_url(result.request_url),
         attempted_urls=_sanitize_agent_llm_urls(result.attempted_urls),
         endpoint_kind=result.endpoint_kind,
         status_code=result.status_code,
@@ -5360,29 +5361,11 @@ def _serialize_agent_llm_profile_test(
     )
 
 
-def _sanitize_agent_llm_url(url: str | None) -> str | None:
-    if url is None:
-        return None
-    parsed = urlsplit(url)
-    hostname = parsed.hostname
-    if hostname is None:
-        netloc = parsed.netloc.rsplit("@", 1)[-1]
-    else:
-        netloc = f"[{hostname}]" if ":" in hostname else hostname
-        try:
-            port = parsed.port
-        except ValueError:
-            port = None
-        if port is not None:
-            netloc = f"{netloc}:{port}"
-    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
-
-
 def _sanitize_agent_llm_urls(urls: list[str]) -> list[str]:
     return [
         sanitized
         for url in urls
-        if (sanitized := _sanitize_agent_llm_url(url)) is not None
+        if (sanitized := sanitize_llm_url(url)) is not None
     ]
 
 
@@ -6244,28 +6227,8 @@ def _parse_agent_professor_ids(value: str) -> list[int]:
 
 
 def _agent_community_mentor_error(error: CommunityDataError) -> AgentApiError:
-    if error.code in {
-        "COMMUNITY_DATA_VERSION_CHANGED",
-        "COMMUNITY_DATA_REQUIRES_NEWER_APP",
-        "COMMUNITY_DATA_IDENTITY_CONFLICT",
-        "COMMUNITY_DATA_LIFECYCLE_BLOCKED",
-        "COMMUNITY_DATA_PREVIEW_STALE",
-    }:
-        status_code = 409
-    elif error.code in {
-        "COMMUNITY_DATA_SELECTION_INVALID",
-        "COMMUNITY_DATA_PATH_INVALID",
-        "COMMUNITY_DATA_CONFIG_INVALID",
-        "COMMUNITY_DATA_FIELD_CHOICE_INVALID",
-        "COMMUNITY_DATA_TOO_LARGE",
-    }:
-        status_code = 400
-    elif error.code == "COMMUNITY_DATA_UNAVAILABLE":
-        status_code = 503
-    else:
-        status_code = 502
     return AgentApiError(
-        status_code=status_code,
+        status_code=error.status_code,
         code=error.code,
         message=str(error),
     )
@@ -6395,37 +6358,6 @@ def _agent_template_error(error: OutreachTemplateMutationError) -> AgentApiError
         code=error.code,
         message=error.message,
     )
-
-
-def _agent_operation_log_filters(
-    *,
-    level: str | None,
-    category: str | None,
-    event_name: str | None,
-    request_id: str | None,
-    entity_type: str | None,
-    entity_id: str | None,
-    start_at: datetime | None,
-    end_at: datetime | None,
-) -> list[object]:
-    filters: list[object] = []
-    if level is not None:
-        filters.append(OperationLog.level == level)
-    if category is not None:
-        filters.append(OperationLog.category == category)
-    if event_name is not None:
-        filters.append(OperationLog.event_name == event_name)
-    if request_id is not None:
-        filters.append(OperationLog.request_id == request_id)
-    if entity_type is not None:
-        filters.append(OperationLog.entity_type == entity_type)
-    if entity_id is not None:
-        filters.append(OperationLog.entity_id == entity_id)
-    if start_at is not None:
-        filters.append(OperationLog.created_at >= start_at)
-    if end_at is not None:
-        filters.append(OperationLog.created_at < end_at)
-    return filters
 
 
 def _serialize_agent_operation_log(log: OperationLog) -> OperationLogRead:

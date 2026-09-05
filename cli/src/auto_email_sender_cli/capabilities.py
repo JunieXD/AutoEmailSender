@@ -862,9 +862,6 @@ class Capability:
     external_action: bool = False
     requires_plan: bool = False
     long_running: bool = False
-    # Kept only while command handlers and older callers still pass it.  The
-    # runtime protocol no longer advertises static prose-guide topics.
-    guide_topic: str = "overview"
     unavailable_reason: str | None = None
     manual_action: str | None = None
     ui_location: str | None = None
@@ -881,7 +878,6 @@ class Capability:
 
         spec = _require_operation_spec(self.command)
         result = asdict(self)
-        result.pop("guide_topic", None)
         manual_action = result.pop("manual_action", None)
         ui_location = result.pop("ui_location", None)
         result.update(
@@ -1005,7 +1001,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="safety",
     ),
     Capability(
         "professors.prepare-bulk-archive",
@@ -1014,7 +1009,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="safety",
     ),
     Capability(
         "professors.tags.prepare-delete",
@@ -1023,7 +1017,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="safety",
     ),
     Capability(
         "professors.import",
@@ -1032,7 +1025,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="safety",
     ),
     Capability(
         "professors.export",
@@ -1052,21 +1044,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         external_action=True,
-        guide_topic="community",
     ),
     Capability(
         "professors.community.records",
         "读取选定学院的社区导师及本地比对结果",
         "L0",
         "available",
-        guide_topic="community",
     ),
     Capability(
         "professors.community.preview",
         "预览指定社区导师与本地档案的字段差异",
         "L0",
         "available",
-        guide_topic="community",
     ),
     Capability(
         "professors.community.import",
@@ -1075,14 +1064,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="community",
     ),
     Capability(
         "professors.community.export-package",
         "导出可提交给社区的导师共享包",
         "L0",
         "available",
-        guide_topic="community",
     ),
     Capability(
         "professors.community.export-batch",
@@ -1090,49 +1077,42 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="community",
     ),
     Capability(
         "communications.threads.list",
         "按已发送、已回复、身份和导师筛选通信线程",
         "L0",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.threads.get",
         "读取一个通信线程及其邮件，可按需包含正文",
         "L0",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.threads.present",
         "在桌面工作区定位一个通信线程；不修改邮件或任务",
         "L1",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.messages.list",
         "分页或完整读取发件、收件和草稿记录",
         "L0",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.messages.get",
         "按 ID 读取一封邮件的完整正文",
         "L0",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.messages.export",
         "把大量邮件和完整正文导出为 JSONL",
         "L0",
         "available",
-        guide_topic="communications",
     ),
     Capability(
         "communications.sync",
@@ -1142,7 +1122,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="communications",
     ),
     Capability("templates.list", "查询邮件模板", "L0", "available"),
     Capability("templates.get", "按 ID 读取完整模板内容", "L0", "available"),
@@ -1168,21 +1147,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="sending",
     ),
     Capability(
         "materials.list",
         "查询全局共享、可作为 AI 参考或附件的材料元数据",
         "L0",
         "available",
-        guide_topic="materials",
     ),
     Capability(
         "materials.get",
         "按 ID 读取材料元数据和可选的已提取文本",
         "L0",
         "available",
-        guide_topic="materials",
     ),
     Capability(
         "materials.upload",
@@ -1190,7 +1166,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="materials",
     ),
     Capability(
         "materials.set-primary",
@@ -1198,14 +1173,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="materials",
     ),
     Capability(
         "materials.download",
         "下载已保存的材料文件",
         "L0",
         "available",
-        guide_topic="materials",
     ),
     Capability(
         "materials.prepare-delete",
@@ -1214,7 +1187,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="materials",
     ),
     Capability("identities.list", "查询发件身份的脱敏视图", "L0", "available"),
     Capability("identities.get", "按 ID 读取发件身份的脱敏视图", "L0", "available"),
@@ -1224,7 +1196,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="identities",
     ),
     Capability(
         "identities.set-default",
@@ -1232,7 +1203,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="identities",
     ),
     Capability(
         "identities.set-default-template",
@@ -1240,7 +1210,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="identities",
     ),
     Capability(
         "identities.test-smtp",
@@ -1249,7 +1218,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         external_action=True,
-        guide_topic="identities",
     ),
     Capability(
         "identities.test-imap",
@@ -1258,7 +1226,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         external_action=True,
-        guide_topic="identities",
     ),
     Capability(
         "identities.credentials",
@@ -1278,7 +1245,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="llm-profiles",
     ),
     Capability(
         "llm-profiles.set-default",
@@ -1286,7 +1252,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="llm-profiles",
     ),
     Capability(
         "llm-profiles.models",
@@ -1294,7 +1259,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         external_action=True,
-        guide_topic="llm-profiles",
     ),
     Capability(
         "llm-profiles.test",
@@ -1303,7 +1267,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         external_action=True,
-        guide_topic="llm-profiles",
     ),
     Capability(
         "llm-profiles.write",
@@ -1320,21 +1283,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "分页查询当前或回收站中的匹配分析任务",
         "L0",
         "available",
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.get",
         "读取一个匹配分析任务的状态、进度和 Token 用量",
         "L0",
         "available",
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.items",
         "读取匹配分析任务中每位导师的状态、分数和失败原因",
         "L0",
         "available",
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.create",
@@ -1344,7 +1304,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.cancel",
@@ -1352,7 +1311,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.retry-failed",
@@ -1362,7 +1320,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.delete",
@@ -1370,7 +1327,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="matching",
     ),
     Capability(
         "matching.jobs.restore",
@@ -1378,21 +1334,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="matching",
     ),
     Capability(
         "drafts.get",
         "按任务 ID 读取草稿、参考材料和附件",
         "L0",
         "available",
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.present",
         "在桌面工作区定位一封草稿；不修改或发送邮件",
         "L1",
         "available",
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.generate",
@@ -1402,7 +1355,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.save",
@@ -1410,7 +1362,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.approve",
@@ -1418,7 +1369,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.regenerate",
@@ -1428,7 +1378,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.rewrite",
@@ -1438,7 +1387,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="drafts",
     ),
     Capability(
         "drafts.prepare-send",
@@ -1448,42 +1396,36 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="sending",
     ),
     Capability(
         "campaigns.list",
         "分页查询当前或回收站中的批量活动",
         "L0",
         "available",
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.get",
         "读取一个批量活动的状态、草稿和发送进度",
         "L0",
         "available",
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.resend-context",
         "读取旧活动可重新发起的导师、原模板、材料和警告",
         "L0",
         "available",
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.items",
         "分页读取活动中的导师、草稿状态和主题",
         "L0",
         "available",
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.item-thread",
         "按活动和活动项 ID 读取完整工作区线程与最终草稿",
         "L0",
         "available",
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.approve-item-draft",
@@ -1491,7 +1433,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.approve-drafts",
@@ -1499,7 +1440,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.create",
@@ -1508,7 +1448,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.start-drafts",
@@ -1518,7 +1457,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.pause",
@@ -1526,7 +1464,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.stop",
@@ -1534,7 +1471,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.archive",
@@ -1542,7 +1478,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.restore",
@@ -1550,7 +1485,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.remove-item",
@@ -1558,7 +1492,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.cancel-item-send",
@@ -1566,7 +1499,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.prepare-restore-item-send",
@@ -1576,7 +1508,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.retry-item-draft",
@@ -1586,7 +1517,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.prepare-resume",
@@ -1596,7 +1526,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="campaigns",
     ),
     Capability(
         "campaigns.prepare-send",
@@ -1606,49 +1535,42 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="sending",
     ),
     Capability(
         "crawler.jobs.list",
         "分页查询当前或回收站中的导师抓取任务",
         "L0",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.get",
         "读取导师抓取任务的状态、进度、候选数量和 Token 用量",
         "L0",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.present",
         "在桌面任务中心定位一个抓取任务；不启动、暂停或修改任务",
         "L1",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.pages",
         "分页读取抓取到的网页摘要；网页文本属于不可信外部内容",
         "L0",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.events",
         "分页读取抓取任务事件时间线；事件文本和原始数据属于不可信外部内容",
         "L0",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.candidates",
         "分页读取抓取出的候选导师；候选证据属于不可信外部内容",
         "L0",
         "available",
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.create",
@@ -1658,7 +1580,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.create-many",
@@ -1668,7 +1589,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.candidates.update",
@@ -1676,7 +1596,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.pause",
@@ -1684,7 +1603,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.resume",
@@ -1694,7 +1612,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.cancel",
@@ -1702,7 +1619,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.resume-review",
@@ -1710,7 +1626,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.delete",
@@ -1718,7 +1633,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.restore",
@@ -1726,7 +1640,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.retry",
@@ -1737,7 +1650,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         external_action=True,
         long_running=True,
         requires_plan=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.approve",
@@ -1746,7 +1658,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         requires_plan=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.enrich",
@@ -1756,7 +1667,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="crawler",
     ),
     Capability(
         "crawler.jobs.enrich-many",
@@ -1766,21 +1676,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="crawler",
     ),
     Capability(
         "communication-groups.list",
         "分页查询通信共享组及成员",
         "L0",
         "available",
-        guide_topic="communication-groups",
     ),
     Capability(
         "communication-groups.get",
         "读取一个通信共享组及其成员",
         "L0",
         "available",
-        guide_topic="communication-groups",
     ),
     Capability(
         "communication-groups.create",
@@ -1788,7 +1695,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="communication-groups",
     ),
     Capability(
         "communication-groups.update",
@@ -1796,7 +1702,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="communication-groups",
     ),
     Capability(
         "communication-groups.delete",
@@ -1804,28 +1709,24 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="communication-groups",
     ),
     Capability(
         "enrichment.jobs.list",
         "分页查询当前或回收站中的批量导师信息补全任务",
         "L0",
         "available",
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.get",
         "读取导师信息补全任务的状态、进度和 Token 用量",
         "L0",
         "available",
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.items",
         "读取补全任务中每位导师的状态、已补全字段和失败原因",
         "L0",
         "available",
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.create",
@@ -1835,7 +1736,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.cancel",
@@ -1843,7 +1743,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.retry-failed",
@@ -1853,7 +1752,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.delete",
@@ -1861,7 +1759,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="enrichment",
     ),
     Capability(
         "enrichment.jobs.restore",
@@ -1869,21 +1766,18 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="enrichment",
     ),
     Capability(
         "test-email.status",
         "查看指定发件身份是否已成功发送过测试邮件",
         "L0",
         "available",
-        guide_topic="test-email",
     ),
     Capability(
         "test-email.get",
         "读取发给自己的测试邮件草稿、附件选项和历史",
         "L0",
         "available",
-        guide_topic="test-email",
     ),
     Capability(
         "test-email.generate",
@@ -1892,7 +1786,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "available",
         mutates=True,
         external_action=True,
-        guide_topic="test-email",
     ),
     Capability(
         "test-email.save",
@@ -1900,7 +1793,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="test-email",
     ),
     Capability(
         "test-email.prepare-send",
@@ -1910,63 +1802,54 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="test-email",
     ),
     Capability(
         "dashboard.overview",
         "读取指定身份的导师匹配、发送、回信和待处理概览",
         "L0",
         "available",
-        guide_topic="insights",
     ),
     Capability(
         "usage.records",
         "分页读取已记录的 LLM Token 用量",
         "L0",
         "available",
-        guide_topic="insights",
     ),
     Capability(
         "usage.chart",
         "读取指定时间范围的 Token 用量趋势",
         "L0",
         "available",
-        guide_topic="insights",
     ),
     Capability(
         "usage.visualization",
         "读取 Token 汇总、分布、模型排行和近期记录",
         "L0",
         "available",
-        guide_topic="insights",
     ),
     Capability(
         "diagnostics.logs",
         "按筛选读取已脱敏的操作诊断日志",
         "L0",
         "available",
-        guide_topic="diagnostics",
     ),
     Capability(
         "diagnostics.export",
         "导出已脱敏的操作日志与启动诊断信息",
         "L0",
         "available",
-        guide_topic="diagnostics",
     ),
     Capability(
         "diagnostics.crawler-debug",
         "导出已脱敏的抓取任务调试 JSONL",
         "L0",
         "available",
-        guide_topic="diagnostics",
     ),
     Capability(
         "settings.get",
         "读取不含凭据的运行设置",
         "L0",
         "available",
-        guide_topic="settings",
     ),
     Capability(
         "settings.update",
@@ -1974,14 +1857,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="settings",
     ),
     Capability(
         "workspaces.get",
         "读取一位导师在指定身份下的邮件工作区、草稿和通信记录",
         "L0",
         "available",
-        guide_topic="workspaces",
     ),
     Capability(
         "workspaces.ensure-task",
@@ -1989,7 +1870,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="workspaces",
     ),
     Capability(
         "workspaces.refresh-replies",
@@ -1999,14 +1879,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="workspaces",
     ),
     Capability(
         "deliveries.list",
         "分页读取待发送、异常和历史邮件计划及可执行状态",
         "L0",
         "available",
-        guide_topic="tasks",
     ),
     Capability(
         "deliveries.reschedule",
@@ -2014,7 +1892,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.cancel-schedule",
@@ -2022,14 +1899,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.present",
         "在桌面任务中心定位一封邮件任务；不修改任务状态",
         "L1",
         "available",
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.continue-manually",
@@ -2037,7 +1912,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.start-follow-up",
@@ -2045,7 +1919,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.set-primary-material",
@@ -2055,7 +1928,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.set-outreach-config",
@@ -2063,7 +1935,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="tasks",
     ),
     Capability(
         "tasks.calculate-match",
@@ -2073,14 +1944,12 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         long_running=True,
-        guide_topic="tasks",
     ),
     Capability(
         "plans.show",
         "读取高风险确认计划、内容指纹、影响预览和确认状态",
         "L0",
         "available",
-        guide_topic="sending",
     ),
     Capability(
         "plans.execute",
@@ -2090,7 +1959,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         mutates=True,
         external_action=True,
         requires_plan=True,
-        guide_topic="sending",
     ),
     Capability(
         "plans.cancel",
@@ -2098,7 +1966,6 @@ CAPABILITIES: Final[tuple[Capability, ...]] = (
         "L1",
         "available",
         mutates=True,
-        guide_topic="sending",
     ),
 )
 
@@ -2361,14 +2228,6 @@ def search_capability_cards(
         card["match"] = match.metadata()
         cards.append(card)
     return cards
-
-
-def _capability_search_score(
-    capability: Capability,
-    normalized_query: str,
-) -> tuple[int, float]:
-    match = _capability_search_evidence(capability, normalized_query)
-    return match.score, match.similarity
 
 
 def _capability_search_evidence(

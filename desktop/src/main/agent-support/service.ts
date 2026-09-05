@@ -418,41 +418,21 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
   }
 
   async function installCliSupport(previousManifest: AgentSupportManifest | null): Promise<AgentSupportStatus> {
-    await ensureSupportedAndSourceAvailable();
-    const cliConflict = await findUnmanagedCliConflict(paths, previousManifest);
-    if (cliConflict !== null) {
-      throw new Error(`为避免覆盖你的文件，无法安装：${cliConflict}`);
-    }
-
-    const replacements = await installCli(
-      paths,
-      options.platform,
-      getManagedCliTargetPath(previousManifest, paths),
-    );
-    try {
-      const pathManaged = options.platform === "darwin"
-        ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
-        : await ensureWindowsPath(
-            paths.commandDirectory,
-            Boolean(previousManifest?.enabled && previousManifest.path_managed),
-            readWindowsPath,
-            writeWindowsPath,
-            processEnvironment,
-            broadcastWindowsChange,
-          );
-      await writeEnabledManifest(pathManaged, []);
-    } catch (error) {
-      await rollbackManagedPathChanges(replacements, error);
-    }
-    await commitManagedPathChanges(replacements);
-    return getStatus();
+    return installSupport(previousManifest, []);
   }
 
   async function installManagedSupport(previousManifest: AgentSupportManifest): Promise<AgentSupportStatus> {
+    return installSupport(previousManifest, getManagedAgentIds(paths, previousManifest));
+  }
+
+  async function installSupport(
+    previousManifest: AgentSupportManifest | null,
+    agentIds: AgentIntegrationId[],
+  ): Promise<AgentSupportStatus> {
     await ensureSupportedAndSourceAvailable();
     const cliConflict = await findUnmanagedCliConflict(paths, previousManifest);
     if (cliConflict !== null) {
-      throw new Error(`为避免覆盖你的文件，无法更新：${cliConflict}`);
+      throw new Error(`为避免覆盖你的文件，无法安装或更新：${cliConflict}`);
     }
 
     const replacements = await installCli(
@@ -460,7 +440,6 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
       options.platform,
       getManagedCliTargetPath(previousManifest, paths),
     );
-    const agentIds = getManagedAgentIds(paths, previousManifest);
     try {
       for (const agentId of agentIds) {
         replacements.push(
@@ -471,7 +450,7 @@ export function createAgentSupportService(options: AgentSupportServiceOptions) {
         ? await ensureMacPath(paths, options.environmentPath ?? process.env.PATH ?? "")
         : await ensureWindowsPath(
             paths.commandDirectory,
-            previousManifest.path_managed,
+            Boolean(previousManifest?.enabled && previousManifest.path_managed),
             readWindowsPath,
             writeWindowsPath,
             processEnvironment,

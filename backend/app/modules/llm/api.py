@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -37,6 +36,7 @@ from .runtime import (
     fetch_llm_profile_models,
     probe_llm_profile,
     resolve_base_url,
+    sanitize_llm_url,
 )
 from app.services.operation_logs import record_operation_log
 from .adaptation.thinking import ThinkingAdaptationFailed
@@ -302,10 +302,10 @@ async def fetch_models_for_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": _strip_url_query_and_fragment(
+            "resolved_base_url": sanitize_llm_url(
                 result.resolved_base_url
             ),
-            "request_url": _strip_url_query_and_fragment(result.request_url),
+            "request_url": sanitize_llm_url(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "model_count": len(result.models),
             "selected_model_available": result.selected_model_available,
@@ -358,10 +358,10 @@ async def test_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": _strip_url_query_and_fragment(
+            "resolved_base_url": sanitize_llm_url(
                 result.resolved_base_url
             ),
-            "request_url": _strip_url_query_and_fragment(result.request_url),
+            "request_url": sanitize_llm_url(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "consumes_tokens": result.consumes_tokens,
         },
@@ -470,29 +470,11 @@ async def _record_llm_profile_log(
     )
 
 
-def _strip_url_query_and_fragment(url: str | None) -> str | None:
-    if url is None:
-        return None
-    parsed = urlsplit(url)
-    hostname = parsed.hostname
-    if hostname is None:
-        netloc = parsed.netloc.rsplit("@", 1)[-1]
-    else:
-        netloc = f"[{hostname}]" if ":" in hostname else hostname
-        try:
-            port = parsed.port
-        except ValueError:
-            port = None
-        if port is not None:
-            netloc = f"{netloc}:{port}"
-    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
-
-
 def _strip_url_list_query_and_fragment(urls: list[str]) -> list[str]:
     return [
         sanitized
         for url in urls
-        if (sanitized := _strip_url_query_and_fragment(url)) is not None
+        if (sanitized := sanitize_llm_url(url)) is not None
     ]
 
 

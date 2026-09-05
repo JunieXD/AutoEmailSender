@@ -42,7 +42,6 @@ def sync_communications(
         command="communications.sync",
         path="/api/agent/v1/communications/sync",
         json_body={"identity_id": identity_id},
-        guide_topic="communications",
         human_formatter=format_detail,
         use_idempotency_key=True,
     )
@@ -76,7 +75,6 @@ def list_threads(
             "cursor": cursor,
             "limit": limit,
         },
-        guide_topic="communications",
         fetch_all=all_items,
         fields=fields,
         human_formatter=lambda data: format_page(
@@ -114,7 +112,6 @@ def get_thread(
             "message_cursor": cursor,
             "message_limit": limit,
         },
-        guide_topic="communications",
         human_formatter=format_detail,
     )
 
@@ -164,7 +161,6 @@ def list_messages(
             "cursor": cursor,
             "limit": limit,
         },
-        guide_topic="communications",
         fetch_all=all_items,
         fields=fields,
         human_formatter=lambda data: format_page(
@@ -191,7 +187,6 @@ def get_message(
         command="communications.messages.get",
         path=f"/api/agent/v1/communications/messages/{message_id}",
         params={"include_body": include_body},
-        guide_topic="communications",
         human_formatter=format_detail,
     )
 
@@ -287,9 +282,8 @@ def export_messages(
             command=command,
             data=result,
             human_text=f"已导出 {len(items)} 封邮件到：\n{destination}",
-            guide_topic="communications",
             app_version=client.descriptor.app_version,
         )
     except CliError as error:
-        emit_error(context, command=command, error=error, guide_topic="communications")
+        emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
