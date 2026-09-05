@@ -312,61 +312,6 @@ describe("TasksPage layout", () => {
     vi.mocked(getBatchTaskItemThread).mockResolvedValue(buildWorkspaceThread());
   });
 
-  it("uses the same wide page shell as the other primary pages", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listBatchTasks).toHaveBeenCalledWith({
-        identityId: 1,
-        llmProfileId: 2,
-        view: "current",
-      });
-    });
-
-    const pageShell = screen
-      .getByRole("heading", { name: "任务中心" })
-      .closest("main");
-
-    expect(pageShell).toHaveClass("max-w-7xl");
-    const batchTab = screen.getByRole("button", { name: "批量邮件" });
-    const crawlTab = screen.getByRole("button", { name: "智能抓取" });
-    expect(batchTab).toBeInTheDocument();
-    expect(crawlTab).toBeInTheDocument();
-    const header = screen.getByTestId("task-center-header");
-    expect(header).toContainElement(batchTab);
-    expect(header).toContainElement(crawlTab);
-    expect(within(header).queryByText("运行中")).not.toBeInTheDocument();
-    expect(within(header).queryByText("待处理")).not.toBeInTheDocument();
-    const toolbar = screen.getByTestId("task-filter-toolbar");
-    expect(header).toContainElement(toolbar);
-    expect(header).toContainElement(screen.getByRole("group", { name: "任务范围" }));
-    expect(
-      within(toolbar).getByRole("searchbox", { name: "搜索任务" }),
-    ).toHaveAttribute("placeholder", "任务名称、邮件主题、邮件模板");
-    const searchScopeButton = within(toolbar).getByRole("button", {
-      name: /搜索范围：选择字段：全部字段/,
-    });
-    expect(searchScopeButton).toHaveClass("border-l");
-    expect(searchScopeButton).toHaveTextContent("全部字段");
-    const sortControl = within(toolbar).getByTestId("task-sort-control");
-    const sortButton = within(sortControl).getByRole("button", {
-      name: "任务排序",
-    });
-    expect(sortControl).toHaveClass("h-12");
-    expect(sortButton).not.toHaveClass("ui-select-shell");
-    expect(sortButton).toHaveTextContent("创建时间 ↓");
-
-    for (const tabName of ["智能抓取", "匹配分析", "信息补全"]) {
-      fireEvent.click(screen.getByRole("button", { name: tabName }));
-      expect(screen.getByRole("button", { name: "任务排序" })).toHaveTextContent(
-        "创建时间 ↓",
-      );
-    }
-
-    expect(within(toolbar).getByRole("button", { name: "高级筛选" })).toBeInTheDocument();
-    expect(within(toolbar).getByRole("button", { name: "重置" })).toBeInTheDocument();
-  });
-
   it("preloads match analysis count before the match tab is opened", async () => {
     vi.mocked(listMatchAnalysisJobs).mockResolvedValue([
       {

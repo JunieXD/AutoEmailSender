@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import gc
+from contextlib import closing
 import json
 import os
 import sqlite3
@@ -17,7 +17,6 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
-        gc.collect()
         self.temp_dir.cleanup()
 
     def test_upgrade_quarantines_candidates_and_downgrade_preserves_every_row(
@@ -28,7 +27,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
             database_path,
             revision="20260810_agent_ui_handoffs",
         )
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO identity_profiles(
@@ -231,7 +230,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
         run_alembic_in_process(env, "upgrade", "head")
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection, connection:
             states = connection.execute(
                 "SELECT id, record_state, merged_into_id FROM email_logs ORDER BY id",
             ).fetchall()
@@ -316,7 +315,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         )
 
         run_alembic_in_process(env, "downgrade", "20260810_agent_ui_handoffs")
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection, connection:
             email_log_count = connection.execute(
                 "SELECT COUNT(*) FROM email_logs",
             ).fetchone()[0]
@@ -359,7 +358,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
             database_path,
             revision="20260810_agent_ui_handoffs",
         )
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO identity_profiles(
@@ -526,7 +525,7 @@ class EmailReconciliationMigrationTestCase(unittest.TestCase):
         env["DATABASE_URL"] = f"sqlite+aiosqlite:///{database_path.as_posix()}"
         run_alembic_in_process(env, "upgrade", "head")
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection, connection:
             states = connection.execute(
                 "SELECT id, record_state FROM email_logs ORDER BY id",
             ).fetchall()

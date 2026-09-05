@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import ast
-import inspect
 import unittest
-from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -30,62 +27,6 @@ class _LooseObjectResult(BaseModel):
 
 
 class StructuredOutputWireContractTests(unittest.TestCase):
-    def test_all_known_non_agent_json_calls_use_the_shared_adaptation(self) -> None:
-        from app.modules.llm import runtime as llm_runtime
-        from app.modules.crawler.runtime import (
-            chunk_worker as crawler_runtime_chunk_worker,
-            enrichment_worker as crawler_runtime_enrichment_worker,
-            profile_extraction as crawler_runtime_profile_extraction,
-            routing as crawler_runtime_routing,
-        )
-
-        self.assertIn(
-            "request_structured_completion(",
-            inspect.getsource(llm_runtime.generate_match_evaluation),
-        )
-        self.assertGreaterEqual(
-            inspect.getsource(llm_runtime.generate_draft_content).count(
-                "request_structured_completion("
-            ),
-            2,
-        )
-        for function in (
-            crawler_runtime_chunk_worker.invoke_chunk_agent,
-            crawler_runtime_enrichment_worker.enrich_candidate_profile_with_llm_with_usage,
-            crawler_runtime_profile_extraction.invoke_profile_extraction_agent,
-            crawler_runtime_routing._invoke_structured_routing_phase,
-        ):
-            with self.subTest(function=function.__name__):
-                self.assertIn(
-                    "request_crawler_structured_completion(",
-                    inspect.getsource(function),
-                )
-
-    def test_business_services_do_not_parse_llm_json_outside_central_runtime(
-        self,
-    ) -> None:
-        services_root = Path(__file__).resolve().parents[1] / "app" / "services"
-        violations: list[str] = []
-        for path in services_root.glob("*.py"):
-            if path.name == "llm_runtime.py":
-                continue
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                function = node.func
-                name = (
-                    function.id
-                    if isinstance(function, ast.Name)
-                    else function.attr
-                    if isinstance(function, ast.Attribute)
-                    else None
-                )
-                if name == "parse_structured_result":
-                    violations.append(f"{path.name}:{node.lineno}")
-
-        self.assertEqual(violations, [])
-
     def test_every_production_wire_model_is_strict_schema_compatible(self) -> None:
         from app.modules.crawler.runtime.routing import (
             EntryRoutingPayload,

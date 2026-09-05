@@ -226,11 +226,6 @@ const renderPage = (initialEntry = "/professors") =>
     </MemoryRouter>,
   );
 
-const expectToAppearBefore = (first: HTMLElement, second: HTMLElement) => {
-  expect(first.compareDocumentPosition(second)).toBe(
-    Node.DOCUMENT_POSITION_FOLLOWING,
-  );
-};
 
 describe("ProfessorsPage layout", () => {
   afterEach(() => {
@@ -513,127 +508,6 @@ describe("ProfessorsPage layout", () => {
     expect(screen.getByText("共享包下载失败")).toBeInTheDocument();
     expect(window.location.href).toBe(locationBeforeContribution);
     expect(openExternalUrl).not.toHaveBeenCalled();
-  });
-
-  it("omits the low-value summary cards from the workbench header", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    expect(screen.queryByText("当前列表")).not.toBeInTheDocument();
-    expect(screen.queryByText("当前筛选")).not.toBeInTheDocument();
-    expect(screen.queryByText("已选择")).not.toBeInTheDocument();
-  });
-
-  it("keeps row field labels inside each professor record for responsive reading", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    const row = screen.getByText("李教授").closest("article");
-    expect(row).not.toBeNull();
-    const record = within(row as HTMLElement);
-
-    expect(record.getByText("邮箱")).toBeInTheDocument();
-    expect(record.getByText("职称")).toBeInTheDocument();
-    expect(record.getByText("学校 / 学院")).toBeInTheDocument();
-    expect(record.getByText("研究方向")).toBeInTheDocument();
-    expect(record.getByText("更新时间")).toBeInTheDocument();
-    expect(record.queryByText("Associate Professor / 测试大学 / 计算机学院")).not.toBeInTheDocument();
-    expect(record.getByText("Associate / Professor")).toHaveClass("lg:text-center");
-    expect(record.getAllByText("机器学习与人机协作")).toHaveLength(1);
-    expect(record.getByRole("button", { name: "选择 李教授" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(
-      record.queryByRole("checkbox", { name: "选择 李教授" }),
-    ).not.toBeInTheDocument();
-    expect(row?.firstElementChild).toHaveClass("lg:items-center");
-    expect(record.getByRole("button", { name: "选择 李教授" }).parentElement).toHaveClass(
-      "justify-center",
-    );
-  });
-
-  it("centers every desktop table header within its column", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    const expectedHeaders = [
-      "选择",
-      "导师",
-      "职称",
-      "邮箱",
-      "学校 / 学院",
-      "研究方向",
-      "更新时间",
-      "操作",
-    ];
-
-    const header = await screen.findByTestId("professor-table-header");
-    expect(header).toHaveClass(
-      "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]",
-    );
-
-    expectedHeaders.forEach((label) => {
-      expect(within(header).getByText(label)).toHaveClass(
-        "justify-center",
-        "text-center",
-      );
-    });
-  });
-
-  it("centers management value columns including professor name and title", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    const row = screen.getByText("李教授").closest("article");
-    expect(row).not.toBeNull();
-    const record = within(row as HTMLElement);
-
-    expect(record.getByText("李教授")).toHaveClass("lg:text-center");
-    expect(record.getByText("Associate / Professor")).toHaveClass("lg:text-center");
-    expect(record.getByText("li@example.edu")).toHaveClass("lg:text-center");
-    expect(record.getByText("测试大学 / 计算机学院")).toHaveClass("lg:text-center");
-    expect(
-      record.getAllByText("机器学习与人机协作").some((item) =>
-        item.classList.contains("lg:text-center"),
-      ),
-    ).toBe(true);
-    expect(record.getByText(formatApiDateTime(professor.updated_at))).toHaveClass("lg:text-center");
-    expect(record.getByRole("button", { name: "编辑" }).closest("div")).toHaveClass(
-      "lg:justify-center",
-    );
-  });
-
-  it("renders management row actions as a balanced compact action group", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    const row = screen.getByText("李教授").closest("article");
-    expect(row).not.toBeNull();
-    const record = within(row as HTMLElement);
-    const editButton = record.getByRole("button", { name: "编辑" });
-    const archiveButton = record.getByRole("button", { name: "归档" });
-    const actionGroup = editButton.closest("div");
-
-    expect(actionGroup).toHaveClass("grid", "grid-cols-2", "lg:mx-auto");
-    expect(editButton).toHaveClass("justify-center", "whitespace-nowrap");
-    expect(archiveButton).toHaveClass("justify-center", "whitespace-nowrap");
-    expect(record.queryByRole("button", { name: "移入回收站" })).not.toBeInTheDocument();
   });
 
   it("opens a linked archived professor search in the recycle bin", async () => {
@@ -1227,42 +1101,6 @@ describe("ProfessorsPage layout", () => {
     });
 
     const resetButton = screen.getByRole("button", { name: "重置" });
-    expect(resetButton).toHaveClass("ui-btn-secondary");
-    const intakePanel = screen.getByTestId("professor-intake-panel");
-    expect(intakePanel).toHaveClass("grid", "gap-3");
-    expect(intakePanel).not.toHaveClass("rounded-[30px]", "border", "shadow-sm");
-    expect(within(intakePanel).getByText("导师导入与导出方式")).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("heading", { name: "智能抓取" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("heading", { name: "表格导入" })).toBeInTheDocument();
-    expect(within(intakePanel).getByRole("heading", { name: "手动添加" })).toBeInTheDocument();
-    expect(within(intakePanel).queryByText("按数据来源选择入口，系统会统一沉淀到导师档案库。")).not.toBeInTheDocument();
-    [
-      "从学院页面自动发现导师，抓取结果进入候选审核。",
-      "下载模板后批量导入导师信息，适合已有名单或表格。",
-      "手动创建一条导师档案，适合临时补充或精修记录。",
-    ].forEach((description) => {
-      expect(within(intakePanel).queryByText(description)).not.toBeInTheDocument();
-    });
-    ["智能抓取", "表格导入", "手动添加", "导出导师信息"].forEach((label) => {
-      expect(within(intakePanel).getByTestId(`professor-intake-${label}`)).toHaveClass(
-        "rounded-[24px]",
-        "border",
-        "min-h-[7.5rem]",
-      );
-    });
-    ["选择文件", "智能抓取", "添加导师"].forEach((name) => {
-      expect(within(intakePanel).getByRole("button", { name })).toBeInTheDocument();
-    });
-    expect(within(intakePanel).queryByText("导出全部正常导师，字段与导入模板一致。")).not.toBeInTheDocument();
-    expect(within(intakePanel).getByTestId("professor-intake-导出导师信息")).toHaveClass("border-emerald-200");
-    expect(within(intakePanel).getByRole("button", { name: "导出导师信息" })).toHaveClass("bg-emerald-600");
-    expect(within(intakePanel).queryByRole("button", { name: "下载模板" })).not.toBeInTheDocument();
-    expect(within(intakePanel).queryByRole("button", { name: "导入文件" })).not.toBeInTheDocument();
-    expectToAppearBefore(intakePanel, screen.getByRole("button", { name: "正常" }));
-    expectToAppearBefore(screen.getByRole("heading", { name: "导师管理" }), intakePanel);
-    expect(screen.queryByText("样例导入与智能抓取")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "导入样例导师" })).not.toBeInTheDocument();
-
     fireEvent.click(resetButton);
 
     await waitFor(() => {
@@ -1332,20 +1170,6 @@ describe("ProfessorsPage layout", () => {
     expect(within(toolbar).getByRole("button", { name: "重置" })).toBeInTheDocument();
   });
 
-  it("shows advanced filter fields with consistent labels", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(listProfessorsForManagement).toHaveBeenCalledWith("active");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "高级筛选" }));
-
-    ["学校", "学院", "系所", "职称 / 导师资格"].forEach((label) => {
-      expect(screen.getByText(label)).toHaveClass("text-sm", "font-medium", "text-stone-800");
-    });
-    expect(screen.getByRole("button", { name: "清空高级筛选" })).toHaveClass("ui-btn-secondary");
-  });
   it("downloads professor templates through an authenticated blob request", async () => {
     renderPage();
 

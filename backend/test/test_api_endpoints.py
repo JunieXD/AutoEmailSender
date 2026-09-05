@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import closing
-import gc
 import io
 import json
 import os
@@ -86,7 +85,6 @@ class ApiEndpointTests(unittest.TestCase):
         get_settings.cache_clear()
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("ENABLE_BACKGROUND_WORKERS", None)
-        gc.collect()
         self.temp_dir.cleanup()
 
     def test_email_delivery_pagination_accepts_one_item_per_page(self) -> None:
@@ -971,7 +969,7 @@ class ApiEndpointTests(unittest.TestCase):
                     primary_material_id=None,
                 )
             )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -992,7 +990,7 @@ class ApiEndpointTests(unittest.TestCase):
             archived_ids.extend(response.json()["canceled_email_task_ids"])
 
         self.assertEqual(set(archived_ids), set(task_ids))
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT id, status, cancellation_reason, draft_claim_id,
@@ -1025,7 +1023,7 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=None,
             source="batch",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET cancellation_reason = 'batch_stopped' WHERE id = ?",
                 (task_id,),
@@ -1040,7 +1038,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(continued.status_code, 400, msg=continued.text)
         self.assertIn(f"导师 #{professor_id} 已移入回收站", continued.json()["detail"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             child_count = connection.execute(
                 "SELECT COUNT(*) FROM email_tasks WHERE parent_task_id = ?",
                 (task_id,),
@@ -1718,7 +1716,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(retired.status_code, 204, msg=retired.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             identity_row = connection.execute(
                 """
                 SELECT deleted_at, smtp_password, imap_password, is_default
@@ -1773,7 +1771,7 @@ class ApiEndpointTests(unittest.TestCase):
             status="send_failed",
             primary_material_id=None,
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -1803,7 +1801,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(retired.status_code, 204, msg=retired.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT id, status, cancellation_reason, draft_claim_id,
@@ -1919,7 +1917,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(detail["code"], "CAMPAIGN_IDENTITY_RETIRED")
         self.assertEqual(detail["batch_task_id"], batch_task_id)
         self.assertEqual(detail["identity_id"], identity_id)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             status_row = connection.execute(
                 "SELECT status FROM batch_tasks WHERE id = ?",
                 (batch_task_id,),
@@ -1957,7 +1955,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(followed_up.status_code, 400, msg=followed_up.text)
         self.assertIn(f"发件身份 #{identity_id} 已删除", followed_up.json()["detail"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             child_count = connection.execute(
                 "SELECT COUNT(*) FROM email_tasks WHERE parent_task_id = ?",
                 (task_id,),
@@ -1999,7 +1997,7 @@ class ApiEndpointTests(unittest.TestCase):
             f"模型配置 #{llm_id} 已删除",
             followed_up.json()["detail"],
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             child_count = connection.execute(
                 "SELECT COUNT(*) FROM email_tasks WHERE parent_task_id = ?",
                 (task_id,),
@@ -5625,7 +5623,7 @@ class ApiEndpointTests(unittest.TestCase):
             content=b"Shared global resume",
             material_type="resume",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             material_path = Path(
                 connection.execute(
                     "SELECT file_path FROM identity_materials WHERE id = ?",
@@ -5755,7 +5753,7 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=None,
             selected_material_ids=[],
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -5779,7 +5777,7 @@ class ApiEndpointTests(unittest.TestCase):
         }
         self.assertIsNone(identities[source_identity_id]["current_primary_material_id"])
         self.assertIsNone(identities[target_identity_id]["current_primary_material_id"])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             rewrite_snapshot = connection.execute(
                 """
                 SELECT draft_rewrite_source_selected_material_ids
@@ -7085,7 +7083,7 @@ class ApiEndpointTests(unittest.TestCase):
         email_task_id = self.client.get(
             f"/api/batch-tasks/{task_id}/items"
         ).json()[0]["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET status = 'sending' WHERE id = ?",
                 (email_task_id,),
@@ -7104,7 +7102,7 @@ class ApiEndpointTests(unittest.TestCase):
                 "status": "sending",
             },
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT batch_tasks.status, batch_tasks.deleted_at, email_tasks.status
@@ -7562,7 +7560,7 @@ class ApiEndpointTests(unittest.TestCase):
 
         self.assertEqual(removed.status_code, 200, msg=removed.text)
         self.assertEqual(removed.json()["task"]["target_count"], 0)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT status, cancellation_reason, scheduled_at
@@ -7692,7 +7690,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201, msg=created.text)
         task_id = created.json()["id"]
         item_id = self.client.get(f"/api/batch-tasks/{task_id}/items").json()[0]["id"]
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 UPDATE email_tasks
@@ -7711,7 +7709,7 @@ class ApiEndpointTests(unittest.TestCase):
         removed = self.client.post(f"/api/batch-tasks/{task_id}/items/{item_id}/delete")
 
         self.assertEqual(removed.status_code, 200, msg=removed.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT status, cancellation_reason, draft_claim_id,
@@ -14553,7 +14551,7 @@ class ApiEndpointTests(unittest.TestCase):
             [profile["id"] for profile in self.client.get("/api/llm-profiles").json()],
         )
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT api_key, api_base_url, matcher_prompt_template,
@@ -14627,7 +14625,7 @@ class ApiEndpointTests(unittest.TestCase):
             json=draft_payload,
         )
         self.assertEqual(saved.status_code, 200, msg=saved.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 """
                 INSERT INTO agent_change_plans (
@@ -14668,7 +14666,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(retired.status_code, 200, msg=retired.text)
         self.assertEqual(retired.json()["invalidated_plan_count"], 1)
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             task_profile_id = connection.execute(
                 "SELECT llm_profile_id FROM email_tasks WHERE id = ?",
                 (email_task_id,),
@@ -14760,7 +14758,7 @@ class ApiEndpointTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 409, msg=blocked.text)
         self.assertEqual(blocked.json()["detail"]["code"], "LLM_PROFILE_IN_USE")
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
                 "UPDATE email_tasks SET status = 'draft_failed' WHERE id = ?",
                 (task_id,),
@@ -14798,7 +14796,7 @@ class ApiEndpointTests(unittest.TestCase):
             primary_material_id=None,
             outreach_generation_mode="llm",
         )
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             batch_task_id = connection.execute(
                 """
                 INSERT INTO batch_tasks (
@@ -14860,7 +14858,7 @@ class ApiEndpointTests(unittest.TestCase):
             [match_job_id],
         )
         self.assertEqual(retired.json()["canceled_crawl_job_ids"], [crawl_job_id])
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             email_state = connection.execute(
                 "SELECT status, cancellation_reason FROM email_tasks WHERE id = ?",
                 (email_task_id,),
@@ -14948,7 +14946,7 @@ class ApiEndpointTests(unittest.TestCase):
             "temperature": 0.2,
             "max_tokens": 2048,
         }
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             job_id = connection.execute(
                 """
                 INSERT INTO crawl_jobs (
@@ -14982,7 +14980,7 @@ class ApiEndpointTests(unittest.TestCase):
         )
         self.assertEqual(retired.status_code, 200, msg=retired.text)
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             stored_snapshot = json.loads(
                 connection.execute(
                     "SELECT llm_runtime_snapshot FROM crawl_job_runs WHERE id = ?",
@@ -15004,7 +15002,7 @@ class ApiEndpointTests(unittest.TestCase):
             "provider": "openai",
             "model_name": "gpt-old",
         }
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             job_id = connection.execute(
                 """
                 INSERT INTO crawl_jobs (
@@ -15054,7 +15052,7 @@ class ApiEndpointTests(unittest.TestCase):
         model_name = "gpt-4o-mini"
 
         def seed_caches() -> None:
-            with sqlite3.connect(self.db_path) as connection:
+            with closing(sqlite3.connect(self.db_path)) as connection, connection:
                 connection.execute(
                     """
                     INSERT INTO llm_endpoint_adaptation_cache (
@@ -15083,7 +15081,7 @@ class ApiEndpointTests(unittest.TestCase):
                 connection.commit()
 
         def cache_counts() -> tuple[int, int, int]:
-            with sqlite3.connect(self.db_path) as connection:
+            with closing(sqlite3.connect(self.db_path)) as connection, connection:
                 return tuple(
                     connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                     for table in (
@@ -15210,7 +15208,7 @@ class ApiEndpointTests(unittest.TestCase):
         retired_llm_id = self._create_llm(name="活动旧模型")
         replacement_id = self._create_llm(name="活动替代模型")
         professor_id = self._create_professor(email="retired-batch@example.edu")
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             batch_id = connection.execute(
                 """
                 INSERT INTO batch_tasks (
@@ -15255,7 +15253,7 @@ class ApiEndpointTests(unittest.TestCase):
             params={"replacement_llm_profile_id": replacement_id},
         )
         self.assertEqual(resumed.status_code, 200, msg=resumed.text)
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection, connection:
             batch_profile_id = connection.execute(
                 "SELECT llm_profile_id FROM batch_tasks WHERE id = ?",
                 (batch_id,),

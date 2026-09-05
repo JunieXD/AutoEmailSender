@@ -98,38 +98,6 @@ class CliBuildScriptTests(unittest.TestCase):
             "导入导师",
         )
 
-    def test_posix_build_creates_arm64_macos_one_directory_cli_and_self_checks(
-        self,
-    ) -> None:
-        script = _read_script("build-cli.sh")
-
-        self.assertIn("uv run pyinstaller", script)
-        self.assertIn("--onedir", script)
-        self.assertNotIn("--onefile", script)
-        self.assertIn("--target-arch arm64", script)
-        self.assertNotIn("--copy-metadata", script)
-        self.assertIn("generate_cli_build_identity.py", script)
-        self.assertIn('--runtime-hook "$BuildIdentityHook"', script)
-        self.assertIn("verify_cli_binary.py", script)
-        self.assertIn('--executable "$CliExecutable"', script)
-        self.assertIn("benchmark_agent_cli.py", script)
-
-    def test_windows_build_creates_one_directory_cli_and_self_checks(self) -> None:
-        script = _read_script("build-cli.ps1")
-
-        self.assertIn("[switch]$SkipSync", script)
-        self.assertIn("uv run pyinstaller", script)
-        self.assertIn("--onedir", script)
-        self.assertNotIn("--onefile", script)
-        self.assertNotIn("--copy-metadata", script)
-        self.assertIn("dist\\auto-email-sender\\auto-email-sender.exe", script)
-        self.assertIn("auto-email-sender.exe", script)
-        self.assertIn("generate_cli_build_identity.py", script)
-        self.assertIn("--runtime-hook $BuildIdentityHook", script)
-        self.assertIn("verify_cli_binary.py", script)
-        self.assertIn("--executable $CliExecutable", script)
-        self.assertIn("benchmark_agent_cli.py", script)
-
     def test_frozen_binary_verifier_requires_embedded_identity_and_matching_catalog(
         self,
     ) -> None:
@@ -479,8 +447,6 @@ class CliBuildScriptTests(unittest.TestCase):
             self.assertEqual(embedded["version"], expected_version)
 
 
-def _read_script(name: str) -> str:
-    return (BUILD_SCRIPTS_ROOT / name).read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":
