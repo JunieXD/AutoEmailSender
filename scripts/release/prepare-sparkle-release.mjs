@@ -21,7 +21,8 @@ import { compareVersions } from "./check-release-version.mjs";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(scriptDirectory, "..", "..");
 const DEFAULT_REPOSITORY = "JunieXD/AutoEmailSender";
-const MAXIMUM_DELTAS = 3;
+// Older clients use the signed full DMG; only the previous version needs a delta.
+const MAXIMUM_DELTAS = 1;
 const REQUIRED_DELTA_BASELINE_VERSION = "2.5.3";
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 const ED25519_SPKI_PUBLIC_KEY_PREFIX = Buffer.from("302a300506032b6570032100", "hex");

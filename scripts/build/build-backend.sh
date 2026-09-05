@@ -27,7 +27,7 @@ NativeOcrHelper="$BackendDir/build/native-ocr/email-ocr"
 cd "$BackendDir"
 
 if ((Clean)); then
-  rm -rf build dist ms-playwright
+  rm -rf build dist
 fi
 
 uv sync --dev

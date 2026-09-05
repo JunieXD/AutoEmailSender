@@ -93,8 +93,7 @@ jobs:
           scripts/packaging/configure-sparkle-info.test.mjs
           scripts/packaging/sanitize-macos-bundle.test.mjs
           scripts/quality/cli-workflow.test.mjs
-          scripts/quality/script-topology.test.mjs
-          scripts/quality/document-topology.test.mjs
+          scripts/quality/document-links.test.mjs
 
       - name: Test Windows VM host readiness helper
         run: bash scripts/quality/windows-vm-host-utils.test.sh
@@ -293,16 +292,8 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Install Agent CLI dependencies
-        working-directory: cli
-        run: uv sync --dev
-
       - name: Build Agent CLI
         run: ./scripts/build/build-cli.sh --clean
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: uv sync --dev
 
       - name: Build backend executable
         run: ./scripts/build/build-backend.sh --clean
@@ -326,9 +317,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/auto-email-sender-sparkle-dmgs
-          key: sparkle-dmgs-v1-${{ runner.os }}-${{ env.RELEASE_TAG }}
+          key: sparkle-dmgs-v2-${{ runner.os }}-${{ env.RELEASE_TAG }}
           restore-keys: |
-            sparkle-dmgs-v1-${{ runner.os }}-
+            sparkle-dmgs-v2-${{ runner.os }}-
 
       - name: Generate signed appcast and deltas
         env:

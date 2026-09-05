@@ -107,7 +107,7 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
       </channel>
     </rss>`;
 
-  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender", 3), [
     {
       tag: "v2.3.9",
       name: "AutoEmailSender-2.3.9-arm64.dmg",
@@ -123,13 +123,13 @@ test("extracts full DMGs while ignoring nested deltas and foreign URLs", () => {
   ]);
 });
 
-test("limits delta source downloads to the most recent three unique DMGs", () => {
+test("downloads only the latest delta baseline by default", () => {
   const items = [9, 8, 8, 7, 6].map(
     (patch) => `<item><enclosure url="https://github.com/JunieXD/AutoEmailSender/releases/download/v2.3.${patch}/AutoEmailSender-2.3.${patch}-arm64.dmg" ${enclosureAttributes(patch)} /></item>`,
   );
   const assets = extractPreviousDmgAssets(`<channel>${items.join("")}</channel>`, "JunieXD/AutoEmailSender");
 
-  assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9", "v2.3.8", "v2.3.7"]);
+  assert.deepEqual(assets.map(({ tag }) => tag), ["v2.3.9"]);
 });
 
 test("recovers historical release tags after Sparkle rewrites retained download URLs", () => {
@@ -143,7 +143,7 @@ test("recovers historical release tags after Sparkle rewrites retained download 
       </item>
     </channel>`;
 
-  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender"), [
+  assert.deepEqual(extractPreviousDmgAssets(appcast, "JunieXD/AutoEmailSender", 3), [
     {
       tag: "v2.4.1",
       name: "AutoEmailSender-2.4.1-arm64.dmg",
@@ -398,6 +398,8 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { privateKey += chunk; });
 process.stdin.on("end", () => {
   if (privateKey.trim() !== process.env.EXPECTED_PRIVATE_KEY) process.exit(3);
+  if (process.argv[process.argv.indexOf("--maximum-deltas") + 1] !== "1") process.exit(5);
+  if (process.argv[process.argv.indexOf("--maximum-versions") + 1] !== "2") process.exit(6);
   const workDirectory = process.argv.at(-1);
   const appcastPath = path.join(workDirectory, "appcast.xml");
   fs.writeFileSync(appcastPath, [

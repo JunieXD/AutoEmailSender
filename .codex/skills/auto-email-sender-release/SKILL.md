@@ -26,7 +26,9 @@ Inspect changes since the prior release and write `docs/releases/v<version>.md` 
 
 This commits/pushes the candidate and dispatches certification without publishing. Keep the run ID and verify its SHA. Candidate certification requires preflight, CLI gate and both platform builds. On the project Mac, run formal Windows QA for the frozen candidate according to `docs/operations/windows-parallels-release-qa.md`; `--quick` is for daily checks, not release evidence.
 
-Use the release entrypoint's checks. If repository tests were already run, `run_all_tests.py --write-evidence .git/release-quality-evidence.json` produces evidence reusable through `--quality-evidence`; the script checks SHA, toolchain and age. Never fabricate evidence.
+Use the entrypoint's source checks once. It leaves frozen CLI/backend builds and their self-checks to the platform jobs that produce the release artifacts. When a full repository test run is needed, generate evidence on that first run with `uv run --project backend --no-sync python scripts/quality/run_all_tests.py --write-evidence .git/release-quality-evidence.json`, then pass `--quality-evidence .git/release-quality-evidence.json` to the entrypoint. Do not repeat a full run solely to recreate evidence already available; reuse requires the same clean SHA, toolchain and valid age. Never fabricate evidence.
+
+For changes to release tooling or this Skill, run the affected script/packaging tests. Candidate builds, formal VM QA and publication belong to an actual release request.
 
 When the candidate and required QA pass, publish the same artifacts:
 
@@ -48,7 +50,7 @@ PowerShell has matching `scripts/*.ps1` entrypoints with `-PromoteRun`, `-Candid
 
 ## Sparkle and recovery
 
-Read `docs/operations/sparkle-release-operations.md` for macOS signing, historical DMG caches, delta requirements and isolated update QA. Final appcast URLs must be fixed before signing; verify the whole feed and enclosure signatures against actual draft assets, uploading the feed last. Secret values must stay out of files, arguments and logs. Routine releases do not rotate keys or replace public assets.
+Read `docs/operations/sparkle-release-operations.md` for macOS signing and isolated update QA. Generate a delta only from the previous release; older clients use the signed full DMG. Final appcast URLs must be fixed before signing; verify the whole feed and enclosure signatures against actual draft assets, uploading the feed last. Secret values must stay out of files, arguments and logs. Routine releases do not rotate keys or replace public assets.
 
 Diagnose a failed check before retrying. Preserve the failure and thresholds; an environmental failure may justify a repeat with the same inputs, not repeated attempts until green. Use impact checks after fixes. Stale desktop build output can be removed with `npm run clean` before repeating the affected source test.
 

@@ -186,9 +186,6 @@ function Invoke-Verification {
   } finally {
     Pop-Location
   }
-  Invoke-CheckedCommand "cli: frozen binary" {
-    & (Join-Path $RepoRoot "scripts\build-cli.ps1") -Clean
-  }
 
   Write-Host "=== 验证 desktop ==="
   Push-Location (Join-Path $RepoRoot "desktop")

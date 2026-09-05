@@ -222,7 +222,9 @@ exit 0
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_database_schema test.test_migrations_runtime" -Message "release.ps1 没有执行迁移相关后端测试。`n$uvCalls"
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" -Message "release.ps1 没有执行导师抓取 Skill 契约和打包测试。`n$uvCalls"
     Assert-Contains -Text $uvCalls -Needle "run python -m unittest discover test" -Message "release.ps1 没有执行 CLI 测试。`n$uvCalls"
-    Assert-Contains -Text $verificationOutput -Needle "fake CLI build -Clean" -Message "release.ps1 没有验证 CLI 冻结包。`n$verificationOutput"
+    if ($verificationOutput.Contains("fake CLI build")) {
+      throw "release.ps1 不应重复构建 CI 才使用的 CLI 冻结包。"
+    }
     Assert-Contains -Text $verificationOutput -Needle "[dry-run] uv version 9.9.9 --no-sync in cli" -Message "release.ps1 dry-run 没有预演 CLI 版本更新。`n$verificationOutput"
     Assert-Contains -Text $verificationOutput -Needle "候选认证成功后，使用 -PromoteRun" -Message "release.ps1 dry-run 没有说明认证后提升流程。`n$verificationOutput"
 

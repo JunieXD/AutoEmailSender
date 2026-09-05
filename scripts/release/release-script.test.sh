@@ -112,7 +112,10 @@ uv_calls="$(cat "$uv_calls_path")"
 assert_contains "$uv_calls" "run python -m unittest test.test_database_schema test.test_migrations_runtime" "release.sh 没有执行迁移相关后端测试。"
 assert_contains "$uv_calls" "run python -m unittest test.test_crawl_mentors_skill_contract test.test_crawl_mentors_skill_package" "release.sh 没有执行导师抓取 Skill 契约和打包测试。"
 assert_contains "$uv_calls" "run python -m unittest discover test" "release.sh 没有执行 CLI 测试。"
-assert_contains "$output" "fake CLI build --clean" "release.sh 没有验证 CLI 冻结包。"
+if [[ "$output" == *"fake CLI build"* ]]; then
+  echo "release.sh 不应重复构建 CI 才使用的 CLI 冻结包。" >&2
+  exit 1
+fi
 assert_contains "$output" "[dry-run] uv version 9.9.9 --no-sync in cli" "release.sh dry-run 没有预演 CLI 版本更新。"
 assert_contains "$output" "候选认证成功后，使用 --promote-run" "release.sh dry-run 没有说明认证后提升流程。"
 

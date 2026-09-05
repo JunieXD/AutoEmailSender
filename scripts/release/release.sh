@@ -232,8 +232,6 @@ invoke_verification() {
         uv run python -m unittest discover test
     fi
   )
-  invoke_checked_command "cli: frozen binary" \
-    "$repo_root/scripts/build-cli.sh" --clean
 
   echo "=== 验证 desktop ==="
   (

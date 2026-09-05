@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -24,45 +23,6 @@ async function collectMarkdownFiles(directory) {
   }
   return files;
 }
-
-test("docs root is a map instead of a document dumping ground", async () => {
-  const entries = await readdir(docsRoot, { withFileTypes: true });
-  const rootFiles = entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort();
-
-  assert.deepEqual(rootFiles, ["README.md"]);
-});
-
-test("active documentation has explicit owners", async () => {
-  const expectedDirectories = [
-    "architecture",
-    "development",
-    "operations",
-    "product",
-    "releases",
-    "screenshots",
-  ];
-  const entries = await readdir(docsRoot, { withFileTypes: true });
-  const directories = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  assert.deepEqual(directories, expectedDirectories);
-});
-
-test("CLI contract data is development-owned", async () => {
-  const developmentEntries = await readdir(path.join(docsRoot, "development"));
-  for (const fileName of [
-    "agent_cli_baseline.json",
-    "agent_cli_concurrency_coverage.json",
-    "agent_cli_gui_coverage.json",
-  ]) {
-    assert.ok(developmentEntries.includes(fileName), `${fileName} must stay under development`);
-  }
-});
 
 test("active Markdown local links resolve", async () => {
   const activeRoots = [

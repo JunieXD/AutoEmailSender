@@ -69,9 +69,8 @@ workflow 会：
 1. 廉价 preflight 先检查版本、公告、发布脚本和后端发布契约；通过后才启动 Windows/macOS runner，并让完整 Agent CLI gate 与两个平台构建并行。最终认证同时依赖 CLI gate 和双平台构建，任何一项失败都不能提升。
 2. 分别构建 Windows 安装包和 macOS arm64 DMG，但不在两个 job 中直接发布，也不提前占用版本 tag。
 3. macOS 打包在签名后清理应用包中的扩展属性，并重新校验签名，避免 Sparkle 无法生成差分包。
-4. macOS job 从上一版 appcast 中解析最近 3 个全量 DMG，并生成最多 3 个差分包。workflow 会滚动缓存这三个历史 DMG；恢复后的缓存不受信任，脚本会先验证上一版 appcast 的 whole-feed 签名，再逐个核对 DMG 长度和 enclosure Ed25519 签名。只复用验证通过的文件，缺失或损坏项并行补下，过期基线从下一份滚动缓存中移除。
-   从 v2.5.3 干净基线开始，脚本必须为最新的旧版本生成 delta；缺少该 delta 时会直接终止发布，不能静默退化为仅全量更新。
-   GitHub 托管 runner 恢复远端 cache 时仍会传输这些字节；缓存的价值是稳定来源和可能更快的内部传输，不是零流量。观察 workflow 输出的缓存命中数以及“历史 Sparkle DMG / generate_appcast”分段耗时；如果连续发布中 cache restore/save 没有缩短墙钟时间，应移除 workflow 的远端 cache，但保留签名校验和并行补下逻辑。不要为了提高命中率保留超过 3 个历史 DMG。
+4. macOS job 只下载并缓存上一版 DMG，生成上一版到当前版的差分包。更早的客户端使用当前版签名 DMG 做全量更新，减少发布时的历史下载、解包和差分计算。脚本先验证上一版 appcast 的 whole-feed 签名，再核对缓存 DMG 的长度和 enclosure Ed25519 签名；缺失或损坏时重新下载，移除过期缓存。
+   从 v2.5.3 干净基线开始，必须生成最新旧版本的 delta；缺少时终止发布。观察日志中的历史 DMG 准备和 `generate_appcast` 分段耗时；远端缓存仍需要传输文件。
 5. 私钥只通过标准输入传给 `generate_appcast`，不会写入临时密钥文件。
 6. `generate_appcast` 可能按 `.app` 目录名生成含空格的差分文件名。发布脚本会先把差分包规范化为 GitHub 不会改写的安全文件名，并同步重写 appcast URL；签名覆盖差分包内容，因此文件改名不会改变 enclosure 的 `sparkle:edSignature`。但 feed 签名覆盖整个 XML，脚本必须在完成所有 URL 改写后用 `sign_update` 对最终 appcast 重新签名，并立即使用配置的公钥验签。
 7. publish job 只下载并核验候选 run 的原产物，在暂存的 draft Release 中先上传安装包和差分包，最后上传 `appcast.xml`。公开前必须再次验证最终 feed 签名，并逐项核对 appcast 当前版本引用的文件名、URL、GitHub 实际资产名和非零大小，全部一致后再发布为稳定 Release。
@@ -102,7 +101,7 @@ v2.4.0 和 v2.4.1 的 DMG 含有旧式代码签名扩展属性，Sparkle 无法�
 - `AutoEmailSender-x.y.z-arm64.dmg`
 - `crawl-mentors-to-xlsx-vx.y.z.zip`
 - `appcast.xml`
-- 从第二个 Sparkle 版本起，最多 3 个面向最近旧版本的 `.delta`
+- 从干净 Sparkle 基线后的版本起，一个面向上一版的 `.delta`
 
 再在已安装的上一版 macOS 应用中点击“检查更新”，确认 Sparkle 原生窗口能展示版本说明、下载并在用户确认后重启安装。自动检查周期是 24 小时，自动下载和静默安装均关闭。
 
