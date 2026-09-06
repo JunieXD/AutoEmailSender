@@ -547,7 +547,7 @@ class CrawlBenchmarkCliTests(unittest.TestCase):
                     code, result = self.invoke("--output", str(path))
                 self.assertEqual(code, 2)
                 self.assertFalse(result["ok"])
-                self.assertEqual(path.read_text(), content)
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
             path.unlink()
             database = root / "missing.db"
             code, result = self.invoke(
@@ -585,9 +585,9 @@ class CrawlBenchmarkCliTests(unittest.TestCase):
             self.assertEqual(database.read_bytes(), original_db)
             self.assertIn(
                 other["recordId"],
-                {item["recordId"] for item in json.loads(path.read_text())["records"]},
+                {item["recordId"] for item in json.loads(path.read_text(encoding="utf-8"))["records"]},
             )
-            self.assertNotIn("secret@example.edu", path.read_text())
+            self.assertNotIn("secret@example.edu", path.read_text(encoding="utf-8"))
 
     def test_concurrent_baseline_change_stops_write(self):
         with TemporaryDirectory() as folder:
@@ -608,7 +608,7 @@ class CrawlBenchmarkCliTests(unittest.TestCase):
                 code, result = self.invoke("--output", str(path))
             self.assertEqual(code, 2)
             self.assertEqual(result["code"], "BASELINE_CHANGED")
-            self.assertEqual(json.loads(path.read_text()), changed)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), changed)
 
     def test_dry_run_does_not_create_output_directory(self):
         with TemporaryDirectory() as folder:
