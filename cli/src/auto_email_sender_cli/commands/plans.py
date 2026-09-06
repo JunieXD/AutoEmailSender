@@ -57,7 +57,7 @@ def execute_plan(
             code="PLAN_CONFIRMATION_REQUIRED",
             message="尚未执行。请先展示计划并得到用户明确确认，再加 --confirm。",
             exit_code=6,
-            suggested_command=f"auto-email-sender plans show {plan_id}",
+            recovery_action={"command": "plans.show", "input": {"plan_id": plan_id}},
         )
         emit_error(
             cli_context(ctx),

@@ -321,6 +321,15 @@ def run_read_command(
         )
         return data
     except CliError as error:
+        if error.code == "RESULT_TOO_LARGE":
+            error.recovery_action = {
+                "command": command,
+                "input": {"all_items": True},
+                "global_options": {"output_file": "<path>.jsonl"},
+                "required_input": ["output_file"],
+                "reuse_previous_input": True,
+            }
+            error.suggested_command = None
         emit_error(context, command=command, error=error)
         raise typer.Exit(error.exit_code) from error
 

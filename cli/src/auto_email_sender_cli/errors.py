@@ -14,6 +14,7 @@ class CliError(Exception):
     retryable: bool = False
     details: dict[str, Any] = field(default_factory=dict)
     suggested_command: str | None = None
+    recovery_action: dict[str, Any] | None = None
 
     def __str__(self) -> str:
         return self.message
@@ -138,7 +139,7 @@ class RuntimeUnavailableError(CliError):
             message=message,
             exit_code=7,
             retryable=True,
-            suggested_command="auto-email-sender --format json doctor",
+            recovery_action={"command": "doctor", "input": {"strict": True}},
         )
 
 
@@ -158,7 +159,7 @@ class ExternalExecutionUnknownError(CliError):
             exit_code=9,
             retryable=False,
             details=details,
-            suggested_command="auto-email-sender --format json status",
+            recovery_action={"command": "status", "input": {}},
         )
 
 
@@ -172,5 +173,5 @@ class RuntimeProtocolMismatchError(CliError):
                 "请更新桌面软件，或在个人中心展开“命令行与 Agent”后点击“重新安装”。"
             ),
             exit_code=7,
-            suggested_command="auto-email-sender --format json doctor",
+            recovery_action={"command": "doctor", "input": {"strict": True}},
         )

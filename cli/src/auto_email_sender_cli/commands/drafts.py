@@ -67,7 +67,10 @@ def generate_draft(
         DraftGenerationMode,
         typer.Option("--generation-mode", help="template、ai_rewrite 或 manual。"),
     ],
-    template_id: Annotated[int | None, typer.Option("--template-id", min=1)] = None,
+    template_id: Annotated[
+        int | None,
+        typer.Option("--template-id", min=1, help="省略时使用该身份的默认模板。"),
+    ] = None,
     reference_material_id: Annotated[
         int | None,
         typer.Option(

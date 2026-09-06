@@ -40,7 +40,8 @@ def add_mutation_receipt(
             "type": resource,
             "id": str(identifier) if identifier is not None else None,
             "changed_fields": changed_fields,
-            "after": _redact_receipt_value(data),
+            # The complete resulting object is already beside this receipt.
+            # Repeating it here wastes context and creates false truncation.
         },
     ]
     response_status = (response_headers or {}).get("x-agent-mutation-status")

@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from auto_email_sender_cli.action_links import resolve_action_links
+from auto_email_sender_cli.action_links import grouped_action_link, resolve_action_links
 from auto_email_sender_cli.client import AgentApiClient
 from auto_email_sender_cli.commands.common import (
     cli_context,
@@ -405,7 +405,7 @@ def _wait_action_groups(
     for status_value, resource_ids in sorted(ids_by_status.items()):
         actions = _available_actions(resource, resource_ids[0], status_value)
         compact_actions = [
-            {key: value for key, value in action.items() if key != "arguments"}
+            grouped_action_link(action, resource_ids[0])
             for action in actions
         ]
         groups.append(

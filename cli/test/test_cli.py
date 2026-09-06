@@ -48,7 +48,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["_meta"]["schema_version"], "4")
+        self.assertEqual(payload["_meta"]["schema_version"], "5")
         self.assertEqual(payload["_meta"]["command"], "version")
         self.assertEqual(
             payload["data"]["schema_version"], payload["_meta"]["schema_version"]
@@ -1114,10 +1114,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         payload = json.loads(result.stdout)["data"]
         self.assertEqual(
-            payload["query_scope"]["mode"], "deterministic_multilingual_v2"
+            payload["scope"]["search_mode"], "deterministic_multilingual_v2"
         )
         self.assertEqual(
-            payload["query_scope"]["intent"], "列出当前系统中所有姓名包含英文字母的导师"
+            payload["scope"]["query"], "列出当前系统中所有姓名包含英文字母的导师"
         )
         self.assertEqual(
             [item["command"] for item in payload["items"]], ["professors.list"]
@@ -1125,7 +1125,7 @@ class CliTests(unittest.TestCase):
         match = payload["items"][0]["match"]
         self.assertEqual(match["confidence"], "high")
         self.assertIn("command_alias", match["reasons"])
-        self.assertTrue(match["matched_terms"])
+        self.assertNotIn("score", match)
 
     def test_community_export_accepts_a_frozen_professor_id_file(self) -> None:
         fake_client = _FakeAgentClient(
@@ -1451,8 +1451,10 @@ class CliTests(unittest.TestCase):
         generation_mode = payload["input"]["required"]["generation_mode"]
         self.assertIn("--generation-mode", generation_mode["flags"])
         self.assertEqual(generation_mode["enum"], ["template", "ai_rewrite", "manual"])
-        self.assertIn("global_option_contracts", payload["input"])
-        byte_budget = payload["input"]["global_option_contracts"]["max_output_bytes"]
+        global_result = self.runner.invoke(
+            app, ["--json", "describe", "--command", "drafts.generate", "--section", "globals"]
+        )
+        byte_budget = json.loads(global_result.stdout)["data"]["details"]["globals"]["max_output_bytes"]
         self.assertEqual(byte_budget["default"], 64 * 1024)
         self.assertEqual(byte_budget["minimum"], 1024)
         self.assertEqual(byte_budget["maximum"], 16 * 1024 * 1024)

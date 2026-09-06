@@ -9,7 +9,7 @@ PROTOCOL_VERSION = "3"
 # Runtime protocol v3 authenticates a concrete backend instance and keeps
 # process identifiers nested so unsafe legacy Windows CLIs fail closed.
 # Schema v4 makes routine discovery, result metadata, and action links sparse.
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 DEVELOPMENT_BUILD_REVISION = "development"
 
 

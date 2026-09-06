@@ -283,6 +283,14 @@ JSON `invoke` 的位置参数始终按数据解析，包括以 `--` 开头的字
 
 导师表格和模板下载使用临时文件写入后原子发布；即使指定 `--force`，写入失败也保留原文件。单资源等待在发起请求前耗尽时间预算时返回 `timed_out=true` 和已有观察结果。
 
+CLI 输出 schema 5 将动作参数统一为 `input`（替代 schema 4 的 `arguments`），与续取和恢复共用同一格式。列表动作通过 `input_bindings` 保留参数映射：选择组内一个 ID，`id` 绑定标量，`[id]` 绑定单元素数组，再合并 `input` 常量。动作可用不代表授权；确认参数仍须由 Agent 在用户确认后补齐。后端 HTTP 协议版本保持不变，客户端按 `_meta.schema_version` 区分 CLI 输出。
+
+`capabilities` 默认省略构建信息和搜索评分，`--diagnostics` 可展开；`--with-contract` 附带首个可用候选的执行卡，减少一次查询。`describe` 默认保留参数用途和已声明的约束，全局选项合同通过 `--section globals` 读取；指定 section 时只返回所请求的详情。合同 revision 包含发现格式版本，旧缓存会失效。
+
+写入回执只补充操作状态、对象标识和变更字段，完整对象已在结果中时不重复复制 `after`。错误的可执行恢复动作放在 `recovery_action`；纯文字建议放在 `suggested_action.reason`，不能作为命令执行。
+
+使用 `uv run --project cli python scripts/quality/benchmark_agent_workflows.py` 验证发现到执行、列表到等待、确认恢复和完整导出恢复的调用次数、累计输出字节与额外合同查询次数。此基准使用隔离测试数据，不访问本机应用或外部服务，也不代表真实模型的任务成功率。
+
 ### 8.2 不提供的“万能命令”
 
 不提供：
@@ -729,11 +737,11 @@ auto-email-sender --format json plans execute plan_01J... --confirm
       "changed_fields": ["attachment_material_ids"]
     },
     "suggested_action": {
-      "command": "auto-email-sender --format json drafts prepare-send --task-id 42"
+      "reason": "读取受影响草稿，检查变更后重新准备发送计划。"
     }
   },
   "_meta": {
-    "schema_version": "2",
+    "schema_version": "5",
     "request_id": "req_01J..."
   }
 }

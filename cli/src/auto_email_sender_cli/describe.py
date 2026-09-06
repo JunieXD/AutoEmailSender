@@ -23,6 +23,7 @@ CommandDescription = dict[str, object]
 
 DESCRIPTION_VIEWS: Final[frozenset[str]] = frozenset({"summary", "full"})
 DESCRIPTION_SECTIONS: Final[tuple[str, ...]] = (
+    "globals",
     "input",
     "output",
     "effects",
@@ -263,7 +264,6 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
 
     parameters = description.get("parameters")
     required_parameters: dict[str, object] = {}
-    optional_parameters: list[str] = []
     optional_parameter_contracts: dict[str, object] = {}
     if isinstance(parameters, list):
         for parameter in parameters:
@@ -275,13 +275,11 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
             if parameter.get("required") is True:
                 required_parameters[name] = _compact_parameter(parameter)
             else:
-                optional_parameters.append(name)
                 optional_parameter_contracts[name] = _compact_parameter(parameter)
 
     unavailable = description.get("kind") == "unavailable"
     input_contract = description.get("input")
     global_options: list[str] = []
-    global_option_contracts: dict[str, object] = {}
     if isinstance(input_contract, dict) and not unavailable:
         raw_global_options = input_contract.get("global_options")
         if isinstance(raw_global_options, dict):
@@ -290,7 +288,6 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
                     continue
                 if name in {"request_id", "format"} or bool(option.get("supported")):
                     global_options.append(name)
-                    global_option_contracts[name] = _compact_global_option(option)
 
     output_contract = description.get("output")
     if not isinstance(output_contract, dict):
@@ -304,13 +301,15 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
 
     input_summary: dict[str, object] = {
         "required": required_parameters,
-        "optional": optional_parameters,
         "optional_contracts": optional_parameter_contracts,
         "global_options": global_options,
-        "global_option_contracts": global_option_contracts,
     }
     if description.get("input_file_examples"):
         input_summary["file_input"] = True
+    if isinstance(input_contract, dict):
+        for key in ("constraints", "selection_semantics"):
+            if input_contract.get(key):
+                input_summary[key] = input_contract[key]
 
     output_traits = [
         trait
@@ -328,9 +327,8 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
     }
     if output_traits:
         output_summary["traits"] = output_traits
-    terminal_states = output_contract.get("terminal_states")
-    if isinstance(terminal_states, list) and terminal_states:
-        output_summary["terminal_states"] = terminal_states
+    if output_contract.get("pagination"):
+        output_summary["key_fields"] = ["items", "next_cursor", "has_more"]
 
     summary: dict[str, object] = {
         "command": description.get("command"),
@@ -341,11 +339,15 @@ def compact_command_description(description: CommandDescription) -> dict[str, ob
         "risk": _compact_risk(description.get("risk"), description.get("effects")),
         "input": input_summary,
         "output": output_summary,
-        "effects": _compact_effects(description.get("effects")),
-        "preconditions": _compact_preconditions(description.get("preconditions")),
-        "errors": _compact_errors(description.get("errors")),
         "details_available": True,
     }
+    for key, value in (
+        ("effects", _compact_effects(description.get("effects"))),
+        ("preconditions", _compact_preconditions(description.get("preconditions"))),
+        ("errors", _compact_errors(description.get("errors"))),
+    ):
+        if value:
+            summary[key] = value
     next_commands = _compact_next_commands(description.get("next_actions"))
     if next_commands:
         summary["next_commands"] = next_commands
@@ -426,6 +428,19 @@ def description_sections(
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
+        if normalized == "globals":
+            input_contract = description.get("input")
+            options = (
+                input_contract.get("global_options", {})
+                if isinstance(input_contract, dict)
+                else {}
+            )
+            selected[normalized] = {
+                name: _compact_global_option(option)
+                for name, option in options.items()
+                if isinstance(option, dict) and option.get("supported")
+            }
+            continue
         key = _DESCRIPTION_SECTION_KEYS.get(normalized)
         if key is None:
             invalid.append(requested)
@@ -463,6 +478,9 @@ def _compact_parameter(parameter: dict[str, object]) -> dict[str, object]:
                 result[key] = type_info[key]
     if bool(parameter.get("multiple")):
         result["multiple"] = True
+    help_text = parameter.get("help")
+    if isinstance(help_text, str) and help_text.strip():
+        result["description"] = help_text.strip()
     if parameter.get("required") is not True and "default" in parameter:
         result["default"] = parameter.get("default")
     nargs = parameter.get("nargs")

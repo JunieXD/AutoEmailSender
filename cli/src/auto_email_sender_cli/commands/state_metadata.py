@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from auto_email_sender_cli.action_links import resolve_action_links
+from auto_email_sender_cli.action_links import grouped_action_link, resolve_action_links
 from auto_email_sender_cli.capabilities import supports_dynamic_action_links
 from auto_email_sender_cli.output import CliContext
 
@@ -68,7 +68,7 @@ def compact_collection_action_metadata(data: Any, *, command: str) -> Any:
             compact_items.append(item)
             continue
         compact_actions = [
-            {key: value for key, value in action.items() if key != "arguments"}
+            grouped_action_link(action, resource_id)
             for action in actions
             if isinstance(action, dict)
         ]

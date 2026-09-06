@@ -297,6 +297,7 @@ def _summarize_value(
                 projection != "full"
                 and key_text == "after"
                 and "/mutation_receipt/changed_resources/" in nested_path
+                and not _is_expanded(key_text, nested_path, selectors)
             ):
                 omitted.append(nested_path)
                 continue

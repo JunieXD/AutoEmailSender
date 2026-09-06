@@ -200,8 +200,7 @@ def _reorder_root_options(arguments: list[str]) -> list[str]:
             break
     leaf_command = (
         arguments[leaf_index]
-        if leaf_index < len(arguments)
-        and not arguments[leaf_index].startswith("-")
+        if leaf_index < len(arguments) and not arguments[leaf_index].startswith("-")
         else None
     )
     moved: list[str] = []
@@ -740,6 +739,15 @@ def capabilities_command(
             help="省略 build、next 和工作区提示，只返回缓存与结果必需字段。",
         ),
     ] = False,
+    diagnostics: Annotated[
+        bool, typer.Option("--diagnostics", help="展开搜索评分、构建和诊断提示。")
+    ] = False,
+    with_contract: Annotated[
+        bool,
+        typer.Option(
+            "--with-contract", help="附带首个可用候选命令的执行卡，省去一次 describe。"
+        ),
+    ] = False,
     since: Annotated[
         str | None,
         typer.Option(
@@ -750,6 +758,15 @@ def capabilities_command(
 ) -> None:
     context = _context(ctx)
     _validate_system_context(context, "capabilities")
+    if with_contract and not (query or command or resource):
+        error = CliError(
+            code="INVALID_ARGUMENT",
+            message="--with-contract 需要用 --intent、--command 或 --resource 缩小范围。",
+            exit_code=2,
+        )
+        emit_error(context, command="capabilities", error=error)
+        raise typer.Exit(error.exit_code)
+    minimal = minimal or not diagnostics
     requested_view = view.strip().lower() if view else None
     normalized_query = query.strip() if query is not None else None
     selected_fields, invalid_select_fields = _normalize_capability_select(select)
@@ -1000,6 +1017,8 @@ def capabilities_command(
         "limit": (limit or 8) if query is not None else None,
         "select": selected_fields,
         "minimal": minimal,
+        "with_contract": with_contract,
+        "diagnostics": diagnostics,
     }
     scope_revision = capability_catalog_revision(
         contract_revisions,
@@ -1094,6 +1113,20 @@ def capabilities_command(
                 f"(风险 {risk_level})",
             )
         items = _select_capability_card_fields(items, selected_fields)
+        if not diagnostics:
+            items = [
+                {
+                    **item,
+                    "match": {
+                        key: value
+                        for key, value in item["match"].items()
+                        if key in {"confidence", "reasons"}
+                    },
+                }
+                if isinstance(item.get("match"), dict)
+                else item
+                for item in items
+            ]
     else:
         items = full_items
         summary = {
@@ -1120,7 +1153,20 @@ def capabilities_command(
         "items": items,
         "summary": summary,
     }
-    if query is not None:
+    if with_contract:
+        target = next(
+            (
+                item["command"]
+                for item in full_items
+                if item.get("availability") == "available"
+            ),
+            None,
+        )
+        if target:
+            description = describe_command(app, target)
+            if description:
+                data["execution_contract"] = compact_command_description(description)
+    if query is not None and not minimal:
         data["query_scope"] = {
             "intent": normalized_query,
             "resource": normalize_capability_command(resource) if resource else None,
@@ -1165,7 +1211,7 @@ def describe_command_handler(
         list[str],
         typer.Option(
             "--section",
-            help="按需展开 input、output、effects、preconditions、trust、states、errors、actions、idempotency 或 lifecycle；可重复。",
+            help="按需展开 globals、input、output、effects、preconditions、trust、states、errors、actions、idempotency 或 lifecycle；可重复。",
         ),
     ] = [],
     since: Annotated[
@@ -1258,7 +1304,12 @@ def describe_command_handler(
             emit_error(context, command="describe", error=error)
             raise typer.Exit(error.exit_code)
         if requested_details:
-            data["details"] = requested_details
+            data = {
+                "command": description["command"],
+                "contract_version": description.get("contract_version"),
+                "contract_revision": contract_revision,
+                "details": requested_details,
+            }
     if since is not None:
         data["cache"] = {"status": "stale", "refresh_required": True}
     emit_success(
@@ -1571,6 +1622,10 @@ def _format_guide_human(guide: dict[str, object]) -> str:
 
 
 def _format_description_human(description: dict[str, object]) -> str:
+    if "details" in description:
+        import json
+
+        return json.dumps(description, ensure_ascii=False, indent=2)
     lines = [
         str(description["command"]),
         str(description["summary"]),

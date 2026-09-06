@@ -2157,7 +2157,7 @@ class ContractTests(unittest.TestCase):
         action_map = {item["action"]: item for item in projected["available_actions"]}
         self.assertEqual(projected["status"], "partially_completed")
         self.assertEqual(action_map["read"]["command"], "campaigns.get")
-        self.assertEqual(action_map["read"]["arguments"], {"campaign_id": 42})
+        self.assertEqual(action_map["read"]["input"], {"campaign_id": 42})
         self.assertIn("retry", projected["blocked_actions"])
         self.assertIn("wait", projected["blocked_actions"])
         task_actions = {
@@ -2165,7 +2165,7 @@ class ContractTests(unittest.TestCase):
             for item in projected["current_task"]["available_actions"]
         }
         self.assertEqual(task_actions["prepare-send"]["command"], "drafts.prepare-send")
-        self.assertEqual(task_actions["prepare-send"]["arguments"], {"task_id": 8})
+        self.assertEqual(task_actions["prepare-send"]["input"], {"task_id": 8})
         self.assertEqual(task_actions["approve"]["command"], "drafts.approve")
         self.assertEqual(task_actions["approve"]["required_input"], ["body_text"])
 
@@ -2179,7 +2179,7 @@ class ContractTests(unittest.TestCase):
         prepare_send = item_actions["prepare-send"]
         self.assertEqual(prepare_send["command"], "campaigns.prepare-send")
         self.assertEqual(
-            prepare_send["arguments"], {"campaign_id": 42, "item_ids": [99]}
+            prepare_send["input"], {"campaign_id": 42, "item_ids": [99]}
         )
         self.assertEqual(prepare_send["risk_level"], "L3")
         self.assertNotIn("confirmation_required", prepare_send)
@@ -2190,7 +2190,7 @@ class ContractTests(unittest.TestCase):
         approve = item_actions["approve"]
         self.assertEqual(approve["command"], "campaigns.approve-item-draft")
         self.assertEqual(
-            approve["arguments"],
+            approve["input"],
             {"campaign_id": 42, "item_id": 99},
         )
         self.assertEqual(approve["required_input"], ["body_text"])
@@ -2207,7 +2207,7 @@ class ContractTests(unittest.TestCase):
         delivery_action = delivery["available_actions"][0]
         self.assertEqual(delivery_action["command"], "deliveries.reschedule")
         self.assertEqual(
-            delivery_action["arguments"],
+            delivery_action["input"],
             {
                 "task_id": 17,
                 "expected_updated_at": "2026-08-09T09:00:00.123456+00:00",
@@ -2223,7 +2223,7 @@ class ContractTests(unittest.TestCase):
             item["action"]: item for item in running_campaign["available_actions"]
         }
         self.assertEqual(
-            campaign_actions["wait"]["arguments"],
+            campaign_actions["wait"]["input"],
             {"resource": "campaigns", "resource_id": [42]},
         )
 
@@ -2250,7 +2250,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(compact["action_groups"][0]["ids"], [7, 8])
         actions = compact["action_groups"][0]["available_actions"]
         self.assertTrue(actions)
-        self.assertTrue(all("arguments" not in action for action in actions))
+        wait_action = next(action for action in actions if action["action"] == "wait")
+        self.assertEqual(wait_action["input"], {"resource": "crawler.jobs"})
+        self.assertEqual(wait_action["input_bindings"], {"resource_id": "[id]"})
 
         plan = augment_state_metadata(
             {
@@ -2263,7 +2265,7 @@ class ContractTests(unittest.TestCase):
         plan_actions = {item["action"]: item for item in plan["available_actions"]}
         self.assertEqual(plan_actions["execute"]["command"], "plans.execute")
         self.assertEqual(
-            plan_actions["execute"]["arguments"],
+            plan_actions["execute"]["input"],
             {
                 "plan_id": "plan-7",
                 "confirmed_fingerprint": "fingerprint-7",

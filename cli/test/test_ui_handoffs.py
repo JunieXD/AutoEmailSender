@@ -141,7 +141,7 @@ class UiHandoffCliTests(unittest.TestCase):
             item["action"]: item for item in payload["data"]["available_actions"]
         }
         self.assertEqual(actions["wait"]["command"], "ui-handoffs.wait")
-        self.assertEqual(actions["cancel"]["arguments"], {"handoff_id": "uih_test"})
+        self.assertEqual(actions["cancel"]["input"], {"handoff_id": "uih_test"})
 
     def test_professor_selection_validates_modes_and_scoped_all(self) -> None:
         invalid_cases = [
@@ -387,7 +387,7 @@ class UiHandoffCliTests(unittest.TestCase):
                     if item["action"] == "present-in-app"
                 )
                 self.assertEqual(action["command"], target)
-                self.assertEqual(action["arguments"], arguments)
+                self.assertEqual(action["input"], arguments)
 
 
 if __name__ == "__main__":

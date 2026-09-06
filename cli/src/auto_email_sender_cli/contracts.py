@@ -69,6 +69,7 @@ _CONTRACT_REVISION_KEYS = frozenset(
         "idempotency",
         "lifecycle",
         "next_steps",
+        "discovery",
     },
 )
 
@@ -123,6 +124,11 @@ def build_command_contract(
         "operation": capability_operation(command),
         "input": _input_contract(command, parameters, input_file_examples),
         "output": _output_contract(command, supports_pagination(command)),
+        "discovery": {
+            "summary_version": "2",
+            "global_options_section": "globals",
+            "section_output": "requested_details_only",
+        },
         **semantics,
     }
     contract["contract_revision"] = command_contract_revision(contract)
@@ -346,7 +352,7 @@ def _input_contract(
             },
         },
         "clear_semantics": (
-            "omitted=preserve; supplied value=set; explicit --clear-* or clear=true=clear"
+            "omitted=parser default; supplied value=set; explicit --clear-* or clear=true=clear"
         ),
         "file_and_stdin_examples": input_file_examples,
     }
@@ -371,6 +377,13 @@ def _input_contract(
         contract["selection_semantics"] = (
             "exactly one of professor_ids or selection_filter is required"
         )
+    if "clear_attachments" in properties and "attachment_material_ids" in properties:
+        contract["constraints"] = [
+            {
+                "mutually_exclusive": ["clear_attachments", "attachment_material_ids"],
+                "reason": "省略附件保留原选择；clear_attachments=true 明确移除附件。",
+            }
+        ]
     return contract
 
 
@@ -396,8 +409,8 @@ def _clear_semantics(name: str) -> str:
     if name.startswith("clear_"):
         return "true explicitly clears the corresponding value"
     if name in {"body_text", "body_html", "subject", "name", "email"}:
-        return "omitted=preserve; supplied value=set; use the command's clear option when available"
-    return "omitted=preserve; supplied value=set"
+        return "omitted=parser default; supplied value=set; use the command's clear option when available"
+    return "omitted=parser default; supplied value=set"
 
 
 def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
@@ -509,13 +522,13 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
                     "required": [
                         "action",
                         "command",
-                        "arguments",
+                        "input",
                         "risk_level",
                     ],
                     "properties": {
                         "action": {"type": "string"},
                         "command": {"type": "string"},
-                        "arguments": {"type": "object"},
+                        "input": {"type": "object"},
                         "risk_level": {
                             "type": "string",
                             "enum": ["L0", "L1", "L2", "L3"],
@@ -556,6 +569,8 @@ def _output_contract(command: str, supports_list: bool) -> dict[str, object]:
             ],
             "presence": "字段按需出现：完整且未摘要的对象不返回协议元数据；limit 仅用于集合，continuation 仅在可续取时出现，recovery_action 仅在可结构化恢复完整结果时出现，truncated/omitted_paths 仅在有内容被省略时出现。",
             "continuation": "当 truncated=true 且 continuation 非空时，使用其 command/input 续取；reuse_previous_input=true 时保留上一次输入。",
+            "action_groups": "选择组内一个 id，将 input 常量与 input_bindings 合并：id 绑定该 ID，[id] 绑定只含该 ID 的数组；再补齐 required_input，通过 invoke 执行所需动作。",
+            "recovery_action": "保留原输入并覆盖 input/global_options，替换 required_input 中的占位值；错误中的 recovery_action 使用相同合同。",
             "expansion": "使用根选项 --projection full 或重复 --expand <field-or-json-pointer> 显式展开正文、日志或证据；所有视图仍受 --max-output-bytes 约束。",
             "budgets": {
                 "default_bytes": DEFAULT_MAX_OUTPUT_BYTES,

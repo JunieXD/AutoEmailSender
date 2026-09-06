@@ -206,10 +206,12 @@ def emit_error(
         "retryable": error.retryable,
         "details": redact_error_details(error.details),
     }
-    if error.suggested_command:
+    if error.suggested_command and not error.recovery_action:
         payload["suggested_action"] = {
-            "command": sanitize_error_message(error.suggested_command)
+            "reason": sanitize_error_message(error.suggested_command)
         }
+    if error.recovery_action:
+        payload["recovery_action"] = redact_error_details(error.recovery_action)
     envelope = {
         "ok": False,
         "error": payload,
@@ -231,6 +233,10 @@ def emit_error(
                     f"建议：{sanitize_error_message(error.suggested_command)}",
                 ),
                 err=True,
+            )
+        elif error.recovery_action:
+            typer.echo(
+                _sanitize_terminal_text(_pretty_json(error.recovery_action)), err=True
             )
         return
     if context.output_format is OutputFormat.JSONL:

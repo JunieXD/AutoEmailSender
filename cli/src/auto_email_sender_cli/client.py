@@ -246,12 +246,14 @@ def _raise_api_error(response: httpx.Response) -> None:
             if isinstance(suggested, dict) and suggested.get("command")
             else None
         )
+        recovery_action = error.get("recovery_action")
     else:
         code = f"HTTP_{response.status_code}"
         message = str(detail or "本地服务请求失败")
         retryable = response.status_code >= 500
         details = {}
         suggested_command = None
+        recovery_action = None
     exit_code = _exit_code_for_api_error(
         status_code=response.status_code,
         code=code,
@@ -263,6 +265,7 @@ def _raise_api_error(response: httpx.Response) -> None:
         retryable=retryable,
         details=details if isinstance(details, dict) else {},
         suggested_command=suggested_command,
+        recovery_action=recovery_action if isinstance(recovery_action, dict) else None,
     )
 
 

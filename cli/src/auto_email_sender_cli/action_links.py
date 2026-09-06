@@ -17,6 +17,28 @@ from auto_email_sender_cli.operation_specs import get_operation_spec
 ActionLink = dict[str, object]
 
 
+def grouped_action_link(action: ActionLink, resource_id: str | int) -> ActionLink:
+    """Keep constant inputs and explicit per-ID bindings when grouping actions."""
+    result = {key: value for key, value in action.items() if key != "input"}
+    arguments = action.get("input")
+    if not isinstance(arguments, dict):
+        return result
+    constants: dict[str, object] = {}
+    bindings: dict[str, str] = {}
+    for name, value in arguments.items():
+        if name.endswith("_id") and value == resource_id:
+            bindings[name] = "id"
+        elif name.endswith(("_id", "_ids")) and value == [resource_id]:
+            bindings[name] = "[id]"
+        else:
+            constants[name] = value
+    if constants:
+        result["input"] = constants
+    if bindings:
+        result["input_bindings"] = bindings
+    return result
+
+
 def resolve_action_links(
     command: str,
     item: Mapping[str, object],
@@ -53,7 +75,7 @@ def resolve_action_links(
         link: ActionLink = {
             "action": action,
             "command": target_command,
-            "arguments": arguments,
+            "input": arguments,
             "risk_level": capability.risk_level,
         }
         if required_input:
