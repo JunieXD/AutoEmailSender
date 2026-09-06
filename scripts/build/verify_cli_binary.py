@@ -28,7 +28,7 @@ def main() -> None:
     executable = arguments.executable.resolve()
     validate_bundle_layout(executable)
     version = _run_json(executable, "version")
-    capabilities = _run_json(executable, "capabilities")
+    capabilities = _run_json(executable, "capabilities", "--diagnostics")
     validate_payloads(version, capabilities)
     manifest_versions = validate_agent_installation_contract(executable)
     print(
@@ -318,7 +318,7 @@ def _sha256_directory(directory: Path) -> str:
 def _run_json(
     executable: Path,
     command: str,
-    *,
+    *arguments: str,
     environment_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     environment = os.environ.copy()
@@ -336,7 +336,7 @@ def _run_json(
         environment.pop(name, None)
     if environment_overrides is not None:
         environment.update(environment_overrides)
-    invocation = [executable.as_posix(), "--format", "json", command]
+    invocation = [executable.as_posix(), "--format", "json", command, *arguments]
     completed = subprocess.run(
         invocation,
         check=False,

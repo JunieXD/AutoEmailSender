@@ -139,6 +139,40 @@ class CliBuildScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unexpected frozen CLI build kind"):
             validate_payloads(version, capabilities)
 
+    def test_verifier_entrypoint_reads_build_identity_from_real_cli(self) -> None:
+        namespace = runpy.run_path(
+            (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
+        )
+        main = namespace["main"]
+        executable = Path(sys.executable).parent / (
+            "auto-email-sender.exe" if os.name == "nt" else "auto-email-sender"
+        )
+        revision = "b" * 40
+        output = io.StringIO()
+        # Exercise the real command invocation and output schema, with the same
+        # identity variables supplied by the PyInstaller runtime hook. Bundle
+        # layout and installation-manifest checks have separate coverage.
+        with (
+            patch.dict(
+                os.environ, {"AUTO_EMAIL_SENDER_EMBEDDED_BUILD_REVISION": revision}
+            ),
+            patch.object(
+                sys, "argv", ["verify_cli_binary.py", "--executable", str(executable)]
+            ),
+            patch.object(sys, "stdout", output),
+            patch.dict(
+                main.__globals__,
+                {
+                    "validate_bundle_layout": lambda _path: None,
+                    "validate_agent_installation_contract": lambda _path: [],
+                },
+            ),
+        ):
+            main()
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["build_revision"], revision)
+
     def test_frozen_binary_verifier_requires_complete_onedir_layout(self) -> None:
         namespace = runpy.run_path(
             (BUILD_SCRIPTS_ROOT / "verify_cli_binary.py").as_posix()
