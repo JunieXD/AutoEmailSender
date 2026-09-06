@@ -156,7 +156,7 @@ class SubmissionSkillTests(unittest.TestCase):
             self.assertFalse((root / ".maintainer-submissions").exists())
             self.assertEqual(result["preflight"], "incomplete")
             self.assertEqual(
-                json.loads((batch_dir / "manifest.json").read_text())["submission"][
+                json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))["submission"][
                     "status"
                 ],
                 "prepared",
@@ -270,7 +270,7 @@ class SubmissionSkillTests(unittest.TestCase):
         self, remote: Path, manifest_path: Path, *, fail_push=False, fail_create=False
     ):
         real_command = submit_submissions._command
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         payload = _payload(manifest, manifest_path)
         branch = _branch(manifest["batch_id"])
         state = {
@@ -489,7 +489,7 @@ class SubmissionSkillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = self.make_batch(root)
-            manifest = json.loads(path.read_text())
+            manifest = json.loads(path.read_text(encoding="utf-8"))
             manifest["submission"] = {"status": "unknown", "stage": "creating_pr"}
             path.write_text(json.dumps(manifest))
             with patch("submit_submissions._gh_search", return_value=([], None)):
@@ -498,7 +498,7 @@ class SubmissionSkillTests(unittest.TestCase):
                 )
             self.assertEqual(result["code"], "CREATE_RESULT_UNKNOWN")
 
-    def test_audit_rejects_extra_files_symlinks_and_invalid_manifest(self):
+    def test_audit_rejects_extra_files_and_invalid_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = self.make_batch(root)
@@ -506,13 +506,7 @@ class SubmissionSkillTests(unittest.TestCase):
             extra.write_text("private")
             self.assertFalse(audit(path)["ok"])
             extra.unlink()
-            data = path.parent / "files" / "001.xlsx"
-            data.unlink()
-            data.symlink_to(root / "source.xlsx")
-            self.assertFalse(audit(path)["ok"])
-            data.unlink()
-            shutil.copyfile(root / "source.xlsx", data)
-            original = json.loads(path.read_text())
+            original = json.loads(path.read_text(encoding="utf-8"))
             for field, value in (
                 ("repository", []),
                 ("license", "unknown"),
@@ -520,6 +514,20 @@ class SubmissionSkillTests(unittest.TestCase):
             ):
                 path.write_text(json.dumps({**original, field: value}))
                 self.assertFalse(audit(path)["ok"])
+
+    def test_audit_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = self.make_batch(root)
+            data = path.parent / "files" / "001.xlsx"
+            data.unlink()
+            try:
+                data.symlink_to(root / "source.xlsx")
+            except OSError as error:
+                if getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows user lacks symbolic-link privileges")
+                raise
+            self.assertFalse(audit(path)["ok"])
 
     def test_xlsx_rejects_extra_sheet_parts_invalid_xml_and_extreme_rows(self):
         from xlsx_contract import inspect_xlsx
