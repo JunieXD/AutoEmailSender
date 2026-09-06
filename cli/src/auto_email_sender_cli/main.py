@@ -188,10 +188,20 @@ def _reorder_root_options(arguments: list[str]) -> list[str]:
 
     command_index = _first_command_index(arguments)
     root_command = arguments[command_index] if command_index < len(arguments) else ""
+    leaf_index = command_index + 1
+    while leaf_index < len(arguments):
+        argument = arguments[leaf_index]
+        option = _root_option_name(argument)
+        if option in _ROOT_FLAG_OPTIONS:
+            leaf_index += 1
+        elif option in _ROOT_VALUE_OPTIONS:
+            leaf_index += 1 if "=" in argument else 2
+        else:
+            break
     leaf_command = (
-        arguments[command_index + 1]
-        if command_index + 1 < len(arguments)
-        and not arguments[command_index + 1].startswith("-")
+        arguments[leaf_index]
+        if leaf_index < len(arguments)
+        and not arguments[leaf_index].startswith("-")
         else None
     )
     moved: list[str] = []

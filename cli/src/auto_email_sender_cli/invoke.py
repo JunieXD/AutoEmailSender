@@ -159,6 +159,12 @@ def _read_input_object(input_source: str) -> dict[str, object]:
                     exit_code=2,
                 )
             raw = path.read_text(encoding="utf-8")
+    except UnicodeError as exc:
+        raise CliError(
+            code="INVALID_INVOKE_INPUT",
+            message="JSON 输入必须使用 UTF-8 编码。",
+            exit_code=2,
+        ) from exc
     except OSError as exc:
         raise CliError(
             code="INVOKE_INPUT_READ_FAILED",
@@ -225,7 +231,9 @@ def _input_to_argv(target: Command, payload: dict[str, object]) -> list[str]:
         else:
             assert isinstance(parameter, TyperArgument)
             _append_argument(destination, parameter, value, name=name)
-    return [*arguments, *options]
+    # JSON positional values are data, including strings such as --help.
+    # Parse options first, then terminate option parsing for all arguments.
+    return [*options, "--", *arguments]
 
 
 def _append_option(

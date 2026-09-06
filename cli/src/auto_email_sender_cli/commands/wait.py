@@ -148,13 +148,18 @@ def wait_for_resource(
                 ]
                 if len(resource_id) == 1:
                     item_id = pending_ids[0]
+                    try:
+                        request_timeout = _remaining_request_timeout(
+                            deadline,
+                            allow_expired=timeout_seconds == 0 and poll_rounds == 1,
+                        )
+                    except TimeoutError:
+                        timed_out = True
+                        break
                     latest_by_id[item_id] = client.request(
                         "GET",
                         route.format(id=item_id),
-                        request_timeout=_remaining_request_timeout(
-                            deadline,
-                            allow_expired=timeout_seconds == 0 and poll_rounds == 1,
-                        ),
+                        request_timeout=request_timeout,
                     )
                     polls += 1
                 elif pending_ids:

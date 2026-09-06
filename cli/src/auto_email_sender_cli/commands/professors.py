@@ -20,6 +20,7 @@ from auto_email_sender_cli.commands.common import (
     run_read_command,
     run_write_command,
     validate_context_options,
+    write_export_bytes,
 )
 from auto_email_sender_cli.commands.ui_handoffs import run_ui_handoff_command
 from auto_email_sender_cli.errors import CliError
@@ -114,20 +115,17 @@ def _download_professor_file(
             supports_filter=False,
             supports_output_file=False,
         )
-        destination = output.expanduser().resolve()
-        destination.parent.mkdir(parents=True, exist_ok=True)
         client = AgentApiClient(timeout=360.0)
         content = client.download_bytes(
             path,
             params={"format": format_name},
         )
         try:
-            with destination.open("wb" if force else "xb") as file:
-                file.write(content)
+            destination = write_export_bytes(output, content, force=force)
         except FileExistsError as exc:
             raise CliError(
                 code="OUTPUT_EXISTS",
-                message=f"输出文件已存在：{destination}",
+                message=f"输出文件已存在：{output}",
                 exit_code=2,
                 suggested_command="重新选择 --output，或明确使用 --force 覆盖。",
             ) from exc
@@ -135,7 +133,7 @@ def _download_professor_file(
             raise CliError(
                 code="OUTPUT_WRITE_FAILED",
                 message=f"无法写入导出文件：{exc}",
-                exit_code=5,
+                exit_code=8,
             ) from exc
         emit_success(
             context,

@@ -13,6 +13,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from auto_email_sender_cli.capabilities import supports_pagination
+
 RESULT_PROTOCOL_VERSION = "2"
 RESULT_PROTOCOL_FIELDS = frozenset(
     {
@@ -211,17 +213,18 @@ def prepare_result_data(
             result["projection"]["input_items"] = original_item_count
         if budget_compacted or item_limit_compacted or collection_records_omitted:
             result["projection"]["recovery"] = (
-                "add --output-file <path>.jsonl for complete collection records"
-                if isinstance(projection_input.get("items"), list)
+                "add --output-file <path>.jsonl and --all for complete collection records"
+                if supports_pagination(command)
                 else "increase --max-output-bytes or request a narrower --expand path"
             )
-    if collection_records_omitted:
+    if collection_records_omitted and supports_pagination(command):
         result["recovery_action"] = {
             "action": "export_complete_collection",
             "command": command,
             "reuse_previous_input": True,
             "required_input": ["output_file"],
             "global_options": {"output_file": "<path>.jsonl"},
+            "input": {"all_items": True},
         }
     if limit is not None:
         result["limit"] = limit
@@ -232,6 +235,22 @@ def prepare_result_data(
         result["omitted_paths"] = omitted_paths
         if omitted_paths_total > len(omitted_paths):
             result["omitted_paths_total"] = omitted_paths_total
+    # Projection and continuation metadata can push an otherwise fitting
+    # payload over budget, even when neither content pass had to compact it.
+    if _json_size(result) > max_output_bytes:
+        projection_metadata = result.setdefault(
+            "projection",
+            {
+                "version": RESULT_PROTOCOL_VERSION,
+                "mode": normalized_projection,
+                "budget_bytes": max_output_bytes,
+            },
+        )
+        assert isinstance(projection_metadata, dict)
+        projection_metadata["budget_compacted"] = True
+        result["truncated"] = True
+        result.setdefault("omitted_paths", [])
+        budget_compacted = True
     if budget_compacted or item_limit_compacted:
         _set_stable_output_bytes(result)
         _fit_final_result_to_budget(result, max_output_bytes=max_output_bytes)

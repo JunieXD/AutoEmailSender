@@ -2577,6 +2577,7 @@ class CliTests(unittest.TestCase):
                 "reuse_previous_input": True,
                 "required_input": ["output_file"],
                 "global_options": {"output_file": "<path>.jsonl"},
+                "input": {"all_items": True},
             },
         )
         self.assertIn("--output-file", projected["projection"]["recovery"])
