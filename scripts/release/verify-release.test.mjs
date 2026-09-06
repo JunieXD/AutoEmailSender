@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { createPrivateKey, sign } from "node:crypto";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { deriveSparklePublicKey } from "./prepare-sparkle-release.mjs";
 import {
   assertPublishedRelease,
   assertReleaseWorkflowRuns,
+  assertWebsiteDeployment,
   extractCurrentSparkleEnclosures,
   selectPreviousSparkleDmg,
 } from "./verify-release.mjs";
@@ -17,6 +22,34 @@ const privateKey = createPrivateKey({
   type: "pkcs8",
 });
 const publicKey = deriveSparklePublicKey(privateSeed.toString("base64"));
+
+test("website deployment accepts an unchanged tree at a later push and rejects stale or unknown content", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "website-deployment-"));
+  const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const commit = () => {
+    git("add", ".");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "fixture");
+    return git("rev-parse", "HEAD");
+  };
+  const run = (headSha) => ({ workflowName: "Deploy Website", headSha, status: "completed", conclusion: "success" });
+  try {
+    git("init");
+    mkdirSync(path.join(root, "website"));
+    writeFileSync(path.join(root, "website", "index.md"), "original");
+    const original = commit();
+    writeFileSync(path.join(root, "README.md"), "unrelated");
+    const pushed = commit();
+    assert.doesNotThrow(() => assertWebsiteDeployment(root, original, [run(pushed)]));
+    writeFileSync(path.join(root, "website", "index.md"), "changed");
+    const changed = commit();
+    assert.throws(() => assertWebsiteDeployment(root, changed, [run(pushed)]), /不一致/);
+    assert.throws(() => assertWebsiteDeployment(root, original, [run(changed), run(pushed)]), /不一致/);
+    assert.throws(() => assertWebsiteDeployment(root, original, [run("a".repeat(40))]), /不一致/);
+    assert.throws(() => assertWebsiteDeployment(root, original, []), /没有成功部署/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function signedEnclosure(name, contents, extra = "") {
   const signature = sign(null, contents, privateKey).toString("base64");

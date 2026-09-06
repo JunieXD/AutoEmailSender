@@ -303,18 +303,27 @@ async function verifySkillZip({ repoRoot, releaseSha, version, publicDirectory, 
   if (await sha256(rebuiltPath) !== await sha256(publicPath)) fail("公开 Skill ZIP 不是 tagged canonical Skill 的确定性产物。 ");
 }
 
+export function assertWebsiteDeployment(repoRoot, releaseSha, runs) {
+  const deployed = runs.find((run) => run.workflowName === WEBSITE_WORKFLOW_NAME && run.status === "completed" && run.conclusion === "success");
+  if (!deployed || !/^[0-9a-f]{40}$/.test(deployed.headSha)) {
+    fail("website 没有成功部署记录。");
+  }
+  const comparison = spawnSync("git", [
+    "-C", repoRoot, "diff", "--quiet", releaseSha, deployed.headSha, "--",
+    "website", ".github/workflows/website.yml",
+  ]);
+  if (comparison.status !== 0) fail("website 最新成功部署的源码或工作流与候选不一致。");
+}
+
 async function verifyWebsiteIfChanged(repoRoot, releaseSha, repository) {
   const previousTag = commandOutput("git", ["-C", repoRoot, "describe", "--tags", "--abbrev=0", "--match", "v*", `${releaseSha}^`]);
   const changed = spawnSync("git", ["-C", repoRoot, "diff", "--quiet", previousTag, releaseSha, "--", "website"]).status !== 0;
   if (!changed) return false;
-  const websiteCommit = commandOutput("git", ["-C", repoRoot, "rev-list", "-1", releaseSha, "--", "website"]);
   const runs = ghJson([
-    "run", "list", "--repo", repository, "--workflow", "website.yml", "--commit", websiteCommit,
+    "run", "list", "--repo", repository, "--workflow", "website.yml", "--branch", "master",
     "--limit", "20", "--json", "workflowName,headSha,status,conclusion,databaseId",
   ]);
-  if (!runs.some((run) => run.workflowName === WEBSITE_WORKFLOW_NAME && run.headSha === websiteCommit && run.status === "completed" && run.conclusion === "success")) {
-    fail(`website 最新变更提交 ${websiteCommit} 没有成功部署。`);
-  }
+  assertWebsiteDeployment(repoRoot, releaseSha, runs);
   await fetchPublicPage(`${WEBSITE_PUBLIC_ROOT}/docs/mentor-crawler-skill`, "导师抓取 Skill");
   await fetchPublicPage(`${WEBSITE_PUBLIC_ROOT}/crawl-benchmark`, "智能抓取实测");
   return true;
