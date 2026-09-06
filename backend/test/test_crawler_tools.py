@@ -19,32 +19,37 @@ from app.models import (
     CrawlPage,
     CrawlPageFetchState,
 )
+from app.modules.crawler.pages import (
+    browser_session,
+    chunking,
+    tools as crawler_tools,
+    url_safety,
+)
 from app.modules.crawler.pages.tools import (
+    CandidateEnrichmentPayload,
     CrawlJobCanceled,
     CrawlToolContext,
-    CandidateEnrichmentPayload,
     PageSnapshot,
-    build_candidate_enrichment_prompt,
     ProfessorCandidatePayload,
-    extract_first_email_from_text,
-    fetch_binary_resource,
-    normalize_obfuscated_email_tokens,
+    _body_content_changed_substantially,
+    _crawl_page_with_browser,
+    _http_compatibility_url,
+    _is_resolved_allowed_crawl_url,
+    _resolve_safe_public_crawl_url,
+    _should_try_http_compatibility_fallback,
+    build_candidate_enrichment_prompt,
     crawl_page_with_browser_fallback,
     crawl_page_with_http,
+    extract_first_email_from_text,
+    fetch_binary_resource,
     is_allowed_crawl_url,
     is_safe_public_crawl_url,
     normalize_candidate_payload,
     normalize_candidate_profile_url,
+    normalize_obfuscated_email_tokens,
     record_page_snapshot,
     save_candidate_payloads_shared,
-    _body_content_changed_substantially,
-    _crawl_page_with_browser,
-    _http_compatibility_url,
-    _should_try_http_compatibility_fallback,
-    _is_resolved_allowed_crawl_url,
-    _resolve_safe_public_crawl_url,
 )
-from app.modules.crawler.pages import tools as crawler_tools
 from test.schema_database import create_schema_sqlite_database
 
 
@@ -72,7 +77,7 @@ class CrawlerToolTests(unittest.TestCase):
         ]:
             scope = ("run", 91999)
             url = "https://example.edu/faculty"
-            cached = crawler_tools.browser_cookie_session_cache
+            cached = browser_session.browser_cookie_session_cache
             cached.discard_scope(scope)
             restored: list[list[dict[str, object]]] = []
             attempts = 0
@@ -151,7 +156,7 @@ class CrawlerToolTests(unittest.TestCase):
             )
             try:
                 with patch(
-                    "app.modules.crawler.pages.tools.async_playwright",
+                    "app.modules.crawler.pages.browser.async_playwright",
                     return_value=_Playwright(),
                 ):
                     snapshot = await crawler_tools._try_playwright_browser_fetch_once(
@@ -167,9 +172,7 @@ class CrawlerToolTests(unittest.TestCase):
         return asyncio.run(run())
 
     def test_html_to_snapshot_caps_untrusted_html_before_parsing(self) -> None:
-        oversized_html = (
-            "<main>教师名单</main>" + "x" * crawler_tools.MAX_CRAWL_HTML_CHARS
-        )
+        oversized_html = "<main>教师名单</main>" + "x" * chunking.MAX_CRAWL_HTML_CHARS
 
         snapshot = crawler_tools.html_to_snapshot(
             "https://example.edu/faculty",
@@ -177,7 +180,7 @@ class CrawlerToolTests(unittest.TestCase):
             "http",
         )
 
-        self.assertEqual(len(snapshot.html), crawler_tools.MAX_CRAWL_HTML_CHARS)
+        self.assertEqual(len(snapshot.html), chunking.MAX_CRAWL_HTML_CHARS)
         self.assertIn("教师名单", snapshot.text)
 
     def test_html_to_snapshot_ignores_commented_markup(self) -> None:
@@ -262,7 +265,7 @@ class CrawlerToolTests(unittest.TestCase):
     ) -> None:
         html = (
             "<html><head><style>"
-            + "x" * (crawler_tools.MAX_CRAWL_HTML_CHARS + 5000)
+            + "x" * (chunking.MAX_CRAWL_HTML_CHARS + 5000)
             + "</style></head><body><main>朱明 邮箱 "
             "zhuming@hust.edu.cn</main></body></html>"
         )
@@ -273,7 +276,7 @@ class CrawlerToolTests(unittest.TestCase):
             "http",
         )
 
-        self.assertLessEqual(len(snapshot.html), crawler_tools.MAX_CRAWL_HTML_CHARS)
+        self.assertLessEqual(len(snapshot.html), chunking.MAX_CRAWL_HTML_CHARS)
         self.assertIn("朱明", snapshot.text)
         self.assertIn("zhuming@hust.edu.cn", snapshot.text)
 
@@ -679,7 +682,7 @@ class CrawlerToolTests(unittest.TestCase):
             )
 
             with patch(
-                "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                "app.modules.crawler.pages.browser._try_playwright_browser_fetch_once",
                 new=AsyncMock(side_effect=[failed, succeeded]),
             ) as fetch_once:
                 actual = await crawler_tools._try_playwright_browser_fetch(
@@ -724,7 +727,7 @@ class CrawlerToolTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                    "app.modules.crawler.pages.browser._try_playwright_browser_fetch_once",
                     new=AsyncMock(side_effect=[shell, complete]),
                 ) as fetch_once,
                 patch(
@@ -763,7 +766,7 @@ class CrawlerToolTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                    "app.modules.crawler.pages.browser._try_playwright_browser_fetch_once",
                     new=AsyncMock(side_effect=[shell, shell]),
                 ) as fetch_once,
                 patch(
@@ -803,7 +806,7 @@ class CrawlerToolTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.crawler.pages.tools._try_playwright_browser_fetch_once",
+                    "app.modules.crawler.pages.browser._try_playwright_browser_fetch_once",
                     new=AsyncMock(return_value=complete),
                 ) as fetch_once,
                 patch(
@@ -874,7 +877,7 @@ class CrawlerToolTests(unittest.TestCase):
                 max_retries=0,
             )
             with patch(
-                "app.modules.crawler.pages.tools.async_playwright",
+                "app.modules.crawler.pages.browser.async_playwright",
                 return_value=_Playwright(),
             ):
                 snapshot = await crawler_tools._try_playwright_browser_fetch_once(
@@ -894,7 +897,7 @@ class CrawlerToolTests(unittest.TestCase):
     def test_playwright_browser_fetch_reuses_cookies_within_run(self) -> None:
         async def run() -> None:
             scope = ("run", 91234)
-            cached = crawler_tools.browser_cookie_session_cache
+            cached = browser_session.browser_cookie_session_cache
             cached.discard_scope(scope)
             restored: list[list[dict[str, object]]] = []
             cookie = {
@@ -955,7 +958,7 @@ class CrawlerToolTests(unittest.TestCase):
             )
             try:
                 with patch(
-                    "app.modules.crawler.pages.tools.async_playwright",
+                    "app.modules.crawler.pages.browser.async_playwright",
                     return_value=_Playwright(),
                 ):
                     first = await crawler_tools._try_playwright_browser_fetch_once(
@@ -1062,7 +1065,7 @@ class CrawlerToolTests(unittest.TestCase):
             )
 
             with patch(
-                "app.modules.crawler.pages.tools._try_fetch_browser_pagination_once",
+                "app.modules.crawler.pages.browser._try_fetch_browser_pagination_once",
                 new=AsyncMock(side_effect=[failed, succeeded]),
             ) as fetch_once:
                 actual = await crawler_tools._fetch_browser_pagination_direct(
@@ -1140,15 +1143,15 @@ class CrawlerToolTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.crawler.pages.tools.async_playwright",
+                    "app.modules.crawler.pages.browser.async_playwright",
                     return_value=_Playwright(),
                 ),
                 patch(
-                    "app.modules.crawler.pages.tools._restore_browser_session_cookies",
+                    "app.modules.crawler.pages.browser._restore_browser_session_cookies",
                     new=AsyncMock(return_value=True),
                 ),
                 patch.object(
-                    crawler_tools.browser_cookie_session_cache,
+                    browser_session.browser_cookie_session_cache,
                     "discard_for_url",
                 ) as discard,
             ):
@@ -1281,7 +1284,7 @@ class CrawlerToolTests(unittest.TestCase):
     def test_resolve_safe_public_crawl_url_can_recheck_explicit_profile_with_public_dns(
         self,
     ) -> None:
-        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        url_safety.resolve_public_dns_host_ips.cache_clear()
         responses = [
             SimpleNamespace(
                 raise_for_status=lambda: None,
@@ -1345,7 +1348,7 @@ class CrawlerToolTests(unittest.TestCase):
         self.assertEqual(public_dns_mock.call_count, 2)
 
     def test_public_dns_recheck_still_rejects_private_answers(self) -> None:
-        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        url_safety.resolve_public_dns_host_ips.cache_clear()
         response = SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: {
@@ -1370,16 +1373,16 @@ class CrawlerToolTests(unittest.TestCase):
                 )
 
     def test_public_dns_service_failure_is_temporary(self) -> None:
-        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        url_safety.resolve_public_dns_host_ips.cache_clear()
         with patch(
             "app.modules.crawler.pages.url_safety.httpx.get",
             side_effect=httpx.ConnectError("temporary DNS service failure"),
         ):
             with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
-                crawler_tools._resolve_public_dns_host_ips("faculty.example.edu")
+                url_safety.resolve_public_dns_host_ips("faculty.example.edu")
 
     def test_public_dns_no_answer_is_temporary(self) -> None:
-        crawler_tools._resolve_public_dns_host_ips.cache_clear()
+        url_safety.resolve_public_dns_host_ips.cache_clear()
         response = SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: {"Status": 0, "Answer": []},
@@ -1389,7 +1392,7 @@ class CrawlerToolTests(unittest.TestCase):
             return_value=response,
         ):
             with self.assertRaises(crawler_tools.TemporaryCrawlDNSResolutionError):
-                crawler_tools._resolve_public_dns_host_ips("faculty.example.edu")
+                url_safety.resolve_public_dns_host_ips("faculty.example.edu")
 
     def test_public_dns_recheck_never_applies_to_private_ip_literal(self) -> None:
         with patch(
@@ -2169,7 +2172,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return_value=True,
             ),
             patch(
-                "app.modules.crawler.pages.tools.record_page_snapshot",
+                "app.modules.crawler.pages.persistence.record_page_snapshot",
                 new=AsyncMock(),
             ),
             patch(
@@ -2590,7 +2593,9 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
             crawler_tools.looks_like_unrendered_dynamic_teacher_directory(snapshot)
         )
 
-    def test_dynamic_directory_detection_recognizes_teacherhome_empty_list(self) -> None:
+    def test_dynamic_directory_detection_recognizes_teacherhome_empty_list(
+        self,
+    ) -> None:
         snapshot = crawler_tools.html_to_snapshot(
             "https://chem.nju.edu.cn/szll/list.htm",
             """
@@ -2932,7 +2937,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 dynamic_directory_stable_ms=100,
             )
             with patch(
-                "app.modules.crawler.pages.tools.async_playwright",
+                "app.modules.crawler.pages.browser.async_playwright",
                 return_value=_Playwright(),
             ):
                 snapshot = await crawler_tools._try_playwright_browser_fetch_once(
@@ -3001,7 +3006,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 delay_before_return_html_seconds=0,
             )
             with patch(
-                "app.modules.crawler.pages.tools.async_playwright",
+                "app.modules.crawler.pages.browser.async_playwright",
                 return_value=_Playwright(),
             ):
                 snapshot = await crawler_tools._try_playwright_browser_fetch_once(
@@ -3190,7 +3195,9 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(to_thread.await_count, 1)
 
-    async def test_same_page_expansion_checks_final_url_after_thread_offload(self) -> None:
+    async def test_same_page_expansion_checks_final_url_after_thread_offload(
+        self,
+    ) -> None:
         ctx = CrawlToolContext(
             job_id=1,
             start_url="https://example.edu/faculty",
@@ -4464,7 +4471,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ),
             patch(
-                "app.modules.crawler.pages.tools.record_page_snapshot",
+                "app.modules.crawler.pages.persistence.record_page_snapshot",
                 new=AsyncMock(),
             ),
         ):
@@ -5016,7 +5023,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
@@ -5082,7 +5089,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
@@ -5142,7 +5149,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
@@ -5204,7 +5211,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(
@@ -5280,7 +5287,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 wait_for_dynamic_directory=False,
             )
             with patch(
-                "app.modules.crawler.pages.tools.async_playwright",
+                "app.modules.crawler.pages.browser.async_playwright",
                 return_value=_Playwright(),
             ):
                 snapshot = await crawler_tools._try_playwright_browser_fetch(
@@ -5325,7 +5332,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.modules.crawler.pages.tools._try_fetch_browser_pagination_once",
+            "app.modules.crawler.pages.browser._try_fetch_browser_pagination_once",
             new=AsyncMock(side_effect=[failed, succeeded]),
         ) as attempt_mock:
             result = await crawler_tools._fetch_browser_pagination_direct(
@@ -5398,11 +5405,11 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.modules.crawler.pages.tools.async_playwright",
+                "app.modules.crawler.pages.browser.async_playwright",
                 return_value=_Playwright(),
             ),
             patch(
-                "app.modules.crawler.pages.tools._wait_for_dynamic_directory_html",
+                "app.modules.crawler.pages.browser._wait_for_dynamic_directory_html",
                 new=wait_for_directory,
             ),
         ):
@@ -5501,7 +5508,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             result = await crawler_tools._try_fetch_browser_pagination_once(
@@ -5591,7 +5598,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             result = await crawler_tools._try_fetch_browser_pagination_once(
@@ -5666,7 +5673,7 @@ class CrawlerHttpToolTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         with patch(
-            "app.modules.crawler.pages.tools.async_playwright",
+            "app.modules.crawler.pages.browser.async_playwright",
             return_value=_Playwright(),
         ):
             snapshot = await crawler_tools._fetch_page_with_playwright_direct(

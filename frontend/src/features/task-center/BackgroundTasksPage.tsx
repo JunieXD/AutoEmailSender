@@ -1,110 +1,8 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  Activity,
-  Ban,
-  Bot,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  CheckCircle2,
-  FileSearch,
-  FileText,
-  Loader2,
-  Mail,
-  Pause,
-  Pencil,
-  Play,
-  RotateCcw,
-  Save,
-  Search,
-  Sparkles,
-  Square,
-  SquareCheck,
-  SquareMinus,
-  Trash2,
-  X,
-} from "lucide-react";
-import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
-import { AttachmentSizeSummary } from "@/components/molecules/AttachmentSizeSummary";
-import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
-import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
-import { Pagination } from "@/components/molecules/Pagination";
-import { SelectionToggleButton } from "@/components/molecules/SelectionToggleButton";
-import { ProfessorEditDialog } from "@/components/molecules/ProfessorEditDialog";
-import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
-import { NativeSelectField } from "@/components/atoms/NativeSelectField";
-import {
-  MODAL_BACKDROP_CLASS_NAME,
-  MODAL_SURFACE_CLASS_NAME,
-} from "@/components/atoms/modalStyles";
 import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
+import { Pagination } from "@/components/molecules/Pagination";
+import { ProfessorEditDialog } from "@/components/molecules/ProfessorEditDialog";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
-import { useConfirmDialog } from "@/lib/useConfirmDialog";
-import { ApiError } from "@/lib/api/client";
-import { saveDraft } from "@/lib/api/emailTasksApi";
-import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
-import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
-import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
-import {
-  approveAllBatchTaskDrafts,
-  approveAndSendBatchTaskItemDraft,
-  approveBatchTaskItemDraft,
-  cancelBatchTaskItemSend,
-  deleteBatchTask,
-  deleteBatchTaskItem,
-  getBatchTaskItemThread,
-  getBatchTaskResendContext,
-  getBatchTaskSummary,
-  listBatchTasks,
-  listBatchTaskItems,
-  pauseBatchTask,
-  regenerateBatchTaskItemDraft,
-  rewriteBatchTaskItemDraft,
-  retryBatchTaskItemDraft,
-  restoreBatchTaskItemSend,
-  restoreBatchTask,
-  resumeBatchTask,
-  stopBatchTask,
-  updateBatchTaskItemOutreachConfig,
-} from "@/lib/api/batchTasksApi";
-import {
-  getOutreachTemplate,
-  listOutreachTemplates,
-} from "@/lib/api/outreachTemplates";
-import { writeCreateTaskNavigationHandoff } from "@/features/navigation-handoffs/client/navigationHandoff";
-import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
-import {
-  TaskCenterSectionSwitch,
-  type TaskCenterSection,
-} from "@/features/email-deliveries/components/TaskCenterSectionSwitch";
-import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
-import {
-  buildBulkLargeAttachmentWarning,
-  buildLargeAttachmentWarning,
-  formatFileSize,
-  getSelectedAttachmentTotalBytes,
-  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
-  shouldPromptForLargeAttachments,
-  suppressLargeAttachmentWarnings,
-} from "@/features/attachments/attachmentSize";
-import {
-  cancelMatchAnalysisJob,
-  deleteMatchAnalysisJob,
-  listMatchAnalysisJobItems,
-  listMatchAnalysisJobs,
-  restoreMatchAnalysisJob,
-  retryFailedMatchAnalysisJob,
-} from "@/lib/api/matchAnalysisJobsApi";
 import {
   cancelProfessorInformationEnrichmentJob,
   deleteProfessorInformationEnrichmentJob,
@@ -115,84 +13,152 @@ import {
 } from "@/entities/professor/api/informationEnrichment";
 import { getProfessor } from "@/entities/professor/api/professors";
 import {
-  cancelCrawlJob,
+  buildBulkLargeAttachmentWarning,
+  buildLargeAttachmentWarning,
+  formatFileSize,
+  getSelectedAttachmentTotalBytes,
+  LARGE_ATTACHMENT_WARNING_CONFIRMATION_LABEL,
+  shouldPromptForLargeAttachments,
+  suppressLargeAttachmentWarnings,
+} from "@/features/attachments/attachmentSize";
+import {
+  buildBatchPendingItemAction,
+  getBatchTaskWaitingSendCount,
+  getOutreachGenerationModeLabel,
+  getOutreachTemplateSourceLabel,
+  isBatchTaskItemMissingResearchDirection,
+} from "@/features/batch-tasks/client/batchTaskDisplay";
+import { BatchTaskResendDialog } from "@/features/batch-tasks/components/BatchTaskResendDialog";
+import {
+  filterCrawlCandidates,
+  getImportableCandidateIds,
+  getReviewableCandidateIds,
+  getReviewableCandidateIdsWithoutEmail,
+  hasActiveCrawlCandidateFilters,
+  pruneSelectedCandidateIds,
+  type CrawlCandidateFilters,
+  type CrawlCandidateInformationCondition,
+  type CrawlCandidateInformationField,
+} from "@/features/crawl-review/client/reviewCandidates";
+import {
+  TaskCenterSectionSwitch,
+  type TaskCenterSection,
+} from "@/features/email-deliveries/components/TaskCenterSectionSwitch";
+import { getEmailSendFailureMessage } from "@/features/email/client/getEmailSendFailureMessage";
+import { writeCreateTaskNavigationHandoff } from "@/features/navigation-handoffs/client/navigationHandoff";
+import {
+  approveAllBatchTaskDrafts,
+  approveAndSendBatchTaskItemDraft,
+  approveBatchTaskItemDraft,
+  cancelBatchTaskItemSend,
+  deleteBatchTask,
+  deleteBatchTaskItem,
+  getBatchTaskItemThread,
+  getBatchTaskResendContext,
+  getBatchTaskSummary,
+  listBatchTaskItems,
+  listBatchTasks,
+  pauseBatchTask,
+  regenerateBatchTaskItemDraft,
+  restoreBatchTask,
+  restoreBatchTaskItemSend,
+  resumeBatchTask,
+  retryBatchTaskItemDraft,
+  rewriteBatchTaskItemDraft,
+  stopBatchTask,
+  updateBatchTaskItemOutreachConfig,
+} from "@/lib/api/batchTasksApi";
+import { ApiError } from "@/lib/api/client";
+import {
   approveCrawlCandidates,
+  cancelCrawlJob,
   deleteCrawlJob,
   enrichCrawlCandidates,
   getCrawlJob,
   getCrawlJobDetails,
   listCrawlJobsPage,
   pauseCrawlJob,
-  retryCrawlJob,
   restoreCrawlJob,
-  resumeCrawlJobReview,
   resumeCrawlJob,
-  updateCrawlCandidate,
+  resumeCrawlJobReview,
+  retryCrawlJob,
 } from "@/lib/api/crawlJobsApi";
+import { saveDraft } from "@/lib/api/emailTasksApi";
 import {
-  filterCrawlCandidates,
-  getImportableCandidateIds,
-  getReviewableCandidateIdsWithoutEmail,
-  getReviewableCandidateIds,
-  hasActiveCrawlCandidateFilters,
-  normalizeCrawlCandidateSearchScopes,
-  pruneSelectedCandidateIds,
-  type CrawlCandidateFilters,
-  type CrawlCandidateInformationCondition,
-  type CrawlCandidateInformationField,
-  type CrawlCandidateInformationMatchMode,
-  type CrawlCandidateReviewStatusFilter,
-} from "@/features/crawl-review/client/reviewCandidates";
+  cancelMatchAnalysisJob,
+  deleteMatchAnalysisJob,
+  listMatchAnalysisJobItems,
+  listMatchAnalysisJobs,
+  restoreMatchAnalysisJob,
+  retryFailedMatchAnalysisJob,
+} from "@/lib/api/matchAnalysisJobsApi";
 import {
-  getCandidateEnrichmentFailureMessage,
-  getCrawlEventFailureReason,
-} from "@/features/crawl-review/client/crawlJobEvents";
-import {
-  buildBatchPendingItemAction,
-  getOutreachGenerationModeLabel,
-  getOutreachTemplateSourceLabel,
-  getBatchTaskItemCancellationText,
-  getBatchTaskWaitingSendCount,
-  isBatchTaskItemMissingResearchDirection,
-} from "@/features/batch-tasks/client/batchTaskDisplay";
-import { getPageItems, getTotalPages } from "@/lib/pagination";
-import { usePageBounds, usePaginationState } from "@/lib/usePaginationState";
+  getOutreachTemplate,
+  listOutreachTemplates,
+} from "@/lib/api/outreachTemplates";
+import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
 import {
   normalizeExternalHttpUrl,
   openExternalHttpUrl,
 } from "@/lib/externalUrls";
+import { getPageItems, getTotalPages } from "@/lib/pagination";
 import { textToEmailHtml } from "@/lib/richEmail";
-import {
-  normalizeTemplatePlaceholderHtmlForCompare,
-  prepareTemplateEditorHtml,
-} from "@/lib/templatePlaceholders";
+import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
+import { usePageBounds, usePaginationState } from "@/lib/usePaginationState";
 import {
   BATCH_TASK_STATUS_LABELS,
-  MATERIAL_TYPE_LABELS,
   MATCH_ANALYSIS_JOB_STATUS_LABELS,
   PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS,
-  PROFESSOR_STATUS_LABELS,
   type BatchTaskCardDTO,
   type BatchTaskItemDTO,
   type BatchTaskResendContextDTO,
   type CrawlCandidateDTO,
-  type CrawlJobEventDTO,
   type CrawlJobDetailsDTO,
+  type CrawlJobEventDTO,
   type CrawlJobSummaryDTO,
   type CrawlPageDTO,
   type MatchAnalysisJobDTO,
   type MatchAnalysisJobItemDTO,
-  type MatchAnalysisJobItemsPageDTO,
   type MatchAnalysisJobItemStatus,
   type OutreachTemplateDTO,
+  type ProfessorDTO,
   type ProfessorInformationEnrichmentItemDTO,
-  type ProfessorInformationEnrichmentItemsPageDTO,
   type ProfessorInformationEnrichmentItemStatus,
   type ProfessorInformationEnrichmentJobDTO,
-  type ProfessorDTO,
   type ProfessorManagementItemDTO,
   type WorkspaceThreadDTO,
 } from "@/types";
+import {
+  Ban,
+  Bot,
+  ChevronRight,
+  FileSearch,
+  Loader2,
+  Mail,
+  Pause,
+  Pencil,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Square,
+  Trash2,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { BatchTaskDetailsDialog } from "./components/BatchTaskDetailsDialog";
+import { CrawlCandidateDetailsDialog } from "./components/CrawlCandidateDetailsDialog";
+import { CrawlJobDetailsDialog } from "./components/CrawlJobDetailsDialog";
+import { EnrichmentJobDetailsDialog } from "./components/EnrichmentJobDetailsDialog";
+import { MatchJobDetailsDialog } from "./components/MatchJobDetailsDialog";
 import {
   CrawlJobCard,
   TaskListViewSwitch,
@@ -200,129 +166,64 @@ import {
 } from "./components/TaskCenterCards";
 import { TaskListToolbar } from "./components/TaskListToolbar";
 import { TaskTypeTabs } from "./components/TaskTypeTabs";
+import { useBatchDraftEditor } from "./hooks/useBatchDraftEditor";
+import { useCrawlCandidateEditor } from "./hooks/useCrawlCandidateEditor";
+import { useJobItemsPage } from "./hooks/useJobItemsPage";
+import type {
+  BatchReviewItemActions,
+  BatchReviewItemActionType,
+} from "./model/batchReview";
 import {
-  CRAWL_JOB_STATUS_LABELS,
-  canDeleteBatchTask,
-  canDeleteInformationEnrichmentJob,
-  canDeleteMatchJob,
-  canOpenBatchResend,
-} from "./model/taskCenterJobs";
-import {
-  DEFAULT_TASK_SORT_DIRECTIONS,
-  createDefaultTaskListFilters,
-  filterAndSortTaskItems,
-  type TaskListFilters,
-  type TaskListViews,
-  type TaskListFilter,
-  type TaskSortDirection,
-  type TaskSortKey,
-  type TasksTab,
-} from "./model/taskCenterFilters";
-import {
-  CRAWL_CANDIDATE_EDIT_INPUT_CLASS,
-  CRAWL_CANDIDATE_INFORMATION_FIELD_OPTIONS,
-  CRAWL_CANDIDATE_REVIEW_STATUS_LABELS,
-  CRAWL_CANDIDATE_REVIEW_STATUS_TONES,
-  CRAWL_CANDIDATE_SEARCH_SCOPE_OPTIONS,
   createDefaultCrawlCandidateFilters,
   getCrawlCandidateInformationConditionEntries,
   getCrawlCandidateInformationConditionsSummary,
-  getCrawlCandidateSearchPlaceholder,
-  hasUnsavedCrawlCandidateChanges,
-  toCrawlCandidateEditForm,
-  toCrawlCandidateUpdatePayload,
-  type CrawlCandidateEditForm,
 } from "./model/crawlCandidateReview";
-import {
-  BATCH_ITEM_STATUS_TONES,
-  INFORMATION_ENRICHMENT_FIELD_LABELS,
-  INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS,
-  INFORMATION_ENRICHMENT_ITEM_STATUS_TONES,
-  INFORMATION_ENRICHMENT_JOB_STATUS_TONES,
-  MATCH_ANALYSIS_ITEM_STATUS_LABELS,
-  MATCH_ANALYSIS_ITEM_STATUS_TONES,
-  MATCH_ANALYSIS_JOB_STATUS_TONES,
-} from "./model/taskCenterStatus";
 import {
   BATCH_DETAIL_ITEM_PAGE_SIZE,
   BATCH_REVIEW_DRAFT_SOURCE_LABELS,
   BATCH_TASK_DETAILS_REFRESH_INTERVAL_MS,
   buildBatchTaskSummarySignature,
-  CRAWL_DETAILS_REFRESH_INTERVAL_MS,
+  buildScheduleLabel,
   CRAWL_DETAIL_CONTENT_REFRESH_INTERVAL_MS,
+  CRAWL_DETAILS_REFRESH_INTERVAL_MS,
   CRAWL_REFRESH_INTERVAL_MS,
-  DETAIL_PAGE_SIZE_OPTIONS,
+  deriveBatchReviewText,
+  formatDisplayTime,
+  formatDuration,
   INFORMATION_ENRICHMENT_ITEMS_PAGE_CACHE_SIZE,
+  isBatchItemScheduledInFuture,
   MATCH_JOB_ITEMS_PAGE_CACHE_SIZE,
-  MONITOR_PAGE_SIZE_OPTIONS,
   MONITOR_SECTION_PAGE_SIZE,
   PAGE_SIZE_STORAGE_KEYS,
   TASKS_PAGE_SIZE,
   TASKS_PAGE_SIZE_OPTIONS,
-  buildScheduleLabel,
-  deriveBatchReviewText,
-  formatDisplayTime,
-  formatDuration,
-  getBatchReviewDraft,
-  getInformationEnrichmentItemsCacheKey,
-  getMatchJobItemsCacheKey,
-  isBatchItemScheduledInFuture,
-  type RichEmailValue,
 } from "./model/taskCenterConfig";
+import {
+  createDefaultTaskListFilters,
+  DEFAULT_TASK_SORT_DIRECTIONS,
+  filterAndSortTaskItems,
+  type TaskListFilter,
+  type TaskListFilters,
+  type TaskListViews,
+  type TaskSortDirection,
+  type TaskSortKey,
+  type TasksTab,
+} from "./model/taskCenterFilters";
+import {
+  canDeleteBatchTask,
+  canDeleteInformationEnrichmentJob,
+  canDeleteMatchJob,
+} from "./model/taskCenterJobs";
+import {
+  INFORMATION_ENRICHMENT_JOB_STATUS_TONES,
+  MATCH_ANALYSIS_JOB_STATUS_TONES,
+} from "./model/taskCenterStatus";
 
 export { CrawlJobCard, TaskListViewSwitch } from "./components/TaskCenterCards";
-
-type BatchReviewItemActionType = "template" | "regenerate" | "delete" | "submit";
-type BatchReviewItemActions = Record<number, BatchReviewItemActionType>;
-type BatchReviewDraftSnapshot = {
-  subject: string;
-  bodyHtml: string;
-  selectedMaterialIds: number[];
-};
-type BatchReviewDraftBaseline = {
-  itemId: number;
-  snapshot: BatchReviewDraftSnapshot;
-};
 type BatchSendItemAction = {
   itemId: number;
   kind: "cancel" | "restore";
 };
-
-const buildBatchReviewDraftSnapshot = ({
-  subject,
-  contentText,
-  contentHtml,
-  selectedMaterialIds,
-}: {
-  subject: string;
-  contentText: string;
-  contentHtml: string;
-  selectedMaterialIds: number[];
-}): BatchReviewDraftSnapshot => {
-  const bodyText = deriveBatchReviewText(contentText, contentHtml);
-  const displayHtml = contentHtml.trim() || (bodyText ? textToEmailHtml(bodyText) : "");
-
-  return {
-    subject,
-    bodyHtml: displayHtml
-      ? normalizeTemplatePlaceholderHtmlForCompare(
-          prepareTemplateEditorHtml(displayHtml),
-        )
-      : "",
-    selectedMaterialIds: [...selectedMaterialIds].sort((left, right) => left - right),
-  };
-};
-
-const areBatchReviewDraftSnapshotsEqual = (
-  left: BatchReviewDraftSnapshot,
-  right: BatchReviewDraftSnapshot,
-) =>
-  left.subject === right.subject &&
-  left.bodyHtml === right.bodyHtml &&
-  left.selectedMaterialIds.length === right.selectedMaterialIds.length &&
-  left.selectedMaterialIds.every(
-    (materialId, index) => materialId === right.selectedMaterialIds[index],
-  );
 
 export type PendingCrawlJobHandoff = {
   token: number;
@@ -376,7 +277,9 @@ export const BackgroundTasksPage = ({
   >({ ...DEFAULT_TASK_SORT_DIRECTIONS });
   const [advancedTaskFiltersOpen, setAdvancedTaskFiltersOpen] = useState(false);
   const [tasks, setTasks] = useState<BatchTaskCardDTO[]>([]);
-  const [currentBatchTasks, setCurrentBatchTasks] = useState<BatchTaskCardDTO[]>([]);
+  const [currentBatchTasks, setCurrentBatchTasks] = useState<
+    BatchTaskCardDTO[]
+  >([]);
   const [selectedBatchTask, setSelectedBatchTask] =
     useState<BatchTaskCardDTO | null>(null);
   const [selectedBatchTaskItems, setSelectedBatchTaskItems] = useState<
@@ -387,16 +290,39 @@ export const BackgroundTasksPage = ({
   const [professorEditProfessor, setProfessorEditProfessor] =
     useState<ProfessorDTO | null>(null);
   const [batchTaskDetailsLoading, setBatchTaskDetailsLoading] = useState(false);
-  const [resendContext, setResendContext] = useState<BatchTaskResendContextDTO | null>(null);
+  const [resendContext, setResendContext] =
+    useState<BatchTaskResendContextDTO | null>(null);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendDialogOpen, setResendDialogOpen] = useState(false);
-  const [selectedResendProfessorIds, setSelectedResendProfessorIds] = useState<number[]>([]);
-  const [batchReviewItemId, setBatchReviewItemId] = useState<number | null>(null);
-  const [batchReviewThread, setBatchReviewThread] =
-    useState<WorkspaceThreadDTO | null>(null);
+  const [selectedResendProfessorIds, setSelectedResendProfessorIds] = useState<
+    number[]
+  >([]);
+  const {
+    batchReviewThread,
+    setBatchReviewThread,
+    batchReviewSaving,
+    setBatchReviewSaving,
+    batchReviewSubject,
+    setBatchReviewSubject,
+    batchReviewContentText,
+    setBatchReviewContentText,
+    batchReviewContentHtml,
+    setBatchReviewContentHtml,
+    batchReviewSelectedMaterialIds,
+    setBatchReviewSelectedMaterialIds,
+    batchReviewDraftBaselineRef,
+    batchReviewSavingRef,
+    syncBatchDraftReview,
+    handleBatchReviewContentChange,
+    buildBatchReviewPayload,
+    batchReviewHasUnsavedChanges,
+  } = useBatchDraftEditor();
+  const [batchReviewItemId, setBatchReviewItemId] = useState<number | null>(
+    null,
+  );
   const [batchReviewLoading, setBatchReviewLoading] = useState(false);
-  const [batchReviewSaving, setBatchReviewSaving] = useState(false);
-  const [batchBulkApprovalLoading, setBatchBulkApprovalLoading] = useState(false);
+  const [batchBulkApprovalLoading, setBatchBulkApprovalLoading] =
+    useState(false);
   const [batchReviewItemActions, setBatchReviewItemActions] =
     useState<BatchReviewItemActions>({});
   const [batchSendItemAction, setBatchSendItemAction] =
@@ -404,18 +330,16 @@ export const BackgroundTasksPage = ({
   const [batchSendActionNowMs, setBatchSendActionNowMs] = useState(() =>
     Date.now(),
   );
-  const [batchReviewSubject, setBatchReviewSubject] = useState("");
-  const [batchReviewContentText, setBatchReviewContentText] = useState("");
-  const [batchReviewContentHtml, setBatchReviewContentHtml] = useState("");
-  const [batchReviewOutreachTemplates, setBatchReviewOutreachTemplates] = useState<
-    OutreachTemplateDTO[]
-  >([]);
-  const [batchReviewOutreachTemplatesLoaded, setBatchReviewOutreachTemplatesLoaded] =
-    useState(false);
-  const [loadingBatchReviewOutreachTemplates, setLoadingBatchReviewOutreachTemplates] =
-    useState(false);
-  const [batchReviewSelectedMaterialIds, setBatchReviewSelectedMaterialIds] =
-    useState<number[]>([]);
+  const [batchReviewOutreachTemplates, setBatchReviewOutreachTemplates] =
+    useState<OutreachTemplateDTO[]>([]);
+  const [
+    batchReviewOutreachTemplatesLoaded,
+    setBatchReviewOutreachTemplatesLoaded,
+  ] = useState(false);
+  const [
+    loadingBatchReviewOutreachTemplates,
+    setLoadingBatchReviewOutreachTemplates,
+  ] = useState(false);
   const [loading, setLoading] = useState(false);
   const [matchAnalysisJobs, setMatchAnalysisJobs] = useState<
     MatchAnalysisJobDTO[]
@@ -434,25 +358,41 @@ export const BackgroundTasksPage = ({
   const [informationEnrichmentJobs, setInformationEnrichmentJobs] = useState<
     ProfessorInformationEnrichmentJobDTO[]
   >([]);
-  const [informationEnrichmentJobTotalCount, setInformationEnrichmentJobTotalCount] =
-    useState(0);
-  const [currentInformationEnrichmentJobCount, setCurrentInformationEnrichmentJobCount] =
-    useState(0);
-  const [informationEnrichmentJobsLoading, setInformationEnrichmentJobsLoading] =
-    useState(false);
-  const [selectedInformationEnrichmentJob, setSelectedInformationEnrichmentJob] =
-    useState<ProfessorInformationEnrichmentJobDTO | null>(null);
-  const [selectedInformationEnrichmentItems, setSelectedInformationEnrichmentItems] =
-    useState<ProfessorInformationEnrichmentItemDTO[]>([]);
-  const [informationEnrichmentItemTotalCount, setInformationEnrichmentItemTotalCount] =
-    useState(0);
-  const [informationEnrichmentDetailsLoading, setInformationEnrichmentDetailsLoading] =
-    useState(false);
+  const [
+    informationEnrichmentJobTotalCount,
+    setInformationEnrichmentJobTotalCount,
+  ] = useState(0);
+  const [
+    currentInformationEnrichmentJobCount,
+    setCurrentInformationEnrichmentJobCount,
+  ] = useState(0);
+  const [
+    informationEnrichmentJobsLoading,
+    setInformationEnrichmentJobsLoading,
+  ] = useState(false);
+  const [
+    selectedInformationEnrichmentJob,
+    setSelectedInformationEnrichmentJob,
+  ] = useState<ProfessorInformationEnrichmentJobDTO | null>(null);
+  const [
+    selectedInformationEnrichmentItems,
+    setSelectedInformationEnrichmentItems,
+  ] = useState<ProfessorInformationEnrichmentItemDTO[]>([]);
+  const [
+    informationEnrichmentItemTotalCount,
+    setInformationEnrichmentItemTotalCount,
+  ] = useState(0);
+  const [
+    informationEnrichmentDetailsLoading,
+    setInformationEnrichmentDetailsLoading,
+  ] = useState(false);
   const [matchJobItemStatusFilter, setMatchJobItemStatusFilterState] = useState<
     "all" | MatchAnalysisJobItemStatus
   >("all");
-  const [informationEnrichmentItemStatusFilter, setInformationEnrichmentItemStatusFilterState] =
-    useState<"all" | ProfessorInformationEnrichmentItemStatus>("all");
+  const [
+    informationEnrichmentItemStatusFilter,
+    setInformationEnrichmentItemStatusFilterState,
+  ] = useState<"all" | ProfessorInformationEnrichmentItemStatus>("all");
   const [crawlJobs, setCrawlJobs] = useState<CrawlJobSummaryDTO[]>([]);
   const [crawlJobTotalCount, setCrawlJobTotalCount] = useState(0);
   const [currentCrawlJobCount, setCurrentCrawlJobCount] = useState(0);
@@ -600,8 +540,10 @@ export const BackgroundTasksPage = ({
   >([]);
   const [crawlCandidateFilters, setCrawlCandidateFilters] =
     useState<CrawlCandidateFilters>(createDefaultCrawlCandidateFilters);
-  const [crawlCandidateInformationFiltersOpen, setCrawlCandidateInformationFiltersOpen] =
-    useState(false);
+  const [
+    crawlCandidateInformationFiltersOpen,
+    setCrawlCandidateInformationFiltersOpen,
+  ] = useState(false);
   const [crawlJobEvents, setCrawlJobEvents] = useState<CrawlJobEventDTO[]>([]);
   const [crawlJobDetailsLoading, setCrawlJobDetailsLoading] = useState(false);
   const [selectedCrawlCandidateIds, setSelectedCrawlCandidateIds] = useState<
@@ -621,27 +563,24 @@ export const BackgroundTasksPage = ({
   const [retryingMatchJobId, setRetryingMatchJobId] = useState<number | null>(
     null,
   );
-  const [cancelingInformationEnrichmentJobId, setCancelingInformationEnrichmentJobId] =
-    useState<number | null>(null);
-  const [retryingInformationEnrichmentJobId, setRetryingInformationEnrichmentJobId] =
-    useState<number | null>(null);
+  const [
+    cancelingInformationEnrichmentJobId,
+    setCancelingInformationEnrichmentJobId,
+  ] = useState<number | null>(null);
+  const [
+    retryingInformationEnrichmentJobId,
+    setRetryingInformationEnrichmentJobId,
+  ] = useState<number | null>(null);
   const [pausingCrawlJobId, setPausingCrawlJobId] = useState<number | null>(
     null,
   );
   const [resumingCrawlJobId, setResumingCrawlJobId] = useState<number | null>(
     null,
   );
-  const [selectedCandidateDetail, setSelectedCandidateDetail] =
-    useState<CrawlCandidateDTO | null>(null);
-  const [candidateEditForm, setCandidateEditForm] =
-    useState<CrawlCandidateEditForm | null>(null);
-  const [candidateUpdateLoading, setCandidateUpdateLoading] = useState(false);
   const lastLoadErrorRef = useRef<string | null>(null);
   const lastBatchTaskDetailsLoadErrorRef = useRef<string | null>(null);
   const lastMatchJobsLoadErrorRef = useRef<string | null>(null);
-  const lastMatchJobDetailsLoadErrorRef = useRef<string | null>(null);
   const lastInformationEnrichmentJobsLoadErrorRef = useRef<string | null>(null);
-  const lastInformationEnrichmentDetailsLoadErrorRef = useRef<string | null>(null);
   const lastCrawlJobsLoadErrorRef = useRef<string | null>(null);
   const lastCrawlJobDetailsLoadErrorRef = useRef<string | null>(null);
   const loadedTasksKeyRef = useRef<string | null>(null);
@@ -657,19 +596,9 @@ export const BackgroundTasksPage = ({
   const latestBatchTaskDetailsRequestIdRef = useRef(0);
   const batchTaskSummarySignatureRef = useRef<string | null>(null);
   const latestBatchReviewRequestIdRef = useRef(0);
-  const batchReviewDraftBaselineRef = useRef<BatchReviewDraftBaseline | null>(null);
-  const batchReviewSavingRef = useRef(false);
   const latestProfessorEditRequestIdRef = useRef(0);
   const latestMatchJobsRequestIdRef = useRef(0);
-  const latestMatchJobDetailsRequestIdRef = useRef(0);
-  const matchJobItemsPageCacheRef = useRef(
-    new Map<string, MatchAnalysisJobItemsPageDTO>(),
-  );
-  const informationEnrichmentItemsPageCacheRef = useRef(
-    new Map<string, ProfessorInformationEnrichmentItemsPageDTO>(),
-  );
   const latestInformationEnrichmentJobsRequestIdRef = useRef(0);
-  const latestInformationEnrichmentDetailsRequestIdRef = useRef(0);
   const latestCrawlJobsRequestIdRef = useRef(0);
   const latestCrawlJobSummaryRequestIdRef = useRef(0);
   const latestCrawlJobDetailsRequestIdRef = useRef(0);
@@ -685,10 +614,9 @@ export const BackgroundTasksPage = ({
   const batchReviewQueueScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTaskListView = taskListViews[activeTab];
   const activeTaskListFilters = taskListFilters[activeTab];
-  const tasksRequestKey =
-    selectedIdentityId
-      ? `${selectedIdentityId}:${taskListViews.batch}`
-      : null;
+  const tasksRequestKey = selectedIdentityId
+    ? `${selectedIdentityId}:${taskListViews.batch}`
+    : null;
   const updateTaskCenterSection = useCallback(
     (section: TaskCenterSection) => {
       setSearchParams((current) => {
@@ -709,37 +637,34 @@ export const BackgroundTasksPage = ({
     },
     [setSearchParams],
   );
-  const renderCandidateExternalUrl = useCallback(
-    (url: string | null) => {
-      const normalizedUrl = url?.trim();
-      if (!normalizedUrl) {
-        return "暂无";
-      }
+  const renderCandidateExternalUrl = useCallback((url: string | null) => {
+    const normalizedUrl = url?.trim();
+    if (!normalizedUrl) {
+      return "暂无";
+    }
 
-      return (
-        <a
-          href={normalizedUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            if (
-              !window.autoEmailSender?.openExternalUrl ||
-              !normalizeExternalHttpUrl(normalizedUrl)
-            ) {
-              return;
-            }
+    return (
+      <a
+        href={normalizedUrl}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => {
+          if (
+            !window.autoEmailSender?.openExternalUrl ||
+            !normalizeExternalHttpUrl(normalizedUrl)
+          ) {
+            return;
+          }
 
-            event.preventDefault();
-            openExternalHttpUrl(normalizedUrl);
-          }}
-          className="inline-flex max-w-full items-center gap-1.5 align-bottom text-primary underline-offset-4 hover:underline"
-        >
-          <span className="truncate">{normalizedUrl}</span>
-        </a>
-      );
-    },
-    [],
-  );
+          event.preventDefault();
+          openExternalHttpUrl(normalizedUrl);
+        }}
+        className="inline-flex max-w-full items-center gap-1.5 align-bottom text-primary underline-offset-4 hover:underline"
+      >
+        <span className="truncate">{normalizedUrl}</span>
+      </a>
+    );
+  }, []);
   const setActiveTaskPage = (page: number) => {
     if (activeTab === "batch") {
       setBatchPage(page);
@@ -802,7 +727,8 @@ export const BackgroundTasksPage = ({
     () =>
       selectedBatchTaskItems.filter(
         (item) =>
-          item.batch_send_canceled_at === null && item.status === "draft_failed",
+          item.batch_send_canceled_at === null &&
+          item.status === "draft_failed",
       ),
     [selectedBatchTaskItems],
   );
@@ -879,31 +805,28 @@ export const BackgroundTasksPage = ({
       }),
     [taskListFilters.batch, taskSortDirections, tasks],
   );
-  const filteredCrawlJobs = useMemo(
-    () => {
-      if (taskListFilters.crawl.sortKey !== "name") {
-        return crawlJobs;
-      }
-      return filterAndSortTaskItems({
-        items: crawlJobs,
-        filters: taskListFilters.crawl,
-        direction: taskSortDirections[taskListFilters.crawl.sortKey],
-        getSearchValuesByScope: (job) => ({
-          university: [job.university],
-          school: [job.school],
-          url: [job.start_url, job.start_urls?.join(" ")],
-          event: [job.latest_event_message],
-        }),
-        getName: (job) => `${job.university} ${job.school}`,
-        getStatus: (job) => job.status,
-        getCreatedAt: (job) => job.created_at,
-        getUpdatedAt: (job) => job.updated_at,
-        getProgress: (job) =>
-          job.progress_total > 0 ? job.progress_current / job.progress_total : 0,
-      });
-    },
-    [crawlJobs, taskListFilters.crawl, taskSortDirections],
-  );
+  const filteredCrawlJobs = useMemo(() => {
+    if (taskListFilters.crawl.sortKey !== "name") {
+      return crawlJobs;
+    }
+    return filterAndSortTaskItems({
+      items: crawlJobs,
+      filters: taskListFilters.crawl,
+      direction: taskSortDirections[taskListFilters.crawl.sortKey],
+      getSearchValuesByScope: (job) => ({
+        university: [job.university],
+        school: [job.school],
+        url: [job.start_url, job.start_urls?.join(" ")],
+        event: [job.latest_event_message],
+      }),
+      getName: (job) => `${job.university} ${job.school}`,
+      getStatus: (job) => job.status,
+      getCreatedAt: (job) => job.created_at,
+      getUpdatedAt: (job) => job.updated_at,
+      getProgress: (job) =>
+        job.progress_total > 0 ? job.progress_current / job.progress_total : 0,
+    });
+  }, [crawlJobs, taskListFilters.crawl, taskSortDirections]);
   const filteredMatchAnalysisJobs = useMemo(
     () =>
       filterAndSortTaskItems({
@@ -923,26 +846,27 @@ export const BackgroundTasksPage = ({
       }),
     [matchAnalysisJobs, taskListFilters.match, taskSortDirections],
   );
-  const filteredInformationEnrichmentJobs = useMemo(
-    () => {
-      if (taskListFilters.enrichment.sortKey !== "name") {
-        return informationEnrichmentJobs;
-      }
-      return filterAndSortTaskItems({
-        items: informationEnrichmentJobs,
-        filters: taskListFilters.enrichment,
-        direction: taskSortDirections[taskListFilters.enrichment.sortKey],
-        getSearchValuesByScope: (job) => ({ name: [job.name] }),
-        getName: (job) => job.name,
-        getStatus: (job) => job.status,
-        getCreatedAt: (job) => job.created_at,
-        getUpdatedAt: (job) => job.updated_at,
-        getProgress: (job) =>
-          job.target_count > 0 ? job.completed_count / job.target_count : 0,
-      });
-    },
-    [informationEnrichmentJobs, taskListFilters.enrichment, taskSortDirections],
-  );
+  const filteredInformationEnrichmentJobs = useMemo(() => {
+    if (taskListFilters.enrichment.sortKey !== "name") {
+      return informationEnrichmentJobs;
+    }
+    return filterAndSortTaskItems({
+      items: informationEnrichmentJobs,
+      filters: taskListFilters.enrichment,
+      direction: taskSortDirections[taskListFilters.enrichment.sortKey],
+      getSearchValuesByScope: (job) => ({ name: [job.name] }),
+      getName: (job) => job.name,
+      getStatus: (job) => job.status,
+      getCreatedAt: (job) => job.created_at,
+      getUpdatedAt: (job) => job.updated_at,
+      getProgress: (job) =>
+        job.target_count > 0 ? job.completed_count / job.target_count : 0,
+    });
+  }, [
+    informationEnrichmentJobs,
+    taskListFilters.enrichment,
+    taskSortDirections,
+  ]);
   const crawlUsesClientPagination = taskListFilters.crawl.sortKey === "name";
   const informationEnrichmentUsesClientPagination =
     taskListFilters.enrichment.sortKey === "name";
@@ -991,7 +915,10 @@ export const BackgroundTasksPage = ({
   );
   const safeBatchDraftFailedItemPage = Math.min(
     batchDraftFailedItemPage,
-    getTotalPages(draftFailedBatchTaskItems.length, batchDraftFailedItemPageSize),
+    getTotalPages(
+      draftFailedBatchTaskItems.length,
+      batchDraftFailedItemPageSize,
+    ),
   );
   const safeBatchFailedItemPage = Math.min(
     batchFailedItemPage,
@@ -1110,8 +1037,7 @@ export const BackgroundTasksPage = ({
     ],
   );
   const visibleMatchJobs = useMemo(
-    () =>
-      getPageItems(filteredMatchAnalysisJobs, safeMatchPage, matchPageSize),
+    () => getPageItems(filteredMatchAnalysisJobs, safeMatchPage, matchPageSize),
     [filteredMatchAnalysisJobs, matchPageSize, safeMatchPage],
   );
   const visibleInformationEnrichmentJobs = useMemo(
@@ -1177,6 +1103,26 @@ export const BackgroundTasksPage = ({
   const selectedCrawlJobCanReview =
     selectedCrawlJob?.status === "needs_review" ||
     selectedCrawlJob?.status === "partially_completed";
+  const {
+    selectedCandidateDetail,
+    setSelectedCandidateDetail,
+    candidateEditForm,
+    setCandidateEditForm,
+    candidateUpdateLoading,
+    setCandidateUpdateLoading,
+    handleStartCandidateEdit,
+    handleCancelCandidateEdit,
+    handleCandidateEditFieldChange,
+    handleSaveCandidateEdit,
+    closeSelectedCandidateDetail,
+  } = useCrawlCandidateEditor({
+    selectedCrawlJobCanReview,
+    setCrawlJobCandidates,
+    confirm,
+    notifyError,
+    notifySuccess,
+  });
+
   const selectedCrawlJobNeedsReviewResume =
     selectedCrawlJob?.status === "canceled" ||
     selectedCrawlJob?.status === "failed";
@@ -1206,10 +1152,7 @@ export const BackgroundTasksPage = ({
       filteredReviewableCrawlCandidateIds.filter((candidateId) =>
         selectedReviewableCrawlCandidateIds.includes(candidateId),
       ).length,
-    [
-      filteredReviewableCrawlCandidateIds,
-      selectedReviewableCrawlCandidateIds,
-    ],
+    [filteredReviewableCrawlCandidateIds, selectedReviewableCrawlCandidateIds],
   );
   const someFilteredCrawlCandidatesSelected =
     filteredSelectedCrawlCandidateCount > 0;
@@ -1276,82 +1219,85 @@ export const BackgroundTasksPage = ({
     taskListViews,
   ]);
 
-  const loadTasks = useCallback(async (options?: { showLoading?: boolean }) => {
-    if (!tasksRequestKey || !selectedIdentityId) {
-      latestTasksRequestIdRef.current += 1;
-      activeTasksRequestKeyRef.current = null;
-      loadedTasksKeyRef.current = null;
-      setTasks([]);
-      setCurrentBatchTasks([]);
-      lastLoadErrorRef.current = null;
-      setLoading(false);
-      return;
-    }
-    const requestId = latestTasksRequestIdRef.current + 1;
-    latestTasksRequestIdRef.current = requestId;
-    activeTasksRequestKeyRef.current = tasksRequestKey;
-    if (options?.showLoading ?? true) {
-      setLoading(true);
-    }
-    try {
-      const isCurrentView = taskListViews.batch === "current";
-      const [data, currentViewData] = await Promise.all([
-        listBatchTasks({
-          identityId: selectedIdentityId,
-          llmProfileId: selectedLlmProfileId,
-          view: taskListViews.batch,
-        }),
-        isCurrentView
-          ? null
-          : listBatchTasks({
-              identityId: selectedIdentityId,
-              llmProfileId: selectedLlmProfileId,
-              view: "current",
-            }),
-      ]);
-      const currentData = isCurrentView ? data : (currentViewData ?? data);
-      if (
-        latestTasksRequestIdRef.current !== requestId ||
-        activeTasksRequestKeyRef.current !== tasksRequestKey
-      ) {
-        return;
-      }
-      setTasks(data);
-      setCurrentBatchTasks(currentData);
-      loadedTasksKeyRef.current = tasksRequestKey;
-      lastLoadErrorRef.current = null;
-    } catch (loadError) {
-      if (
-        latestTasksRequestIdRef.current !== requestId ||
-        activeTasksRequestKeyRef.current !== tasksRequestKey
-      ) {
-        return;
-      }
-      if (loadedTasksKeyRef.current !== tasksRequestKey) {
+  const loadTasks = useCallback(
+    async (options?: { showLoading?: boolean }) => {
+      if (!tasksRequestKey || !selectedIdentityId) {
+        latestTasksRequestIdRef.current += 1;
+        activeTasksRequestKeyRef.current = null;
+        loadedTasksKeyRef.current = null;
         setTasks([]);
-      }
-      const message =
-        loadError instanceof Error ? loadError.message : "加载任务失败";
-      if (lastLoadErrorRef.current !== message) {
-        notifyError("加载任务失败", message);
-        lastLoadErrorRef.current = message;
-      }
-    } finally {
-      if (
-        latestTasksRequestIdRef.current === requestId &&
-        activeTasksRequestKeyRef.current === tasksRequestKey &&
-        (options?.showLoading ?? true)
-      ) {
+        setCurrentBatchTasks([]);
+        lastLoadErrorRef.current = null;
         setLoading(false);
+        return;
       }
-    }
-  }, [
-    notifyError,
-    selectedIdentityId,
-    selectedLlmProfileId,
-    taskListViews.batch,
-    tasksRequestKey,
-  ]);
+      const requestId = latestTasksRequestIdRef.current + 1;
+      latestTasksRequestIdRef.current = requestId;
+      activeTasksRequestKeyRef.current = tasksRequestKey;
+      if (options?.showLoading ?? true) {
+        setLoading(true);
+      }
+      try {
+        const isCurrentView = taskListViews.batch === "current";
+        const [data, currentViewData] = await Promise.all([
+          listBatchTasks({
+            identityId: selectedIdentityId,
+            llmProfileId: selectedLlmProfileId,
+            view: taskListViews.batch,
+          }),
+          isCurrentView
+            ? null
+            : listBatchTasks({
+                identityId: selectedIdentityId,
+                llmProfileId: selectedLlmProfileId,
+                view: "current",
+              }),
+        ]);
+        const currentData = isCurrentView ? data : (currentViewData ?? data);
+        if (
+          latestTasksRequestIdRef.current !== requestId ||
+          activeTasksRequestKeyRef.current !== tasksRequestKey
+        ) {
+          return;
+        }
+        setTasks(data);
+        setCurrentBatchTasks(currentData);
+        loadedTasksKeyRef.current = tasksRequestKey;
+        lastLoadErrorRef.current = null;
+      } catch (loadError) {
+        if (
+          latestTasksRequestIdRef.current !== requestId ||
+          activeTasksRequestKeyRef.current !== tasksRequestKey
+        ) {
+          return;
+        }
+        if (loadedTasksKeyRef.current !== tasksRequestKey) {
+          setTasks([]);
+        }
+        const message =
+          loadError instanceof Error ? loadError.message : "加载任务失败";
+        if (lastLoadErrorRef.current !== message) {
+          notifyError("加载任务失败", message);
+          lastLoadErrorRef.current = message;
+        }
+      } finally {
+        if (
+          latestTasksRequestIdRef.current === requestId &&
+          activeTasksRequestKeyRef.current === tasksRequestKey &&
+          (options?.showLoading ?? true)
+        ) {
+          setLoading(false);
+        }
+      }
+    },
+    [
+      notifyError,
+      selectedIdentityId,
+      selectedLlmProfileId,
+      taskListViews.batch,
+      tasksRequestKey,
+    ],
+  );
 
   const loadCrawlJobs = useCallback(
     async (options?: { showLoading?: boolean }) => {
@@ -1395,7 +1341,9 @@ export const BackgroundTasksPage = ({
           if (!currentJob) {
             return currentJob;
           }
-          return data.items.find((job) => job.id === currentJob.id) ?? currentJob;
+          return (
+            data.items.find((job) => job.id === currentJob.id) ?? currentJob
+          );
         });
         lastCrawlJobsLoadErrorRef.current = null;
       } catch (loadError) {
@@ -1428,185 +1376,91 @@ export const BackgroundTasksPage = ({
     ],
   );
 
-  const loadMatchAnalysisJobs = useCallback(async (options?: { showLoading?: boolean }) => {
-    if (!selectedIdentityId) {
-      setMatchAnalysisJobs([]);
-      setCurrentMatchAnalysisJobs([]);
-      lastMatchJobsLoadErrorRef.current = null;
-      setMatchJobsLoading(false);
-      return;
-    }
-    const requestId = latestMatchJobsRequestIdRef.current + 1;
-    latestMatchJobsRequestIdRef.current = requestId;
-    if (options?.showLoading ?? true) {
-      setMatchJobsLoading(true);
-    }
-    try {
-      const data = await listMatchAnalysisJobs({
-        identityId: selectedIdentityId,
-        llmProfileId: selectedLlmProfileId,
-        view: taskListViews.match,
-      });
-      const currentData =
-        taskListViews.match === "current"
-          ? data
-          : await listMatchAnalysisJobs({
-              identityId: selectedIdentityId,
-              llmProfileId: selectedLlmProfileId,
-              view: "current",
-            });
-      if (latestMatchJobsRequestIdRef.current !== requestId) {
-        return;
-      }
-      setMatchAnalysisJobs(data);
-      setCurrentMatchAnalysisJobs(currentData);
-      setSelectedMatchJob((currentJob) => {
-        if (!currentJob) {
-          return currentJob;
-        }
-        return data.find((job) => job.id === currentJob.id) ?? currentJob;
-      });
-      lastMatchJobsLoadErrorRef.current = null;
-    } catch (loadError) {
-      if (latestMatchJobsRequestIdRef.current !== requestId) {
-        return;
-      }
-      const message =
-        loadError instanceof Error ? loadError.message : "加载匹配分析任务失败";
-      if (lastMatchJobsLoadErrorRef.current !== message) {
-        notifyError("加载匹配分析任务失败", message);
-        lastMatchJobsLoadErrorRef.current = message;
-      }
-    } finally {
-      if (
-        latestMatchJobsRequestIdRef.current === requestId &&
-        (options?.showLoading ?? true)
-      ) {
+  const loadMatchAnalysisJobs = useCallback(
+    async (options?: { showLoading?: boolean }) => {
+      if (!selectedIdentityId) {
+        setMatchAnalysisJobs([]);
+        setCurrentMatchAnalysisJobs([]);
+        lastMatchJobsLoadErrorRef.current = null;
         setMatchJobsLoading(false);
-      }
-    }
-  }, [notifyError, selectedIdentityId, selectedLlmProfileId, taskListViews.match]);
-
-  const cacheMatchJobItemsPage = useCallback(
-    (key: string, page: MatchAnalysisJobItemsPageDTO) => {
-      const cache = matchJobItemsPageCacheRef.current;
-      cache.delete(key);
-      cache.set(key, page);
-      while (cache.size > MATCH_JOB_ITEMS_PAGE_CACHE_SIZE) {
-        const oldestKey = cache.keys().next().value;
-        if (oldestKey === undefined) {
-          return;
-        }
-        cache.delete(oldestKey);
-      }
-    },
-    [],
-  );
-
-  const prefetchMatchJobItemsPage = useCallback(
-    async (
-      jobId: number,
-      cursor: number,
-      limit: number,
-      status: MatchAnalysisJobItemStatus | "all",
-    ) => {
-      if (cursor < 0) {
         return;
       }
-      const key = getMatchJobItemsCacheKey(jobId, cursor, limit, status);
-      if (matchJobItemsPageCacheRef.current.has(key)) {
-        return;
+      const requestId = latestMatchJobsRequestIdRef.current + 1;
+      latestMatchJobsRequestIdRef.current = requestId;
+      if (options?.showLoading ?? true) {
+        setMatchJobsLoading(true);
       }
       try {
-        const page = await listMatchAnalysisJobItems(jobId, {
-          cursor,
-          limit,
-          status: status === "all" ? null : status,
+        const data = await listMatchAnalysisJobs({
+          identityId: selectedIdentityId,
+          llmProfileId: selectedLlmProfileId,
+          view: taskListViews.match,
         });
-        cacheMatchJobItemsPage(key, page);
-      } catch {
-        // Prefetch failures should not interrupt the currently visible page.
-      }
-    },
-    [cacheMatchJobItemsPage],
-  );
-
-  const loadMatchJobDetails = useCallback(
-    async (jobId: number) => {
-      const requestId = latestMatchJobDetailsRequestIdRef.current + 1;
-      latestMatchJobDetailsRequestIdRef.current = requestId;
-      const cursor = (matchJobItemPage - 1) * matchJobItemPageSize;
-      const key = getMatchJobItemsCacheKey(
-        jobId,
-        cursor,
-        matchJobItemPageSize,
-        matchJobItemStatusFilter,
-      );
-      const cached = matchJobItemsPageCacheRef.current.get(key);
-      if (cached) {
-        setSelectedMatchJobItems(cached.items);
-        setMatchJobItemTotalCount(cached.total_count);
-      }
-      setMatchJobDetailsLoading(!cached);
-      try {
-        const data = await listMatchAnalysisJobItems(jobId, {
-          cursor,
-          limit: matchJobItemPageSize,
-          status:
-            matchJobItemStatusFilter === "all"
-              ? null
-              : matchJobItemStatusFilter,
-        });
-        cacheMatchJobItemsPage(key, data);
-        if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
+        const currentData =
+          taskListViews.match === "current"
+            ? data
+            : await listMatchAnalysisJobs({
+                identityId: selectedIdentityId,
+                llmProfileId: selectedLlmProfileId,
+                view: "current",
+              });
+        if (latestMatchJobsRequestIdRef.current !== requestId) {
           return;
         }
-        setSelectedMatchJobItems(data.items);
-        setMatchJobItemTotalCount(data.total_count);
-        lastMatchJobDetailsLoadErrorRef.current = null;
-        if (data.has_more) {
-          void prefetchMatchJobItemsPage(
-            jobId,
-            cursor + matchJobItemPageSize,
-            matchJobItemPageSize,
-            matchJobItemStatusFilter,
-          );
-        }
-        if (cursor > 0) {
-          void prefetchMatchJobItemsPage(
-            jobId,
-            cursor - matchJobItemPageSize,
-            matchJobItemPageSize,
-            matchJobItemStatusFilter,
-          );
-        }
+        setMatchAnalysisJobs(data);
+        setCurrentMatchAnalysisJobs(currentData);
+        setSelectedMatchJob((currentJob) => {
+          if (!currentJob) {
+            return currentJob;
+          }
+          return data.find((job) => job.id === currentJob.id) ?? currentJob;
+        });
+        lastMatchJobsLoadErrorRef.current = null;
       } catch (loadError) {
-        if (latestMatchJobDetailsRequestIdRef.current !== requestId) {
+        if (latestMatchJobsRequestIdRef.current !== requestId) {
           return;
         }
         const message =
           loadError instanceof Error
             ? loadError.message
-            : "加载匹配分析任务详情失败";
-        if (lastMatchJobDetailsLoadErrorRef.current !== message) {
-          notifyError("加载匹配分析任务详情失败", message);
-          lastMatchJobDetailsLoadErrorRef.current = message;
+            : "加载匹配分析任务失败";
+        if (lastMatchJobsLoadErrorRef.current !== message) {
+          notifyError("加载匹配分析任务失败", message);
+          lastMatchJobsLoadErrorRef.current = message;
         }
       } finally {
-        if (latestMatchJobDetailsRequestIdRef.current === requestId) {
-          setMatchJobDetailsLoading(false);
+        if (
+          latestMatchJobsRequestIdRef.current === requestId &&
+          (options?.showLoading ?? true)
+        ) {
+          setMatchJobsLoading(false);
         }
       }
     },
     [
-      cacheMatchJobItemsPage,
-      matchJobItemPage,
-      matchJobItemPageSize,
-      matchJobItemStatusFilter,
       notifyError,
-      prefetchMatchJobItemsPage,
+      selectedIdentityId,
+      selectedLlmProfileId,
+      taskListViews.match,
     ],
   );
+
+  const {
+    load: loadMatchJobDetails,
+    invalidate: invalidateMatchDetails,
+    resetError: resetMatchDetailsError,
+  } = useJobItemsPage({
+    page: matchJobItemPage,
+    pageSize: matchJobItemPageSize,
+    status: matchJobItemStatusFilter,
+    cacheSize: MATCH_JOB_ITEMS_PAGE_CACHE_SIZE,
+    fetchPage: listMatchAnalysisJobItems,
+    setItems: setSelectedMatchJobItems,
+    setTotalCount: setMatchJobItemTotalCount,
+    setLoading: setMatchJobDetailsLoading,
+    notifyError,
+    errorTitle: "加载匹配分析任务详情失败",
+  });
 
   const setMatchJobItemStatusFilter = useCallback(
     (status: MatchAnalysisJobItemStatus | "all") => {
@@ -1652,10 +1506,7 @@ export const BackgroundTasksPage = ({
           data.total_count,
           informationEnrichmentPageSize,
         );
-        if (
-          !usesClientPagination &&
-          informationEnrichmentPage > totalPages
-        ) {
+        if (!usesClientPagination && informationEnrichmentPage > totalPages) {
           setInformationEnrichmentPage(totalPages);
           lastInformationEnrichmentJobsLoadErrorRef.current = null;
           return;
@@ -1665,7 +1516,9 @@ export const BackgroundTasksPage = ({
           if (!currentJob) {
             return currentJob;
           }
-          return data.items.find((job) => job.id === currentJob.id) ?? currentJob;
+          return (
+            data.items.find((job) => job.id === currentJob.id) ?? currentJob
+          );
         });
         lastInformationEnrichmentJobsLoadErrorRef.current = null;
       } catch (loadError) {
@@ -1700,126 +1553,22 @@ export const BackgroundTasksPage = ({
     ],
   );
 
-  const cacheInformationEnrichmentItemsPage = useCallback(
-    (key: string, page: ProfessorInformationEnrichmentItemsPageDTO) => {
-      const cache = informationEnrichmentItemsPageCacheRef.current;
-      cache.delete(key);
-      cache.set(key, page);
-      while (cache.size > INFORMATION_ENRICHMENT_ITEMS_PAGE_CACHE_SIZE) {
-        const oldestKey = cache.keys().next().value;
-        if (oldestKey === undefined) {
-          return;
-        }
-        cache.delete(oldestKey);
-      }
-    },
-    [],
-  );
-
-  const prefetchInformationEnrichmentItemsPage = useCallback(
-    async (
-      jobId: number,
-      cursor: number,
-      limit: number,
-      status: ProfessorInformationEnrichmentItemStatus | "all",
-    ) => {
-      if (cursor < 0) {
-        return;
-      }
-      const key = getInformationEnrichmentItemsCacheKey(jobId, cursor, limit, status);
-      if (informationEnrichmentItemsPageCacheRef.current.has(key)) {
-        return;
-      }
-      try {
-        const page = await listProfessorInformationEnrichmentItemsPage(jobId, {
-          cursor,
-          limit,
-          status: status === "all" ? null : status,
-        });
-        cacheInformationEnrichmentItemsPage(key, page);
-      } catch {
-        // Prefetch failures should not interrupt the currently visible page.
-      }
-    },
-    [cacheInformationEnrichmentItemsPage],
-  );
-
-  const loadInformationEnrichmentDetails = useCallback(
-    async (jobId: number) => {
-      const requestId = latestInformationEnrichmentDetailsRequestIdRef.current + 1;
-      latestInformationEnrichmentDetailsRequestIdRef.current = requestId;
-      const cursor = (informationEnrichmentItemPage - 1) * informationEnrichmentItemPageSize;
-      const key = getInformationEnrichmentItemsCacheKey(
-        jobId,
-        cursor,
-        informationEnrichmentItemPageSize,
-        informationEnrichmentItemStatusFilter,
-      );
-      const cached = informationEnrichmentItemsPageCacheRef.current.get(key);
-      if (cached) {
-        setSelectedInformationEnrichmentItems(cached.items);
-        setInformationEnrichmentItemTotalCount(cached.total_count);
-      }
-      setInformationEnrichmentDetailsLoading(!cached);
-      try {
-        const data = await listProfessorInformationEnrichmentItemsPage(jobId, {
-          cursor,
-          limit: informationEnrichmentItemPageSize,
-          status:
-            informationEnrichmentItemStatusFilter === "all"
-              ? null
-              : informationEnrichmentItemStatusFilter,
-        });
-        cacheInformationEnrichmentItemsPage(key, data);
-        if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
-          return;
-        }
-        setSelectedInformationEnrichmentItems(data.items);
-        setInformationEnrichmentItemTotalCount(data.total_count);
-        lastInformationEnrichmentDetailsLoadErrorRef.current = null;
-        if (data.has_more) {
-          void prefetchInformationEnrichmentItemsPage(
-            jobId,
-            cursor + informationEnrichmentItemPageSize,
-            informationEnrichmentItemPageSize,
-            informationEnrichmentItemStatusFilter,
-          );
-        }
-        if (cursor > 0) {
-          void prefetchInformationEnrichmentItemsPage(
-            jobId,
-            cursor - informationEnrichmentItemPageSize,
-            informationEnrichmentItemPageSize,
-            informationEnrichmentItemStatusFilter,
-          );
-        }
-      } catch (loadError) {
-        if (latestInformationEnrichmentDetailsRequestIdRef.current !== requestId) {
-          return;
-        }
-        const message =
-          loadError instanceof Error
-            ? loadError.message
-            : "加载信息补全任务详情失败";
-        if (lastInformationEnrichmentDetailsLoadErrorRef.current !== message) {
-          notifyError("加载信息补全任务详情失败", message);
-          lastInformationEnrichmentDetailsLoadErrorRef.current = message;
-        }
-      } finally {
-        if (latestInformationEnrichmentDetailsRequestIdRef.current === requestId) {
-          setInformationEnrichmentDetailsLoading(false);
-        }
-      }
-    },
-    [
-      cacheInformationEnrichmentItemsPage,
-      informationEnrichmentItemPage,
-      informationEnrichmentItemPageSize,
-      informationEnrichmentItemStatusFilter,
-      notifyError,
-      prefetchInformationEnrichmentItemsPage,
-    ],
-  );
+  const {
+    load: loadInformationEnrichmentDetails,
+    invalidate: invalidateEnrichmentDetails,
+    resetError: resetEnrichmentDetailsError,
+  } = useJobItemsPage({
+    page: informationEnrichmentItemPage,
+    pageSize: informationEnrichmentItemPageSize,
+    status: informationEnrichmentItemStatusFilter,
+    cacheSize: INFORMATION_ENRICHMENT_ITEMS_PAGE_CACHE_SIZE,
+    fetchPage: listProfessorInformationEnrichmentItemsPage,
+    setItems: setSelectedInformationEnrichmentItems,
+    setTotalCount: setInformationEnrichmentItemTotalCount,
+    setLoading: setInformationEnrichmentDetailsLoading,
+    notifyError,
+    errorTitle: "加载信息补全任务详情失败",
+  });
 
   const setInformationEnrichmentItemStatusFilter = useCallback(
     (status: ProfessorInformationEnrichmentItemStatus | "all") => {
@@ -1957,7 +1706,7 @@ export const BackgroundTasksPage = ({
         loadTasks(),
       ]);
     },
-    [loadBatchTaskDetails, loadTasks, selectedBatchTask],
+    [loadBatchTaskDetails, loadTasks, selectedBatchTask, setBatchReviewThread],
   );
 
   const loadCrawlJobSummary = useCallback(
@@ -2097,27 +1846,71 @@ export const BackgroundTasksPage = ({
     return () => {
       ignore = true;
     };
-  }, [
-    batchReviewItemId,
-    batchReviewOutreachTemplatesLoaded,
-    notifyError,
-  ]);
+  }, [batchReviewItemId, batchReviewOutreachTemplatesLoaded, notifyError]);
 
   usePageBounds(setBatchPage, tasks.length, batchPageSize);
   usePageBounds(setCrawlPage, displayedCrawlJobTotalCount, crawlPageSize);
   usePageBounds(setMatchPage, matchAnalysisJobs.length, matchPageSize);
-  usePageBounds(setInformationEnrichmentPage, displayedInformationEnrichmentJobTotalCount, informationEnrichmentPageSize);
-  usePageBounds(setMatchJobItemPage, matchJobItemTotalCount, matchJobItemPageSize);
-  usePageBounds(setInformationEnrichmentItemPage, informationEnrichmentItemTotalCount, informationEnrichmentItemPageSize);
-  usePageBounds(setCrawlEventPage, crawlExecutionLogEvents.length, crawlEventPageSize);
-  usePageBounds(setCrawlDetailPagePage, crawlJobPages.length, crawlDetailPagePageSize);
-  usePageBounds(setCrawlCandidatePage, filteredCrawlJobCandidates.length, crawlCandidatePageSize);
-  usePageBounds(setBatchSentItemPage, sentBatchTaskItems.length, batchSentItemPageSize);
-  usePageBounds(setBatchPendingItemPage, pendingBatchTaskItems.length, batchPendingItemPageSize);
-  usePageBounds(setBatchGeneratingItemPage, generatingDraftBatchTaskItems.length, batchGeneratingItemPageSize);
-  usePageBounds(setBatchDraftFailedItemPage, draftFailedBatchTaskItems.length, batchDraftFailedItemPageSize);
-  usePageBounds(setBatchFailedItemPage, failedBatchTaskItems.length, batchFailedItemPageSize);
-  usePageBounds(setBatchReviewItemPage, batchReviewQueueItems.length, batchReviewItemPageSize);
+  usePageBounds(
+    setInformationEnrichmentPage,
+    displayedInformationEnrichmentJobTotalCount,
+    informationEnrichmentPageSize,
+  );
+  usePageBounds(
+    setMatchJobItemPage,
+    matchJobItemTotalCount,
+    matchJobItemPageSize,
+  );
+  usePageBounds(
+    setInformationEnrichmentItemPage,
+    informationEnrichmentItemTotalCount,
+    informationEnrichmentItemPageSize,
+  );
+  usePageBounds(
+    setCrawlEventPage,
+    crawlExecutionLogEvents.length,
+    crawlEventPageSize,
+  );
+  usePageBounds(
+    setCrawlDetailPagePage,
+    crawlJobPages.length,
+    crawlDetailPagePageSize,
+  );
+  usePageBounds(
+    setCrawlCandidatePage,
+    filteredCrawlJobCandidates.length,
+    crawlCandidatePageSize,
+  );
+  usePageBounds(
+    setBatchSentItemPage,
+    sentBatchTaskItems.length,
+    batchSentItemPageSize,
+  );
+  usePageBounds(
+    setBatchPendingItemPage,
+    pendingBatchTaskItems.length,
+    batchPendingItemPageSize,
+  );
+  usePageBounds(
+    setBatchGeneratingItemPage,
+    generatingDraftBatchTaskItems.length,
+    batchGeneratingItemPageSize,
+  );
+  usePageBounds(
+    setBatchDraftFailedItemPage,
+    draftFailedBatchTaskItems.length,
+    batchDraftFailedItemPageSize,
+  );
+  usePageBounds(
+    setBatchFailedItemPage,
+    failedBatchTaskItems.length,
+    batchFailedItemPageSize,
+  );
+  usePageBounds(
+    setBatchReviewItemPage,
+    batchReviewQueueItems.length,
+    batchReviewItemPageSize,
+  );
 
   useEffect(() => {
     if (batchReviewQueueScrollRef.current) {
@@ -2179,18 +1972,23 @@ export const BackgroundTasksPage = ({
       setActiveTab("batch");
       return;
     }
-    const requestedTask = tasks.find((task) => task.id === requestedBatchTaskId);
+    const requestedTask = tasks.find(
+      (task) => task.id === requestedBatchTaskId,
+    );
     let canceled = false;
     const openRequestedTask = (task: BatchTaskCardDTO) => {
       if (canceled) {
         return;
       }
       setSelectedBatchTask(task);
-      setSearchParams((current) => {
-        const next = new URLSearchParams(current);
-        next.delete("batch_task_id");
-        return next;
-      }, { replace: true });
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("batch_task_id");
+          return next;
+        },
+        { replace: true },
+      );
     };
     if (requestedTask) {
       openRequestedTask(requestedTask);
@@ -2210,11 +2008,14 @@ export const BackgroundTasksPage = ({
             ? loadError.message
             : `未找到批量任务 #${requestedBatchTaskId}`,
         );
-        setSearchParams((current) => {
-          const next = new URLSearchParams(current);
-          next.delete("batch_task_id");
-          return next;
-        }, { replace: true });
+        setSearchParams(
+          (current) => {
+            const next = new URLSearchParams(current);
+            next.delete("batch_task_id");
+            return next;
+          },
+          { replace: true },
+        );
       });
     return () => {
       canceled = true;
@@ -2276,11 +2077,7 @@ export const BackgroundTasksPage = ({
       void loadInformationEnrichmentJobs({ showLoading: false });
     }, CRAWL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [
-    activeTab,
-    loadInformationEnrichmentJobs,
-    taskCenterSection,
-  ]);
+  }, [activeTab, loadInformationEnrichmentJobs, taskCenterSection]);
 
   useEffect(() => {
     if (!selectedBatchTaskId) {
@@ -2370,16 +2167,21 @@ export const BackgroundTasksPage = ({
     if (!selectedMatchJob) {
       return undefined;
     }
-    lastMatchJobDetailsLoadErrorRef.current = null;
+    resetMatchDetailsError();
     void loadMatchJobDetails(selectedMatchJob.id);
     const timer = window.setInterval(() => {
       void loadMatchJobDetails(selectedMatchJob.id);
     }, CRAWL_DETAILS_REFRESH_INTERVAL_MS);
     return () => {
-      latestMatchJobDetailsRequestIdRef.current += 1;
+      invalidateMatchDetails();
       window.clearInterval(timer);
     };
-  }, [loadMatchJobDetails, selectedMatchJob]);
+  }, [
+    loadMatchJobDetails,
+    selectedMatchJob,
+    invalidateMatchDetails,
+    resetMatchDetailsError,
+  ]);
 
   useEffect(() => {
     setInformationEnrichmentItemStatusFilterState("all");
@@ -2392,16 +2194,23 @@ export const BackgroundTasksPage = ({
     if (!selectedInformationEnrichmentJob) {
       return undefined;
     }
-    lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+    resetEnrichmentDetailsError();
     void loadInformationEnrichmentDetails(selectedInformationEnrichmentJob.id);
     const timer = window.setInterval(() => {
-      void loadInformationEnrichmentDetails(selectedInformationEnrichmentJob.id);
+      void loadInformationEnrichmentDetails(
+        selectedInformationEnrichmentJob.id,
+      );
     }, CRAWL_DETAILS_REFRESH_INTERVAL_MS);
     return () => {
-      latestInformationEnrichmentDetailsRequestIdRef.current += 1;
+      invalidateEnrichmentDetails();
       window.clearInterval(timer);
     };
-  }, [loadInformationEnrichmentDetails, selectedInformationEnrichmentJob]);
+  }, [
+    loadInformationEnrichmentDetails,
+    selectedInformationEnrichmentJob,
+    invalidateEnrichmentDetails,
+    resetEnrichmentDetailsError,
+  ]);
 
   useEffect(() => {
     if (!selectedCrawlJobId) {
@@ -2448,6 +2257,9 @@ export const BackgroundTasksPage = ({
     setCrawlCandidatePage(1);
   }, [
     selectedCrawlJobId,
+    setSelectedCandidateDetail,
+    setCandidateEditForm,
+    setCandidateUpdateLoading,
     setCrawlCandidatePage,
     setCrawlDetailPagePage,
     setCrawlEventPage,
@@ -2730,9 +2542,7 @@ export const BackgroundTasksPage = ({
       await loadCrawlJobDetails(jobId, { showLoading: false });
     } catch (actionError) {
       const message =
-        actionError instanceof Error
-          ? actionError.message
-          : "转入待审核失败";
+        actionError instanceof Error ? actionError.message : "转入待审核失败";
       notifyError("转入待审核失败", message);
     } finally {
       setResumingCrawlJobReviewId((currentJobId) =>
@@ -2765,7 +2575,9 @@ export const BackgroundTasksPage = ({
       }
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "取消匹配分析任务失败";
+        actionError instanceof Error
+          ? actionError.message
+          : "取消匹配分析任务失败";
       notifyError("取消匹配分析任务失败", message);
     } finally {
       setCancelingMatchJobId((currentJobId) =>
@@ -2783,7 +2595,9 @@ export const BackgroundTasksPage = ({
       notifySuccess("已创建重试任务", "失败项已重新加入后台匹配分析队列。");
     } catch (actionError) {
       const message =
-        actionError instanceof Error ? actionError.message : "重试匹配分析任务失败";
+        actionError instanceof Error
+          ? actionError.message
+          : "重试匹配分析任务失败";
       notifyError("重试匹配分析任务失败", message);
     } finally {
       setRetryingMatchJobId((currentJobId) =>
@@ -3010,86 +2824,6 @@ export const BackgroundTasksPage = ({
     }
   };
 
-  const handleStartCandidateEdit = () => {
-    if (
-      !selectedCandidateDetail ||
-      selectedCandidateDetail.review_status !== "pending" ||
-      !selectedCrawlJobCanReview
-    ) {
-      return;
-    }
-    setCandidateEditForm(toCrawlCandidateEditForm(selectedCandidateDetail));
-  };
-
-  const handleCancelCandidateEdit = () => {
-    if (candidateUpdateLoading) {
-      return;
-    }
-    setCandidateEditForm(null);
-  };
-
-  const handleCandidateEditFieldChange = (
-    field: keyof CrawlCandidateEditForm,
-    value: string,
-  ) => {
-    setCandidateEditForm((currentForm) =>
-      currentForm ? { ...currentForm, [field]: value } : currentForm,
-    );
-  };
-
-  const handleSaveCandidateEdit = async (
-    event: FormEvent<HTMLFormElement>,
-  ) => {
-    event.preventDefault();
-    if (
-      !selectedCandidateDetail ||
-      !candidateEditForm ||
-      candidateUpdateLoading
-    ) {
-      return;
-    }
-    if (
-      selectedCandidateDetail.review_status !== "pending" ||
-      !selectedCrawlJobCanReview
-    ) {
-      notifyError("无法保存导师信息", "该候选导师已不在待审核状态，请刷新任务后重试。");
-      return;
-    }
-
-    const payload = toCrawlCandidateUpdatePayload(
-      selectedCandidateDetail,
-      candidateEditForm,
-    );
-    if (!payload.name) {
-      notifyError("无法保存导师信息", "导师姓名不能为空。");
-      return;
-    }
-
-    setCandidateUpdateLoading(true);
-    try {
-      const updatedCandidate = await updateCrawlCandidate(
-        selectedCandidateDetail.id,
-        payload,
-      );
-      setCrawlJobCandidates((currentCandidates) =>
-        currentCandidates.map((candidate) =>
-          candidate.id === updatedCandidate.id ? updatedCandidate : candidate,
-        ),
-      );
-      setSelectedCandidateDetail(updatedCandidate);
-      setCandidateEditForm(null);
-      notifySuccess("导师信息已保存", "后续补全仅填写空缺字段。");
-    } catch (actionError) {
-      const message =
-        actionError instanceof Error
-          ? actionError.message
-          : "保存候选导师信息失败";
-      notifyError("保存候选导师信息失败", message);
-    } finally {
-      setCandidateUpdateLoading(false);
-    }
-  };
-
   const closeCrawlJobDetails = () => {
     latestCrawlJobDetailsRequestIdRef.current += 1;
     setSelectedCrawlJob(null);
@@ -3125,27 +2859,6 @@ export const BackgroundTasksPage = ({
     setBatchReviewSelectedMaterialIds([]);
   };
 
-  const syncBatchDraftReview = (thread: WorkspaceThreadDTO) => {
-    const draft = getBatchReviewDraft(thread);
-    setBatchReviewThread(thread);
-    setBatchReviewSubject(draft.subject);
-    setBatchReviewContentText(draft.text);
-    setBatchReviewContentHtml(draft.html);
-    setBatchReviewSelectedMaterialIds(draft.selectedMaterialIds);
-    batchReviewDraftBaselineRef.current =
-      thread.current_task.id === null
-        ? null
-        : {
-            itemId: thread.current_task.id,
-            snapshot: buildBatchReviewDraftSnapshot({
-              subject: draft.subject,
-              contentText: draft.text,
-              contentHtml: draft.html,
-              selectedMaterialIds: draft.selectedMaterialIds,
-            }),
-          };
-  };
-
   const ensureBatchReviewThreadMatchesItem = (
     thread: WorkspaceThreadDTO,
     item: BatchTaskItemDTO,
@@ -3159,20 +2872,6 @@ export const BackgroundTasksPage = ({
     }
   };
 
-  const handleBatchReviewContentChange = (value: RichEmailValue) => {
-    setBatchReviewContentHtml(value.html);
-    setBatchReviewContentText(value.text);
-  };
-
-  const buildBatchReviewPayload = () => ({
-    subject: batchReviewSubject.trim() || null,
-    body_text:
-      batchReviewContentText.trim() ||
-      deriveBatchReviewText("", batchReviewContentHtml),
-    body_html: batchReviewContentHtml || null,
-    selected_material_ids: batchReviewSelectedMaterialIds,
-  });
-
   const saveActiveBatchReviewDraftIfChanged = async () => {
     if (!selectedBatchTask || !activeBatchReviewItem || !batchReviewThread) {
       return true;
@@ -3183,17 +2882,7 @@ export const BackgroundTasksPage = ({
       notifyError("草稿未保存", "当前草稿信息不完整，请刷新后重试。");
       return false;
     }
-    const baseline = batchReviewDraftBaselineRef.current;
-    const currentSnapshot = buildBatchReviewDraftSnapshot({
-      subject: batchReviewSubject,
-      contentText: batchReviewContentText,
-      contentHtml: batchReviewContentHtml,
-      selectedMaterialIds: batchReviewSelectedMaterialIds,
-    });
-    if (
-      baseline?.itemId === itemId &&
-      areBatchReviewDraftSnapshotsEqual(baseline.snapshot, currentSnapshot)
-    ) {
+    if (!batchReviewHasUnsavedChanges(itemId)) {
       return true;
     }
     if (batchReviewSavingRef.current) {
@@ -3254,7 +2943,10 @@ export const BackgroundTasksPage = ({
     }
     setBatchReviewLoading(true);
     try {
-      const thread = await getBatchTaskItemThread(selectedBatchTask.id, item.id);
+      const thread = await getBatchTaskItemThread(
+        selectedBatchTask.id,
+        item.id,
+      );
       if (latestBatchReviewRequestIdRef.current !== requestId) {
         return;
       }
@@ -3442,10 +3134,16 @@ export const BackgroundTasksPage = ({
       const thread = usesRenderedTemplateDraft
         ? await rewriteBatchTaskItemDraft(selectedBatchTask.id, itemId, {
             ...buildBatchReviewPayload(),
-            llm_profile_id: batchReviewThread?.llm_profile.id ?? selectedBatchTask.llm_profile_id,
+            llm_profile_id:
+              batchReviewThread?.llm_profile.id ??
+              selectedBatchTask.llm_profile_id,
           })
         : await regenerateBatchTaskItemDraft(selectedBatchTask.id, itemId);
-      ensureBatchReviewThreadMatchesItem(thread, activeBatchReviewItem, selectedBatchTask);
+      ensureBatchReviewThreadMatchesItem(
+        thread,
+        activeBatchReviewItem,
+        selectedBatchTask,
+      );
       setBatchReviewItemId((currentItemId) => {
         if (currentItemId === itemId) {
           syncBatchDraftReview(thread);
@@ -3466,7 +3164,11 @@ export const BackgroundTasksPage = ({
   };
 
   const handleApproveBatchDraft = async () => {
-    if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
+    if (
+      !batchReviewThread?.current_task.id ||
+      !selectedBatchTask ||
+      !activeBatchReviewItem
+    ) {
       return;
     }
     const attachmentWarning = shouldPromptForLargeAttachments()
@@ -3488,8 +3190,9 @@ export const BackgroundTasksPage = ({
       }
     }
     const nextItem =
-      reviewRequiredBatchTaskItems.find((item) => item.id !== activeBatchReviewItem.id) ??
-      null;
+      reviewRequiredBatchTaskItems.find(
+        (item) => item.id !== activeBatchReviewItem.id,
+      ) ?? null;
     const itemId = activeBatchReviewItem.id;
     setBatchReviewItemAction(itemId, "submit");
     try {
@@ -3498,7 +3201,11 @@ export const BackgroundTasksPage = ({
         itemId,
         buildBatchReviewPayload(),
       );
-      ensureBatchReviewThreadMatchesItem(thread, activeBatchReviewItem, selectedBatchTask);
+      ensureBatchReviewThreadMatchesItem(
+        thread,
+        activeBatchReviewItem,
+        selectedBatchTask,
+      );
       notifySuccess("草稿已审核通过");
       setSelectedBatchTaskItems((current) =>
         current.map((item) =>
@@ -3507,14 +3214,18 @@ export const BackgroundTasksPage = ({
                 ...item,
                 status: "approved",
                 next_action:
-                  selectedBatchTask.schedule_type === "scheduled" && !item.scheduled_at
+                  selectedBatchTask.schedule_type === "scheduled" &&
+                  !item.scheduled_at
                     ? "missing_schedule"
                     : "waiting_send",
               }
             : item,
         ),
       );
-      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+      await Promise.all([
+        loadBatchTaskDetails(selectedBatchTask.id),
+        loadTasks(),
+      ]);
       if (nextItem) {
         await openBatchDraftReview(nextItem);
       } else {
@@ -3604,9 +3315,7 @@ export const BackgroundTasksPage = ({
       await Promise.all([loadBatchTaskDetails(taskId), loadTasks()]);
     } catch (actionError) {
       const message =
-        actionError instanceof Error
-          ? actionError.message
-          : "批量审核草稿失败";
+        actionError instanceof Error ? actionError.message : "批量审核草稿失败";
       notifyError("批量审核草稿失败", message);
       await loadBatchTaskDetails(taskId);
     } finally {
@@ -3630,14 +3339,18 @@ export const BackgroundTasksPage = ({
       return;
     }
     const nextItem =
-      reviewRequiredBatchTaskItems.find((candidate) => candidate.id !== item.id) ??
-      null;
+      reviewRequiredBatchTaskItems.find(
+        (candidate) => candidate.id !== item.id,
+      ) ?? null;
     setBatchReviewItemAction(item.id, "delete");
     try {
       const result = await deleteBatchTaskItem(selectedBatchTask.id, item.id);
       notifySuccess("草稿已从批量任务中移除");
       setSelectedBatchTask(result.task);
-      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+      await Promise.all([
+        loadBatchTaskDetails(selectedBatchTask.id),
+        loadTasks(),
+      ]);
       if (batchReviewItemId === item.id) {
         if (nextItem) {
           await openBatchDraftReview(nextItem);
@@ -3660,10 +3373,16 @@ export const BackgroundTasksPage = ({
     }
     setBatchReviewItemAction(item.id, "regenerate");
     try {
-      const result = await retryBatchTaskItemDraft(selectedBatchTask.id, item.id);
+      const result = await retryBatchTaskItemDraft(
+        selectedBatchTask.id,
+        item.id,
+      );
       setSelectedBatchTask(result.task);
       notifySuccess("已重新加入草稿生成队列");
-      await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+      await Promise.all([
+        loadBatchTaskDetails(selectedBatchTask.id),
+        loadTasks(),
+      ]);
     } catch (actionError) {
       const message =
         actionError instanceof Error ? actionError.message : "重新生成草稿失败";
@@ -3674,7 +3393,11 @@ export const BackgroundTasksPage = ({
   };
 
   const handleSendBatchDraftNow = async () => {
-    if (!batchReviewThread?.current_task.id || !selectedBatchTask || !activeBatchReviewItem) {
+    if (
+      !batchReviewThread?.current_task.id ||
+      !selectedBatchTask ||
+      !activeBatchReviewItem
+    ) {
       return;
     }
     const attachmentWarning = shouldPromptForLargeAttachments()
@@ -3715,7 +3438,11 @@ export const BackgroundTasksPage = ({
         itemId,
         buildBatchReviewPayload(),
       );
-      ensureBatchReviewThreadMatchesItem(thread, activeBatchReviewItem, selectedBatchTask);
+      ensureBatchReviewThreadMatchesItem(
+        thread,
+        activeBatchReviewItem,
+        selectedBatchTask,
+      );
       const failureMessage = getEmailSendFailureMessage(
         thread.current_task.status,
         thread.current_task.last_error,
@@ -3746,10 +3473,15 @@ export const BackgroundTasksPage = ({
         ),
       );
       try {
-        await Promise.all([loadBatchTaskDetails(selectedBatchTask.id), loadTasks()]);
+        await Promise.all([
+          loadBatchTaskDetails(selectedBatchTask.id),
+          loadTasks(),
+        ]);
       } catch (refreshError) {
         const message =
-          refreshError instanceof Error ? refreshError.message : "刷新任务状态失败";
+          refreshError instanceof Error
+            ? refreshError.message
+            : "刷新任务状态失败";
         notifyError("刷新任务状态失败", message);
       }
       if (!failureMessage) {
@@ -3936,9 +3668,7 @@ export const BackgroundTasksPage = ({
     let actionContent: ReactNode = null;
     if (action?.kind === "message") {
       actionContent = (
-        <span className="font-medium text-stone-600">
-          {action.text}
-        </span>
+        <span className="font-medium text-stone-600">{action.text}</span>
       );
     } else if (action?.kind === "professor" && !missingResearchDirection) {
       actionContent = (
@@ -4011,54 +3741,20 @@ export const BackgroundTasksPage = ({
   };
 
   const closeMatchJobDetails = () => {
-    latestMatchJobDetailsRequestIdRef.current += 1;
+    invalidateMatchDetails();
     setSelectedMatchJob(null);
     setSelectedMatchJobItems([]);
     setMatchJobItemTotalCount(0);
     setMatchJobDetailsLoading(false);
-    lastMatchJobDetailsLoadErrorRef.current = null;
+    resetMatchDetailsError();
   };
   const closeInformationEnrichmentDetails = () => {
-    latestInformationEnrichmentDetailsRequestIdRef.current += 1;
+    invalidateEnrichmentDetails();
     setSelectedInformationEnrichmentJob(null);
     setSelectedInformationEnrichmentItems([]);
     setInformationEnrichmentDetailsLoading(false);
-    lastInformationEnrichmentDetailsLoadErrorRef.current = null;
+    resetEnrichmentDetailsError();
   };
-  const requestCloseSelectedCandidateDetail = useCallback(async () => {
-    if (candidateUpdateLoading) {
-      return;
-    }
-    if (
-      selectedCandidateDetail &&
-      candidateEditForm &&
-      hasUnsavedCrawlCandidateChanges(
-        selectedCandidateDetail,
-        candidateEditForm,
-      )
-    ) {
-      const shouldDiscardChanges = await confirm({
-        title: "放弃未保存的修改？",
-        description: "关闭后，本次对候选导师信息的修改将不会保存。",
-        confirmLabel: "不保存并关闭",
-        cancelLabel: "继续编辑",
-        tone: "danger",
-      });
-      if (!shouldDiscardChanges) {
-        return;
-      }
-    }
-    setCandidateEditForm(null);
-    setSelectedCandidateDetail(null);
-  }, [
-    candidateEditForm,
-    candidateUpdateLoading,
-    confirm,
-    selectedCandidateDetail,
-  ]);
-  const closeSelectedCandidateDetail = useCallback(() => {
-    void requestCloseSelectedCandidateDetail();
-  }, [requestCloseSelectedCandidateDetail]);
   const batchTaskDetailsLayer = useDismissableLayerClick(() => {
     void requestCloseBatchTaskDetails();
   });
@@ -4067,7 +3763,9 @@ export const BackgroundTasksPage = ({
     closeInformationEnrichmentDetails,
   );
   const crawlJobDetailsLayer = useDismissableLayerClick(closeCrawlJobDetails);
-  const candidateDetailLayer = useDismissableLayerClick(closeSelectedCandidateDetail);
+  const candidateDetailLayer = useDismissableLayerClick(
+    closeSelectedCandidateDetail,
+  );
 
   const handleOpenBatchResend = async (task: BatchTaskCardDTO) => {
     setResendDialogOpen(true);
@@ -4078,11 +3776,17 @@ export const BackgroundTasksPage = ({
       setResendContext(context);
       setSelectedResendProfessorIds(
         context.items
-          .filter((item) => item.selectable && item.default_selected && item.professor_id !== null)
+          .filter(
+            (item) =>
+              item.selectable &&
+              item.default_selected &&
+              item.professor_id !== null,
+          )
           .map((item) => item.professor_id as number),
       );
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : "请稍后重试";
+      const message =
+        loadError instanceof Error ? loadError.message : "请稍后重试";
       notifyError("加载可重新发起项失败", message);
       setResendDialogOpen(false);
     } finally {
@@ -4163,7 +3867,8 @@ export const BackgroundTasksPage = ({
   const handleDeleteBatchTask = async (task: BatchTaskCardDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先停止尚未完成的工作。",
+      description:
+        "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先停止尚未完成的工作。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4200,7 +3905,8 @@ export const BackgroundTasksPage = ({
   const handleDeleteCrawlJob = async (job: CrawlJobSummaryDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的工作。",
+      description:
+        "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的工作。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4237,7 +3943,8 @@ export const BackgroundTasksPage = ({
   const handleDeleteMatchJob = async (job: MatchAnalysisJobDTO) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先请求取消尚未完成的分析。",
+      description:
+        "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先请求取消尚未完成的分析。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4276,7 +3983,8 @@ export const BackgroundTasksPage = ({
   ) => {
     const confirmed = await confirm({
       title: "移入回收站？",
-      description: "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的补全。",
+      description:
+        "任务及其全部历史数据都会保留，可在回收站恢复。若任务仍在运行，系统会先取消尚未完成的补全。",
       confirmLabel: "移入回收站",
       cancelLabel: "先保留",
       tone: "danger",
@@ -4322,11 +4030,10 @@ export const BackgroundTasksPage = ({
     );
   const activeBatchReviewAction =
     batchReviewItemId !== null
-      ? batchReviewItemActions[batchReviewItemId] ?? null
+      ? (batchReviewItemActions[batchReviewItemId] ?? null)
       : null;
-  const activeBatchReviewOutreachTemplates = batchReviewOutreachTemplates.filter(
-    (template) => !template.archived_at,
-  );
+  const activeBatchReviewOutreachTemplates =
+    batchReviewOutreachTemplates.filter((template) => !template.archived_at);
   const selectedBatchReviewOutreachTemplateId =
     batchReviewThread?.current_task.outreach_template_id ?? null;
   const selectedBatchReviewOutreachTemplate =
@@ -4358,14 +4065,12 @@ export const BackgroundTasksPage = ({
           : "manual_empty");
   const batchReviewDraftSourceLabel =
     BATCH_REVIEW_DRAFT_SOURCE_LABELS[batchReviewDraftSource];
-  const batchReviewUsesTemplateFallback =
-    batchReviewThread
-      ? batchReviewThread.current_task.draft_generation_source ===
-        "template_fallback"
-      : activeBatchReviewItem?.draft_generation_source === "template_fallback";
+  const batchReviewUsesTemplateFallback = batchReviewThread
+    ? batchReviewThread.current_task.draft_generation_source ===
+      "template_fallback"
+    : activeBatchReviewItem?.draft_generation_source === "template_fallback";
   const batchReviewUsesTemplateDraft =
-    batchReviewDraftSource === "template" ||
-    batchReviewUsesTemplateFallback;
+    batchReviewDraftSource === "template" || batchReviewUsesTemplateFallback;
   const batchReviewProfessorMissingResearchDirection =
     !batchReviewThread?.professor.research_direction?.trim();
   const batchReviewTemplateReferencesResearchDirection = [
@@ -4385,7 +4090,9 @@ export const BackgroundTasksPage = ({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-stone-900">任务中心</h1>
-            <p className="mt-1 text-sm text-stone-500">查看发送计划和后台任务</p>
+            <p className="mt-1 text-sm text-stone-500">
+              查看发送计划和后台任务
+            </p>
           </div>
           <TaskCenterSectionSwitch
             activeSection="background"
@@ -4399,507 +4106,336 @@ export const BackgroundTasksPage = ({
           </div>
         ) : null}
 
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <TaskTypeTabs
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TaskTypeTabs
+            activeTab={activeTab}
+            hasTaskSelection={hasTaskSelection}
+            counts={{
+              batch: currentBatchTasks.length,
+              crawl: currentCrawlJobCount,
+              match: currentMatchAnalysisJobs.length,
+              enrichment: currentInformationEnrichmentJobCount,
+            }}
+            onChange={setActiveTab}
+          />
+
+          <TaskListViewSwitch
+            activeView={activeTaskListView}
+            onViewChange={(view) => {
+              setTaskListViews((current) => ({
+                ...current,
+                [activeTab]: view,
+              }));
+              setActiveTaskPage(1);
+            }}
+          />
+        </div>
+
+        <TaskListToolbar
           activeTab={activeTab}
-          hasTaskSelection={hasTaskSelection}
-          counts={{
-            batch: currentBatchTasks.length,
-            crawl: currentCrawlJobCount,
-            match: currentMatchAnalysisJobs.length,
-            enrichment: currentInformationEnrichmentJobCount,
+          filters={activeTaskListFilters}
+          sortDirections={taskSortDirections}
+          advancedFiltersOpen={advancedTaskFiltersOpen}
+          advancedFilterCount={activeAdvancedTaskFilterCount}
+          onFilterChange={updateActiveTaskListFilters}
+          onSortDirectionChange={(sortKey) => {
+            setTaskSortDirections((current) => ({
+              ...current,
+              [sortKey]: current[sortKey] === "desc" ? "asc" : "desc",
+            }));
+            updateActiveTaskListFilters({ sortKey });
           }}
-          onChange={setActiveTab}
-        />
-
-        <TaskListViewSwitch
-          activeView={activeTaskListView}
-          onViewChange={(view) => {
-            setTaskListViews((current) => ({ ...current, [activeTab]: view }));
-            setActiveTaskPage(1);
-          }}
+          onAdvancedFiltersToggle={() =>
+            setAdvancedTaskFiltersOpen((current) => !current)
+          }
+          onReset={resetActiveTaskListFilters}
         />
       </div>
-
-      <TaskListToolbar
-        activeTab={activeTab}
-        filters={activeTaskListFilters}
-        sortDirections={taskSortDirections}
-        advancedFiltersOpen={advancedTaskFiltersOpen}
-        advancedFilterCount={activeAdvancedTaskFilterCount}
-        onFilterChange={updateActiveTaskListFilters}
-        onSortDirectionChange={(sortKey) => {
-          setTaskSortDirections((current) => ({
-            ...current,
-            [sortKey]: current[sortKey] === "desc" ? "asc" : "desc",
-          }));
-          updateActiveTaskListFilters({ sortKey });
-        }}
-        onAdvancedFiltersToggle={() =>
-          setAdvancedTaskFiltersOpen((current) => !current)
-        }
-        onReset={resetActiveTaskListFilters}
-      />
-      </div>
-
       <section
         ref={taskListStartRef}
         tabIndex={-1}
         aria-label="任务列表"
         className="scroll-mt-6 focus:outline-none"
       >
-      {activeTab === "batch" && loading ? (
-        <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载任务列表…
-        </div>
-      ) : activeTab === "batch" && tasks.length === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          {activeTaskListView === "trash" ? "回收站暂无任务。" : "暂无任务。可从首页创建。"}
-        </div>
-      ) : activeTab === "batch" && filteredBatchTasks.length === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          没有符合当前条件的批量邮件任务。
-        </div>
-      ) : activeTab === "batch" ? (
-        <>
-          <div className="mt-6 grid gap-4">
-            {visibleBatchTasks.map((task) => {
-              const progress =
-                task.target_count === 0
-                  ? 0
-                  : Math.round(
-                      (task.completed_count / task.target_count) * 100,
-                    );
-              const waitingSendCount = getBatchTaskWaitingSendCount(task);
-
-              return (
-                <article
-                  key={task.id}
-                  className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
-                >
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px_minmax(260px,auto)_auto] lg:items-center">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                        <Mail className="h-4 w-4 text-primary" />
-                        批量邮件任务
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="mt-2 truncate text-base font-semibold text-stone-900">
-                          {task.name}
-                        </h2>
-                        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700">
-                          {BATCH_TASK_STATUS_LABELS[task.status]}
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate text-sm text-stone-500">
-                        {buildScheduleLabel(task)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
-                        <span>
-                          {task.completed_count}/{task.target_count}
-                        </span>
-                        <span>{progress}%</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-stone-100">
-                        <div
-                          className="h-full rounded-full bg-primary"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      {task.queued_generation_count > 0 ? (
-                        <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
-                          排队中 {task.queued_generation_count}
-                        </span>
-                      ) : null}
-                      {task.blocked_generation_count > 0 ? (
-                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
-                          需处理 {task.blocked_generation_count}
-                        </span>
-                      ) : null}
-                      {task.generating_draft_count > 0 ? (
-                        <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs text-sky-700">
-                          生成中 {task.generating_draft_count}
-                        </span>
-                      ) : null}
-                      {task.draft_failed_count > 0 ? (
-                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
-                          草稿失败 {task.draft_failed_count}
-                        </span>
-                      ) : null}
-                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
-                        待审核 {task.review_required_count}
-                      </span>
-                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
-                        待发送 {waitingSendCount}
-                      </span>
-                      {task.canceled_send_count > 0 ? (
-                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
-                          已取消发送 {task.canceled_send_count}
-                        </span>
-                      ) : null}
-                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
-                        已发送 {task.sent_count + task.replied_count}
-                      </span>
-                      {task.failed_count > 0 ? (
-                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
-                          失败 {task.failed_count}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      {activeTaskListView === "trash" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleRestoreBatchTask(task.id)}
-                          className="ui-btn-primary"
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                          还原任务
-                        </button>
-                      ) : null}
-                      {activeTaskListView === "current" &&
-                      canDeleteBatchTask(task) ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteBatchTask(task)}
-                          className="ui-btn-danger"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          删除
-                        </button>
-                      ) : null}
-                      {activeTaskListView === "current" &&
-                      task.status === "running" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleAction(task.id, "pause")}
-                          className="ui-btn-secondary"
-                        >
-                          <Pause className="h-4 w-4" />
-                          暂停
-                        </button>
-                      ) : null}
-                      {activeTaskListView === "current" &&
-                      task.status === "paused" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleAction(task.id, "resume")}
-                          className="ui-btn-secondary"
-                        >
-                          <Play className="h-4 w-4" />
-                          继续
-                        </button>
-                      ) : null}
-                      {activeTaskListView === "current" &&
-                      task.status !== "stopped" &&
-                      task.status !== "completed" &&
-                      task.status !== "expired" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleAction(task.id, "stop")}
-                          className="ui-btn-danger"
-                        >
-                          <Square className="h-4 w-4" />
-                          终止
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => setSelectedBatchTask(task)}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                        aria-label="查看详情"
-                        title="查看详情"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+        {activeTab === "batch" && loading ? (
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载任务列表…
           </div>
-          <Pagination
-            page={safeBatchPage}
-            pageSize={batchPageSize}
-            totalCount={filteredBatchTasks.length}
-            onChange={handleBatchPaginationChange}
-            ariaLabel="批量邮件任务分页"
-            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
-            unitLabel="个"
-            itemLabel="个任务"
-            pageStatusPrefix="第 "
-            focusTargetRef={taskListStartRef}
-            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
-          />
-        </>
-      ) : activeTab === "match" && matchJobsLoading && matchAnalysisJobs.length === 0 ? (
-        <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载匹配分析任务列表…
-        </div>
-      ) : activeTab === "match" && matchAnalysisJobs.length === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          {activeTaskListView === "trash"
-            ? "回收站暂无任务。"
-            : "暂无匹配分析任务。可从首页创建。"}
-        </div>
-      ) : activeTab === "match" && filteredMatchAnalysisJobs.length === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          没有符合当前条件的匹配分析任务。
-        </div>
-      ) : activeTab === "match" ? (
-        <>
-          <div className="mt-6 grid gap-4">
-            {visibleMatchJobs.map((job) => (
-              <article
-                key={job.id}
-                className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
-              >
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                      <Sparkles className="h-4 w-4 text-primary" />
-                      匹配分析任务
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <h2 className="truncate text-base font-semibold text-stone-900">
-                        {job.name}
-                      </h2>
-                      <span
-                        className={`rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_JOB_STATUS_TONES[job.status]}`}
-                      >
-                        {MATCH_ANALYSIS_JOB_STATUS_LABELS[job.status]}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-stone-500">
-                      成功 {job.succeeded_count} / 失败 {job.failed_count} / 跳过 {job.skipped_count} / 共 {job.target_count}
-                    </p>
-                    <p className="mt-1 text-xs text-stone-500">
-                      {job.match_source_identity_id === null ? (
-                        <>匹配依据 原身份已删除</>
-                      ) : (
-                        <>
-                          {job.match_source_identity_id &&
-                          job.match_source_identity_id !== job.identity_id
-                            ? '组内统一匹配依据'
-                            : '匹配依据'}{' '}
-                          {identities.find(
-                            (identity) =>
-                              identity.id ===
-                              (job.match_source_identity_id ?? job.identity_id),
-                          )?.profile_name ??
-                            `身份 #${job.match_source_identity_id ?? job.identity_id}`}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  <div className="min-w-0 space-y-2">
-                    <TokenUsageBreakdown
-                      inputTokens={job.total_prompt_tokens}
-                      outputTokens={job.total_completion_tokens}
-                      cachedTokens={job.total_cached_tokens}
-                      totalTokens={job.total_tokens}
-                      ariaLabel={`${job.name} Token 使用汇总`}
-                    />
-                    <div className="text-right text-xs text-stone-500">
-                      更新 {formatDisplayTime(job.updated_at, { withSeconds: true })}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                    {activeTaskListView === "trash" ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleRestoreMatchJob(job.id)}
-                        className="ui-btn-primary"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                        还原任务
-                      </button>
-                    ) : null}
-                    {activeTaskListView === "current" &&
-                    canDeleteMatchJob(job) ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteMatchJob(job)}
-                        className="ui-btn-danger"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        删除
-                      </button>
-                    ) : null}
-                    {activeTaskListView === "current" &&
-                    (job.status === "queued" || job.status === "running") ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleCancelMatchJob(job.id)}
-                        className="ui-btn-danger"
-                        disabled={cancelingMatchJobId === job.id}
-                      >
-                        <Square className="h-4 w-4" />
-                        取消
-                      </button>
-                    ) : null}
-                    {activeTaskListView === "current" && (
-                      job.status === "partial_failed" ||
-                      job.status === "failed" ||
-                      job.status === "canceled"
-                    ) ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleRetryMatchJob(job.id)}
-                        className="ui-btn-secondary"
-                        disabled={retryingMatchJobId === job.id}
-                      >
-                        <Play className="h-4 w-4" />
-                        重试失败项
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMatchJob(job)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                      aria-label={`查看匹配分析任务 ${job.name}`}
-                      title="查看详情"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
+        ) : activeTab === "batch" && tasks.length === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            {activeTaskListView === "trash"
+              ? "回收站暂无任务。"
+              : "暂无任务。可从首页创建。"}
           </div>
-          <Pagination
-            page={safeMatchPage}
-            pageSize={matchPageSize}
-            totalCount={filteredMatchAnalysisJobs.length}
-            onChange={handleMatchPaginationChange}
-            ariaLabel="匹配分析任务分页"
-            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
-            unitLabel="个"
-            itemLabel="个任务"
-            pageStatusPrefix="第 "
-            focusTargetRef={taskListStartRef}
-            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
-          />
-        </>
-      ) : activeTab === "enrichment" &&
-        informationEnrichmentJobsLoading &&
-        informationEnrichmentJobs.length === 0 ? (
-        <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载信息补全任务列表…
-        </div>
-      ) : activeTab === "enrichment" &&
-        informationEnrichmentJobTotalCount === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          {activeTaskListView === "trash"
-            ? "回收站暂无任务。"
-            : "暂无信息补全任务。可从导师管理页批量创建。"}
-        </div>
-      ) : activeTab === "enrichment" &&
-        displayedInformationEnrichmentJobTotalCount === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          没有符合当前条件的信息补全任务。
-        </div>
-      ) : activeTab === "enrichment" ? (
-        <>
-          <div className="mt-6 grid gap-4">
-            {visibleInformationEnrichmentJobs.map((job) => {
-              const progress =
-                job.target_count === 0
-                  ? 0
-                  : Math.round((job.completed_count / job.target_count) * 100);
-              const canRetry = job.failed_count + job.canceled_count > 0;
+        ) : activeTab === "batch" && filteredBatchTasks.length === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            没有符合当前条件的批量邮件任务。
+          </div>
+        ) : activeTab === "batch" ? (
+          <>
+            <div className="mt-6 grid gap-4">
+              {visibleBatchTasks.map((task) => {
+                const progress =
+                  task.target_count === 0
+                    ? 0
+                    : Math.round(
+                        (task.completed_count / task.target_count) * 100,
+                      );
+                const waitingSendCount = getBatchTaskWaitingSendCount(task);
 
-              return (
+                return (
+                  <article
+                    key={task.id}
+                    className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
+                  >
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px_minmax(260px,auto)_auto] lg:items-center">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                          <Mail className="h-4 w-4 text-primary" />
+                          批量邮件任务
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="mt-2 truncate text-base font-semibold text-stone-900">
+                            {task.name}
+                          </h2>
+                          <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700">
+                            {BATCH_TASK_STATUS_LABELS[task.status]}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-sm text-stone-500">
+                          {buildScheduleLabel(task)}
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
+                          <span>
+                            {task.completed_count}/{task.target_count}
+                          </span>
+                          <span>{progress}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                          <div
+                            className="h-full rounded-full bg-primary"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        {task.queued_generation_count > 0 ? (
+                          <span className="rounded-full bg-stone-50 px-2.5 py-1 text-xs text-stone-600">
+                            排队中 {task.queued_generation_count}
+                          </span>
+                        ) : null}
+                        {task.blocked_generation_count > 0 ? (
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                            需处理 {task.blocked_generation_count}
+                          </span>
+                        ) : null}
+                        {task.generating_draft_count > 0 ? (
+                          <span className="rounded-full bg-sky-50 px-2.5 py-1 text-xs text-sky-700">
+                            生成中 {task.generating_draft_count}
+                          </span>
+                        ) : null}
+                        {task.draft_failed_count > 0 ? (
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                            草稿失败 {task.draft_failed_count}
+                          </span>
+                        ) : null}
+                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+                          待审核 {task.review_required_count}
+                        </span>
+                        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
+                          待发送 {waitingSendCount}
+                        </span>
+                        {task.canceled_send_count > 0 ? (
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                            已取消发送 {task.canceled_send_count}
+                          </span>
+                        ) : null}
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
+                          已发送 {task.sent_count + task.replied_count}
+                        </span>
+                        {task.failed_count > 0 ? (
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                            失败 {task.failed_count}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        {activeTaskListView === "trash" ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRestoreBatchTask(task.id)}
+                            className="ui-btn-primary"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            还原任务
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        canDeleteBatchTask(task) ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteBatchTask(task)}
+                            className="ui-btn-danger"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            删除
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        task.status === "running" ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleAction(task.id, "pause")}
+                            className="ui-btn-secondary"
+                          >
+                            <Pause className="h-4 w-4" />
+                            暂停
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        task.status === "paused" ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleAction(task.id, "resume")}
+                            className="ui-btn-secondary"
+                          >
+                            <Play className="h-4 w-4" />
+                            继续
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        task.status !== "stopped" &&
+                        task.status !== "completed" &&
+                        task.status !== "expired" ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleAction(task.id, "stop")}
+                            className="ui-btn-danger"
+                          >
+                            <Square className="h-4 w-4" />
+                            终止
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBatchTask(task)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+                          aria-label="查看详情"
+                          title="查看详情"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <Pagination
+              page={safeBatchPage}
+              pageSize={batchPageSize}
+              totalCount={filteredBatchTasks.length}
+              onChange={handleBatchPaginationChange}
+              ariaLabel="批量邮件任务分页"
+              pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+              unitLabel="个"
+              itemLabel="个任务"
+              pageStatusPrefix="第 "
+              focusTargetRef={taskListStartRef}
+              className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
+            />
+          </>
+        ) : activeTab === "match" &&
+          matchJobsLoading &&
+          matchAnalysisJobs.length === 0 ? (
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载匹配分析任务列表…
+          </div>
+        ) : activeTab === "match" && matchAnalysisJobs.length === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            {activeTaskListView === "trash"
+              ? "回收站暂无任务。"
+              : "暂无匹配分析任务。可从首页创建。"}
+          </div>
+        ) : activeTab === "match" && filteredMatchAnalysisJobs.length === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            没有符合当前条件的匹配分析任务。
+          </div>
+        ) : activeTab === "match" ? (
+          <>
+            <div className="mt-6 grid gap-4">
+              {visibleMatchJobs.map((job) => (
                 <article
                   key={job.id}
                   className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
                 >
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px_minmax(250px,auto)_auto] lg:items-center">
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                        <Bot className="h-4 w-4 text-primary" />
-                        信息补全任务
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        匹配分析任务
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <h2 className="min-w-0 truncate text-base font-semibold text-stone-900">
+                        <h2 className="truncate text-base font-semibold text-stone-900">
                           {job.name}
                         </h2>
                         <span
-                          className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_JOB_STATUS_TONES[job.status]}`}
+                          className={`rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_JOB_STATUS_TONES[job.status]}`}
                         >
-                          {PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS[job.status]}
+                          {MATCH_ANALYSIS_JOB_STATUS_LABELS[job.status]}
                         </span>
                       </div>
                       <p className="mt-1 text-sm text-stone-500">
-                        创建于 {formatDisplayTime(job.created_at)}
+                        成功 {job.succeeded_count} / 失败 {job.failed_count} /
+                        跳过 {job.skipped_count} / 共 {job.target_count}
                       </p>
-                      {job.last_error ? (
-                        <p className="mt-2 line-clamp-2 break-all text-xs leading-5 text-red-700">
-                          {job.last_error}
-                        </p>
-                      ) : null}
+                      <p className="mt-1 text-xs text-stone-500">
+                        {job.match_source_identity_id === null ? (
+                          <>匹配依据 原身份已删除</>
+                        ) : (
+                          <>
+                            {job.match_source_identity_id &&
+                            job.match_source_identity_id !== job.identity_id
+                              ? "组内统一匹配依据"
+                              : "匹配依据"}{" "}
+                            {identities.find(
+                              (identity) =>
+                                identity.id ===
+                                (job.match_source_identity_id ??
+                                  job.identity_id),
+                            )?.profile_name ??
+                              `身份 #${job.match_source_identity_id ?? job.identity_id}`}
+                          </>
+                        )}
+                      </p>
                     </div>
-
-                    <div className="min-w-0">
-                      <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
-                        <span>
-                          {job.completed_count}/{job.target_count}
-                        </span>
-                        <span>{progress}%</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-stone-100">
-                        <div
-                          className="h-full rounded-full bg-primary"
-                          style={{ width: `${progress}%` }}
-                        />
-                      </div>
+                    <div className="min-w-0 space-y-2">
                       <TokenUsageBreakdown
-                        inputTokens={job.input_tokens}
-                        outputTokens={job.output_tokens}
-                        cachedTokens={job.cached_tokens}
+                        inputTokens={job.total_prompt_tokens}
+                        outputTokens={job.total_completion_tokens}
+                        cachedTokens={job.total_cached_tokens}
                         totalTokens={job.total_tokens}
                         ariaLabel={`${job.name} Token 使用汇总`}
-                        className="mt-3"
                       />
-                      <div className="mt-2 text-right text-xs text-stone-500">
-                        耗时 {formatDuration(job.duration_seconds)}
+                      <div className="text-right text-xs text-stone-500">
+                        更新{" "}
+                        {formatDisplayTime(job.updated_at, {
+                          withSeconds: true,
+                        })}
                       </div>
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
-                        成功 {job.succeeded_count}
-                      </span>
-                      <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
-                        失败 {job.failed_count}
-                      </span>
-                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
-                        跳过 {job.skipped_count}
-                      </span>
-                      {job.canceled_count > 0 ? (
-                        <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">
-                          取消 {job.canceled_count}
-                        </span>
-                      ) : null}
-                    </div>
-
                     <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                       {activeTaskListView === "trash" ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            void handleRestoreInformationEnrichmentJob(job.id)
-                          }
+                          onClick={() => void handleRestoreMatchJob(job.id)}
                           className="ui-btn-primary"
                         >
                           <RotateCcw className="h-4 w-4" />
@@ -4907,12 +4443,10 @@ export const BackgroundTasksPage = ({
                         </button>
                       ) : null}
                       {activeTaskListView === "current" &&
-                      canDeleteInformationEnrichmentJob(job) ? (
+                      canDeleteMatchJob(job) ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            void handleDeleteInformationEnrichmentJob(job)
-                          }
+                          onClick={() => void handleDeleteMatchJob(job)}
                           className="ui-btn-danger"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -4923,42 +4457,33 @@ export const BackgroundTasksPage = ({
                       (job.status === "queued" || job.status === "running") ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            void handleCancelInformationEnrichmentJob(job.id)
-                          }
+                          onClick={() => void handleCancelMatchJob(job.id)}
                           className="ui-btn-danger"
-                          disabled={cancelingInformationEnrichmentJobId === job.id}
+                          disabled={cancelingMatchJobId === job.id}
                         >
-                          {cancelingInformationEnrichmentJobId === job.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Square className="h-4 w-4" />
-                          )}
+                          <Square className="h-4 w-4" />
                           取消
                         </button>
                       ) : null}
-                      {activeTaskListView === "current" && canRetry ? (
+                      {activeTaskListView === "current" &&
+                      (job.status === "partial_failed" ||
+                        job.status === "failed" ||
+                        job.status === "canceled") ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            void handleRetryInformationEnrichmentJob(job.id)
-                          }
+                          onClick={() => void handleRetryMatchJob(job.id)}
                           className="ui-btn-secondary"
-                          disabled={retryingInformationEnrichmentJobId === job.id}
+                          disabled={retryingMatchJobId === job.id}
                         >
-                          {retryingInformationEnrichmentJobId === job.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Play className="h-4 w-4" />
-                          )}
+                          <Play className="h-4 w-4" />
                           重试失败项
                         </button>
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => setSelectedInformationEnrichmentJob(job)}
+                        onClick={() => setSelectedMatchJob(job)}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-                        aria-label={`查看信息补全任务 ${job.name}`}
+                        aria-label={`查看匹配分析任务 ${job.name}`}
                         title="查看详情"
                       >
                         <ChevronRight className="h-4 w-4" />
@@ -4966,2352 +4491,537 @@ export const BackgroundTasksPage = ({
                     </div>
                   </div>
                 </article>
-              );
-            })}
-          </div>
-          <Pagination
-            page={safeInformationEnrichmentPage}
-            pageSize={informationEnrichmentPageSize}
-            totalCount={displayedInformationEnrichmentJobTotalCount}
-            onChange={handleInformationEnrichmentPaginationChange}
-            ariaLabel="信息补全任务分页"
-            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
-            unitLabel="个"
-            itemLabel="个任务"
-            pageStatusPrefix="第 "
-            focusTargetRef={taskListStartRef}
-            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
-          />
-        </>
-      ) : crawlJobsLoading && crawlJobs.length === 0 ? (
-        <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载抓取任务列表…
-        </div>
-      ) : crawlJobTotalCount === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          {activeTaskListView === "trash"
-            ? "回收站暂无任务。"
-            : "暂无抓取任务。可从导师管理页创建。"}
-        </div>
-      ) : displayedCrawlJobTotalCount === 0 ? (
-        <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
-          没有符合当前条件的智能抓取任务。
-        </div>
-      ) : (
-        <>
-          <div className="mt-6 grid gap-4">
-            {visibleCrawlJobs.map((job) => (
-              <CrawlJobCard
-                key={job.id}
-                job={job}
-                listView={taskListViews.crawl}
-                pausingCrawlJobId={pausingCrawlJobId}
-                resumingCrawlJobId={resumingCrawlJobId}
-                retryingCrawlJobId={retryingCrawlJobId}
-                resumingCrawlJobReviewId={resumingCrawlJobReviewId}
-                onOpenDetails={(currentJob) => {
-                  safeRecordUserAction({
-                    eventName: "tasks.crawl_job_detail_opened",
-                    data: { jobId: currentJob.id, status: currentJob.status },
-                  });
-                  setSelectedCrawlJob(currentJob);
-                }}
-                onPause={(jobId) => void handlePauseCrawlJob(jobId)}
-                onResume={(jobId) => void handleResumeCrawlJob(jobId)}
-                onCancel={(jobId) => void handleCancelCrawlJob(jobId)}
-                onRetry={(jobId) => void handleRetryCrawlJob(jobId)}
-                onResumeReview={(jobId) => void handleResumeCrawlJobReview(jobId)}
-                onDelete={(currentJob) => void handleDeleteCrawlJob(currentJob)}
-                onRestore={(jobId) => void handleRestoreCrawlJob(jobId)}
-                formatUpdatedAt={(value) =>
-                  formatDisplayTime(value, { withSeconds: true })
-                }
-              />
-            ))}
-          </div>
-          <Pagination
-            page={safeCrawlPage}
-            pageSize={crawlPageSize}
-            totalCount={displayedCrawlJobTotalCount}
-            onChange={handleCrawlPaginationChange}
-            ariaLabel="智能抓取任务分页"
-            pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
-            unitLabel="个"
-            itemLabel="个任务"
-            pageStatusPrefix="第 "
-            focusTargetRef={taskListStartRef}
-            className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
-          />
-        </>
-      )}
-      </section>
-      {selectedBatchTask ? (
-        <div
-          className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
-          onClick={batchTaskDetailsLayer.onBackdropClick}
-          onMouseDown={batchTaskDetailsLayer.onBackdropMouseDown}
-        >
-          <section
-            role="dialog"
-            aria-label="批量任务详情"
-            className={
-              batchDraftReviewOpen
-                ? "flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-7xl sm:rounded-3xl"
-                : "flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-4xl sm:rounded-3xl"
-            }
-            onClick={batchTaskDetailsLayer.onContentClick}
-            onMouseDown={batchTaskDetailsLayer.onContentMouseDown}
-          >
-            <div className="flex flex-col gap-4 border-b border-stone-200 bg-[#fcfbf8] px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                  <Mail className="h-4 w-4 text-primary" />
-                  {batchDraftReviewOpen ? "批量草稿审核" : "批量邮件任务"}
-                </div>
-                <h2 className="mt-2 break-words text-xl font-semibold text-stone-900">
-                  {batchDraftReviewOpen ? "批量审核草稿" : selectedBatchTask.name}
-                </h2>
-                <p className="mt-2 text-sm text-stone-500">
-                  {batchDraftReviewOpen
-                    ? `${selectedBatchTask.name} · ${activeBatchReviewItem?.professor_name ?? "正在加载"}`
-                    : buildScheduleLabel(selectedBatchTask)}
-                </p>
-              </div>
-              <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
-                {!batchDraftReviewOpen && canOpenBatchResend(selectedBatchTask, activeTaskListView) ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleOpenBatchResend(selectedBatchTask)}
-                    className="ui-btn-primary"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                    重新发起未成功项
-                  </button>
-                ) : null}
-                {batchDraftReviewOpen ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleReturnToBatchTaskDetails()}
-                    disabled={batchReviewSaving}
-                    className="ui-btn-secondary disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {batchReviewSaving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ChevronLeft className="h-4 w-4" />
-                    )}
-                    {batchReviewSaving ? "正在保存" : "返回详情"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => void requestCloseBatchTaskDetails()}
-                  disabled={batchReviewSaving}
-                  className="ui-btn-secondary disabled:cursor-wait disabled:opacity-60"
-                  aria-label="关闭"
-                >
-                  <X className="h-4 w-4" />
-                  关闭
-                </button>
-              </div>
+              ))}
             </div>
-
-            <div
-              data-testid="batch-task-detail-scroll"
-              className="flex-1 overflow-y-auto overscroll-contain px-6 py-5"
-            >
-              {batchDraftReviewOpen ? (
-                <div className="grid min-h-full gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-                  <aside className="rounded-3xl border border-stone-200 bg-stone-50/70 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-semibold text-stone-900">
-                          待审核队列
-                        </h3>
-                        <p className="mt-1 text-xs text-stone-500">
-                          {batchReviewQueueItems.length} 封草稿等待处理
-                        </p>
-                      </div>
-                      {batchReviewSaving ? (
-                        <span
-                          role="status"
-                          className="inline-flex items-center gap-1.5 text-xs text-stone-500"
-                        >
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          保存中
-                        </span>
-                      ) : batchReviewLoading && !batchReviewThread ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-stone-400" />
-                      ) : null}
-                    </div>
-                    <div
-                      ref={batchReviewQueueScrollRef}
-                      role="list"
-                      aria-label="待审核草稿列表"
-                      className="mt-4 max-h-[min(50rem,calc(100dvh-16rem))] space-y-2 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
-                    >
-                      {visibleBatchReviewQueueItems.map((item) => {
-                        const itemGeneratingDraft =
-                          item.status === "generating_draft";
-                        const itemAction = batchReviewItemActions[item.id] ?? null;
-                        const itemDeleting = itemAction === "delete";
-                        const itemRegenerating = itemAction === "regenerate";
-                        const itemBusyGenerating =
-                          itemGeneratingDraft || itemRegenerating;
-                        return (
-                        <div
-                          key={item.id}
-                          role="listitem"
-                          className={
-                            item.id === batchReviewItemId
-                              ? "flex w-full items-stretch overflow-hidden rounded-2xl border border-primary/25 bg-white shadow-sm"
-                              : "flex w-full items-stretch overflow-hidden rounded-2xl border border-stone-200 bg-white/70 transition hover:border-primary/20 hover:bg-white"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => void openBatchDraftReview(item)}
-                            disabled={itemBusyGenerating || batchReviewSaving}
-                            className="min-w-0 flex-1 px-4 py-3 text-left disabled:cursor-wait"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="truncate text-sm font-semibold text-stone-900">
-                                    {item.professor_name}
-                                  </span>
-                                  {itemBusyGenerating ? (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                      重新生成中
-                                    </span>
-                                  ) : null}
-                                  {item.draft_generation_source ===
-                                  "template_fallback" ? (
-                                    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                                      未进行 AI 改写
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <div className="mt-1 truncate text-xs text-stone-500">
-                                  {[item.professor_title, item.professor_school]
-                                    .filter(Boolean)
-                                    .join(" / ") || "暂无补充信息"}
-                                </div>
-                              </div>
-                              {item.match_score !== null ? (
-                                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                                  {item.match_score}
-                                </span>
-                              ) : null}
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="移除草稿"
-                            onClick={() => void handleDeleteBatchDraftItem(item)}
-                            disabled={
-                              itemDeleting || itemBusyGenerating || batchReviewSaving
-                            }
-                            className="flex w-11 shrink-0 items-center justify-center border-l border-stone-100 text-stone-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      )})}
-                    </div>
-                    <Pagination
-                      page={safeBatchReviewItemPage}
-                      pageSize={batchReviewItemPageSize}
-                      totalCount={batchReviewQueueItems.length}
-                      onChange={handleBatchReviewItemPaginationChange}
-                      ariaLabel="待审核草稿分页"
-                      pageSizeAriaLabel="待审核草稿每页数量"
-                      variant="compact"
-                      layout="stacked"
-                      pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                      unitLabel="封"
-                      itemLabel="封草稿"
-                      className="mt-4 border-t border-stone-200 pt-3"
-                    />
-                  </aside>
-
-                  <section className="min-w-0 rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
-                    {batchReviewLoading && !batchReviewThread ? (
-                      <div className="flex min-h-[520px] items-center justify-center gap-2 text-sm text-stone-500">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        正在加载草稿…
-                      </div>
-                    ) : batchReviewThread ? (
-                      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
-                        <div className="min-w-0">
-                          {batchReviewUsesTemplateFallback ? (
-                            <section
-                              aria-label="未进行 AI 改写提示"
-                              className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"
-                            >
-                              <div className="flex items-center gap-2 font-semibold">
-                                <Sparkles className="h-4 w-4" />
-                                未进行 AI 改写
-                              </div>
-                              <p className="mt-1">
-                                因缺少研究方向，已直接套用
-                                {`「${batchReviewSourceTemplateLabel}」`}
-                                模板。
-                                {batchReviewProfessorMissingResearchDirection
-                                  ? "可编辑后审核或先补充资料。"
-                                  : "资料已补充，可重新改写或直接审核。"}
-                              </p>
-                              {batchReviewTemplateReferencesResearchDirection ? (
-                                <p className="mt-1 font-medium">
-                                  模板中的研究方向变量为空，请重点检查相关语句。
-                                </p>
-                              ) : null}
-                              {batchReviewProfessorMissingResearchDirection ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (activeBatchReviewItem) {
-                                      void openProfessorEditDialog(
-                                        activeBatchReviewItem,
-                                      );
-                                    }
-                                  }}
-                                  disabled={!activeBatchReviewItem}
-                                  className="mt-2 inline-flex font-medium text-amber-900 underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  补充资料
-                                </button>
-                              ) : null}
-                            </section>
-                          ) : null}
-                          <div className="mb-5 rounded-2xl border border-primary/10 bg-primary/5 px-4 py-3">
-                            <div className="text-sm font-semibold text-stone-900">
-                              {batchReviewThread.professor.name}
-                            </div>
-                            <div className="mt-1 text-xs leading-5 text-stone-600">
-                              {[
-                                batchReviewThread.professor.title,
-                                batchReviewThread.professor.university,
-                                batchReviewThread.professor.school,
-                                batchReviewThread.professor.email,
-                              ]
-                                .filter(Boolean)
-                                .join(" / ") || "导师信息待补充"}
-                            </div>
-                          </div>
-                          <div className="space-y-4">
-                            <section
-                              aria-label="模板"
-                              className="rounded-2xl border border-stone-200/80 bg-stone-50/75 p-4"
-                            >
-                              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.72fr)] lg:items-center">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                                    <FileText className="h-4 w-4 text-primary" />
-                                    来源模板
-                                  </div>
-                                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                                    <span className="min-w-0 truncate text-sm font-semibold text-stone-900">
-                                      {batchReviewSourceTemplateLabel}
-                                    </span>
-                                    <span className="shrink-0 rounded-lg border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-medium text-stone-600">
-                                      当前草稿：{batchReviewDraftSourceLabel}
-                                    </span>
-                                  </div>
-                                </div>
-                                <NativeSelectField
-                                  value=""
-                                  ariaLabel="选择模板重新套用"
-                                  selectedLabel={
-                                    activeBatchReviewAction === "template"
-                                      ? "正在套用模板…"
-                                      : loadingBatchReviewOutreachTemplates ||
-                                          !batchReviewOutreachTemplatesLoaded
-                                        ? "正在加载模板库…"
-                                        : activeBatchReviewOutreachTemplates.length > 0
-                                          ? "选择模板重新套用…"
-                                          : "暂无可用模板"
-                                  }
-                                  disabled={
-                                    batchReviewSaving ||
-                                    Boolean(activeBatchReviewAction) ||
-                                    loadingBatchReviewOutreachTemplates ||
-                                    !batchReviewOutreachTemplatesLoaded ||
-                                    activeBatchReviewOutreachTemplates.length === 0
-                                  }
-                                  onChange={(event) => {
-                                    if (event.target.value) {
-                                      void handleApplyBatchReviewOutreachTemplate(
-                                        Number(event.target.value),
-                                      );
-                                    }
-                                  }}
-                                >
-                                  {activeBatchReviewOutreachTemplates.map((template) => (
-                                    <option key={template.id} value={template.id}>
-                                      {template.name}
-                                      {template.id === selectedBatchReviewOutreachTemplateId
-                                        ? " · 当前来源"
-                                        : ""}
-                                      {template.is_default ? " · 全局默认" : ""}
-                                      {template.is_ready ? "" : " · 内容待完善"}
-                                    </option>
-                                  ))}
-                                </NativeSelectField>
-                              </div>
-                            </section>
-                            <SubjectTemplateInput
-                              key={`batch-review-subject-${batchReviewThread.current_task.id}`}
-                              label="邮件主题"
-                              value={batchReviewSubject}
-                              onChange={setBatchReviewSubject}
-                              placeholder="给导师的邮件主题"
-                              disabled={batchReviewSaving}
-                            />
-                            <EmailTemplateEditor
-                              key={`batch-review-body-${batchReviewThread.current_task.id}`}
-                              label="邮件正文"
-                              html={batchReviewEditorHtml}
-                              onChange={handleBatchReviewContentChange}
-                              disabled={batchReviewSaving}
-                            />
-                          </div>
-                        </div>
-
-                        <aside className="space-y-4">
-                          <section
-                            aria-label="随信附件"
-                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
-                          >
-                            <div className="text-xs font-medium text-stone-500">
-                              随信附件
-                            </div>
-                            <div className="mt-3 space-y-2">
-                              {batchReviewThread.material_options.length > 0 ? (
-                                batchReviewThread.material_options.map((material) => {
-                                  const checked = batchReviewSelectedMaterialIds.includes(material.id);
-                                  return (
-                                    <label
-                                      key={material.id}
-                                      className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700"
-                                    >
-                                      <SelectionToggleButton
-                                        label={`选择附件 ${material.display_name}`}
-                                        selected={checked}
-                                        semantics="checkbox"
-                                        size="sm"
-                                        disabled={batchReviewSaving}
-                                        onToggle={() =>
-                                          setBatchReviewSelectedMaterialIds((current) =>
-                                            checked
-                                              ? current.filter((id) => id !== material.id)
-                                              : [...current, material.id],
-                                          )
-                                        }
-                                      />
-                                      <span className="min-w-0">
-                                        <span className="block truncate font-medium">
-                                          {material.display_name}
-                                        </span>
-                                        <span className="mt-0.5 block text-xs text-stone-500">
-                                          {MATERIAL_TYPE_LABELS[material.material_type]} · {formatFileSize(material.size_bytes)}
-                                        </span>
-                                      </span>
-                                    </label>
-                                  );
-                                })
-                              ) : (
-                                <p className="text-sm text-stone-500">
-                                  暂无可发送材料。
-                                </p>
-                              )}
-                            </div>
-                            <AttachmentSizeSummary
-                              selectedCount={batchReviewSelectedMaterialIds.length}
-                              totalSizeBytes={batchReviewAttachmentTotalBytes}
-                              className="mt-3"
-                            />
-                          </section>
-
-                          <section
-                            aria-label="审核操作"
-                            className="rounded-2xl border border-stone-100 bg-white px-4 py-3"
-                          >
-                            <div className="text-xs leading-5 text-stone-500">
-                              通过后进入发送队列；定时任务仍按原计划发送。
-                            </div>
-                            <div className="mt-4 flex flex-col gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void handleRegenerateBatchDraft()}
-                                disabled={
-                                  batchReviewSaving ||
-                                  Boolean(activeBatchReviewAction) ||
-                                  !batchReviewThread
-                                }
-                                className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {batchReviewUsesTemplateDraft ? (
-                                  <Sparkles className="h-4 w-4" />
-                                ) : (
-                                  <RotateCcw className="h-4 w-4" />
-                                )}
-                                {batchReviewUsesTemplateDraft
-                                  ? "使用 AI 改写"
-                                  : "重新生成"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleApproveBatchDraft()}
-                                disabled={
-                                  batchReviewSaving ||
-                                  Boolean(activeBatchReviewAction) ||
-                                  !batchReviewCanSubmit
-                                }
-                                className="ui-btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                <CheckCircle2 className="h-4 w-4" />
-                                审核通过
-                              </button>
-                              {canSendBatchReviewImmediately ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void handleSendBatchDraftNow()}
-                                  disabled={
-                                    batchReviewSaving ||
-                                    Boolean(activeBatchReviewAction) ||
-                                    !batchReviewCanSubmit
-                                  }
-                                  className="ui-btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  <Mail className="h-4 w-4" />
-                                  立即发送
-                                </button>
-                              ) : null}
-                            </div>
-                          </section>
-
-                          <section
-                            aria-label="导师详情"
-                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
-                          >
-                            <div className="text-xs font-medium text-stone-500">
-                              导师详情
-                            </div>
-                            <dl className="mt-2 space-y-1.5">
-                              {[
-                                { label: "学校", value: batchReviewThread.professor.university },
-                                { label: "学院", value: batchReviewThread.professor.school },
-                                { label: "系所", value: batchReviewThread.professor.department },
-                                {
-                                  label: "研究方向",
-                                  value: batchReviewThread.professor.research_direction,
-                                },
-                                { label: "主页链接", value: batchReviewThread.professor.profile_url },
-                              ].map(({ label, value }) => {
-                                const normalizedValue = value?.trim();
-                                if (!normalizedValue) {
-                                  return null;
-                                }
-
-                                return (
-                                  <div
-                                    key={label}
-                                    className="grid grid-cols-[3.5rem_minmax(0,1fr)] items-start gap-2 text-xs leading-5"
-                                  >
-                                    <dt className="text-stone-500">{label}</dt>
-                                    <dd className="min-w-0 break-words text-stone-700">
-                                      {label === "主页链接"
-                                        ? renderCandidateExternalUrl(normalizedValue)
-                                        : normalizedValue}
-                                    </dd>
-                                  </div>
-                                );
-                              })}
-                            </dl>
-                          </section>
-
-                          <section
-                            aria-label="匹配摘要"
-                            className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3"
-                          >
-                            <div className="text-xs font-medium text-stone-500">
-                              匹配摘要
-                            </div>
-                            <div className="mt-2 text-sm font-semibold text-stone-900">
-                              {batchReviewThread.current_task.match_score !== null
-                                ? `匹配分 ${batchReviewThread.current_task.match_score}`
-                                : "暂无匹配分"}
-                            </div>
-                            {batchReviewThread.current_task.match_reason ? (
-                              <p className="mt-2 text-xs leading-5 text-stone-600">
-                                {batchReviewThread.current_task.match_reason}
-                              </p>
-                            ) : null}
-                          </section>
-                        </aside>
-                      </div>
-                    ) : (
-                      <div className="flex min-h-[520px] items-center justify-center text-sm text-stone-500">
-                        请选择一封待审核草稿。
-                      </div>
-                    )}
-                  </section>
-                </div>
-              ) : (
-              <>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    当前状态
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {BATCH_TASK_STATUS_LABELS[selectedBatchTask.status]}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    目标人数
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedBatchTask.target_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    已完成
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedBatchTask.completed_count}
-                  </div>
-                </div>
-              </div>
-              {selectedBatchTask.status === "expired" ? (
-                <p className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">
-                  发送窗口已过期，剩余邮件已取消。可重新创建任务。
-                </p>
-              ) : null}
-
-              <section className="mt-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    导师进度
-                  </h3>
-                  {batchTaskDetailsLoading ? (
-                    <span className="inline-flex items-center gap-2 text-xs text-stone-500">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      正在刷新
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                    <div className="text-xs font-medium text-emerald-700">
-                      已发送/已回复
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-emerald-900">
-                      {sentBatchTaskItems.length}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3">
-                    <div className="text-xs font-medium text-primary">
-                      等待发送
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-stone-900">
-                      {selectedBatchWaitingSendCount}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
-                    <div className="text-xs font-medium text-amber-700">
-                      待审核/未处理
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-amber-900">
-                      {selectedBatchNeedsManualItems.length}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3">
-                    <div className="text-xs font-medium text-red-700">
-                      发送失败
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-red-900">
-                      {failedBatchTaskItems.length}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
-                    <div className="text-xs font-medium text-stone-600">
-                      已取消发送
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-stone-900">
-                      {selectedBatchTask.canceled_send_count}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section
-                ref={batchSentItemsStartRef}
-                tabIndex={-1}
-                aria-label="已发送导师列表"
-                className="mt-6 scroll-mt-6 focus:outline-none"
-              >
-                <h3 className="text-sm font-semibold text-stone-900">
-                  已发送给
-                </h3>
-                <div className="mt-3 space-y-2">
-                  {sentBatchTaskItems.length > 0 ? (
-                    visibleSentBatchTaskItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-2xl border border-stone-100 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-stone-900">
-                              {item.professor_name}
-                            </p>
-                            <p className="mt-1 text-xs text-stone-500">
-                              {[
-                                item.professor_title,
-                                item.professor_school,
-                                item.professor_email,
-                              ]
-                                .filter(Boolean)
-                                .join(" / ") || "暂无补充信息"}
-                            </p>
-                          </div>
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-xs ${BATCH_ITEM_STATUS_TONES[item.status]}`}
-                          >
-                            {PROFESSOR_STATUS_LABELS[item.status]}
-                          </span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-stone-500">
-                          <span>
-                            发送时间 {formatDisplayTime(item.sent_at)}
-                          </span>
-                          <Link
-                            to={`/workspace/${item.professor_id}`}
-                            className="font-medium text-primary"
-                          >
-                            查看通信
-                          </Link>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
-                      暂无已发送导师。
-                    </p>
-                  )}
-                </div>
-                <Pagination
-                  page={safeBatchSentItemPage}
-                  pageSize={batchSentItemPageSize}
-                  totalCount={sentBatchTaskItems.length}
-                  onChange={handleBatchSentItemPaginationChange}
-                  ariaLabel="已发送导师分页"
-                  pageSizeAriaLabel="已发送导师每页数量"
-                  variant="compact"
-                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                  unitLabel="位"
-                  itemLabel="位导师"
-                  summary={`${(safeBatchSentItemPage - 1) * batchSentItemPageSize + 1}-${Math.min(sentBatchTaskItems.length, safeBatchSentItemPage * batchSentItemPageSize)} / ${sentBatchTaskItems.length}`}
-                  focusTargetRef={batchSentItemsStartRef}
-                  menuPlacement="popover"
-                  className="mt-3 border-t border-stone-100 pt-3"
-                />
-              </section>
-
-              <section
-                ref={batchPendingItemsStartRef}
-                tabIndex={-1}
-                aria-label="未发送导师列表"
-                className="mt-6 scroll-mt-6 focus:outline-none"
-              >
-                <h3 className="text-sm font-semibold text-stone-900">
-                  还未发送给
-                </h3>
-                {selectedBatchTask.schedule_type === "scheduled" && selectedBatchWaitingSendCount > 0 ? (
-                  <p className="mt-2 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-stone-700">
-                    已审核邮件将按批次计划自动发送。
-                  </p>
-                ) : null}
-                {reviewRequiredBatchTaskItems.length > 0 ? (
-                  <div className="mt-2 flex flex-col gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 sm:flex-row sm:items-center sm:justify-between">
-                    <p>
-                      {reviewRequiredBatchTaskItems.length} 封草稿待审核。
-                      {templateFallbackReviewCount > 0
-                        ? `其中 ${templateFallbackReviewCount} 封未进行 AI 改写。`
-                        : "均已完成 AI 改写。"}
-                      可逐封审核或全部通过。
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void handleApproveAllBatchDrafts()}
-                      disabled={batchBulkApprovalLoading || batchTaskDetailsLoading}
-                      className="ui-btn-secondary shrink-0 justify-center border-amber-200 bg-white text-amber-800 hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {batchBulkApprovalLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      {batchBulkApprovalLoading
-                        ? `正在通过 ${reviewRequiredBatchTaskItems.length} 封…`
-                        : `全部通过审核（${reviewRequiredBatchTaskItems.length} 封）`}
-                    </button>
-                  </div>
-                ) : null}
-                <div className="mt-3 space-y-2">
-                  {pendingBatchTaskItems.length > 0 ? (
-                    visiblePendingBatchTaskItems.map((item) => {
-                      const cancellationText = getBatchTaskItemCancellationText(item);
-                      const sendCanceled = item.batch_send_canceled_at !== null;
-                      const missingResearchDirection =
-                        !sendCanceled &&
-                        isBatchTaskItemMissingResearchDirection(item);
-                      const restoreWindowExpired =
-                        sendCanceled &&
-                        !isBatchItemScheduledInFuture(
-                          item,
-                          batchSendActionNowMs,
-                        );
-                      return (
-                        <div
-                          key={item.id}
-                          data-testid={`batch-task-item-${item.id}`}
-                          className={
-                            sendCanceled
-                              ? "rounded-2xl border border-red-200 bg-red-50/60 px-4 py-3"
-                              : "rounded-2xl border border-stone-100 px-4 py-3"
-                          }
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <p className="text-sm font-medium text-stone-900">
-                                  {item.professor_name}
-                                </p>
-                                {missingResearchDirection ? (
-                                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                                    缺少研究方向
-                                  </span>
-                                ) : null}
-                                {!sendCanceled &&
-                                item.draft_generation_source === "template_fallback" ? (
-                                  <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-800">
-                                    未进行 AI 改写
-                                  </span>
-                                ) : null}
-                              </div>
-                              <p className="mt-1 text-xs text-stone-500">
-                                {[
-                                  item.professor_title,
-                                  item.professor_school,
-                                  item.professor_email,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" / ") || "暂无补充信息"}
-                              </p>
-                            </div>
-                            <div className="flex flex-wrap items-center justify-end gap-2">
-                              {sendCanceled ? (
-                                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-800">
-                                  <Ban className="h-3.5 w-3.5" />
-                                  已取消发送
-                                </span>
-                              ) : (
-                                <span
-                                  className={`rounded-full px-2.5 py-1 text-xs ${BATCH_ITEM_STATUS_TONES[item.status]}`}
-                                >
-                                  {PROFESSOR_STATUS_LABELS[item.status]}
-                                </span>
-                              )}
-                              {renderBatchTaskItemReviewButton(item)}
-                              {renderBatchItemSendButton(item)}
-                            </div>
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-stone-500">
-                            {item.scheduled_at ? (
-                              <span>
-                                {sendCanceled ? "原计划发送" : "计划发送"}{" "}
-                                {formatDisplayTime(item.scheduled_at)}
-                              </span>
-                            ) : null}
-                            {sendCanceled ? (
-                              <span className="font-medium text-red-700">
-                                {restoreWindowExpired
-                                  ? "原定发送时间已过，无法恢复"
-                                  : "该导师不会收到本次邮件"}
-                              </span>
-                            ) : cancellationText ? (
-                              <span className="font-medium text-red-700">
-                                {cancellationText}
-                              </span>
-                            ) : renderBatchTaskItemAction(item)}
-                            {item.match_score !== null ? (
-                              <span>匹配分 {item.match_score}</span>
-                            ) : null}
-                          </div>
-                        </div>
+            <Pagination
+              page={safeMatchPage}
+              pageSize={matchPageSize}
+              totalCount={filteredMatchAnalysisJobs.length}
+              onChange={handleMatchPaginationChange}
+              ariaLabel="匹配分析任务分页"
+              pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+              unitLabel="个"
+              itemLabel="个任务"
+              pageStatusPrefix="第 "
+              focusTargetRef={taskListStartRef}
+              className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
+            />
+          </>
+        ) : activeTab === "enrichment" &&
+          informationEnrichmentJobsLoading &&
+          informationEnrichmentJobs.length === 0 ? (
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载信息补全任务列表…
+          </div>
+        ) : activeTab === "enrichment" &&
+          informationEnrichmentJobTotalCount === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            {activeTaskListView === "trash"
+              ? "回收站暂无任务。"
+              : "暂无信息补全任务。可从导师管理页批量创建。"}
+          </div>
+        ) : activeTab === "enrichment" &&
+          displayedInformationEnrichmentJobTotalCount === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            没有符合当前条件的信息补全任务。
+          </div>
+        ) : activeTab === "enrichment" ? (
+          <>
+            <div className="mt-6 grid gap-4">
+              {visibleInformationEnrichmentJobs.map((job) => {
+                const progress =
+                  job.target_count === 0
+                    ? 0
+                    : Math.round(
+                        (job.completed_count / job.target_count) * 100,
                       );
-                    })
-                  ) : (
-                    <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
-                      暂无未发送导师。
-                    </p>
-                  )}
-                </div>
-                <Pagination
-                  page={safeBatchPendingItemPage}
-                  pageSize={batchPendingItemPageSize}
-                  totalCount={pendingBatchTaskItems.length}
-                  onChange={handleBatchPendingItemPaginationChange}
-                  ariaLabel="未发送导师分页"
-                  pageSizeAriaLabel="未发送导师每页数量"
-                  variant="compact"
-                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                  unitLabel="位"
-                  itemLabel="位导师"
-                  summary={`${(safeBatchPendingItemPage - 1) * batchPendingItemPageSize + 1}-${Math.min(pendingBatchTaskItems.length, safeBatchPendingItemPage * batchPendingItemPageSize)} / ${pendingBatchTaskItems.length}`}
-                  focusTargetRef={batchPendingItemsStartRef}
-                  menuPlacement="popover"
-                  className="mt-3 border-t border-stone-100 pt-3"
-                />
-              </section>
+                const canRetry = job.failed_count + job.canceled_count > 0;
 
-              {generatingDraftBatchTaskItems.length > 0 ? (
-                <section className="mt-6">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    正在生成草稿
-                  </h3>
-                  <div className="mt-3 space-y-2">
-                    {visibleGeneratingDraftBatchTaskItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-2xl border border-sky-100 bg-sky-50/50 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-stone-900">
-                              {item.professor_name}
-                            </p>
-                            <p className="mt-1 text-xs text-stone-500">
-                              {[
-                                item.professor_title,
-                                item.professor_school,
-                                item.professor_email,
+                return (
+                  <article
+                    key={job.id}
+                    className="rounded-2xl border border-stone-200 bg-white px-5 py-5 shadow-sm"
+                  >
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px_minmax(250px,auto)_auto] lg:items-center">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
+                          <Bot className="h-4 w-4 text-primary" />
+                          信息补全任务
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <h2 className="min-w-0 truncate text-base font-semibold text-stone-900">
+                            {job.name}
+                          </h2>
+                          <span
+                            className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_JOB_STATUS_TONES[job.status]}`}
+                          >
+                            {
+                              PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS[
+                                job.status
                               ]
-                                .filter(Boolean)
-                                .join(" / ") || "暂无补充信息"}
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center justify-end gap-2">
-                            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs text-sky-700">
-                              {PROFESSOR_STATUS_LABELS[item.status]}
-                            </span>
-                            {renderBatchItemSendButton(item)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Pagination
-                    page={safeBatchGeneratingItemPage}
-                    pageSize={batchGeneratingItemPageSize}
-                    totalCount={generatingDraftBatchTaskItems.length}
-                    onChange={handleBatchGeneratingItemPaginationChange}
-                    ariaLabel="正在生成草稿分页"
-                    pageSizeAriaLabel="正在生成草稿每页数量"
-                    variant="compact"
-                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                    unitLabel="封"
-                    itemLabel="封草稿"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                </section>
-              ) : null}
-
-              {draftFailedBatchTaskItems.length > 0 ? (
-                <section className="mt-6">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    草稿生成失败
-                  </h3>
-                  <div className="mt-3 space-y-2">
-                    {visibleDraftFailedBatchTaskItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-stone-900">
-                              {item.professor_name}
-                            </p>
-                            <p className="mt-1 text-xs text-red-700">
-                              {item.last_error || "暂无失败原因"}
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
-                            {renderBatchTaskItemAction(item)}
-                            {renderBatchItemSendButton(item)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Pagination
-                    page={safeBatchDraftFailedItemPage}
-                    pageSize={batchDraftFailedItemPageSize}
-                    totalCount={draftFailedBatchTaskItems.length}
-                    onChange={handleBatchDraftFailedItemPaginationChange}
-                    ariaLabel="草稿生成失败分页"
-                    pageSizeAriaLabel="草稿生成失败每页数量"
-                    variant="compact"
-                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                    unitLabel="封"
-                    itemLabel="封草稿"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                </section>
-              ) : null}
-
-              {failedBatchTaskItems.length > 0 ? (
-                <section className="mt-6">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    发送失败
-                  </h3>
-                  <div className="mt-3 space-y-2">
-                    {visibleFailedBatchTaskItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-2xl border border-red-100 bg-red-50/60 px-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-stone-900">
-                            {item.professor_name}
-                          </p>
-                          <EmailDeliveryFailureDetails
-                            possibleCause={item.possible_cause}
-                            rawError={item.last_error}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Pagination
-                    page={safeBatchFailedItemPage}
-                    pageSize={batchFailedItemPageSize}
-                    totalCount={failedBatchTaskItems.length}
-                    onChange={handleBatchFailedItemPaginationChange}
-                    ariaLabel="发送失败分页"
-                    pageSizeAriaLabel="发送失败每页数量"
-                    variant="compact"
-                    pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                    unitLabel="封"
-                    itemLabel="封邮件"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                </section>
-              ) : null}
-
-              <section className="mt-6">
-                <h3 className="text-sm font-semibold text-stone-900">
-                  基础信息
-                </h3>
-                <dl className="mt-3 divide-y divide-stone-100 rounded-2xl border border-stone-100 text-sm">
-                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
-                    <dt className="text-stone-500">发信模板</dt>
-                    <dd className="text-stone-800">
-                      <div className="font-medium text-stone-900">
-                        {getOutreachTemplateSourceLabel(selectedBatchTask)}
-                      </div>
-                      {selectedBatchTask.outreach_template_snapshot_version !== null ? (
-                        <div className="mt-1 text-xs leading-5 text-stone-500">
-                          使用任务创建时的模板快照。
-                        </div>
-                      ) : null}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
-                    <dt className="text-stone-500">写信方式</dt>
-                    <dd className="text-stone-800">
-                      {getOutreachGenerationModeLabel(
-                        selectedBatchTask.outreach_generation_mode,
-                      )}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
-                    <dt className="text-stone-500">邮件主题</dt>
-                    <dd className="text-stone-800">
-                      {selectedBatchTask.email_subject || "未设置"}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
-                    <dt className="text-stone-500">创建时间</dt>
-                    <dd className="text-stone-800">
-                      {formatDisplayTime(selectedBatchTask.created_at)}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_1fr]">
-                    <dt className="text-stone-500">更新时间</dt>
-                    <dd className="text-stone-800">
-                      {formatDisplayTime(selectedBatchTask.updated_at)}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-              </>
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {selectedMatchJob ? (
-        <div
-          className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
-          onClick={matchJobDetailsLayer.onBackdropClick}
-          onMouseDown={matchJobDetailsLayer.onBackdropMouseDown}
-        >
-          <section
-            role="dialog"
-            aria-label="匹配分析任务详情"
-            className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-4xl sm:rounded-3xl"
-            onClick={matchJobDetailsLayer.onContentClick}
-            onMouseDown={matchJobDetailsLayer.onContentMouseDown}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  匹配分析任务
-                </div>
-                <h2 className="mt-2 text-xl font-semibold text-stone-900">
-                  {selectedMatchJob.name}
-                </h2>
-                <p className="mt-2 text-sm text-stone-500">
-                  创建于 {formatDisplayTime(selectedMatchJob.created_at)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeMatchJobDetails}
-                className="ui-btn-secondary shrink-0"
-                aria-label="关闭"
-              >
-                <X className="h-4 w-4" />
-                关闭
-              </button>
-            </div>
-
-            <div
-              data-testid="match-job-detail-scroll"
-              className="flex-1 overflow-y-auto overscroll-contain px-6 py-5"
-            >
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">成功</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedMatchJob.succeeded_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">失败</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedMatchJob.failed_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">跳过</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedMatchJob.skipped_count}
-                  </div>
-                </div>
-              </div>
-
-              <TokenUsageBreakdown
-                inputTokens={selectedMatchJob.total_prompt_tokens}
-                outputTokens={selectedMatchJob.total_completion_tokens}
-                cachedTokens={selectedMatchJob.total_cached_tokens}
-                totalTokens={selectedMatchJob.total_tokens}
-                ariaLabel="匹配分析任务 Token 使用汇总"
-                variant="metrics"
-                className="mt-3"
-              />
-
-              <section
-                ref={matchJobItemsStartRef}
-                tabIndex={-1}
-                aria-label="匹配分析导师明细"
-                className="mt-6 scroll-mt-6 focus:outline-none"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    导师明细
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {matchJobDetailsLoading ? (
-                      <span className="inline-flex items-center gap-2 text-xs text-stone-500">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        正在刷新
-                      </span>
-                    ) : null}
-                    <span className="text-xs text-stone-500">状态</span>
-                    <NativeSelectField
-                      ariaLabel="筛选匹配分析导师状态"
-                      value={matchJobItemStatusFilter}
-                      onChange={(event) => {
-                        setMatchJobItemStatusFilter(
-                          event.target.value as MatchAnalysisJobItemStatus | "all",
-                        );
-                      }}
-                      wrapperClassName="w-32"
-                      shellClassName="!min-h-0 h-9 rounded-2xl px-3 py-0 shadow-none"
-                    >
-                      <option value="all">全部状态</option>
-                      {Object.entries(MATCH_ANALYSIS_ITEM_STATUS_LABELS).map(
-                        ([status, label]) => (
-                          <option key={status} value={status}>
-                            {label}
-                          </option>
-                        ),
-                      )}
-                    </NativeSelectField>
-                    <span className="text-xs tabular-nums text-stone-500">
-                      {matchJobItemTotalCount} / {selectedMatchJob.target_count + selectedMatchJob.skipped_count} 位
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
-                    <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
-                      <tr>
-                        <th className="px-4 py-3 align-middle">导师</th>
-                        <th className="px-4 py-3 align-middle">状态</th>
-                        <th className="px-4 py-3 align-middle">匹配分</th>
-                        <th className="px-4 py-3 align-middle">说明</th>
-                        <th className="px-3 py-3 align-middle">Token 明细</th>
-                        <th className="px-4 py-3 align-middle">更新时间</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {selectedMatchJobItems.length > 0 ? (
-                        selectedMatchJobItems.map((item) => {
-                          const professorDetails = [
-                            item.professor_title,
-                            item.professor_university,
-                            item.professor_school,
-                          ]
-                            .filter(Boolean)
-                            .join(" / ");
-
-                          return (
-                            <tr key={item.id}>
-                              <td className="px-4 py-3 align-middle">
-                                <div className="max-w-56 break-words font-medium text-stone-900">
-                                  {item.professor_name}
-                                </div>
-                                {professorDetails ? (
-                                  <div className="mt-1 max-w-56 break-words text-xs text-stone-500">
-                                    {professorDetails}
-                                  </div>
-                                ) : null}
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                <span
-                                  className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${MATCH_ANALYSIS_ITEM_STATUS_TONES[item.status]}`}
-                                >
-                                  {MATCH_ANALYSIS_ITEM_STATUS_LABELS[item.status]}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle tabular-nums">
-                                {item.match_score ?? "未生成"}
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                <div className="max-w-[22rem] break-words">
-                                  {item.error_message || item.skip_reason || "已完成"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 text-center align-middle">
-                                <TokenUsageBreakdown
-                                  inputTokens={item.prompt_tokens}
-                                  outputTokens={item.completion_tokens}
-                                  cachedTokens={item.cached_tokens}
-                                  totalTokens={item.total_tokens}
-                                  ariaLabel={`${item.professor_name} Token 使用明细`}
-                                  compactLayout="tight"
-                                  className="text-left"
-                                />
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-center align-middle tabular-nums">
-                                {formatDisplayTime(item.updated_at, { withSeconds: true })}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td
-                            colSpan={6}
-                            className="px-4 py-6 text-center text-sm text-stone-500"
-                          >
-                            {selectedMatchJobItems.length > 0
-                              ? "当前状态下暂无导师。"
-                              : "暂无任务明细。"}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <Pagination
-                  page={matchJobItemPage}
-                  pageSize={matchJobItemPageSize}
-                  totalCount={matchJobItemTotalCount}
-                  onChange={handleMatchJobItemPaginationChange}
-                  ariaLabel="匹配分析导师明细分页"
-                  pageSizeAriaLabel="匹配分析导师明细每页数量"
-                  variant="compact"
-                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                  unitLabel="位"
-                  itemLabel="位导师"
-                  focusTargetRef={matchJobItemsStartRef}
-                  menuPlacement="popover"
-                  className="mt-3 border-t border-stone-100 pt-3"
-                />
-              </section>
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {selectedInformationEnrichmentJob ? (
-        <div
-          className="fixed inset-0 z-50 flex items-stretch justify-end bg-stone-950/30 p-0 sm:p-6"
-          onClick={informationEnrichmentDetailsLayer.onBackdropClick}
-          onMouseDown={informationEnrichmentDetailsLayer.onBackdropMouseDown}
-        >
-          <section
-            role="dialog"
-            aria-label="信息补全任务详情"
-            className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-5xl sm:rounded-3xl"
-            onClick={informationEnrichmentDetailsLayer.onContentClick}
-            onMouseDown={informationEnrichmentDetailsLayer.onContentMouseDown}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-4 py-5 sm:px-6">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                  <Bot className="h-4 w-4 text-primary" />
-                  信息补全任务
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <h2 className="min-w-0 break-words text-xl font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.name}
-                  </h2>
-                  <span
-                    className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_JOB_STATUS_TONES[selectedInformationEnrichmentJob.status]}`}
-                  >
-                    {
-                      PROFESSOR_INFORMATION_ENRICHMENT_STATUS_LABELS[
-                        selectedInformationEnrichmentJob.status
-                      ]
-                    }
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-stone-500">
-                  创建于 {formatDisplayTime(selectedInformationEnrichmentJob.created_at)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeInformationEnrichmentDetails}
-                className="ui-btn-secondary shrink-0"
-                aria-label="关闭信息补全任务详情"
-              >
-                <X className="h-4 w-4" />
-                关闭
-              </button>
-            </div>
-
-            <div
-              data-testid="information-enrichment-detail-scroll"
-              className="flex-1 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6"
-            >
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">成功</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.succeeded_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">失败</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.failed_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">跳过</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.skipped_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">取消</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedInformationEnrichmentJob.canceled_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">耗时</div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {formatDuration(selectedInformationEnrichmentJob.duration_seconds)}
-                  </div>
-                </div>
-              </div>
-
-              <TokenUsageBreakdown
-                inputTokens={selectedInformationEnrichmentJob.input_tokens}
-                outputTokens={selectedInformationEnrichmentJob.output_tokens}
-                cachedTokens={selectedInformationEnrichmentJob.cached_tokens}
-                totalTokens={selectedInformationEnrichmentJob.total_tokens}
-                ariaLabel="信息补全任务 Token 使用汇总"
-                variant="metrics"
-                className="mt-3"
-              />
-
-              {selectedInformationEnrichmentJob.last_error ? (
-                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
-                  <div className="text-xs font-medium text-red-700">最近错误</div>
-                  <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-red-900">
-                    {selectedInformationEnrichmentJob.last_error}
-                  </div>
-                </div>
-              ) : null}
-
-              <section
-                ref={informationEnrichmentItemsStartRef}
-                tabIndex={-1}
-                aria-label="信息补全导师明细"
-                className="mt-6 scroll-mt-6 focus:outline-none"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <h3 className="text-sm font-semibold text-stone-900">导师明细</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {informationEnrichmentDetailsLoading ? (
-                      <span className="inline-flex items-center gap-2 text-xs text-stone-500">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        正在刷新
-                      </span>
-                    ) : null}
-                    <span className="text-xs text-stone-500">状态</span>
-                    <NativeSelectField
-                      ariaLabel="筛选信息补全导师状态"
-                      value={informationEnrichmentItemStatusFilter}
-                      onChange={(event) => {
-                        setInformationEnrichmentItemStatusFilter(
-                          event.target.value as
-                            | ProfessorInformationEnrichmentItemStatus
-                            | "all",
-                        );
-                      }}
-                      wrapperClassName="w-32"
-                      shellClassName="!min-h-0 h-9 rounded-2xl px-3 py-0 shadow-none"
-                    >
-                      <option value="all">全部状态</option>
-                      {Object.entries(INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS).map(
-                        ([status, label]) => (
-                          <option key={status} value={status}>
-                            {label}
-                          </option>
-                        ),
-                      )}
-                    </NativeSelectField>
-                    <span className="text-xs tabular-nums text-stone-500">
-                      {informationEnrichmentItemTotalCount} /{" "}
-                      {selectedInformationEnrichmentJob.target_count} 位
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3 overflow-x-auto rounded-2xl border border-stone-200">
-                  <table className="w-full min-w-max table-auto divide-y divide-stone-200 text-sm">
-                    <thead className="bg-stone-50 text-center text-xs font-medium text-stone-500">
-                      <tr>
-                        <th className="px-4 py-3 align-middle">导师</th>
-                        <th className="px-4 py-3 align-middle">状态</th>
-                        <th className="px-4 py-3 align-middle">补全字段</th>
-                        <th className="px-4 py-3 align-middle">说明</th>
-                        <th className="px-3 py-3 align-middle">
-                          Token 明细 / 尝试
-                        </th>
-                        <th className="px-4 py-3 align-middle">主页 / 完成时间</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-stone-100 bg-white text-stone-700">
-                      {selectedInformationEnrichmentItems.length > 0 ? (
-                        selectedInformationEnrichmentItems.map((item) => {
-                          const itemMessage =
-                            item.error_message ||
-                            item.skip_reason ||
-                            (item.status === "succeeded"
-                              ? item.enriched_fields.length > 0
-                                ? "补全完成"
-                                : "未发现可写入的新信息"
-                              : "等待处理");
-
-                          return (
-                            <tr key={item.id}>
-                              <td className="px-4 py-3 align-middle">
-                                <div className="max-w-64 break-words font-medium text-stone-900">
-                                  {item.professor_name}
-                                </div>
-                                <div className="mt-1 max-w-64 break-words text-xs leading-5 text-stone-500">
-                                  {item.professor_email || "暂无邮箱"}
-                                </div>
-                                <div className="max-w-64 break-words text-xs leading-5 text-stone-500">
-                                  {[
-                                    item.professor_title,
-                                    item.professor_school,
-                                    item.professor_department,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" / ") || "暂无补充信息"}
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                <span
-                                  className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${INFORMATION_ENRICHMENT_ITEM_STATUS_TONES[item.status]}`}
-                                >
-                                  {INFORMATION_ENRICHMENT_ITEM_STATUS_LABELS[item.status]}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                {item.enriched_fields.length > 0 ? (
-                                  <div className="mx-auto flex max-w-48 flex-wrap justify-center gap-1.5">
-                                    {item.enriched_fields.map((field) => (
-                                      <span
-                                        key={field}
-                                        className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700"
-                                      >
-                                        {INFORMATION_ENRICHMENT_FIELD_LABELS[field] ?? field}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className="text-stone-400">--</span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                <div
-                                  className={`mx-auto max-w-[22rem] whitespace-pre-wrap break-words leading-6 ${
-                                    item.error_message ? "text-red-700" : "text-stone-700"
-                                  }`}
-                                >
-                                  {itemMessage}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 text-center align-middle">
-                                <TokenUsageBreakdown
-                                  inputTokens={item.input_tokens}
-                                  outputTokens={item.output_tokens}
-                                  cachedTokens={item.cached_tokens}
-                                  totalTokens={item.total_tokens}
-                                  ariaLabel={`${item.professor_name} Token 使用明细`}
-                                  compactLayout="tight"
-                                  className="text-left"
-                                />
-                                <div className="mt-1 text-xs text-stone-500">
-                                  尝试 {item.attempt_count} 次
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-center align-middle">
-                                <div className="mx-auto max-w-56 truncate">
-                                  {renderCandidateExternalUrl(item.profile_url)}
-                                </div>
-                                <div className="mt-2 text-xs text-stone-500">
-                                  {formatDisplayTime(item.finished_at, {
-                                    withSeconds: true,
-                                  })}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td
-                            colSpan={6}
-                            className="px-4 py-6 text-center text-sm text-stone-500"
-                          >
-                            {selectedInformationEnrichmentJob.target_count > 0
-                              ? "当前状态下暂无导师。"
-                              : "暂无任务明细。"}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <Pagination
-                  page={informationEnrichmentItemPage}
-                  pageSize={informationEnrichmentItemPageSize}
-                  totalCount={informationEnrichmentItemTotalCount}
-                  onChange={handleInformationEnrichmentItemPaginationChange}
-                  ariaLabel="信息补全导师明细分页"
-                  pageSizeAriaLabel="信息补全导师明细每页数量"
-                  variant="compact"
-                  pageSizeOptions={DETAIL_PAGE_SIZE_OPTIONS}
-                  unitLabel="位"
-                  itemLabel="位导师"
-                  focusTargetRef={informationEnrichmentItemsStartRef}
-                  menuPlacement="popover"
-                  className="mt-3 border-t border-stone-100 pt-3"
-                />
-              </section>
-            </div>
-          </section>
-        </div>
-      ) : null}
-      {selectedCrawlJob ? (
-        <div
-          className="fixed inset-0 z-50 flex items-stretch justify-center bg-stone-950/30 p-0 sm:p-6"
-          onClick={crawlJobDetailsLayer.onBackdropClick}
-          onMouseDown={crawlJobDetailsLayer.onBackdropMouseDown}
-        >
-          <section
-            role="dialog"
-            aria-label="抓取任务详情"
-            className="flex h-full w-full flex-col overflow-hidden bg-white shadow-xl sm:max-w-[min(94vw,1280px)] sm:rounded-3xl"
-            onClick={crawlJobDetailsLayer.onContentClick}
-            onMouseDown={crawlJobDetailsLayer.onContentMouseDown}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 bg-[#fcfbf8] px-6 py-5">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-                  <Activity className="h-4 w-4 text-primary" />
-                  实时抓取监控
-                </div>
-                <h2 className="text-xl font-semibold text-stone-900">
-                  {selectedCrawlJob.university} / {selectedCrawlJob.school}
-                </h2>
-                <p className="mt-2 break-all text-sm text-stone-500">
-                  {selectedCrawlJob.start_url}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeCrawlJobDetails}
-                className="ui-btn-secondary shrink-0"
-                aria-label="关闭"
-              >
-                <X className="h-4 w-4" />
-                关闭
-              </button>
-            </div>
-
-            <div
-              data-testid="crawl-job-detail-scroll"
-              className="flex-1 space-y-6 overflow-y-auto overscroll-contain px-6 py-5"
-            >
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    当前状态
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {CRAWL_JOB_STATUS_LABELS[selectedCrawlJob.status]}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    已抓页面
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.page_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    候选导师
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.candidate_count}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    输入 Token
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.input_tokens.toLocaleString("zh-CN")}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    输出 Token
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.output_tokens.toLocaleString("zh-CN")}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    缓存命中 Token
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.cached_tokens.toLocaleString("zh-CN")}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    总 Token
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {selectedCrawlJob.total_tokens.toLocaleString("zh-CN")}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-stone-100 bg-white px-4 py-3">
-                  <div className="text-xs font-medium text-stone-500">
-                    已耗时长
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-stone-900">
-                    {formatDuration(selectedCrawlJob.duration_seconds)}
-                  </div>
-                </div>
-              </div>
-              {selectedCrawlJob.error_message ? (
-                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {selectedCrawlJob.error_message}
-                </div>
-              ) : null}
-
-              {crawlJobDetailsLoading ? (
-                <div className="flex items-center gap-2 text-sm text-stone-500">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在加载日志详情…
-                </div>
-              ) : null}
-
-              <div className="grid items-stretch gap-6 xl:grid-cols-2">
-                <section
-                  ref={crawlEventsStartRef}
-                  tabIndex={-1}
-                  aria-label="抓取执行日志"
-                  className="flex h-full scroll-mt-6 flex-col focus:outline-none"
-                >
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
-                    <Activity className="h-4 w-4 text-primary" />
-                    执行日志
-                  </h3>
-                  <div
-                    className="mt-3 flex-1 space-y-2"
-                    data-monitor-section-list
-                  >
-                    {crawlExecutionLogEvents.length > 0 ? (
-                      visibleCrawlJobEvents.map((event) => {
-                        const failureReason = getCrawlEventFailureReason(event);
-                        return (
-                          <div key={event.id} className="flex h-[76px] gap-3">
-                            <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                            <div className="flex h-full min-w-0 flex-1 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3">
-                              <p
-                                className="truncate text-sm text-stone-800"
-                                title={event.message}
-                              >
-                                {event.message}
-                              </p>
-                              <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
-                                {failureReason ? (
-                                  <p
-                                    className="min-w-0 flex-1 truncate text-xs text-red-700"
-                                    title={`失败原因：${failureReason}`}
-                                  >
-                                    失败原因：{failureReason}
-                                  </p>
-                                ) : null}
-                                <p className="shrink-0 text-xs text-stone-500">
-                                  {formatDisplayTime(event.created_at, {
-                                    withSeconds: true,
-                                  })}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
-                        暂无执行日志。
-                      </p>
-                    )}
-                  </div>
-                  <Pagination
-                    page={safeCrawlEventPage}
-                    pageSize={crawlEventPageSize}
-                    totalCount={crawlExecutionLogEvents.length}
-                    onChange={handleCrawlEventPaginationChange}
-                    ariaLabel="抓取执行日志分页"
-                    pageSizeAriaLabel="抓取执行日志每页数量"
-                    variant="compact"
-                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
-                    unitLabel="条"
-                    itemLabel="条日志"
-                    focusTargetRef={crawlEventsStartRef}
-                    menuPlacement="popover"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                </section>
-
-                <section
-                  ref={crawlPagesStartRef}
-                  tabIndex={-1}
-                  aria-label="已抓页面列表"
-                  className="flex h-full scroll-mt-6 flex-col focus:outline-none"
-                >
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
-                    <FileSearch className="h-4 w-4 text-sky-600" />
-                    已抓页面
-                  </h3>
-                  <div
-                    className="mt-3 flex-1 space-y-2"
-                    data-monitor-section-list
-                  >
-                    {crawlJobPages.length > 0 ? (
-                      visibleCrawlJobPages.map((page) => (
-                        <div
-                          key={page.id}
-                          className="flex h-[76px] min-w-0 flex-col justify-between rounded-2xl border border-stone-100 px-4 py-3"
-                        >
-                          <p
-                            className="truncate text-sm font-medium text-stone-800"
-                            title={page.title ?? page.url}
-                          >
-                            {page.title ?? page.url}
-                          </p>
-                          <a
-                            href={page.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-1 block truncate text-xs text-primary underline decoration-primary/30 underline-offset-2 transition-colors hover:text-primary-dark hover:decoration-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1"
-                            title={page.url}
-                          >
-                            {page.url}
-                          </a>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
-                        暂无已抓页面。
-                      </p>
-                    )}
-                  </div>
-                  <Pagination
-                    page={safeCrawlDetailPagePage}
-                    pageSize={crawlDetailPagePageSize}
-                    totalCount={crawlJobPages.length}
-                    onChange={handleCrawlDetailPagePaginationChange}
-                    ariaLabel="已抓页面分页"
-                    pageSizeAriaLabel="已抓页面每页数量"
-                    variant="compact"
-                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
-                    unitLabel="个"
-                    itemLabel="个页面"
-                    focusTargetRef={crawlPagesStartRef}
-                    menuPlacement="popover"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                </section>
-              </div>
-
-              <section
-                ref={crawlCandidatesStartRef}
-                tabIndex={-1}
-                aria-label="候选导师列表"
-                className="scroll-mt-6 focus:outline-none"
-              >
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  候选导师
-                </h3>
-                <div className="mt-3 space-y-2">
-                  {crawlJobCandidates.length > 0 ? (
-                    <div
-                      data-testid="crawl-candidate-review-toolbar"
-                      className="overflow-visible rounded-2xl border border-stone-200 bg-stone-50/70"
-                    >
-                      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_minmax(11rem,1fr)]">
-                        <div className="min-w-0 md:col-span-2 xl:col-span-1">
-                          <div className="mb-2 text-sm font-medium text-stone-800">
-                            关键词
-                          </div>
-                          <div className="ui-select-shell h-10 min-h-10 w-full py-0">
-                            <Search className="h-4 w-4 shrink-0 text-stone-400" />
-                            <input
-                              type="search"
-                              aria-label="搜索候选导师"
-                              value={crawlCandidateFilters.keyword}
-                              onChange={(event) =>
-                                updateCrawlCandidateFilters({
-                                  keyword: event.target.value,
-                                })
-                              }
-                              placeholder={getCrawlCandidateSearchPlaceholder(
-                                crawlCandidateFilters.searchScopes,
-                              )}
-                              className="w-full min-w-0 bg-transparent text-sm leading-5 outline-none placeholder:text-stone-400"
-                            />
-                            <KeywordSearchScopeSelect
-                              label="搜索范围"
-                              options={CRAWL_CANDIDATE_SEARCH_SCOPE_OPTIONS}
-                              selectedValues={crawlCandidateFilters.searchScopes}
-                              embedded
-                              onChange={(searchScopes) =>
-                                updateCrawlCandidateFilters({
-                                  searchScopes:
-                                    normalizeCrawlCandidateSearchScopes(
-                                      searchScopes,
-                                    ),
-                                })
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="mb-2 text-sm font-medium text-stone-800">
-                            资料条件
-                          </div>
-                          <button
-                            type="button"
-                            aria-label={`资料条件：${crawlCandidateInformationConditionsSummary}`}
-                            aria-expanded={crawlCandidateInformationFiltersOpen}
-                            aria-controls="crawl-candidate-information-filters"
-                            onClick={() =>
-                              setCrawlCandidateInformationFiltersOpen(
-                                (currentOpen) => !currentOpen,
-                              )
                             }
-                            className={`ui-select-shell h-10 min-h-10 w-full ${
-                              crawlCandidateInformationFiltersOpen
-                                ? "border-primary/45 bg-white ring-2 ring-primary/10"
-                                : ""
-                            }`}
-                          >
-                            <span className="flex-1 truncate text-left text-sm text-stone-700">
-                              {crawlCandidateInformationConditionsSummary}
-                            </span>
-                            <ChevronDown
-                              className={`ui-select-chevron ${
-                                crawlCandidateInformationFiltersOpen
-                                  ? "rotate-180 text-primary"
-                                  : ""
-                              }`}
-                            />
-                          </button>
+                          </span>
                         </div>
-                        <NativeSelectField
-                          label="审核状态"
-                          ariaLabel="候选导师审核状态"
-                          value={crawlCandidateFilters.reviewStatus}
-                          onChange={(event) =>
-                            updateCrawlCandidateFilters({
-                              reviewStatus: event.target
-                                .value as CrawlCandidateReviewStatusFilter,
-                            })
-                          }
-                          shellClassName="h-10 min-h-10"
-                        >
-                          <option value="all">全部状态</option>
-                          <option value="pending">待审核</option>
-                          <option value="accepted">已通过</option>
-                          <option value="merged">已合并</option>
-                          <option value="rejected">已拒绝</option>
-                        </NativeSelectField>
-                      </div>
-
-                      {crawlCandidateInformationFiltersOpen ? (
-                        <div
-                          id="crawl-candidate-information-filters"
-                          data-testid="crawl-candidate-information-filters"
-                          className="border-t border-stone-200 bg-white px-4 py-4"
-                        >
-                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                            {CRAWL_CANDIDATE_INFORMATION_FIELD_OPTIONS.map(
-                              ({ field, label }) => (
-                                <NativeSelectField
-                                  key={field}
-                                  label={label}
-                                  ariaLabel={`候选导师${label}条件`}
-                                  value={
-                                    crawlCandidateFilters
-                                      .informationConditions[field] ?? "any"
-                                  }
-                                  onChange={(event) =>
-                                    updateCrawlCandidateInformationCondition(
-                                      field,
-                                      event.target.value as
-                                        | CrawlCandidateInformationCondition
-                                        | "any",
-                                    )
-                                  }
-                                  shellClassName="h-10 min-h-10"
-                                >
-                                  <option value="any">不限</option>
-                                  <option value="present">有{label}</option>
-                                  <option value="missing">无{label}</option>
-                                </NativeSelectField>
-                              ),
-                            )}
-                          </div>
-                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-4">
-                            <div>
-                              <div className="text-sm font-medium text-stone-800">
-                                多个资料条件之间
-                              </div>
-                              <div className="mt-1 text-xs text-stone-500">
-                                {activeCrawlCandidateInformationConditionCount < 2
-                                  ? "选择两个及以上条件后可切换关系"
-                                  : `当前有 ${activeCrawlCandidateInformationConditionCount} 个条件`}
-                              </div>
-                            </div>
-                            <div className="inline-flex gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1">
-                              {(
-                                ["all", "any"] as CrawlCandidateInformationMatchMode[]
-                              ).map((matchMode) => {
-                                const selected =
-                                  crawlCandidateFilters.informationMatchMode ===
-                                  matchMode;
-                                return (
-                                  <button
-                                    key={matchMode}
-                                    type="button"
-                                    aria-pressed={selected}
-                                    disabled={
-                                      activeCrawlCandidateInformationConditionCount <
-                                      2
-                                    }
-                                    onClick={() =>
-                                      updateCrawlCandidateFilters({
-                                        informationMatchMode: matchMode,
-                                      })
-                                    }
-                                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                                      selected
-                                        ? "bg-primary text-white shadow-sm shadow-primary/20"
-                                        : "text-stone-600 hover:bg-white hover:text-stone-900"
-                                    }`}
-                                  >
-                                    {matchMode === "all"
-                                      ? "全部满足（且）"
-                                      : "任一满足（或）"}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white/80 px-4 py-3">
-                        <div className="text-sm text-stone-600">
-                          显示 {filteredCrawlJobCandidates.length} /{" "}
-                          {crawlJobCandidates.length} 位
-                          {selectedCrawlJobCanReview ? (
-                            <>
-                              {" "}
-                              · 待审核 {reviewableCrawlCandidateIds.length} 位 ·
-                              可导入 {importableCrawlCandidateIds.length} 位 ·
-                              无邮箱{" "}
-                              {reviewableCrawlCandidateIdsWithoutEmail.length} 位
-                            </>
-                          ) : null}
-                        </div>
-                        {crawlCandidateFiltersActive ||
-                        selectedCrawlJobCanReview ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            {crawlCandidateFiltersActive ? (
-                              <button
-                                type="button"
-                                onClick={resetCrawlCandidateFilters}
-                                className="ui-btn-secondary min-h-9 px-3 py-1.5 text-sm"
-                              >
-                                重置筛选
-                              </button>
-                            ) : null}
-                            {selectedCrawlJobCanReview ? (
-                              <button
-                                type="button"
-                                aria-label={
-                                  allFilteredCrawlCandidatesSelected
-                                    ? "取消全选"
-                                    : "全选当前结果"
-                                }
-                                aria-pressed={
-                                  allFilteredCrawlCandidatesSelected
-                                }
-                                onClick={
-                                  handleToggleFilteredCrawlCandidateSelection
-                                }
-                                disabled={
-                                  filteredReviewableCrawlCandidateIds.length ===
-                                    0 ||
-                                  crawlJobApproveLoading ||
-                                  crawlJobEnrichLoading
-                                }
-                                className={`inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                                  allFilteredCrawlCandidatesSelected
-                                    ? "border-primary/30 bg-primary/5 text-primary"
-                                    : "border-stone-200 bg-white text-stone-700 hover:border-primary/40 hover:text-primary"
-                                }`}
-                              >
-                                {allFilteredCrawlCandidatesSelected ? (
-                                  <SquareCheck className="h-4 w-4" />
-                                ) : someFilteredCrawlCandidatesSelected ? (
-                                  <SquareMinus className="h-4 w-4" />
-                                ) : (
-                                  <Square className="h-4 w-4" />
-                                )}
-                                {allFilteredCrawlCandidatesSelected
-                                  ? "取消全选"
-                                  : "全选当前结果"}
-                              </button>
-                            ) : null}
-                          </div>
+                        <p className="mt-1 text-sm text-stone-500">
+                          创建于 {formatDisplayTime(job.created_at)}
+                        </p>
+                        {job.last_error ? (
+                          <p className="mt-2 line-clamp-2 break-all text-xs leading-5 text-red-700">
+                            {job.last_error}
+                          </p>
                         ) : null}
                       </div>
 
-                      {selectedCrawlJobCanReview &&
-                      selectedReviewableCrawlCandidateIds.length > 0 ? (
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-amber-200 bg-amber-50/80 px-4 py-3">
-                          <div className="text-sm text-amber-950">
-                            已选 {selectedReviewableCrawlCandidateIds.length} 位
-                            <span className="mt-1 block text-xs text-amber-700">
-                              当前筛选结果中已选{" "}
-                              {filteredSelectedCrawlCandidateCount} 位，其中无邮箱{" "}
-                              {selectedCrawlCandidateIdsWithoutEmail.length} 位
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedCrawlCandidateIds([])}
-                              disabled={
-                                crawlJobApproveLoading || crawlJobEnrichLoading
-                              }
-                              className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              清空选择
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void handleEnrichSelectedCrawlCandidates()
-                              }
-                              disabled={
-                                crawlJobApproveLoading || crawlJobEnrichLoading
-                              }
-                              className="ui-btn-secondary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {crawlJobEnrichLoading
-                                ? "补全中…"
-                                : "补全缺失信息"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void handleApproveSelectedCrawlCandidates()
-                              }
-                              disabled={
-                                selectedImportableCrawlCandidateIds.length === 0 ||
-                                crawlJobApproveLoading ||
-                                crawlJobEnrichLoading
-                              }
-                              className="ui-btn-primary px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {crawlJobApproveLoading
-                                ? "导入中…"
-                                : "审核通过并导入"}
-                            </button>
-                          </div>
+                      <div className="min-w-0">
+                        <div className="mb-2 flex items-center justify-between text-xs text-stone-500">
+                          <span>
+                            {job.completed_count}/{job.target_count}
+                          </span>
+                          <span>{progress}%</span>
                         </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {selectedCrawlJobNeedsReviewResume &&
-                  reviewableCrawlCandidateIds.length > 0 ? (
-                    <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
-                      请先将任务转入待审核状态，再补全或审核导入候选导师。
-                    </div>
-                  ) : null}
-                  {filteredCrawlJobCandidates.length > 0 ? (
-                    visibleCrawlJobCandidates.map((candidate, index) => {
-                      const candidateMissingEmail = !candidate.email?.trim();
-                      const candidateCanEdit =
-                        selectedCrawlJobCanReview &&
-                        candidate.review_status === "pending";
+                        <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                          <div
+                            className="h-full rounded-full bg-primary"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                        <TokenUsageBreakdown
+                          inputTokens={job.input_tokens}
+                          outputTokens={job.output_tokens}
+                          cachedTokens={job.cached_tokens}
+                          totalTokens={job.total_tokens}
+                          ariaLabel={`${job.name} Token 使用汇总`}
+                          className="mt-3"
+                        />
+                        <div className="mt-2 text-right text-xs text-stone-500">
+                          耗时 {formatDuration(job.duration_seconds)}
+                        </div>
+                      </div>
 
-                      return (
-                        <div
-                          key={candidate.id}
-                          ref={
-                            index === 0
-                              ? crawlCandidateFirstItemRef
-                              : undefined
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700">
+                          成功 {job.succeeded_count}
+                        </span>
+                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700">
+                          失败 {job.failed_count}
+                        </span>
+                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+                          跳过 {job.skipped_count}
+                        </span>
+                        {job.canceled_count > 0 ? (
+                          <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">
+                            取消 {job.canceled_count}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        {activeTaskListView === "trash" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleRestoreInformationEnrichmentJob(job.id)
+                            }
+                            className="ui-btn-primary"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            还原任务
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        canDeleteInformationEnrichmentJob(job) ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleDeleteInformationEnrichmentJob(job)
+                            }
+                            className="ui-btn-danger"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            删除
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" &&
+                        (job.status === "queued" ||
+                          job.status === "running") ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleCancelInformationEnrichmentJob(job.id)
+                            }
+                            className="ui-btn-danger"
+                            disabled={
+                              cancelingInformationEnrichmentJobId === job.id
+                            }
+                          >
+                            {cancelingInformationEnrichmentJobId === job.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                            取消
+                          </button>
+                        ) : null}
+                        {activeTaskListView === "current" && canRetry ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void handleRetryInformationEnrichmentJob(job.id)
+                            }
+                            className="ui-btn-secondary"
+                            disabled={
+                              retryingInformationEnrichmentJobId === job.id
+                            }
+                          >
+                            {retryingInformationEnrichmentJobId === job.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                            重试失败项
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedInformationEnrichmentJob(job)
                           }
-                          tabIndex={index === 0 ? -1 : undefined}
-                          className="scroll-mt-6 rounded-2xl border border-stone-100 bg-white px-4 py-3 focus:outline-none"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+                          aria-label={`查看信息补全任务 ${job.name}`}
+                          title="查看详情"
                         >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                              {selectedCrawlJobCanReview ? (
-                                <div className="shrink-0 self-center">
-                                  <SelectionToggleButton
-                                    label={`选择候选导师 ${candidate.name}`}
-                                    selected={selectedReviewableCrawlCandidateIds.includes(
-                                      candidate.id,
-                                    )}
-                                    disabled={
-                                      candidate.review_status !== "pending" ||
-                                      crawlJobApproveLoading ||
-                                      crawlJobEnrichLoading
-                                    }
-                                    onToggle={() =>
-                                      handleToggleCrawlCandidateSelection(
-                                        candidate.id,
-                                      )
-                                    }
-                                  />
-                                </div>
-                              ) : null}
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-sm font-medium text-stone-800">
-                                    {candidate.name}
-                                  </p>
-                                  {candidate.title ? (
-                                    <span className="text-xs text-stone-500">
-                                      {candidate.title}
-                                    </span>
-                                  ) : null}
-                                  {candidateMissingEmail ? (
-                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                                      邮箱为空
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <p
-                                  className={`mt-1 break-all ${
-                                    candidateMissingEmail
-                                      ? "text-xs text-amber-700"
-                                      : "text-sm text-stone-600"
-                                  }`}
-                                >
-                                  {candidate.email?.trim() ||
-                                    "暂无邮箱（可手工填写或选中后尝试使用补全功能）"}
-                                </p>
-                                {[candidate.school, candidate.department]
-                                  .filter(Boolean)
-                                  .join(" / ") ? (
-                                  <p className="mt-1 text-xs text-stone-400">
-                                    {[candidate.school, candidate.department]
-                                      .filter(Boolean)
-                                      .join(" / ")}
-                                  </p>
-                                ) : null}
-                                {selectedCrawlJobNeedsReviewResume &&
-                                candidate.review_status === "pending" ? (
-                                  <p className="mt-2 text-xs text-amber-700">
-                                    先转入待审核后才可补全或审核导入
-                                  </p>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 flex-wrap items-center gap-2">
-                              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
-                                置信度 {Math.round(candidate.confidence * 100)}%
-                              </span>
-                              <span
-                                className={`rounded-full border px-3 py-1 text-xs ${
-                                  CRAWL_CANDIDATE_REVIEW_STATUS_TONES[
-                                    candidate.review_status
-                                  ]
-                                }`}
-                              >
-                                {
-                                  CRAWL_CANDIDATE_REVIEW_STATUS_LABELS[
-                                    candidate.review_status
-                                  ]
-                                }
-                              </span>
-                              {candidateMissingEmail && candidateCanEdit ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedCandidateDetail(candidate);
-                                    setCandidateEditForm(
-                                      toCrawlCandidateEditForm(candidate),
-                                    );
-                                  }}
-                                  className="ui-btn-secondary px-3 py-2 text-sm"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                  填写邮箱
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCandidateEditForm(null);
-                                  setSelectedCandidateDetail(candidate);
-                                }}
-                                className="ui-btn-secondary px-3 py-2 text-sm"
-                              >
-                                查看详情
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : crawlJobCandidates.length > 0 ? (
-                    <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-6 py-8 text-center">
-                      <Search className="mx-auto h-6 w-6 text-stone-300" />
-                      <p className="mt-3 text-sm font-medium text-stone-700">
-                        没有符合筛选条件的候选导师
-                      </p>
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-                  ) : (
-                    <p className="rounded-2xl border border-dashed border-stone-200 px-4 py-3 text-sm text-stone-500">
-                      暂无候选导师。
-                    </p>
-                  )}
-                </div>
-                {filteredCrawlJobCandidates.length > 0 ? (
-                  <Pagination
-                    page={safeCrawlCandidatePage}
-                    pageSize={crawlCandidatePageSize}
-                    totalCount={filteredCrawlJobCandidates.length}
-                    onChange={handleCrawlCandidatePaginationChange}
-                    ariaLabel="候选导师分页"
-                    pageSizeAriaLabel="候选导师每页数量"
-                    variant="compact"
-                    pageSizeOptions={MONITOR_PAGE_SIZE_OPTIONS}
-                    unitLabel="位"
-                    itemLabel="位导师"
-                    summary={`${filteredCrawlJobCandidates.length} 位 · 已选 ${selectedReviewableCrawlCandidateIds.length} 位`}
-                    focusTargetRef={crawlCandidateFirstItemRef}
-                    menuPlacement="popover"
-                    className="mt-3 border-t border-stone-100 pt-3"
-                  />
-                ) : null}
-              </section>
+                  </article>
+                );
+              })}
             </div>
-          </section>
-        </div>
-      ) : null}
+            <Pagination
+              page={safeInformationEnrichmentPage}
+              pageSize={informationEnrichmentPageSize}
+              totalCount={displayedInformationEnrichmentJobTotalCount}
+              onChange={handleInformationEnrichmentPaginationChange}
+              ariaLabel="信息补全任务分页"
+              pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+              unitLabel="个"
+              itemLabel="个任务"
+              pageStatusPrefix="第 "
+              focusTargetRef={taskListStartRef}
+              className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
+            />
+          </>
+        ) : crawlJobsLoading && crawlJobs.length === 0 ? (
+          <div className="mt-6 flex items-center justify-center gap-2 rounded-3xl border border-stone-200 bg-white px-6 py-14 text-sm text-stone-500 shadow-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在加载抓取任务列表…
+          </div>
+        ) : crawlJobTotalCount === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            {activeTaskListView === "trash"
+              ? "回收站暂无任务。"
+              : "暂无抓取任务。可从导师管理页创建。"}
+          </div>
+        ) : displayedCrawlJobTotalCount === 0 ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center text-sm text-stone-500 shadow-sm">
+            没有符合当前条件的智能抓取任务。
+          </div>
+        ) : (
+          <>
+            <div className="mt-6 grid gap-4">
+              {visibleCrawlJobs.map((job) => (
+                <CrawlJobCard
+                  key={job.id}
+                  job={job}
+                  listView={taskListViews.crawl}
+                  pausingCrawlJobId={pausingCrawlJobId}
+                  resumingCrawlJobId={resumingCrawlJobId}
+                  retryingCrawlJobId={retryingCrawlJobId}
+                  resumingCrawlJobReviewId={resumingCrawlJobReviewId}
+                  onOpenDetails={(currentJob) => {
+                    safeRecordUserAction({
+                      eventName: "tasks.crawl_job_detail_opened",
+                      data: { jobId: currentJob.id, status: currentJob.status },
+                    });
+                    setSelectedCrawlJob(currentJob);
+                  }}
+                  onPause={(jobId) => void handlePauseCrawlJob(jobId)}
+                  onResume={(jobId) => void handleResumeCrawlJob(jobId)}
+                  onCancel={(jobId) => void handleCancelCrawlJob(jobId)}
+                  onRetry={(jobId) => void handleRetryCrawlJob(jobId)}
+                  onResumeReview={(jobId) =>
+                    void handleResumeCrawlJobReview(jobId)
+                  }
+                  onDelete={(currentJob) =>
+                    void handleDeleteCrawlJob(currentJob)
+                  }
+                  onRestore={(jobId) => void handleRestoreCrawlJob(jobId)}
+                  formatUpdatedAt={(value) =>
+                    formatDisplayTime(value, { withSeconds: true })
+                  }
+                />
+              ))}
+            </div>
+            <Pagination
+              page={safeCrawlPage}
+              pageSize={crawlPageSize}
+              totalCount={displayedCrawlJobTotalCount}
+              onChange={handleCrawlPaginationChange}
+              ariaLabel="智能抓取任务分页"
+              pageSizeOptions={TASKS_PAGE_SIZE_OPTIONS}
+              unitLabel="个"
+              itemLabel="个任务"
+              pageStatusPrefix="第 "
+              focusTargetRef={taskListStartRef}
+              className="mt-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
+            />
+          </>
+        )}
+      </section>
+      <BatchTaskDetailsDialog
+        selectedBatchTask={selectedBatchTask}
+        batchTaskDetailsLayer={batchTaskDetailsLayer}
+        batchDraftReviewOpen={batchDraftReviewOpen}
+        activeBatchReviewItem={activeBatchReviewItem}
+        activeTaskListView={activeTaskListView}
+        handleOpenBatchResend={handleOpenBatchResend}
+        handleReturnToBatchTaskDetails={handleReturnToBatchTaskDetails}
+        batchReviewSaving={batchReviewSaving}
+        requestCloseBatchTaskDetails={requestCloseBatchTaskDetails}
+        batchReviewQueueItems={batchReviewQueueItems}
+        batchReviewLoading={batchReviewLoading}
+        batchReviewThread={batchReviewThread}
+        batchReviewQueueScrollRef={batchReviewQueueScrollRef}
+        visibleBatchReviewQueueItems={visibleBatchReviewQueueItems}
+        batchReviewItemActions={batchReviewItemActions}
+        batchReviewItemId={batchReviewItemId}
+        openBatchDraftReview={openBatchDraftReview}
+        handleDeleteBatchDraftItem={handleDeleteBatchDraftItem}
+        safeBatchReviewItemPage={safeBatchReviewItemPage}
+        batchReviewItemPageSize={batchReviewItemPageSize}
+        handleBatchReviewItemPaginationChange={
+          handleBatchReviewItemPaginationChange
+        }
+        batchReviewUsesTemplateFallback={batchReviewUsesTemplateFallback}
+        batchReviewSourceTemplateLabel={batchReviewSourceTemplateLabel}
+        batchReviewProfessorMissingResearchDirection={
+          batchReviewProfessorMissingResearchDirection
+        }
+        batchReviewTemplateReferencesResearchDirection={
+          batchReviewTemplateReferencesResearchDirection
+        }
+        openProfessorEditDialog={openProfessorEditDialog}
+        batchReviewDraftSourceLabel={batchReviewDraftSourceLabel}
+        activeBatchReviewAction={activeBatchReviewAction}
+        loadingBatchReviewOutreachTemplates={
+          loadingBatchReviewOutreachTemplates
+        }
+        batchReviewOutreachTemplatesLoaded={batchReviewOutreachTemplatesLoaded}
+        activeBatchReviewOutreachTemplates={activeBatchReviewOutreachTemplates}
+        handleApplyBatchReviewOutreachTemplate={
+          handleApplyBatchReviewOutreachTemplate
+        }
+        selectedBatchReviewOutreachTemplateId={
+          selectedBatchReviewOutreachTemplateId
+        }
+        batchReviewSubject={batchReviewSubject}
+        setBatchReviewSubject={setBatchReviewSubject}
+        batchReviewEditorHtml={batchReviewEditorHtml}
+        handleBatchReviewContentChange={handleBatchReviewContentChange}
+        batchReviewSelectedMaterialIds={batchReviewSelectedMaterialIds}
+        setBatchReviewSelectedMaterialIds={setBatchReviewSelectedMaterialIds}
+        batchReviewAttachmentTotalBytes={batchReviewAttachmentTotalBytes}
+        handleRegenerateBatchDraft={handleRegenerateBatchDraft}
+        batchReviewUsesTemplateDraft={batchReviewUsesTemplateDraft}
+        handleApproveBatchDraft={handleApproveBatchDraft}
+        batchReviewCanSubmit={batchReviewCanSubmit}
+        canSendBatchReviewImmediately={canSendBatchReviewImmediately}
+        handleSendBatchDraftNow={handleSendBatchDraftNow}
+        renderCandidateExternalUrl={renderCandidateExternalUrl}
+        batchTaskDetailsLoading={batchTaskDetailsLoading}
+        sentBatchTaskItems={sentBatchTaskItems}
+        selectedBatchWaitingSendCount={selectedBatchWaitingSendCount}
+        selectedBatchNeedsManualItems={selectedBatchNeedsManualItems}
+        failedBatchTaskItems={failedBatchTaskItems}
+        batchSentItemsStartRef={batchSentItemsStartRef}
+        visibleSentBatchTaskItems={visibleSentBatchTaskItems}
+        safeBatchSentItemPage={safeBatchSentItemPage}
+        batchSentItemPageSize={batchSentItemPageSize}
+        handleBatchSentItemPaginationChange={
+          handleBatchSentItemPaginationChange
+        }
+        batchPendingItemsStartRef={batchPendingItemsStartRef}
+        reviewRequiredBatchTaskItems={reviewRequiredBatchTaskItems}
+        templateFallbackReviewCount={templateFallbackReviewCount}
+        handleApproveAllBatchDrafts={handleApproveAllBatchDrafts}
+        batchBulkApprovalLoading={batchBulkApprovalLoading}
+        pendingBatchTaskItems={pendingBatchTaskItems}
+        visiblePendingBatchTaskItems={visiblePendingBatchTaskItems}
+        batchSendActionNowMs={batchSendActionNowMs}
+        renderBatchTaskItemReviewButton={renderBatchTaskItemReviewButton}
+        renderBatchItemSendButton={renderBatchItemSendButton}
+        renderBatchTaskItemAction={renderBatchTaskItemAction}
+        safeBatchPendingItemPage={safeBatchPendingItemPage}
+        batchPendingItemPageSize={batchPendingItemPageSize}
+        handleBatchPendingItemPaginationChange={
+          handleBatchPendingItemPaginationChange
+        }
+        generatingDraftBatchTaskItems={generatingDraftBatchTaskItems}
+        visibleGeneratingDraftBatchTaskItems={
+          visibleGeneratingDraftBatchTaskItems
+        }
+        safeBatchGeneratingItemPage={safeBatchGeneratingItemPage}
+        batchGeneratingItemPageSize={batchGeneratingItemPageSize}
+        handleBatchGeneratingItemPaginationChange={
+          handleBatchGeneratingItemPaginationChange
+        }
+        draftFailedBatchTaskItems={draftFailedBatchTaskItems}
+        visibleDraftFailedBatchTaskItems={visibleDraftFailedBatchTaskItems}
+        safeBatchDraftFailedItemPage={safeBatchDraftFailedItemPage}
+        batchDraftFailedItemPageSize={batchDraftFailedItemPageSize}
+        handleBatchDraftFailedItemPaginationChange={
+          handleBatchDraftFailedItemPaginationChange
+        }
+        visibleFailedBatchTaskItems={visibleFailedBatchTaskItems}
+        safeBatchFailedItemPage={safeBatchFailedItemPage}
+        batchFailedItemPageSize={batchFailedItemPageSize}
+        handleBatchFailedItemPaginationChange={
+          handleBatchFailedItemPaginationChange
+        }
+      />
+      <MatchJobDetailsDialog
+        selectedMatchJob={selectedMatchJob}
+        matchJobDetailsLayer={matchJobDetailsLayer}
+        closeMatchJobDetails={closeMatchJobDetails}
+        matchJobItemsStartRef={matchJobItemsStartRef}
+        matchJobDetailsLoading={matchJobDetailsLoading}
+        matchJobItemStatusFilter={matchJobItemStatusFilter}
+        setMatchJobItemStatusFilter={setMatchJobItemStatusFilter}
+        matchJobItemTotalCount={matchJobItemTotalCount}
+        selectedMatchJobItems={selectedMatchJobItems}
+        matchJobItemPage={matchJobItemPage}
+        matchJobItemPageSize={matchJobItemPageSize}
+        handleMatchJobItemPaginationChange={handleMatchJobItemPaginationChange}
+      />
+      <EnrichmentJobDetailsDialog
+        selectedInformationEnrichmentJob={selectedInformationEnrichmentJob}
+        informationEnrichmentDetailsLayer={informationEnrichmentDetailsLayer}
+        closeInformationEnrichmentDetails={closeInformationEnrichmentDetails}
+        informationEnrichmentItemsStartRef={informationEnrichmentItemsStartRef}
+        informationEnrichmentDetailsLoading={
+          informationEnrichmentDetailsLoading
+        }
+        informationEnrichmentItemStatusFilter={
+          informationEnrichmentItemStatusFilter
+        }
+        setInformationEnrichmentItemStatusFilter={
+          setInformationEnrichmentItemStatusFilter
+        }
+        informationEnrichmentItemTotalCount={
+          informationEnrichmentItemTotalCount
+        }
+        selectedInformationEnrichmentItems={selectedInformationEnrichmentItems}
+        renderCandidateExternalUrl={renderCandidateExternalUrl}
+        informationEnrichmentItemPage={informationEnrichmentItemPage}
+        informationEnrichmentItemPageSize={informationEnrichmentItemPageSize}
+        handleInformationEnrichmentItemPaginationChange={
+          handleInformationEnrichmentItemPaginationChange
+        }
+      />
+      <CrawlJobDetailsDialog
+        selectedCrawlJob={selectedCrawlJob}
+        crawlJobDetailsLayer={crawlJobDetailsLayer}
+        closeCrawlJobDetails={closeCrawlJobDetails}
+        crawlJobDetailsLoading={crawlJobDetailsLoading}
+        crawlEventsStartRef={crawlEventsStartRef}
+        crawlExecutionLogEvents={crawlExecutionLogEvents}
+        visibleCrawlJobEvents={visibleCrawlJobEvents}
+        safeCrawlEventPage={safeCrawlEventPage}
+        crawlEventPageSize={crawlEventPageSize}
+        handleCrawlEventPaginationChange={handleCrawlEventPaginationChange}
+        crawlPagesStartRef={crawlPagesStartRef}
+        crawlJobPages={crawlJobPages}
+        visibleCrawlJobPages={visibleCrawlJobPages}
+        safeCrawlDetailPagePage={safeCrawlDetailPagePage}
+        crawlDetailPagePageSize={crawlDetailPagePageSize}
+        handleCrawlDetailPagePaginationChange={
+          handleCrawlDetailPagePaginationChange
+        }
+        crawlCandidatesStartRef={crawlCandidatesStartRef}
+        crawlJobCandidates={crawlJobCandidates}
+        crawlCandidateFilters={crawlCandidateFilters}
+        updateCrawlCandidateFilters={updateCrawlCandidateFilters}
+        crawlCandidateInformationConditionsSummary={
+          crawlCandidateInformationConditionsSummary
+        }
+        crawlCandidateInformationFiltersOpen={
+          crawlCandidateInformationFiltersOpen
+        }
+        setCrawlCandidateInformationFiltersOpen={
+          setCrawlCandidateInformationFiltersOpen
+        }
+        updateCrawlCandidateInformationCondition={
+          updateCrawlCandidateInformationCondition
+        }
+        activeCrawlCandidateInformationConditionCount={
+          activeCrawlCandidateInformationConditionCount
+        }
+        filteredCrawlJobCandidates={filteredCrawlJobCandidates}
+        selectedCrawlJobCanReview={selectedCrawlJobCanReview}
+        reviewableCrawlCandidateIds={reviewableCrawlCandidateIds}
+        importableCrawlCandidateIds={importableCrawlCandidateIds}
+        reviewableCrawlCandidateIdsWithoutEmail={
+          reviewableCrawlCandidateIdsWithoutEmail
+        }
+        crawlCandidateFiltersActive={crawlCandidateFiltersActive}
+        resetCrawlCandidateFilters={resetCrawlCandidateFilters}
+        allFilteredCrawlCandidatesSelected={allFilteredCrawlCandidatesSelected}
+        handleToggleFilteredCrawlCandidateSelection={
+          handleToggleFilteredCrawlCandidateSelection
+        }
+        filteredReviewableCrawlCandidateIds={
+          filteredReviewableCrawlCandidateIds
+        }
+        crawlJobApproveLoading={crawlJobApproveLoading}
+        crawlJobEnrichLoading={crawlJobEnrichLoading}
+        someFilteredCrawlCandidatesSelected={
+          someFilteredCrawlCandidatesSelected
+        }
+        selectedReviewableCrawlCandidateIds={
+          selectedReviewableCrawlCandidateIds
+        }
+        filteredSelectedCrawlCandidateCount={
+          filteredSelectedCrawlCandidateCount
+        }
+        selectedCrawlCandidateIdsWithoutEmail={
+          selectedCrawlCandidateIdsWithoutEmail
+        }
+        setSelectedCrawlCandidateIds={setSelectedCrawlCandidateIds}
+        handleEnrichSelectedCrawlCandidates={
+          handleEnrichSelectedCrawlCandidates
+        }
+        handleApproveSelectedCrawlCandidates={
+          handleApproveSelectedCrawlCandidates
+        }
+        selectedImportableCrawlCandidateIds={
+          selectedImportableCrawlCandidateIds
+        }
+        selectedCrawlJobNeedsReviewResume={selectedCrawlJobNeedsReviewResume}
+        visibleCrawlJobCandidates={visibleCrawlJobCandidates}
+        crawlCandidateFirstItemRef={crawlCandidateFirstItemRef}
+        handleToggleCrawlCandidateSelection={
+          handleToggleCrawlCandidateSelection
+        }
+        setSelectedCandidateDetail={setSelectedCandidateDetail}
+        setCandidateEditForm={setCandidateEditForm}
+        safeCrawlCandidatePage={safeCrawlCandidatePage}
+        crawlCandidatePageSize={crawlCandidatePageSize}
+        handleCrawlCandidatePaginationChange={
+          handleCrawlCandidatePaginationChange
+        }
+      />
       {resendDialogOpen ? (
         <BatchTaskResendDialog
           context={resendContext}
@@ -7323,337 +5033,21 @@ export const BackgroundTasksPage = ({
           onClose={() => setResendDialogOpen(false)}
           onSubmit={() => void handleSubmitBatchResend()}
         />
-      ) : null}      {selectedCandidateDetail ? (
-        <div
-          className={`${MODAL_BACKDROP_CLASS_NAME} z-[60]`}
-          onClick={candidateDetailLayer.onBackdropClick}
-          onMouseDown={candidateDetailLayer.onBackdropMouseDown}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-label="候选导师详情"
-            className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[90vh] w-full max-w-3xl flex-col`}
-            onClick={candidateDetailLayer.onContentClick}
-            onMouseDown={candidateDetailLayer.onContentMouseDown}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-6 py-5">
-              <div className="min-w-0">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-stone-400">
-                  {candidateEditForm ? "编辑候选导师" : "候选导师详情"}
-                </p>
-                <h3 className="mt-2 text-xl font-semibold text-stone-900">
-                  {selectedCandidateDetail.name}
-                </h3>
-                <p className="mt-1 text-sm text-stone-500">
-                  {candidateEditForm
-                    ? "手动修正待审核资料，保存后仍可继续补全缺失信息。"
-                    : selectedCandidateDetail.email?.trim() ||
-                      "暂无邮箱（可尝试进行补全）"}
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                {!candidateEditForm &&
-                selectedCrawlJobCanReview &&
-                selectedCandidateDetail.review_status === "pending" ? (
-                  <button
-                    type="button"
-                    onClick={handleStartCandidateEdit}
-                    disabled={candidateUpdateLoading}
-                    className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Pencil className="h-4 w-4" />
-                    编辑
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={closeSelectedCandidateDetail}
-                  disabled={candidateUpdateLoading}
-                  className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                  aria-label="关闭候选导师详情"
-                >
-                  <X className="h-4 w-4" />
-                  关闭
-                </button>
-              </div>
-            </div>
-            {candidateEditForm ? (
-              <form
-                onSubmit={(event) => void handleSaveCandidateEdit(event)}
-                className="flex min-h-0 flex-1 flex-col"
-              >
-                <div
-                  data-testid="candidate-detail-scroll"
-                  className="grid flex-1 gap-4 overflow-y-auto overscroll-contain px-6 py-5 md:grid-cols-2"
-                >
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    姓名
-                    <input
-                      type="text"
-                      required
-                      value={candidateEditForm.name}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange("name", event.target.value)
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    邮箱
-                    <input
-                      type="email"
-                      value={candidateEditForm.email}
-                      placeholder="例如 professor@example.edu"
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange("email", event.target.value)
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    职称
-                    <input
-                      type="text"
-                      value={candidateEditForm.title}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange("title", event.target.value)
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    部门
-                    <input
-                      type="text"
-                      value={candidateEditForm.department}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "department",
-                          event.target.value,
-                        )
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    院校
-                    <input
-                      type="text"
-                      value={candidateEditForm.university}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "university",
-                          event.target.value,
-                        )
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500">
-                    学院
-                    <input
-                      type="text"
-                      value={candidateEditForm.school}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange("school", event.target.value)
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
-                    研究方向
-                    <textarea
-                      value={candidateEditForm.researchDirection}
-                      rows={3}
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "researchDirection",
-                          event.target.value,
-                        )
-                      }
-                      className={`${CRAWL_CANDIDATE_EDIT_INPUT_CLASS} resize-y leading-6`}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
-                    近期论文
-                    <textarea
-                      value={candidateEditForm.recentPapers}
-                      rows={5}
-                      placeholder="每行填写一篇论文"
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "recentPapers",
-                          event.target.value,
-                        )
-                      }
-                      className={`${CRAWL_CANDIDATE_EDIT_INPUT_CLASS} resize-y leading-6`}
-                    />
-                    <span className="mt-2 block font-normal text-stone-400">
-                      每行一篇，空行会在保存时自动忽略。
-                    </span>
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
-                    资料页
-                    <input
-                      type="url"
-                      value={candidateEditForm.profileUrl}
-                      placeholder="https://example.edu/profile"
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "profileUrl",
-                          event.target.value,
-                        )
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                  <label className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 text-xs font-medium text-stone-500 md:col-span-2">
-                    来源页
-                    <input
-                      type="url"
-                      value={candidateEditForm.sourceUrl}
-                      placeholder="https://example.edu/faculty"
-                      onChange={(event) =>
-                        handleCandidateEditFieldChange(
-                          "sourceUrl",
-                          event.target.value,
-                        )
-                      }
-                      className={CRAWL_CANDIDATE_EDIT_INPUT_CLASS}
-                    />
-                  </label>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50/80 px-6 py-4">
-                  <p className="max-w-xl text-pretty text-xs leading-5 text-stone-500">
-                    保存后仍可补全缺失信息；已有内容（包括本次手动修改）不会被覆盖。
-                  </p>
-                  <div className="ml-auto flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCancelCandidateEdit}
-                      disabled={candidateUpdateLoading}
-                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={candidateUpdateLoading}
-                      className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {candidateUpdateLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="h-4 w-4" />
-                      )}
-                      {candidateUpdateLoading ? "保存中…" : "保存修改"}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            ) : (
-              <div
-                data-testid="candidate-detail-scroll"
-                className="grid flex-1 gap-4 overflow-y-auto overscroll-contain px-6 py-5 md:grid-cols-2"
-              >
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
-                <div className="text-xs font-medium text-stone-500">职称</div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {selectedCandidateDetail.title || "暂无"}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
-                <div className="text-xs font-medium text-stone-500">
-                  院校 / 学院
-                </div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {[
-                    selectedCandidateDetail.university,
-                    selectedCandidateDetail.school,
-                  ]
-                    .filter(Boolean)
-                    .join(" / ") || "暂无"}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
-                <div className="text-xs font-medium text-stone-500">部门</div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {selectedCandidateDetail.department || "暂无"}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3">
-                <div className="text-xs font-medium text-stone-500">
-                  审核状态
-                </div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {
-                    CRAWL_CANDIDATE_REVIEW_STATUS_LABELS[
-                      selectedCandidateDetail.review_status
-                    ]
-                  }
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 md:col-span-2">
-                <div className="text-xs font-medium text-stone-500">
-                  研究方向
-                </div>
-                <div className="mt-2 text-sm leading-6 text-stone-900">
-                  {selectedCandidateDetail.research_direction || "暂无"}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 md:col-span-2">
-                <div className="text-xs font-medium text-stone-500">
-                  近期论文
-                </div>
-                {selectedCandidateDetail.recent_papers.length > 0 ? (
-                  <ul className="mt-2 space-y-2 text-sm text-stone-900">
-                    {selectedCandidateDetail.recent_papers.map((paper) => (
-                      <li key={paper} className="rounded-xl bg-white px-3 py-2">
-                        {paper}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="mt-2 text-sm text-stone-900">暂无</div>
-                )}
-              </div>
-              <div className="rounded-2xl border border-stone-100 bg-stone-50/70 px-4 py-3 md:col-span-2">
-                <div className="text-xs font-medium text-stone-500">
-                  链接信息
-                </div>
-                <div className="mt-2 space-y-2 text-sm text-stone-900">
-                  <div>
-                    <span className="text-stone-500">资料页：</span>
-                    {renderCandidateExternalUrl(selectedCandidateDetail.profile_url)}
-                  </div>
-                  <div>
-                    <span className="text-stone-500">来源页：</span>
-                    {renderCandidateExternalUrl(selectedCandidateDetail.source_url)}
-                  </div>
-                </div>
-              </div>
-              {getCandidateEnrichmentFailureMessage(
-                selectedCandidateDetail,
-                crawlJobEvents,
-              ) ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50/70 px-4 py-3 md:col-span-2">
-                  <div className="text-xs font-medium text-red-700">
-                    补全失败原因
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-red-900">
-                    {getCandidateEnrichmentFailureMessage(
-                      selectedCandidateDetail,
-                      crawlJobEvents,
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              </div>
-            )}
-          </section>
-        </div>
-      ) : null}
+      ) : null}{" "}
+      <CrawlCandidateDetailsDialog
+        selectedCandidateDetail={selectedCandidateDetail}
+        candidateDetailLayer={candidateDetailLayer}
+        candidateEditForm={candidateEditForm}
+        selectedCrawlJobCanReview={selectedCrawlJobCanReview}
+        handleStartCandidateEdit={handleStartCandidateEdit}
+        candidateUpdateLoading={candidateUpdateLoading}
+        closeSelectedCandidateDetail={closeSelectedCandidateDetail}
+        handleSaveCandidateEdit={handleSaveCandidateEdit}
+        handleCandidateEditFieldChange={handleCandidateEditFieldChange}
+        handleCancelCandidateEdit={handleCancelCandidateEdit}
+        renderCandidateExternalUrl={renderCandidateExternalUrl}
+        crawlJobEvents={crawlJobEvents}
+      />
       <ProfessorEditDialog
         open={professorEditDialogOpen}
         professor={professorEditProfessor}

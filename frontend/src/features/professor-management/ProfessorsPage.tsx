@@ -1,18 +1,93 @@
+import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
+import { NativeSelectField } from "@/components/atoms/NativeSelectField";
+import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagDialog";
+import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
+import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
+import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
+import { Pagination } from "@/components/molecules/Pagination";
+import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
+import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
+import { useNotification } from "@/context/NotificationContext";
+import { useSelectionContext } from "@/context/SelectionContext";
+import { downloadCommunitySharePackage } from "@/entities/community-mentor/api/communityMentors";
 import {
-  type ChangeEvent,
-  type ClipboardEvent as ReactClipboardEvent,
-  type DragEvent as ReactDragEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+  createProfessorInformationEnrichmentJob,
+  createSingleProfessorInformationEnrichment,
+  getActiveProfessorInformationEnrichment,
+  getProfessorInformationEnrichmentJob,
+} from "@/entities/professor/api/informationEnrichment";
+import {
+  archiveProfessor,
+  bulkArchiveProfessors,
+  bulkUpdateProfessorTags,
+  createProfessor,
+  createProfessorTag,
+  deleteProfessorTag,
+  downloadProfessorExport,
+  downloadProfessorTemplate,
+  getProfessor,
+  getProfessorTagUsage,
+  importProfessorsFromFile,
+  listProfessorTags,
+  restoreProfessor,
+  searchManagementProfessorIds,
+  searchManagementProfessors,
+  updateProfessor,
+  updateProfessorNote,
+  updateProfessorTags,
+} from "@/entities/professor/api/professors";
+import { AgentProfessorSelectionBanner } from "@/features/agent-ui-handoffs/AgentProfessorSelectionBanner";
+import {
+  isAgentProfessorManagementHandoff,
+  type AgentProfessorSelectionMode,
+} from "@/features/agent-ui-handoffs/types";
+import { useAgentUiHandoffSurface } from "@/features/agent-ui-handoffs/useAgentUiHandoffSurface";
+import {
+  buildBulkTagConfirmDescription,
+  bulkTagConfirmLabels,
+} from "@/features/professor-management/client/bulkTagConfirmCopy";
+import {
+  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
+  NO_FIELD_FILTER_VALUE,
+  NO_TAG_FILTER_VALUE,
+  createDefaultManagementFilters,
+  getActiveManagementAdvancedFilterCount,
+  getManagementKeywordSearchPlaceholder,
+  normalizeManagementKeywordSearchScopes,
+  type ProfessorManagementFilterState,
+  type ProfessorManagementKeywordSearchScope,
+} from "@/features/professor-management/client/filterManagementProfessors";
+import {
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
+  DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
+  PROFESSOR_MANAGEMENT_SORT_OPTIONS,
+  type ProfessorManagementSortDirection,
+  type ProfessorManagementSortKey,
+} from "@/features/professor-management/client/sortManagementProfessors";
+import { createCrawlJob } from "@/lib/api/crawlJobsApi";
+import { downloadBlob } from "@/lib/api/download";
+import {
+  COMMUNITY_BATCH_CONTRIBUTION_URL,
+  buildCommunityBatchContributionUrl,
+  buildCommunityContributionPrefill,
+} from "@/lib/communityMentorLinks";
+import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
+import { openExternalHttpUrl } from "@/lib/externalUrls";
+import {
+  getStoredPageSize,
+  setStoredPageSize,
+  type PaginationChange,
+} from "@/lib/pagination";
+import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import type {
+  ProfessorBulkTagModeDTO,
+  ProfessorFilterOptionsDTO,
+  ProfessorImportFileResultDTO,
+  ProfessorManagementItemDTO,
+  ProfessorTagDTO,
+  ProfessorTagPayloadDTO,
+} from "@/types";
 import clsx from "clsx";
-import { useSearchParams } from "react-router-dom";
 import {
   Archive,
   ArrowDown,
@@ -23,11 +98,9 @@ import {
   ExternalLink,
   FileSpreadsheet,
   Loader2,
-  Minus,
   Plus,
   RefreshCcw,
   Search,
-  Share2,
   Square,
   SquareCheck,
   SquareMinus,
@@ -35,107 +108,25 @@ import {
   Upload,
   Users,
 } from "lucide-react";
-import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import {
-  MODAL_BACKDROP_CLASS_NAME,
-  MODAL_SURFACE_CLASS_NAME,
-} from "@/components/atoms/modalStyles";
-import { BulkProfessorTagDialog } from "@/components/molecules/BulkProfessorTagDialog";
-import { KeywordSearchScopeSelect } from "@/components/molecules/KeywordSearchScopeSelect";
-import { ManagementProfessorRow } from "@/components/molecules/ManagementProfessorRow";
-import { MultiSelectFilter } from "@/components/molecules/MultiSelectFilter";
-import { Pagination } from "@/components/molecules/Pagination";
-import { ProfessorNoteDialog } from "@/components/molecules/ProfessorNoteDialog";
-import { ProfessorTagAssignmentDialog } from "@/components/molecules/ProfessorTagAssignmentDialog";
-import { ProfessorTagSelector } from "@/components/molecules/ProfessorTagSelector";
-import { useBackgroundTaskNotification } from "@/app/providers/BackgroundTaskNotificationContext";
-import { useNotification } from "@/context/NotificationContext";
-import { useSelectionContext } from "@/context/SelectionContext";
-import { AgentProfessorSelectionBanner } from "@/features/agent-ui-handoffs/AgentProfessorSelectionBanner";
-import {
-  isAgentProfessorManagementHandoff,
-  type AgentProfessorSelectionMode,
-} from "@/features/agent-ui-handoffs/types";
-import { useAgentUiHandoffSurface } from "@/features/agent-ui-handoffs/useAgentUiHandoffSurface";
-import { safeRecordUserAction } from "@/lib/diagnosticUserActions";
-import {
-  getStoredPageSize,
-  setStoredPageSize,
-  type PaginationChange,
-} from "@/lib/pagination";
-import {
-  normalizeExternalHttpUrl,
-  openExternalHttpUrl,
-} from "@/lib/externalUrls";
-import { useConfirmDialog } from "@/lib/useConfirmDialog";
-import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
-import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
-import { downloadBlob } from "@/lib/api/download";
-import { createCrawlJob } from "@/lib/api/crawlJobsApi";
-import { downloadCommunitySharePackage } from "@/entities/community-mentor/api/communityMentors";
-import {
-  COMMUNITY_BATCH_CONTRIBUTION_URL,
-  buildCommunityBatchContributionUrl,
-  buildCommunityContributionPrefill,
-} from "@/lib/communityMentorLinks";
-import {
-  createProfessorInformationEnrichmentJob,
-  createSingleProfessorInformationEnrichment,
-  getActiveProfessorInformationEnrichment,
-  getProfessorInformationEnrichmentJob,
-} from "@/entities/professor/api/informationEnrichment";
-import {
-  archiveProfessor,
-  bulkUpdateProfessorTags,
-  bulkArchiveProfessors,
-  createProfessor,
-  createProfessorTag,
-  deleteProfessorTag,
-  downloadProfessorExport,
-  downloadProfessorTemplate,
-  getProfessor,
-  importProfessorsFromFile,
-  getProfessorTagUsage,
-  listProfessorTags,
-  searchManagementProfessors,
-  searchManagementProfessorIds,
-  restoreProfessor,
-  updateProfessor,
-  updateProfessorNote,
-  updateProfessorTags,
-} from "@/entities/professor/api/professors";
-import type {
-  CrawlJobEntryTypeDTO,
-  ProfessorImportFileResultDTO,
-  ProfessorInformationEnrichmentJobDTO,
-  ProfessorManagementItemDTO,
-  ProfessorBulkTagModeDTO,
-  ProfessorFilterOptionsDTO,
-  ProfessorTagDTO,
-  ProfessorTagPayloadDTO,
-} from "@/types";
-import {
-  MANAGEMENT_KEYWORD_SEARCH_SCOPE_OPTIONS,
-  createDefaultManagementFilters,
-  getActiveManagementAdvancedFilterCount,
-  getManagementKeywordSearchPlaceholder,
-  normalizeManagementKeywordSearchScopes,
-  NO_FIELD_FILTER_VALUE,
-  NO_TAG_FILTER_VALUE,
-  type ProfessorManagementKeywordSearchScope,
-  type ProfessorManagementFilterState,
-} from "@/features/professor-management/client/filterManagementProfessors";
-import {
-  bulkTagConfirmLabels,
-  buildBulkTagConfirmDescription,
-} from "@/features/professor-management/client/bulkTagConfirmCopy";
-import {
-  DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS,
-  DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY,
-  PROFESSOR_MANAGEMENT_SORT_OPTIONS,
-  type ProfessorManagementSortDirection,
-  type ProfessorManagementSortKey,
-} from "@/features/professor-management/client/sortManagementProfessors";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+import { useSearchParams } from "react-router-dom";
+import { CreateCrawlJobDialog } from "./components/CreateCrawlJobDialog";
+import { ProfessorEditorDialog } from "./components/ProfessorEditorDialog";
+import { ProfessorExportDialog } from "./components/ProfessorExportDialog";
+import { ProfessorImportDialog } from "./components/ProfessorImportDialog";
+import type { TrackedSingleInformationEnrichment } from "./model/enrichmentTracking";
 import {
   buildCrawlerStartUrlsAfterMultilinePaste,
   emptyCrawlerJobForm,
@@ -171,15 +162,10 @@ type ManagementAgentSelectionState = {
 };
 const noFieldOptionLabels = { [NO_FIELD_FILTER_VALUE]: "未填写" };
 const activeInformationEnrichmentStatuses = new Set(["queued", "running"]);
-type TrackedSingleInformationEnrichment = {
-  job: ProfessorInformationEnrichmentJobDTO;
-  professorName: string;
-};
+
 type IntakeActionTone = "primary" | "amber" | "stone" | "emerald";
 
 const PROFESSORS_PAGE_SIZE_STORAGE_KEY = "professors-management:page-size";
-const MENTOR_CRAWLER_SKILL_GUIDE_URL =
-  "https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill";
 const managementTableColumns =
   "lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]";
 
@@ -187,70 +173,6 @@ const archiveFilterLabels: Record<ArchiveFilter, string> = {
   active: "正常",
   archived: "回收站",
   all: "全部",
-};
-
-const fieldLabelClassName =
-  "mb-2 inline-flex items-center gap-1 text-sm font-medium text-stone-800";
-const inputClassName =
-  "w-full rounded-2xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15";
-const urlInputWithActionClassName =
-  "w-full rounded-2xl border border-stone-200 bg-white py-2.5 pl-3 pr-11 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15";
-
-const renderFieldLabel = (label: string, required = false) => (
-  <span className={fieldLabelClassName}>
-    {required ? (
-      <span className="text-base leading-none text-red-500">*</span>
-    ) : null}
-    <span>{label}</span>
-  </span>
-);
-
-const UrlInputField = ({
-  id,
-  label,
-  value,
-  placeholder,
-  openLabel,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  placeholder: string;
-  openLabel: string;
-  onChange: (value: string) => void;
-}) => {
-  const openableUrl = normalizeExternalHttpUrl(value);
-
-  return (
-    <div className="block">
-      <label htmlFor={id}>{renderFieldLabel(label)}</label>
-      <div className="relative">
-        <input
-          id={id}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className={urlInputWithActionClassName}
-          placeholder={placeholder}
-        />
-        <button
-          type="button"
-          aria-label={openLabel}
-          title={openLabel}
-          disabled={!openableUrl}
-          onClick={() => {
-            if (!openableUrl) {
-              return;
-            }
-            openExternalHttpUrl(openableUrl);
-          }}
-          className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl border border-stone-200 bg-stone-50 text-stone-500 transition hover:border-primary/40 hover:bg-white hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <ExternalLink className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
 };
 
 const saveCommunitySharePackageBlob = async (
@@ -312,98 +234,14 @@ const IntakeActionCard = ({
         {icon}
       </div>
       <div className="min-w-0">
-        <h2 className="text-base font-semibold leading-6 text-stone-900">{label}</h2>
+        <h2 className="text-base font-semibold leading-6 text-stone-900">
+          {label}
+        </h2>
       </div>
     </div>
     <div className="flex w-full flex-wrap gap-2">{children}</div>
   </article>
 );
-
-const ModalShell = ({
-  open,
-  title,
-  description,
-  onClose,
-  children,
-  headerAction,
-  maxWidthClassName = "max-w-3xl",
-}: {
-  open: boolean;
-  title: string;
-  description?: string;
-  onClose: () => void;
-  children: ReactNode;
-  headerAction?: ReactNode;
-  maxWidthClassName?: string;
-}) => {
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } =
-    useDismissableLayerClick(onClose);
-  useDocumentScrollLock(open);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
-
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div
-      role="dialog"
-      aria-label={title}
-      aria-modal="true"
-      className={`${MODAL_BACKDROP_CLASS_NAME} z-[80]`}
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
-    >
-      <div
-        className={clsx(
-          `${MODAL_SURFACE_CLASS_NAME} w-full`,
-          maxWidthClassName,
-        )}
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
-      >
-        <div
-          data-testid="professor-modal-scroll"
-          className="relative max-h-[85vh] overflow-y-auto overscroll-contain px-6 py-6"
-        >
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-start justify-between gap-4">
-              <h2 className="min-w-0 break-words text-2xl font-semibold tracking-[0.01em] text-stone-900">
-                {title}
-              </h2>
-              {headerAction ? (
-                <div className="shrink-0">{headerAction}</div>
-              ) : null}
-            </div>
-            {description ? (
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600">
-                {description}
-              </p>
-            ) : null}
-          </div>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const ProfessorsPageLoadingSkeleton = () => (
   <main
@@ -419,7 +257,10 @@ const ProfessorsPageLoadingSkeleton = () => (
         </div>
         <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }, (_, index) => (
-            <div key={index} className="h-[7.5rem] animate-pulse rounded-[24px] border border-stone-200 bg-white" />
+            <div
+              key={index}
+              className="h-[7.5rem] animate-pulse rounded-[24px] border border-stone-200 bg-white"
+            />
           ))}
         </div>
         <div className="h-11 w-56 animate-pulse rounded-3xl border border-stone-200 bg-white" />
@@ -438,7 +279,10 @@ const ProfessorsPageLoadingSkeleton = () => (
       </div>
       <div className="hidden gap-4 border-b border-stone-100 px-6 py-4 lg:grid lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]">
         {Array.from({ length: 8 }, (_, index) => (
-          <div key={index} className="h-3 animate-pulse rounded-full bg-stone-100" />
+          <div
+            key={index}
+            className="h-3 animate-pulse rounded-full bg-stone-100"
+          />
         ))}
       </div>
       <div className="divide-y divide-stone-100">
@@ -448,7 +292,10 @@ const ProfessorsPageLoadingSkeleton = () => (
             className="grid gap-4 px-6 py-5 lg:grid-cols-[2.75rem_minmax(0,0.72fr)_minmax(0,0.74fr)_minmax(0,1.08fr)_minmax(0,1.18fr)_minmax(0,1.56fr)_minmax(0,0.78fr)_minmax(12rem,0.92fr)]"
           >
             {Array.from({ length: 8 }, (_, itemIndex) => (
-              <div key={itemIndex} className="h-4 animate-pulse rounded-full bg-stone-100" />
+              <div
+                key={itemIndex}
+                className="h-4 animate-pulse rounded-full bg-stone-100"
+              />
             ))}
           </div>
         ))}
@@ -496,7 +343,9 @@ export const ProfessorsPage = () => {
     useState<ProfessorManagementItemDTO | null>(null);
   const [noteEditorProfessor, setNoteEditorProfessor] =
     useState<ProfessorManagementItemDTO | null>(null);
-  const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>([]);
+  const [tagEditorSelectedIds, setTagEditorSelectedIds] = useState<number[]>(
+    [],
+  );
   const [savingProfessorTags, setSavingProfessorTags] = useState(false);
   const [savingProfessorNote, setSavingProfessorNote] = useState(false);
   const [creatingAssignmentTag, setCreatingAssignmentTag] = useState(false);
@@ -527,26 +376,30 @@ export const ProfessorsPage = () => {
   const agentSelectionRef = useRef<ManagementAgentSelectionState | null>(null);
   agentSelectionRef.current = agentSelection;
   const [selectingAllProfessors, setSelectingAllProfessors] = useState(false);
-  const [selectedAllQueryKey, setSelectedAllQueryKey] = useState<string | null>(null);
+  const [selectedAllQueryKey, setSelectedAllQueryKey] = useState<string | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [hasLoadedProfessors, setHasLoadedProfessors] = useState(false);
   const [totalProfessorCount, setTotalProfessorCount] = useState(0);
   const [hasAnyProfessors, setHasAnyProfessors] = useState(false);
   const [totalProfessorPages, setTotalProfessorPages] = useState(1);
-  const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>({
-    universities: [],
-    schools: [],
-    departments: [],
-    titles: [],
-    tags: [],
-  });
+  const [filterOptions, setFilterOptions] = useState<ProfessorFilterOptionsDTO>(
+    {
+      universities: [],
+      schools: [],
+      departments: [],
+      titles: [],
+      tags: [],
+    },
+  );
   const isRefreshingProfessors = hasLoadedProfessors && loading;
   const shouldShowProfessorIntakePanel =
-    isRefreshingProfessors ||
-    archiveFilter === "archived" ||
-    hasAnyProfessors;
+    isRefreshingProfessors || archiveFilter === "archived" || hasAnyProfessors;
   const latestProfessorsRequestIdRef = useRef(0);
-  const cursorByPageRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
+  const cursorByPageRef = useRef<Map<number, string | null>>(
+    new Map([[1, null]]),
+  );
   const cursorQueryKeyRef = useRef("");
   const selectedAllIdsRef = useRef<number[]>([]);
   const selectionRequestIdRef = useRef(0);
@@ -563,12 +416,16 @@ export const ProfessorsPage = () => {
   const [formState, setFormState] =
     useState<ProfessorFormState>(emptyProfessorForm());
   const [savingProfessor, setSavingProfessor] = useState(false);
-  const [startingSingleInformationEnrichmentIds, setStartingSingleInformationEnrichmentIds] =
-    useState<Set<number>>(new Set());
+  const [
+    startingSingleInformationEnrichmentIds,
+    setStartingSingleInformationEnrichmentIds,
+  ] = useState<Set<number>>(new Set());
   const [singleInformationEnrichments, setSingleInformationEnrichments] =
     useState<Record<number, TrackedSingleInformationEnrichment>>({});
-  const [creatingBulkInformationEnrichment, setCreatingBulkInformationEnrichment] =
-    useState(false);
+  const [
+    creatingBulkInformationEnrichment,
+    setCreatingBulkInformationEnrichment,
+  ] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -637,7 +494,9 @@ export const ProfessorsPage = () => {
     const previous = pendingAgentSelectionLoadRef.current;
     if (previous) {
       window.clearTimeout(previous.timeoutId);
-      previous.reject(new Error("新的 Agent 导师选择替换了尚未完成的页面加载。"));
+      previous.reject(
+        new Error("新的 Agent 导师选择替换了尚未完成的页面加载。"),
+      );
     }
     return new Promise<number>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
@@ -689,98 +548,95 @@ export const ProfessorsPage = () => {
     setSortKey(DEFAULT_PROFESSOR_MANAGEMENT_SORT_KEY);
     setSortDirections({ ...DEFAULT_PROFESSOR_MANAGEMENT_SORT_DIRECTIONS });
     setFilters({ ...createDefaultManagementFilters(), keyword: linkedKeyword });
-    setSearchParams((previous) => {
-      const next = new URLSearchParams(previous);
-      next.delete("keyword");
-      next.delete("archive");
-      return next;
-    }, { replace: true });
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete("keyword");
+        next.delete("archive");
+        return next;
+      },
+      { replace: true },
+    );
   }, [
     linkedArchiveFilter,
     linkedKeyword,
     setSearchParams,
     settleAgentSelectionLoad,
   ]);
-  const loadProfessors = useCallback(
-    async () => {
-      const requestId = latestProfessorsRequestIdRef.current + 1;
-      latestProfessorsRequestIdRef.current = requestId;
-      setLoading(true);
-      try {
-        if (cursorQueryKeyRef.current !== managementPageQueryKey) {
-          cursorQueryKeyRef.current = managementPageQueryKey;
-          cursorByPageRef.current = new Map([[1, null]]);
-        }
-        const data = await searchManagementProfessors({
-          ui_handoff_id:
-            agentSelection?.selectedOnly === true
-              ? agentSelection.handoffId
-              : null,
-          archived: archiveFilter,
-          page: currentPage,
-          page_size: pageSize,
-          cursor: cursorByPageRef.current.get(currentPage),
-          keyword: filters.keyword,
-          keyword_search_scopes: filters.keywordSearchScopes,
-          universities: filters.universities,
-          schools: filters.schools,
-          departments: filters.departments,
-          titles: filters.titles,
-          tag_ids: filters.tagIds,
-          sort_key: sortKey,
-          sort_direction: sortDirections[sortKey],
-        });
-        if (latestProfessorsRequestIdRef.current !== requestId) {
-          return;
-        }
-        setProfessors(data.items);
-        setTotalProfessorCount(data.total_count);
-        setHasAnyProfessors(data.has_any_professors);
-        setTotalProfessorPages(data.total_pages);
-        setFilterOptions(data.filter_options);
-        if (data.next_cursor) {
-          cursorByPageRef.current.set(data.page + 1, data.next_cursor);
-        }
-        setHasLoadedProfessors(true);
-        if (agentSelection?.selectedOnly === true) {
-          settleAgentSelectionLoad(
-            agentSelection.handoffId,
-            undefined,
-            data.total_count,
-          );
-        }
-      } catch (loadError) {
-        if (latestProfessorsRequestIdRef.current !== requestId) {
-          return;
-        }
-        setHasLoadedProfessors(true);
-        const message = getActionErrorMessage(loadError, "加载导师列表失败");
-        if (agentSelection?.selectedOnly === true) {
-          settleAgentSelectionLoad(
-            agentSelection.handoffId,
-            new Error(message),
-          );
-        }
-        notifyError("加载导师列表失败", message);
-      } finally {
-        if (latestProfessorsRequestIdRef.current === requestId) {
-          setLoading(false);
-        }
+  const loadProfessors = useCallback(async () => {
+    const requestId = latestProfessorsRequestIdRef.current + 1;
+    latestProfessorsRequestIdRef.current = requestId;
+    setLoading(true);
+    try {
+      if (cursorQueryKeyRef.current !== managementPageQueryKey) {
+        cursorQueryKeyRef.current = managementPageQueryKey;
+        cursorByPageRef.current = new Map([[1, null]]);
       }
-    },
-    [
-      archiveFilter,
-      agentSelection,
-      currentPage,
-      filters,
-      managementPageQueryKey,
-      notifyError,
-      pageSize,
-      sortDirections,
-      sortKey,
-      settleAgentSelectionLoad,
-    ],
-  );
+      const data = await searchManagementProfessors({
+        ui_handoff_id:
+          agentSelection?.selectedOnly === true
+            ? agentSelection.handoffId
+            : null,
+        archived: archiveFilter,
+        page: currentPage,
+        page_size: pageSize,
+        cursor: cursorByPageRef.current.get(currentPage),
+        keyword: filters.keyword,
+        keyword_search_scopes: filters.keywordSearchScopes,
+        universities: filters.universities,
+        schools: filters.schools,
+        departments: filters.departments,
+        titles: filters.titles,
+        tag_ids: filters.tagIds,
+        sort_key: sortKey,
+        sort_direction: sortDirections[sortKey],
+      });
+      if (latestProfessorsRequestIdRef.current !== requestId) {
+        return;
+      }
+      setProfessors(data.items);
+      setTotalProfessorCount(data.total_count);
+      setHasAnyProfessors(data.has_any_professors);
+      setTotalProfessorPages(data.total_pages);
+      setFilterOptions(data.filter_options);
+      if (data.next_cursor) {
+        cursorByPageRef.current.set(data.page + 1, data.next_cursor);
+      }
+      setHasLoadedProfessors(true);
+      if (agentSelection?.selectedOnly === true) {
+        settleAgentSelectionLoad(
+          agentSelection.handoffId,
+          undefined,
+          data.total_count,
+        );
+      }
+    } catch (loadError) {
+      if (latestProfessorsRequestIdRef.current !== requestId) {
+        return;
+      }
+      setHasLoadedProfessors(true);
+      const message = getActionErrorMessage(loadError, "加载导师列表失败");
+      if (agentSelection?.selectedOnly === true) {
+        settleAgentSelectionLoad(agentSelection.handoffId, new Error(message));
+      }
+      notifyError("加载导师列表失败", message);
+    } finally {
+      if (latestProfessorsRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
+    }
+  }, [
+    archiveFilter,
+    agentSelection,
+    currentPage,
+    filters,
+    managementPageQueryKey,
+    notifyError,
+    pageSize,
+    sortDirections,
+    sortKey,
+    settleAgentSelectionLoad,
+  ]);
 
   const loadProfessorTags = useCallback(async () => {
     try {
@@ -994,8 +850,12 @@ export const ProfessorsPage = () => {
         );
         setFormState((previous) => ({
           ...previous,
-          email: previous.email.trim() ? previous.email : (refreshed.email ?? ""),
-          title: previous.title.trim() ? previous.title : (refreshed.title ?? ""),
+          email: previous.email.trim()
+            ? previous.email
+            : (refreshed.email ?? ""),
+          title: previous.title.trim()
+            ? previous.title
+            : (refreshed.title ?? ""),
           department: previous.department.trim()
             ? previous.department
             : (refreshed.department ?? ""),
@@ -1036,7 +896,8 @@ export const ProfessorsPage = () => {
 
   useEffect(() => {
     const activeEntries = Object.entries(singleInformationEnrichments).filter(
-      ([, tracked]) => activeInformationEnrichmentStatuses.has(tracked.job.status),
+      ([, tracked]) =>
+        activeInformationEnrichmentStatuses.has(tracked.job.status),
     );
     if (activeEntries.length === 0) {
       return;
@@ -1046,7 +907,9 @@ export const ProfessorsPage = () => {
       await Promise.all(
         activeEntries.map(async ([professorIdText, tracked]) => {
           try {
-            const job = await getProfessorInformationEnrichmentJob(tracked.job.id);
+            const job = await getProfessorInformationEnrichmentJob(
+              tracked.job.id,
+            );
             if (disposed) {
               return;
             }
@@ -1122,7 +985,9 @@ export const ProfessorsPage = () => {
   const currentSortDirection = sortDirections[sortKey];
   const visibleProfessors = professors;
 
-  const updateFilters = (nextFilters: Partial<ProfessorManagementFilterState>) => {
+  const updateFilters = (
+    nextFilters: Partial<ProfessorManagementFilterState>,
+  ) => {
     setCurrentPage(1);
     setFilters((previous) => ({ ...previous, ...nextFilters }));
   };
@@ -1364,15 +1229,19 @@ export const ProfessorsPage = () => {
     const omittedLabels = prefill.omittedFields.map((field) =>
       field === "research_direction" ? "研究方向" : "代表论文",
     );
-    const prefillDescription = missingLabels.length > 0
-      ? `已预填现有信息；提交前请补全：${missingLabels.join("、")}。`
-      : "已预填现有信息；提交前请核对。";
-    const lengthDescription = omittedLabels.length > 0
-      ? `${omittedLabels.join("和")}因过长未带入；完整投稿请使用批量“贡献到社区”。`
-      : null;
+    const prefillDescription =
+      missingLabels.length > 0
+        ? `已预填现有信息；提交前请补全：${missingLabels.join("、")}。`
+        : "已预填现有信息；提交前请核对。";
+    const lengthDescription =
+      omittedLabels.length > 0
+        ? `${omittedLabels.join("和")}因过长未带入；完整投稿请使用批量“贡献到社区”。`
+        : null;
     const confirmed = await confirm({
       title: `贡献“${payload.name || "这位导师"}”到社区？`,
-      description: [prefillDescription, lengthDescription].filter(Boolean).join("\n\n"),
+      description: [prefillDescription, lengthDescription]
+        .filter(Boolean)
+        .join("\n\n"),
       confirmLabel: "打开已预填的投稿表",
       cancelLabel: "暂不投稿",
     });
@@ -1494,8 +1363,7 @@ export const ProfessorsPage = () => {
     }
     const confirmed = await confirm({
       title: `补全选中的 ${selectedIds.size} 位导师信息？`,
-      description:
-        "将访问导师主页补全空缺信息，不覆盖现有内容，并消耗 Token。",
+      description: "将访问导师主页补全空缺信息，不覆盖现有内容，并消耗 Token。",
       confirmLabel: "开始补全",
       cancelLabel: "取消",
     });
@@ -1685,9 +1553,7 @@ export const ProfessorsPage = () => {
     return createdTag;
   };
 
-  const handleCreateAssignmentTag = async (
-    payload: ProfessorTagPayloadDTO,
-  ) => {
+  const handleCreateAssignmentTag = async (payload: ProfessorTagPayloadDTO) => {
     setCreatingAssignmentTag(true);
     try {
       return await createAndRegisterProfessorTag(payload);
@@ -1981,7 +1847,8 @@ export const ProfessorsPage = () => {
 
   const handleChooseDesktopImportFile = async () => {
     try {
-      const selectedFile = await window.autoEmailSender?.selectProfessorImportFile?.();
+      const selectedFile =
+        await window.autoEmailSender?.selectProfessorImportFile?.();
       if (!selectedFile) {
         return;
       }
@@ -2000,7 +1867,9 @@ export const ProfessorsPage = () => {
     }
   };
 
-  const handleImportDropZoneClick = (event: ReactMouseEvent<HTMLLabelElement>) => {
+  const handleImportDropZoneClick = (
+    event: ReactMouseEvent<HTMLLabelElement>,
+  ) => {
     if (!window.autoEmailSender?.selectProfessorImportFile) {
       return;
     }
@@ -2082,10 +1951,7 @@ export const ProfessorsPage = () => {
       });
       setCrawlerModalOpen(false);
       setCrawlerFormState(emptyCrawlerJobForm());
-      notifySuccess(
-        "抓取任务已创建",
-        "可在任务中心查看抓取进度。",
-      );
+      notifySuccess("抓取任务已创建", "可在任务中心查看抓取进度。");
     } catch (crawlerError) {
       safeRecordUserAction({
         eventName: "professors.crawl_job_create_failed",
@@ -2184,7 +2050,9 @@ export const ProfessorsPage = () => {
             <div className="flex shrink-0 flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL)}
+                onClick={() =>
+                  openExternalHttpUrl(COMMUNITY_BATCH_CONTRIBUTION_URL)
+                }
                 className="ui-btn-secondary"
               >
                 已有共享包，打开投稿表
@@ -2193,11 +2061,14 @@ export const ProfessorsPage = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setSearchParams((previous) => {
-                    const next = new URLSearchParams(previous);
-                    next.delete("community_contribution");
-                    return next;
-                  }, { replace: true });
+                  setSearchParams(
+                    (previous) => {
+                      const next = new URLSearchParams(previous);
+                      next.delete("community_contribution");
+                      return next;
+                    },
+                    { replace: true },
+                  );
                 }}
                 className="ui-btn-secondary"
               >
@@ -2414,8 +2285,12 @@ export const ProfessorsPage = () => {
                   }}
                   wrapperClassName="h-full min-w-0 flex-1"
                   embedded
-                  renderOption={(option, { selected, selectOption, closeMenu }) => {
-                    const optionKey = option.value as ProfessorManagementSortKey;
+                  renderOption={(
+                    option,
+                    { selected, selectOption, closeMenu },
+                  ) => {
+                    const optionKey =
+                      option.value as ProfessorManagementSortKey;
                     const direction = sortDirections[optionKey];
 
                     return (
@@ -2436,7 +2311,9 @@ export const ProfessorsPage = () => {
                           )}
                         >
                           <span className="truncate">{option.label}</span>
-                          {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                          {selected ? (
+                            <Check className="h-4 w-4 shrink-0" />
+                          ) : null}
                         </button>
                         <button
                           type="button"
@@ -2508,7 +2385,7 @@ export const ProfessorsPage = () => {
                   <div className="text-sm font-semibold text-stone-800">
                     高级筛选
                   </div>
-                                  <button
+                  <button
                     type="button"
                     onClick={clearAdvancedFilters}
                     className="ui-btn-secondary px-3 py-1.5 text-sm"
@@ -2595,16 +2472,13 @@ export const ProfessorsPage = () => {
             />
           ) : null}
           <div className="text-sm text-stone-600">
-            {totalProfessorCount} 位 · {safeCurrentPage}/{totalPages} 页 · 每页 {pageSize} 位
+            {totalProfessorCount} 位 · {safeCurrentPage}/{totalPages} 页 · 每页{" "}
+            {pageSize} 位
           </div>
           {totalProfessorCount > 0 ? (
             <button
               type="button"
-              aria-label={
-                allFilteredSelected
-                  ? "取消全选"
-                  : "全选当前结果"
-              }
+              aria-label={allFilteredSelected ? "取消全选" : "全选当前结果"}
               aria-pressed={allFilteredSelected}
               onClick={() => void handleToggleFilteredSelection()}
               disabled={selectingAllProfessors}
@@ -2644,20 +2518,12 @@ export const ProfessorsPage = () => {
             </span>
             <button
               type="button"
-              aria-label={
-                allFilteredSelected
-                  ? "取消全选"
-                  : "全选当前结果"
-              }
+              aria-label={allFilteredSelected ? "取消全选" : "全选当前结果"}
               aria-pressed={allFilteredSelected}
               onClick={() => void handleToggleFilteredSelection()}
               disabled={selectingAllProfessors || totalProfessorCount === 0}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-45"
-              title={
-                allFilteredSelected
-                  ? "取消全选"
-                  : "全选当前结果"
-              }
+              title={allFilteredSelected ? "取消全选" : "全选当前结果"}
             >
               {selectingAllProfessors ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -2870,7 +2736,9 @@ export const ProfessorsPage = () => {
                 已选中 {selectedIds.size} 位导师
               </div>
               {archiveFilter === "archived" ? (
-                <div className="mt-1 text-xs text-stone-500">恢复后可继续使用</div>
+                <div className="mt-1 text-xs text-stone-500">
+                  恢复后可继续使用
+                </div>
               ) : null}
             </div>
             <div className="flex max-w-full flex-wrap gap-3">
@@ -2943,619 +2811,67 @@ export const ProfessorsPage = () => {
                 ) : (
                   <FileSpreadsheet className="h-4 w-4" />
                 )}
-                {exportingCommunitySharePackage ? "正在生成共享包…" : "贡献到社区"}
+                {exportingCommunitySharePackage
+                  ? "正在生成共享包…"
+                  : "贡献到社区"}
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      <ModalShell
-        open={upsertModalOpen}
-        title={
-          editingProfessor ? `编辑导师：${editingProfessor.name}` : "新增导师"
+      <ProfessorEditorDialog
+        upsertModalOpen={upsertModalOpen}
+        editingProfessor={editingProfessor}
+        closeUpsertModal={closeUpsertModal}
+        handleSingleInformationEnrichment={handleSingleInformationEnrichment}
+        startingSingleInformationEnrichmentIds={
+          startingSingleInformationEnrichmentIds
         }
-        description="保存后可立即用于筛选和创建任务。"
-        onClose={closeUpsertModal}
-        headerAction={
-          editingProfessor ? (
-            <button
-              type="button"
-              onClick={() => void handleSingleInformationEnrichment()}
-              disabled={
-                startingSingleInformationEnrichmentIds.has(editingProfessor.id) ||
-                activeInformationEnrichmentStatuses.has(
-                  singleInformationEnrichments[editingProfessor.id]?.job.status ?? "",
-                )
-              }
-              className="ui-btn-secondary whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {startingSingleInformationEnrichmentIds.has(editingProfessor.id) ||
-              activeInformationEnrichmentStatuses.has(
-                singleInformationEnrichments[editingProfessor.id]?.job.status ?? "",
-              ) ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Bot className="h-4 w-4" />
-              )}
-              智能补全
-            </button>
-          ) : null
-        }
-      >
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <label className="block">
-            {renderFieldLabel("姓名", true)}
-            <input
-              value={formState.name}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  name: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：张明远"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("邮箱", true)}
-            <input
-              value={formState.email}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  email: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：faculty@example.edu"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("职称")}
-            <input
-              value={formState.title}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  title: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：Associate Professor"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("学校")}
-            <input
-              value={formState.university}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  university: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：Tsinghua University"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("学院")}
-            <input
-              value={formState.school}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  school: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：School of Computer Science"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("系所")}
-            <input
-              value={formState.department}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  department: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：Department of AI"
-            />
-          </label>
-          <div className="md:col-span-2">
-            <ProfessorTagSelector
-              tags={professorTags}
-              selectedTagIds={formState.tag_ids}
-              disabled={savingProfessor}
-              onChange={(tagIds) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  tag_ids: tagIds,
-                }))
-              }
-              onCreateTag={(payload) => void handleCreateProfessorTag(payload)}
-              onDeleteTag={(tag) => void handleDeleteProfessorTag(tag)}
-            />
-          </div>
-          <label className="block md:col-span-2">
-            {renderFieldLabel("研究方向")}
-            <textarea
-              value={formState.research_direction}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  research_direction: event.target.value,
-                }))
-              }
-              className="min-h-28 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
-              placeholder="示例：Large Language Models, Information Extraction, NLP"
-            />
-          </label>
-          <label className="block md:col-span-2">
-            {renderFieldLabel("近期论文")}
-            <textarea
-              value={formState.recent_papers_text}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  recent_papers_text: event.target.value,
-                }))
-              }
-              className="min-h-32 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
-              placeholder={
-                    "一行一篇，例如：\nScaling Agents with…\nReasoning for Scientific Discovery…"
-              }
-            />
-          </label>
-          <label className="block md:col-span-2">
-            {renderFieldLabel("个人备注")}
-            <textarea
-              aria-label="个人备注"
-              value={formState.personal_note}
-              onChange={(event) =>
-                setFormState((previous) => ({
-                  ...previous,
-                  personal_note: event.target.value,
-                }))
-              }
-              maxLength={10000}
-              className="min-h-28 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
-              placeholder="只对自己可见的沟通偏好、判断依据或跟进提醒。"
-            />
-          </label>
-          <UrlInputField
-            id="professor-profile-url"
-            label="导师主页"
-            value={formState.profile_url}
-            placeholder="示例：https://example.edu/faculty/zhang"
-            openLabel="打开导师主页"
-            onChange={(value) =>
-              setFormState((previous) => ({
-                ...previous,
-                profile_url: value,
-              }))
-            }
-          />
-          <UrlInputField
-            id="professor-source-url"
-            label="发现来源页"
-            value={formState.source_url}
-            placeholder="示例：https://example.edu/faculty-directory"
-            openLabel="打开发现来源页"
-            onChange={(value) =>
-              setFormState((previous) => ({
-                ...previous,
-                source_url: value,
-              }))
-            }
-          />
-        </div>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-3">
-            {editingProfessor ? (
-              <button
-                type="button"
-                onClick={() => void handleContributeProfessor()}
-                className="ui-btn-secondary"
-              >
-                <Share2 className="h-4 w-4" />
-                贡献到社区
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={closeUpsertModal}
-              className="ui-btn-secondary"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSaveProfessor()}
-              disabled={savingProfessor}
-              className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {savingProfessor ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : null}
-              保存导师
-            </button>
-          </div>
-        </div>
-      </ModalShell>
+        singleInformationEnrichments={singleInformationEnrichments}
+        formState={formState}
+        setFormState={setFormState}
+        professorTags={professorTags}
+        savingProfessor={savingProfessor}
+        handleCreateProfessorTag={handleCreateProfessorTag}
+        handleDeleteProfessorTag={handleDeleteProfessorTag}
+        handleContributeProfessor={handleContributeProfessor}
+        handleSaveProfessor={handleSaveProfessor}
+      />
 
-      <ModalShell
-        open={importModalOpen}
-        title="导入导师文件"
-        description="按邮箱匹配并更新；回收站记录会自动恢复。"
-        onClose={() => {
-          if (importingFile) {
-            return;
-          }
-          setImportModalOpen(false);
-        }}
-      >
-        <div className="mt-6 grid gap-6 lg:grid-cols-[0.95fr,1.05fr]">
-          <div className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-stone-900">
-              先下载模板
-            </div>
-            <p className="mt-2 text-sm leading-6 text-stone-500">
-              支持 CSV 和 XLSX。
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => handleDownloadTemplate("xlsx")}
-                className="ui-btn-primary"
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                下载 XLSX 模板
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDownloadTemplate("csv")}
-                className="ui-btn-secondary"
-              >
-                <Download className="h-4 w-4" />
-                下载 CSV 模板
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                openExternalHttpUrl(MENTOR_CRAWLER_SKILL_GUIDE_URL)
-              }
-              className="mt-4 inline-flex items-center gap-2 text-left text-sm font-medium text-primary transition hover:text-primary/80"
-            >
-              <ExternalLink className="h-4 w-4" />
-              用 Codex / Claude Code 从导师官网生成导入表
-            </button>
-            <ul className="mt-5 space-y-2 text-sm leading-6 text-stone-600">
-              <li>必填列为 name 和 email；格式错误的行会跳过。</li>
-              <li>
-                省略标签或个人备注列时，已有内容不会被清空。
-              </li>
-              <li>
-                <span className="font-mono text-xs">research_direction</span>{" "}
-                多个方向用中文分号；分隔。
-              </li>
-              <li>
-                <span className="font-mono text-xs">recent_papers</span>{" "}
-                多篇论文用 | 分隔，最多保留前 8 篇。
-              </li>
-            </ul>
-          </div>
+      <ProfessorImportDialog
+        importModalOpen={importModalOpen}
+        importingFile={importingFile}
+        setImportModalOpen={setImportModalOpen}
+        handleDownloadTemplate={handleDownloadTemplate}
+        handleImportDropZoneClick={handleImportDropZoneClick}
+        handleDropImportFile={handleDropImportFile}
+        handleChooseImportFile={handleChooseImportFile}
+        importFile={importFile}
+        importResult={importResult}
+        setImportResult={setImportResult}
+        setImportFile={setImportFile}
+        handleImportSubmit={handleImportSubmit}
+      />
 
-          <div className="rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-stone-900">
-              上传并导入
-            </div>
-            <p className="mt-2 text-sm leading-6 text-stone-500">
-              同邮箱记录将更新；新邮箱将新增。
-            </p>
-            <label
-              onClick={handleImportDropZoneClick}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={handleDropImportFile}
-              className="mt-4 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-[28px] border border-dashed border-stone-300 bg-stone-50/70 px-5 text-center transition hover:border-stone-400 hover:bg-white"
-            >
-              <input
-                type="file"
-                accept=".csv,.xlsx"
-                className="hidden"
-                onChange={handleChooseImportFile}
-              />
-              <Upload className="h-6 w-6 text-stone-400" />
-              <div className="mt-3 text-sm font-medium text-stone-800">
-                {importFile
-                  ? importFile.name
-                  : "拖拽 csv/xlsx 到这里，或点击选择文件"}
-              </div>
-              <div className="mt-2 text-xs text-stone-500">
-                {importFile
-                  ? `已选 ${Math.round(importFile.size / 1024)} KB`
-                  : "支持 UTF-8 CSV 和 Excel 文件"}
-              </div>
-            </label>
+      <ProfessorExportDialog
+        exportModalOpen={exportModalOpen}
+        setExportModalOpen={setExportModalOpen}
+        handleDownloadExport={handleDownloadExport}
+      />
 
-            {importResult ? (
-              <div className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                <div className="font-medium">{importResult.message}</div>
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-white/80 px-3 py-1">
-                    新增 {importResult.inserted_count}
-                  </span>
-                  <span className="rounded-full bg-white/80 px-3 py-1">
-                    更新 {importResult.updated_count}
-                  </span>
-                  <span className="rounded-full bg-white/80 px-3 py-1">
-                    失败 {importResult.failed_count}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setImportModalOpen(false);
-                  setImportResult(null);
-                  setImportFile(null);
-                }}
-                className="ui-btn-secondary"
-              >
-                关闭
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleImportSubmit()}
-                disabled={importingFile}
-                className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {importingFile ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                开始导入
-              </button>
-            </div>
-          </div>
-        </div>
-      </ModalShell>
-
-      <ModalShell
-        open={exportModalOpen}
-        title="导出导师信息"
-        description="导出全部正常导师，格式与导入模板一致。"
-        onClose={() => setExportModalOpen(false)}
-      >
-        <div className="mt-6 rounded-[28px] border border-stone-200 bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-stone-900">
-            选择导出格式
-          </div>
-          <p className="mt-2 text-sm leading-6 text-stone-500">
-            XLSX 适合表格软件，CSV 适合脚本处理。
-          </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => handleDownloadExport("xlsx")}
-              className="ui-btn-primary"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              导出 XLSX
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDownloadExport("csv")}
-              className="ui-btn-secondary"
-            >
-              <Download className="h-4 w-4" />
-              导出 CSV
-            </button>
-          </div>
-          <ul className="mt-5 space-y-2 text-sm leading-6 text-stone-600">
-            <li>包含全部正常导师，不包含回收站导师。</li>
-            <li>导出文件包含个人备注，请谨慎分享。</li>
-          </ul>
-        </div>
-      </ModalShell>
-
-      <ModalShell
-        open={crawlerModalOpen}
-        title="创建抓取任务"
-        description="填写学校、学院和页面 URL；结果进入候选审核。"
-        onClose={closeCrawlerModal}
-        maxWidthClassName="max-w-2xl"
-      >
-        <div className="mt-6 grid gap-4">
-          <label className="block">
-            {renderFieldLabel("学校", true)}
-            <input
-              aria-label="学校"
-              value={crawlerFormState.university}
-              onChange={(event) =>
-                setCrawlerFormState((previous) => ({
-                  ...previous,
-                  university: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：示例大学"
-            />
-          </label>
-          <label className="block">
-            {renderFieldLabel("学院", true)}
-            <input
-              aria-label="学院"
-              value={crawlerFormState.school}
-              onChange={(event) =>
-                setCrawlerFormState((previous) => ({
-                  ...previous,
-                  school: event.target.value,
-                }))
-              }
-              className={inputClassName}
-              placeholder="示例：计算机学院"
-            />
-          </label>
-          <fieldset className="grid gap-2">
-            <legend className="text-sm font-medium text-stone-800">
-              入口类型
-            </legend>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(
-                [
-                  {
-                    value: "list",
-                    label: "列表页",
-                    hint: "学院师资列表页",
-                  },
-                  {
-                    value: "profile",
-                    label: "详情页",
-                    hint: "导师个人主页",
-                  },
-                ] satisfies Array<{
-                  value: CrawlJobEntryTypeDTO;
-                  label: string;
-                  hint: string;
-                }>
-              ).map((option) => (
-                <label
-                  key={option.value}
-                  className="flex cursor-pointer items-start gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-stone-700 transition hover:border-primary/50"
-                >
-                  <input
-                    type="radio"
-                    name="crawler-entry-type"
-                    aria-label={option.label}
-                    value={option.value}
-                    checked={crawlerFormState.entry_type === option.value}
-                    onChange={() =>
-                      setCrawlerFormState((previous) => ({
-                        ...previous,
-                        entry_type: option.value,
-                      }))
-                    }
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="block font-medium text-stone-900">
-                      {option.label}
-                    </span>
-                    <span className="block text-xs leading-5 text-stone-500">
-                      {option.hint}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between gap-3">
-              {renderFieldLabel("页面 URL", true)}
-              <button
-                type="button"
-                aria-label="添加页面 URL"
-                onClick={() =>
-                  setCrawlerFormState((previous) => ({
-                    ...previous,
-                    start_urls: [...previous.start_urls, ""],
-                  }))
-                }
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 transition hover:border-primary/50 hover:text-primary"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-            </div>
-            <p
-              id="crawler-url-hint"
-              className="text-xs leading-5 text-stone-500"
-            >
-              可一次粘贴多个 URL，每行一个，系统会自动拆分。
-            </p>
-            {crawlerFormState.start_urls.map((url, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <input
-                  aria-label="页面 URL"
-                  aria-describedby="crawler-url-hint"
-                  ref={(element) => {
-                    crawlerUrlInputRefs.current[index] = element;
-                  }}
-                  value={url}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setCrawlerFormState((previous) => ({
-                      ...previous,
-                      start_urls: previous.start_urls.map((item, itemIndex) =>
-                        itemIndex === index ? nextValue : item,
-                      ),
-                    }));
-                  }}
-                  onKeyDown={(event) => handleCrawlerUrlKeyDown(event, index)}
-                  onPaste={(event) => handleCrawlerUrlPaste(event, index)}
-                  className={inputClassName}
-                  placeholder={
-                    crawlerFormState.entry_type === "profile"
-                      ? "示例：https://example.edu/faculty/zhang"
-                      : "示例：https://example.edu/faculty"
-                  }
-                />
-                <button
-                  type="button"
-                  aria-label="移除页面 URL"
-                  onClick={() =>
-                    setCrawlerFormState((previous) => ({
-                      ...previous,
-                      start_urls:
-                        previous.start_urls.length > 1
-                          ? previous.start_urls.filter(
-                              (_, itemIndex) => itemIndex !== index,
-                            )
-                          : [""],
-                    }))
-                  }
-                  disabled={crawlerFormState.start_urls.length === 1}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-red-200 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <Minus className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            type="button"
-            onClick={closeCrawlerModal}
-            className="ui-btn-secondary"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCreateCrawlJob()}
-            disabled={crawlerSubmitDisabled}
-            className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {creatingCrawlJob ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : null}
-            开始抓取
-          </button>
-        </div>
-      </ModalShell>
+      <CreateCrawlJobDialog
+        crawlerModalOpen={crawlerModalOpen}
+        closeCrawlerModal={closeCrawlerModal}
+        crawlerFormState={crawlerFormState}
+        setCrawlerFormState={setCrawlerFormState}
+        crawlerUrlInputRefs={crawlerUrlInputRefs}
+        handleCrawlerUrlKeyDown={handleCrawlerUrlKeyDown}
+        handleCrawlerUrlPaste={handleCrawlerUrlPaste}
+        handleCreateCrawlJob={handleCreateCrawlJob}
+        crawlerSubmitDisabled={crawlerSubmitDisabled}
+        creatingCrawlJob={creatingCrawlJob}
+      />
 
       <ProfessorTagAssignmentDialog
         open={Boolean(tagEditorProfessor)}

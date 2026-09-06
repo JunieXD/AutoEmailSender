@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from ..wire import (
+    _THINKING_KEYS as _THINKING_KEYS,
+    merge_extra_body as merge_extra_body,
+    strip_thinking_keys as strip_thinking_keys,
+)
+
 """Thinking-mode adaptation: detect protocol errors and find the right extra_body per endpoint.
 
 The cache is keyed by (api_base_url, model_name, endpoint_kind), so the same
@@ -9,10 +15,9 @@ protocols. Rows are stored in ``thinking_adaptation_cache``; see
 """
 
 
-from app.core.time import utc_now
-
 from typing import Final, Literal
 
+from app.core.time import utc_now
 
 EndpointKind = Literal["chat_completions", "responses"]
 
@@ -43,14 +48,6 @@ THINKING_DISABLE_CANDIDATES: Final[tuple[dict[str, object], ...]] = (
     {"thinking_budget": 0},
 )
 
-_THINKING_KEYS: Final[tuple[str, ...]] = (
-    "thinking",
-    "enable_thinking",
-    "reasoning",
-    "reasoning_effort",
-    "thinking_budget",
-)
-
 
 def is_thinking_mode_protocol_error(status_code: int, response_text: str) -> bool:
     """Return True when an HTTP failure looks like a thinking-mode protocol error.
@@ -65,39 +62,14 @@ def is_thinking_mode_protocol_error(status_code: int, response_text: str) -> boo
     return any(keyword in haystack for keyword in THINKING_PROTOCOL_ERROR_KEYWORDS)
 
 
-def strip_thinking_keys(payload: dict[str, object]) -> dict[str, object]:
-    """Remove every known thinking-mode override key from ``payload`` (out-of-place)."""
-
-    cleaned = dict(payload)
-    for key in _THINKING_KEYS:
-        cleaned.pop(key, None)
-    return cleaned
-
-
-def merge_extra_body(
-    payload: dict[str, object],
-    extra_body: dict[str, object] | None,
-) -> dict[str, object]:
-    """Strip any existing thinking keys from ``payload`` and overlay ``extra_body``.
-
-    Always overwrites so a single attempt's intent is unambiguous: if
-    ``extra_body`` is ``None`` we strip and write nothing back.
-    """
-
-    merged = strip_thinking_keys(payload)
-    if extra_body:
-        merged.update(extra_body)
-    return merged
-
-
 from sqlalchemy import JSON, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ThinkingAdaptationCache
-from app.models import LLMProfile
-from ..runtime import LLMEmptyContentError, LLMRuntimeError
+from app.models import LLMProfile, ThinkingAdaptationCache
+
+from ..contracts import LLMEmptyContentError, LLMRuntimeError
 
 
 async def get_cached_extra_body(
@@ -310,7 +282,7 @@ def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
     """Build a 3-turn payload that triggers thinking-mode protocol errors on
     affected models, but is harmless on regular models (they just answer "7")."""
 
-    from ..runtime import probe_max_tokens_for_profile
+    from ..wire import probe_max_tokens_for_profile
 
     return {
         "model": profile.model_name,
@@ -330,7 +302,7 @@ def _build_probe_payload(profile: LLMProfile) -> dict[str, object]:
 def resolve_base_url_for_cache(api_base_url: str | None) -> str:
     """Normalize the api_base_url for use as a cache key."""
 
-    from ..runtime import resolve_base_url
+    from ..wire import resolve_base_url
 
     return resolve_base_url(api_base_url)
 
@@ -352,7 +324,7 @@ async def probe_and_learn_extra_body(
     On other 4xx/5xx: re-raises ``LLMRuntimeError`` (caller decides what to do).
     """
 
-    from ..runtime import _request_completion_endpoint
+    from ..transport import _request_completion_endpoint
 
     payload = _build_probe_payload(profile)
     attempts: list[dict[str, object] | None] = [None, *THINKING_DISABLE_CANDIDATES]

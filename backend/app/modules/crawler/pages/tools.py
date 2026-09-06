@@ -1,43 +1,132 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import OrderedDict
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
-from difflib import SequenceMatcher
-from functools import lru_cache
-from html import escape, unescape
-import hashlib
-import platform
-import re
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.time import utc_now
 from app.models.crawl_job import (
     CrawlCandidate,
-    CrawlJob,
-    CrawlJobStatus,
-    CrawlPage,
-    CrawlPageTask,
 )
-from app.modules.crawler.candidate_identity import (
-    candidate_identity_values,
-    canonical_candidate_clause,
-    consolidate_candidate_identity,
-    find_canonical_candidate_for_identity,
-    merge_candidate_payload as merge_candidate_payload_shared,
+from app.modules.llm.public import LLMRuntimeAdaptation
+
+from ..runtime.lease import CrawlerClaimFence
+from .browser import (
+    _AT_REPLACEMENTS as _AT_REPLACEMENTS,
+    _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS as _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS,
+    _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT as _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT,
+    _BROWSER_PAGINATION_JUMP_SCRIPT as _BROWSER_PAGINATION_JUMP_SCRIPT,
+    _BROWSER_PAGINATION_STATE_SCRIPT as _BROWSER_PAGINATION_STATE_SCRIPT,
+    _DEFAULT_BROWSER_WAIT_FOR as _DEFAULT_BROWSER_WAIT_FOR,
+    _DOT_REPLACEMENTS as _DOT_REPLACEMENTS,
+    _DYNAMIC_COLLECTION_TOKENS as _DYNAMIC_COLLECTION_TOKENS,
+    _DYNAMIC_MAIN_CONTENT_TOKENS as _DYNAMIC_MAIN_CONTENT_TOKENS,
+    _DYNAMIC_NON_CONTENT_TOKENS as _DYNAMIC_NON_CONTENT_TOKENS,
+    _EMAIL_CHINESE_DOT_PATTERN as _EMAIL_CHINESE_DOT_PATTERN,
+    _EMAIL_CHINESE_EMAIL_SYMBOL_PATTERN as _EMAIL_CHINESE_EMAIL_SYMBOL_PATTERN,
+    _EMAIL_FULLWIDTH_TRANSLATION as _EMAIL_FULLWIDTH_TRANSLATION,
+    _EMAIL_INVISIBLE_PATTERN as _EMAIL_INVISIBLE_PATTERN,
+    _EMAIL_PATTERN as _EMAIL_PATTERN,
+    _TRANSIENT_BROWSER_ERROR_MARKERS as _TRANSIENT_BROWSER_ERROR_MARKERS,
+    _TRANSPARENT_IMAGE_BYTES as _TRANSPARENT_IMAGE_BYTES,
+    BROWSER_BLOCKED_RESOURCE_TYPES as BROWSER_BLOCKED_RESOURCE_TYPES,
+    BROWSER_DELAY_SECONDS as BROWSER_DELAY_SECONDS,
+    BROWSER_EXTRA_ARGS as BROWSER_EXTRA_ARGS,
+    BROWSER_FALLBACK_STATUS as BROWSER_FALLBACK_STATUS,
+    BROWSER_PAGINATION_CHANGE_TIMEOUT_MS as BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
+    BROWSER_RESTRICTED_RESPONSE_SETTLE_MS as BROWSER_RESTRICTED_RESPONSE_SETTLE_MS,
+    BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS as BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS,
+    BROWSER_SPARSE_DIRECTORY_MAX_LINKS as BROWSER_SPARSE_DIRECTORY_MAX_LINKS,
+    BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS as BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS,
+    BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS as BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS,
+    BROWSER_TRANSIENT_RETRY_DELAY_SECONDS as BROWSER_TRANSIENT_RETRY_DELAY_SECONDS,
+    BROWSER_USER_AGENT as BROWSER_USER_AGENT,
+    BROWSER_WAIT_SELECTOR as BROWSER_WAIT_SELECTOR,
+    BROWSER_WAIT_TIMEOUT_MS as BROWSER_WAIT_TIMEOUT_MS,
+    CERTIFICATE_DATE_ERROR_MARKERS as CERTIFICATE_DATE_ERROR_MARKERS,
+    DYNAMIC_DIRECTORY_MAX_RETRIES as DYNAMIC_DIRECTORY_MAX_RETRIES,
+    DYNAMIC_DIRECTORY_READY_POLL_MS as DYNAMIC_DIRECTORY_READY_POLL_MS,
+    DYNAMIC_DIRECTORY_READY_TIMEOUT_MS as DYNAMIC_DIRECTORY_READY_TIMEOUT_MS,
+    DYNAMIC_DIRECTORY_STABLE_MS as DYNAMIC_DIRECTORY_STABLE_MS,
+    DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS as DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS,
+    DYNAMIC_PROFILE_READY_POLL_MS as DYNAMIC_PROFILE_READY_POLL_MS,
+    DYNAMIC_PROFILE_READY_TIMEOUT_MS as DYNAMIC_PROFILE_READY_TIMEOUT_MS,
+    DYNAMIC_PROFILE_STABLE_MS as DYNAMIC_PROFILE_STABLE_MS,
+    IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS as IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS,
+    JS_RENDER_TIMEOUT_MS as JS_RENDER_TIMEOUT_MS,
+    MAX_BROWSER_PAGINATION_CLICK_RETRIES as MAX_BROWSER_PAGINATION_CLICK_RETRIES,
+    MAX_EMBEDDED_FRAME_DOCUMENTS as MAX_EMBEDDED_FRAME_DOCUMENTS,
+    MAX_RETRIES_FOR_BROWSER_RENDER as MAX_RETRIES_FOR_BROWSER_RENDER,
+    TRANSIENT_HTTP_STATUS_CODES as TRANSIENT_HTTP_STATUS_CODES,
+    TRANSIENT_SERVER_STATUS_MAX as TRANSIENT_SERVER_STATUS_MAX,
+    TRANSIENT_SERVER_STATUS_MIN as TRANSIENT_SERVER_STATUS_MIN,
+    BrowserFetchOptions as BrowserFetchOptions,
+    CrawlPageIntent as CrawlPageIntent,
+    _apply_browser_bandwidth_policy as _apply_browser_bandwidth_policy,
+    _body_content_changed_substantially as _body_content_changed_substantially,
+    _browser_fetch_options_for_intent as _browser_fetch_options_for_intent,
+    _browser_link_signature as _browser_link_signature,
+    _browser_pagination_state as _browser_pagination_state,
+    _browser_snapshot_unusable_after_cached_cookies as _browser_snapshot_unusable_after_cached_cookies,
+    _browser_wait_selector_for_intent as _browser_wait_selector_for_intent,
+    _collect_browser_embedded_documents as _collect_browser_embedded_documents,
+    _collect_browser_pagination_by_page_number as _collect_browser_pagination_by_page_number,
+    _dynamic_collection_family as _dynamic_collection_family,
+    _dynamic_collection_has_content as _dynamic_collection_has_content,
+    _dynamic_directory_render_signature as _dynamic_directory_render_signature,
+    _dynamic_directory_snapshot_quality as _dynamic_directory_snapshot_quality,
+    _dynamic_profile_snapshot_quality as _dynamic_profile_snapshot_quality,
+    _failed_snapshot as _failed_snapshot,
+    _fetch_browser_pagination_direct as _fetch_browser_pagination_direct,
+    _fetch_browser_same_page_controls_direct as _fetch_browser_same_page_controls_direct,
+    _fetch_page_with_playwright_direct as _fetch_page_with_playwright_direct,
+    _first_normalized_valid_email as _first_normalized_valid_email,
+    _format_exception_for_snapshot as _format_exception_for_snapshot,
+    _get_async_playwright as _get_async_playwright,
+    _html_class_tokens as _html_class_tokens,
+    _html_structure_tokens as _html_structure_tokens,
+    _install_browser_bandwidth_policy as _install_browser_bandwidth_policy,
+    _is_browser_content_navigation_error as _is_browser_content_navigation_error,
+    _is_certificate_date_error as _is_certificate_date_error,
+    _is_immediate_http_compatibility_error as _is_immediate_http_compatibility_error,
+    _is_transient_http_status as _is_transient_http_status,
+    _is_wait_condition_failure as _is_wait_condition_failure,
+    _load_async_playwright as _load_async_playwright,
+    _looks_like_sparse_browser_directory_shell as _looks_like_sparse_browser_directory_shell,
+    _looks_like_transient_browser_error as _looks_like_transient_browser_error,
+    _pagination_snapshot_fingerprint as _pagination_snapshot_fingerprint,
+    _playwright_launch_options as _playwright_launch_options,
+    _remember_browser_session_cookies as _remember_browser_session_cookies,
+    _restore_browser_session_cookies as _restore_browser_session_cookies,
+    _run_browser_fetch_with_proactor_loop as _run_browser_fetch_with_proactor_loop,
+    _run_browser_pagination_with_proactor_loop as _run_browser_pagination_with_proactor_loop,
+    _run_browser_same_page_controls_with_proactor_loop as _run_browser_same_page_controls_with_proactor_loop,
+    _should_offload_browser_fetch_to_thread as _should_offload_browser_fetch_to_thread,
+    _should_use_page_number_pagination as _should_use_page_number_pagination,
+    _snapshot_from_browser_html as _snapshot_from_browser_html,
+    _try_fetch_browser_pagination_once as _try_fetch_browser_pagination_once,
+    _try_playwright_browser_fetch as _try_playwright_browser_fetch,
+    _try_playwright_browser_fetch_once as _try_playwright_browser_fetch_once,
+    _try_read_browser_page_content as _try_read_browser_page_content,
+    _wait_for_browser_content_change as _wait_for_browser_content_change,
+    _wait_for_browser_pagination_page as _wait_for_browser_pagination_page,
+    _wait_for_dynamic_directory_html as _wait_for_dynamic_directory_html,
+    _wait_for_dynamic_profile_html as _wait_for_dynamic_profile_html,
+    _wait_for_same_page_content_change as _wait_for_same_page_content_change,
+    async_playwright as async_playwright,
+    extract_first_email_from_text as extract_first_email_from_text,
+    looks_like_unrendered_dynamic_teacher_directory as looks_like_unrendered_dynamic_teacher_directory,
+    normalize_obfuscated_email_tokens as normalize_obfuscated_email_tokens,
+    profile_text_has_meaningful_content as profile_text_has_meaningful_content,
 )
-from .chunking import MAX_CRAWL_HTML_CHARS
 from .browser_session import (
     BrowserSessionScope,
-    browser_cookie_session_cache,
 )
 from .fetch_ledger import (
     PageFetchDecision,
@@ -46,87 +135,86 @@ from .fetch_ledger import (
     normalize_fetch_url,
     should_prefer_browser_for_fetch_domain,
 )
+from .payloads import (
+    _CONFIDENCE_LABEL_MAP as _CONFIDENCE_LABEL_MAP,
+    BrowserPaginationExpansion as BrowserPaginationExpansion,
+    BrowserSamePageExpansion as BrowserSamePageExpansion,
+    CandidateBatchFailure as CandidateBatchFailure,
+    CandidateEnrichmentPayload as CandidateEnrichmentPayload,
+    CandidatePersistenceResult as CandidatePersistenceResult,
+    PageSnapshot as PageSnapshot,
+    ProfessorCandidatePayload as ProfessorCandidatePayload,
+    SharedCandidateSaveResult as SharedCandidateSaveResult,
+    _clamp_confidence as _clamp_confidence,
+    _clean_optional as _clean_optional,
+    _clean_required as _clean_required,
+    _normalize_confidence_value as _normalize_confidence_value,
+    _try_float as _try_float,
+)
+from .persistence import (
+    _MERGEABLE_TEXT_FIELDS as _MERGEABLE_TEXT_FIELDS,
+    CrawlJobCanceled as CrawlJobCanceled,
+    CrawlJobPaused as CrawlJobPaused,
+    _candidate_missing_contact_path as _candidate_missing_contact_path,
+    _candidate_profile_url_matches_known_listing_url as _candidate_profile_url_matches_known_listing_url,
+    _clear_listing_profile_url as _clear_listing_profile_url,
+    _field_confidence as _field_confidence,
+    _field_source_entry as _field_source_entry,
+    _filter_accepted_candidate_payloads as _filter_accepted_candidate_payloads,
+    _find_existing_candidate_for_payload as _find_existing_candidate_for_payload,
+    _first_valid_email as _first_valid_email,
+    _get_job_status as _get_job_status,
+    _is_crawl_job_stopped as _is_crawl_job_stopped,
+    _is_spa_route_fragment as _is_spa_route_fragment,
+    _known_listing_urls_for_job as _known_listing_urls_for_job,
+    _looks_like_hostname_without_scheme as _looks_like_hostname_without_scheme,
+    _merge_candidate_payload as _merge_candidate_payload,
+    _normalize_candidate_payloads_for_save as _normalize_candidate_payloads_for_save,
+    _normalize_candidate_profile_urls_for_save as _normalize_candidate_profile_urls_for_save,
+    _normalize_listing_url as _normalize_listing_url,
+    _save_normalized_candidate_payloads as _save_normalized_candidate_payloads,
+    ensure_crawl_job_can_continue as ensure_crawl_job_can_continue,
+    normalize_candidate_payload as normalize_candidate_payload,
+    normalize_candidate_profile_url as normalize_candidate_profile_url,
+    normalize_navigable_url as normalize_navigable_url,
+    record_page_snapshot as record_page_snapshot,
+    save_candidate_payloads_shared as save_candidate_payloads_shared,
+)
+from .snapshots import (
+    CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS as CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS,
+    DYNAMIC_TEACHER_DIRECTORY_MARKERS as DYNAMIC_TEACHER_DIRECTORY_MARKERS,
+    INVALID_PROFILE_PAGE_MARKERS as INVALID_PROFILE_PAGE_MARKERS,
+    MAX_LINKS as MAX_LINKS,
+    MAX_TEXT_CHARS as MAX_TEXT_CHARS,
+    _bound_snapshot_html as _bound_snapshot_html,
+    _clean_snapshot_soup as _clean_snapshot_soup,
+    html_to_snapshot as html_to_snapshot,
+)
 from .url_safety import (
     TEMPORARY_DNS_RESOLUTION_MESSAGE,
     TEMPORARY_FINAL_DNS_RESOLUTION_MESSAGE,
     UNSAFE_CRAWL_URL_MESSAGE,
-    PinnedCrawlNetworkBackend as _PinnedCrawlNetworkBackend,
-    SafeCrawlUrl as _SafeCrawlUrl,
     TemporaryCrawlDNSResolutionError,
     build_safe_crawl_transport as _build_safe_crawl_transport,
     is_allowed_crawl_url,
     is_resolved_allowed_crawl_url as _is_resolved_allowed_crawl_url,
     is_safe_public_crawl_url,
-    resolve_public_dns_host_ips as _resolve_public_dns_host_ips,
     resolve_safe_public_crawl_url as _resolve_safe_public_crawl_url,
     resolved_allowed_crawl_url_error as _resolved_allowed_crawl_url_error,
-    validate_safe_public_crawl_url,
-)
-from app.services.html_text import html_to_text
-from app.services.beautiful_soup import is_comment, parse_html
-from app.modules.llm.public import LLMRuntimeAdaptation
-from ..runtime.lease import CrawlerClaimFence, fence_crawler_claim
-from ..runtime.url_utils import recover_embedded_absolute_url
-from app.modules.professors.public import (
-    RECENT_PAPERS_MAX_ITEMS,
-    is_valid_professor_email,
-    normalize_professor_email,
-    normalize_professor_title,
-    normalize_recent_papers,
-    normalize_research_direction,
+    validate_safe_public_crawl_url as validate_safe_public_crawl_url,
 )
 
 if TYPE_CHECKING:
-    from bs4 import BeautifulSoup
-
-async_playwright = None
+    pass
 
 
-@lru_cache(maxsize=1)
-def _load_async_playwright() -> Any:
-    try:
-        from playwright.async_api import async_playwright as playwright_factory
-    except Exception:  # pragma: no cover - dependency errors become fetch errors later
-        return None
-    return playwright_factory
-
-
-def _get_async_playwright() -> Any:
-    if async_playwright is not None:
-        return async_playwright
-    return _load_async_playwright()
-
-
-MAX_TEXT_CHARS = 12000
-MAX_LINKS = 200
-MAX_EMBEDDED_FRAME_DOCUMENTS = 4
 MAX_HTTP_REDIRECTS = 5
-MAX_RETRIES_FOR_BROWSER_RENDER = 2
 MAX_BROWSER_INTERACTIVE_PAGES = 500
-MAX_BROWSER_PAGINATION_CLICK_RETRIES = 2
 MAX_BROWSER_SAME_PAGE_CONTROLS = 24
-BROWSER_PAGINATION_CHANGE_TIMEOUT_MS = 10000
 MAX_PAGE_SNAPSHOT_CACHE_ENTRIES = 64
 MAX_BINARY_RESOURCE_BYTES = 2 * 1024 * 1024
-BROWSER_BLOCKED_RESOURCE_TYPES = frozenset({"font", "media"})
 # Preserve image load events without downloading the original asset. OCR still
 # fetches selected image URLs explicitly through fetch_binary_resource.
-_TRANSPARENT_IMAGE_BYTES = (
-    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff"
-    b"!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00"
-    b"\x00\x02\x02D\x01\x00;"
-)
-BROWSER_FALLBACK_STATUS = {403, 412, 429}
-TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429})
-TRANSIENT_SERVER_STATUS_MIN = 500
-TRANSIENT_SERVER_STATUS_MAX = 599
-INVALID_PROFILE_PAGE_MARKERS = (
-    "{{name}}",
-    "{{email}}",
-    "{{data}}",
-    "FineCMS error",
-    "SQL syntax",
-)
 UNAVAILABLE_PROFILE_HTTP_STATUS_CODES = frozenset({404, 410})
 _SOFT_404_PROFILE_TITLE_PATTERNS = (
     re.compile(r"(?:^|\s)404(?:\s|$|错误|页面)", re.IGNORECASE),
@@ -146,81 +234,6 @@ _SOFT_404_PROFILE_BODY_PATTERNS = (
     ),
 )
 _MAX_SOFT_404_PROFILE_TEXT_CHARS = 800
-CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS = ("_tsites_encrypt_field",)
-DYNAMIC_TEACHER_DIRECTORY_MARKERS = (
-    "search_teacher.js",
-    "_wp3services/generalquery?queryobj=articles",
-    "queryobj=articles",
-    "_wp3services/generalquery?queryobj=teacherhome",
-    "queryobj=teacherhome",
-)
-_DYNAMIC_COLLECTION_TOKENS = {
-    "cards",
-    "grid",
-    "items",
-    "list",
-    "results",
-    "rows",
-}
-_DYNAMIC_MAIN_CONTENT_TOKENS = {
-    "article",
-    "container",
-    "content",
-    "detail",
-    "main",
-    "news",
-    "result",
-    "results",
-}
-_DYNAMIC_NON_CONTENT_TOKENS = {
-    "aside",
-    "banner",
-    "breadcrumb",
-    "carousel",
-    "dots",
-    "footer",
-    "header",
-    "menu",
-    "nav",
-    "navi",
-    "pager",
-    "pagination",
-    "search",
-    "share",
-    "slider",
-    "social",
-    "swiper",
-    "tabs",
-}
-JS_RENDER_TIMEOUT_MS = 30000
-BROWSER_WAIT_TIMEOUT_MS = 15000
-BROWSER_DELAY_SECONDS = 1.5
-BROWSER_WAIT_SELECTOR = "css:body"
-DYNAMIC_DIRECTORY_READY_TIMEOUT_MS = 5000
-DYNAMIC_DIRECTORY_READY_POLL_MS = 200
-DYNAMIC_DIRECTORY_STABLE_MS = 500
-DYNAMIC_DIRECTORY_MAX_RETRIES = 1
-BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS = 1.0
-BROWSER_TRANSIENT_RETRY_DELAY_SECONDS = 1.0
-BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS = 80
-BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS = 8_000
-BROWSER_SPARSE_DIRECTORY_MAX_LINKS = 5
-BROWSER_RESTRICTED_RESPONSE_SETTLE_MS = 2_500
-DYNAMIC_PROFILE_READY_TIMEOUT_MS = 10000
-DYNAMIC_PROFILE_READY_POLL_MS = 200
-DYNAMIC_PROFILE_STABLE_MS = 400
-DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS = 300
-BROWSER_EXTRA_ARGS = (
-    "--disable-features=HttpsUpgrades",
-    "--disable-blink-features=AutomationControlled",
-)
-CERTIFICATE_DATE_ERROR_MARKERS = (
-    "certificate has expired",
-    "certificate is not yet valid",
-    "cert_has_expired",
-    "cert_not_yet_valid",
-    "err_cert_date_invalid",
-)
 HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "err_connection",
     "err_http2_protocol",
@@ -233,249 +246,6 @@ HTTP_COMPATIBILITY_ERROR_MARKERS = (
     "timeout",
     "certificate",
 )
-_BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS = (
-    "page.content",
-    "page is navigating",
-)
-_TRANSIENT_BROWSER_ERROR_MARKERS = (
-    "err_",
-    "connection",
-    "protocol",
-    "fetch failed",
-    "timed out",
-    "timeout",
-    "dns",
-    "name resolution",
-)
-IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS = (
-    "err_connection_closed",
-    "err_connection_refused",
-    "err_http2_protocol_error",
-    "err_ssl_protocol_error",
-)
-BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
-CrawlPageIntent = Literal["generic", "directory", "profile"]
-_DEFAULT_BROWSER_WAIT_FOR = object()
-
-
-@dataclass(frozen=True, slots=True)
-class BrowserFetchOptions:
-    wait_until: str = "load"
-    wait_for: str | None = BROWSER_WAIT_SELECTOR
-    wait_for_timeout_ms: int = BROWSER_WAIT_TIMEOUT_MS
-    delay_before_return_html_seconds: float = BROWSER_DELAY_SECONDS
-    page_timeout_ms: int = JS_RENDER_TIMEOUT_MS
-    max_retries: int = MAX_RETRIES_FOR_BROWSER_RENDER
-    user_agent: str = BROWSER_USER_AGENT
-    wait_for_dynamic_directory: bool = False
-    dynamic_directory_ready_timeout_ms: int = DYNAMIC_DIRECTORY_READY_TIMEOUT_MS
-    dynamic_directory_ready_poll_ms: int = DYNAMIC_DIRECTORY_READY_POLL_MS
-    dynamic_directory_stable_ms: int = DYNAMIC_DIRECTORY_STABLE_MS
-    wait_for_dynamic_profile: bool = False
-    dynamic_profile_ready_timeout_ms: int = DYNAMIC_PROFILE_READY_TIMEOUT_MS
-    dynamic_profile_ready_poll_ms: int = DYNAMIC_PROFILE_READY_POLL_MS
-    dynamic_profile_stable_ms: int = DYNAMIC_PROFILE_STABLE_MS
-    ignore_https_errors: bool = False
-
-
-class PageSnapshot(BaseModel):
-    page_id: int | None = None
-    url: str
-    title: str | None = None
-    text: str = ""
-    html: str = ""
-    links: list[str] = Field(default_factory=list)
-    fetch_method: str
-    status: Literal["succeeded", "failed"]
-    http_status_code: int | None = None
-    error_message: str | None = None
-    suspicious_empty: bool = False
-    has_client_encrypted_profile_fields: bool = False
-    has_dynamic_teacher_directory_markers: bool = False
-    has_invalid_profile_page_markers: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class BrowserPaginationExpansion:
-    status: Literal["succeeded", "failed"]
-    snapshots: tuple[PageSnapshot, ...] = ()
-    stopped_reason: str | None = None
-    error_message: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class BrowserSamePageExpansion:
-    status: Literal["succeeded", "failed"]
-    snapshots: tuple[PageSnapshot, ...] = ()
-    stopped_reason: str | None = None
-    error_message: str | None = None
-
-
-class ProfessorCandidatePayload(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    name: str = Field(validation_alias=AliasChoices("name", "姓名"))
-    email: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("email", "邮箱", "邮箱地址"),
-    )
-    title: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("title", "职称", "岗位"),
-    )
-    university: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("university", "学校", "院校"),
-    )
-    school: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("school", "学院", "院系", "学院/单位", "单位"),
-    )
-    department: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("department", "部门", "系别"),
-    )
-    research_direction: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("research_direction", "研究方向", "研究领域"),
-    )
-    recent_papers: list[str] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("recent_papers", "近期论文", "代表论文"),
-    )
-    profile_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("profile_url", "主页URL", "主页链接", "个人主页"),
-    )
-    source_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("source_url", "证据来源", "来源页面", "页面URL"),
-    )
-    confidence: float = Field(
-        default=0.0,
-        validation_alias=AliasChoices("confidence", "置信度"),
-    )
-    field_confidence: dict[str, float] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("field_confidence", "字段置信度"),
-    )
-    evidence: dict[str, object] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("evidence", "证据"),
-    )
-    source_chunk_id: str | None = None
-    source_kind: str | None = None
-    boundary_risk: bool = False
-    identity_key: str | None = None
-    merge_history: list[dict[str, object]] | None = None
-    field_sources: dict[str, object] | None = None
-    conflicts: dict[str, object] | None = None
-
-    @field_validator("research_direction", mode="before")
-    @classmethod
-    def _normalize_research_direction(cls, value: object) -> object:
-        return normalize_research_direction(value)
-
-    @field_validator("recent_papers", mode="before")
-    @classmethod
-    def _normalize_recent_papers(cls, value: object) -> list[str]:
-        return normalize_recent_papers(value)
-
-    @field_validator("confidence", mode="before")
-    @classmethod
-    def _normalize_confidence(cls, value: object) -> float:
-        return _clamp_confidence(value)
-
-    @field_validator("field_confidence", mode="before")
-    @classmethod
-    def _normalize_field_confidence(cls, value: object) -> dict[str, float] | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return None
-            numeric = _try_float(stripped)
-            return {"overall": numeric} if numeric is not None else None
-        if isinstance(value, (int, float)):
-            return {"overall": float(value)}
-        if not isinstance(value, dict):
-            return None
-
-        normalized: dict[str, float] = {}
-        for key, item in value.items():
-            if str(key) == "fields" and isinstance(item, dict):
-                for nested_key, nested_item in item.items():
-                    numeric = _normalize_confidence_value(nested_item)
-                    if numeric is not None and str(nested_key).strip():
-                        normalized[str(nested_key).strip()] = numeric
-                continue
-            numeric = _normalize_confidence_value(item)
-            if numeric is not None and str(key).strip():
-                normalized[str(key).strip()] = numeric
-        return normalized or None
-
-    @field_validator("evidence", mode="before")
-    @classmethod
-    def _normalize_evidence(cls, value: object) -> dict[str, object] | None:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            stripped = value.strip()
-            return {"summary": stripped} if stripped else None
-        return None
-
-
-class CandidateEnrichmentPayload(BaseModel):
-    page_relation: Literal["matched", "mismatched", "uncertain"] = "uncertain"
-    email: str | None = None
-    title: str | None = None
-    department: str | None = None
-    research_direction: str | None = None
-    recent_papers: list[str] = Field(default_factory=list)
-
-    @field_validator("title", mode="before")
-    @classmethod
-    def _normalize_title(cls, value: object) -> str | None:
-        return normalize_professor_title(_clean_optional(value))
-
-    @field_validator("recent_papers", mode="before")
-    @classmethod
-    def _normalize_recent_papers(cls, value: object) -> list[str]:
-        return normalize_recent_papers(value)
-
-
-class CandidateBatchFailure(TypedDict):
-    index: int
-    name: str | None
-    reason: str
-
-
-class SharedCandidateSaveResult(TypedDict):
-    attempted_count: int
-    saved_count: int
-    merged_count: int
-    skipped_duplicate_count: int
-    rejected_count: int
-    rejected_items: list[CandidateBatchFailure]
-    saved: list[CrawlCandidate]
-
-
-@dataclass(frozen=True)
-class CandidatePersistenceResult:
-    saved: list[CrawlCandidate]
-    merged_count: int = 0
-    skipped_duplicate_count: int = 0
-
-
-def _is_spa_route_fragment(fragment: str) -> bool:
-    return fragment.startswith("/") or fragment.startswith("!/")
 
 
 def _normalize_url_for_deduplication(url: str) -> str:
@@ -485,104 +255,8 @@ def _normalize_url_for_deduplication(url: str) -> str:
     return parsed.geturl()
 
 
-def normalize_navigable_url(
-    value: object, *, base_url: str | None = None
-) -> str | None:
-    if value is None:
-        return None
-    raw = str(value).strip()
-    if not raw:
-        return None
-    absolute = urljoin(base_url or "", raw) if base_url else raw
-    parsed = urlparse(absolute)
-    if not _is_spa_route_fragment(parsed.fragment):
-        parsed = parsed._replace(fragment="")
-    normalized = parsed.geturl().rstrip("/")
-    return normalized or None
-
-
 def _normalize_page_cache_url(url: str) -> str:
     return _normalize_url_for_deduplication(url)
-
-
-def normalize_candidate_profile_url(
-    value: object, *, base_url: str | None = None
-) -> str | None:
-    if value is None:
-        return None
-    raw = str(value).strip()
-    if not raw:
-        return None
-    if base_url and _looks_like_hostname_without_scheme(raw):
-        base_scheme = urlparse(base_url).scheme.lower()
-        raw = f"{base_scheme if base_scheme in {'http', 'https'} else 'https'}://{raw}"
-    absolute = urljoin(base_url or "", raw) if base_url else raw
-    return normalize_navigable_url(recover_embedded_absolute_url(absolute))
-
-
-def _looks_like_hostname_without_scheme(value: str) -> bool:
-    if value.startswith(("/", "./", "../", "//", "#", "?")) or "://" in value:
-        return False
-    authority = re.split(r"[/#?]", value, maxsplit=1)[0]
-    if "@" in authority:
-        return False
-    host = (
-        authority.rsplit(":", 1)[0]
-        if authority.rsplit(":", 1)[-1].isdigit()
-        else authority
-    )
-    labels = host.rstrip(".").split(".")
-    if len(labels) < 3:
-        return False
-    return all(
-        label
-        and len(label) <= 63
-        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
-        for label in labels
-    )
-
-
-def _normalize_listing_url(value: object, *, base_url: str | None = None) -> str | None:
-    return normalize_navigable_url(value, base_url=base_url)
-
-
-def _candidate_profile_url_matches_known_listing_url(
-    profile_url: str | None, listing_urls: set[str]
-) -> bool:
-    return bool(profile_url and profile_url in listing_urls)
-
-
-def _clear_listing_profile_url(
-    payload: dict[str, Any], removed_profile_url: str
-) -> None:
-    payload["profile_url"] = None
-    field_confidence = payload.get("field_confidence")
-    if isinstance(field_confidence, dict):
-        field_confidence.pop("profile_url", None)
-    evidence = payload.get("evidence")
-    if not isinstance(evidence, dict):
-        evidence = {}
-    evidence["profile_url_removed_reason"] = "matches_known_listing_url"
-    evidence["removed_profile_url"] = removed_profile_url
-    payload["evidence"] = evidence
-
-
-def _candidate_missing_contact_path(payload: dict[str, Any]) -> bool:
-    email = str(payload.get("email") or "").strip()
-    profile_url = str(payload.get("profile_url") or "").strip()
-    return not email and not profile_url
-
-
-_MERGEABLE_TEXT_FIELDS = (
-    "email",
-    "title",
-    "university",
-    "school",
-    "department",
-    "research_direction",
-    "profile_url",
-    "source_url",
-)
 
 
 def _merge_json_dict(current: object, incoming: object) -> dict[str, object]:
@@ -600,16 +274,6 @@ def _append_json_list(
     entries = list(current) if isinstance(current, list) else []
     entries.append(item)
     return entries[-limit:]
-
-
-def _field_source_entry(payload: dict[str, Any], field_name: str) -> dict[str, object]:
-    return {
-        "source_kind": payload.get("source_kind"),
-        "source_chunk_id": payload.get("source_chunk_id"),
-        "source_url": payload.get("source_url"),
-        "confidence": _field_confidence(payload.get("field_confidence"), field_name),
-        "boundary_risk": bool(payload.get("boundary_risk")),
-    }
 
 
 _SOURCE_PRIORITY = {"profile_page": 4, "page_chunk": 3, "list_chunk": 2, None: 1}
@@ -637,71 +301,6 @@ def should_replace_field(
     if old_boundary_risk and not new_boundary_risk:
         return True
     return (new_confidence or 0) > (old_confidence or 0) + 0.2
-
-
-def _field_confidence(value: object, field_name: str) -> float | None:
-    if not isinstance(value, dict):
-        return None
-    raw = value.get(field_name)
-    return float(raw) if isinstance(raw, (int, float)) else None
-
-
-def _merge_candidate_payload(existing: CrawlCandidate, payload: dict[str, Any]) -> bool:
-    return merge_candidate_payload_shared(existing, payload)
-
-
-async def _known_listing_urls_for_job(
-    session: AsyncSession, *, job_id: int, start_url: str
-) -> set[str]:
-    listing_urls: set[str] = set()
-    job = await session.get(CrawlJob, job_id)
-    if job is not None:
-        for url in [job.start_url, *(job.start_urls or [])]:
-            normalized = _normalize_listing_url(url, base_url=start_url)
-            if normalized:
-                listing_urls.add(normalized)
-    else:
-        normalized = _normalize_listing_url(start_url, base_url=start_url)
-        if normalized:
-            listing_urls.add(normalized)
-
-    rows = await session.scalars(
-        select(CrawlPageTask.normalized_url).where(CrawlPageTask.job_id == job_id)
-    )
-    for url in rows:
-        normalized = _normalize_listing_url(url, base_url=start_url)
-        if normalized:
-            listing_urls.add(normalized)
-    return listing_urls
-
-
-async def _find_existing_candidate_for_payload(
-    session: AsyncSession,
-    *,
-    job_id: int,
-    name: str | None,
-    email: str | None,
-    profile_url: str | None,
-    identity_key: str | None = None,
-) -> CrawlCandidate | None:
-    row = await find_canonical_candidate_for_identity(
-        session,
-        job_id=job_id,
-        name=name,
-        email=email,
-        profile_url=profile_url,
-    )
-    if row is not None:
-        return row
-    if identity_key:
-        return await session.scalar(
-            select(CrawlCandidate).where(
-                CrawlCandidate.job_id == job_id,
-                CrawlCandidate.identity_key == identity_key,
-                canonical_candidate_clause(),
-            )
-        )
-    return None
 
 
 @dataclass(frozen=True)
@@ -813,14 +412,6 @@ class CrawlToolContext:
         return True
 
 
-class CrawlJobPaused(RuntimeError):
-    """Raised internally when a crawl job is paused at a safe checkpoint."""
-
-
-class CrawlJobCanceled(RuntimeError):
-    """Raised internally when a crawl job is canceled at a safe checkpoint."""
-
-
 def _is_resolved_context_url(ctx: CrawlToolContext, candidate_url: str) -> bool:
     return _resolved_context_url_error(ctx, candidate_url) is None
 
@@ -860,48 +451,6 @@ def _is_profile_entry_request(profile_entry_url: str, requested_url: str) -> boo
     )
 
 
-def normalize_candidate_payload(
-    candidate: ProfessorCandidatePayload,
-    *,
-    university: str,
-    school: str,
-) -> dict[str, Any]:
-    papers = normalize_recent_papers(
-        candidate.recent_papers, max_items=RECENT_PAPERS_MAX_ITEMS
-    )
-    field_confidence = None
-    if candidate.field_confidence is not None:
-        field_confidence = {
-            str(key).strip(): _clamp_confidence(value)
-            for key, value in candidate.field_confidence.items()
-            if str(key).strip()
-        }
-
-    return {
-        "name": _clean_required(candidate.name),
-        "email": _first_valid_email(candidate.email),
-        "title": normalize_professor_title(_clean_optional(candidate.title)),
-        "university": _clean_optional(candidate.university)
-        or _clean_required(university),
-        "school": _clean_optional(candidate.school) or _clean_required(school),
-        "department": _clean_optional(candidate.department),
-        "research_direction": _clean_optional(candidate.research_direction),
-        "recent_papers": papers,
-        "profile_url": _clean_optional(candidate.profile_url),
-        "source_url": _clean_optional(candidate.source_url),
-        "confidence": _clamp_confidence(candidate.confidence),
-        "field_confidence": field_confidence,
-        "evidence": candidate.evidence,
-        "source_chunk_id": getattr(candidate, "source_chunk_id", None),
-        "source_kind": getattr(candidate, "source_kind", None),
-        "boundary_risk": bool(getattr(candidate, "boundary_risk", False)),
-        "identity_key": getattr(candidate, "identity_key", None),
-        "merge_history": getattr(candidate, "merge_history", None),
-        "field_sources": getattr(candidate, "field_sources", None),
-        "conflicts": getattr(candidate, "conflicts", None),
-    }
-
-
 def build_candidate_enrichment_prompt(
     candidate: CrawlCandidate,
     page_text: str,
@@ -935,82 +484,6 @@ def build_candidate_enrichment_prompt(
 资料页正文：
 {page_text}
 """
-
-
-_EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-
-_AT_REPLACEMENTS = (
-    r"\(\s*at\s*\)",
-    r"\[\s*at\s*\]",
-    r"\s+at\s+",
-)
-
-_DOT_REPLACEMENTS = (
-    r"\(\s*dot\s*\)",
-    r"\[\s*dot\s*\]",
-    r"\s+dot\s+",
-)
-_EMAIL_FULLWIDTH_TRANSLATION = str.maketrans(
-    {
-        "＠": "@",
-        "．": ".",
-        "。": ".",
-        "﹒": ".",
-        "｡": ".",
-        "（": "(",
-        "）": ")",
-        "［": "[",
-        "］": "]",
-        "【": "[",
-        "】": "]",
-        "｛": "{",
-        "｝": "}",
-    }
-)
-_EMAIL_INVISIBLE_PATTERN = re.compile(r"[\u200b\u200c\u200d\ufeff]")
-_EMAIL_CHINESE_EMAIL_SYMBOL_PATTERN = re.compile(r"邮箱符号")
-_EMAIL_CHINESE_DOT_PATTERN = re.compile(r"(?<=[A-Za-z0-9])\s*点\s*(?=[A-Za-z0-9])")
-
-
-def normalize_obfuscated_email_tokens(text: str) -> str:
-    normalized = unescape(text).translate(_EMAIL_FULLWIDTH_TRANSLATION)
-    normalized = _EMAIL_INVISIBLE_PATTERN.sub("", normalized)
-    normalized = _EMAIL_CHINESE_EMAIL_SYMBOL_PATTERN.sub("@", normalized)
-    for token in _AT_REPLACEMENTS:
-        normalized = re.sub(token, "@", normalized, flags=re.IGNORECASE)
-    for token in _DOT_REPLACEMENTS:
-        normalized = re.sub(token, ".", normalized, flags=re.IGNORECASE)
-    normalized = _EMAIL_CHINESE_DOT_PATTERN.sub(".", normalized)
-    normalized = re.sub(r"\s*@\s*", "@", normalized)
-    normalized = re.sub(r"\s*\.\s*", ".", normalized)
-    return normalized
-
-
-def extract_first_email_from_text(text: str) -> str | None:
-    direct = _EMAIL_PATTERN.findall(text)
-    direct_email = _first_normalized_valid_email(direct)
-    if direct_email:
-        return direct_email
-
-    normalized = normalize_obfuscated_email_tokens(text)
-    normalized = re.sub(r"\s+", "", normalized)
-    normalized_emails = _EMAIL_PATTERN.findall(normalized)
-    return _first_normalized_valid_email(normalized_emails)
-
-
-def _first_normalized_valid_email(candidates: Sequence[str]) -> str | None:
-    for candidate in candidates:
-        normalized = normalize_professor_email(candidate)
-        if normalized and is_valid_professor_email(normalized):
-            return normalized
-    return None
-
-
-def _first_valid_email(value: str | None) -> str | None:
-    cleaned = _clean_optional(value)
-    if not cleaned:
-        return None
-    return extract_first_email_from_text(cleaned)
 
 
 async def crawl_page_with_http(ctx: CrawlToolContext, url: str) -> PageSnapshot:
@@ -1677,120 +1150,6 @@ def looks_like_client_encrypted_profile_fields(snapshot: PageSnapshot) -> bool:
     return any(marker in html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS)
 
 
-def looks_like_unrendered_dynamic_teacher_directory(snapshot: PageSnapshot) -> bool:
-    html = snapshot.html or ""
-    if not html:
-        return False
-    lowered = html.lower()
-    soup = parse_html(html)
-    if snapshot.has_dynamic_teacher_directory_markers or any(
-        marker in lowered for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS
-    ):
-        legacy_containers = soup.select(".type_info")
-        if legacy_containers and not any(
-            container.get_text(" ", strip=True) or container.find("a", href=True)
-            for container in legacy_containers
-        ):
-            return True
-        dynamic_teacher_lists = soup.select(
-            ".teacher-list, .teacher-con .teacher-list, [class*='teacher-list']"
-        )
-        if dynamic_teacher_lists and not any(
-            _dynamic_collection_has_content(container)
-            for container in dynamic_teacher_lists
-        ):
-            return True
-
-    collections = list(soup.select("ul, ol, tbody"))
-    populated_families = {
-        _dynamic_collection_family(container)
-        for container in collections
-        if _dynamic_collection_has_content(container)
-    }
-
-    for container in collections:
-        if _dynamic_collection_has_content(container):
-            continue
-        if (
-            container.has_attr("hidden")
-            or str(container.get("aria-hidden") or "").lower() == "true"
-        ):
-            continue
-
-        container_tokens = _html_structure_tokens(container)
-        if container.name != "tbody" and not container_tokens.intersection(
-            _DYNAMIC_COLLECTION_TOKENS
-        ):
-            continue
-
-        ancestors = list(container.parents)
-        context_tokens = set().union(
-            *(_html_structure_tokens(parent) for parent in ancestors)
-        )
-        if container_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
-            continue
-        if context_tokens.intersection(_DYNAMIC_NON_CONTENT_TOKENS):
-            continue
-        if any(
-            getattr(parent, "name", None) in {"header", "footer", "nav", "aside"}
-            for parent in ancestors
-        ):
-            continue
-        if not (
-            any(getattr(parent, "name", None) == "main" for parent in ancestors)
-            or context_tokens.intersection(_DYNAMIC_MAIN_CONTENT_TOKENS)
-        ):
-            continue
-        if _dynamic_collection_family(container) in populated_families:
-            continue
-        return True
-    return False
-
-
-def _dynamic_collection_has_content(element: Any) -> bool:
-    return bool(
-        element.get_text(" ", strip=True)
-        or element.find("a", href=True)
-        or element.find("img", src=True)
-    )
-
-
-def _dynamic_collection_family(element: Any) -> tuple[str, tuple[str, ...]]:
-    tag_name = str(getattr(element, "name", "") or "")
-    tokens = _html_class_tokens(element) or _html_structure_tokens(element)
-    if not tokens:
-        parent = getattr(element, "parent", None)
-        tokens = _html_structure_tokens(parent)
-    return tag_name, tuple(sorted(tokens))
-
-
-def _html_class_tokens(element: Any) -> set[str]:
-    if not hasattr(element, "get"):
-        return set()
-    classes = element.get("class") or []
-    if isinstance(classes, str):
-        values = [classes]
-    else:
-        values = [str(item) for item in classes]
-    return {
-        token for token in re.split(r"[^a-z0-9]+", " ".join(values).lower()) if token
-    }
-
-
-def _html_structure_tokens(element: Any) -> set[str]:
-    if not hasattr(element, "get"):
-        return set()
-    values = [str(element.get("id") or "")]
-    classes = element.get("class") or []
-    if isinstance(classes, str):
-        values.append(classes)
-    else:
-        values.extend(str(item) for item in classes)
-    return {
-        token for token in re.split(r"[^a-z0-9]+", " ".join(values).lower()) if token
-    }
-
-
 def _is_http_blocked_snapshot(snapshot: PageSnapshot) -> bool:
     if snapshot.fetch_method != "http":
         return False
@@ -1869,80 +1228,6 @@ async def _try_http_compatibility_browser_fallback(
     return snapshot
 
 
-def _is_immediate_http_compatibility_error(
-    requested_url: str,
-    snapshot: PageSnapshot,
-) -> bool:
-    if snapshot.status != "failed" or urlparse(requested_url).scheme.lower() != "https":
-        return False
-    error_message = (snapshot.error_message or "").lower()
-    return any(
-        marker in error_message for marker in IMMEDIATE_HTTP_COMPATIBILITY_ERROR_MARKERS
-    )
-
-
-def _browser_wait_selector_for_intent(intent: CrawlPageIntent) -> str:
-    _ = intent
-    return BROWSER_WAIT_SELECTOR
-
-
-def _browser_fetch_options_for_intent(
-    intent: CrawlPageIntent,
-    *,
-    wait_for: str | None | object = _DEFAULT_BROWSER_WAIT_FOR,
-    wait_until: str = "load",
-) -> BrowserFetchOptions:
-    selected_wait_for = (
-        _browser_wait_selector_for_intent(intent)
-        if wait_for is _DEFAULT_BROWSER_WAIT_FOR
-        else wait_for
-    )
-    if intent == "directory":
-        return BrowserFetchOptions(
-            wait_until=wait_until,
-            wait_for=selected_wait_for,
-            delay_before_return_html_seconds=0,
-            max_retries=DYNAMIC_DIRECTORY_MAX_RETRIES,
-            wait_for_dynamic_directory=True,
-        )
-    if intent == "profile":
-        return BrowserFetchOptions(
-            wait_until=wait_until,
-            wait_for=selected_wait_for,
-            delay_before_return_html_seconds=0,
-            wait_for_dynamic_profile=True,
-        )
-    return BrowserFetchOptions(wait_until=wait_until, wait_for=selected_wait_for)
-
-
-def _playwright_launch_options() -> dict[str, object]:
-    return {
-        "headless": True,
-        "args": list(BROWSER_EXTRA_ARGS),
-    }
-
-
-async def _apply_browser_bandwidth_policy(route: Any) -> None:
-    resource_type = str(getattr(getattr(route, "request", None), "resource_type", ""))
-    if resource_type == "image":
-        await route.fulfill(
-            status=200,
-            content_type="image/gif",
-            body=_TRANSPARENT_IMAGE_BYTES,
-        )
-        return
-    if resource_type in BROWSER_BLOCKED_RESOURCE_TYPES:
-        await route.abort()
-        return
-    await route.continue_()
-
-
-async def _install_browser_bandwidth_policy(page: Any) -> None:
-    route = getattr(page, "route", None)
-    if callable(route):
-        await route("**/*", _apply_browser_bandwidth_policy)
-
-
 async def _crawl_page_with_browser(
     ctx: CrawlToolContext,
     absolute_url: str,
@@ -1990,32 +1275,6 @@ async def _crawl_page_with_browser(
                 error_message="浏览器最终 URL 不在允许的同校公网域名范围内",
             )
     return snapshot
-
-
-async def _fetch_page_with_playwright_direct(
-    absolute_url: str,
-    goal: str,
-    intent: CrawlPageIntent = "generic",
-    *,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> PageSnapshot:
-    _ = goal
-    first_result = await _try_playwright_browser_fetch(
-        absolute_url,
-        _browser_fetch_options_for_intent(intent),
-        browser_session_scope=browser_session_scope,
-    )
-    if first_result.status == "succeeded":
-        return first_result
-
-    if _is_wait_condition_failure(first_result.error_message):
-        return await _try_playwright_browser_fetch(
-            absolute_url,
-            _browser_fetch_options_for_intent(intent, wait_for=None),
-            browser_session_scope=browser_session_scope,
-        )
-
-    return first_result
 
 
 async def expand_browser_pagination(
@@ -2143,1803 +1402,9 @@ async def expand_browser_same_page_controls(
     return result
 
 
-async def _fetch_browser_same_page_controls_direct(
-    absolute_url: str,
-    controls: Sequence[dict[str, object]],
-    *,
-    intent: CrawlPageIntent,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> BrowserSamePageExpansion:
-    playwright_factory = _get_async_playwright()
-    if playwright_factory is None:
-        return BrowserSamePageExpansion(
-            status="failed",
-            stopped_reason="playwright_unavailable",
-            error_message="Playwright same-page expansion unavailable",
-        )
-    options = _browser_fetch_options_for_intent(intent)
-    browser = None
-    try:
-        async with playwright_factory() as playwright:
-            browser = await playwright.chromium.launch(**_playwright_launch_options())
-            context = await browser.new_context(
-                user_agent=options.user_agent,
-                ignore_https_errors=options.ignore_https_errors,
-            )
-            await _restore_browser_session_cookies(
-                context,
-                browser_session_scope,
-                absolute_url,
-            )
-            page = await context.new_page()
-            await _install_browser_bandwidth_policy(page)
-            response = await page.goto(
-                absolute_url,
-                wait_until=options.wait_until,
-                timeout=options.page_timeout_ms,
-            )
-            response_status = getattr(response, "status", None)
-            if options.wait_for:
-                selector = options.wait_for[4:] if options.wait_for.startswith("css:") else options.wait_for
-                await page.wait_for_selector(selector, timeout=options.wait_for_timeout_ms)
-            if isinstance(response_status, int) and response_status in BROWSER_FALLBACK_STATUS:
-                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
-            if options.wait_for_dynamic_directory:
-                await _wait_for_dynamic_directory_html(page, absolute_url=absolute_url, options=options)
-            initial_body = await page.locator("body").inner_text()
-            initial_snapshot_html = await page.content()
-            initial_snapshot = _snapshot_from_browser_html(
-                html=initial_snapshot_html,
-                final_url=str(getattr(page, "url", "") or absolute_url),
-                absolute_url=absolute_url,
-            )
-            if isinstance(response_status, int):
-                initial_snapshot.http_status_code = response_status
-            if initial_snapshot.status != "succeeded":
-                return BrowserSamePageExpansion(
-                    status="failed",
-                    stopped_reason="initial_page_failed",
-                    error_message=initial_snapshot.error_message,
-                )
-            seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
-            snapshots: list[PageSnapshot] = []
-            for control in controls:
-                target = {
-                    "tag": str(control.get("tag") or "a"),
-                    "text": str(control.get("text") or ""),
-                    "title": str(control.get("title") or ""),
-                    "ariaLabel": str(control.get("aria_label") or ""),
-                    "classTokens": list(control.get("class_tokens") or ()),
-                    "matchIndex": max(0, int(control.get("match_index") or 0)),
-                }
-                match = await page.evaluate(_BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT, target)
-                if not isinstance(match, dict) or not isinstance(match.get("index"), int):
-                    continue
-                if bool(match.get("disabled")):
-                    continue
-                body_before = await page.locator("body").inner_text()
-                links_before = await _browser_link_signature(page)
-                await page.locator(target["tag"]).nth(int(match["index"])).click(
-                    timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
-                )
-                changed, _, _ = await _wait_for_same_page_content_change(
-                    page,
-                    body_before=body_before,
-                    links_before=links_before,
-                )
-                if not changed:
-                    continue
-                await page.wait_for_timeout(350)
-                html = await page.content()
-                snapshot = _snapshot_from_browser_html(
-                    html=html,
-                    final_url=str(getattr(page, "url", "") or absolute_url),
-                    absolute_url=absolute_url,
-                )
-                if snapshot.status != "succeeded":
-                    continue
-                if isinstance(response_status, int):
-                    snapshot.http_status_code = response_status
-                fingerprint = _pagination_snapshot_fingerprint(snapshot)
-                if fingerprint in seen_fingerprints:
-                    continue
-                seen_fingerprints.add(fingerprint)
-                snapshots.append(snapshot)
-            await _remember_browser_session_cookies(context, browser_session_scope)
-            return BrowserSamePageExpansion(
-                status="succeeded",
-                snapshots=tuple(snapshots),
-                stopped_reason="controls_processed",
-            )
-    except Exception as exc:
-        return BrowserSamePageExpansion(
-            status="failed",
-            stopped_reason="browser_error",
-            error_message=_format_exception_for_snapshot(
-                exc,
-                "Playwright same-page expansion failed",
-            ),
-        )
-    finally:
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-
-
-async def _fetch_browser_pagination_direct(
-    absolute_url: str,
-    target: dict[str, object],
-    *,
-    intent: CrawlPageIntent,
-    max_pages: int,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> BrowserPaginationExpansion:
-    last_result: BrowserPaginationExpansion | None = None
-    for _attempt in range(MAX_RETRIES_FOR_BROWSER_RENDER + 1):
-        result = await _try_fetch_browser_pagination_once(
-            absolute_url,
-            target,
-            intent=intent,
-            max_pages=max_pages,
-            browser_session_scope=browser_session_scope,
-        )
-        if _is_certificate_date_error(result.error_message):
-            return await _try_fetch_browser_pagination_once(
-                absolute_url,
-                target,
-                intent=intent,
-                max_pages=max_pages,
-                ignore_https_errors=True,
-                browser_session_scope=browser_session_scope,
-            )
-        if result.status == "succeeded" or result.stopped_reason != "browser_error":
-            return result
-        last_result = result
-    return last_result or BrowserPaginationExpansion(
-        status="failed",
-        stopped_reason="browser_error",
-        error_message="Playwright browser pagination failed",
-    )
-
-
-async def _try_fetch_browser_pagination_once(
-    absolute_url: str,
-    target: dict[str, object],
-    *,
-    intent: CrawlPageIntent,
-    max_pages: int,
-    ignore_https_errors: bool = False,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> BrowserPaginationExpansion:
-    playwright_factory = _get_async_playwright()
-    if playwright_factory is None:
-        return BrowserPaginationExpansion(
-            status="failed",
-            stopped_reason="playwright_unavailable",
-            error_message="Playwright browser pagination unavailable",
-        )
-
-    options = _browser_fetch_options_for_intent(intent)
-    browser = None
-    try:
-        async with playwright_factory() as playwright:
-            browser = await playwright.chromium.launch(**_playwright_launch_options())
-            context = await browser.new_context(
-                user_agent=options.user_agent,
-                ignore_https_errors=ignore_https_errors,
-            )
-            used_cached_cookies = await _restore_browser_session_cookies(
-                context,
-                browser_session_scope,
-                absolute_url,
-            )
-            page = await context.new_page()
-            await _install_browser_bandwidth_policy(page)
-            navigation_response = await page.goto(
-                absolute_url,
-                wait_until=options.wait_until,
-                timeout=options.page_timeout_ms,
-            )
-            response_status = getattr(navigation_response, "status", None)
-            if options.wait_for:
-                selector = options.wait_for
-                if selector.startswith("css:"):
-                    selector = selector[4:]
-                await page.wait_for_selector(
-                    selector,
-                    timeout=options.wait_for_timeout_ms,
-                )
-            if response_status in BROWSER_FALLBACK_STATUS:
-                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
-            if options.wait_for_dynamic_directory:
-                initial_html, _ = await _wait_for_dynamic_directory_html(
-                    page,
-                    absolute_url=absolute_url,
-                    options=options,
-                )
-            elif options.delay_before_return_html_seconds > 0:
-                await page.wait_for_timeout(
-                    options.delay_before_return_html_seconds * 1000
-                )
-                initial_html = await page.content()
-            else:
-                initial_html = await page.content()
-            initial_url = str(getattr(page, "url", "") or absolute_url)
-            initial_snapshot = _snapshot_from_browser_html(
-                html=initial_html,
-                final_url=initial_url,
-                absolute_url=absolute_url,
-            )
-            if isinstance(response_status, int):
-                initial_snapshot.http_status_code = response_status
-            await _remember_browser_session_cookies(
-                context,
-                browser_session_scope,
-            )
-            if (
-                used_cached_cookies
-                and browser_session_scope is not None
-                and _browser_snapshot_unusable_after_cached_cookies(initial_snapshot)
-            ):
-                browser_cookie_session_cache.discard_for_url(
-                    browser_session_scope,
-                    absolute_url,
-                )
-                return BrowserPaginationExpansion(
-                    status="failed",
-                    stopped_reason="browser_error",
-                    error_message=(
-                        "Playwright browser pagination rejected cached browser session"
-                    ),
-                )
-            if initial_snapshot.suspicious_empty:
-                return BrowserPaginationExpansion(
-                    status="failed",
-                    stopped_reason="browser_error",
-                    error_message="Playwright browser pagination returned empty page content",
-                )
-            seen_fingerprints = {_pagination_snapshot_fingerprint(initial_snapshot)}
-            initial_link_signature = await _browser_link_signature(page)
-            seen_link_signatures = {initial_link_signature}
-            try:
-                pagination_state = await _browser_pagination_state(page)
-            except Exception:
-                pagination_state = None
-            if _should_use_page_number_pagination(pagination_state):
-                return await _collect_browser_pagination_by_page_number(
-                    page,
-                    absolute_url=absolute_url,
-                    options=options,
-                    initial_state=pagination_state,
-                    max_pages=max_pages,
-                    seen_fingerprints=seen_fingerprints,
-                )
-            dynamic_link_pagination = False
-            snapshots: list[PageSnapshot] = []
-            stopped_reason = "page_limit_reached"
-
-            for _ in range(max(1, int(max_pages)) - 1):
-                match = await page.evaluate(
-                    _BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT,
-                    target,
-                )
-                if not isinstance(match, dict) or not isinstance(
-                    match.get("index"), int
-                ):
-                    if snapshots:
-                        stopped_reason = "control_disappeared"
-                        break
-                    return BrowserPaginationExpansion(
-                        status="failed",
-                        stopped_reason="control_not_found",
-                        error_message="重新打开页面后未找到模型选择的分页控件",
-                    )
-                if bool(match.get("disabled")):
-                    stopped_reason = "control_disabled"
-                    break
-
-                changed = False
-                links_before: tuple[str, ...] = ()
-                links_after: tuple[str, ...] = ()
-                for _click_attempt in range(MAX_BROWSER_PAGINATION_CLICK_RETRIES + 1):
-                    body_before = await page.locator("body").inner_text()
-                    links_before = await _browser_link_signature(page)
-                    await (
-                        page.locator(str(target["tag"]))
-                        .nth(int(match["index"]))
-                        .click(
-                            timeout=BROWSER_PAGINATION_CHANGE_TIMEOUT_MS,
-                        )
-                    )
-                    changed, _, links_after = await _wait_for_browser_content_change(
-                        page,
-                        body_before=body_before,
-                        links_before=links_before,
-                    )
-                    if changed:
-                        break
-                if not changed:
-                    stopped_reason = "content_unchanged"
-                    break
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=3000)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(350)
-                links_after = await _browser_link_signature(page)
-                if links_after and links_after != links_before:
-                    dynamic_link_pagination = True
-                if dynamic_link_pagination and links_after in seen_link_signatures:
-                    stopped_reason = "content_repeated"
-                    break
-                html = await page.content()
-                final_url = str(getattr(page, "url", "") or absolute_url)
-                snapshot = _snapshot_from_browser_html(
-                    html=html,
-                    final_url=final_url,
-                    absolute_url=absolute_url,
-                )
-                fingerprint = _pagination_snapshot_fingerprint(snapshot)
-                if fingerprint in seen_fingerprints:
-                    stopped_reason = "content_repeated"
-                    break
-                seen_fingerprints.add(fingerprint)
-                seen_link_signatures.add(links_after)
-                snapshots.append(snapshot)
-
-            return BrowserPaginationExpansion(
-                status="succeeded",
-                snapshots=tuple(snapshots),
-                stopped_reason=stopped_reason,
-            )
-    except Exception as exc:
-        return BrowserPaginationExpansion(
-            status="failed",
-            stopped_reason="browser_error",
-            error_message=_format_exception_for_snapshot(
-                exc,
-                "Playwright browser pagination failed",
-            ),
-        )
-    finally:
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-
-
-async def _wait_for_browser_content_change(
-    page: Any,
-    *,
-    body_before: str,
-    links_before: tuple[str, ...],
-) -> tuple[bool, str, tuple[str, ...]]:
-    elapsed_ms = 0
-    latest_body = body_before
-    latest_links = links_before
-    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
-        await page.wait_for_timeout(250)
-        elapsed_ms += 250
-        latest_body = await page.locator("body").inner_text()
-        latest_links = await _browser_link_signature(page)
-        if latest_links and latest_links != links_before:
-            return True, latest_body, latest_links
-        if elapsed_ms >= 1500 and _body_content_changed_substantially(
-            body_before,
-            latest_body,
-        ):
-            return True, latest_body, latest_links
-    return False, latest_body, latest_links
-
-
-async def _wait_for_same_page_content_change(
-    page: Any,
-    *,
-    body_before: str,
-    links_before: tuple[str, ...],
-) -> tuple[bool, str, tuple[str, ...]]:
-    """Wait past the transient empty state produced by AJAX list replacement."""
-
-    elapsed_ms = 0
-    latest_body = body_before
-    latest_links = links_before
-    changed_at_ms: int | None = None
-    stable_ms = 0
-    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
-        await page.wait_for_timeout(250)
-        elapsed_ms += 250
-        latest_body = await page.locator("body").inner_text()
-        latest_links = await _browser_link_signature(page)
-        body_changed = _body_content_changed_substantially(body_before, latest_body)
-        links_changed = latest_links != links_before
-        if changed_at_ms is None and (body_changed or links_changed):
-            changed_at_ms = elapsed_ms
-            stable_ms = 0
-        if changed_at_ms is None:
-            continue
-        # A list click often clears the old anchors before the new response
-        # arrives.  Do not capture that intermediate empty state as a page.
-        if latest_links and latest_links != links_before:
-            stable_ms += 250
-            if stable_ms >= DYNAMIC_DIRECTORY_STABLE_MS:
-                return True, latest_body, latest_links
-        elif elapsed_ms - changed_at_ms >= 1500 and body_changed:
-            return True, latest_body, latest_links
-    return False, latest_body, latest_links
-
-
-async def _browser_link_signature(page: Any) -> tuple[str, ...]:
-    values = await page.evaluate(
-        """
-        () => Array.from(document.querySelectorAll('a[href]')).map((element) => {
-          const text = String(element.innerText || '').replace(/\\s+/g, ' ').trim();
-          return `${element.href} ${text}`;
-        })
-        """
-    )
-    if not isinstance(values, list):
-        return ()
-    return tuple(str(value) for value in values)
-
-
-async def _browser_pagination_state(page: Any) -> dict[str, int | None] | None:
-    state = await page.evaluate(_BROWSER_PAGINATION_STATE_SCRIPT)
-    if not isinstance(state, dict):
-        return None
-    normalized: dict[str, int | None] = {}
-    for key in ("currentPage", "pageCount", "inputIndex", "jumpControlIndex"):
-        value = state.get(key)
-        normalized[key] = (
-            value if isinstance(value, int) and not isinstance(value, bool) else None
-        )
-    return normalized
-
-
-def _should_use_page_number_pagination(
-    state: dict[str, int | None] | None,
-) -> bool:
-    if state is None:
-        return False
-    return (
-        isinstance(state.get("currentPage"), int)
-        and int(state["currentPage"] or 0) > 0
-        and isinstance(state.get("pageCount"), int)
-        and int(state["pageCount"] or 0) > 0
-        and isinstance(state.get("inputIndex"), int)
-        and int(state["inputIndex"]) >= 0
-        and isinstance(state.get("jumpControlIndex"), int)
-        and int(state["jumpControlIndex"]) >= 0
-    )
-
-
-async def _collect_browser_pagination_by_page_number(
-    page: Any,
-    *,
-    absolute_url: str,
-    options: BrowserFetchOptions,
-    initial_state: dict[str, int | None],
-    max_pages: int,
-    seen_fingerprints: set[str],
-) -> BrowserPaginationExpansion:
-    snapshots: list[PageSnapshot] = []
-    current_page = int(initial_state["currentPage"] or 1)
-    page_count = int(initial_state["pageCount"] or current_page)
-    last_page = min(page_count, max(1, int(max_pages)))
-    stopped_reason = "page_limit_reached"
-
-    for target_page in range(current_page + 1, last_page + 1):
-        try:
-            await page.goto(
-                absolute_url,
-                wait_until=options.wait_until,
-                timeout=options.page_timeout_ms,
-            )
-            if options.wait_for:
-                selector = options.wait_for
-                if selector.startswith("css:"):
-                    selector = selector[4:]
-                await page.wait_for_selector(
-                    selector,
-                    timeout=options.wait_for_timeout_ms,
-                )
-            if options.wait_for_dynamic_directory:
-                await _wait_for_dynamic_directory_html(
-                    page,
-                    absolute_url=absolute_url,
-                    options=options,
-                )
-            elif options.delay_before_return_html_seconds > 0:
-                await page.wait_for_timeout(
-                    options.delay_before_return_html_seconds * 1000
-                )
-            state = await _browser_pagination_state(page)
-            if not _should_use_page_number_pagination(state):
-                stopped_reason = "page_jump_controls_disappeared"
-                break
-            await page.evaluate(
-                _BROWSER_PAGINATION_JUMP_SCRIPT,
-                {
-                    "inputIndex": state["inputIndex"],
-                    "jumpControlIndex": state["jumpControlIndex"],
-                    "targetPage": target_page,
-                },
-            )
-            if not await _wait_for_browser_pagination_page(
-                page,
-                expected_page=target_page,
-            ):
-                stopped_reason = "page_jump_timeout"
-                break
-            await page.wait_for_timeout(350)
-            html = await page.content()
-            final_url = str(getattr(page, "url", "") or absolute_url)
-            snapshot = _snapshot_from_browser_html(
-                html=html,
-                final_url=final_url,
-                absolute_url=absolute_url,
-            )
-            fingerprint = _pagination_snapshot_fingerprint(snapshot)
-            if fingerprint in seen_fingerprints:
-                stopped_reason = "content_repeated"
-                break
-            seen_fingerprints.add(fingerprint)
-            snapshots.append(snapshot)
-        except Exception as exc:
-            stopped_reason = "page_jump_failed"
-            if not snapshots:
-                return BrowserPaginationExpansion(
-                    status="failed",
-                    stopped_reason="browser_error",
-                    error_message=_format_exception_for_snapshot(
-                        exc,
-                        "Playwright browser pagination failed",
-                    ),
-                )
-            break
-
-    if not snapshots and stopped_reason != "page_limit_reached":
-        return BrowserPaginationExpansion(
-            status="failed",
-            stopped_reason="browser_error",
-            error_message=(
-                f"Playwright browser pagination page jump failed: {stopped_reason}"
-            ),
-        )
-    return BrowserPaginationExpansion(
-        status="succeeded",
-        snapshots=tuple(snapshots),
-        stopped_reason=stopped_reason,
-    )
-
-
-async def _wait_for_browser_pagination_page(
-    page: Any,
-    *,
-    expected_page: int,
-) -> bool:
-    elapsed_ms = 0
-    while elapsed_ms < BROWSER_PAGINATION_CHANGE_TIMEOUT_MS:
-        state = await _browser_pagination_state(page)
-        if state is not None and state.get("currentPage") == expected_page:
-            return True
-        await page.wait_for_timeout(250)
-        elapsed_ms += 250
-    return False
-
-
-def _body_content_changed_substantially(before: str, after: str) -> bool:
-    if not after or after == before:
-        return False
-    return SequenceMatcher(None, before, after, autojunk=False).ratio() < 0.995
-
-
-def _pagination_snapshot_fingerprint(snapshot: PageSnapshot) -> str:
-    payload = f"{snapshot.url}\n{snapshot.text}\n" + "\n".join(snapshot.links)
-    return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
-
-
-_BROWSER_PAGINATION_CONTROL_MATCH_SCRIPT = """
-(target) => {
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 240);
-  const requiredClasses = Array.isArray(target.classTokens) ? target.classTokens : [];
-  const matches = [];
-  const nodes = Array.from(document.querySelectorAll(target.tag));
-  nodes.forEach((element, index) => {
-    const descendant = element.querySelector('[aria-label]');
-    const ariaLabel = normalize(
-      element.getAttribute('aria-label') || (descendant && descendant.getAttribute('aria-label'))
-    );
-    const classes = new Set(Array.from(element.classList || []));
-    if (target.text && normalize(element.innerText) !== target.text) return;
-    if (target.title && normalize(element.getAttribute('title')) !== target.title) return;
-    if (target.ariaLabel && ariaLabel !== target.ariaLabel) return;
-    if (!requiredClasses.every((token) => classes.has(token))) return;
-    const disabled = Boolean(element.disabled)
-      || normalize(element.getAttribute('aria-disabled')).toLowerCase() === 'true'
-      || Array.from(classes).some((token) => token.toLowerCase().includes('disabled'));
-    matches.push({index, disabled});
-  });
-  return matches[Math.max(0, Number(target.matchIndex) || 0)] || null;
-}
-"""
-
-
-_BROWSER_PAGINATION_STATE_SCRIPT = """
-/* crawler-pagination-state */
-() => {
-  const numberValue = (value) => {
-    const match = String(value || '').replace(/,/g, '').match(/\\d+/);
-    return match ? Number(match[0]) : null;
-  };
-  const visible = (element) => {
-    if (!element) return false;
-    const style = window.getComputedStyle(element);
-    return style.display !== 'none' && style.visibility !== 'hidden'
-      && element.getClientRects().length > 0;
-  };
-  const current = Array.from(document.querySelectorAll(
-    '[curr_page], [data-current-page], [aria-current="page"], .curr_page'
-  )).map((element) => numberValue(
-    element.getAttribute('curr_page')
-      || element.getAttribute('data-current-page')
-      || element.textContent
-  )).find((value) => value !== null) || null;
-  const pageCountFromAttribute = Array.from(document.querySelectorAll(
-    '[pagecount], [pageCount], [data-page-count], .all_pages'
-  )).map((element) => numberValue(
-    element.getAttribute('pagecount')
-      || element.getAttribute('pageCount')
-      || element.getAttribute('data-page-count')
-      || element.textContent
-  )).find((value) => value !== null) || null;
-  const perPage = Array.from(document.querySelectorAll(
-    '.per_count, [data-page-size], [page-size]'
-  )).map((element) => numberValue(element.textContent || element.getAttribute('data-page-size') || element.getAttribute('page-size')))
-    .find((value) => value !== null) || null;
-  const totalRecords = Array.from(document.querySelectorAll(
-    '.all_count em, [data-total], [total]'
-  )).map((element) => numberValue(element.textContent || element.getAttribute('data-total') || element.getAttribute('total')))
-    .find((value) => value !== null) || null;
-  const pageCount = pageCountFromAttribute || (
-    perPage && totalRecords ? Math.ceil(totalRecords / perPage) : null
-  );
-  const inputs = Array.from(document.querySelectorAll('input'));
-  const inputIndex = inputs.findIndex((element) => {
-    if (!visible(element) || ['hidden', 'button', 'submit'].includes(String(element.type || '').toLowerCase())) return false;
-    const signal = `${element.id} ${element.className} ${element.name}`.toLowerCase();
-    return /page|pager|pagination|jump/.test(signal);
-  });
-  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
-  const jumpControlIndex = controls.findIndex((element) => {
-    if (!visible(element)) return false;
-    const signal = `${element.textContent || ''} ${element.id} ${element.className} ${element.getAttribute('aria-label') || ''}`.toLowerCase();
-    return /jump|go|跳转|转到/.test(signal);
-  });
-  return {
-    currentPage: current,
-    pageCount,
-    inputIndex: inputIndex >= 0 ? inputIndex : null,
-    jumpControlIndex: jumpControlIndex >= 0 ? jumpControlIndex : null,
-  };
-}
-"""
-
-
-_BROWSER_PAGINATION_JUMP_SCRIPT = """
-/* crawler-pagination-jump */
-({inputIndex, jumpControlIndex, targetPage}) => {
-  const inputs = Array.from(document.querySelectorAll('input'));
-  const controls = Array.from(document.querySelectorAll('a, button, [role="button"]'));
-  const input = inputs[Number(inputIndex)];
-  const control = controls[Number(jumpControlIndex)];
-  if (!input || !control) return false;
-  input.value = String(targetPage);
-  input.dispatchEvent(new Event('input', {bubbles: true}));
-  input.dispatchEvent(new Event('change', {bubbles: true}));
-  setTimeout(() => control.click(), 0);
-  return true;
-}
-"""
-
-
-async def _try_playwright_browser_fetch(
-    absolute_url: str,
-    options: BrowserFetchOptions,
-    *,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> PageSnapshot:
-    last_result: PageSnapshot | None = None
-    max_attempts = max(0, options.max_retries) + 1
-    for attempt in range(max_attempts):
-        last_result = await _try_playwright_browser_fetch_once(
-            absolute_url,
-            options,
-            browser_session_scope=browser_session_scope,
-        )
-        if not options.ignore_https_errors and _is_certificate_date_error(
-            last_result.error_message
-        ):
-            compatibility_options = replace(
-                options,
-                ignore_https_errors=True,
-                max_retries=0,
-            )
-            return await _try_playwright_browser_fetch_once(
-                absolute_url,
-                compatibility_options,
-                browser_session_scope=browser_session_scope,
-            )
-        if _is_immediate_http_compatibility_error(absolute_url, last_result):
-            return last_result
-        if _is_transient_http_status(last_result.http_status_code):
-            if attempt + 1 < max_attempts:
-                await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
-                continue
-            status_code = last_result.http_status_code
-            return last_result.model_copy(
-                update={
-                    "status": "failed",
-                    "error_message": (
-                        f"Playwright browser fetch returned temporary HTTP {status_code}"
-                    ),
-                    "suspicious_empty": True,
-                }
-            )
-        if _looks_like_sparse_browser_directory_shell(last_result, options=options):
-            if attempt + 1 < max_attempts:
-                await asyncio.sleep(BROWSER_SPARSE_DIRECTORY_RETRY_DELAY_SECONDS)
-                continue
-            return last_result.model_copy(
-                update={
-                    "status": "failed",
-                    "error_message": (
-                        "Playwright browser fetch returned sparse directory shell after retry"
-                    ),
-                    "suspicious_empty": True,
-                }
-            )
-        if last_result.status == "succeeded" or _is_wait_condition_failure(
-            last_result.error_message
-        ):
-            return last_result
-        if attempt + 1 < max_attempts and _looks_like_transient_browser_error(
-            last_result.error_message
-        ):
-            await asyncio.sleep(BROWSER_TRANSIENT_RETRY_DELAY_SECONDS)
-    return last_result or _failed_snapshot(
-        url=absolute_url,
-        fetch_method="browser",
-        error_message="Playwright browser fetch failed",
-    )
-
-
-async def _try_playwright_browser_fetch_once(
-    absolute_url: str,
-    options: BrowserFetchOptions,
-    *,
-    browser_session_scope: BrowserSessionScope | None = None,
-    _allow_cached_cookie_reset_retry: bool = True,
-) -> PageSnapshot:
-    playwright_factory = _get_async_playwright()
-    if playwright_factory is None:
-        return _failed_snapshot(
-            url=absolute_url,
-            fetch_method="browser",
-            error_message="Playwright browser fetch unavailable: failed to import playwright",
-        )
-
-    browser = None
-    profile_ready = True
-    http_status_code: int | None = None
-    used_cached_cookies = False
-    try:
-        async with playwright_factory() as playwright:
-            browser = await playwright.chromium.launch(**_playwright_launch_options())
-            context = await browser.new_context(
-                user_agent=options.user_agent,
-                ignore_https_errors=options.ignore_https_errors,
-            )
-            used_cached_cookies = await _restore_browser_session_cookies(
-                context,
-                browser_session_scope,
-                absolute_url,
-            )
-            page = await context.new_page()
-            await _install_browser_bandwidth_policy(page)
-            navigation_response = await page.goto(
-                absolute_url,
-                wait_until=options.wait_until,
-                timeout=options.page_timeout_ms,
-            )
-            response_status = getattr(navigation_response, "status", None)
-            if isinstance(response_status, int):
-                http_status_code = response_status
-            if options.wait_for:
-                selector = options.wait_for
-                if selector.startswith("css:"):
-                    selector = selector[4:]
-                await page.wait_for_selector(
-                    selector,
-                    timeout=options.wait_for_timeout_ms,
-                )
-            if http_status_code in BROWSER_FALLBACK_STATUS:
-                await page.wait_for_timeout(BROWSER_RESTRICTED_RESPONSE_SETTLE_MS)
-            has_child_frames = len(getattr(page, "frames", ())) > 1
-            if options.wait_for_dynamic_directory and not has_child_frames:
-                html, _ = await _wait_for_dynamic_directory_html(
-                    page,
-                    absolute_url=absolute_url,
-                    options=options,
-                )
-            elif options.wait_for_dynamic_profile and not has_child_frames:
-                html, profile_ready = await _wait_for_dynamic_profile_html(
-                    page,
-                    absolute_url=absolute_url,
-                    options=options,
-                )
-            elif options.delay_before_return_html_seconds > 0:
-                await page.wait_for_timeout(
-                    options.delay_before_return_html_seconds * 1000
-                )
-                html = await page.content()
-            else:
-                html = await page.content()
-            final_url = str(getattr(page, "url", "") or absolute_url)
-            embedded_documents = await _collect_browser_embedded_documents(
-                page,
-                absolute_url=final_url,
-            )
-            if embedded_documents:
-                profile_ready = True
-            await _remember_browser_session_cookies(
-                context,
-                browser_session_scope,
-            )
-    except Exception as exc:
-        return _failed_snapshot(
-            url=absolute_url,
-            fetch_method="browser",
-            error_message=_format_exception_for_snapshot(
-                exc,
-                "Playwright browser fetch failed",
-            ),
-            http_status_code=http_status_code,
-        )
-    finally:
-        if browser is not None:
-            try:
-                await browser.close()
-            except Exception:
-                pass
-
-    snapshot = _snapshot_from_browser_html(
-        html=html,
-        final_url=final_url,
-        absolute_url=absolute_url,
-        embedded_documents=embedded_documents,
-    )
-    snapshot.http_status_code = http_status_code
-    if _looks_like_sparse_browser_directory_shell(snapshot, options=options):
-        snapshot.suspicious_empty = True
-    if options.wait_for_dynamic_profile and not profile_ready:
-        snapshot.suspicious_empty = True
-    if (
-        used_cached_cookies
-        and browser_session_scope is not None
-        and _allow_cached_cookie_reset_retry
-        and _browser_snapshot_unusable_after_cached_cookies(snapshot)
-    ):
-        browser_cookie_session_cache.discard_for_url(
-            browser_session_scope,
-            absolute_url,
-        )
-        return await _try_playwright_browser_fetch_once(
-            absolute_url,
-            options,
-            browser_session_scope=browser_session_scope,
-            _allow_cached_cookie_reset_retry=False,
-        )
-    return snapshot
-
-
-async def _restore_browser_session_cookies(
-    context: Any,
-    browser_session_scope: BrowserSessionScope | None,
-    absolute_url: str,
-) -> bool:
-    if browser_session_scope is None:
-        return False
-    cookies = browser_cookie_session_cache.get_for_url(
-        browser_session_scope,
-        absolute_url,
-    )
-    if cookies:
-        await context.add_cookies(list(cookies))
-        return True
-    return False
-
-
-async def _remember_browser_session_cookies(
-    context: Any,
-    browser_session_scope: BrowserSessionScope | None,
-) -> None:
-    if browser_session_scope is None:
-        return
-    try:
-        cookies = await context.cookies()
-    except Exception:
-        return
-    browser_cookie_session_cache.remember(browser_session_scope, cookies)
-
-
-def _looks_like_sparse_browser_directory_shell(
-    snapshot: PageSnapshot,
-    *,
-    options: BrowserFetchOptions,
-) -> bool:
-    if (
-        not options.wait_for_dynamic_directory
-        or snapshot.status != "succeeded"
-        or snapshot.http_status_code not in BROWSER_FALLBACK_STATUS
-    ):
-        return False
-    normalized_text = " ".join((snapshot.text or "").split())
-    return (
-        len(normalized_text) <= BROWSER_SPARSE_DIRECTORY_MAX_TEXT_CHARS
-        and len(snapshot.html or "") <= BROWSER_SPARSE_DIRECTORY_MAX_HTML_CHARS
-        and len(set(snapshot.links or ())) <= BROWSER_SPARSE_DIRECTORY_MAX_LINKS
-    )
-
-
-def _is_transient_http_status(status_code: int | None) -> bool:
-    return bool(
-        status_code is not None
-        and (
-            status_code in TRANSIENT_HTTP_STATUS_CODES
-            or TRANSIENT_SERVER_STATUS_MIN <= status_code <= TRANSIENT_SERVER_STATUS_MAX
-        )
-    )
-
-
-def _looks_like_transient_browser_error(message: str | None) -> bool:
-    normalized = (message or "").lower()
-    return bool(normalized) and any(
-        marker in normalized for marker in _TRANSIENT_BROWSER_ERROR_MARKERS
-    )
-
-
-def _browser_snapshot_unusable_after_cached_cookies(snapshot: PageSnapshot) -> bool:
-    if snapshot.suspicious_empty:
-        return True
-    return snapshot.http_status_code in {400, 401, 403, 429}
-
-
-async def _collect_browser_embedded_documents(
-    page: Any,
-    *,
-    absolute_url: str,
-) -> tuple[tuple[str, str], ...]:
-    """Collect one bounded level of same-host frame documents.
-
-    Frame pages are common for older faculty sites. Their outer frameset has
-    no visible body, while the actual profile lives in a child document. We
-    deliberately keep this to same-host frames and one level so it cannot turn
-    into arbitrary recursive browsing.
-    """
-
-    parent_host = (urlparse(absolute_url).hostname or "").lower()
-    documents: list[tuple[str, str]] = []
-    for frame in list(getattr(page, "frames", ())):
-        if frame is getattr(page, "main_frame", None):
-            continue
-        frame_url = str(getattr(frame, "url", "") or "")
-        parsed = urlparse(frame_url)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.hostname.lower() != parent_host
-            or not is_safe_public_crawl_url(frame_url)
-        ):
-            continue
-        try:
-            frame_html = await frame.content()
-        except Exception:
-            continue
-        if frame_html:
-            documents.append((frame_url, frame_html))
-        if len(documents) >= MAX_EMBEDDED_FRAME_DOCUMENTS:
-            break
-    return tuple(documents)
-
-
-async def _wait_for_dynamic_directory_html(
-    page: Any,
-    *,
-    absolute_url: str,
-    options: BrowserFetchOptions,
-) -> tuple[str, bool]:
-    timeout_ms = max(0, int(options.dynamic_directory_ready_timeout_ms))
-    poll_ms = max(1, int(options.dynamic_directory_ready_poll_ms))
-    stable_ms = max(0, int(options.dynamic_directory_stable_ms))
-    elapsed_ms = 0
-    stable_elapsed_ms = 0
-    ready_signature: str | None = None
-    latest_html = ""
-    best_html = ""
-    best_quality: tuple[int, int, int] = (-1, -1, -1)
-
-    while True:
-        latest_html = await _try_read_browser_page_content(page)
-        if latest_html is None:
-            ready_signature = None
-            stable_elapsed_ms = 0
-        else:
-            final_url = str(getattr(page, "url", "") or absolute_url)
-            snapshot = _snapshot_from_browser_html(
-                html=latest_html,
-                final_url=final_url,
-                absolute_url=absolute_url,
-            )
-            quality = _dynamic_directory_snapshot_quality(snapshot)
-            if quality > best_quality:
-                best_html = latest_html
-                best_quality = quality
-            if (
-                snapshot.status == "succeeded"
-                and not snapshot.suspicious_empty
-                and not looks_like_unrendered_dynamic_teacher_directory(snapshot)
-            ):
-                signature = _dynamic_directory_render_signature(snapshot)
-                if signature == ready_signature:
-                    stable_elapsed_ms += poll_ms
-                else:
-                    ready_signature = signature
-                    stable_elapsed_ms = 0
-                if stable_elapsed_ms >= stable_ms:
-                    return best_html or latest_html, True
-            else:
-                stable_elapsed_ms = 0
-                ready_signature = None
-
-        if elapsed_ms >= timeout_ms:
-            return best_html or latest_html, False
-        wait_ms = min(poll_ms, timeout_ms - elapsed_ms)
-        if wait_ms <= 0:
-            return best_html or latest_html, False
-        await page.wait_for_timeout(wait_ms)
-        elapsed_ms += wait_ms
-
-
-def _dynamic_directory_snapshot_quality(snapshot: PageSnapshot) -> tuple[int, int, int]:
-    unique_links = set(snapshot.links or [])
-    return (
-        len(unique_links),
-        len(snapshot.links or []),
-        len(" ".join((snapshot.text or "").split())),
-    )
-
-
-async def _wait_for_dynamic_profile_html(
-    page: Any,
-    *,
-    absolute_url: str,
-    options: BrowserFetchOptions,
-) -> tuple[str, bool]:
-    timeout_ms = max(0, int(options.dynamic_profile_ready_timeout_ms))
-    poll_ms = max(1, int(options.dynamic_profile_ready_poll_ms))
-    stable_ms = max(0, int(options.dynamic_profile_stable_ms))
-    elapsed_ms = 0
-    stable_elapsed_ms = 0
-    ready_signature: str | None = None
-    best_html = ""
-    best_quality: tuple[int, int, int] = (-1, -1, -1)
-
-    while True:
-        latest_html = await _try_read_browser_page_content(page)
-        if latest_html is None:
-            ready_signature = None
-            stable_elapsed_ms = 0
-        else:
-            final_url = str(getattr(page, "url", "") or absolute_url)
-            snapshot = _snapshot_from_browser_html(
-                html=latest_html,
-                final_url=final_url,
-                absolute_url=absolute_url,
-            )
-            quality = _dynamic_profile_snapshot_quality(snapshot)
-            if quality > best_quality:
-                best_html = latest_html
-                best_quality = quality
-
-            if profile_text_has_meaningful_content(snapshot.text):
-                signature = _dynamic_directory_render_signature(snapshot)
-                if signature == ready_signature:
-                    stable_elapsed_ms += poll_ms
-                else:
-                    ready_signature = signature
-                    stable_elapsed_ms = 0
-                if stable_elapsed_ms >= stable_ms:
-                    return latest_html, True
-            else:
-                stable_elapsed_ms = 0
-                ready_signature = None
-
-        if elapsed_ms >= timeout_ms:
-            return best_html or latest_html, False
-        wait_ms = min(poll_ms, timeout_ms - elapsed_ms)
-        if wait_ms <= 0:
-            return best_html or latest_html, False
-        await page.wait_for_timeout(wait_ms)
-        elapsed_ms += wait_ms
-
-
-def profile_text_has_meaningful_content(text: str | None) -> bool:
-    normalized_text = " ".join((text or "").split())
-    if not normalized_text:
-        return False
-    return bool(extract_first_email_from_text(normalized_text)) or (
-        len(normalized_text) >= DYNAMIC_PROFILE_MEANINGFUL_TEXT_CHARS
-    )
-
-
-def _dynamic_profile_snapshot_quality(snapshot: PageSnapshot) -> tuple[int, int, int]:
-    normalized_text = " ".join((snapshot.text or "").split())
-    return (
-        int(bool(extract_first_email_from_text(normalized_text))),
-        len(normalized_text),
-        len(snapshot.links or []),
-    )
-
-
-def _dynamic_directory_render_signature(snapshot: PageSnapshot) -> str:
-    content = snapshot.text + "\0" + "\n".join(snapshot.links)
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _is_browser_content_navigation_error(exc: BaseException) -> bool:
-    normalized = str(exc).casefold()
-    return all(
-        marker in normalized for marker in _BROWSER_CONTENT_NAVIGATION_ERROR_MARKERS
-    )
-
-
-async def _try_read_browser_page_content(page: Any) -> str | None:
-    try:
-        return await page.content()
-    except Exception as exc:
-        if _is_browser_content_navigation_error(exc):
-            return None
-        raise
-
-
-def _is_wait_condition_failure(message: str | None) -> bool:
-    normalized_message = (message or "").lower()
-    return "wait condition failed" in normalized_message or (
-        "wait_for_selector" in normalized_message
-        and "timeout" in normalized_message
-        and "exceeded" in normalized_message
-    )
-
-
-def _is_certificate_date_error(message: str | None) -> bool:
-    normalized_message = (message or "").strip().lower()
-    return any(
-        marker in normalized_message for marker in CERTIFICATE_DATE_ERROR_MARKERS
-    )
-
-
-def _snapshot_from_browser_html(
-    *,
-    html: str,
-    final_url: str,
-    absolute_url: str,
-    embedded_documents: Sequence[tuple[str, str]] = (),
-) -> PageSnapshot:
-    if not html:
-        return _failed_snapshot(
-            url=absolute_url,
-            fetch_method="browser",
-            error_message="Playwright browser fetch returned empty HTML",
-            suspicious_empty=True,
-        )
-
-    snapshot = html_to_snapshot(
-        final_url or absolute_url,
-        html,
-        "browser",
-        embedded_documents=embedded_documents,
-    )
-    if not snapshot.text.strip():
-        snapshot.suspicious_empty = True
-    return snapshot
-
-
-def _run_browser_fetch_with_proactor_loop(
-    absolute_url: str,
-    goal: str,
-    intent: CrawlPageIntent = "generic",
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> PageSnapshot:
-    from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
-
-    ensure_windows_proactor_event_loop_policy()
-    return asyncio.run(
-        _fetch_page_with_playwright_direct(
-            absolute_url,
-            goal,
-            intent,
-            browser_session_scope=browser_session_scope,
-        )
-    )
-
-
-def _run_browser_pagination_with_proactor_loop(
-    absolute_url: str,
-    target: dict[str, object],
-    intent: CrawlPageIntent,
-    max_pages: int,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> BrowserPaginationExpansion:
-    from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
-
-    ensure_windows_proactor_event_loop_policy()
-    return asyncio.run(
-        _fetch_browser_pagination_direct(
-            absolute_url,
-            target,
-            intent=intent,
-            max_pages=max_pages,
-            browser_session_scope=browser_session_scope,
-        )
-    )
-
-
-def _run_browser_same_page_controls_with_proactor_loop(
-    absolute_url: str,
-    controls: Sequence[dict[str, object]],
-    intent: CrawlPageIntent,
-    browser_session_scope: BrowserSessionScope | None = None,
-) -> BrowserSamePageExpansion:
-    from app.core.windows_event_loop import ensure_windows_proactor_event_loop_policy
-
-    ensure_windows_proactor_event_loop_policy()
-    return asyncio.run(
-        _fetch_browser_same_page_controls_direct(
-            absolute_url,
-            controls,
-            intent=intent,
-            browser_session_scope=browser_session_scope,
-        )
-    )
-
-
-def _should_offload_browser_fetch_to_thread() -> bool:
-    if platform.system() != "Windows":
-        return False
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return False
-
-    proactor_type = getattr(asyncio, "ProactorEventLoop", None)
-    if proactor_type is not None and isinstance(loop, proactor_type):
-        return False
-
-    return True
-
-
-def _normalize_candidate_payloads_for_save(
-    ctx: CrawlToolContext,
-    candidates: Sequence[ProfessorCandidatePayload | dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[CandidateBatchFailure]]:
-    payloads: list[dict[str, Any]] = []
-    failed_items: list[CandidateBatchFailure] = []
-    for index, candidate in enumerate(candidates):
-        try:
-            payload = normalize_candidate_payload(
-                candidate,
-                university=ctx.university,
-                school=ctx.school,
-            )
-            if payload.get("source_kind") in (None, ""):
-                payload["source_kind"] = (
-                    "profile_page" if ctx.entry_type == "profile" else "list_chunk"
-                )
-            payloads.append(payload)
-        except (TypeError, ValueError) as exc:
-            failed_items.append(
-                {
-                    "index": index,
-                    "name": _clean_optional(getattr(candidate, "name", None)),
-                    "reason": str(exc),
-                }
-            )
-    return payloads, failed_items
-
-
-def _filter_accepted_candidate_payloads(
-    payloads: Sequence[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[CandidateBatchFailure]]:
-    accepted_payloads: list[dict[str, Any]] = []
-    rejected_items: list[CandidateBatchFailure] = []
-    for index, payload in enumerate(payloads):
-        if _candidate_missing_contact_path(payload):
-            rejected_items.append(
-                {
-                    "index": index,
-                    "name": _clean_optional(payload.get("name")),
-                    "reason": "缺少邮箱和详情页链接，无法用于联系或后续补全",
-                }
-            )
-            continue
-        accepted_payloads.append(payload)
-    return accepted_payloads, rejected_items
-
-
-async def _normalize_candidate_profile_urls_for_save(
-    ctx: CrawlToolContext,
-    payloads: Sequence[dict[str, Any]],
-) -> None:
-    """Normalize candidate profile URLs before contact-path validation."""
-
-    known_listing_urls: set[str] = set(ctx.known_listing_urls)
-    if ctx.entry_type != "profile":
-        async with ctx.session_factory() as session:
-            known_listing_urls.update(
-                await _known_listing_urls_for_job(
-                    session,
-                    job_id=ctx.job_id,
-                    start_url=ctx.start_url,
-                )
-            )
-
-    for payload in payloads:
-        normalized_profile_url = normalize_candidate_profile_url(
-            payload.get("profile_url"),
-            base_url=ctx.start_url,
-        )
-        if _candidate_profile_url_matches_known_listing_url(
-            normalized_profile_url,
-            known_listing_urls,
-        ):
-            _clear_listing_profile_url(payload, normalized_profile_url or "")
-        else:
-            payload["profile_url"] = normalized_profile_url
-
-
-async def save_candidate_payloads_shared(
-    ctx: CrawlToolContext,
-    candidates: Sequence[ProfessorCandidatePayload | dict[str, Any]],
-) -> SharedCandidateSaveResult:
-    payloads, failed_items = _normalize_candidate_payloads_for_save(ctx, candidates)
-    if failed_items:
-        return {
-            "attempted_count": len(candidates),
-            "saved_count": 0,
-            "merged_count": 0,
-            "skipped_duplicate_count": 0,
-            "rejected_count": 0,
-            "rejected_items": failed_items,
-            "saved": [],
-        }
-    await _normalize_candidate_profile_urls_for_save(ctx, payloads)
-    accepted_payloads, rejected_items = _filter_accepted_candidate_payloads(payloads)
-    persistence = await _save_normalized_candidate_payloads(ctx, accepted_payloads)
-    return {
-        "attempted_count": len(candidates),
-        "saved_count": len(persistence.saved),
-        "merged_count": persistence.merged_count,
-        "skipped_duplicate_count": persistence.skipped_duplicate_count,
-        "rejected_count": len(rejected_items),
-        "rejected_items": rejected_items,
-        "saved": persistence.saved,
-    }
-
-
-async def _save_normalized_candidate_payloads(
-    ctx: CrawlToolContext,
-    payloads: Sequence[dict[str, Any]],
-) -> CandidatePersistenceResult:
-    saved: list[CrawlCandidate] = []
-    merged_count = 0
-    skipped_duplicate_count = 0
-    async with ctx.session_factory() as session:
-        if ctx.claim_fence is not None and not await fence_crawler_claim(
-            session,
-            ctx.claim_fence,
-        ):
-            await session.rollback()
-            return CandidatePersistenceResult(saved=[])
-        if await _is_crawl_job_stopped(session, ctx.job_id):
-            return CandidatePersistenceResult(saved=[])
-
-        for payload in payloads:
-            payload["recent_papers"] = normalize_recent_papers(
-                payload.get("recent_papers")
-            )
-            email = payload["email"]
-            normalized_email = str(email).lower() if email else None
-            normalized_profile_url = payload.get("profile_url")
-            identity_key = (
-                payload.get("identity_key")
-                or normalized_email
-                or normalized_profile_url
-            )
-
-            existing = await _find_existing_candidate_for_payload(
-                session,
-                job_id=ctx.job_id,
-                name=payload.get("name"),
-                email=normalized_email,
-                profile_url=normalized_profile_url,
-                identity_key=identity_key,
-            )
-            identities = candidate_identity_values(
-                name=payload.get("name"),
-                email=normalized_email,
-                profile_url=normalized_profile_url,
-            )
-            if existing is not None:
-                if _merge_candidate_payload(existing, payload):
-                    merged_count += 1
-                else:
-                    skipped_duplicate_count += 1
-                await consolidate_candidate_identity(
-                    session,
-                    existing,
-                    additional_identities=identities,
-                )
-                continue
-
-            if not payload.get("identity_key"):
-                payload["identity_key"] = identity_key
-            if not payload.get("field_sources"):
-                payload["field_sources"] = {
-                    field_name: _field_source_entry(payload, field_name)
-                    for field_name in (*_MERGEABLE_TEXT_FIELDS, "recent_papers")
-                    if payload.get(field_name) not in (None, "", [])
-                }
-
-            if await _is_crawl_job_stopped(session, ctx.job_id):
-                await session.rollback()
-                return CandidatePersistenceResult(saved=[])
-
-            row = CrawlCandidate(job_id=ctx.job_id, **payload)
-            try:
-                async with session.begin_nested():
-                    session.add(row)
-                    await session.flush()
-            except IntegrityError:
-                existing = await _find_existing_candidate_for_payload(
-                    session,
-                    job_id=ctx.job_id,
-                    name=payload.get("name"),
-                    email=normalized_email,
-                    profile_url=normalized_profile_url,
-                    identity_key=identity_key,
-                )
-                if existing is None:
-                    raise
-                if _merge_candidate_payload(existing, payload):
-                    merged_count += 1
-                else:
-                    skipped_duplicate_count += 1
-                await consolidate_candidate_identity(
-                    session,
-                    existing,
-                    additional_identities=identities,
-                )
-                continue
-            canonical = await consolidate_candidate_identity(
-                session,
-                row,
-                additional_identities=identities,
-            )
-            if canonical.id == row.id:
-                saved.append(row)
-            else:
-                merged_count += 1
-
-        if await _is_crawl_job_stopped(session, ctx.job_id):
-            await session.rollback()
-            return CandidatePersistenceResult(saved=[])
-
-        await session.commit()
-        for row in saved:
-            await session.refresh(row)
-    return CandidatePersistenceResult(
-        saved=saved,
-        merged_count=merged_count,
-        skipped_duplicate_count=skipped_duplicate_count,
-    )
-
-
-async def record_page_snapshot(
-    ctx: CrawlToolContext, snapshot: PageSnapshot
-) -> CrawlPage | None:
-    row = CrawlPage(
-        job_id=ctx.job_id,
-        url=snapshot.url,
-        parent_url=None,
-        fetch_method=snapshot.fetch_method,
-        page_type="unknown",
-        status=snapshot.status,
-        title=snapshot.title,
-        text_excerpt=snapshot.text[:MAX_TEXT_CHARS] or None,
-        error_message=snapshot.error_message,
-        created_at=utc_now(),
-    )
-    async with ctx.session_factory() as session:
-        if await _is_crawl_job_stopped(session, ctx.job_id):
-            return None
-
-        session.add(row)
-        if await _is_crawl_job_stopped(session, ctx.job_id):
-            await session.rollback()
-            return None
-
-        await session.commit()
-        await session.refresh(row)
-        snapshot.page_id = row.id
-        return row
-
-
-def html_to_snapshot(
-    url: str,
-    html: str,
-    fetch_method: str,
-    *,
-    embedded_documents: Sequence[tuple[str, str]] = (),
-) -> PageSnapshot:
-    """Turn one page and optional frame documents into a bounded snapshot.
-
-    The old implementation sliced raw HTML before parsing. Excel-exported
-    faculty pages put their contact row after a large amount of invisible
-    style/VML markup, so that slice could remove the only email. We now remove
-    non-visible markup first, extract text and links from the complete cleaned
-    documents, and only then apply the existing snapshot budget.
-    """
-
-    documents = [(url, html)] + [
-        (document_url, document_html)
-        for document_url, document_html in embedded_documents
-        if document_html
-    ]
-    cleaned_documents = [
-        (document_url, _clean_snapshot_soup(document_html))
-        for document_url, document_html in documents
-    ]
-    has_client_encrypted_profile_fields = any(
-        any(
-            marker in document_html for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS
-        )
-        for _document_url, document_html in documents
-    )
-    has_dynamic_teacher_directory_markers = any(
-        any(
-            marker in document_html.lower()
-            for marker in DYNAMIC_TEACHER_DIRECTORY_MARKERS
-        )
-        for _document_url, document_html in documents
-    )
-    has_invalid_profile_page_markers = any(
-        any(
-            marker.lower() in document_html.lower()
-            for marker in INVALID_PROFILE_PAGE_MARKERS
-        )
-        for _document_url, document_html in documents
-    )
-    main_soup = cleaned_documents[0][1]
-    title = _clean_optional(
-        main_soup.title.get_text(" ", strip=True) if main_soup.title else None
-    )
-    if not title:
-        for _document_url, document_soup in cleaned_documents[1:]:
-            if document_soup.title:
-                title = _clean_optional(document_soup.title.get_text(" ", strip=True))
-                if title:
-                    break
-
-    text_parts = [
-        html_to_text(str(document_soup))
-        for _document_url, document_soup in cleaned_documents
-    ]
-    text = "\n\n".join(part for part in text_parts if part)
-    text = text.replace("\ufeff", "").strip()[:MAX_TEXT_CHARS]
-
-    links: list[str] = []
-    seen_links: set[str] = set()
-    for document_url, document_soup in cleaned_documents:
-        for tag in document_soup.find_all("a", href=True):
-            link = urljoin(document_url, str(tag["href"]).strip())
-            parsed = urlparse(link)
-            if parsed.scheme not in {"http", "https"} or link in seen_links:
-                continue
-            seen_links.add(link)
-            links.append(link)
-            if len(links) >= MAX_LINKS:
-                break
-        if len(links) >= MAX_LINKS:
-            break
-
-    serialized_documents = [str(main_soup)]
-    for document_url, document_soup in cleaned_documents[1:]:
-        serialized_documents.append(
-            '<section data-crawl-frame-url="{}">{}</section>'.format(
-                escape(document_url, quote=True),
-                document_soup,
-            )
-        )
-    bounded_html = _bound_snapshot_html("\n".join(serialized_documents))
-
-    return PageSnapshot(
-        url=url,
-        title=title,
-        text=text,
-        html=bounded_html,
-        links=links,
-        fetch_method=fetch_method,
-        status="succeeded",
-        suspicious_empty=not text,
-        has_client_encrypted_profile_fields=has_client_encrypted_profile_fields,
-        has_dynamic_teacher_directory_markers=has_dynamic_teacher_directory_markers,
-        has_invalid_profile_page_markers=has_invalid_profile_page_markers,
-    )
-
-
-def _clean_snapshot_soup(html: str) -> BeautifulSoup:
-    soup = parse_html(html or "")
-    for tag in soup.find_all(True):
-        attributes = " ".join(
-            f"{attribute}={attribute_value}"
-            for attribute, attribute_value in tag.attrs.items()
-        )
-        if any(
-            marker in attributes for marker in CLIENT_ENCRYPTED_PROFILE_FIELD_MARKERS
-        ):
-            tag.decompose()
-    for tag in soup(["script", "style", "noscript", "template", "noframes"]):
-        tag.decompose()
-    for comment in soup.find_all(string=is_comment):
-        comment.extract()
-    return soup
-
-
-def _bound_snapshot_html(html: str) -> str:
-    if len(html) <= MAX_CRAWL_HTML_CHARS:
-        return html
-    marker = '\n<div data-crawl-truncated="true"></div>\n'
-    available = max(0, MAX_CRAWL_HTML_CHARS - len(marker))
-    head_size = available // 2
-    tail_size = available - head_size
-    return html[:head_size] + marker + (html[-tail_size:] if tail_size else "")
-
-
-def _format_exception_for_snapshot(exc: BaseException, context: str) -> str:
-    message = str(exc).strip()
-    if message:
-        return f"{context}: {type(exc).__name__}: {message}"
-    return f"{context}: {type(exc).__name__}"
-
-
-def _clean_required(value: object) -> str:
-    cleaned = str(value).strip() if value is not None else ""
-    if not cleaned:
-        raise ValueError("必填文本不能为空")
-    return cleaned
-
-
-def _clean_optional(value: object) -> str | None:
-    if value is None:
-        return None
-    cleaned = str(value).strip()
-    return cleaned or None
-
-
-def _try_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-_CONFIDENCE_LABEL_MAP = {
-    "very high": 1.0,
-    "high": 0.9,
-    "medium": 0.6,
-    "moderate": 0.6,
-    "low": 0.3,
-    "very low": 0.1,
-    "高": 0.9,
-    "较高": 0.8,
-    "中": 0.6,
-    "中等": 0.6,
-    "一般": 0.5,
-    "低": 0.3,
-    "较低": 0.2,
-}
-
-
-def _normalize_confidence_value(value: object) -> float | None:
-    if value is None:
-        return None
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if not isinstance(value, str):
-        return None
-
-    stripped = value.strip()
-    if not stripped:
-        return None
-
-    if stripped.endswith("%"):
-        numeric = _try_float(stripped[:-1].strip())
-        if numeric is not None:
-            return numeric / 100
-
-    numeric = _try_float(stripped)
-    if numeric is not None:
-        return numeric
-
-    normalized = re.sub(r"[\s_-]+", " ", stripped.casefold())
-    return _CONFIDENCE_LABEL_MAP.get(normalized)
-
-
-def _clamp_confidence(value: object) -> float:
-    number = _normalize_confidence_value(value)
-    if number is None:
-        return 0.0
-    return min(1.0, max(0.0, number))
-
-
-async def ensure_crawl_job_can_continue(session: AsyncSession, job_id: int) -> None:
-    status = await _get_job_status(session, job_id)
-    if status == CrawlJobStatus.PAUSED.value:
-        raise CrawlJobPaused()
-    if status == CrawlJobStatus.CANCELED.value:
-        raise CrawlJobCanceled()
-
-
 async def _ensure_crawl_job_can_continue_for_context(ctx: CrawlToolContext) -> None:
     async with ctx.session_factory() as session:
         await ensure_crawl_job_can_continue(session, ctx.job_id)
-
-
-async def _is_crawl_job_stopped(session: AsyncSession, job_id: int) -> bool:
-    status = await _get_job_status(session, job_id)
-    return status in {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
-
-
-async def _get_job_status(session: AsyncSession, job_id: int) -> str | None:
-    return await session.scalar(select(CrawlJob.status).where(CrawlJob.id == job_id))
-
-
-def _failed_snapshot(
-    url: str,
-    fetch_method: str,
-    error_message: str,
-    *,
-    suspicious_empty: bool = False,
-    http_status_code: int | None = None,
-) -> PageSnapshot:
-    return PageSnapshot(
-        url=url,
-        title=None,
-        text="",
-        html="",
-        links=[],
-        fetch_method=fetch_method,
-        status="failed",
-        http_status_code=http_status_code,
-        error_message=error_message,
-        suspicious_empty=suspicious_empty,
-    )
 
 
 def _has_unsafe_public_crawl_url(start_url: str, candidate_url: str) -> bool:

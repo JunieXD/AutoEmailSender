@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.core.time import as_utc_aware, utc_now
-
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import as_utc_aware, utc_now
 from app.models import (
     CrawlJob,
     CrawlPage,
@@ -18,24 +17,32 @@ from app.models import (
     CrawlWorkerKind,
     LLMProfile,
 )
-from ..pages.chunking import ChunkingConfig, build_page_chunks
+from app.modules.llm.public import (
+    ensure_llm_runtime_adaptation,
+    format_llm_runtime_error_for_user,
+)
+
 from ..jobs.llm_context import resolve_crawl_job_runtime_profile
 from ..pages.chunk_runtime import create_chunks_for_page
-from ..pages.fetch_ledger import should_prefer_browser_for_fetch_domain
+from ..pages.chunking import ChunkingConfig, build_page_chunks
 from ..pages.debug import append_crawler_worker_debug_event
+from ..pages.fetch_ledger import should_prefer_browser_for_fetch_domain
 from ..pages.tools import (
     CrawlToolContext,
     PageSnapshot,
-    expand_browser_same_page_controls,
     ProfessorCandidatePayload,
     browser_investigate,
     crawl_page_with_http,
     expand_browser_pagination,
+    expand_browser_same_page_controls,
     looks_like_client_encrypted_profile_fields,
     looks_like_unrendered_dynamic_teacher_directory,
     save_candidate_payloads_shared,
 )
+from .lease import CrawlerClaimFence, fence_crawler_claim
+from .models import CrawlerWorkKind
 from .profile_extraction import invoke_profile_extraction_agent
+from .retry import mark_crawler_failed
 from .routing import (
     ENTRY_DISCOVERY_REASON,
     ENTRY_EXPANSION_MODE,
@@ -45,17 +52,9 @@ from .routing import (
     PageRoutingResult,
     invoke_page_routing_agent,
 )
-from .retry import mark_crawler_failed
-from .token_usage import record_crawler_token_usage
 from .scheduler import ZERO_CANDIDATE_BROWSER_RETRY_REASON, ensure_job_active
-from .lease import CrawlerClaimFence, fence_crawler_claim
-from .models import CrawlerWorkKind
+from .token_usage import record_crawler_token_usage
 from .url_utils import has_spa_route_fragment
-from app.modules.llm.public import (
-    ensure_llm_runtime_adaptation,
-    format_llm_runtime_error_for_user,
-)
-
 
 MAX_PAGE_TASKS_PER_JOB = 5000
 # A selected sibling list may have two more category layers (for example, a
@@ -113,83 +112,18 @@ async def run_crawler_page_worker_once(
         )
 
     try:
-        if force_browser:
-            direct_status = "skipped_for_zero_candidate_retry"
-            fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
-            browser_snapshot = await fetch_page_browser(
-                ctx,
-                target_url,
-                intent=fetch_intent,
-                force_fetch=True,
-            )
-            browser_status = browser_snapshot.status
-            snapshot = browser_snapshot
-            fetch_mode = "browser"
-        elif has_spa_route_fragment(target_url):
-            direct_status = "skipped_for_spa_route"
-            fallback_reason = "spa_route_requires_browser"
-            browser_snapshot = await fetch_page_browser(
-                ctx, target_url, intent=fetch_intent
-            )
-            browser_status = browser_snapshot.status
-            snapshot = browser_snapshot
-            fetch_mode = "browser"
-        elif fetch_intent == "directory":
-            if await _prefer_browser_for_task_domain(
-                session_factory,
-                task.job_id,
-                target_url,
-            ):
-                direct_status = "skipped_by_domain_browser_preference"
-                fallback_reason = "same_domain_previously_required_browser"
-                browser_snapshot = await fetch_page_browser(
-                    ctx,
-                    target_url,
-                    intent=fetch_intent,
-                )
-                browser_status = browser_snapshot.status
-                snapshot = browser_snapshot
-                fetch_mode = "browser"
-            else:
-                direct_snapshot = await fetch_page_direct(ctx, target_url)
-                snapshot = direct_snapshot
-                fetch_mode = "direct"
-                direct_status = direct_snapshot.status
-                fallback_reason = None
-                browser_status = None
-                if _should_use_browser_fallback(direct_snapshot):
-                    fallback_reason = _fallback_reason(direct_snapshot)
-                    browser_snapshot = await fetch_page_browser(
-                        ctx,
-                        target_url,
-                        intent=fetch_intent,
-                    )
-                    browser_status = browser_snapshot.status
-                    if (
-                        browser_snapshot.status == "succeeded"
-                        or direct_snapshot.status != "succeeded"
-                    ):
-                        snapshot = browser_snapshot
-                        fetch_mode = "browser"
-        else:
-            direct_snapshot = await fetch_page_direct(ctx, target_url)
-            snapshot = direct_snapshot
-            fetch_mode = "direct"
-            direct_status = direct_snapshot.status
-            fallback_reason = None
-            browser_status = None
-            if _should_use_browser_fallback(direct_snapshot):
-                fallback_reason = _fallback_reason(direct_snapshot)
-                browser_snapshot = await fetch_page_browser(
-                    ctx, target_url, intent=fetch_intent
-                )
-                browser_status = browser_snapshot.status
-                if (
-                    browser_snapshot.status == "succeeded"
-                    or direct_snapshot.status != "succeeded"
-                ):
-                    snapshot = browser_snapshot
-                    fetch_mode = "browser"
+        (
+            snapshot,
+            fetch_mode,
+            direct_status,
+            fallback_reason,
+            browser_status,
+        ) = await _fetch_page_for_task(
+            ctx,
+            target_url,
+            fetch_intent=fetch_intent,
+            force_browser=force_browser,
+        )
         async with session_factory() as session:
             if not await fence_crawler_claim(
                 session,
@@ -1138,3 +1072,66 @@ def _snapshot_debug_payload(snapshot: PageSnapshot) -> dict[str, object]:
         "markdown": getattr(snapshot, "markdown", "") or "",
         "links_count": len(snapshot.links or []),
     }
+
+
+async def _fetch_page_for_task(
+    ctx: CrawlToolContext,
+    target_url: str,
+    *,
+    fetch_intent: str,
+    force_browser: bool,
+) -> tuple[PageSnapshot, str, str, str | None, str | None]:
+    if force_browser:
+        direct_status = "skipped_for_zero_candidate_retry"
+        fallback_reason = ZERO_CANDIDATE_BROWSER_RETRY_REASON
+        browser_snapshot = await fetch_page_browser(
+            ctx,
+            target_url,
+            intent=fetch_intent,
+            force_fetch=True,
+        )
+        browser_status = browser_snapshot.status
+        snapshot = browser_snapshot
+        fetch_mode = "browser"
+    elif has_spa_route_fragment(target_url):
+        direct_status = "skipped_for_spa_route"
+        fallback_reason = "spa_route_requires_browser"
+        browser_snapshot = await fetch_page_browser(
+            ctx, target_url, intent=fetch_intent
+        )
+        browser_status = browser_snapshot.status
+        snapshot = browser_snapshot
+        fetch_mode = "browser"
+    elif fetch_intent == "directory" and await _prefer_browser_for_task_domain(
+        ctx.session_factory,
+        ctx.job_id,
+        target_url,
+    ):
+        direct_status = "skipped_by_domain_browser_preference"
+        fallback_reason = "same_domain_previously_required_browser"
+        browser_snapshot = await fetch_page_browser(
+            ctx, target_url, intent=fetch_intent
+        )
+        browser_status = browser_snapshot.status
+        snapshot = browser_snapshot
+        fetch_mode = "browser"
+    else:
+        direct_snapshot = await fetch_page_direct(ctx, target_url)
+        snapshot = direct_snapshot
+        fetch_mode = "direct"
+        direct_status = direct_snapshot.status
+        fallback_reason = None
+        browser_status = None
+        if _should_use_browser_fallback(direct_snapshot):
+            fallback_reason = _fallback_reason(direct_snapshot)
+            browser_snapshot = await fetch_page_browser(
+                ctx, target_url, intent=fetch_intent
+            )
+            browser_status = browser_snapshot.status
+            if (
+                browser_snapshot.status == "succeeded"
+                or direct_snapshot.status != "succeeded"
+            ):
+                snapshot = browser_snapshot
+                fetch_mode = "browser"
+    return snapshot, fetch_mode, direct_status, fallback_reason, browser_status

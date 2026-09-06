@@ -8,8 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import CrawlJob, CrawlJobKind, CrawlJobStatus
 
-from .events import normalize_agent_trace_event
-
+from .trace import latest_event_message
 
 CRAWL_TASK_SEARCH_SCOPES = frozenset({"university", "school", "url", "event"})
 
@@ -185,7 +184,7 @@ def _matches_keyword(
     if "url" in search_scopes:
         values.extend([job.start_url, " ".join(job.start_urls or [])])
     if "event" in search_scopes:
-        values.append(_latest_event_message(job.agent_trace) or "")
+        values.append(latest_event_message(job.agent_trace) or "")
     return any(keyword in value.lower() for value in values)
 
 
@@ -228,22 +227,6 @@ def _sort_jobs(
     else:
         get_value = lambda job: job.created_at
     jobs.sort(key=get_value, reverse=sort_direction == "desc")
-
-
-def _latest_event_message(agent_trace: object) -> str | None:
-    if not isinstance(agent_trace, list):
-        return None
-    trace_events = [item for item in agent_trace if isinstance(item, dict)]
-    if not trace_events:
-        return None
-    latest_event = trace_events[-1]
-    summary = latest_event.get("summary")
-    if isinstance(summary, str) and summary.strip():
-        return summary.strip()
-    message = normalize_agent_trace_event(latest_event).get("message")
-    if isinstance(message, str) and message.strip():
-        return message.strip()
-    return None
 
 
 def _escape_keyword(value: str) -> str:

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import secrets
 from datetime import timedelta
 
@@ -14,22 +12,25 @@ from app.core.agent_api_errors import AgentApiError
 from app.core.error_formatting import safe_exception_message
 from app.core.time import as_utc_aware, serialize_api_datetime, utc_now
 from app.models import AgentActionPlan, EmailTask, EmailTaskStatus, IdentityMaterial
-from app.schemas.agent import (
-    AgentActionPlanRead,
-    AgentPlanExecuteRequest,
-    AgentPlanSummaryRead,
-    AgentPrepareSendRequest,
-)
 from app.modules.workspace.public import (
     EmailTaskApprovalRequest,
     EmailTaskScheduleRequest,
     approve_and_schedule_task,
     approve_and_send_task,
 )
+from app.schemas.agent import (
+    AgentActionPlanRead,
+    AgentPlanExecuteRequest,
+    AgentPlanSummaryRead,
+    AgentPrepareSendRequest,
+)
+from app.services.agent_mutations import (
+    fingerprint as _fingerprint,
+    normalize_idempotency_key as _normalize_idempotency_key,
+)
 from app.services.agent_plan_effects import resolve_agent_plan_effects
-from app.services.operation_logs import record_operation_log
 from app.services.material_catalog import list_global_material_metadata
-
+from app.services.operation_logs import record_operation_log
 
 PLAN_TTL = timedelta(minutes=30)
 PLAN_STATUS_AWAITING = "awaiting_confirmation"
@@ -717,31 +718,8 @@ def _ensure_same_idempotent_request(
         )
 
 
-def _normalize_idempotency_key(value: str | None) -> str | None:
-    normalized = (value or "").strip()
-    if not normalized:
-        return None
-    if len(normalized) > 160:
-        raise AgentApiError(
-            status_code=400,
-            code="INVALID_IDEMPOTENCY_KEY",
-            message="Idempotency-Key 不能超过 160 个字符。",
-        )
-    return normalized
-
-
 def _new_plan_id() -> str:
     return f"plan_{secrets.token_urlsafe(18)}"
-
-
-def _fingerprint(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _plan_expired_error(plan: AgentActionPlan) -> AgentApiError:

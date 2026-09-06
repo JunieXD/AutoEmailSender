@@ -14,27 +14,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
-from alembic import command
 from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from alembic import command
 from app.core.migrations import get_alembic_config
 from app.models import Base, Professor, ProfessorCommunityLink
 from app.modules.community.public import (
-    CommunityImportPayload,
+    CommunityDataError,
     CommunityImportItemPayload,
+    CommunityImportPayload,
     CommunityLifecycleWarningStatus,
     CommunityMentorComparisonRead,
+    CommunityMentorDataService,
     CommunityMentorRecord,
     CommunityPreviewPayload,
     CommunityRelocationRecord,
     CommunityRevocationRecord,
     CommunitySharePackagePayload,
-)
-from app.modules.community.public import (
-    CommunityDataError,
-    CommunityMentorDataService,
     build_community_comparisons,
     build_community_share_package,
     community_record_values,
@@ -42,7 +40,6 @@ from app.modules.community.public import (
     sync_community_link_lifecycle,
 )
 from test.migrated_database import create_migrated_sqlite_database
-
 
 DATASET_VERSION = "v2-abcdef123456abcdef123456abcdef12"
 GENERATED_AT = "2026-08-03T00:00:00Z"
@@ -2048,13 +2045,13 @@ class CommunityApiTests(unittest.TestCase):
     def setUp(self) -> None:
         from fastapi.testclient import TestClient
 
-        from app.api.agent_v1.router import (
-            get_agent_community_mentor_data_service,
+        from app.api.agent_v1.plans import (
             get_agent_community_mentor_data_service_factory,
         )
-        from app.modules.community.mentors.api import get_community_mentor_data_service
+        from app.api.agent_v1.support import get_agent_community_mentor_data_service
         from app.core.config import get_settings
         from app.core.database import dispose_engine, get_engine, get_session_factory
+        from app.modules.community.mentors.api import get_community_mentor_data_service
         from main import create_app
 
         self.temp_dir = tempfile.TemporaryDirectory()

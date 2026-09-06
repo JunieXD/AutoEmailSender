@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from ..wire import (
+    EndpointKind as EndpointKind,
+    ResponseEnvelopeClassification as ResponseEnvelopeClassification,
+    _is_chat_completions_envelope as _is_chat_completions_envelope,
+    _is_responses_envelope as _is_responses_envelope,
+    classify_response_envelope as classify_response_envelope,
+)
+
 """Cache and coordination primitives for adapting LLM endpoint protocols."""
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -19,11 +27,9 @@ from app.core.sqlite_diagnostics import (
 )
 from app.core.time import utc_now
 from app.models import LLMEndpointAdaptationCache
-from ..runtime import resolve_base_url
 
+from ..wire import resolve_base_url
 
-EndpointKind = Literal["chat_completions", "responses"]
-ResponseEnvelopeClassification = Literal["valid", "other_endpoint", "invalid"]
 _CACHE_WRITE_LOCK_RETRY_DELAYS = (0.1, 0.25)
 
 
@@ -46,52 +52,6 @@ async def _execute_cache_write_with_lock_retry(
                     SQLITE_LOCK_USER_MESSAGE
                 ) from exc
             await asyncio.sleep(_CACHE_WRITE_LOCK_RETRY_DELAYS[attempt])
-
-
-def _is_chat_completions_envelope(data: object) -> bool:
-    if not isinstance(data, Mapping):
-        return False
-    choices = data.get("choices")
-    return (
-        isinstance(choices, list)
-        and bool(choices)
-        and all(
-            isinstance(choice, Mapping) and isinstance(choice.get("message"), Mapping)
-            for choice in choices
-        )
-    )
-
-
-def _is_responses_envelope(data: object) -> bool:
-    if not isinstance(data, Mapping):
-        return False
-    return isinstance(data.get("output"), list) or isinstance(
-        data.get("output_text"), str
-    )
-
-
-def classify_response_envelope(
-    endpoint_kind: EndpointKind,
-    data: object,
-) -> ResponseEnvelopeClassification:
-    """Classify ``data`` against the protocol expected by ``endpoint_kind``."""
-
-    expected_is_valid = (
-        _is_chat_completions_envelope(data)
-        if endpoint_kind == "chat_completions"
-        else _is_responses_envelope(data)
-    )
-    if expected_is_valid:
-        return "valid"
-
-    other_is_valid = (
-        _is_responses_envelope(data)
-        if endpoint_kind == "chat_completions"
-        else _is_chat_completions_envelope(data)
-    )
-    if other_is_valid:
-        return "other_endpoint"
-    return "invalid"
 
 
 def endpoint_candidates(

@@ -24,30 +24,38 @@ from app.models import (
     OutreachTemplate,
     Professor,
 )
-from app.schemas.agent import (
-    AgentCampaignCreateRequest,
-    AgentCampaignItemRead,
-    AgentCampaignRead,
-    AgentCampaignSendRequest,
+from app.modules.campaigns.create_inputs import (
+    load_campaign_identity,
+    load_campaign_professors,
 )
-from .scheduling import (
-    build_jittered_batch_schedule,
-    has_future_batch_window,
-    normalize_scheduled_dates,
-)
-from .drafts.fallback import (
-    build_initial_batch_draft,
-    professor_has_research_direction,
-)
-from .status import sync_batch_task_completion
 from app.modules.campaigns.status import (
     BATCH_TASK_DELETABLE_STATUSES,
     sanitize_batch_task_material_references_before_restore,
 )
 from app.modules.identities.public import material_can_be_primary
 from app.modules.llm.public import get_active_llm_profile, llm_profile_is_active
-from app.services.operation_logs import record_operation_log
+from app.modules.professors.public import is_valid_professor_email
+from app.schemas.agent import (
+    AgentCampaignCreateRequest,
+    AgentCampaignItemRead,
+    AgentCampaignRead,
+    AgentCampaignSendRequest,
+)
+from app.services.agent_mutations import fingerprint
 from app.services.material_catalog import list_global_material_metadata
+from app.services.operation_logs import record_operation_log
+from app.services.rich_text import normalize_email_html, text_to_email_html
+
+from .drafts.fallback import (
+    build_initial_batch_draft,
+    professor_has_research_direction,
+)
+from .scheduling import (
+    build_jittered_batch_schedule,
+    has_future_batch_window,
+    normalize_scheduled_dates,
+)
+from .status import sync_batch_task_completion
 from .templates.library import (
     get_default_outreach_template_for_identity,
     get_outreach_template,
@@ -59,10 +67,6 @@ from .templates.rendering import (
     get_outreach_template_defaults_validation_error,
     resolve_outreach_template_config,
 )
-from app.services.rich_text import normalize_email_html, text_to_email_html
-from app.services.agent_mutations import fingerprint
-from app.modules.professors.public import is_valid_professor_email
-
 
 CAMPAIGN_CREATE_SNAPSHOT_VERSION = "1"
 CAMPAIGN_SEND_SNAPSHOT_VERSION = "1"
@@ -77,11 +81,7 @@ CAMPAIGN_DISPATCHABLE_STATUSES = {
     EmailTaskStatus.SCHEDULED.value,
     EmailTaskStatus.SENDING.value,
 }
-BATCH_TASK_DELETABLE_STATUSES = {
-    BatchTaskStatus.STOPPED.value,
-    BatchTaskStatus.COMPLETED.value,
-    BatchTaskStatus.EXPIRED.value,
-}
+
 CAMPAIGN_ITEM_REMOVABLE_STATUSES = {
     EmailTaskStatus.DISCOVERED.value,
     EmailTaskStatus.MATCHED.value,
@@ -736,9 +736,7 @@ async def execute_campaign_restore_send_snapshot(
         item_id,
     )
     current_snapshot = _build_campaign_restore_send_snapshot(context)
-    if expected_fingerprint != _campaign_snapshot_fingerprint(
-        current_snapshot
-    ):
+    if expected_fingerprint != _campaign_snapshot_fingerprint(current_snapshot):
         raise _campaign_restore_send_plan_stale_error(campaign_id, item_id)
 
     now = utc_now()
@@ -1027,16 +1025,7 @@ async def _resolve_campaign_create_context(
             message="活动名称不能为空。",
         )
     scheduled_dates = _validate_campaign_schedule(payload)
-    identity = await session.scalar(
-        select(IdentityProfile)
-        .options(
-            selectinload(IdentityProfile.current_primary_material),
-        )
-        .where(
-            IdentityProfile.id == payload.identity_id,
-            IdentityProfile.deleted_at.is_(None),
-        ),
-    )
+    identity = await load_campaign_identity(session, payload.identity_id)
     if identity is None:
         raise AgentApiError(
             status_code=404,
@@ -1050,18 +1039,7 @@ async def _resolve_campaign_create_context(
             code="CAMPAIGN_LLM_PROFILE_NOT_FOUND",
             message="未找到模型配置。",
         )
-    professor_ids = unique_positive_ids(payload.professor_ids)
-    professors: list[Professor] = []
-    for professor_id_chunk in chunked_values(professor_ids):
-        professors.extend(
-            await session.scalars(
-                select(Professor).where(
-                    Professor.id.in_(professor_id_chunk),
-                    Professor.archived_at.is_(None),
-                ),
-            ),
-        )
-    professors.sort(key=lambda professor: professor.id)
+    professors = await load_campaign_professors(session, payload.professor_ids)
     if len(professors) != len(payload.professor_ids):
         raise AgentApiError(
             status_code=404,
@@ -1070,7 +1048,8 @@ async def _resolve_campaign_create_context(
         )
 
     material_map = {
-        material.id: material for material in await list_global_material_metadata(session)
+        material.id: material
+        for material in await list_global_material_metadata(session)
     }
     primary_material: IdentityMaterial | None = None
     if payload.reference_material_id is not None:
@@ -1279,9 +1258,7 @@ def _build_campaign_create_snapshot(
         "summary": summary,
         "warnings": warnings,
     }
-    snapshot["campaign_create_fingerprint"] = _campaign_snapshot_fingerprint(
-        snapshot
-    )
+    snapshot["campaign_create_fingerprint"] = _campaign_snapshot_fingerprint(snapshot)
     return snapshot
 
 
@@ -1326,7 +1303,8 @@ async def _resolve_campaign_send_context(
         )
     selected_tasks = [selected_by_id[item_id] for item_id in sorted(payload.item_ids)]
     material_by_id = {
-        material.id: material for material in await list_global_material_metadata(session)
+        material.id: material
+        for material in await list_global_material_metadata(session)
     }
     final_drafts = [
         _final_campaign_draft_or_raise(campaign, task, material_by_id)
@@ -1369,7 +1347,8 @@ async def _resolve_campaign_resume_context(
             message="该活动的定时发送窗口已全部过期，不能恢复运行。",
         )
     material_by_id = {
-        material.id: material for material in await list_global_material_metadata(session)
+        material.id: material
+        for material in await list_global_material_metadata(session)
     }
     delivery_drafts = [
         _current_campaign_delivery_draft_or_raise(
@@ -1439,7 +1418,8 @@ async def _resolve_campaign_restore_send_context(
             },
         )
     material_by_id = {
-        material.id: material for material in await list_global_material_metadata(session)
+        material.id: material
+        for material in await list_global_material_metadata(session)
     }
     return CampaignRestoreSendContext(
         campaign=campaign,
@@ -1663,9 +1643,7 @@ def _build_campaign_send_snapshot(
             "执行后无法通过同一计划再次创建重复发送。",
         ],
     }
-    snapshot["campaign_send_fingerprint"] = _campaign_snapshot_fingerprint(
-        snapshot
-    )
+    snapshot["campaign_send_fingerprint"] = _campaign_snapshot_fingerprint(snapshot)
     return snapshot
 
 
@@ -1754,8 +1732,8 @@ def _build_campaign_restore_send_snapshot(
             "若活动当前正在运行，到达原定时间后会按已有身份和 SMTP 配置进入发送流程。",
         ],
     }
-    snapshot["campaign_restore_send_fingerprint"] = (
-        _campaign_snapshot_fingerprint(snapshot)
+    snapshot["campaign_restore_send_fingerprint"] = _campaign_snapshot_fingerprint(
+        snapshot
     )
     return snapshot
 

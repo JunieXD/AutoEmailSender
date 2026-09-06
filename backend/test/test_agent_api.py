@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
 import io
 import json
 import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 
 from test.migrated_database import create_migrated_sqlite_database
-
 
 UI_TOKEN = "ui-token-for-tests"
 AGENT_TOKEN = "agent-token-for-tests"
@@ -340,7 +339,7 @@ class AgentApiTests(unittest.TestCase):
 
         sync_mock = AsyncMock(side_effect=RuntimeError("api_key=workspace-sync-secret"))
         with patch(
-            "app.api.agent_v1.router.sync_workspace_professor_replies",
+            "app.api.agent_v1.workspace.sync_workspace_professor_replies",
             sync_mock,
         ):
             refreshed = self.client.post(
@@ -591,7 +590,7 @@ class AgentApiTests(unittest.TestCase):
             "Idempotency-Key": "agent-task-calculate-match",
         }
         with patch(
-            "app.api.agent_v1.router.calculate_task_match_once",
+            "app.api.agent_v1.workspace.calculate_task_match_once",
             new=AsyncMock(return_value=calculation),
         ) as calculate_mock:
             calculated = self.client.post(
@@ -736,7 +735,7 @@ class AgentApiTests(unittest.TestCase):
             selected_model_available=True,
         )
         with patch(
-            "app.api.agent_v1.router.fetch_llm_profile_models",
+            "app.api.agent_v1.llm_profiles.fetch_llm_profile_models",
             new=AsyncMock(return_value=model_result),
         ):
             models = self._agent_get(
@@ -767,11 +766,11 @@ class AgentApiTests(unittest.TestCase):
         }
         with (
             patch(
-                "app.api.agent_v1.router.ensure_llm_runtime_adaptation",
+                "app.api.agent_v1.llm_profiles.ensure_llm_runtime_adaptation",
                 new=AsyncMock(return_value=SimpleNamespace()),
             ),
             patch(
-                "app.api.agent_v1.router.probe_llm_profile",
+                "app.api.agent_v1.llm_profiles.probe_llm_profile",
                 new=AsyncMock(return_value=probe_result),
             ) as probe_mock,
         ):
@@ -2369,7 +2368,7 @@ class AgentApiTests(unittest.TestCase):
             "Idempotency-Key": "agent-mailbox-sync-once",
         }
         with patch(
-            "app.api.agent_v1.router.sync_identity_history_poll_once",
+            "app.api.agent_v1.communications.sync_identity_history_poll_once",
             sync_mock,
         ):
             response = self.client.post(
@@ -2412,7 +2411,7 @@ class AgentApiTests(unittest.TestCase):
         unknown_identity_id = self._create_identity(email="unknown-sync@example.com")
         failed_sync = AsyncMock(side_effect=RuntimeError("provider connection lost"))
         with patch(
-            "app.api.agent_v1.router.sync_identity_history_poll_once",
+            "app.api.agent_v1.communications.sync_identity_history_poll_once",
             failed_sync,
         ):
             unknown = self.client.post(
@@ -2546,7 +2545,7 @@ class AgentApiTests(unittest.TestCase):
             message="未找到发送计划。",
         )
         with patch(
-            "app.api.agent_v1.router.cancel_email_action_plan",
+            "app.api.agent_v1.plans.cancel_email_action_plan",
             new=AsyncMock(side_effect=[RuntimeError("database unavailable"), failure]),
         ) as cancel:
             first = self.client.post(
@@ -4460,11 +4459,11 @@ class AgentApiTests(unittest.TestCase):
 
         with (
             patch(
-                "app.api.agent_v1.router.test_smtp_connection",
+                "app.api.agent_v1.identities.test_smtp_connection",
                 new=AsyncMock(return_value=(False, "SMTP authentication failed")),
             ),
             patch(
-                "app.api.agent_v1.router.test_imap_connection",
+                "app.api.agent_v1.identities.test_imap_connection",
                 new=AsyncMock(return_value=(True, "IMAP connection succeeded")),
             ),
         ):
@@ -4954,7 +4953,7 @@ class AgentApiTests(unittest.TestCase):
             return await load_agent_draft_task(session_factory, task_id)
 
         with patch(
-            "app.api.agent_v1.router.rewrite_agent_draft",
+            "app.api.agent_v1.drafts.rewrite_agent_draft",
             side_effect=fake_rewrite,
         ):
             response = self.client.post(
@@ -5618,7 +5617,7 @@ class AgentApiTests(unittest.TestCase):
         campaign_id, item_id = self._create_template_campaign()
 
         with patch(
-            "app.api.agent_v1.router._cancel_agent_campaign_draft_generation",
+            "app.api.agent_v1.campaigns._cancel_agent_campaign_draft_generation",
         ) as cancel_generation:
             stopped = self.client.post(
                 f"/api/agent/v1/campaigns/{campaign_id}/stop",
@@ -5745,7 +5744,7 @@ class AgentApiTests(unittest.TestCase):
             connection.commit()
 
         with patch(
-            "app.api.agent_v1.router._cancel_agent_campaign_draft_generation",
+            "app.api.agent_v1.campaigns._cancel_agent_campaign_draft_generation",
         ) as cancel_generation:
             paused = self.client.post(
                 f"/api/agent/v1/campaigns/{campaign_id}/pause",
@@ -6104,7 +6103,7 @@ class AgentApiTests(unittest.TestCase):
             run_id=91,
         )
         with patch(
-            "app.api.agent_v1.router.calculate_task_match_once",
+            "app.api.agent_v1.workspace.calculate_task_match_once",
             new=AsyncMock(return_value=calculation),
         ):
             calculated = self.client.post(

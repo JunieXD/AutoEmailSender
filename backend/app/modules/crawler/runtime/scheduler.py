@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import logging
 import uuid
 from collections.abc import Awaitable
+from contextlib import suppress
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-
-from app.core.time import utc_now
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.time import utc_now
 from app.models import (
     CrawlCandidate,
     CrawlCandidateEnrichmentTask,
@@ -27,21 +26,23 @@ from app.models import (
     CrawlPageTask,
     CrawlPageTaskStatus,
 )
-from .models import CrawlerClaimedWork, CrawlerWorkerConfig, CrawlerWorkKind
-from .profile_text_cache import profile_text_cache
-from app.modules.system.public import get_runtime_settings
 from app.modules.crawler.candidate_identity import (
     canonical_candidate_clause,
     consolidate_job_candidates,
 )
+from app.modules.llm.public import format_llm_runtime_error_for_user
+from app.modules.system.public import get_runtime_settings
+
 from ..jobs.enrichment_operations import append_candidate_enrichment_terminal_event
+from ..jobs.leases import expire_job_work_leases
 from ..jobs.runs import (
     mark_crawl_job_run_finished,
     mark_crawl_job_run_queued,
     mark_crawl_job_run_running,
 )
-from app.modules.llm.public import format_llm_runtime_error_for_user
 from .lease import CrawlerClaimFence, renew_crawler_claim
+from .models import CrawlerClaimedWork, CrawlerWorkerConfig, CrawlerWorkKind
+from .profile_text_cache import profile_text_cache
 
 _ACTIVE_JOB_STATUSES = {CrawlJobStatus.QUEUED.value, CrawlJobStatus.RUNNING.value}
 _PAUSED_JOB_STATUSES = {CrawlJobStatus.PAUSED.value, CrawlJobStatus.CANCELED.value}
@@ -160,7 +161,7 @@ async def _eligible_job_ids(
     overflow_jobs = running_jobs[job_concurrency:]
     for job in overflow_jobs:
         demoted_at = utc_now()
-        await _expire_job_work_leases(session, job_id=job.id, now=demoted_at)
+        await expire_job_work_leases(session, job_id=job.id, now=demoted_at)
         job.status = CrawlJobStatus.QUEUED.value
         job.updated_at = demoted_at
         await mark_crawl_job_run_queued(session, job, now=demoted_at)
@@ -190,39 +191,13 @@ async def _eligible_job_ids(
     return [job.id for job in admitted_jobs]
 
 
-async def _expire_job_work_leases(
-    session: AsyncSession,
-    *,
-    job_id: int,
-    now: datetime,
-) -> None:
-    for model, processing_status in (
-        (CrawlPageTask, CrawlPageTaskStatus.PROCESSING.value),
-        (CrawlPageChunk, CrawlPageChunkStatus.PROCESSING.value),
-        (
-            CrawlCandidateEnrichmentTask,
-            CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-        ),
-    ):
-        await session.execute(
-            update(model)
-            .where(
-                model.job_id == job_id,
-                model.status == processing_status,
-            )
-            .values(lease_expires_at=now)
-        )
-
-
 async def run_crawler_scheduler_once(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     worker_id: str = "crawler-scheduler",
     config: CrawlerWorkerConfig | None = None,
 ) -> int:
-    claimed = await claim_next_work(
-        session_factory, worker_id=worker_id, config=config
-    )
+    claimed = await claim_next_work(session_factory, worker_id=worker_id, config=config)
     if claimed.kind is not CrawlerWorkKind.IDLE:
         return 1
     async with session_factory() as session:

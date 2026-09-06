@@ -44,6 +44,7 @@ from .availability import (
     get_default_active_llm_profile,
     llm_profile_is_active,
 )
+from .defaults import set_default_llm_profile_record as set_default_llm_profile_record
 from .runtime import *  # noqa: F403
 from .schemas import (
     LLMProfileBase,

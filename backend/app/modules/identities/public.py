@@ -17,11 +17,11 @@ from .communication_groups.public import (
     update_communication_group_record,
 )
 from .materials.public import (
-    IdentityMaterialRead,
-    IdentityMaterialTypeRead,
     MATERIAL_REFERENCE_BLOCKING_STATUSES,
     MATERIAL_REFERENCE_DETACHABLE_STATUSES,
     MATERIAL_REFERENCE_RESET_DRAFT_STATUSES,
+    IdentityMaterialRead,
+    IdentityMaterialTypeRead,
     MaterialDeletionResult,
     MaterialMutationError,
     build_material_download_name,
@@ -34,20 +34,23 @@ from .materials.public import (
     normalize_material_type,
     prepare_material_deletion_snapshot,
     record_material_event,
-    set_primary_material_record,
     serialize_material,
+    set_primary_material_record,
     upload_identity_material_record,
 )
+from .profiles.defaults import (
+    set_default_identity_record as set_default_identity_record,
+)
 from .profiles.public import (
+    RETIRED_IDENTITY_MESSAGE,
     ConnectionTestResult,
-    IdentityProfileRetiringError,
     IdentityProfileBase,
     IdentityProfileCreate,
     IdentityProfileRead,
+    IdentityProfileRetiringError,
     IdentityProfileUpdate,
     IdentityTemplateImportResult,
     OutreachGenerationMode,
-    RETIRED_IDENTITY_MESSAGE,
     get_active_identity_profile,
     identity_profile_is_active,
     serialize_identity,

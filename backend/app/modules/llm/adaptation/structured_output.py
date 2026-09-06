@@ -17,8 +17,8 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.time import utc_now
 from app.models import LLMProfile, LLMStructuredOutputAdaptationCache
-from ..runtime import LLMRuntimeError
 
+from ..contracts import LLMRuntimeError
 
 EndpointKind = Literal["chat_completions", "responses"]
 StructuredOutputMode = Literal[
@@ -102,7 +102,7 @@ _UNSUPPORTED_KEYWORDS: Final[tuple[str, ...]] = (
 
 
 def resolve_base_url_for_cache(api_base_url: str | None) -> str:
-    from ..runtime import resolve_base_url
+    from ..wire import resolve_base_url
 
     return resolve_base_url(api_base_url)
 
@@ -323,10 +323,8 @@ async def _request_probe(
     max_tokens: int,
     mode: StructuredOutputMode | None,
 ) -> object:
-    from ..runtime import (
-        _request_completion_endpoint,
-        with_structured_output,
-    )
+    from ..transport import _request_completion_endpoint
+    from ..wire import with_structured_output
 
     payload = _probe_payload(profile, prompt, max_tokens=max_tokens)
     if mode is not None:

@@ -1,80 +1,32 @@
 from __future__ import annotations
 
-from app.core.time import utc_now
-
 # -*- coding: utf-8 -*-
-
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Float, String, case, cast, delete, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
 from app.core.query_chunks import chunked_values, unique_positive_ids
-from app.schemas.selection import SelectionSpec
 from app.models import (
     CrawlCandidate,
-    CrawlCandidateReviewStatus,
     CrawlJob,
     CrawlJobKind,
-    CrawlJobStatus,
     CrawlPage,
-    CrawlPageChunk,
-    CrawlPageChunkStatus,
-    CrawlPageFetchState,
-    CrawlPageTask,
-    CrawlPageTaskStatus,
-    CrawlCandidateEnrichmentTask,
-    CrawlCandidateEnrichmentTaskStatus,
-    CrawlWorkerTokenUsage,
-    LLMProfile,
 )
 from app.modules.llm.public import get_active_llm_profile
-from .schemas import (
-    CrawlCandidateRead,
-    CrawlCandidateUpdatePayload,
-    CrawlJobEnrichPayload,
-    CrawlJobEnrichResult,
-    CrawlJobApprovePayload,
-    CrawlJobApproveResult,
-    CrawlJobCreatePayload,
-    CrawlJobDetailsRead,
-    CrawlJobEventRead,
-    CrawlJobRead,
-    CrawlJobStatusDTO,
-    CrawlJobSummaryPageRead,
-    CrawlJobSummaryRead,
-    CrawlPageRead,
-    CrawlJobRetryPayload,
-    CrawlJobResumePayload,
+from app.schemas.selection import SelectionSpec
+
+from .candidate_identity import (
+    canonical_candidate_clause,
 )
-from .jobs.events import build_crawl_job_events, normalize_agent_trace_event
+from .jobs.events import build_crawl_job_events
+from .jobs.metrics import build_crawl_job_metrics
 from .jobs.query import (
     parse_crawl_task_search_scopes,
     query_crawl_task_center_jobs,
-)
-from .jobs.enrichment_operations import (
-    append_candidate_enrichment_terminal_event,
-    start_candidate_enrichment_operation,
-)
-from .candidate_identity import (
-    candidate_identity_values,
-    canonical_candidate_clause,
-    canonicalize_candidate_ids,
-    mark_candidate_fields_manual,
-    rebuild_candidate_identity_keys,
-)
-from .jobs.metrics import build_crawl_job_metrics
-from .jobs.runs import (
-    create_initial_crawl_job_run,
-    create_retry_crawl_job_run,
-    mark_crawl_job_run_finished,
-    mark_crawl_job_run_paused,
-    mark_crawl_job_run_queued,
-    mark_crawl_job_run_running,
 )
 from .jobs.records import (
     CrawlJobRecordError,
@@ -92,21 +44,27 @@ from .jobs.records import (
     retry_faculty_crawl_job_record,
     update_faculty_crawl_candidate_record,
 )
-from app.services.operation_logs import record_operation_log
-from app.modules.professors.public import (
-    get_or_create_professor_by_email,
-    is_valid_professor_email,
-    normalize_professor_email,
-    normalize_recent_papers,
-)
-from .runtime.url_utils import normalize_url
+from .jobs.trace import latest_event_message
 from .runtime.profile_text_cache import profile_text_cache
-from .runtime.routing import (
-    ENTRY_EXPANSION_MODE,
-    NO_EXPANSION_MODE,
-    START_DISCOVERY_REASON,
+from .runtime.url_utils import normalize_url
+from .schemas import (
+    CrawlCandidateRead,
+    CrawlCandidateUpdatePayload,
+    CrawlJobApprovePayload,
+    CrawlJobApproveResult,
+    CrawlJobCreatePayload,
+    CrawlJobDetailsRead,
+    CrawlJobEnrichPayload,
+    CrawlJobEnrichResult,
+    CrawlJobEventRead,
+    CrawlJobRead,
+    CrawlJobResumePayload,
+    CrawlJobRetryPayload,
+    CrawlJobStatusDTO,
+    CrawlJobSummaryPageRead,
+    CrawlJobSummaryRead,
+    CrawlPageRead,
 )
-
 
 router = APIRouter(prefix="/api/crawl-jobs", tags=["crawl-jobs"])
 CrawlJobListLimit = Annotated[int, Query(ge=1, le=50)]
@@ -245,7 +203,7 @@ async def get_crawl_job_details(
         update={
             "page_count": len(pages),
             "candidate_count": len(candidates),
-            "latest_event_message": _latest_event_message(job.agent_trace),
+            "latest_event_message": latest_event_message(job.agent_trace),
             "input_tokens": metrics.input_tokens,
             "output_tokens": metrics.output_tokens,
             "cached_tokens": metrics.cached_tokens,
@@ -554,7 +512,7 @@ async def _build_crawl_job_summaries(
             update={
                 "page_count": page_counts.get(job.id, 0),
                 "candidate_count": candidate_counts.get(job.id, 0),
-                "latest_event_message": _latest_event_message(job.agent_trace),
+                "latest_event_message": latest_event_message(job.agent_trace),
                 "input_tokens": metrics.input_tokens,
                 "output_tokens": metrics.output_tokens,
                 "cached_tokens": metrics.cached_tokens,
@@ -588,22 +546,3 @@ async def _count_unique_crawl_pages_by_job_id(
             _crawl_page_normalized_url(str(url))
         )
     return {job_id: len(urls) for job_id, urls in urls_by_job.items()}
-
-
-def _latest_event_message(agent_trace: object) -> str | None:
-    if not isinstance(agent_trace, list):
-        return None
-
-    trace_events = [item for item in agent_trace if isinstance(item, dict)]
-    if not trace_events:
-        return None
-
-    latest_event = trace_events[-1]
-    summary = latest_event.get("summary")
-    if isinstance(summary, str) and summary.strip():
-        return summary.strip()
-
-    message = normalize_agent_trace_event(latest_event).get("message")
-    if isinstance(message, str) and message.strip():
-        return message.strip()
-    return None

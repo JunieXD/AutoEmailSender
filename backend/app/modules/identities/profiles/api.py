@@ -1,22 +1,56 @@
 from __future__ import annotations
 
 import re
-
-from app.core.time import utc_now
-
 from time import perf_counter
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_async_session
+from app.core.time import utc_now
 from app.models import (
-    IdentityMaterial,
     IdentityProfile,
     OutreachTemplate,
+)
+from app.modules.campaigns.public import (
+    OUTREACH_GENERATION_MODE_LLM,
+    OUTREACH_GENERATION_MODE_TEMPLATE,
+    IdentityDefaultOutreachTemplateUpdate,
+    apply_template_to_identity_legacy_fields,
+    clear_identity_default_template,
+    create_template_from_legacy_identity,
+    get_outreach_template,
+    import_outreach_template_file,
+    normalize_generation_mode,
+    normalize_nullable_template_text,
+    sync_template_to_default_identities,
+)
+from app.modules.communications.public import (
+    clear_identity_sent_folder_discovery_cache_in_session,
+    explain_smtp_error,
+    test_imap_connection,
+    test_smtp_connection,
+)
+from app.services.material_catalog import list_global_material_metadata
+from app.services.operation_logs import record_operation_log
+
+from .defaults import set_default_identity_record
+from .deletion import (
+    IdentityDeletionError,
+    build_identity_deletion_impact,
+    retire_identity_profile,
 )
 from .schemas import (
     ConnectionTestResult,
@@ -26,42 +60,12 @@ from .schemas import (
     IdentityProfileUpdate,
     IdentityTemplateImportResult,
 )
-from app.modules.campaigns.public import IdentityDefaultOutreachTemplateUpdate
-from app.services.material_catalog import list_global_material_metadata
-from app.modules.communications.public import (
-    clear_identity_sent_folder_discovery_cache_in_session,
-    test_imap_connection,
-    test_smtp_connection,
-)
-from app.services.operation_logs import record_operation_log
-from app.modules.campaigns.public import (
-    apply_template_to_identity_legacy_fields,
-    clear_identity_default_template,
-    create_template_from_legacy_identity,
-    get_outreach_template,
-    normalize_generation_mode,
-    normalize_nullable_template_text,
-    sync_template_to_default_identities,
-)
-from app.modules.campaigns.public import (
-    OUTREACH_GENERATION_MODE_LLM,
-    OUTREACH_GENERATION_MODE_TEMPLATE,
-    import_outreach_template_file,
-)
-from app.modules.communications.public import explain_smtp_error
-
 from .serializer import serialize_identity
-from .deletion import (
-    IdentityDeletionError,
-    build_identity_deletion_impact,
-    retire_identity_profile,
-)
 from .usage import (
     IdentityProfileRetiringError,
     end_identity_profile_retirement,
     track_identity_profile_usage,
 )
-
 
 router = APIRouter(prefix="/api/identities", tags=["identities"])
 DUPLICATE_EMAIL_DETAIL = "该发件邮箱已存在，请改用编辑已有身份或更换邮箱"
@@ -293,9 +297,7 @@ async def set_default_identity(
     session: AsyncSession = Depends(get_async_session),
 ) -> IdentityProfileRead:
     identity = await _get_identity(session, identity_id)
-    await _clear_default_identities(session, exclude_id=identity_id)
-    identity.is_default = True
-    identity.updated_at = utc_now()
+    await set_default_identity_record(session, identity, refresh_timestamps=True)
     await _record_identity_log(session, identity, "identity.default_set")
     await session.commit()
     saved = await _get_identity(session, identity_id)

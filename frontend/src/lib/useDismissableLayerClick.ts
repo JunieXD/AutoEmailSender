@@ -1,6 +1,6 @@
 import { type MouseEvent, useCallback, useRef } from "react";
 
-type DismissableLayerClickHandlers = {
+export type DismissableLayerClickHandlers = {
   onBackdropClick: (event: MouseEvent<HTMLElement>) => void;
   onBackdropMouseDown: (event: MouseEvent<HTMLElement>) => void;
   onContentClick: (event: MouseEvent<HTMLElement>) => void;

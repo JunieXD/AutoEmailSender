@@ -123,7 +123,7 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
         from app.modules.llm.adaptation.structured_output import _request_probe
 
         with patch(
-            "app.modules.llm.runtime._request_completion_endpoint",
+            "app.modules.llm.transport._request_completion_endpoint",
             new=AsyncMock(return_value=ChatCompletionResult(content="{}")),
         ) as request_mock:
             await _request_probe(
@@ -216,11 +216,12 @@ class StructuredOutputAdaptationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mode, "prompt_only")
 
     async def test_rate_limit_is_not_cached_as_unsupported(self) -> None:
+        from sqlalchemy import select
+
         from app.models import LLMStructuredOutputAdaptationCache
         from app.modules.llm.adaptation.structured_output import (
             probe_structured_output_mode,
         )
-        from sqlalchemy import select
 
         error = LLMRuntimeError("rate limited", status_code=429)
         with patch(

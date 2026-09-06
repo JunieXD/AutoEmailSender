@@ -1,60 +1,22 @@
-import {
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-  type ReactNode,
-  type TransitionEvent,
-} from "react";
-import { Link } from "react-router-dom";
-import clsx from "clsx";
-import {
-  AlertTriangle,
-  ArchiveRestore,
-  ChevronDown,
-  CheckCircle2,
-  Copy,
-  Download,
-  Eye,
-  EyeOff,
-  ExternalLink,
-  FolderOpen,
-  Loader2,
-  Plus,
-  Star,
-  Send,
-  Trash2,
-  Upload,
-  X,
-  XCircle,
-} from "lucide-react";
+import { AgentSupportCard } from "@/components/molecules/AgentSupportCard";
+import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
+import { ProjectAcknowledgements } from "@/components/molecules/ProjectAcknowledgements";
+import { CommunicationSharingPanel } from "@/components/organisms/CommunicationSharingPanel";
+import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
 import { useDesktopBackend } from "@/context/DesktopBackendContext";
 import { useNotification } from "@/context/NotificationContext";
 import { useSelectionContext } from "@/context/SelectionContext";
 import { useWorkspaceDraftGuard } from "@/context/useWorkspaceDraftGuard";
-import { NativeSelectField } from "@/components/atoms/NativeSelectField";
 import {
-  MODAL_BACKDROP_CLASS_NAME,
-  MODAL_SURFACE_CLASS_NAME,
-} from "@/components/atoms/modalStyles";
-import { EmailDeliveryFailureDetails } from "@/components/molecules/EmailDeliveryFailureDetails";
-import { EmailTemplateEditor } from "@/components/molecules/EmailTemplateEditor";
-import { SubjectTemplateInput } from "@/components/molecules/SubjectTemplateInput";
-import { OtherSettingsCard } from "@/components/molecules/OtherSettingsCard";
-import { AgentSupportCard } from "@/components/molecules/AgentSupportCard";
-import { ProjectAcknowledgements } from "@/components/molecules/ProjectAcknowledgements";
-import { DiagnosticLogPanel } from "@/components/organisms/DiagnosticLogPanel";
-import { CommunicationSharingPanel } from "@/components/organisms/CommunicationSharingPanel";
-import { formatApiDateTime } from "@/lib/dateTime";
-import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
-import { openExternalHttpUrl } from "@/lib/externalUrls";
-import { PROFILE_HELP_LINKS } from "@/lib/helpLinks";
-import { textToEmailHtml } from "@/lib/richEmail";
-import { useDismissableLayerClick } from "@/lib/useDismissableLayerClick";
-import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
+  ActionResultState,
+  IdentityConnectionTestSummary,
+  TestComposeSetupStatus,
+  getActionButtonClassName,
+  inputClassName,
+} from "@/features/profile-setup/model/formControls";
+import { isIdentityDeletionImpact } from "@/features/profile-setup/model/identityDeletion";
+import { isDeletionImpact } from "@/features/profile-setup/model/llmDeletion";
+import { ApiError } from "@/lib/api/client";
 import {
   createIdentity,
   deleteIdentity,
@@ -67,22 +29,6 @@ import {
   updateIdentityDefaultOutreachTemplate,
 } from "@/lib/api/identities";
 import {
-  archiveOutreachTemplate,
-  createOutreachTemplate,
-  duplicateOutreachTemplate,
-  listOutreachTemplates,
-  restoreOutreachTemplate,
-  setGlobalDefaultOutreachTemplate,
-  updateOutreachTemplate,
-} from "@/lib/api/outreachTemplates";
-import {
-  deleteMaterial,
-  downloadMaterial,
-  getMaterialDeletionImpact,
-  setPrimaryMaterial,
-  uploadIdentityMaterial,
-} from "@/lib/api/materials";
-import {
   createLLMProfile,
   deleteLLMProfile,
   fetchLLMProfileModelsPreview,
@@ -91,32 +37,79 @@ import {
   testLLMProfilePreview,
   updateLLMProfile,
 } from "@/lib/api/llmProfiles";
-import { ApiError } from "@/lib/api/client";
-import { getTestComposeStatus } from "@/lib/api/testComposeApi";
 import {
-  MATERIAL_TYPE_LABELS,
+  deleteMaterial,
+  downloadMaterial,
+  getMaterialDeletionImpact,
+  setPrimaryMaterial,
+  uploadIdentityMaterial,
+} from "@/lib/api/materials";
+import {
+  archiveOutreachTemplate,
+  createOutreachTemplate,
+  duplicateOutreachTemplate,
+  listOutreachTemplates,
+  restoreOutreachTemplate,
+  setGlobalDefaultOutreachTemplate,
+  updateOutreachTemplate,
+} from "@/lib/api/outreachTemplates";
+import { getTestComposeStatus } from "@/lib/api/testComposeApi";
+import { isDesktopApp, openDesktopMaterial } from "@/lib/desktopApi";
+import { PROFILE_HELP_LINKS } from "@/lib/helpLinks";
+import { useConfirmDialog } from "@/lib/useConfirmDialog";
+import { useDocumentScrollLock } from "@/lib/useDocumentScrollLock";
+import {
   type IdentityDTO,
   type IdentityDeletionImpactDTO,
   type IdentityMaterialDTO,
   type IdentityMaterialType,
-  type IdentityReferenceCountsDTO,
-  type LLMProfileModelsResultDTO,
   type LLMProfileDeletionImpactDTO,
-  type LLMProfileReferenceCountsDTO,
+  type LLMProfileModelsResultDTO,
   type LLMProfileTestResultDTO,
-  type OutreachGenerationMode,
   type OutreachTemplateDTO,
 } from "@/types";
-import { useConfirmDialog } from "@/lib/useConfirmDialog";
-import { buildMaterialDeletionConfirmationDescription } from "./client/materialDeletionImpact";
+import clsx from "clsx";
 import {
-  PROFILE_SETUP_STAGES,
-  TEMPLATE_FILE_ACCEPT,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Loader2,
+  Send,
+  Trash2,
+  XCircle,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { buildMaterialDeletionConfirmationDescription } from "./client/materialDeletionImpact";
+import { EditorSwitcher } from "./components/editorSwitcher";
+import {
+  ContextualHelpLink,
+  FieldLabel,
+  FormFieldHeader,
+  ProfileSetupSection,
+} from "./components/formControls";
+import { IdentityConnectionCard } from "./components/identityConnection";
+import { IdentityDeletionDialog } from "./components/identityDeletion";
+import { LLMDeletionDialog } from "./components/llmDeletion";
+import {
+  LlmModelsFeedbackPanel,
+  LlmTestFeedbackPanel,
+} from "./components/llmFeedback";
+import {
+  MaterialLibraryModal,
+  MaterialSummaryCard,
+} from "./components/materials";
+import {
+  OutreachTemplateModal,
+  OutreachTemplateSummaryCard,
+} from "./components/templates";
+import { getMaterialTypeLabel } from "./model/materialLabels";
+import {
   DEFAULT_LLM_MAX_TOKENS,
   DEFAULT_LLM_TEMPERATURE,
+  PROFILE_SETUP_STAGES,
   applyOutreachTemplateToIdentityForm,
   areIdentityFormsEqual,
-  canUseAsPrimaryMaterial,
   clearOutreachTemplateFromIdentityForm,
   createEmptyIdentityForm,
   createEmptyLLMForm,
@@ -141,2037 +134,6 @@ import {
   type ProfileSetupSectionId,
 } from "./model/profileForms";
 
-type ActionResultState = "idle" | "success" | "error";
-type IdentityConnectionTestSummary = {
-  kind: "smtp" | "imap";
-  status: "success" | "error";
-  message: string;
-  possibleCause?: string | null;
-};
-
-type TestComposeSetupStatus = "unchecked" | "loading" | "completed" | "pending";
-
-const inputClassName =
-  "w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20";
-
-const labelClassName =
-  "mb-2 inline-flex items-center gap-1 text-sm font-medium text-stone-800";
-
-const renderFieldLabel = (label: string, required = false) => (
-  <span className={labelClassName}>
-    {required && (
-      <span aria-hidden="true" className="text-base leading-none text-red-500">
-        *
-      </span>
-    )}
-    <span>{label}</span>
-  </span>
-);
-
-const ContextualHelpLink = ({
-  href,
-  children,
-  tone = "quiet",
-  compact = false,
-}: {
-  href: string;
-  children: ReactNode;
-  tone?: "quiet" | "surface";
-  compact?: boolean;
-}) => (
-  <a
-    href={href}
-    target="_blank"
-    rel="noopener noreferrer"
-    onClick={(event) => {
-      event.preventDefault();
-      openExternalHttpUrl(href);
-    }}
-    className={clsx(
-      "inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary underline decoration-primary/30 underline-offset-4 transition hover:bg-primary/5 hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25",
-      compact
-        ? "min-h-0 rounded px-1 py-0 leading-5"
-        : "min-h-9 rounded-xl px-2.5",
-      tone === "surface" &&
-        "border border-stone-200 bg-white/90 no-underline shadow-sm hover:border-primary/25 hover:bg-white",
-    )}
-  >
-    <span>{children}</span>
-    <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
-  </a>
-);
-
-const FormFieldHeader = ({
-  id,
-  label,
-  required = false,
-  help,
-}: {
-  id: string;
-  label: string;
-  required?: boolean;
-  help?: ReactNode;
-}) => (
-  <div className="mb-2 flex min-h-[22px] flex-wrap items-center justify-start gap-x-1 gap-y-1">
-    <label
-      htmlFor={id}
-      className="inline-flex items-center gap-1 text-sm font-medium text-stone-800"
-    >
-      {required && (
-        <span aria-hidden="true" className="text-base leading-none text-red-500">
-          *
-        </span>
-      )}
-      <span>{label}</span>
-    </label>
-    {help}
-  </div>
-);
-
-function ProfileSetupSection({
-  sectionId,
-  title,
-  description,
-  badge,
-  helpAction,
-  open,
-  renderContent,
-  onToggle,
-  onExitComplete,
-  sectionRef,
-  children,
-}: {
-  sectionId: ProfileSetupSectionId;
-  title: string;
-  description: string;
-  badge: ReactNode;
-  helpAction?: ReactNode;
-  open: boolean;
-  renderContent: boolean;
-  onToggle: () => void;
-  onExitComplete: () => void;
-  sectionRef: (element: HTMLElement | null) => void;
-  children: ReactNode;
-}) {
-  const handleContentTransitionEnd = (
-    event: TransitionEvent<HTMLDivElement>,
-  ) => {
-    if (open || event.propertyName !== "grid-template-rows") {
-      return;
-    }
-    onExitComplete();
-  };
-
-  return (
-    <section
-      ref={sectionRef}
-      className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm"
-    >
-      <div
-        onClick={(event) => {
-          if (
-            event.target instanceof Element &&
-            event.target.closest("a, button")
-          ) {
-            return;
-          }
-          onToggle();
-        }}
-        className="cursor-pointer px-6 py-5 transition hover:bg-stone-50 active:bg-stone-50"
-      >
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={`${sectionId}-setup-content`}
-          onClick={onToggle}
-          className="collapsible-card-toggle flex w-full min-w-0 items-center justify-between gap-4 text-left active:bg-stone-50"
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
-            {badge}
-          </div>
-          <ChevronDown
-            className={clsx(
-              "h-5 w-5 shrink-0 text-stone-500 transition-transform",
-              open ? "rotate-180" : "rotate-0",
-            )}
-          />
-        </button>
-        {description || helpAction ? (
-          <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
-            {description ? (
-              <p className="text-xs leading-5 text-stone-600 sm:text-sm sm:leading-6">
-                {description}
-              </p>
-            ) : null}
-            {helpAction}
-          </div>
-        ) : null}
-      </div>
-
-      {renderContent ? (
-        <div
-          id={`${sectionId}-setup-content`}
-          data-state={open ? "open" : "closed"}
-          onTransitionEnd={handleContentTransitionEnd}
-          className="collapsible-card-content"
-        >
-          <div className="collapsible-card-body min-h-0 px-6">
-            {children}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-const formatFileSize = (sizeBytes: number) => {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes} B`;
-  }
-  if (sizeBytes < 1024 * 1024) {
-    return `${(sizeBytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-
-const formatDuration = (durationMs: number | null) =>
-  durationMs === null ? "未返回" : `${durationMs} ms`;
-
-const LlmModelsFeedbackPanel = ({
-  result,
-  currentModelName,
-  onSelectModel,
-}: {
-  result: LLMProfileModelsResultDTO | null;
-  currentModelName: string;
-  onSelectModel: (modelName: string) => void;
-}) => {
-  const [searchKeyword, setSearchKeyword] = useState("");
-  const deferredSearchKeyword = useDeferredValue(searchKeyword);
-
-  if (!result) {
-    return null;
-  }
-
-  const normalizedKeyword = deferredSearchKeyword.trim().toLowerCase();
-  const filteredModels = result.models.filter((model) =>
-    normalizedKeyword ? model.toLowerCase().includes(normalizedKeyword) : true,
-  );
-  const hasExactCurrentModel = result.models.includes(currentModelName.trim());
-
-  return (
-    <div
-      className={clsx(
-        "rounded-3xl border px-4 py-4 shadow-sm",
-        result.ok
-          ? "border-emerald-200 bg-emerald-50/80"
-          : "border-red-200 bg-red-50/80",
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-stone-900">基础连通性</span>
-        <span
-          className={clsx(
-            "rounded-full px-2.5 py-1 text-[11px] font-medium",
-            result.consumes_tokens
-              ? "bg-amber-100 text-amber-700"
-              : "bg-stone-900 text-white",
-          )}
-        >
-          {result.consumes_tokens ? "会耗 Token" : "不耗 Token"}
-        </span>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-stone-700">{result.message}</p>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          状态码：{result.status_code ?? "未返回"}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          耗时：{formatDuration(result.duration_ms)}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          端点：{result.endpoint_kind ?? "未识别"}
-        </span>
-      </div>
-      {result.request_url ? (
-        <div className="mt-3 rounded-2xl border border-stone-200 bg-white/90 px-3 py-2 text-xs leading-5 text-stone-600">
-          <div className="font-medium text-stone-800">请求 URL</div>
-          <div className="mt-1 break-all">{result.request_url}</div>
-        </div>
-      ) : null}
-      {!result.ok ? (
-        <div className="mt-3 border-t border-red-200/80 pt-3">
-          <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration} tone="surface">
-            查看模型配置排查步骤
-          </ContextualHelpLink>
-        </div>
-      ) : null}
-      {result.models.length > 0 ? (
-        <div className="mt-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-xs font-medium text-stone-700">可用模型</div>
-            </div>
-            <span className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] text-stone-500">
-              {filteredModels.length}/{result.models.length}
-            </span>
-          </div>
-          <div className="mt-3 rounded-[24px] border border-stone-200 bg-white/90 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              className="w-full rounded-2xl border border-stone-200 bg-stone-50/80 px-3 py-2 text-sm text-stone-700 outline-none transition placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/15"
-              placeholder="搜索模型名，点击进行选择"
-            />
-            {currentModelName.trim() ? (
-              <div className="mt-3 rounded-2xl border border-stone-200 bg-stone-50/85 px-3 py-3">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-stone-400">
-                  当前选择
-                </div>
-                <div className="mt-2 break-all text-sm font-medium leading-6 text-stone-800">
-                  {currentModelName}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                  {hasExactCurrentModel ? (
-                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
-                      已在列表中
-                    </span>
-                  ) : (
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
-                      不在当前列表中
-                    </span>
-                  )}
-                </div>
-              </div>
-            ) : null}
-            <div className="mt-3 max-h-56 overflow-y-auto pr-1">
-              {filteredModels.length > 0 ? (
-                <div className="space-y-2">
-                  {filteredModels.map((model) => {
-                    const active = model === currentModelName.trim();
-                    return (
-                      <button
-                        key={model}
-                        type="button"
-                        onClick={() => onSelectModel(model)}
-                        className={clsx(
-                          "group flex w-full justify-between items-center gap-3 rounded-2xl border px-3 py-2 text-left transition",
-                          active
-                            ? "border-primary/20 bg-primary text-white shadow-sm shadow-primary/20"
-                            : "border-stone-200 bg-stone-50/75 text-stone-700 hover:border-stone-300 hover:bg-white hover:text-stone-900",
-                        )}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="break-all text-sm font-medium leading-5">
-                            {model}
-                          </div>
-                        </div>
-                        <div
-                          className={clsx(
-                            "mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium",
-                            active
-                              ? "bg-white/18 text-white"
-                              : "bg-stone-100 text-stone-500 group-hover:bg-stone-200 group-hover:text-stone-700",
-                          )}
-                        >
-                          {active ? "当前" : "选择"}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50/70 px-4 py-6 text-center text-xs text-stone-500">
-                  没找到匹配的模型名，试试换个关键词。
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-};
-
-const LlmTestFeedbackPanel = ({
-  result,
-}: {
-  result: LLMProfileTestResultDTO | null;
-}) => {
-  if (!result) {
-    return null;
-  }
-
-  return (
-    <div
-      className={clsx(
-        "rounded-3xl border px-4 py-4 shadow-sm",
-        result.ok
-          ? "border-emerald-200 bg-emerald-50/80"
-          : "border-red-200 bg-red-50/80",
-      )}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-stone-900">测试模型</span>
-        <span
-          className={clsx(
-            "rounded-full px-2.5 py-1 text-[11px] font-medium",
-            result.consumes_tokens
-              ? "bg-amber-100 text-amber-700"
-              : "bg-stone-900 text-white",
-          )}
-        >
-          {result.consumes_tokens ? "会耗 Token" : "不耗 Token"}
-        </span>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-stone-700">{result.message}</p>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          状态码：{result.status_code ?? "未返回"}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          耗时：{formatDuration(result.duration_ms)}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          端点：{result.endpoint_kind ?? "未识别"}
-        </span>
-      </div>
-      {result.request_url ? (
-        <div className="mt-3 rounded-2xl border border-stone-200 bg-white/90 px-3 py-2 text-xs leading-5 text-stone-600">
-          <div className="font-medium text-stone-800">最终请求 URL</div>
-          <div className="mt-1 break-all">{result.request_url}</div>
-        </div>
-      ) : null}
-      {result.attempted_urls.length > 1 ? (
-        <div className="mt-3 rounded-2xl border border-stone-200 bg-white/90 px-3 py-2 text-xs leading-5 text-stone-600">
-          <div className="font-medium text-stone-800">尝试过的 URL</div>
-          <div className="mt-1 break-all">
-            {result.attempted_urls.join("\n")}
-          </div>
-        </div>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          输入 Token：{result.prompt_tokens ?? "未返回"}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          输出 Token：{result.completion_tokens ?? "未返回"}
-        </span>
-        <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
-          总 Token：{result.total_tokens ?? "未返回"}
-        </span>
-      </div>
-      {result.response_preview ? (
-        <div className="mt-3 rounded-2xl border border-stone-200 bg-white/90 px-3 py-2 text-xs leading-5 text-stone-600">
-          <div className="font-medium text-stone-800">响应预览</div>
-          <div className="mt-1 whitespace-pre-wrap">
-            {result.response_preview}
-          </div>
-        </div>
-      ) : null}
-      {!result.ok ? (
-        <div className="mt-3 border-t border-red-200/80 pt-3">
-          <ContextualHelpLink href={PROFILE_HELP_LINKS.llmConfiguration} tone="surface">
-            查看模型配置排查步骤
-          </ContextualHelpLink>
-        </div>
-      ) : null}
-    </div>
-  );
-};
-
-const MATERIAL_TYPE_OPTIONS = Object.entries(MATERIAL_TYPE_LABELS) as [
-  IdentityMaterialType,
-  string,
-][];
-
-const getMaterialTypeLabel = (value: IdentityMaterialType) =>
-  MATERIAL_TYPE_LABELS[value];
-
-const getActionButtonClassName = (state: ActionResultState, loading: boolean) =>
-  clsx(
-    "inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium transition",
-    state === "success" &&
-      "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100/80",
-    state === "error" &&
-      "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100/80",
-    state === "idle" &&
-      "border-stone-200 bg-white text-stone-700 hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900",
-    loading && "cursor-not-allowed opacity-70",
-  );
-
-type EditorOption = {
-  id: number;
-  name: string;
-  is_default: boolean;
-};
-
-type EditorSwitcherProps = {
-  label: string;
-  helper?: string;
-  options: EditorOption[];
-  activeId: EditorId;
-  createLabel: string;
-  creatingLabel: string;
-  onCreate: () => void;
-  onSelect: (id: number) => void;
-};
-
-const EditorSwitcher = ({
-  label,
-  helper,
-  options,
-  activeId,
-  createLabel,
-  creatingLabel,
-  onCreate,
-  onSelect,
-}: EditorSwitcherProps) => (
-  <div className="rounded-2xl border border-stone-200 bg-white px-4 py-4 shadow-sm shadow-stone-100/60">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <div className="text-sm font-medium text-stone-900">{label}</div>
-        {helper ? (
-          <p className="mt-1 text-xs leading-5 text-stone-500">{helper}</p>
-        ) : null}
-      </div>
-      {options.length > 0 ? (
-        <button
-          type="button"
-          onClick={onCreate}
-          className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-300 hover:bg-white hover:text-stone-900"
-        >
-          <Plus className="h-4 w-4" />
-          {createLabel}
-        </button>
-      ) : null}
-    </div>
-
-    <div className="mt-4 flex flex-wrap gap-2">
-      {options.length === 0 ? (
-        <div className="w-full rounded-2xl border border-dashed border-primary/20 bg-primary/5 px-4 py-4">
-          <div className="text-sm font-medium text-primary">
-            {creatingLabel}
-          </div>
-        </div>
-      ) : (
-        options.map((option) => {
-          const isActive = activeId === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onSelect(option.id)}
-              className={clsx(
-                "inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition-all",
-                isActive
-                  ? "border-primary/20 bg-primary text-white shadow-sm shadow-primary/20"
-                  : "border-stone-200 bg-stone-50 text-stone-700 hover:border-stone-300 hover:bg-white hover:text-stone-900",
-              )}
-            >
-              <span>{option.name}</span>
-              {option.is_default && (
-                <span
-                  className={clsx(
-                    "rounded-full px-2 py-0.5 text-[11px]",
-                    isActive
-                      ? "bg-white/18 text-white"
-                      : "bg-white text-stone-500",
-                  )}
-                >
-                  默认
-                </span>
-              )}
-            </button>
-          );
-        })
-      )}
-
-      {options.length > 0 && activeId === "new" && (
-        <div className="inline-flex items-center rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm font-medium text-primary">
-          {creatingLabel}
-        </div>
-      )}
-    </div>
-  </div>
-);
-
-const MaterialTypePicker = ({
-  value,
-  onChange,
-}: {
-  value: IdentityMaterialType;
-  onChange: (value: IdentityMaterialType) => void;
-}) => (
-  <NativeSelectField
-    value={value}
-    onChange={(event) => onChange(event.target.value as IdentityMaterialType)}
-    wrapperClassName="w-full max-w-xs"
-    shellClassName="min-h-10 rounded-2xl border-stone-200 bg-white/92 px-4 py-2.5 shadow-sm shadow-stone-100/70"
-  >
-    {MATERIAL_TYPE_OPTIONS.map(([type, label]) => (
-      <option key={type} value={type}>
-        {label}
-      </option>
-    ))}
-  </NativeSelectField>
-);
-
-const MaterialFilterBar = ({
-  value,
-  materials,
-  onChange,
-}: {
-  value: MaterialFilterValue;
-  materials: IdentityMaterialDTO[];
-  onChange: (value: MaterialFilterValue) => void;
-}) => (
-  <div className="flex flex-wrap gap-2">
-    <button
-      type="button"
-      onClick={() => onChange("all")}
-      className={clsx(
-        "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-        value === "all"
-          ? "border-stone-900 bg-stone-900 text-white shadow-sm shadow-stone-900/20"
-          : "border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900",
-      )}
-    >
-      全部 {materials.length}
-    </button>
-    {MATERIAL_TYPE_OPTIONS.map(([type, label]) => {
-      const count = materials.filter(
-        (material) => material.material_type === type,
-      ).length;
-      if (!count) {
-        return null;
-      }
-      return (
-        <button
-          key={type}
-          type="button"
-          onClick={() => onChange(type)}
-          className={clsx(
-            "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-            value === type
-              ? "border-primary bg-primary text-white shadow-sm shadow-primary/20"
-              : "border-stone-200 bg-white text-stone-600 hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900",
-          )}
-        >
-          {label} {count}
-        </button>
-      );
-    })}
-  </div>
-);
-
-const MaterialSummaryCard = ({
-  identity,
-  onOpen,
-}: {
-  identity: IdentityDTO;
-  onOpen: () => void;
-}) => {
-  const primaryMaterial = identity.current_primary_material;
-
-  return (
-    <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(135deg,#fffdfa,#fff8ef_55%,#fff3e1)] p-5 shadow-sm shadow-stone-200/70">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-3">
-          <div>
-            <div className="text-sm font-medium text-stone-900">全局材料库</div>
-            <div className="mt-1 text-xs text-stone-500">
-              所有发件身份共享，共 {identity.materials.length} 份
-              {primaryMaterial
-                ? ` · 默认材料：${primaryMaterial.display_name}`
-                : " · 当前未设默认材料"}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {MATERIAL_TYPE_OPTIONS.map(([type, label]) => {
-              const count = identity.materials.filter(
-                (material) => material.material_type === type,
-              ).length;
-              if (!count) {
-                return null;
-              }
-              return (
-                <span
-                  key={type}
-                  className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600"
-                >
-                  {label} {count}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex items-center gap-2 rounded-2xl border border-stone-300 bg-white/95 px-4 py-2.5 text-sm font-medium text-stone-800 shadow-sm transition hover:border-stone-400 hover:bg-white"
-        >
-          <FolderOpen className="h-4 w-4" />
-          打开材料库
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const IdentityConnectionCard = ({
-  testingIdentityConnection,
-  lastResult,
-  onTestSmtp,
-  onTestImap,
-}: {
-  testingIdentityConnection: "smtp" | "imap" | null;
-  lastResult: IdentityConnectionTestSummary | null;
-  onTestSmtp: () => void;
-  onTestImap: () => void;
-}) => (
-  <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(135deg,#fffdfa,#fff9f2_52%,#fff5ea)] p-5 shadow-sm shadow-stone-200/70">
-    <div className="flex flex-wrap justify-between items-center gap-4">
-      <div className="space-y-2">
-        <div className="text-sm font-medium text-stone-900">邮箱连接测试</div>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={onTestSmtp}
-          disabled={testingIdentityConnection !== null}
-          className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {testingIdentityConnection === "smtp" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : null}
-          测试 SMTP
-        </button>
-        <button
-          type="button"
-          onClick={onTestImap}
-          disabled={testingIdentityConnection !== null}
-          className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {testingIdentityConnection === "imap" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : null}
-          测试 IMAP
-        </button>
-      </div>
-    </div>
-    {lastResult ? (
-      <div className="mt-4 rounded-2xl border border-stone-200/80 bg-white/80 px-4 py-3 text-sm text-stone-700">
-        <div className="font-medium text-stone-900">
-          上次测试：{lastResult.kind.toUpperCase()}
-          {lastResult.status === "success" ? " 成功" : " 失败"}
-        </div>
-        {lastResult.kind === "smtp" && lastResult.status === "error" ? (
-          <EmailDeliveryFailureDetails
-            possibleCause={lastResult.possibleCause}
-            rawError={lastResult.message}
-          />
-        ) : (
-          <div className="mt-1 whitespace-pre-wrap break-words text-stone-600">
-            {lastResult.message}
-          </div>
-        )}
-        {lastResult.status === "error" ? (
-          <div className="mt-3 border-t border-stone-200 pt-3">
-            <ContextualHelpLink href={PROFILE_HELP_LINKS.mailAuthorization} tone="surface">
-              按邮箱配置教程逐项检查
-            </ContextualHelpLink>
-          </div>
-        ) : null}
-      </div>
-    ) : null}
-  </div>
-);
-
-const OutreachTemplateSummaryCard = ({
-  form,
-  template,
-  globalTemplate,
-  templateCount,
-  loadingTemplates,
-  onOpen,
-}: {
-  form: IdentityFormState;
-  template: OutreachTemplateDTO | null;
-  globalTemplate: OutreachTemplateDTO | null;
-  templateCount: number;
-  loadingTemplates: boolean;
-  onOpen: () => void;
-}) => {
-  const effectiveTemplate = template ?? globalTemplate;
-  const hasSubject = effectiveTemplate
-    ? Boolean(effectiveTemplate.subject?.trim())
-    : Boolean(form.outreach_template_subject.trim());
-  const hasTemplateBody = effectiveTemplate
-    ? Boolean(effectiveTemplate.body_text?.trim())
-    : hasVisibleTemplateBody(form);
-  const effectiveMode =
-    effectiveTemplate?.recommended_generation_mode ??
-    form.outreach_generation_mode;
-
-  return (
-    <div className="rounded-[28px] border border-stone-200 bg-[linear-gradient(135deg,#fffdfa,#fff7ee_58%,#fff2e4)] p-5 shadow-sm shadow-stone-200/70">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-3">
-          <div>
-            <div className="text-sm font-medium text-stone-900">
-              发信模板库
-            </div>
-            <div className="mt-1 text-xs leading-6 text-stone-500">
-              模板可单独保存并重复使用。
-            </div>
-            <div className="mt-1 text-xs leading-6 text-stone-500">
-              默认模板：
-              {template
-                ? template.name
-                : globalTemplate
-                  ? `使用全局“${globalTemplate.name}”`
-                  : "未设置"}
-            </div>
-            <div className="mt-1 text-xs leading-6 text-stone-500">
-              默认写信方式：
-              {effectiveMode === "template"
-                ? "直接套用模板"
-                : "AI 辅助写信"}
-              {` · ${loadingTemplates ? "正在加载" : `${templateCount} 份可用模板`}`}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasSubject ? "主题已填写" : "主题待补充"}
-            </span>
-            <span className="rounded-full border border-stone-200/80 bg-white/90 px-3 py-1 text-xs text-stone-600">
-              {hasTemplateBody ? "正文已填写" : "正文待补充"}
-            </span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex items-center gap-2 rounded-2xl border border-stone-300 bg-white/95 px-4 py-2.5 text-sm font-medium text-stone-800 shadow-sm transition hover:border-stone-400 hover:bg-white"
-        >
-          <FolderOpen className="h-4 w-4" />
-          管理模板
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const OutreachTemplateModal = ({
-  open,
-  importingTemplateFile,
-  savingTemplate,
-  actingOnTemplate,
-  loadingTemplates,
-  templates,
-  archivedTemplates,
-  editorId,
-  form,
-  identityLabel,
-  identityDefaultTemplateId,
-  onClose,
-  onComplete,
-  onCreate,
-  onSelect,
-  onDuplicate,
-  onSetIdentityDefault,
-  onClearIdentityDefault,
-  onSetGlobalDefault,
-  onDelete,
-  onRestore,
-  onImport,
-  onNameChange,
-  onModeChange,
-  onSubjectChange,
-  onBodyChange,
-}: {
-  open: boolean;
-  importingTemplateFile: boolean;
-  savingTemplate: boolean;
-  actingOnTemplate: boolean;
-  loadingTemplates: boolean;
-  templates: OutreachTemplateDTO[];
-  archivedTemplates: OutreachTemplateDTO[];
-  editorId: EditorId;
-  form: OutreachTemplateFormState;
-  identityLabel: string;
-  identityDefaultTemplateId: number | null;
-  onClose: () => void;
-  onComplete: () => void;
-  onCreate: () => void;
-  onSelect: (templateId: number) => void;
-  onDuplicate: (templateId: number) => void;
-  onSetIdentityDefault: (template: OutreachTemplateDTO) => void;
-  onClearIdentityDefault: () => void;
-  onSetGlobalDefault: (templateId: number) => void;
-  onDelete: (template: OutreachTemplateDTO) => void;
-  onRestore: (template: OutreachTemplateDTO) => void;
-  onImport: (file: File) => void;
-  onNameChange: (value: string) => void;
-  onModeChange: (value: OutreachGenerationMode) => void;
-  onSubjectChange: (value: string) => void;
-  onBodyChange: (value: { html: string; text: string }) => void;
-}) => {
-  const [isTemplateDropActive, setIsTemplateDropActive] = useState(false);
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } =
-    useDismissableLayerClick(onClose);
-
-  if (!open) {
-    return null;
-  }
-
-  const templateEditorHtml =
-    form.outreach_template_body_html ||
-    textToEmailHtml(form.outreach_template_body_text);
-  const editingTemplate = isExistingEditorId(editorId)
-    ? (templates.find((template) => template.id === editorId) ?? null)
-    : null;
-  const templateBusy = savingTemplate || actingOnTemplate;
-  const hasUnsavedTemplate = editorId === "new";
-  const visibleTemplateCount = templates.length + (hasUnsavedTemplate ? 1 : 0);
-
-  const handleTemplateDragOver = (event: DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!importingTemplateFile) {
-      setIsTemplateDropActive(true);
-    }
-  };
-
-  const handleTemplateDragLeave = (event: DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsTemplateDropActive(false);
-  };
-
-  const handleTemplateDrop = (event: DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsTemplateDropActive(false);
-
-    if (importingTemplateFile) {
-      return;
-    }
-
-    const file = event.dataTransfer.files?.[0];
-    if (!file) {
-      return;
-    }
-    onImport(file);
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/35 p-4 backdrop-blur-md sm:items-center"
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
-    >
-      <div
-        className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,#fffdfa,#fff7ee_18%,#ffffff_40%)] shadow-[0_30px_90px_-28px_rgba(41,37,36,0.45)]"
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
-      >
-        <div className="border-b border-stone-200/80 bg-white/75 px-6 py-5 backdrop-blur-md">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-xs uppercase tracking-[0.26em] text-stone-400">
-                Outreach Templates
-              </div>
-              <h3 className="mt-2 text-2xl font-semibold text-stone-900">
-                发信模板库
-              </h3>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-stone-500">
-                模板可复用；修改不影响已创建任务。
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900"
-              aria-label="关闭模板库"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="border-b border-stone-200/80 bg-[#fffaf3] px-6 py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="text-sm font-medium text-stone-900">
-                正在编辑
-              </div>
-              <div className="mt-1 flex flex-wrap gap-2 text-xs text-stone-500">
-                <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {editorId === "new"
-                    ? form.name.trim() || "新模板（未保存）"
-                    : (editingTemplate?.name ?? "请选择模板")}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  写信方式：
-                  {form.outreach_generation_mode === "template"
-                    ? "直接套用模板"
-                    : "AI 辅助写信"}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {form.outreach_template_subject.trim() ? "主题已填写" : "主题待补充"}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-white/90 px-3 py-1">
-                  {hasVisibleTemplateBody(form) ? "正文已填写" : "正文待补充"}
-                </span>
-              </div>
-            </div>
-
-            <label
-              onDragOver={handleTemplateDragOver}
-              onDragLeave={handleTemplateDragLeave}
-              onDrop={handleTemplateDrop}
-              aria-busy={importingTemplateFile}
-              className={clsx(
-                "inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-dashed bg-white px-4 py-3 text-sm font-medium shadow-sm transition",
-                importingTemplateFile
-                  ? "cursor-wait border-stone-200 text-stone-400"
-                  : isTemplateDropActive
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-stone-200 text-stone-700 hover:border-stone-300 hover:text-stone-900",
-              )}
-            >
-              {importingTemplateFile ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
-              {importingTemplateFile
-                ? "正在导入模板文件"
-                : isTemplateDropActive
-                  ? "松开即可导入模板"
-                  : "点击或拖拽导入模板正文"}
-              <input
-                type="file"
-                accept={TEMPLATE_FILE_ACCEPT}
-                disabled={importingTemplateFile}
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.currentTarget.value = "";
-                  if (!file) {
-                    return;
-                  }
-                  onImport(file);
-                }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="grid gap-6 lg:grid-cols-[260px,minmax(0,1fr)]">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-stone-900">模板列表</div>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  disabled={templateBusy}
-                  className="inline-flex items-center gap-1 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:border-stone-300 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  新建模板
-                </button>
-              </div>
-              <div
-                aria-label="模板列表"
-                className={clsx(
-                  "space-y-2 pr-1",
-                  visibleTemplateCount > 3 && "max-h-72 overflow-y-auto",
-                )}
-              >
-                {loadingTemplates ? (
-                  <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-4 py-5 text-sm text-stone-500">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    正在加载模板
-                  </div>
-                ) : visibleTemplateCount === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-stone-200 bg-white px-4 py-5 text-sm leading-6 text-stone-500">
-                    暂无模板，点击“新建模板”创建。
-                  </div>
-                ) : (
-                  <>
-                    {hasUnsavedTemplate ? (
-                      <div className="w-full rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-left shadow-sm">
-                        <div className="break-words text-sm font-medium text-stone-900">
-                          {form.name.trim() || "新模板"}
-                        </div>
-                        <div className="mt-2">
-                          <span className="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-700">
-                            未保存
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {templates.map((template) => {
-                      const active = editorId === template.id;
-                      return (
-                        <button
-                          key={template.id}
-                          type="button"
-                          onClick={() => onSelect(template.id)}
-                          className={clsx(
-                            "w-full rounded-2xl border px-4 py-3 text-left transition",
-                            active
-                              ? "border-primary/30 bg-primary/5 shadow-sm"
-                              : "border-stone-200 bg-white hover:border-stone-300",
-                          )}
-                        >
-                          <div className="break-words text-sm font-medium text-stone-900">
-                            {template.name}
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-                            <span className={clsx(
-                              "rounded-full px-2 py-1",
-                              template.is_ready
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-amber-50 text-amber-700",
-                            )}>
-                              {template.is_ready ? "可用于发信" : "内容待完善"}
-                            </span>
-                            {identityDefaultTemplateId === template.id ? (
-                              <span className="rounded-full bg-sky-50 px-2 py-1 text-sky-700">
-                                {identityLabel}默认
-                              </span>
-                            ) : null}
-                            {template.is_default ? (
-                              <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
-                                全局默认
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
-              {archivedTemplates.length > 0 ? (
-                <div className="border-t border-stone-200 pt-3">
-                  <div className="text-xs font-semibold text-stone-500">
-                    已归档模板
-                  </div>
-                  <div className="mt-2 space-y-2">
-                    {archivedTemplates.map((template) => (
-                      <div
-                        key={template.id}
-                        className="flex items-center justify-between gap-2 border-b border-stone-100 py-2"
-                      >
-                        <span className="min-w-0 break-words text-sm text-stone-600">
-                          {template.name}
-                        </span>
-                        <button
-                          type="button"
-                          className="ui-icon-btn shrink-0"
-                          aria-label={`恢复模板“${template.name}”`}
-                          title="恢复模板"
-                          disabled={templateBusy}
-                          onClick={() => onRestore(template)}
-                        >
-                          <ArchiveRestore aria-hidden="true" className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="grid min-w-0 gap-6">
-              <label className="block">
-                {renderFieldLabel("模板名称", true)}
-                <input
-                  value={form.name}
-                  onChange={(event) => onNameChange(event.target.value)}
-                  className={inputClassName}
-                  placeholder="例如：博士申请通用模板"
-                />
-              </label>
-
-            <div>
-              <div className="text-sm font-medium text-stone-900">推荐写信方式</div>
-              <p className="mt-1 text-xs leading-6 text-stone-500">
-                选择模板时会一并带入，单次任务中仍可调整。
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                {
-                  value: "llm" as const,
-                  title: "AI 辅助写信",
-                  description: "AI 以此模板为基础生成个性化邮件。",
-                },
-                {
-                  value: "template" as const,
-                  title: "直接套用模板",
-                  description: "直接替换占位符生成邮件，适合固定话术。",
-                },
-              ].map((option) => {
-                const active = form.outreach_generation_mode === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => onModeChange(option.value)}
-                    className={clsx(
-                      "rounded-[26px] border px-4 py-4 text-left transition",
-                      active
-                        ? "border-primary/20 bg-primary/5 shadow-sm shadow-primary/10"
-                        : "border-stone-200 bg-white hover:border-stone-300 hover:bg-stone-50",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-stone-900">
-                        {option.title}
-                      </div>
-                      {active ? (
-                        <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-white">
-                          已选择
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-stone-500">
-                      {option.description}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="rounded-2xl border border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
-              用“占位符”插入导师姓名等变量，发送时自动替换。
-            </div>
-
-            <div className="grid gap-4">
-              <SubjectTemplateInput
-                label="模板主题"
-                value={form.outreach_template_subject}
-                onChange={onSubjectChange}
-                inputClassName={`${inputClassName} pr-28`}
-                placeholder="例如：申请与 {{name}} 老师交流科研方向"
-              />
-              <p className="text-xs leading-6 text-stone-500">
-                导入文件仅包含正文，主题需另填。
-              </p>
-              <EmailTemplateEditor
-                label="模板正文"
-                html={templateEditorHtml}
-                placeholder="可将套磁信docx拖到此处导入"
-                onFileDrop={onImport}
-                onChange={onBodyChange}
-              />
-            </div>
-
-            <div className="rounded-2xl border border-dashed border-stone-200 bg-white/85 px-4 py-3 text-xs leading-6 text-stone-500">
-              {form.outreach_generation_mode === "template"
-                ? "选用时复制到任务，后续修改互不影响。"
-                : "AI 只在模板基础上调整称呼、个性化理由和主题。"}
-            </div>
-
-              {editingTemplate ? (
-                <div className="flex flex-wrap gap-2 border-t border-stone-200 pt-4">
-                  {identityDefaultTemplateId === editingTemplate.id ? (
-                    <button
-                      type="button"
-                      onClick={onClearIdentityDefault}
-                      disabled={templateBusy}
-                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      取消{identityLabel}默认
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onSetIdentityDefault(editingTemplate)}
-                      disabled={templateBusy}
-                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      设为{identityLabel}默认
-                    </button>
-                  )}
-                  {!editingTemplate.is_default ? (
-                    <button
-                      type="button"
-                      onClick={() => onSetGlobalDefault(editingTemplate.id)}
-                      disabled={templateBusy}
-                      className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <Star className="h-4 w-4" />
-                      设为全局默认
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => onDuplicate(editingTemplate.id)}
-                    disabled={templateBusy}
-                    className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Copy className="h-4 w-4" />
-                    复制一份
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(editingTemplate)}
-                    disabled={templateBusy}
-                    className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    归档模板
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-stone-200/80 bg-white/80 px-6 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs leading-6 text-stone-500">
-              只填名称也可保存，缺失内容会标记为“待完善”。
-            </div>
-            <button
-              type="button"
-              onClick={onComplete}
-              disabled={templateBusy}
-              className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {savingTemplate && <Loader2 className="h-4 w-4 animate-spin" />}
-              {savingTemplate
-                ? editorId === "new"
-                  ? "正在创建"
-                  : "正在保存"
-                : editorId === "new"
-                  ? "创建模板"
-                  : "保存修改"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MaterialLibraryModal = ({
-  open,
-  identity,
-  materials,
-  busy,
-  uploading,
-  selectedMaterialType,
-  materialFilter,
-  highlightedMaterialId,
-  onChangeMaterialType,
-  onChangeMaterialFilter,
-  onUpload,
-  onOpen,
-  onDownload,
-  onClose,
-  onSetPrimary,
-  onDelete,
-}: {
-  open: boolean;
-  identity: IdentityDTO;
-  materials: IdentityMaterialDTO[];
-  busy: boolean;
-  uploading: boolean;
-  selectedMaterialType: IdentityMaterialType;
-  materialFilter: MaterialFilterValue;
-  highlightedMaterialId: number | null;
-  onChangeMaterialType: (value: IdentityMaterialType) => void;
-  onChangeMaterialFilter: (value: MaterialFilterValue) => void;
-  onUpload: (file: File) => void;
-  onOpen: (material: IdentityMaterialDTO) => void;
-  onDownload: (material: IdentityMaterialDTO) => void;
-  onClose: () => void;
-  onSetPrimary: (material: IdentityMaterialDTO) => void;
-  onDelete: (material: IdentityMaterialDTO) => void;
-}) => {
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } =
-    useDismissableLayerClick(onClose);
-
-  if (!open) {
-    return null;
-  }
-
-  const primaryMaterial = identity.current_primary_material;
-  const visibleMaterials =
-    materialFilter === "all"
-      ? materials
-      : materials.filter(
-          (material) => material.material_type === materialFilter,
-        );
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/35 p-4 backdrop-blur-md sm:items-center"
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
-    >
-      <div
-        className="relative flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-stone-200/80 bg-[linear-gradient(180deg,#fffdfa,#fff7ee_18%,#ffffff_40%)] shadow-[0_30px_90px_-28px_rgba(41,37,36,0.45)]"
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
-      >
-        <div className="border-b border-stone-200/80 bg-white/75 px-6 py-5 backdrop-blur-md">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-xs uppercase tracking-[0.26em] text-stone-400">
-                Global Material Library
-              </div>
-              <h3 className="mt-2 text-2xl font-semibold text-stone-900">
-                全局材料管理
-              </h3>
-              <p className="mt-1 text-sm text-stone-500">
-                {materials.length} 份共享材料
-                {primaryMaterial
-                  ? ` · 默认材料：${primaryMaterial.display_name}`
-                  : " · 当前未设默认材料"}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-900"
-              aria-label="关闭材料库"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="border-b border-stone-200/80 bg-[#fffaf3] px-6 py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="min-w-[6.5rem]">
-                <div className="text-sm font-medium text-stone-900">
-                  上传新材料
-                </div>
-                <div className="mt-1 text-xs text-stone-500">
-                  上传一次，可供所有发件身份复用
-                </div>
-              </div>
-              <MaterialTypePicker
-                value={selectedMaterialType}
-                onChange={onChangeMaterialType}
-              />
-              <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/90 px-3 py-1.5 text-xs text-stone-600 shadow-sm shadow-stone-100/70">
-                当前：{getMaterialTypeLabel(selectedMaterialType)}
-              </span>
-            </div>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-primary/20 bg-primary px-4 py-3 text-sm font-medium text-white shadow-sm shadow-primary/20 transition hover:bg-primary-dark">
-              {uploading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
-              上传材料
-              <input
-                type="file"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.currentTarget.value = "";
-                  if (!file) {
-                    return;
-                  }
-                  onUpload(file);
-                }}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-stone-900">查看材料</div>
-            </div>
-            <MaterialFilterBar
-              value={materialFilter}
-              materials={materials}
-              onChange={onChangeMaterialFilter}
-            />
-          </div>
-
-          {materials.length === 0 ? (
-            <div className="rounded-[28px] border border-dashed border-stone-200 bg-white/75 px-6 py-12 text-center text-sm text-stone-500">
-              暂无材料。上传一份即可。
-            </div>
-          ) : visibleMaterials.length === 0 ? (
-            <div className="rounded-[28px] border border-dashed border-stone-200 bg-white/75 px-6 py-12 text-center text-sm text-stone-500">
-              当前筛选下还没有材料，试试切回“全部”。
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {visibleMaterials.map((material) => {
-                const canPromote = canUseAsPrimaryMaterial(material);
-                return (
-                  <article
-                    key={material.id}
-                    data-material-id={material.id}
-                    className={clsx(
-                      "rounded-[26px] border px-5 py-4 shadow-sm transition",
-                      material.is_primary
-                        ? "border-primary/20 bg-primary/5 shadow-primary/5"
-                        : "border-stone-200 bg-white shadow-stone-100/60",
-                      highlightedMaterialId === material.id &&
-                        "border-amber-300 bg-amber-50/70 shadow-amber-100",
-                    )}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="truncate text-sm font-semibold text-stone-900">
-                            {material.display_name}
-                          </h3>
-                          {material.is_primary ? (
-                            <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-white">
-                              默认材料
-                            </span>
-                          ) : null}
-                          {!canPromote ? (
-                            <span className="rounded-full border border-stone-200 bg-stone-100 px-2.5 py-1 text-[11px] text-stone-500">
-                              仅随信发送
-                            </span>
-                          ) : null}
-                          <span className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] text-stone-600">
-                            {MATERIAL_TYPE_LABELS[material.material_type]}
-                          </span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-3 text-xs text-stone-500">
-                          <span>{material.original_filename}</span>
-                          <span>{formatFileSize(material.size_bytes)}</span>
-                          <span>{formatApiDateTime(material.created_at)}</span>
-                          {(material.default_for_identity_ids?.length ?? 0) > 0 ? (
-                            <span>
-                              {material.default_for_identity_ids?.length} 个身份正在使用默认
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onOpen(material)}
-                          className="ui-btn-secondary"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          打开
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDownload(material)}
-                          className="ui-btn-secondary"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载
-                        </button>
-                        {material.is_primary ? (
-                          <span className="inline-flex items-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-                            已设为默认材料
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={busy || !canPromote}
-                            onClick={() => onSetPrimary(material)}
-                            className="ui-btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {canPromote ? "设为默认材料" : "不可设默认材料"}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => onDelete(material)}
-                          className="ui-btn-danger disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LLM_REFERENCE_LABELS: Array<
-  [keyof LLMProfileReferenceCountsDTO, string]
-> = [
-  ["batch_tasks", "批量活动"],
-  ["email_tasks", "邮件任务"],
-  ["email_logs", "邮件与通信记录"],
-  ["match_analysis_jobs", "匹配分析任务"],
-  ["match_analysis_job_items", "匹配分析明细"],
-  ["match_analysis_runs", "匹配运行记录"],
-  ["match_results", "导师匹配结果"],
-  ["test_compose_sessions", "测试写信会话"],
-  ["test_compose_messages", "测试邮件记录"],
-  ["crawl_jobs", "抓取与信息补全任务"],
-  ["crawl_runs", "抓取运行记录"],
-  ["crawl_pages", "抓取页面"],
-  ["crawl_candidates", "抓取候选数据"],
-  ["crawl_token_usages", "抓取 Token 记录"],
-  ["agent_change_plans", "Agent 待办与历史计划"],
-  ["operation_logs", "操作日志"],
-];
-
-const IDENTITY_REFERENCE_LABELS: Array<
-  [keyof IdentityReferenceCountsDTO, string]
-> = [
-  ["email_tasks", "邮件任务"],
-  ["email_logs", "邮件与通信记录"],
-  ["batch_tasks", "批量任务"],
-  ["test_compose_sessions", "测试写信会话"],
-  ["test_compose_messages", "测试邮件记录"],
-  ["match_analysis_jobs", "匹配分析任务"],
-  ["match_analysis_runs", "匹配运行记录"],
-  ["match_results", "导师匹配结果"],
-  ["delivery_attempts", "邮件投递尝试"],
-  ["email_observations", "邮件投递观测记录"],
-  ["agent_change_plans", "Agent 操作计划"],
-];
-
-const isIdentityDeletionImpact = (
-  value: unknown,
-): value is IdentityDeletionImpactDTO =>
-  typeof value === "object" &&
-  value !== null &&
-  "identity_id" in value &&
-  "revision" in value &&
-  typeof value.revision === "string" &&
-  "blockers" in value &&
-  Array.isArray(value.blockers);
-
-const IdentityDeletionDialog = ({
-  impact,
-  busy,
-  onClose,
-  onConfirm,
-}: {
-  impact: IdentityDeletionImpactDTO;
-  busy: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-}) => {
-  useDocumentScrollLock(true);
-  const dismiss = useCallback(() => {
-    if (!busy) {
-      onClose();
-    }
-  }, [busy, onClose]);
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } = useDismissableLayerClick(dismiss);
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose]);
-
-  const references = IDENTITY_REFERENCE_LABELS.filter(
-    ([key]) => impact.references[key] > 0,
-  );
-
-  return (
-    <div
-      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
-    >
-      <div
-        aria-describedby="identity-deletion-description"
-        aria-labelledby="identity-deletion-title"
-        aria-modal="true"
-        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[min(88vh,46rem)] w-full max-w-2xl flex-col`}
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
-        role="dialog"
-      >
-        <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
-        <div className="relative flex items-start justify-between gap-4 border-b border-stone-200/80 px-6 py-6">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600 shadow-sm shadow-red-100/80">
-              <AlertTriangle aria-hidden="true" className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 id="identity-deletion-title" className="text-lg font-semibold tracking-[0.01em] text-stone-900">
-                {impact.can_delete ? "删除身份配置" : "暂时无法删除身份配置"}
-              </h2>
-              <p id="identity-deletion-description" className="mt-2 text-sm leading-6 text-stone-600">
-                “{impact.identity_name}” · {impact.email_address}
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label="关闭确认弹层"
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={busy}
-            onClick={dismiss}
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          {impact.blockers.length > 0 && (
-            <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
-                <AlertTriangle aria-hidden="true" className="h-4 w-4" />
-                以下操作结束前无法删除
-              </div>
-              <p className="mt-2 text-sm leading-6 text-rose-800">
-                这些操作正在执行，直接删除可能导致邮件发送或任务结果异常。请按提示找到并处理对应任务。
-              </p>
-              <ul className="mt-2 space-y-2 text-sm text-rose-800">
-                {impact.blockers.map((blocker) => (
-                  <li key={blocker.kind}>
-                    {blocker.label}：{blocker.count} 项
-                    {blocker.entity_ids.length > 0
-                      ? `（ID ${blocker.entity_ids.join("、")}${blocker.count > blocker.entity_ids.length ? " 等" : ""}）`
-                      : ""}
-                    <span className="mt-0.5 block text-xs text-rose-700">
-                      定位：{blocker.surface}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section>
-            <h3 className="text-sm font-semibold text-stone-900">保留的历史数据</h3>
-            {references.length > 0 ? (
-              <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
-                {references.map(([key, label]) => (
-                  <div key={key} className="flex items-center justify-between gap-4 border-b border-stone-100 py-1.5 text-sm">
-                    <dt className="text-stone-600">{label}</dt>
-                    <dd className="font-medium tabular-nums text-stone-900">
-                      {impact.references[key]}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p className="mt-2 text-sm text-stone-500">没有关联的业务历史。</p>
-            )}
-          </section>
-
-          {(impact.automatic_actions.cancel_email_task_ids.length > 0 ||
-            impact.automatic_actions.stop_batch_task_ids.length > 0 ||
-            impact.automatic_actions.cancel_match_analysis_job_ids.length > 0 ||
-            impact.automatic_actions.invalidate_agent_change_plan_ids.length > 0) && (
-            <section>
-              <h3 className="text-sm font-semibold text-stone-900">确认后自动处理</h3>
-              <ul className="mt-2 space-y-2 text-sm leading-6 text-stone-600">
-                {impact.automatic_actions.cancel_email_task_ids.length > 0 && (
-                  <li>取消未开始发送的邮件任务：ID {impact.automatic_actions.cancel_email_task_ids.join("、")}</li>
-                )}
-                {impact.automatic_actions.stop_batch_task_ids.length > 0 && (
-                  <li>停止仍可继续的批量任务：ID {impact.automatic_actions.stop_batch_task_ids.join("、")}</li>
-                )}
-                {impact.automatic_actions.cancel_match_analysis_job_ids.length > 0 && (
-                  <li>取消匹配分析任务：ID {impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}</li>
-                )}
-                {impact.automatic_actions.invalidate_agent_change_plan_ids.length > 0 && (
-                  <li>作废关联的待确认 Agent 计划：ID {impact.automatic_actions.invalidate_agent_change_plan_ids.join("、")}</li>
-                )}
-              </ul>
-            </section>
-          )}
-
-          <section>
-            <h3 className="text-sm font-semibold text-stone-900">处理方式</h3>
-            <ul className="mt-2 space-y-2 text-sm leading-6 text-stone-600">
-              {impact.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          </section>
-        </div>
-
-        <div className="relative flex flex-wrap justify-end gap-3 border-t border-stone-200/80 px-6 py-5">
-          <button type="button" className="ui-btn-secondary rounded-2xl" disabled={busy} onClick={dismiss}>
-            {impact.can_delete ? "取消" : "知道了"}
-          </button>
-          {impact.can_delete && (
-            <button type="button" className="ui-btn-danger rounded-2xl" disabled={busy} onClick={onConfirm}>
-              {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
-              {busy ? "正在删除" : "确认删除"}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const isDeletionImpact = (value: unknown): value is LLMProfileDeletionImpactDTO =>
-  typeof value === "object" &&
-  value !== null &&
-  "revision" in value &&
-  typeof value.revision === "string" &&
-  "blockers" in value &&
-  Array.isArray(value.blockers);
-
-const LLMDeletionDialog = ({
-  impact,
-  replacementProfiles,
-  replacementProfileId,
-  busy,
-  onReplacementChange,
-  onClose,
-  onConfirm,
-}: {
-  impact: LLMProfileDeletionImpactDTO;
-  replacementProfiles: Array<{
-    id: number;
-    name: string;
-    model_name: string;
-  }>;
-  replacementProfileId: number | null;
-  busy: boolean;
-  onReplacementChange: (profileId: number | null) => void;
-  onClose: () => void;
-  onConfirm: () => void;
-}) => {
-  useDocumentScrollLock(true);
-  const dismiss = useCallback(() => {
-    if (!busy) {
-      onClose();
-    }
-  }, [busy, onClose]);
-  const {
-    onBackdropClick,
-    onBackdropMouseDown,
-    onContentClick,
-    onContentMouseDown,
-  } = useDismissableLayerClick(dismiss);
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose]);
-
-  const references = LLM_REFERENCE_LABELS.filter(
-    ([key]) => impact.references[key] > 0,
-  );
-  const automaticActions = [
-    impact.automatic_actions.cancel_email_task_ids.length > 0
-      ? `等待生成草稿的邮件任务：ID ${impact.automatic_actions.cancel_email_task_ids.join("、")}`
-      : null,
-    impact.automatic_actions.cancel_match_analysis_job_ids.length > 0
-      ? `匹配分析任务：ID ${impact.automatic_actions.cancel_match_analysis_job_ids.join("、")}`
-      : null,
-    impact.automatic_actions.cancel_crawl_job_ids.length > 0
-      ? `智能抓取或信息补全任务：ID ${impact.automatic_actions.cancel_crawl_job_ids.join("、")}`
-      : null,
-  ].filter((item): item is string => item !== null);
-
-  return (
-    <div
-      className={`${MODAL_BACKDROP_CLASS_NAME} z-[90]`}
-      onClick={onBackdropClick}
-      onMouseDown={onBackdropMouseDown}
-    >
-      <div
-        aria-describedby="llm-deletion-description"
-        aria-labelledby="llm-deletion-title"
-        aria-modal="true"
-        className={`${MODAL_SURFACE_CLASS_NAME} flex max-h-[min(88vh,48rem)] w-full max-w-2xl flex-col`}
-        onClick={onContentClick}
-        onMouseDown={onContentMouseDown}
-        role="dialog"
-      >
-        <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_68%)]" />
-        <div className="relative flex min-h-0 flex-col px-6 py-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600 shadow-sm shadow-red-100/80">
-                <AlertTriangle aria-hidden="true" className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 id="llm-deletion-title" className="text-lg font-semibold tracking-[0.01em] text-stone-900">
-                  {impact.can_delete ? "删除模型配置" : "暂时无法删除模型配置"}
-                </h2>
-                <p id="llm-deletion-description" className="mt-2 text-sm leading-6 text-stone-600">
-                  “{impact.profile_name}” · {impact.model_name}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              aria-label="关闭确认弹层"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white/80 text-stone-500 transition hover:border-stone-300 hover:bg-white hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={busy}
-              onClick={dismiss}
-            >
-              <X aria-hidden="true" className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="relative min-h-0 flex-1 space-y-5 overflow-y-auto pr-1 pt-6">
-          {impact.blockers.length > 0 && (
-            <section className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-rose-900">
-                <AlertTriangle aria-hidden="true" className="h-4 w-4" />
-                以下操作结束前无法删除
-              </div>
-              <ul className="mt-2 space-y-2 text-sm text-rose-800">
-                {impact.blockers.map((blocker) => (
-                  <li key={blocker.kind}>
-                    {blocker.label}：{blocker.count} 项
-                    {blocker.entity_ids.length > 0
-                      ? `（ID ${blocker.entity_ids.join("、")}${blocker.count > blocker.entity_ids.length ? " 等" : ""}）`
-                      : ""}
-                    <span className="mt-0.5 block text-xs text-rose-700">
-                      定位：{blocker.surface}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {automaticActions.length > 0 && (
-            <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <h3 className="text-sm font-semibold text-amber-950">
-                确认删除后会自动取消
-              </h3>
-              <ul className="mt-2 space-y-1 text-sm text-amber-900">
-                {automaticActions.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section className="rounded-2xl border border-stone-200/80 bg-white/70 px-4 py-4">
-            <h3 className="text-sm font-semibold text-stone-900">保留的历史数据</h3>
-            {references.length > 0 ? (
-              <dl className="mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2">
-                {references.map(([key, label]) => (
-                  <div key={key} className="flex items-center justify-between gap-4 border-b border-stone-100 py-1.5 text-sm">
-                    <dt className="text-stone-600">{label}</dt>
-                    <dd className="font-medium tabular-nums text-stone-900">
-                      {impact.references[key]}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : (
-              <p className="mt-2 text-sm text-stone-500">没有关联的历史业务数据。</p>
-            )}
-          </section>
-
-          {impact.is_default && impact.can_delete && (
-            <section className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
-              <label htmlFor="llm-default-replacement" className="text-sm font-semibold text-stone-900">
-                删除后的默认模型
-              </label>
-              <select
-                id="llm-default-replacement"
-                className="ui-input mt-2 w-full"
-                disabled={busy}
-                value={replacementProfileId ?? ""}
-                onChange={(event) =>
-                  onReplacementChange(event.target.value ? Number(event.target.value) : null)
-                }
-              >
-                <option value="">暂不设置默认模型</option>
-                {replacementProfiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}（{profile.model_name}）
-                  </option>
-                ))}
-              </select>
-            </section>
-          )}
-
-          <section className="rounded-2xl border border-stone-200/80 bg-white/70 px-4 py-4 text-sm leading-6 text-stone-600">
-            <p>
-              API Key、服务地址和模型级提示词会被清除。
-            </p>
-            <p className="mt-2">
-              发信模板不会删除。历史邮件、任务和分析记录会保留。
-            </p>
-            <p className="mt-2">
-              暂停或失败的任务不会自动继续。再次运行时，请选择可用模型。
-            </p>
-          </section>
-          </div>
-
-          <div className="relative mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={busy}
-            onClick={dismiss}
-          >
-            {impact.can_delete ? "取消" : "知道了"}
-          </button>
-          {impact.can_delete && (
-            <button
-              type="button"
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-red-200/90 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={busy}
-              onClick={onConfirm}
-            >
-              {busy ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Trash2 aria-hidden="true" className="h-4 w-4" />}
-              {busy ? "正在删除" : "确认删除"}
-            </button>
-          )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export const ProfilePage = () => {
   const {
     identities,
@@ -2185,15 +147,11 @@ export const ProfilePage = () => {
     refreshSelections,
     loading,
   } = useSelectionContext();
-  const {
-    registerWorkspaceDraftGuard,
-    requestWorkspaceDraftGuard,
-  } = useWorkspaceDraftGuard();
+  const { registerWorkspaceDraftGuard, requestWorkspaceDraftGuard } =
+    useWorkspaceDraftGuard();
   const { notifyError, notifyFormErrors, notifySuccess } = useNotification();
-  const {
-    isReady: desktopBackendReady,
-    disableReason: desktopDisableReason,
-  } = useDesktopBackend();
+  const { isReady: desktopBackendReady, disableReason: desktopDisableReason } =
+    useDesktopBackend();
   const [identityEditorId, setIdentityEditorId] = useState<EditorId>(null);
   const [llmEditorId, setLlmEditorId] = useState<EditorId>(null);
   const [identityForm, setIdentityForm] = useState<IdentityFormState>(
@@ -2202,7 +160,9 @@ export const ProfilePage = () => {
   const identityFormRef = useRef(identityForm);
   const identityFormBaselineRef = useRef(identityForm);
   const identityEditorIdRef = useRef<EditorId>(identityEditorId);
-  const identityEditorSelectionIdRef = useRef<number | null>(selectedIdentityId);
+  const identityEditorSelectionIdRef = useRef<number | null>(
+    selectedIdentityId,
+  );
   const selectedIdentityIdRef = useRef<number | null>(selectedIdentityId);
   const saveIdentityRef = useRef<
     (options?: { silent?: boolean }) => Promise<IdentityDTO | null>
@@ -2381,9 +341,7 @@ export const ProfilePage = () => {
       identityFormBaselineRef.current = nextForm;
       identityEditorIdRef.current = nextEditorId;
       identityEditorSelectionIdRef.current =
-        nextEditor === "new"
-          ? selectedIdentityIdRef.current
-          : nextEditor.id;
+        nextEditor === "new" ? selectedIdentityIdRef.current : nextEditor.id;
       setSmtpPasswordVisible(false);
       setIdentityEditorId(nextEditorId);
       setIdentityForm(nextForm);
@@ -2549,8 +507,7 @@ export const ProfilePage = () => {
 
     const fallback =
       activeOutreachTemplates.find(
-        (template) =>
-          template.id === identityForm.default_outreach_template_id,
+        (template) => template.id === identityForm.default_outreach_template_id,
       ) ??
       activeOutreachTemplates.find((template) => template.is_default) ??
       activeOutreachTemplates[0] ??
@@ -2614,8 +571,7 @@ export const ProfilePage = () => {
     selectedLlmProfile ?? defaultLLMProfile ?? llmProfiles[0] ?? null;
   const setupOutreachTemplate =
     activeOutreachTemplates.find(
-      (template) =>
-        template.id === setupIdentity?.default_outreach_template_id,
+      (template) => template.id === setupIdentity?.default_outreach_template_id,
     ) ?? globalDefaultOutreachTemplate;
   const setupHasTemplate = setupOutreachTemplate
     ? setupOutreachTemplate.is_ready
@@ -2847,8 +803,7 @@ export const ProfilePage = () => {
     }
     const fallback =
       activeOutreachTemplates.find(
-        (template) =>
-          template.id === identityForm.default_outreach_template_id,
+        (template) => template.id === identityForm.default_outreach_template_id,
       ) ??
       activeOutreachTemplates.find((template) => template.is_default) ??
       activeOutreachTemplates[0] ??
@@ -2921,50 +876,51 @@ export const ProfilePage = () => {
     }
   };
 
-  const saveOutreachTemplate = async (): Promise<OutreachTemplateDTO | null> => {
-    if (!desktopBackendReady) {
-      notifyError(
-        "系统正在准备本地数据",
-        "请等待系统准备完成后再保存模板，已填写内容不会丢失。",
-      );
-      return null;
-    }
-    if (!outreachTemplateForm.name.trim()) {
-      notifyFormErrors("请检查表单", ["请填写模板名称"]);
-      return null;
-    }
-
-    setSavingOutreachTemplate(true);
-    try {
-      const payload = toOutreachTemplatePayload(outreachTemplateForm);
-      const isCreating = templateEditorId === "new";
-      const saved = isExistingEditorId(templateEditorId)
-        ? await updateOutreachTemplate(templateEditorId, payload)
-        : await createOutreachTemplate(payload);
-      setTemplateEditorId(saved.id);
-      setOutreachTemplateForm(toOutreachTemplateForm(saved));
-      if (identityForm.default_outreach_template_id === saved.id) {
-        updateIdentityFormState(
-          (previous) => applyOutreachTemplateToIdentityForm(previous, saved),
-          Boolean(editingIdentity),
+  const saveOutreachTemplate =
+    async (): Promise<OutreachTemplateDTO | null> => {
+      if (!desktopBackendReady) {
+        notifyError(
+          "系统正在准备本地数据",
+          "请等待系统准备完成后再保存模板，已填写内容不会丢失。",
         );
+        return null;
       }
-      await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
-      notifySuccess(
-        isCreating ? "模板创建成功" : "模板保存成功",
-        "缺失主题或正文时会标记为“待完善”。",
-      );
-      return saved;
-    } catch (saveError) {
-      notifyError(
-        "模板保存失败",
-        getActionErrorMessage(saveError, "保存发信模板失败"),
-      );
-      return null;
-    } finally {
-      setSavingOutreachTemplate(false);
-    }
-  };
+      if (!outreachTemplateForm.name.trim()) {
+        notifyFormErrors("请检查表单", ["请填写模板名称"]);
+        return null;
+      }
+
+      setSavingOutreachTemplate(true);
+      try {
+        const payload = toOutreachTemplatePayload(outreachTemplateForm);
+        const isCreating = templateEditorId === "new";
+        const saved = isExistingEditorId(templateEditorId)
+          ? await updateOutreachTemplate(templateEditorId, payload)
+          : await createOutreachTemplate(payload);
+        setTemplateEditorId(saved.id);
+        setOutreachTemplateForm(toOutreachTemplateForm(saved));
+        if (identityForm.default_outreach_template_id === saved.id) {
+          updateIdentityFormState(
+            (previous) => applyOutreachTemplateToIdentityForm(previous, saved),
+            Boolean(editingIdentity),
+          );
+        }
+        await Promise.all([refreshOutreachTemplates(), refreshSelections()]);
+        notifySuccess(
+          isCreating ? "模板创建成功" : "模板保存成功",
+          "缺失主题或正文时会标记为“待完善”。",
+        );
+        return saved;
+      } catch (saveError) {
+        notifyError(
+          "模板保存失败",
+          getActionErrorMessage(saveError, "保存发信模板失败"),
+        );
+        return null;
+      } finally {
+        setSavingOutreachTemplate(false);
+      }
+    };
 
   const handleSetIdentityDefaultTemplate = async (
     template: OutreachTemplateDTO,
@@ -3099,8 +1055,7 @@ export const ProfilePage = () => {
       const fallback =
         (!wasIdentityDefault
           ? remainingTemplates.find(
-              (item) =>
-                item.id === identityForm.default_outreach_template_id,
+              (item) => item.id === identityForm.default_outreach_template_id,
             )
           : null) ??
         remainingTemplates.find((item) => item.is_default) ??
@@ -3112,10 +1067,7 @@ export const ProfilePage = () => {
       } else {
         beginOutreachTemplateCreation();
       }
-      notifySuccess(
-        "模板已归档",
-        "已创建任务不受影响，可在模板库中恢复。",
-      );
+      notifySuccess("模板已归档", "已创建任务不受影响，可在模板库中恢复。");
     } catch (templateError) {
       notifyError(
         "归档模板失败",
@@ -3152,9 +1104,8 @@ export const ProfilePage = () => {
     }
 
     const importTargetEditorId = templateEditorId;
-    const hasExistingTemplateBody = hasVisibleTemplateBody(
-      outreachTemplateForm,
-    );
+    const hasExistingTemplateBody =
+      hasVisibleTemplateBody(outreachTemplateForm);
 
     if (hasExistingTemplateBody) {
       const shouldReplaceTemplateBody = await confirm({
@@ -3179,12 +1130,14 @@ export const ProfilePage = () => {
 
       setOutreachTemplateForm((previous) => ({
         ...previous,
-        name:
-          previous.name.trim() || file.name.replace(/\.[^.]+$/, "").trim(),
+        name: previous.name.trim() || file.name.replace(/\.[^.]+$/, "").trim(),
         outreach_template_body_text: imported.body_text,
         outreach_template_body_html: imported.body_html,
       }));
-      notifySuccess("模板导入成功", `已导入 ${imported.format_name} 并生成纯文本正文。`);
+      notifySuccess(
+        "模板导入成功",
+        `已导入 ${imported.format_name} 并生成纯文本正文。`,
+      );
     } catch (importError) {
       notifyError(
         "模板导入失败",
@@ -3300,9 +1253,9 @@ export const ProfilePage = () => {
     }));
   };
 
-  const saveIdentity = async (
-    { silent = false }: { silent?: boolean } = {},
-  ): Promise<IdentityDTO | null> => {
+  const saveIdentity = async ({
+    silent = false,
+  }: { silent?: boolean } = {}): Promise<IdentityDTO | null> => {
     if (!desktopBackendReady) {
       notifyError(
         "系统正在准备本地数据",
@@ -3592,7 +1545,10 @@ export const ProfilePage = () => {
 
   const handleOpenMaterial = async (material: IdentityMaterialDTO) => {
     if (!isDesktopApp()) {
-      notifyError("无法打开材料", "请在桌面应用中打开材料，或使用下载按钮保存后查看。");
+      notifyError(
+        "无法打开材料",
+        "请在桌面应用中打开材料，或使用下载按钮保存后查看。",
+      );
       return;
     }
 
@@ -3714,7 +1670,9 @@ export const ProfilePage = () => {
         className="ui-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
       >
         {submittingIdentity && <Loader2 className="h-4 w-4 animate-spin" />}
-        {!desktopBackendReady ? (desktopDisableReason ?? "系统准备中") : "保存身份"}
+        {!desktopBackendReady
+          ? (desktopDisableReason ?? "系统准备中")
+          : "保存身份"}
       </button>
       {!desktopBackendReady && (
         <p className="basis-full text-xs text-amber-700">
@@ -3740,7 +1698,9 @@ export const ProfilePage = () => {
                     return;
                   }
                   setSelectedIdentityId(editingIdentity.id);
-                  notifySuccess(`当前身份：${getIdentityProfileName(editingIdentity)}`);
+                  notifySuccess(
+                    `当前身份：${getIdentityProfileName(editingIdentity)}`,
+                  );
                 })();
               }}
               className="ui-btn-secondary"
@@ -3766,7 +1726,9 @@ export const ProfilePage = () => {
                       }),
                       true,
                     );
-                    notifySuccess(`默认身份：${getIdentityProfileName(editingIdentity)}`);
+                    notifySuccess(
+                      `默认身份：${getIdentityProfileName(editingIdentity)}`,
+                    );
                   })
                   .catch((defaultError) => {
                     notifyError(
@@ -3861,7 +1823,9 @@ export const ProfilePage = () => {
                     onClick={() => openAndScrollToSetupSection(item.id)}
                     className={clsx(
                       "rounded-2xl border bg-white px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/20",
-                      item.completed ? "border-emerald-200" : "border-amber-200",
+                      item.completed
+                        ? "border-emerald-200"
+                        : "border-amber-200",
                     )}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -3920,28 +1884,30 @@ export const ProfilePage = () => {
             }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
-                <EditorSwitcher
-                  label={editingIdentity
+              <EditorSwitcher
+                label={
+                  editingIdentity
                     ? `编辑发件身份：${getIdentityProfileName(editingIdentity)}`
-                    : "新建发件身份"}
-                  helper={
-                    identities.length > 0 ? "点选切换，或新建一套。" : undefined
-                  }
-                  options={identities.map((identity) => ({
-                    ...identity,
-                    name: getIdentityProfileName(identity),
-                  }))}
-                  activeId={identityEditorId}
-                  createLabel="新建发件身份"
-                  creatingLabel="新建发件身份"
-                  onCreate={() => void beginIdentityCreation()}
-                  onSelect={(identityId) => void openIdentityEditor(identityId)}
-                />
+                    : "新建发件身份"
+                }
+                helper={
+                  identities.length > 0 ? "点选切换，或新建一套。" : undefined
+                }
+                options={identities.map((identity) => ({
+                  ...identity,
+                  name: getIdentityProfileName(identity),
+                }))}
+                activeId={identityEditorId}
+                createLabel="新建发件身份"
+                creatingLabel="新建发件身份"
+                onCreate={() => void beginIdentityCreation()}
+                onSelect={(identityId) => void openIdentityEditor(identityId)}
+              />
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="block">
-                {renderFieldLabel("身份名称", true)}
+                {<FieldLabel label={"身份名称"} required={true} />}
                 <input
                   ref={identityNameInputRef}
                   aria-label="身份名称"
@@ -3958,7 +1924,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("发件人姓名", true)}
+                {<FieldLabel label={"发件人姓名"} required={true} />}
                 <input
                   aria-label="发件人姓名"
                   value={identityForm.sender_name}
@@ -3973,7 +1939,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("发件邮箱", true)}
+                {<FieldLabel label={"发件邮箱"} required={true} />}
                 <input
                   value={identityForm.email_address}
                   onChange={(event) =>
@@ -3987,7 +1953,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("SMTP 服务器", true)}
+                {<FieldLabel label={"SMTP 服务器"} required={true} />}
                 <input
                   value={identityForm.smtp_host}
                   onChange={(event) => handleSmtpHostChange(event.target.value)}
@@ -4025,10 +1991,14 @@ export const ProfilePage = () => {
                   />
                   <button
                     type="button"
-                    aria-label={smtpPasswordVisible ? "隐藏授权码" : "显示授权码"}
+                    aria-label={
+                      smtpPasswordVisible ? "隐藏授权码" : "显示授权码"
+                    }
                     aria-pressed={smtpPasswordVisible}
                     title={smtpPasswordVisible ? "隐藏授权码" : "显示授权码"}
-                    onClick={() => setSmtpPasswordVisible((visible) => !visible)}
+                    onClick={() =>
+                      setSmtpPasswordVisible((visible) => !visible)
+                    }
                     className="pointer-events-none absolute inset-y-0 right-2 my-auto flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 opacity-0 transition hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
                   >
                     {smtpPasswordVisible ? (
@@ -4043,7 +2013,7 @@ export const ProfilePage = () => {
                 </p>
               </div>
               <label className="block">
-                {renderFieldLabel("SMTP 端口", true)}
+                {<FieldLabel label={"SMTP 端口"} required={true} />}
                 <input
                   type="number"
                   value={identityForm.smtp_port}
@@ -4058,7 +2028,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("IMAP 服务器", true)}
+                {<FieldLabel label={"IMAP 服务器"} required={true} />}
                 <input
                   value={identityForm.imap_host}
                   onChange={(event) =>
@@ -4072,7 +2042,7 @@ export const ProfilePage = () => {
                 />
               </label>
               <label className="block">
-                {renderFieldLabel("IMAP 端口", true)}
+                {<FieldLabel label={"IMAP 端口"} required={true} />}
                 <input
                   type="number"
                   value={identityForm.imap_port}
@@ -4171,20 +2141,18 @@ export const ProfilePage = () => {
             }
           >
             <div className="mt-5 rounded-3xl border border-stone-200 bg-[#fcfbf8] p-4">
-                <EditorSwitcher
-                  label={editingLLM ? `编辑模型：${editingLLM.name}` : "新建模型"}
-                  helper={
-                    llmProfiles.length > 0
-                      ? "点选切换，或新建一套。"
-                      : undefined
-                  }
-                  options={llmProfiles}
-                  activeId={llmEditorId}
-                  createLabel="新建模型"
-                  creatingLabel="新建模型"
-                  onCreate={beginLLMCreation}
-                  onSelect={openLLMEditor}
-                />
+              <EditorSwitcher
+                label={editingLLM ? `编辑模型：${editingLLM.name}` : "新建模型"}
+                helper={
+                  llmProfiles.length > 0 ? "点选切换，或新建一套。" : undefined
+                }
+                options={llmProfiles}
+                activeId={llmEditorId}
+                createLabel="新建模型"
+                creatingLabel="新建模型"
+                onCreate={beginLLMCreation}
+                onSelect={openLLMEditor}
+              />
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500">
                 <span className="rounded-full border border-stone-200 bg-white px-3 py-1">
                   DeepSeek 示例
@@ -4200,7 +2168,7 @@ export const ProfilePage = () => {
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <label className="block">
-                {renderFieldLabel("名称", true)}
+                {<FieldLabel label={"名称"} required={true} />}
                 <input
                   ref={llmNameInputRef}
                   value={llmForm.name}
@@ -4276,7 +2244,7 @@ export const ProfilePage = () => {
                 </p>
               </div>
               <label className="block">
-                {renderFieldLabel("模型名称", true)}
+                {<FieldLabel label={"模型名称"} required={true} />}
                 <input
                   value={llmForm.model_name}
                   onChange={(event) =>
@@ -4403,7 +2371,10 @@ export const ProfilePage = () => {
                     disabled={loadingLLMDeletionImpactId === editingLLM.id}
                   >
                     {loadingLLMDeletionImpactId === editingLLM.id ? (
-                      <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                      <Loader2
+                        aria-hidden="true"
+                        className="h-4 w-4 animate-spin"
+                      />
                     ) : (
                       <Trash2 aria-hidden="true" className="h-4 w-4" />
                     )}
@@ -4500,7 +2471,6 @@ export const ProfilePage = () => {
             </div>
           </ProfileSetupSection>
 
-
           <CommunicationSharingPanel />
 
           <OtherSettingsCard />
@@ -4540,9 +2510,7 @@ export const ProfilePage = () => {
         onSetIdentityDefault={(template) =>
           void handleSetIdentityDefaultTemplate(template)
         }
-        onClearIdentityDefault={() =>
-          void handleClearIdentityDefaultTemplate()
-        }
+        onClearIdentityDefault={() => void handleClearIdentityDefaultTemplate()}
         onSetGlobalDefault={(templateId) =>
           void handleSetGlobalDefaultTemplate(templateId)
         }

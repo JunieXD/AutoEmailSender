@@ -9,25 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_async_session
 from app.core.time import utc_now
 from app.models import LLMProfile
-from .schemas import (
-    LLMProfileCreate,
-    LLMProfileDeletionImpact,
-    LLMProfileDeletionResult,
-    LLMProfileModelsResult,
-    LLMProfileRead,
-    LLMProfileTestResult,
-    LLMProfileUpdate,
-)
+from app.services.operation_logs import record_operation_log
+
+from .adaptation.thinking import ThinkingAdaptationFailed
 from .availability import get_active_llm_profile
+from .defaults import set_default_llm_profile_record
 from .deletion import (
     LLMProfileDeletionError,
     build_llm_profile_deletion_impact,
     retire_llm_profile,
-)
-from .usage import (
-    LLMProfileRetiringError,
-    end_llm_profile_retirement,
-    track_llm_profile_usage,
 )
 from .runtime import (
     LLMProbeResult,
@@ -38,9 +28,20 @@ from .runtime import (
     resolve_base_url,
     sanitize_llm_url,
 )
-from app.services.operation_logs import record_operation_log
-from .adaptation.thinking import ThinkingAdaptationFailed
-
+from .schemas import (
+    LLMProfileCreate,
+    LLMProfileDeletionImpact,
+    LLMProfileDeletionResult,
+    LLMProfileModelsResult,
+    LLMProfileRead,
+    LLMProfileTestResult,
+    LLMProfileUpdate,
+)
+from .usage import (
+    LLMProfileRetiringError,
+    end_llm_profile_retirement,
+    track_llm_profile_usage,
+)
 
 router = APIRouter(prefix="/api/llm-profiles", tags=["llm-profiles"])
 
@@ -52,9 +53,7 @@ async def list_llm_profiles(
     result = await session.execute(
         select(LLMProfile)
         .where(LLMProfile.deleted_at.is_(None))
-        .order_by(
-            LLMProfile.is_default.desc(), LLMProfile.created_at.desc()
-        ),
+        .order_by(LLMProfile.is_default.desc(), LLMProfile.created_at.desc()),
     )
     return list(result.scalars())
 
@@ -215,9 +214,7 @@ async def set_default_llm_profile(
     session: AsyncSession = Depends(get_async_session),
 ) -> LLMProfile:
     profile = await _get_profile(session, profile_id)
-    await _clear_default_profiles(session, exclude_id=profile_id)
-    profile.is_default = True
-    profile.updated_at = utc_now()
+    await set_default_llm_profile_record(session, profile, refresh_timestamps=True)
     await _record_llm_profile_log(session, profile, "llm_profile.default_set")
     await session.commit()
     await session.refresh(profile)
@@ -302,9 +299,7 @@ async def fetch_models_for_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": sanitize_llm_url(
-                result.resolved_base_url
-            ),
+            "resolved_base_url": sanitize_llm_url(result.resolved_base_url),
             "request_url": sanitize_llm_url(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "model_count": len(result.models),
@@ -358,9 +353,7 @@ async def test_llm_profile(
             "status_code": result.status_code,
             "duration_ms": result.duration_ms,
             "endpoint_kind": result.endpoint_kind,
-            "resolved_base_url": sanitize_llm_url(
-                result.resolved_base_url
-            ),
+            "resolved_base_url": sanitize_llm_url(result.resolved_base_url),
             "request_url": sanitize_llm_url(result.request_url),
             "attempted_urls": _strip_url_list_query_and_fragment(result.attempted_urls),
             "consumes_tokens": result.consumes_tokens,
@@ -472,9 +465,7 @@ async def _record_llm_profile_log(
 
 def _strip_url_list_query_and_fragment(urls: list[str]) -> list[str]:
     return [
-        sanitized
-        for url in urls
-        if (sanitized := sanitize_llm_url(url)) is not None
+        sanitized for url in urls if (sanitized := sanitize_llm_url(url)) is not None
     ]
 
 

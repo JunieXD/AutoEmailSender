@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
-
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.time import utc_now
@@ -20,9 +18,9 @@ from app.models import (
 )
 
 from ..candidate_identity import canonical_candidate_clause, consolidate_job_candidates
+from .leases import expire_job_work_leases
 from .records import pause_faculty_crawl_job_record
 from .runs import mark_crawl_job_run_finished, mark_crawl_job_run_queued
-
 
 INTERRUPTED_JOB_ERROR = "抓取任务因桌面端进程中断而停止"
 INTERRUPTED_JOB_PAUSED_MESSAGE = (
@@ -85,7 +83,7 @@ async def _recover_interrupted_crawl_job(
             or await _crawl_job_has_pending_work(session, job_id=job.id)
         ):
             now = utc_now()
-            await _expire_interrupted_work_leases(session, job_id=job.id, now=now)
+            await expire_job_work_leases(session, job_id=job.id, now=now)
             job.status = CrawlJobStatus.QUEUED.value
             job.updated_at = now
             await mark_crawl_job_run_queued(session, job, now=now)
@@ -169,27 +167,6 @@ async def _crawl_job_has_pending_work(session: AsyncSession, *, job_id: int) -> 
         if await session.scalar(query.limit(1)) is not None:
             return True
     return False
-
-
-async def _expire_interrupted_work_leases(
-    session: AsyncSession,
-    *,
-    job_id: int,
-    now: datetime,
-) -> None:
-    for model, processing_status in (
-        (CrawlPageTask, CrawlPageTaskStatus.PROCESSING.value),
-        (CrawlPageChunk, CrawlPageChunkStatus.PROCESSING.value),
-        (
-            CrawlCandidateEnrichmentTask,
-            CrawlCandidateEnrichmentTaskStatus.PROCESSING.value,
-        ),
-    ):
-        await session.execute(
-            update(model)
-            .where(model.job_id == job_id, model.status == processing_status)
-            .values(lease_expires_at=now)
-        )
 
 
 def _normalize_trace(value: object) -> list[dict[str, object]]:

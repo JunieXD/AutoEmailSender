@@ -106,8 +106,9 @@ Professor/ProfessorCommunityLink 持久化与 operation log；这些协作边在
 
 `backend/app/modules/llm/` 拥有 profile DTO/UI adapter、模型目录与探测、匹配/草稿/重写运行时，
 以及 endpoint、thinking、structured-output 三类能力适配。其他领域统一通过 `llm.public` 调用；
-runtime 与 adaptation 的双向延迟导入属于同领域内部探测协议，第一轮迁移记录该边并保持现有时序，
-不得向 crawler、campaign 或 workspace 反向取用业务实现。
+`contracts.py` 拥有结果、异常和适配类型，`prompts.py` 拥有提示词构造，`wire.py` 拥有协议转换与响应解析，
+`transport.py` 拥有 HTTP/TLS 请求与日志。runtime 编排生成流程，adaptation 通过这些底层模块探测能力，
+不再反向导入 runtime，也不向 crawler、campaign 或 workspace 取用业务实现。
 
 ## crawler 基础子切片（第 6A 批，已完成）
 
@@ -141,8 +142,9 @@ transport、协议错误、message fetch/rate limit/sync state，以及 test-com
 领域外统一经 `communications.public` 使用；test-compose 合同和用例按需加载，避免低层 transport
 调用触发 identities/campaigns/LLM 高层初始化。
 
-`communications/imap/sync.py` 拥有 IMAP 增量/历史同步、single-flight 锁与 throttle、sent-folder
-发现、recent-v2/targeted history、sent/received 关联、回复检测和 EmailLog 写入。RuntimeManager、
+`communications/imap/sync.py` 拥有 IMAP 增量/历史同步编排、single-flight 锁与 throttle、sent-folder
+发现和 recent-v2/targeted history 调度。`history_fetch.py` 拥有历史邮件匹配、正文抓取预算与去重；
+`message_ingestion.py` 拥有 sent/received 关联、回复检测和 EmailLog 写入。RuntimeManager、
 workspace 与 Agent 调用方只经 `communications.public` 使用这些能力；第 9 批已删除旧
 `task_runtime.py` 兼容入口，communications 不反向依赖 workspace。
 
@@ -198,3 +200,35 @@ Desktop renderer 可见 DTO 与 bridge 以 `contracts/desktop-ipc.d.ts` 为单�
 `frontend/src/types/desktop.d.ts`、Desktop preload bridge 与 main handlers 直接使用该合同。
 IPC/event channel 由 `desktop/src/contracts/channels.ts` 统一定义，preload bridge 与 main handlers
 不得内联重复 channel。
+
+## 领域内职责拆分
+
+- `api/agent_v1/router.py` 只组合各领域 router；分页、回执与共享 DTO 投影放在 `support.py`，
+  领域请求验证和 HTTP 错误映射保留在各自 adapter。
+- `services/agent_change_plans.py` 拥有计划确认、领取、事务提交和执行回执；
+  `agent_plan_handlers/registry.py` 显式分发动作，各领域 handler 拥有快照检查和实际变更。
+  材料文件清理仍在数据库提交成功后执行。
+- `campaigns/batch_tasks/creation.py` 拥有批量任务创建用例及单项初始草稿构造，调用方控制提交；
+  `projections.py` 拥有卡片与详情投影，`item_policy.py` 拥有条目可见性和动作规则。
+  UI 与 Agent 通过 `campaigns/create_inputs.py` 共用身份和导师加载规则。
+- `identities/profiles/defaults.py` 与 `llm/defaults.py` 分别拥有默认身份和默认模型的切换，
+  UI 和 Agent 调用同一用例。
+- `crawler/pages/payloads.py` 拥有页面与候选合同，`snapshots.py` 拥有 HTML 快照生成，
+  `browser.py` 拥有 Playwright 抓取、动态页面等待与交互，`persistence.py` 拥有候选合并和快照落库。
+  `tools.py` 编排 HTTP 与浏览器回退；page worker 将抓取阶段与领取、路由和落库阶段分开。
+  租约过期与最近事件消息分别以 `jobs/leases.py`、`jobs/trace.py` 为单一实现。
+
+## 页面与客户端职责拆分
+
+- `features/task-center/components/` 拥有批量、抓取、匹配、补全及候选详情展示；
+  `useJobItemsPage` 共用匹配与补全的分页缓存、预取、过期响应隔离和错误提示去重。
+  `useCrawlCandidateEditor` 拥有候选编辑与关闭确认，`useBatchDraftEditor` 拥有草稿表单与修改基线。
+- `features/profile-setup/components/` 拥有身份连接、模板、材料、模型反馈和删除界面；
+  `model/` 拥有表单与删除选择的纯规则。
+  `features/professor-management/components/` 拥有导师编辑、导入、导出和抓取创建对话框。
+- CLI 的 `commands/common.py` 编排请求；`collection_filters.py` 拥有过滤与字段投影，
+  `state_metadata.py` 拥有状态解释，`mutation_receipts.py` 拥有写入回执，`exports.py` 拥有原子文件发布。
+- Desktop 的 `agent-support/service.ts` 编排安装；`managed-paths.ts` 拥有文件变更提交和回滚，
+  `fingerprints.ts` 拥有内容指纹，`environment-path.ts` 拥有 macOS/Windows PATH 管理。
+- 后端 HTTP 回归测试按 campaign、workspace、profiles/communications、professors、delivery 分组，
+  `test/api_fixture.py` 共用迁移数据库、客户端和清理设施。
