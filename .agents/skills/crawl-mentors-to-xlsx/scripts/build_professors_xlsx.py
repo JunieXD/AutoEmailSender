@@ -1,19 +1,17 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
 import os
-from pathlib import Path
-import sys
 import tempfile
+from pathlib import Path
 
 from professor_import_contract import (
-    ContractIssue,
-    ContractValidationError,
     FULL_COLUMNS,
     SAFE_COLUMNS,
     SPREADSHEET_ERROR_VALUES,
+    ContractIssue,
+    ContractValidationError,
     canonicalize_payload,
 )
 from xlsx_support import read_workbook, write_professor_workbook
@@ -32,14 +30,21 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include tags and personal_note columns; use only when explicitly requested",
     )
+    parser.add_argument(
+        "--details", action="store_true", help="展开规范化明细、表结构及全部错误"
+    )
     return parser
 
 
-def _error_payload(issues: list[ContractIssue]) -> dict[str, object]:
+def _error_payload(
+    issues: list[ContractIssue], *, details: bool = False, code: str = "INVALID_INPUT"
+) -> dict[str, object]:
     return {
         "ok": False,
         "error_count": len(issues),
-        "errors": [issue.as_dict() for issue in issues],
+        "code": code,
+        "next_action": "修正输入 JSON 或输出路径后重新生成；完整问题列表使用 --details",
+        "errors": [issue.as_dict() for issue in (issues if details else issues[:10])],
     }
 
 
@@ -54,7 +59,6 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
                 indent=2,
             ),
-            file=sys.stderr,
         )
         return 2
     try:
@@ -66,8 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError:
         issues = [ContractIssue("--input", f"文件不存在：{input_path}")]
         print(
-            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
-            file=sys.stderr,
+            json.dumps(
+                _error_payload(issues, details=args.details),
+                ensure_ascii=False,
+                indent=2,
+            ),
         )
         return 2
     except json.JSONDecodeError as error:
@@ -78,28 +85,34 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
         print(
-            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
-            file=sys.stderr,
+            json.dumps(
+                _error_payload(issues, details=args.details),
+                ensure_ascii=False,
+                indent=2,
+            ),
         )
         return 2
-    except (OSError, ContractValidationError) as error:
+    except (OSError, UnicodeError, ContractValidationError) as error:
         issues = (
             error.issues
             if isinstance(error, ContractValidationError)
             else [ContractIssue("--input", str(error))]
         )
         print(
-            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
-            file=sys.stderr,
+            json.dumps(
+                _error_payload(issues, details=args.details),
+                ensure_ascii=False,
+                indent=2,
+            ),
         )
         return 2
 
     columns = FULL_COLUMNS if args.include_user_fields else SAFE_COLUMNS
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     active_sheet = ""
     sheet_summaries: list[dict[str, int | str]] = []
     try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             prefix=f".{output_path.stem}.",
             suffix=".xlsx",
@@ -140,8 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         issues = [ContractIssue("--output", str(error))]
         print(
-            json.dumps(_error_payload(issues), ensure_ascii=False, indent=2),
-            file=sys.stderr,
+            json.dumps(
+                _error_payload(
+                    issues, details=args.details, code="OUTPUT_WRITE_FAILED"
+                ),
+                ensure_ascii=False,
+                indent=2,
+            ),
         )
         return 3
     finally:
@@ -156,12 +174,27 @@ def main(argv: list[str] | None = None) -> int:
         "record_count": len(payload["records"]),
         "review_count": len(payload["review"]),
         "source_count": len(payload["sources"]),
-        "normalizations": normalizations,
+        "normalization_count": len(normalizations),
+        "next_action": {
+            "command": "validate_professors_xlsx.py",
+            "xlsx": str(output_path),
+        },
         "active_sheet": active_sheet,
         "sheets": sheet_summaries,
         "formula_count": sum(item["formula_count"] for item in sheet_summaries),
         "error_value_count": sum(item["error_value_count"] for item in sheet_summaries),
     }
+    if args.details:
+        result["normalizations"] = normalizations
+    else:
+        for key in (
+            "columns",
+            "active_sheet",
+            "sheets",
+            "formula_count",
+            "error_value_count",
+        ):
+            result.pop(key)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

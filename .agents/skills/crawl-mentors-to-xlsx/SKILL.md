@@ -5,7 +5,7 @@ description: 从学校、学院、系所或实验室官网抓取公开导师/教
 
 # Crawl Mentors To XLSX
 
-从高校官网收集公开导师信息，生成 Auto Email Sender 可导入的 XLSX。相对路径以本 Skill 目录为基准。
+从高校官网收集公开导师信息，生成 Auto Email Sender 可导入的 XLSX。脚本仅需 Python 3.12+ 标准库，可独立安装；相对路径以本 Skill 目录为基准。
 
 ## 抓取
 
@@ -29,6 +29,8 @@ python3 scripts/build_professors_xlsx.py --input /绝对路径/candidates.json -
 python3 scripts/validate_professors_xlsx.py /绝对路径/professors_import.xlsx
 ```
 
-使用随附生成器和校验器保证导入格式与文本单元格正确。校验失败时修正源数据再生成。需要检查版面时可用现有表格工具预览，不另建渲染流程。
+生成器和校验器均向 stdout 输出 JSON：默认返回文件、人数、问题数量和 `next_action`，需要全部规范化明细或错误时加 `--details`。退出码 `0` 为成功，`2` 为输入/校验失败，生成器的 `3` 为输出写入失败。
+
+校验器验证的是完整抓取交付：`Professors`、`Needs Review` 和 `Sources` 三表及来源证据都必须存在，即使没有待复核人员。应用导入只读活动表，不等于满足此交付契约。校验失败时按错误位置修正源 JSON 再生成，避免反复读取整个工作簿。需要检查版面时可用现有表格工具预览，不另建渲染流程。
 
 交付 XLSX 链接、可导入/待复核人数、来源、未解决问题与校验结果。导入或投稿按用户另行指示执行。

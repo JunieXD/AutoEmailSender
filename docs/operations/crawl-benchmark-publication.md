@@ -8,7 +8,8 @@
 
 ```bash
 cd backend
-uv run python ../scripts/data/update_crawl_benchmark.py
+uv run python ../scripts/data/update_crawl_benchmark.py --json --dry-run
+uv run python ../scripts/data/update_crawl_benchmark.py --json
 ```
 
 脚本会自动寻找桌面应用数据库，只读查询当前抓取任务，并合并输出文件中已有的其他电脑记录与早期 XLSX 记录。它不会修改原数据库，也不要求先把候选导师导入导师库。首次导入历史表时使用：
@@ -20,6 +21,8 @@ uv run python ../scripts/data/update_crawl_benchmark.py \
 ```
 
 需要指定其他数据库时传入 `--database /absolute/path/to/auto_email_sender.db`。
+
+`--dry-run` 使用与正式运行相同的已有 JSON 合并基线，不写入任何文件。`--json` 输出新增、更新、保留、删除数量及下一步；无内容变化时不更新生成时间。`--output` 同时指定已有合并基线和写入目标，不能通过换成空的临时路径预览完整合并。损坏的基线、Schema 1 或重复记录 ID 会阻断写入，错误用 `code` 和 `next_action` 返回。
 
 学校或学院曾使用简称、旧称时，在 `config/crawl-benchmark-aliases.json` 中维护统一名称。更新脚本会在发布阶段同时规范数据库记录和历史 XLSX 记录，不会修改用户的原始任务数据库。例如当前会将“中科院”统一为“中国科学院大学”，并把“沈阳自动化所”统一为“中国科学院沈阳自动化研究所”。
 

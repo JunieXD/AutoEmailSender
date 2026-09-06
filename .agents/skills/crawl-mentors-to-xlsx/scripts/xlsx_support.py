@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import re
+import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-import re
 from xml.etree import ElementTree as ET
-from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
-
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -29,6 +29,11 @@ ET.register_namespace("dc", DC_NS)
 ET.register_namespace("dcterms", DCTERMS_NS)
 ET.register_namespace("xsi", XSI_NS)
 ET.register_namespace("vt", VT_NS)
+
+MAX_XLSX_BYTES = 20 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+MAX_SHEET_ROWS = 100001
+MAX_SHEET_COLUMNS = 12
 
 CELL_REF_PATTERN = re.compile(r"^([A-Z]+)([1-9][0-9]*)$")
 
@@ -596,7 +601,7 @@ def write_professor_workbook(
 def _read_shared_strings(archive: ZipFile) -> list[str]:
     if "xl/sharedStrings.xml" not in archive.namelist():
         return []
-    root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+    root = _parse_xml(archive.read("xl/sharedStrings.xml"))
     return [
         "".join(text.text or "" for text in item.iter(_tag(MAIN_NS, "t")))
         for item in root.findall(_tag(MAIN_NS, "si"))
@@ -616,23 +621,25 @@ def _read_sheet(
     target: str,
     shared_strings: list[str],
 ) -> SheetData:
-    root = ET.fromstring(archive.read(target))
+    root = _parse_xml(archive.read(target))
     row_values: dict[int, dict[int, str]] = {}
     formulas: list[str] = []
     max_column = 0
     max_row = 0
     for row in root.findall(f".//{_tag(MAIN_NS, 'row')}"):
         row_number = int(row.attrib.get("r", "0") or "0")
-        if row_number <= 0:
-            continue
+        if not 1 <= row_number <= MAX_SHEET_ROWS or row_number in row_values:
+            raise ValueError("工作表行号无效、重复或超过 100000 条数据限制")
         max_row = max(max_row, row_number)
         current: dict[int, str] = {}
         for cell in row.findall(_tag(MAIN_NS, "c")):
             reference = cell.attrib.get("r", "")
             match = CELL_REF_PATTERN.fullmatch(reference)
-            if not match:
-                continue
+            if not match or int(match.group(2)) != row_number:
+                raise ValueError("单元格坐标无效或与所在行不一致")
             column_index = _column_index(match.group(1))
+            if column_index > MAX_SHEET_COLUMNS or column_index in current:
+                raise ValueError("工作表超过 12 列或含重复单元格")
             max_column = max(max_column, column_index)
             formula = cell.find(_tag(MAIN_NS, "f"))
             if formula is not None:
@@ -647,9 +654,12 @@ def _read_sheet(
                 raw_value = value_element.text if value_element is not None else ""
                 if cell_type == "s" and raw_value:
                     try:
-                        value = shared_strings[int(raw_value)]
+                        index = int(raw_value)
+                        if index < 0:
+                            raise ValueError("negative index")
+                        value = shared_strings[index]
                     except (IndexError, ValueError):
-                        value = raw_value
+                        raise ValueError("共享字符串索引无效") from None
                 elif cell_type == "b":
                     value = "TRUE" if raw_value == "1" else "FALSE"
                 else:
@@ -666,25 +676,31 @@ def _read_sheet(
     return SheetData(name=name, rows=rows, formulas=tuple(formulas))
 
 
-def read_workbook(path: Path) -> WorkbookData:
+def _read_workbook(path: Path) -> WorkbookData:
     try:
         archive = ZipFile(path)
     except (BadZipFile, OSError) as error:
         raise ValueError("XLSX 文件无法作为 ZIP/OOXML 工作簿读取") from error
     with archive:
+        entries = archive.infolist()
+        if len(entries) > 100 or len(set(archive.namelist())) != len(entries):
+            raise ValueError("XLSX 含过多或重复的 ZIP 部件")
+        if sum(entry.file_size for entry in entries) > MAX_UNCOMPRESSED_BYTES:
+            raise ValueError("XLSX 解压后超过 64 MiB；请分批生成")
         required = {"xl/workbook.xml", "xl/_rels/workbook.xml.rels"}
         missing = required.difference(archive.namelist())
         if missing:
             raise ValueError(f"XLSX 缺少必要部件：{', '.join(sorted(missing))}")
-        workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
-        rels_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        workbook_root = _parse_xml(archive.read("xl/workbook.xml"))
+        rels_root = _parse_xml(archive.read("xl/_rels/workbook.xml.rels"))
         relationships = {
             item.attrib.get("Id", ""): item.attrib.get("Target", "")
             for item in rels_root.findall(_tag(PACKAGE_REL_NS, "Relationship"))
         }
         sheet_elements = workbook_root.findall(f".//{_tag(MAIN_NS, 'sheet')}")
-        if not sheet_elements:
-            raise ValueError("XLSX 不包含工作表")
+        names = [sheet.attrib.get("name", "") for sheet in sheet_elements]
+        if not 1 <= len(names) <= 3 or len(set(names)) != len(names):
+            raise ValueError("XLSX 必须含 1 至 3 个名称唯一的工作表")
         active_view = workbook_root.find(f".//{_tag(MAIN_NS, 'workbookView')}")
         active_index = (
             int(active_view.attrib.get("activeTab", "0"))
@@ -692,7 +708,7 @@ def read_workbook(path: Path) -> WorkbookData:
             else 0
         )
         if active_index < 0 or active_index >= len(sheet_elements):
-            active_index = 0
+            raise ValueError("活动工作表索引无效")
         shared_strings = _read_shared_strings(archive)
         sheets: list[SheetData] = []
         for sheet_element in sheet_elements:
@@ -716,3 +732,27 @@ def read_workbook(path: Path) -> WorkbookData:
             active_sheet_name=sheets[active_index].name,
             sheets=tuple(sheets),
         )
+
+
+def _parse_xml(data: bytes) -> ET.Element:
+    # Removing NULs also detects DTD/entity declarations in UTF-16 XML.
+    upper = data.replace(b"\0", b"").upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise ValueError("XLSX 不支持 XML 实体或 DTD")
+    return ET.fromstring(data)
+
+
+def read_workbook(path: Path) -> WorkbookData:
+    if path.stat().st_size > MAX_XLSX_BYTES:
+        raise ValueError("XLSX 超过 20 MiB；请分批生成")
+    try:
+        return _read_workbook(path)
+    except (
+        ET.ParseError,
+        BadZipFile,
+        KeyError,
+        RuntimeError,
+        NotImplementedError,
+        zlib.error,
+    ) as error:
+        raise ValueError("XLSX 部件损坏或不受支持；请重新生成工作簿") from error

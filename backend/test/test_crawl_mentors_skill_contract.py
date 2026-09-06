@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import subprocess
+from unittest.mock import patch
 from zipfile import ZipFile
 
 from openpyxl import load_workbook
@@ -412,6 +414,99 @@ class CrawlMentorsSkillContractTests(unittest.TestCase):
             self.assertEqual(workbook["Professors"]["H2"].data_type, "s")
             self.assertEqual(workbook["Professors"]["H2"].value, "=1+1|+SUM(A1:A2)")
             workbook.close()
+
+    def test_cli_errors_are_json_and_success_details_are_opt_in(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "input.json"
+            source.write_text(
+                json.dumps(_payload(_record(email="ZHANG@EXAMPLE.EDU"))),
+                encoding="utf-8",
+            )
+            arguments = ["--input", str(source), "--output", str(root / "output.xlsx")]
+            for details in (False, True):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    code = build_professors_xlsx(
+                        arguments + (["--details"] if details else [])
+                    )
+                result = json.loads(output.getvalue())
+                self.assertEqual(code, 0)
+                self.assertGreater(result["normalization_count"], 0)
+                self.assertEqual("normalizations" in result, details)
+                self.assertEqual(result["record_count"], 1)
+            source.write_bytes(b"\xff")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = build_professors_xlsx(arguments)
+            self.assertEqual(code, 2)
+            self.assertEqual(json.loads(output.getvalue())["code"], "INVALID_INPUT")
+            with patch(
+                "build_professors_xlsx.Path.mkdir", side_effect=PermissionError()
+            ):
+                source.write_text(json.dumps(_payload(_record())), encoding="utf-8")
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(build_professors_xlsx(arguments), 3)
+                self.assertFalse(json.loads(output.getvalue())["ok"])
+
+    def test_malformed_and_unbounded_xlsx_fail_with_json(self):
+        import xlsx_support
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            baseline = self._build(root, _payload(_record()))
+            with ZipFile(baseline) as archive:
+                parts = {name: archive.read(name) for name in archive.namelist()}
+            mutations = {
+                "xml": ("xl/workbook.xml", b"<broken"),
+                "row": (
+                    "xl/worksheets/sheet1.xml",
+                    parts["xl/worksheets/sheet1.xml"].replace(
+                        b'<row r="2"', b'<row r="999999999"'
+                    ),
+                ),
+                "column": (
+                    "xl/worksheets/sheet1.xml",
+                    parts["xl/worksheets/sheet1.xml"].replace(b"J2", b"ZZZZ2"),
+                ),
+            }
+            for name, (part, data) in mutations.items():
+                path = root / f"{name}.xlsx"
+                with ZipFile(path, "w") as archive:
+                    for key, value in parts.items():
+                        archive.writestr(key, data if key == part else value)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SKILL_SCRIPTS / "validate_professors_xlsx.py"),
+                        str(path),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["code"], "INVALID_WORKBOOK")
+                self.assertNotIn("Traceback", result.stderr)
+            with patch("xlsx_support.MAX_UNCOMPRESSED_BYTES", 1):
+                self.assertFalse(validate_professors_xlsx(baseline)["ok"])
+            with baseline.open("wb") as stream:
+                stream.truncate(xlsx_support.MAX_XLSX_BYTES + 1)
+            with patch("xlsx_support._read_workbook") as reader:
+                self.assertFalse(validate_professors_xlsx(baseline)["ok"])
+                reader.assert_not_called()
+
+    def test_delivery_requires_evidence_even_when_application_can_import(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._build(Path(folder), _payload(_record()))
+            workbook = load_workbook(path)
+            del workbook["Sources"]
+            del workbook["Needs Review"]
+            workbook.save(path)
+            workbook.close()
+            parsed = parse_professor_import_file(path.name, path.read_bytes())
+            self.assertEqual(parsed.failed_count, 0)
+            self.assertFalse(validate_professors_xlsx(path)["ok"])
 
 
 if __name__ == "__main__":

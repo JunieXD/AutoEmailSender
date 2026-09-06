@@ -1,19 +1,17 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-import sys
 
 from professor_import_contract import (
-    ContractIssue,
-    ContractValidationError,
     FULL_COLUMNS,
     REVIEW_FIELDS,
     SAFE_COLUMNS,
     SOURCE_FIELDS,
     SPREADSHEET_ERROR_VALUES,
+    ContractIssue,
+    ContractValidationError,
     canonicalize_payload,
 )
 from xlsx_support import SheetData, column_name, read_workbook
@@ -47,7 +45,7 @@ def _table_rows(
     result: list[dict[str, str]] = []
     for row_number, row in enumerate(sheet.rows[1:], start=2):
         values = list(row[: len(columns)]) + [""] * max(0, len(columns) - len(row))
-        if not any(value.strip() for value in values):
+        if not any(value.strip() for value in row):
             continue
         if any(value.strip() for value in row[len(columns) :]):
             issues.append(
@@ -82,7 +80,12 @@ def validate(path: Path) -> dict[str, object]:
         workbook = read_workbook(path)
     except (OSError, ValueError) as error:
         issues.append(ContractIssue("workbook", str(error)))
-        return {"ok": False, "errors": [item.as_dict() for item in issues]}
+        return {
+            "ok": False,
+            "path": str(path),
+            "code": "INVALID_WORKBOOK",
+            "errors": [item.as_dict() for item in issues],
+        }
 
     if workbook.active_sheet_name != "Professors":
         issues.append(
@@ -206,9 +209,30 @@ def main(argv: list[str] | None = None) -> int:
         description="Validate an XLSX against the Auto Email Sender professor import contract."
     )
     parser.add_argument("xlsx", type=Path)
+    parser.add_argument(
+        "--details", action="store_true", help="展开工作表结构及全部错误"
+    )
     args = parser.parse_args(argv)
     path = args.xlsx.expanduser().resolve()
     result = validate(path)
+    result["error_count"] = len(result["errors"])
+    if not result["ok"]:
+        result.setdefault("code", "CONTRACT_VIOLATION")
+    result["next_action"] = (
+        "deliver_xlsx"
+        if result["ok"]
+        else "修正候选 JSON 后重新生成；此校验要求抓取交付证据完整，全部问题使用 --details"
+    )
+    if not args.details:
+        for key in (
+            "columns",
+            "active_sheet",
+            "sheets",
+            "formula_count",
+            "error_value_count",
+        ):
+            result.pop(key, None)
+        result["errors"] = result["errors"][:10]
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 2
 

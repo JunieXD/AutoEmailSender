@@ -6,6 +6,10 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+import importlib.util
+import io
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from openpyxl import Workbook
 
@@ -471,6 +475,149 @@ class CrawlBenchmarkLegacyWorkbookTests(unittest.TestCase):
         self.assertNotIn("email", preserved[0])
         self.assertNotIn("errorLog", preserved[0])
         self.assertEqual(preserved[0]["emailCount"], 10)
+
+
+class CrawlBenchmarkCliTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "scripts/data/update_crawl_benchmark.py"
+        )
+        spec = importlib.util.spec_from_file_location("benchmark_skill_cli", path)
+        cls.cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.cli)
+
+    def invoke(self, *arguments):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = self.cli.main(["--json", *arguments])
+        return code, json.loads(output.getvalue())
+
+    def test_preview_preserves_baseline_then_reports_merge_and_noop(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "public.json"
+            existing = make_public_legacy_record()
+            retained = make_public_legacy_record(
+                recordId="legacy-1111111111111111", school="另一学院"
+            )
+            write_publication_payload(
+                path, build_publication_payload([existing, retained])
+            )
+            before = path.read_bytes()
+            updated = {**existing, "emailCount": 10}
+            added = make_public_legacy_record(
+                recordId="legacy-2222222222222222", school="新增学院"
+            )
+            with patch.object(
+                self.cli, "load_database_records", return_value=[updated, added]
+            ):
+                code, preview = self.invoke("--output", str(path), "--dry-run")
+                self.assertEqual(code, 0)
+                self.assertFalse(preview["written"])
+                self.assertEqual(
+                    preview["changes"],
+                    {"added": 1, "updated": 1, "retained": 1, "removed": 0},
+                )
+                self.assertEqual(path.read_bytes(), before)
+                code, result = self.invoke("--output", str(path))
+                self.assertTrue(result["written"])
+                self.assertEqual(result["changes"], preview["changes"])
+                written = path.read_bytes()
+                code, noop = self.invoke("--output", str(path))
+                self.assertEqual(noop["status"], "unchanged")
+                self.assertEqual(path.read_bytes(), written)
+
+    def test_failures_do_not_overwrite_history_or_create_missing_database(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "public.json"
+            for content in (
+                "<broken",
+                json.dumps({"schemaVersion": 1, "records": []}),
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "records": [{"recordId": "x"}, {"recordId": "x"}],
+                    }
+                ),
+            ):
+                path.write_text(content)
+                with patch.object(self.cli, "load_database_records", return_value=[]):
+                    code, result = self.invoke("--output", str(path))
+                self.assertEqual(code, 2)
+                self.assertFalse(result["ok"])
+                self.assertEqual(path.read_text(), content)
+            path.unlink()
+            database = root / "missing.db"
+            code, result = self.invoke(
+                "--database", str(database), "--output", str(path)
+            )
+            self.assertEqual(result["code"], "INPUT_NOT_FOUND")
+            self.assertFalse(database.exists())
+            self.assertFalse(path.exists())
+            code, result = self.invoke(
+                "--database", str(database), "--output", str(database)
+            )
+            self.assertEqual(result["code"], "OUTPUT_IS_INPUT")
+
+    def test_real_database_is_read_only_and_other_machine_history_survives(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "app.db"
+            CrawlBenchmarkDatabasePublicationTests._create_database(database)
+            original_db = database.read_bytes()
+            path = root / "public.json"
+            other = make_public_legacy_record()
+            write_publication_payload(path, build_publication_payload([other]))
+            original_json = path.read_bytes()
+            code, preview = self.invoke(
+                "--database", str(database), "--output", str(path), "--dry-run"
+            )
+            self.assertEqual(code, 0, preview)
+            self.assertEqual(preview["changes"]["added"], 2)
+            self.assertEqual(preview["changes"]["retained"], 1)
+            self.assertEqual(path.read_bytes(), original_json)
+            code, applied = self.invoke(
+                "--database", str(database), "--output", str(path)
+            )
+            self.assertEqual(code, 0, applied)
+            self.assertEqual(database.read_bytes(), original_db)
+            self.assertIn(
+                other["recordId"],
+                {item["recordId"] for item in json.loads(path.read_text())["records"]},
+            )
+            self.assertNotIn("secret@example.edu", path.read_text())
+
+    def test_concurrent_baseline_change_stops_write(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "public.json"
+            initial = build_publication_payload([make_public_legacy_record()])
+            write_publication_payload(path, initial)
+            changed = build_publication_payload(
+                [make_public_legacy_record(emailCount=10)]
+            )
+
+            def read_database(_):
+                write_publication_payload(path, changed)
+                return [make_public_legacy_record(emailCount=8)]
+
+            with patch.object(
+                self.cli, "load_database_records", side_effect=read_database
+            ):
+                code, result = self.invoke("--output", str(path))
+            self.assertEqual(code, 2)
+            self.assertEqual(result["code"], "BASELINE_CHANGED")
+            self.assertEqual(json.loads(path.read_text()), changed)
+
+    def test_dry_run_does_not_create_output_directory(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "missing" / "public.json"
+            with patch.object(self.cli, "load_database_records", return_value=[]):
+                code, result = self.invoke("--output", str(path), "--dry-run")
+            self.assertEqual(code, 0)
+            self.assertFalse(result["written"])
+            self.assertFalse(path.parent.exists())
 
 
 if __name__ == "__main__":

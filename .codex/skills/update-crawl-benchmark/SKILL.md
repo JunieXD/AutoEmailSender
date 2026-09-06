@@ -12,13 +12,14 @@ Merge local crawl aggregates into `website/data/crawl-benchmark.json`. Read `doc
 3. From `backend/`, run:
 
    ```bash
-   uv run python ../scripts/data/update_crawl_benchmark.py [--database /absolute/path/auto_email_sender.db] [--legacy-xlsx /absolute/path/history.xlsx]
+   uv run python ../scripts/data/update_crawl_benchmark.py --json --dry-run
    ```
 
-   Use the historical workbook only when requested or during its initial migration.
-4. Review the diff: existing records from other machines remain, same-job enrichment updates retain `recordId`, aliases are correct, and only aggregate fields are published. Enrichment progress uses all candidates as its denominator.
-5. Run `uv run python -m unittest test.test_crawl_benchmark_publication` in backend, then `npm run test` and `npm run build` in website. Report changed counts, unresolved aliases and verification results. Commit or publish according to the user's request.
+   Use `--database <absolute-path>` for another computer and `--legacy-xlsx <absolute-path>` only for requested historical data or its initial migration. Preview reads the same existing public JSON as execution. Do not use a new `--output` path as a preview: it would select a different merge baseline.
+4. Read `changes.added/updated/retained/removed`, `changed`, and `next_action`. If the requested update has changes, rerun the same arguments without `--dry-run`. An unchanged run preserves the file and its generation time. Errors return `ok: false`, `code` and `next_action` with exit code 2; fix the named input instead of rebuilding or discarding existing history.
+5. Review the diff: existing records from other machines remain, same-job enrichment updates retain `recordId`, aliases are correct, and only aggregate fields are published. Enrichment progress uses all candidates as its denominator.
+6. Run `uv run python -m unittest test.test_crawl_benchmark_publication` in backend, then `npm run test` and `npm run build` in website. Report changed counts, aliases still needing evidence (if encountered) and verification results. The script does not infer unconfirmed aliases. Commit or publish according to the user's request.
 
 The script opens the database read-only. Do not migrate, edit or publish it. Names, emails, logs, prompts and database paths do not belong in public output.
 
-The existing schema 2 JSON is an input: retain other machines' records. After a conflicting remote update, integrate it and rerun the script, rather than selecting one side. Local numeric job IDs alone are not global identities. A schema 1 upgrade needs the primary history database; see the operations guide before rebuilding that baseline.
+The output is Schema 3; existing Schema 2/3 JSON is an input: retain other machines' records. After a conflicting remote update, integrate it and rerun the script, rather than selecting one side. Local numeric job IDs alone are not global identities. A schema 1 upgrade needs the primary history database; see the operations guide before rebuilding that baseline.
