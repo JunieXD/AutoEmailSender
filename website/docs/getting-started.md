@@ -4,7 +4,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。桌面版开箱�
 
 ## 下载安装
 
-请从 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases) 下载 Windows 或 Apple Silicon macOS 安装包。Intel Mac 暂无安装包；首次运行时请确认安装包来自本项目。详细步骤和安全提示见[安装桌面版](./install)。
+请从 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases) 下载 Windows 或 Apple Silicon macOS 安装包。Intel Mac 暂无安装包。运行前请确认安装包来自本项目，详细步骤和安全提示见[安装桌面版](./install)。
 
 ## 基本流程
 

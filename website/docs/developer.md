@@ -118,7 +118,7 @@ npm run dist
 从仓库根目录运行完整测试：
 
 ```bash
-rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py
+uv run --project backend --no-sync python scripts/quality/run_all_tests.py
 ```
 
 只验证某一端时，可分别运行 `frontend`、`backend`、`desktop` 或 `website` 目录中的测试命令。提交前还应运行受影响工作区的类型检查、Lint 或构建。
