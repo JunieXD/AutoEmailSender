@@ -23,13 +23,13 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 ## 宣传片
 
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1yQgw6rEXG">
-    <img src="website/public/screenshots/promo/bilibili-promo-play-tv-white-70.jpg" alt="Auto Email Sender 宣传片，点击前往哔哩哔哩观看" width="720" />
+  <a href="https://www.bilibili.com/video/BV1sUHS6uEUZ">
+    <img src="website/public/screenshots/promo/bilibili-promo-v10-play.jpg" alt="Auto Email Sender 宣传片，点击前往哔哩哔哩观看" width="720" />
   </a>
 </p>
 
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1yQgw6rEXG">在哔哩哔哩观看宣传片</a>
+  <a href="https://www.bilibili.com/video/BV1sUHS6uEUZ">在哔哩哔哩观看宣传片</a>
 </p>
 
 ## 界面预览
