@@ -1,4 +1,0 @@
-interface:
-  display_name: "AutoEmailSender Release"
-  short_description: "Prepare, certify, promote, and verify releases."
-  default_prompt: "Use $auto-email-sender-release to prepare, certify, promote, and verify an AutoEmailSender version without rebuilding certified artifacts."

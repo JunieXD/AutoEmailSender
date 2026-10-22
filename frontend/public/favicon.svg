@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-labelledby="title">
-  <title id="title">Auto Email Sender</title>
-  <rect width="16" height="16" rx="3" fill="#991b1b" shape-rendering="crispEdges"/>
-  <g fill="none" stroke="#ffffff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12.5 5.5 8.9 8.1a1.5 1.5 0 0 1-1.8 0L3.5 5.5"/>
-    <rect x="3.5" y="4.5" width="9" height="7" rx="1"/>
-  </g>
-</svg>

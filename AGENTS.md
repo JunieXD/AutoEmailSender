@@ -1,66 +1,121 @@
-# Repository Guidelines
+# AGENTS.md
 
-- Use Node.js 24, Python 3.12 and `uv`. Prefix shell commands with `rtk` (`rtk proxy` for unsupported commands).
-- Install Python dependencies with `uv sync --dev`; use `npm ci` in Node workspaces. Use `npm install` when changing dependencies and update both package files.
-- If `.codegraph/` exists, use `codegraph explore "<file, symbol or question>"` before searching for code. Do not create an index unless requested.
+Auto Email Sender 是帮学生联系导师的本地桌面应用：从学校官网抓取导师信息，结合个人材料分析匹配度，生成个性化的邮件草稿，经用户审核后定时发送，并通过 IMAP 追踪回信。这份文件是参与开发的规矩和文档索引，人和编码 agent 都适用。
 
-## Layout
+`master` 上是从头重写的 V3，全部用 TypeScript，是和 V2 完全独立的新应用，不兼容 V2 的代码、数据和接口。V2 冻结在 `v2` 分支，最后一版是 `v2.6.5`，不再维护；`v2` 分支和 `v2.*` 标签由仓库规则锁定，只读。
 
-- `backend/app/modules/`: domain logic; `api/` and `services/`: remaining HTTP adapters and shared services. Migrations: `backend/alembic/versions/`.
-- `frontend/src/`: React UI, feature logic and API clients.
-- `desktop/`: Electron main/preload and packaging. `cli/`: Agent API client. `contracts/`: shared protocols.
-- `website/`: VitePress site. `scripts/`: build, release, quality and data tools. Documentation starts at `docs/README.md`.
+## 文档索引
 
-## Changes
+按任务读相关的部分，不用每次全读。
 
-Follow nearby code style: UTF-8, Python 4-space indentation, TypeScript 2-space indentation and frontend `@/` imports.
-Validate external inputs at their boundary; use the resulting types internally. Add abstractions, compatibility branches and retries only for a concrete requirement.
-Test observable behavior and meaningful failure cases. Avoid tests that duplicate implementation, freeze prose or directory layouts, or merely repeat type checking.
-Update existing documentation when behavior changes; routine work does not need a new plan or acceptance report.
-Schema changes need an Alembic revision and migration coverage. Keep secrets, local databases, generated crawl data and dependencies out of Git; update `.env.example` for configuration changes.
-Prefer focused `type(scope): summary` commits. PRs should explain behavior and validation.
+| 要做的事 | 先读 |
+| --- | --- |
+| 了解目标、已定决策、架构和技术栈 | [总体设计](docs/design.md) |
+| 当前阶段要做什么 | 总体设计的"当前阶段"一节 |
+| 改密码和 API Key 的保存、发信、IPC、加载外部网页的代码 | 总体设计的"安全"一节 |
+| 表结构、索引、查询 | [数据表](docs/data-model.md) |
+| 目录、模块划分和分层，接口、数据库、界面、测试的写法，以及术语 | [开发约定](docs/development.md) |
+| 查 V2 怎么处理某个功能、踩过哪些坑 | `v2` 分支，用法见"工作方式" |
 
-## Development and verification
+## 命令
 
-Run commands from the relevant workspace:
+包管理只用 pnpm，临时运行工具用 `pnpm dlx`。
 
-| Workspace | Development | Verification |
-| --- | --- | --- |
-| backend | `uv run python dev_entry.py` | `uv run python -m unittest test.test_<module>` |
-| frontend | `npm run dev` | `npm run lint`, `npm run test -- <file>`, `npm run build` |
-| desktop | `npm run dev` (requires frontend dev server) | `npm run typecheck`, `npm run test` |
-| cli | `uv run auto-email-sender --help` | `uv run python -m unittest discover test` |
-| website | `npm run docs:dev` | `npm run test`, `npm run build` |
+| 命令 | 用途 |
+| --- | --- |
+| `pnpm install` | 安装依赖 |
+| `pnpm dev` | 启动开发版应用 |
+| `pnpm check` | 类型检查、lint、格式检查和测试，提交前要全部通过 |
+| `pnpm test <路径>` | 只跑相关的测试 |
+| `pnpm format` | 格式化 |
 
-Apply migrations with `cd backend && uv run alembic upgrade head` before using an existing development database.
-For a full test run: `rtk proxy uv run --project backend --no-sync python scripts/quality/run_all_tests.py`.
-For release and packaging work, use `.codex/skills/auto-email-sender-release/SKILL.md` and the relevant guides under `docs/operations/`.
+## 语言
 
-<!-- ZVEC_GREP_START -->
-## zvec-grep
+- 和用户交流（回复、汇报、提问）用简体中文。
+- 文档、界面文案和给用户看的错误信息用简体中文。
+- 提交信息、PR 标题和描述用简体中文。
+- 代码、标识符、注释、日志、错误码和分支名用英文。
 
-Choose the evidence source before the retrieval mode.
+## 工作方式
 
-### Workspace evidence
-- Use the current workspace as the evidence source when the user asks about local material, prior context establishes it as relevant, or the question concerns how the current project works—even if the workspace is not mentioned explicitly.
-- A workspace may contain any mix of code, documents, configuration, and data.
-- Do not use workspace retrieval for unrelated open-world questions, current external facts, or web content that does not depend on local evidence.
+- 动手前先读相关文档和周围的代码，照着已有的写法写；没打开过的代码不要下结论。
+- 文档就是规格。文档没覆盖的新功能，先在对应文档里写好设计，和用户确认后再写代码。文档没写到的小细节，按最简单合理的做法做，在汇报里说一声。
+- 文档记录的是写下时的最佳方案，不是非照做不可。实践中发现更好的做法就直接采用，在同一个改动里把文档改过来，并在 PR 和汇报里说明改了什么、为什么。"先问用户"里的事情照旧先问。
+- V2 只当参考，不照搬。做一个功能前可以用 `git show v2:<路径>` 看 V2 怎么做的，找出它处理过的真实情况，比如某个邮箱服务商的怪癖、某所学校网站的特殊结构；确实需要的写进设计文档，代码按这份文件的规矩重写。V2 的结构、命名、兼容分支和测试都不要带过来。
+- 只做任务要求的事。顺手发现的问题告诉用户，不混进这次改动。
+- 代码和文档一起改：改表要更新 data-model.md，改决策或架构要更新 design.md，改写法约定要更新 development.md。
+- 做完运行 `pnpm check`。汇报时说清楚改了什么、怎么验证的；没跑的检查、失败的测试、没做完的部分照实说。
+- 临时脚本、临时文件和调试输出用完就删。不新建总结、报告、计划、验收之类的 Markdown 文件，说明写在回复或 PR 描述里。
 
-### Retrieval routing
-- When an exact word, phrase, name, date, identifier, filename, path, configuration key, error message, source fragment, literal, or regex is known and locating its occurrences is sufficient, use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg`.
-- Use `zvec_grep_search` when wording or location is unknown, or when the answer requires semantic, conceptual, fuzzy, or paraphrase discovery; relationships, chronology, causality, architecture, or data or control flow; or comparison or synthesis across files, sections, or documents.
-- For a mixed task with exact anchors that still requires relationships or cross-file synthesis, call `zvec_grep_search` with the concept and anchors, then use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg` for focused follow-up.
-- When no sufficient exact anchor is available and the user asks whether conceptually related material exists locally, make at most one focused `zvec_grep_search` probe using the question plus distinctive names, dates, or terms. This probe does not apply to exact quotations, configuration keys, filenames, regexes, or exhaustive occurrence requests. Continue only when results are relevant; otherwise stop and report that the indexed workspace did not establish the answer.
-- Before broad file reads or delegating workspace discovery, use the appropriate search route. Do not delegate solely to locate material, and stop when the evidence is sufficient.
+## 写代码
 
-### Search evidence
-- Search results include bounded source snippets. Treat a sufficient snippet as already-read evidence, and read a cited file only when a required detail falls outside the snippet.
+标准是高质量，不是能跑就行：短、直接、一眼能看懂，和周围的代码一个写法，代码量和问题的规模相称。
 
-### Freshness and index lifecycle
-- Pass a daemon-visible absolute `root` on every zvec-grep workspace call.
-- Read `freshness` and `background_refresh` from search results without a status preflight.
-- When results are `served_from_current_index`, use them when sufficient instead of waiting for the background refresh.
-- If the index is missing but exact or regex lookup can answer the task, use `zvec_grep_rg` when it is listed by the current host; otherwise native Grep or `rg`.
-- Creating, rebuilding, or dropping a persistent index requires an explicit user request or authorization; never do so silently.
+- **结构**：按领域分模块，同一件事的代码放在一起。依赖只能单向：界面 → 接口 → 服务 → 数据库。模块之间只通过对方服务导出的函数协作，不引用对方的内部文件，不循环依赖；每张表只由一个模块写入。新建文件前先按开发约定确定放在哪。
+- **用现成的**：先找 Node 内置模块、Electron 自带的能力、已选的库和仓库里已有的函数，它们能做的不要手写。修 bug 要修在根因上，不在出问题的地方打补丁绕过去。
+- **不过度防御**：只在系统边界校验，也就是界面发来的请求、用户导入的文件、抓到的网页、LLM 的输出、邮件服务器和其他外部服务的响应，以及启动时读的配置。边界以内信任类型：不检查不可能出现的情况，不给不会为空的值加 `?.` 和 `??`，不加没人要求的重试、降级和兜底。
+- **错误往上抛**：不 `try/catch` 了打个日志就继续，也不返回默认值装作成功。业务错误抛统一的错误类型，由统一的地方转成界面上的提示。后台任务（抓取、分析、生成草稿、发信、收信）出错就记在任务上让用户看到，不吞掉。只有真能处理的才捕获，比如把唯一约束冲突转成"已存在"。
+- **不留旧东西**：换了做法就把旧的删干净，不留兼容层、功能开关、回退路径、`legacy` 或 `v2` 副本、注释掉的代码、没人用的导出和参数。3.0 发布前没有要兼容的用户数据，表结构和接口直接改；发布后改表要写迁移，让用户的本地数据能升级上来。
+- **不提前抽象**：不为一次性的操作写 helper、wrapper、工厂或只有一个实现的接口，不为假想的需求加参数和配置项。同样的逻辑出现第三次再提取。不建 `utils.ts`、`helpers.ts`、`common.ts` 这种什么都往里放的文件，也不建只转发导出的文件。
+- **不瞎算哈希**：缓存键、去重、幂等键都用原值或元组，判断有没有变化就直接比较字段，判断邮件发没发出看数据库里的状态。只有总体设计里列出的用途才用哈希，新加用途要先问用户；也不换个叫法（fingerprint、digest、signature）绕过去。
+- **注释只写为什么**：写代码里看不出来的原因和约束。不复述代码，不给一看就懂的函数写 JSDoc，不写"改成了……""新增""修复了……"这类改动说明。
+- **类型**：TypeScript 严格模式。类型错了就把类型改对，不用 `any`、`as` 断言、非空断言 `!`、`@ts-ignore` 或 lint 禁用注释绕过去。类型从源头推导：数据库类型来自表定义，接口和 IPC 的类型来自 Zod schema，不手写重复的类型。
+- **命名**：领域词和文档、数据表保持一致，全部叫法见开发约定的术语一节。同一个概念全项目只用一个英文词，不混用同义词，比如导师不能一处叫 professor、一处叫 mentor。
+- **配置**：用户确实需要调的做成应用里的设置，其余写成常量。不为调试加环境变量或配置文件开关。
+- **跨平台**：Windows x64 和 macOS Apple Silicon 都要支持。路径用 `node:path` 拼，不假设路径分隔符、文件名大小写、换行符和默认编码。脚本用 TypeScript 写、由 Node 运行，不写成 `.sh` 和 `.ps1` 两份。
+- **依赖**：先确认 Node 内置模块和已有依赖做不到，不为几行代码引入新包。选维护活跃、体积小、自带类型的包，用 `pnpm add` 安装，不手改版本号。
+- **库的新版本**：各个库都用当前的大版本，很多旧写法已经不对了。拿不准的 API 先查当前版本的官方文档，版本以 `package.json` 为准。
+- **生成的文件不手改**：数据库类型、锁文件这些生成的文件用命令重新生成。
 
-<!-- ZVEC_GREP_END -->
+## 测试
+
+测试用来抓类型检查抓不到、出了错代价又大的问题，不追求覆盖率。
+
+- 值得测：邮件任务的状态流转，定时发送的时间窗口和时区，发信不重复、不遗漏（包括发到一半应用退出），回信和已发邮件的对应，导入时的去重与合并，模板变量的渲染，解析 LLM 输出和抓取结果时的各种情况，数据迁移，以及修过的、可能再犯的 bug。
+- 不写：测框架或库本身行为的、把实现再抄一遍的、只断言 mock 被调用了的、快照测试、断言界面文案和样式类名的、检查目录结构和文档内容的，以及类型已经保证的情况。同一个行为只在一层测一次。
+- 测试不连外网：不抓真实网站，不调用真实的 LLM，不连真实邮箱。用保存下来的网页、固定的模型响应和本地的假邮件服务器。
+- 测试失败时先判断是代码错了还是测试错了，改测试要说明理由。不删除或跳过失败的测试，不放宽断言，不为测试数据写特判。
+- 具体写法见开发约定的测试一节。
+
+## 写文档
+
+- 写现状和决定，不写讨论过程和改动历史。
+- 同一件事只在一个地方写细节，其他地方链接过去。
+- 简洁，能用表格和列表就不写长段落；中文和英文、数字之间留空格，用全角标点。
+
+## 分支、提交和 PR
+
+- `master` 上的每个提交都要能构建、通过 `pnpm check`。改动都在分支上做，通过 PR 合入；PR 由用户审核后 squash 合并，合并后删除分支。agent 不自己合并 PR，也不直接推 `master`，除非用户明确要求。`v2` 分支只读，不在上面提交。
+- 分支名用英文小写加短横线，说明做什么，例如 `imap-reply-sync`、`fix-schedule-timezone`；不加 `codex/` 这类工具名前缀。
+- 一个提交只做一件事。同一件事的代码、迁移、测试和文档放在同一个提交里；无关的格式调整和重构不要混进来。只提交和这次改动有关的文件，密钥、本地数据库和构建产物不进仓库。
+- 提交标题用一句话说明做了什么，动词开头，例如"添加 IMAP 回信同步"。不超过 50 个字，结尾不加句号，不加 `feat:`、`fix:` 这类前缀。需要解释时空一行写正文，说明为什么改，值得注意的改动用 `- ` 列出。
+- 提交信息和 PR 里只写改动本身：不加 `Co-Authored-By` 之类的署名行，也不写是用什么工具生成的。
+- PR 保持小而专注，大功能拆成能单独合并的几步，比如先表结构和服务，再接口，再界面。依赖升级单独提 PR。
+- PR 标题和描述的写法同提交信息：squash 合并时，标题就是 `master` 上的提交标题，描述就是提交正文。描述写清楚为什么改、主要改了什么、怎么验证的；改了界面的附截图。CI 通过后才能合并。
+- 不改写已经推送的历史：不 force push `master`，自己的分支需要时用 `--force-with-lease`；不 amend 已推送的提交。不用 `git reset --hard`、`git checkout -- .`、`git clean` 这类会丢改动的命令；工作区里不是你做的改动不要动。
+
+## 审查代码
+
+审查 PR（包括其他 agent 和外部贡献者写的）时，对照这份文件逐条检查，重点看过度防御、多余的抽象和哈希、该删没删的旧代码和兼容路径、没用的测试。不合格的要说清楚哪里不对、应该怎么写，让作者改。
+
+## 先问用户
+
+- 改总体设计里的已定决策、换技术栈，或者加影响架构的依赖（框架、ORM、状态管理、UI 库）和需要编译的原生模块。
+- 加常驻的后台进程、本地监听的端口或新的环境变量。
+- 3.0 发布后，删表、删字段、改字段含义这类会影响用户已有数据的改动。
+- 加新的哈希用途。
+- 发布版本、打标签，改 GitHub 仓库设置、CI 里的发布流程和官网部署。
+- 改这份文件里的规矩。命令、目录这类事实随代码更新即可。
+
+## 不要做
+
+- 不给真实收件人发信做试验。自动化测试用假的邮件服务器；手动试发信只发给开发者自己的邮箱。
+- 手动试抓真实的学校网站时只抓需要的几页，不对同一个网站大量请求。
+- 开发和测试不读写已安装应用的数据目录，V2 和 V3 正式版的都不行。
+- 不把密钥放进仓库、日志或输出：邮箱密码和授权码、LLM 的 API Key、发布用的签名密钥和 token。
+- 不为了让检查通过而关掉类型检查、lint 规则或测试。
+
+## 维护这份文件
+
+- 只写每次干活都用得上的规矩；只和某一部分相关的写进对应的文档，在索引里指过去。
+- 能交给类型检查、lint、格式化工具的规则写进工具配置，不写在这里。

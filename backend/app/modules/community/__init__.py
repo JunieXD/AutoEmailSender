@@ -1,1 +1,0 @@
-"""Community-owned application modules."""

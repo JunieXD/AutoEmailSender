@@ -1,1 +1,0 @@
-"""Campaign domain package."""
