@@ -44,7 +44,6 @@ import {
   parseExternalNavigationUrl,
   parseWebUrl,
 } from "../shell/external-url.js";
-import { checkForUpdatesOnStartup } from "../updates/service.js";
 import {
   restoreExistingWindow,
   shouldHideWindowOnClose,
@@ -346,7 +345,6 @@ async function createWindow(): Promise<void> {
     repoRoot,
   });
   await mainWindow.loadURL(pathToFileURL(indexPath).toString());
-  checkForUpdatesOnStartup(() => mainWindow);
 }
 
 async function startDesktopBackend(): Promise<BackendController> {

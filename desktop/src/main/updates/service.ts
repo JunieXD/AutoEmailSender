@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { checkForMacSparkleUpdates, startMacSparkle } from "./sparkle.js";
+import { checkForMacSparkleUpdates } from "./sparkle.js";
 import { DESKTOP_IPC_CHANNELS } from "../../contracts/channels.js";
 import type {
   DesktopUpdateDownloadMode as UpdateDownloadMode,
@@ -44,8 +44,6 @@ let activeFullDownloadBytes: number | undefined;
 let pendingInstallVersion: string | null = null;
 let activeUpdateCheck: Promise<UpdateStatus> | null = null;
 let updateCheckOwnsErrorReporting = false;
-
-export type StartupUpdateMode = "disabled" | "sparkle" | "electron-updater";
 
 type DownloadStatusPayload = {
   version: string;
@@ -318,37 +316,6 @@ export function registerUpdateIpc(getWindow: () => BrowserWindow | null): void {
     });
     getAutoUpdater().quitAndInstall(false, true);
   });
-}
-
-export function checkForUpdatesOnStartup(getWindow: () => BrowserWindow | null): void {
-  const mode = resolveStartupUpdateMode({
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-  });
-  if (mode === "disabled") {
-    return;
-  }
-  if (mode === "sparkle") {
-    try {
-      startMacSparkle();
-    } catch (error) {
-      console.error("Failed to start Sparkle updater.", error);
-    }
-    return;
-  }
-  setTimeout(() => {
-    void checkForElectronUpdates(getWindow);
-  }, 3_000);
-}
-
-export function resolveStartupUpdateMode(input: {
-  isPackaged: boolean;
-  platform: NodeJS.Platform;
-}): StartupUpdateMode {
-  if (!input.isPackaged) {
-    return "disabled";
-  }
-  return input.platform === "darwin" ? "sparkle" : "electron-updater";
 }
 
 function isAutomaticUpdateActionSupported(): boolean {
