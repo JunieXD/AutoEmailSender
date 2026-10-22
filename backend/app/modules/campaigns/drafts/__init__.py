@@ -1,1 +1,0 @@
-"""Campaign draft generation rules."""

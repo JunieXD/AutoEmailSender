@@ -1,1 +1,0 @@
-"""Professor domain package."""

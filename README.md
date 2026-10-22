@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="frontend/public/favicon.svg" alt="Auto Email Sender Logo" width="100" height="100" />
+  <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/frontend/public/favicon.svg" alt="Auto Email Sender Logo" width="100" height="100" />
   <h1>Auto Email Sender</h1>
   <p>
     <strong>面向导师套磁场景的智能邮件助手</strong>
@@ -14,7 +14,7 @@
 </div>
 
 > [!IMPORTANT]
-> V2 已停止更新，v2.6.5 是最终版本，可以继续正常使用。全新的 V3 正在开发中，进展和发布消息会第一时间在 QQ 交流群（`952383261`）公布。
+> 这里是正在从头重写的 V3，还没有可下载的版本。现在可下载的是 V2 的最终版本 v2.6.5，可以继续正常使用，代码在 [`v2` 分支](https://github.com/JunieXD/AutoEmailSender/tree/v2)。V3 的进展和发布消息会第一时间在 QQ 交流群（`952383261`）公布。
 
 ---
 
@@ -28,7 +28,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1sUHS6uEUZ">
-    <img src="website/public/screenshots/promo/bilibili-promo-v10-play.jpg" alt="Auto Email Sender 宣传片，点击前往哔哩哔哩观看" width="720" />
+    <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/screenshots/promo/bilibili-promo-v10-play.jpg" alt="Auto Email Sender 宣传片，点击前往哔哩哔哩观看" width="720" />
   </a>
 </p>
 
@@ -40,11 +40,11 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 
 | 导师看板 | 批量草稿审核 |
 | --- | --- |
-| <img src="website/public/screenshots/docs/home/app-home-overview.png" alt="导师看板截图" /> | <img src="website/public/screenshots/docs/tasks/task-center-batch-review.png" alt="批量草稿审核截图" /> |
+| <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/screenshots/docs/home/app-home-overview.png" alt="导师看板截图" /> | <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/screenshots/docs/tasks/task-center-batch-review.png" alt="批量草稿审核截图" /> |
 
 | 统计面板 | 社区导师库 |
 | --- | --- |
-| <img src="website/public/screenshots/docs/statistics/statistics-overview.png" alt="统计面板截图" /> | <img src="website/public/screenshots/docs/community/community-mentor-catalog.png" alt="社区导师库截图" /> |
+| <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/screenshots/docs/statistics/statistics-overview.png" alt="统计面板截图" /> | <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/screenshots/docs/community/community-mentor-catalog.png" alt="社区导师库截图" /> |
 
 ## 入口
 
@@ -60,7 +60,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 欢迎加入 QQ 交流群反馈 Bug、提出功能建议，或和其他同学交流使用经验。
 
 <p>
-  <img src="website/public/qq-group-952383261.jpg" alt="Auto Email Sender QQ 交流群二维码" width="220" />
+  <img src="https://raw.githubusercontent.com/JunieXD/AutoEmailSender/v2/website/public/qq-group-952383261.jpg" alt="Auto Email Sender QQ 交流群二维码" width="220" />
 </p>
 
 如果需要提交可追踪的问题、复现步骤或截图，也可以前往 [GitHub Issues](https://github.com/JunieXD/AutoEmailSender/issues)。

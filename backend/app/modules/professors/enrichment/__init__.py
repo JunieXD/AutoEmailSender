@@ -1,1 +1,0 @@
-"""Professor information-enrichment slice."""
