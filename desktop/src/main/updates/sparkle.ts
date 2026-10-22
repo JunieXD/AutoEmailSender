@@ -40,10 +40,6 @@ export function isSparkleBridge(value: unknown): value is SparkleBridge {
   return typeof candidate.start === "function" && typeof candidate.checkForUpdates === "function";
 }
 
-export function startMacSparkle(): void {
-  getSparkleBridge().start();
-}
-
 export function checkForMacSparkleUpdates(): void {
   const bridge = getSparkleBridge();
   bridge.start();

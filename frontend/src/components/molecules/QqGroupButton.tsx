@@ -4,7 +4,7 @@ import qqGroupQrCode from "@/assets/qq-group-952383261.png";
 import { QqOutlineLogo } from "@/components/atoms/QqOutlineLogo";
 import { FloatingMenuPortal } from "@/components/molecules/FloatingMenuPortal";
 
-const QQ_GROUP_NUMBER = "952383261";
+export const QQ_GROUP_NUMBER = "952383261";
 
 export const QqGroupButton = () => {
   const [open, setOpen] = useState(false);

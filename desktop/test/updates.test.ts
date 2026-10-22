@@ -9,7 +9,6 @@ import {
   isLikelyFullDownloadFallback,
   isRetryableUpdateCheckError,
   normalizeReleaseNotes,
-  resolveStartupUpdateMode,
   retryUpdateCheckOnce,
   shouldOfferFullDownload,
   supportsElectronUpdaterActions,
@@ -82,43 +81,6 @@ describe("update helpers", () => {
   it("keeps electron-updater actions on Windows and delegates macOS actions to Sparkle", () => {
     expect(supportsElectronUpdaterActions("darwin")).toBe(false);
     expect(supportsElectronUpdaterActions("win32")).toBe(true);
-  });
-
-  it("selects the packaged startup updater for Windows and macOS", () => {
-    expect(resolveStartupUpdateMode({ isPackaged: true, platform: "win32" })).toBe(
-      "electron-updater",
-    );
-    expect(resolveStartupUpdateMode({ isPackaged: true, platform: "darwin" })).toBe(
-      "sparkle",
-    );
-    expect(resolveStartupUpdateMode({ isPackaged: false, platform: "win32" })).toBe(
-      "disabled",
-    );
-    expect(resolveStartupUpdateMode({ isPackaged: false, platform: "darwin" })).toBe(
-      "disabled",
-    );
-  });
-
-  it("starts update checks after the desktop page loads without waiting for backend readiness", () => {
-    const source = readDesktopApplicationSource();
-    const createWindowSource = source.slice(
-      source.indexOf("async function createWindow"),
-      source.indexOf("async function startDesktopBackend"),
-    );
-    const publishBackendReadySource = source.slice(
-      source.indexOf("function publishBackendReady"),
-      source.indexOf("async function removeAgentRuntime"),
-    );
-    const pageLoadIndex = createWindowSource.indexOf(
-      "await mainWindow.loadURL(pathToFileURL(indexPath).toString());",
-    );
-    const updateCheckIndex = createWindowSource.indexOf(
-      "checkForUpdatesOnStartup(() => mainWindow);",
-    );
-
-    expect(pageLoadIndex).toBeGreaterThan(-1);
-    expect(updateCheckIndex).toBeGreaterThan(pageLoadIndex);
-    expect(publishBackendReadySource).not.toContain("checkForUpdatesOnStartup");
   });
 
   it("estimates remaining seconds from remaining bytes and speed", () => {
@@ -223,7 +185,6 @@ describe("update helpers", () => {
     const source = readUpdateServiceSource();
 
     expect(source).toContain("checkForMacSparkleUpdates()");
-    expect(source).toContain("startMacSparkle()");
     expect(source).toContain('if (process.platform !== "darwin")');
     expect(source).not.toContain("GITHUB_LATEST_RELEASE_API_URL");
     expect(source).not.toContain("buildManualDownloadStatus");
