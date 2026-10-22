@@ -1,17 +1,4 @@
 node_modules/
 .env
 .DS_Store
-
-# Local agent and editor tooling
-.agents/
-.ccb/
-.claude/
-.codegraph/
-.codex/
-.gemini/
-.mcp.json
-.serena/
 .worktrees/
-.zcode/
-.zvec-grep/
-skills-lock.json
