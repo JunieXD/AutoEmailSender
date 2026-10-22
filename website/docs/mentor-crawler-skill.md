@@ -15,7 +15,7 @@
 新建一个 Codex 任务并发送：
 
 ```text
-请使用 $skill-installer，从 GitHub 仓库 JunieXD/AutoEmailSender 的 master 分支安装
+请使用 $skill-installer，从 GitHub 仓库 JunieXD/AutoEmailSender 的 v2 分支安装
 .agents/skills/crawl-mentors-to-xlsx。请安装完整 Skill 目录，并设为当前用户全局可用。
 ```
 
@@ -26,7 +26,7 @@
 打开 Claude Code 并发送：
 
 ```text
-请从 GitHub 仓库 JunieXD/AutoEmailSender 的 master 分支下载
+请从 GitHub 仓库 JunieXD/AutoEmailSender 的 v2 分支下载
 .agents/skills/crawl-mentors-to-xlsx 完整目录，并安装到
 ~/.claude/skills/crawl-mentors-to-xlsx，使它在本机所有项目中可用。
 不要只下载 SKILL.md；完成后请确认 scripts、references 和 assets 目录都已安装。
@@ -112,12 +112,12 @@ https://example.edu/faculty
 
 ```text
 请把本机已安装的 crawl-mentors-to-xlsx 更新为
-JunieXD/AutoEmailSender 仓库 master 分支中的最新版。
+JunieXD/AutoEmailSender 仓库 v2 分支中的最新版。
 请只替换这个 Skill 的完整目录，不要改动其他 Skill；完成后确认
 SKILL.md、scripts、references 和 assets 都存在。
 ```
 
-手动安装时，请用新版本 ZIP 中的完整文件夹替换旧文件夹。`master` 代表最新版；需要复现旧版本时，可改用对应 tag，例如 `v2.4.0`。
+手动安装时，请用新版本 ZIP 中的完整文件夹替换旧文件夹。`v2` 分支是 V2 的最终版本；需要复现旧版本时，可改用对应 tag，例如 `v2.4.0`。
 
 ## 成功标准与限制
 

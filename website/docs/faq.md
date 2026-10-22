@@ -1,16 +1,12 @@
 # 更新与常见问题
 
-## 如何更新
+## V2 还会更新吗
 
-应用会自动检查更新。Windows 和新版 macOS 可直接在应用内更新；旧版 macOS 需手动覆盖安装一次。Intel Mac 暂无安装包。
+不会。v2.6.5 是 V2 的最终版本，之后应用不再检查更新，但会一直可以正常使用，本机数据不受影响。
 
-旧版 macOS 请到 GitHub Releases 下载新版 `.dmg` 覆盖安装，之后就能在应用内更新了。
+还在用旧版本的话，打开应用后会自动提示更新到 v2.6.5；也可以到 [GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases) 下载安装包覆盖安装。
 
-## 检查更新失败怎么办
-
-更新检查需要访问 GitHub。失败时请检查网络和代理，稍后重试，或手动下载最新安装包：
-
-[GitHub Releases](https://github.com/JunieXD/AutoEmailSender/releases)
+我们正在从头打造全新的 V3。它是独立的新应用，发布后需要单独下载安装，不会覆盖 V2。V3 的进展和发布消息会第一时间在 [QQ 交流群](./feedback) 公布。
 
 ## 数据默认保存在哪里
 

@@ -13,14 +13,14 @@
 
 ## 首次初始化
 
-Web 版本和桌面端都需要后端的浏览器自动化能力。先在 GitHub 上 fork 本仓库，然后克隆你自己的 fork：
+V2 已停止更新，代码保留在 `v2` 分支；`master` 是正在开发的 V3。克隆仓库并切到 `v2` 分支：
 
 ```powershell
-git clone https://github.com/<你的 GitHub 用户名>/AutoEmailSender.git
+git clone -b v2 https://github.com/JunieXD/AutoEmailSender.git
 cd AutoEmailSender
 ```
 
-将 `<你的 GitHub 用户名>` 替换为你的 GitHub 用户名。使用 SSH 的话，改为你的 SSH 仓库地址。
+Web 版本和桌面端都需要后端的浏览器自动化能力。
 
 Windows 安装后端依赖和浏览器运行时：
 
@@ -137,4 +137,4 @@ npm run dist:mac
 
 `dist:mac` 会自动编译原生桥接并把 `Sparkle.framework` 放入应用包。DMG 同时用于首次安装和 Sparkle 无法使用差分包时的全量回退，不再另外发布裸 `.app`。
 
-正式发布、密钥配置和故障处理见 [Sparkle 发布运维说明](https://github.com/JunieXD/AutoEmailSender/blob/master/docs/operations/sparkle-release-operations.md)。
+正式发布、密钥配置和故障处理见 [Sparkle 发布运维说明](https://github.com/JunieXD/AutoEmailSender/blob/v2/docs/operations/sparkle-release-operations.md)。

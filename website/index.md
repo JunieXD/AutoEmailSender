@@ -23,6 +23,10 @@ hero:
 import CrawlBenchmarkPromo from './.vitepress/theme/components/CrawlBenchmarkPromo.vue'
 </script>
 
+::: tip V2 已是最终版本，全新的 V3 正在开发中
+v2.6.5 之后 V2 不再更新，但会一直可以正常使用。V3 会从头重新设计，带来更快、更稳、更顺手的体验；进展和发布消息会第一时间在 [QQ 交流群](/docs/feedback) 公布。
+:::
+
 <section class="home-screenshot-section">
   <div class="home-screenshot-card">
     <img src="/screenshots/docs/home/app-home-overview.png" alt="Auto Email Sender 导师看板" />
