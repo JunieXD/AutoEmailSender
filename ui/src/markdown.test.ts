@@ -2,11 +2,11 @@
 import type { Node } from "@tiptap/pm/model";
 import { createDocument, getSchema, type JSONContent } from "@tiptap/react";
 import { describe, expect, test } from "vitest";
-import { letterFormats } from "@/components/letter-editor";
+import { letterFormats, letterParsing } from "@/components/letter-editor";
 import { toHtml, toMarkdown } from "@/markdown";
 
 const schema = getSchema([letterFormats]);
-const read = (markdown: string) => createDocument(toHtml(markdown), schema);
+const read = (markdown: string) => createDocument(toHtml(markdown), schema, letterParsing);
 
 type Mark = NonNullable<JSONContent["marks"]>[number];
 
@@ -38,6 +38,12 @@ describe("a letter reads back as written", () => {
     ["Markdown and HTML characters", doc(p(t("2*3*4 a_b_c \\ <b>x</b> &amp; &#35; `code` ~del~ [x](y)")))],
     ["stars next to bold", doc(p(t("**"), t("粗", "bold"), t("**")))],
     ["two breaks in a row", doc(p(t("甲"), br, br, t("乙")))],
+    [
+      "formats ending at a break",
+      doc(p(t("尊敬的老师：", "bold"), br, t("您好", link("https://a.com")), br, t("此致"))),
+    ],
+    ["bold across a break", doc(p(t("甲", "bold"), { type: "hardBreak", marks: [{ type: "bold" }] }, t("乙", "bold")))],
+    ["spaces typed in a letter", doc(p(t("    尊敬的老师：")), p(t("甲  乙")))],
     ["a Chinese indent", doc(p(t("　　尊敬的老师：")), p(t("　　您好！")))],
     ["bold ending in Chinese punctuation", doc(p(t("你好，", "bold"), t("世界")))],
     ["italic in Chinese brackets", doc(p(t("（研究）", "italic"), t("方向")))],
@@ -50,6 +56,7 @@ describe("a letter reads back as written", () => {
     ],
     ["a link inside bold", doc(p(t("前", "bold"), t("链", "bold", link("https://a.com")), t("后", "bold")))],
     ["a placeholder in bold", doc(p(t("{导师姓名}", "bold"), t("老师")))],
+    ["a link right after an exclamation mark", doc(p(t("Hi!"), t("简历", link("https://a.com/cv.pdf"))))],
     ["nested lists", doc(bullets(li(p(t("一")), numbers(1, li(p(t("甲"))), li(p(t("乙"))))), li(p(t("二")))))],
     [
       "list items with paragraphs and breaks",
@@ -62,6 +69,28 @@ describe("a letter reads back as written", () => {
   test("a link keeps its text when its address has brackets and spaces", () => {
     const letter = doc(p(t("链接", link("https://example.com/search?q=(a) b"))));
     expect(reread(letter)).toEqual(doc(p(t("链接", link("https://example.com/search?q=%28a%29%20b")))).toJSON());
+  });
+
+  test.each([
+    ["甲", "乙", "丙", "丁"],
+    ["你好，", "（研究）", "方向", "。"],
+  ])("every mix of bold and italic over %s%s%s%s", (...words) => {
+    for (let k = 0; k < 4 ** words.length; k++) {
+      const formats = (i: number) => [(k >> (2 * i)) & 1 ? ["bold"] : [], (k >> (2 * i)) & 2 ? ["italic"] : []].flat();
+      const letter = doc(p(...words.map((w, i) => t(w, ...formats(i)))));
+      expect(reread(letter)).toEqual(letter.toJSON());
+    }
+  });
+
+  test("lists in a row stay apart", () => {
+    const first = numbers(1, li(p(t("研究计划"))));
+    const others = [
+      numbers(1, li(p(t("个人经历")))),
+      bullets(li(p(t("甲")))),
+      bullets(li(p(t("乙")))),
+      bullets(li(p(t("丙")))),
+    ];
+    expect(reread(doc(first, { type: "paragraph" }, ...others))).toEqual(doc(first, ...others).toJSON());
   });
 
   test("what shows nothing is not kept", () => {

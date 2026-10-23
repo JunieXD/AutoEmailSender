@@ -22,6 +22,9 @@ export const letterFormats = StarterKit.configure({
   link: { openOnClick: false, autolink: false },
 });
 
+/** How the editor reads a letter's HTML: spaces typed in it, such as an indent, are text. */
+export const letterParsing = { preserveWhitespace: true } as const;
+
 /**
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
  * staying plain.
@@ -76,6 +79,7 @@ export function LetterEditor({
   const editor = useEditor({
     extensions: [letterFormats, highlightPlaceholders(placeholders)],
     content: toHtml(markdown),
+    parseOptions: letterParsing,
     editorProps: {
       attributes: {
         id,

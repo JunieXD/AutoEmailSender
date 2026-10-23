@@ -248,7 +248,7 @@ V3 的产品范围和全局决定。
   - 访问过的页面存进数据库，内存里的缓存有上限，长时间抓取时内存不随页数增长。
   - 基准：V2 在 113 个学院上的实测结果（`git show v2.6.5:website/data/crawl-benchmark.json`），中位数是每位导师约 4,700 token、19 秒，一个学院 26 分钟，邮箱覆盖率 88%。V3 用同一批学院对比，不能比它差。
 - 文档：PDF 提取文字用 pdf_oxide 或 pdfium，用真实的中文简历实测后选定；DOCX 解析成 Markdown。表格用 calamine 读、rust_xlsxwriter 写。
-- 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap 加它的 Markdown 扩展，图表用 Recharts。
+- 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap，Markdown 用 marked 解析、写回由界面自己的序列化器完成（`ui/src/markdown.ts`），图表用 Recharts。
 - CLI 和 MCP：一个 Rust 小程序，MCP 用官方的 Rust SDK。用户在设置里开启后装到 PATH，也可以一键写进 Claude、Cursor 等工具的 MCP 配置。在 Windows 的 PowerShell 和 cmd 里读到的中文输出不能乱码。
 
 ### 服务端

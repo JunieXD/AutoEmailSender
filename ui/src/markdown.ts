@@ -36,26 +36,34 @@ export function toHtml(markdown: string): string {
 
 /** An editor document as Markdown. */
 export function toMarkdown(doc: Node): string {
-  // Markdown has no empty paragraphs, so blank lines typed between paragraphs are not kept.
   return blocksOf(doc)
-    .filter((b) => b !== "")
+    .map((b) => b.text)
     .join("\n\n");
 }
 
-function blocksOf(parent: Node): string[] {
-  const out: string[] = [];
-  parent.forEach((node) => out.push(block(node)));
+type Block = { node: Node; text: string; otherMarker: boolean };
+
+/** Markdown has no empty paragraphs, so blank lines typed between paragraphs are not kept. */
+function blocksOf(parent: Node): Block[] {
+  const out: Block[] = [];
+  parent.forEach((node) => {
+    const previous = out.at(-1);
+    // Two lists of a kind in a row would read as one, unless their markers differ.
+    const otherMarker = previous?.node.type === node.type && !previous.otherMarker;
+    const text = block(node, otherMarker);
+    if (text !== "") out.push({ node, text, otherMarker });
+  });
   return out;
 }
 
-function block(node: Node): string {
+function block(node: Node, otherMarker: boolean): string {
   switch (node.type.name) {
     case "paragraph":
       return inline(node);
     case "bulletList":
-      return items(node, () => "- ");
+      return items(node, () => (otherMarker ? "+ " : "- "));
     case "orderedList":
-      return items(node, (i) => `${Number(node.attrs.start) + i}. `);
+      return items(node, (i) => `${Number(node.attrs.start) + i}${otherMarker ? ")" : "."} `);
     default:
       throw new Error(`letters have no ${node.type.name}`);
   }
@@ -66,10 +74,9 @@ function items(list: Node, marker: (index: number) => string): string {
   list.forEach((item, _, index) => {
     const m = marker(index);
     // A nested list right under its item's text keeps the list tight.
-    const body = blocksOf(item).reduce((text, b, i) => {
-      const sep = item.child(i).type.name === "paragraph" ? "\n\n" : "\n";
-      return i === 0 ? b : text + sep + b;
-    }, "");
+    const body = blocksOf(item)
+      .map((b, i) => (i === 0 ? "" : b.node.type.name === "paragraph" ? "\n\n" : "\n") + b.text)
+      .join("");
     out.push(m + body.replace(/\n(?=.)/g, `\n${" ".repeat(m.length)}`));
   });
   return out.join("\n");
@@ -87,9 +94,13 @@ function marksOf(node: Node | undefined): Mark[] {
   }));
 }
 
+const carries = (node: Node | undefined, mark: Mark) => marksOf(node).some((m) => sameMark(m, mark));
+
 /**
- * A paragraph's text and marks. Marks that cross are closed and reopened; a reopening right after a
- * closing uses underscores, as `***` followed by `*` would read differently.
+ * A paragraph's text and marks. Marks that cross are closed and reopened. A run of `*` right next
+ * to one of another mark would read differently, as in `****` or `***甲*乙*丙***`, so such a mark
+ * uses underscores: one reopened right after a closing, and one opened together with an inner mark
+ * that closes and opens again inside it.
  */
 function inline(para: Node): string {
   const children: Node[] = [];
@@ -97,7 +108,7 @@ function inline(para: Node): string {
   // How many children in a row from `index` carry the mark, so the longest is opened outermost.
   const extent = (mark: Mark, index: number) => {
     let i = index;
-    while (i < children.length && marksOf(children[i]).some((m) => sameMark(m, mark))) i++;
+    while (i < children.length && carries(children[i], mark)) i++;
     return i - index;
   };
   let out = "";
@@ -106,34 +117,42 @@ function inline(para: Node): string {
   // not count as emphasis.
   let space = "";
   children.forEach((child, index) => {
-    if (child.type.name === "hardBreak") {
-      // A break with only spaces after it shows nothing, and its backslash would be read as text.
-      // A backslash, unlike two spaces, keeps two breaks in a row from reading as a new paragraph.
-      if (children.slice(index + 1).some((c) => (c.text ?? "").trim() !== "")) out += `${space}\\\n`;
-      space = "";
-      return;
-    }
     const marks = marksOf(child);
-    // Marks stay open up to the first that this text does not have.
+    // Marks stay open up to the first that this child does not have.
     let keep = open.findIndex((o) => !marks.some((m) => sameMark(m, o)));
     if (keep === -1) keep = open.length;
     const closing = open.slice(keep).toReversed();
     out += closing.map((o) => o.close).join("") + space;
     open = open.slice(0, keep);
+    space = "";
+    if (child.type.name === "hardBreak") {
+      // A break with only spaces after it shows nothing, and its backslash would be read as text.
+      // A backslash, unlike two spaces, keeps two breaks in a row from reading as a new paragraph.
+      if (children.slice(index + 1).some((c) => (c.text ?? "").trim() !== "")) out += "\\\n";
+      return;
+    }
     const text = child.text ?? "";
     const middle = text.trim();
     if (middle === "") {
       out += text;
-      space = "";
       return;
     }
     const opening = marks
       .filter((m) => !open.some((o) => sameMark(o, m)))
       .toSorted((a, b) => extent(b, index) - extent(a, index));
     out += opening.length > 0 ? text.slice(0, text.indexOf(middle)) : "";
-    for (const mark of opening) {
-      const o: Open = { ...mark, close: closer(mark, closing.length > 0) };
-      out += mark.name === "link" ? "[" : o.close;
+    for (const [k, mark] of opening.entries()) {
+      const afterClosing = k === 0 && closing.length > 0 && out.endsWith("*");
+      const inner = opening.slice(k + 1).find((m) => m.name !== "link");
+      const reopens =
+        inner !== undefined &&
+        children.slice(index + extent(inner, index), index + extent(mark, index)).some((c) => carries(c, inner));
+      const o: Open = { ...mark, close: closer(mark, afterClosing || reopens) };
+      if (mark.name === "link") {
+        // A "!" right before a link would make it an image.
+        if (out.endsWith("!")) out = `${out.slice(0, -1)}\\!`;
+        out += "[";
+      } else out += o.close;
       open.push(o);
     }
     const next = marksOf(children[index + 1]);
@@ -152,12 +171,12 @@ function inline(para: Node): string {
   );
 }
 
-function closer(mark: Mark, afterClosing: boolean): string {
+function closer(mark: Mark, underscores: boolean): string {
   switch (mark.name) {
     case "bold":
-      return afterClosing ? "__" : "**";
+      return underscores ? "__" : "**";
     case "italic":
-      return afterClosing ? "_" : "*";
+      return underscores ? "_" : "*";
     case "link":
       // Brackets and spaces in an address would end the link early.
       return `](${(mark.href ?? "").replace(/[()<> ]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
