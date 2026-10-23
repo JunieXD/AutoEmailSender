@@ -3,6 +3,7 @@ import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
 import { MailboxesSection } from "./pages/mailboxes";
+import { ModelsSection } from "./pages/models";
 import { AboutSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
@@ -61,6 +62,12 @@ const mailboxesRoute = createRoute({
   component: MailboxesSection,
 });
 
+const modelsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "models",
+  component: ModelsSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -74,7 +81,7 @@ export const router = createRouter({
     mentorsRoute,
     trashRoute,
     mentorRoute,
-    settingsRoute.addChildren([settingsHomeRoute, mailboxesRoute, aboutRoute]),
+    settingsRoute.addChildren([settingsHomeRoute, mailboxesRoute, modelsRoute, aboutRoute]),
   ]),
   history: createHashHistory(),
 });

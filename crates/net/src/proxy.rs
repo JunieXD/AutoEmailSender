@@ -2,16 +2,17 @@
 //! (docs/design.md#桌面端).
 
 use std::fmt;
+use std::net::IpAddr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Proxy {
+pub enum Proxy {
     Socks5(Endpoint),
     /// Tunnels with HTTP CONNECT.
     Http(Endpoint),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Endpoint {
+pub struct Endpoint {
     pub host: String,
     pub port: u16,
 }
@@ -23,16 +24,32 @@ impl fmt::Display for Endpoint {
 }
 
 impl Proxy {
-    pub(crate) fn endpoint(&self) -> &Endpoint {
+    pub fn endpoint(&self) -> &Endpoint {
         match self {
             Proxy::Socks5(e) | Proxy::Http(e) => e,
         }
     }
+
+    /// As reqwest takes it; with SOCKS the proxy looks up the name.
+    pub fn url(&self) -> String {
+        match self {
+            Proxy::Socks5(e) => format!("socks5h://{e}"),
+            Proxy::Http(e) => format!("http://{e}"),
+        }
+    }
+}
+
+/// The proxy for a connection to `host`, unless the host is this computer.
+pub fn for_host(host: &str) -> Option<Proxy> {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    let local = bare.eq_ignore_ascii_case("localhost")
+        || bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    if local { None } else { system() }
 }
 
 /// The proxy set in System Settings › Network, if any.
 #[cfg(target_os = "macos")]
-pub(crate) fn system() -> Option<Proxy> {
+fn system() -> Option<Proxy> {
     use system_configuration::core_foundation::number::CFNumber;
     use system_configuration::core_foundation::string::CFString;
     use system_configuration::dynamic_store::SCDynamicStoreBuilder;
@@ -65,7 +82,7 @@ pub(crate) fn system() -> Option<Proxy> {
 
 /// The proxy set in Settings › Network & internet › Proxy, if any.
 #[cfg(windows)]
-pub(crate) fn system() -> Option<Proxy> {
+fn system() -> Option<Proxy> {
     use winreg::RegKey;
     use winreg::enums::HKEY_CURRENT_USER;
 

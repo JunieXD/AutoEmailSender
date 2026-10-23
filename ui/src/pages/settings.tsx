@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
 const GROUPS = [
   { label: "邮件", sections: [{ to: "/settings/mailboxes", label: "邮箱" }] },
+  { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },
   { label: "应用", sections: [{ to: "/settings/about", label: "关于和日志" }] },
 ] as const;
 

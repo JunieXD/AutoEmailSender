@@ -5,27 +5,29 @@ use async_imap::{Client, Session};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::net::{self, Net};
+use net::Net;
+
+use crate::connect;
 use crate::{Account, MailError, Security};
 
 /// Logs in to the mailbox's IMAP server, opens the inbox and leaves.
 pub async fn check_receiving(net: &Net, account: &Account) -> Result<(), MailError> {
-    let mut session = net::within(&account.imap, async {
+    let mut session = connect::within(&account.imap, async {
         let mut session = login(net, account).await?;
         session.select("INBOX").await.map_err(refused)?;
         Ok(session)
     })
     .await?;
-    net::farewell(&account.imap.host, async move { session.logout().await });
+    connect::farewell(&account.imap.host, async move { session.logout().await });
     Ok(())
 }
 
 async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStream>>, MailError> {
     let server = &account.imap;
-    let tcp = net::connect(&server.host, server.port).await?;
+    let tcp = connect::connect(&server.host, server.port).await?;
     let client = match server.security {
         Security::Tls => {
-            let mut client = Client::new(net.tls(&server.host, tcp).await?);
+            let mut client = Client::new(connect::encrypt(net, &server.host, tcp).await?);
             greeting(&mut client).await?;
             client
         }
@@ -36,7 +38,7 @@ async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStre
                 .run_command_and_check_ok("STARTTLS", None)
                 .await
                 .map_err(refused)?;
-            Client::new(net.tls(&server.host, client.into_inner()).await?)
+            Client::new(connect::encrypt(net, &server.host, client.into_inner()).await?)
         }
     };
     let mut session = client

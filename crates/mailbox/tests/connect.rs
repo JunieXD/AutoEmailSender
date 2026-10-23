@@ -8,7 +8,8 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine;
-use mailbox::{Account, MailError, Net, Security, Server};
+use mailbox::{Account, MailError, Security, Server};
+use net::Net;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,

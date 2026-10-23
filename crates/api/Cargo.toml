@@ -10,7 +10,9 @@ workspace = true
 
 [dependencies]
 mailbox.workspace = true
+model.workspace = true
 mentor.workspace = true
+net.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

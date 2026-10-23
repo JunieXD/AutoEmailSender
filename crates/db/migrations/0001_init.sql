@@ -3,10 +3,11 @@
 
 CREATE TABLE model_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
+  name TEXT,                    -- NULL: known by the model's name
   provider TEXT NOT NULL,
   base_url TEXT,
   model TEXT NOT NULL,
+  api_key TEXT NOT NULL,        -- never sent to the UI
   input_price REAL,
   output_price REAL,
   created_at INTEGER NOT NULL,

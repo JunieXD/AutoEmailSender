@@ -1,26 +1,25 @@
-//! Connections to mail servers: through the system proxy when there is one, encrypted with TLS that
-//! trusts what the system trusts.
+//! Connections to mail servers: plain TCP through the system proxy, which lettre and async-imap
+//! cannot open themselves, then TLS with the app's shared settings.
 
 use std::fmt::Display;
 use std::future::Future;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 
 use lettre::transport::smtp::client::{Certificate, TlsParameters, TlsParametersBuilder};
-use rustls_platform_verifier::Verifier;
+use net::Net;
+use net::proxy::{self, Proxy};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-use tokio_rustls::rustls::{self, ClientConfig, pki_types::CertificateDer, pki_types::ServerName};
+use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_socks::tcp::Socks5Stream;
 
-use crate::proxy::{self, Proxy};
 use crate::{MailError, Server};
 
 /// How long one check or send may take, from connecting to the server's last answer that matters.
@@ -32,63 +31,39 @@ const STAGGER: Duration = Duration::from_millis(250);
 /// How long a server whose work is done gets to answer a goodbye.
 const FAREWELL: Duration = Duration::from_secs(5);
 
-/// TLS settings shared by every connection.
-pub struct Net {
-    tls: TlsConnector,
-    /// Trusted besides the system's certificates; lettre needs them again for STARTTLS.
-    roots: Vec<CertificateDer<'static>>,
+/// Encrypts a connection to `host`.
+pub(crate) async fn encrypt(
+    net: &Net,
+    host: &str,
+    stream: TcpStream,
+) -> Result<TlsStream<TcpStream>, MailError> {
+    let name = ServerName::try_from(host.to_owned()).map_err(|e| MailError::Tls {
+        host: host.into(),
+        source: io::Error::other(e),
+    })?;
+    TlsConnector::from(net.tls())
+        .connect(name, stream)
+        .await
+        .map_err(|source| MailError::Tls {
+            host: host.into(),
+            source,
+        })
 }
 
-impl Net {
-    /// Trusts the system's certificates and `roots`, such as a test server's.
-    pub fn new(roots: Vec<CertificateDer<'static>>) -> Result<Net, rustls::Error> {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let verifier = Verifier::new_with_extra_roots(roots.clone(), provider.clone())?;
-        let config = ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
-        Ok(Net {
-            tls: TlsConnector::from(Arc::new(config)),
-            roots,
-        })
-    }
-
-    /// Encrypts a connection to `host`.
-    pub(crate) async fn tls(
-        &self,
-        host: &str,
-        stream: TcpStream,
-    ) -> Result<TlsStream<TcpStream>, MailError> {
-        let name = ServerName::try_from(host.to_owned()).map_err(|e| MailError::Tls {
+/// The same trust for lettre, which upgrades SMTP connections with STARTTLS itself.
+pub(crate) fn lettre_tls(net: &Net, host: &str) -> Result<TlsParameters, MailError> {
+    let builder = net
+        .roots()
+        .iter()
+        .try_fold(TlsParametersBuilder::new(host.into()), |builder, root| {
+            Ok(builder.add_root_certificate(Certificate::from_der(root.to_vec())?))
+        });
+    builder
+        .and_then(TlsParametersBuilder::build_rustls)
+        .map_err(|e: lettre::transport::smtp::Error| MailError::Tls {
             host: host.into(),
-            source: std::io::Error::other(e),
-        })?;
-        self.tls
-            .connect(name, stream)
-            .await
-            .map_err(|source| MailError::Tls {
-                host: host.into(),
-                source,
-            })
-    }
-
-    /// The same trust for lettre, which upgrades SMTP connections with STARTTLS itself.
-    pub(crate) fn lettre_tls(&self, host: &str) -> Result<TlsParameters, MailError> {
-        let builder = self
-            .roots
-            .iter()
-            .try_fold(TlsParametersBuilder::new(host.into()), |builder, root| {
-                Ok(builder.add_root_certificate(Certificate::from_der(root.to_vec())?))
-            });
-        builder
-            .and_then(TlsParametersBuilder::build_rustls)
-            .map_err(|e: lettre::transport::smtp::Error| MailError::Tls {
-                host: host.into(),
-                source: std::io::Error::other(e),
-            })
-    }
+            source: io::Error::other(e),
+        })
 }
 
 /// Runs one check or send against `server`, giving up after `TIMEOUT`.
@@ -124,9 +99,7 @@ pub(crate) fn farewell<E: Display>(
 
 /// A plain connection to `host:port`, through the system proxy unless the host is this computer.
 pub(crate) async fn connect(host: &str, port: u16) -> Result<TcpStream, MailError> {
-    let local = host.eq_ignore_ascii_case("localhost")
-        || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    let proxy = if local { None } else { proxy::system() };
+    let proxy = proxy::for_host(host);
     match &proxy {
         Some(p) => tracing::info!("connecting to {host}:{port} through {}", p.endpoint()),
         None => tracing::info!("connecting to {host}:{port}"),
@@ -232,8 +205,9 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::net::TcpListener;
 
+    use net::proxy::Endpoint;
+
     use super::*;
-    use crate::proxy::Endpoint;
 
     /// Serves each connection with `serve` on a free port.
     async fn listen<F, Fut>(serve: F) -> u16

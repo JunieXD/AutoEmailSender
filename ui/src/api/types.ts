@@ -76,7 +76,79 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
+export type ModelConfig = { id: number, 
+/**
+ * None: known by the model's name.
+ */
+name: string | null, 
+/**
+ * A provider's id, or `providers::CUSTOM`.
+ */
+provider: string, 
+/**
+ * Only for `providers::CUSTOM`.
+ */
+baseUrl: string | null, model: string, };
+
+export type ModelConfigEdit = { id: number, 
+/**
+ * Blank keeps the saved one, unless the provider or address changed.
+ */
+apiKey: string, 
+/**
+ * May be blank.
+ */
+name: string, provider: string, 
+/**
+ * Only read for `providers::CUSTOM`.
+ */
+baseUrl: string, model: string, };
+
+export type ModelConfigId = { id: number, };
+
+export type ModelProvider = { id: string, name: string, 
+/**
+ * Where the user gets an API key.
+ */
+keyUrl: string, };
+
+export type ModelSource = { 
+/**
+ * The saved configuration being edited, whose API key a blank one stands for while the
+ * provider and address stay the same.
+ */
+id?: number, provider: string, 
+/**
+ * Only read for a custom provider.
+ */
+baseUrl: string, apiKey: string, };
+
+export type ModelTest = { 
+/**
+ * The saved configuration being edited, whose API key a blank one stands for while the
+ * provider and address stay the same.
+ */
+id?: number, apiKey: string, 
+/**
+ * May be blank.
+ */
+name: string, provider: string, 
+/**
+ * Only read for `providers::CUSTOM`.
+ */
+baseUrl: string, model: string, };
+
 export type NewMailbox = { secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
+
+export type NewModelConfig = { apiKey: string, 
+/**
+ * May be blank.
+ */
+name: string, provider: string, 
+/**
+ * Only read for `providers::CUSTOM`.
+ */
+baseUrl: string, model: string, };
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
@@ -158,4 +230,11 @@ export interface Operations {
   testSending: { input: MailboxTest; output: null };
   testReceiving: { input: MailboxTest; output: null };
   sendTestMail: { input: MailboxId; output: null };
+  listModelProviders: { input: Nothing; output: Array<ModelProvider> };
+  listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
+  addModelConfig: { input: NewModelConfig; output: ModelConfigId };
+  updateModelConfig: { input: ModelConfigEdit; output: null };
+  deleteModelConfig: { input: ModelConfigId; output: null };
+  listProviderModels: { input: ModelSource; output: Array<string> };
+  testModel: { input: ModelTest; output: null };
 }
