@@ -8,7 +8,15 @@ import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { FirstLetter } from "@/components/first-letter";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, refreshMentors } from "@/components/mentor";
+import {
+  Avatar,
+  ContactLabel,
+  contactDetail,
+  dropDrafts,
+  MATCH_LABEL,
+  Missing,
+  refreshMentors,
+} from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -29,9 +37,10 @@ export function MentorPage() {
   const trash = useMutation({
     mutationFn: (op: TrashOp) => call(op, { ids: [mentorId] }),
     onSuccess: async (_, op) => {
+      if (op === "trashMentors") dropDrafts(queryClient, [mentorId]);
       if (op === "deleteMentors") await navigate({ to: "/mentors/trash", replace: true });
     },
-    onSettled: () => refreshMentors(queryClient, [mentorId]),
+    onSettled: () => refreshMentors(queryClient),
   });
   if (query.isPending) return null;
   if (query.isError) {

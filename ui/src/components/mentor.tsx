@@ -60,11 +60,17 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
 };
 
 /** After mentors are trashed, restored or deleted, every view of them is out of date. */
-export function refreshMentors(queryClient: QueryClient, ids: number[]) {
+export function refreshMentors(queryClient: QueryClient) {
   for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
-  // The trash cancels their drafts, which must not come back on restore from the cache or a failed save.
+}
+
+/**
+ * Moving mentors to the trash canceled their drafts, which must not come back on restore from the
+ * cache or a failed save.
+ */
+export function dropDrafts(queryClient: QueryClient, ids: number[]) {
   const saves = queryClient.getMutationCache();
   for (const id of ids) {
     queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });

@@ -6,7 +6,7 @@ import { call, errorMessage } from "@/api/call";
 import type { ContactStatus } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
-import { refreshMentors } from "@/components/mentor";
+import { dropDrafts, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
 import { Notice } from "@/components/notice";
@@ -55,8 +55,11 @@ export function MentorsPage() {
   const trash = useMutation({
     mutationFn: (ids: number[]) => call("trashMentors", { ids }),
     // Only these: others may have been ticked while it ran.
-    onSuccess: (_, ids) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
-    onSettled: (_, __, ids) => refreshMentors(queryClient, ids),
+    onSuccess: (_, ids) => {
+      setSelected((s) => new Set([...s].filter((id) => !ids.includes(id))));
+      dropDrafts(queryClient, ids);
+    },
+    onSettled: () => refreshMentors(queryClient),
   });
 
   return (
