@@ -136,10 +136,8 @@ async fn smtp_session(
                 inbox.lock().unwrap().push(message);
                 "250 queued\r\n"
             }
-            Some("QUIT") => {
-                io.write_all(b"221 bye\r\n").await?;
-                return Ok(());
-            }
+            // Never answered, as by some servers behind proxies: the mail counts as sent anyway.
+            Some("QUIT") => std::future::pending().await,
             _ => "502 unknown\r\n",
         };
         io.write_all(reply.as_bytes()).await?;
@@ -186,11 +184,8 @@ async fn imap_session(mut io: BufReader<Box<dyn Stream>>, tls: TlsAcceptor) -> s
                 format!("* 0 EXISTS\r\n* OK [UIDVALIDITY 1] ok\r\n{tag} OK [READ-WRITE] done\r\n")
             }
             "SELECT" => format!("{tag} NO Unsafe Login\r\n"),
-            "LOGOUT" => {
-                io.write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes())
-                    .await?;
-                return Ok(());
-            }
+            // Never answered: the check has passed by then.
+            "LOGOUT" => std::future::pending().await,
             _ => format!("{tag} BAD unknown\r\n"),
         };
         io.write_all(reply.as_bytes()).await?;
@@ -248,15 +243,17 @@ async fn a_wrong_secret_is_a_refused_login() {
 async fn an_untrusted_certificate_is_refused() {
     let (_, tls) = pki();
     let net = Net::new(Vec::new()).unwrap();
-    let (smtp, _) = smtp(&tls, Security::Tls).await;
-    let imap = imap(&tls, Security::Tls).await;
-    let me = account(smtp, imap, Security::Tls, SECRET);
-    for result in [
-        mailbox::check_sending(&net, &me).await,
-        mailbox::check_receiving(&net, &me).await,
-    ] {
-        let message = result.unwrap_err().message();
-        assert!(message.contains("证书不受信任"), "{message}");
+    for security in [Security::Tls, Security::Starttls] {
+        let (smtp, _) = smtp(&tls, security).await;
+        let imap = imap(&tls, security).await;
+        let me = account(smtp, imap, security, SECRET);
+        for result in [
+            mailbox::check_sending(&net, &me).await,
+            mailbox::check_receiving(&net, &me).await,
+        ] {
+            let message = result.unwrap_err().message();
+            assert!(message.contains("证书不受信任"), "{security:?}: {message}");
+        }
     }
 }
 

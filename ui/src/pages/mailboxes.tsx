@@ -11,8 +11,7 @@ import { Section } from "./settings";
 export function MailboxesSection() {
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const providers = useProviders();
-  // The mailbox being edited, or null for a new one; undefined while the dialog is closed.
-  const [editing, setEditing] = useState<Mailbox | null>();
+  const [adding, setAdding] = useState(false);
   const error = mailboxes.error ?? providers.error;
   return (
     <Section title="邮箱">
@@ -25,31 +24,22 @@ export function MailboxesSection() {
           {mailboxes.data.length > 0 && (
             <ul className="flex flex-col divide-y divide-border">
               {mailboxes.data.map((m) => (
-                <MailboxRow key={m.id} mailbox={m} providers={providers.data} onEdit={() => setEditing(m)} />
+                <MailboxRow key={m.id} mailbox={m} providers={providers.data} />
               ))}
             </ul>
           )}
           <div>
-            <Button onClick={() => setEditing(null)}>添加邮箱</Button>
+            <Button onClick={() => setAdding(true)}>添加邮箱</Button>
           </div>
-          {editing !== undefined && (
-            <MailboxDialog mailbox={editing} providers={providers.data} onClose={() => setEditing(undefined)} />
-          )}
+          {adding && <MailboxDialog mailbox={null} providers={providers.data} onClose={() => setAdding(false)} />}
         </>
       )}
     </Section>
   );
 }
 
-function MailboxRow({
-  mailbox: m,
-  providers,
-  onEdit,
-}: {
-  mailbox: Mailbox;
-  providers: Provider[];
-  onEdit: () => void;
-}) {
+function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Provider[] }) {
+  const [editing, setEditing] = useState(false);
   const queryClient = useQueryClient();
   const test = useMutation({ mutationFn: () => call("sendTestMail", { id: m.id }) });
   const remove = useMutation({
@@ -71,7 +61,7 @@ function MailboxRow({
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>
             发测试信
           </Button>
-          <Button variant="ghost" onClick={onEdit}>
+          <Button variant="ghost" onClick={() => setEditing(true)}>
             编辑
           </Button>
           <Confirm
@@ -93,6 +83,15 @@ function MailboxRow({
         {test.isError && <span className="text-destructive">{errorMessage(test.error)}</span>}
         {remove.isError && <span className="text-destructive">{errorMessage(remove.error)}</span>}
       </p>
+      {editing && (
+        <MailboxDialog
+          mailbox={m}
+          providers={providers}
+          // A test of the old settings says nothing about the new ones.
+          onSaved={() => test.reset()}
+          onClose={() => setEditing(false)}
+        />
+      )}
     </li>
   );
 }

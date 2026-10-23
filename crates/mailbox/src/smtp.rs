@@ -23,12 +23,9 @@ const HELLO: ClientId = ClientId::Ipv4(Ipv4Addr::LOCALHOST);
 
 /// Logs in to the mailbox's SMTP server and leaves.
 pub async fn check_sending(net: &Net, account: &Account) -> Result<(), MailError> {
-    net::within(&account.smtp, async {
-        let conn = login(net, account).await?;
-        quit(conn).await;
-        Ok(())
-    })
-    .await
+    let conn = net::within(&account.smtp, login(net, account)).await?;
+    quit(&account.smtp.host, conn);
+    Ok(())
 }
 
 /// Sends a short email from the mailbox to itself.
@@ -49,15 +46,16 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
             "这封信由 Auto Email Sender 发出，收到它说明这个邮箱能正常发信。",
         ))
         .map_err(|e| MailError::Broken(e.to_string()))?;
-    net::within(&account.smtp, async {
+    let conn = net::within(&account.smtp, async {
         let mut conn = login(net, account).await?;
         conn.send(message.envelope(), &message.formatted())
             .await
             .map_err(refused)?;
-        quit(conn).await;
-        Ok(())
+        Ok(conn)
     })
-    .await
+    .await?;
+    quit(&account.smtp.host, conn);
+    Ok(())
 }
 
 async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailError> {
@@ -77,13 +75,14 @@ async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, Mail
             conn.starttls(net.lettre_tls(&server.host)?, &HELLO)
                 .await
                 .map_err(|e| {
-                    if e.is_tls() {
+                    if e.status().is_some() {
+                        refused(e)
+                    } else {
+                        // Without a reply to refuse with, what failed is the handshake.
                         MailError::Tls {
                             host: server.host.to_string(),
                             source: io::Error::other(e),
                         }
-                    } else {
-                        refused(e)
                     }
                 })?;
             conn
@@ -99,12 +98,8 @@ async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, Mail
     Ok(conn)
 }
 
-/// Says goodbye. Failing here changes nothing: the server has already accepted what was sent, and
-/// some, such as Gmail through a proxy, drop the connection instead of answering.
-async fn quit(mut conn: AsyncSmtpConnection) {
-    if let Err(e) = conn.quit().await {
-        tracing::debug!("smtp quit: {e}");
-    }
+fn quit(host: &str, mut conn: AsyncSmtpConnection) {
+    net::farewell(host, async move { conn.quit().await.map(drop) });
 }
 
 /// A reply from the server, worded by lettre like "permanent error (535): ...", is a refusal;

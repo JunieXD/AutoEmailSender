@@ -221,7 +221,7 @@ V3 的产品范围和全局决定。
   - 备份：用 SQLite 的 `VACUUM INTO` 导出数据库快照，压缩后和材料文件一起打包；本地备份是一个文件，云端备份把快照和每个材料文件分别加密上传。
 - 密钥：邮箱授权码、OAuth 令牌和 API Key 存在本地数据库里，只有收发信和调用模型的代码读取：界面拿到的数据里没有，不写进日志，云端备份不带，删除邮箱或模型配置时一起删掉。不用系统钥匙串：应用没有 Apple 签名，每次更新后 macOS 都会弹窗要钥匙串密码。
 - 网络：HTTP 请求和隐藏的 WebView 都跟随系统代理，包括 SOCKS 代理，代理设置改了马上生效。收发信也走系统代理（国内连 Gmail 要走代理）：
-  - 每次连接时读系统代理：macOS 用 system-configuration 读，Windows 读注册表里的 Internet 设置。连本机的服务器不走代理。自动代理配置（PAC）暂不支持。
+  - 每次连接时读系统代理：macOS 用 system-configuration 读，Windows 读注册表里的 Internet 设置。连本机的服务器不走代理。自动代理配置（PAC）和代理的例外列表暂不支持：macOS 的例外列表没有不用 unsafe 的读法，常用的代理软件也会自己让内网和国内地址直连。
   - macOS 有 SOCKS 代理就用 SOCKS5（tokio-socks），否则用 HTTPS 代理的 CONNECT 建隧道；Windows 优先用 HTTP 代理，因为它的 socks 项可能是 SOCKS4。隧道建好后把连接交给 lettre 和 async-imap。SSL/TLS 由我们用 rustls 套上，证书按系统信任的来验（rustls-platform-verifier）；SMTP 的 STARTTLS 用 lettre 自己的升级。已在 Clash 下实测 Gmail 的 SMTP（465、587）和 IMAP。
 - 收发信：lettre 发信，async-imap 收信，mail-parser 解析（支持 GBK 等中文编码）。微软账号用 OAuth 登录，SMTP 不可用时走 Graph 接口。
   - 生成 Message-ID、读附件、组装邮件这些准备工作全部做完，才把邮件标为"发送中"交给 SMTP；SMTP 返回成功后立即记为已发出，中间不做别的事。中断后的处理见[发送中断](#联系)。

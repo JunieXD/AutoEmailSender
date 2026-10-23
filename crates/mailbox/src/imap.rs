@@ -10,17 +10,14 @@ use crate::{Account, MailError, Security};
 
 /// Logs in to the mailbox's IMAP server, opens the inbox and leaves.
 pub async fn check_receiving(net: &Net, account: &Account) -> Result<(), MailError> {
-    net::within(&account.imap, async {
+    let mut session = net::within(&account.imap, async {
         let mut session = login(net, account).await?;
         session.select("INBOX").await.map_err(refused)?;
-        // The check has passed by now; a server that drops the connection instead of answering
-        // changes nothing.
-        if let Err(e) = session.logout().await {
-            tracing::debug!("imap logout: {e}");
-        }
-        Ok(())
+        Ok(session)
     })
-    .await
+    .await?;
+    net::farewell(&account.imap.host, async move { session.logout().await });
+    Ok(())
 }
 
 async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStream>>, MailError> {

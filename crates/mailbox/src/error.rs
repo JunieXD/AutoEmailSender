@@ -1,5 +1,7 @@
 use std::io;
 
+use tokio_rustls::rustls;
+
 /// Why talking to a mail server failed. Displays in English for the log; `message` is for the user.
 #[derive(Debug)]
 pub enum MailError {
@@ -111,9 +113,19 @@ impl MailError {
     }
 }
 
-/// Whether the server's certificate was the problem rather than the handshake.
+/// Whether the server's certificate was the problem rather than the handshake, however deep lettre
+/// or tokio-rustls wrapped the TLS error.
 fn untrusted(e: &io::Error) -> bool {
-    e.get_ref()
-        .and_then(|e| e.downcast_ref::<tokio_rustls::rustls::Error>())
-        .is_some_and(|e| matches!(e, tokio_rustls::rustls::Error::InvalidCertificate(_)))
+    let mut next: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(e) = next {
+        if let Some(rustls::Error::InvalidCertificate(_)) = e.downcast_ref::<rustls::Error>() {
+            return true;
+        }
+        // An io::Error's source skips the error it wraps.
+        next = match e.downcast_ref::<io::Error>().and_then(io::Error::get_ref) {
+            Some(inner) => Some(inner),
+            None => e.source(),
+        };
+    }
+    false
 }

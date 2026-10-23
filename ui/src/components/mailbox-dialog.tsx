@@ -77,10 +77,13 @@ function withProvider(form: NewMailbox, p: Provider): NewMailbox {
 export function MailboxDialog({
   mailbox,
   providers,
+  onSaved,
   onClose,
 }: {
   mailbox: Mailbox | null;
   providers: Provider[];
+  /** After saving, before closing. */
+  onSaved?: () => void;
   onClose: () => void;
 }) {
   const [initial] = useState(() => (mailbox ? formOf(mailbox) : EMPTY));
@@ -91,6 +94,7 @@ export function MailboxDialog({
     mutationFn: (f: NewMailbox) => (mailbox ? call("updateMailbox", { ...f, id: mailbox.id }) : call("addMailbox", f)),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["listMailboxes"] });
+      onSaved?.();
       onClose();
     },
   });

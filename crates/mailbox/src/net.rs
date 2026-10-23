@@ -1,10 +1,15 @@
 //! Connections to mail servers: through the system proxy when there is one, encrypted with TLS that
 //! trusts what the system trusts.
 
+use std::fmt::Display;
 use std::future::Future;
-use std::net::IpAddr;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
+
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 
 use lettre::transport::smtp::client::{Certificate, TlsParameters, TlsParametersBuilder};
 use rustls_platform_verifier::Verifier;
@@ -18,8 +23,14 @@ use tokio_socks::tcp::Socks5Stream;
 use crate::proxy::{self, Endpoint, Proxy};
 use crate::{MailError, Server};
 
-/// How long one check or send may take, from connecting to the last reply.
+/// How long one check or send may take, from connecting to the server's last answer that matters.
 const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for one address before also trying the next (RFC 8305).
+const STAGGER: Duration = Duration::from_millis(250);
+
+/// How long a server whose work is done gets to answer a goodbye.
+const FAREWELL: Duration = Duration::from_secs(5);
 
 /// TLS settings shared by every connection.
 pub struct Net {
@@ -95,6 +106,22 @@ pub(crate) async fn within<T>(
         })
 }
 
+/// Says goodbye to a server in the background once its work is done. Its answer changes nothing, and
+/// some servers, such as Gmail through a proxy, drop the connection or never answer.
+pub(crate) fn farewell<E: Display>(
+    server: &str,
+    goodbye: impl Future<Output = Result<(), E>> + Send + 'static,
+) {
+    let server = server.to_owned();
+    tokio::spawn(async move {
+        match tokio::time::timeout(FAREWELL, goodbye).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::debug!("goodbye to {server}: {e}"),
+            Err(_) => tracing::debug!("goodbye to {server}: no answer"),
+        }
+    });
+}
+
 /// A plain connection to `host:port`, through the system proxy unless the host is this computer.
 pub(crate) async fn connect(host: &str, port: u16) -> Result<TcpStream, MailError> {
     let local = host.eq_ignore_ascii_case("localhost")
@@ -140,13 +167,35 @@ async fn direct(host: &str, port: u16) -> Result<TcpStream, MailError> {
             source,
         })?
         .collect();
-    TcpStream::connect(&addrs[..])
+    first_to_answer(&addrs)
         .await
         .map_err(|source| MailError::Connect {
             host: host.into(),
             port,
             source,
         })
+}
+
+/// Connects to whichever address answers first, starting on the next one every `STAGGER` until one
+/// does (RFC 8305), so that an IPv6 route that swallows connections does not hold up working IPv4.
+async fn first_to_answer(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
+    let mut waiting = addrs.iter();
+    let mut attempts = FuturesUnordered::new();
+    let mut error = io::Error::new(io::ErrorKind::NotFound, "no address");
+    loop {
+        match waiting.next() {
+            Some(addr) => attempts.push(TcpStream::connect(*addr)),
+            None if attempts.is_empty() => return Err(error),
+            None => {}
+        }
+        tokio::select! {
+            Some(attempt) = attempts.next() => match attempt {
+                Ok(stream) => return Ok(stream),
+                Err(e) => error = e,
+            },
+            () = tokio::time::sleep(STAGGER), if waiting.len() > 0 => {}
+        }
+    }
 }
 
 /// Opens a tunnel through an HTTP proxy with CONNECT.
