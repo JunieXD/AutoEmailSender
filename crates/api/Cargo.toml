@@ -13,5 +13,5 @@ mentor.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tracing = "0.1.44"
+tracing.workspace = true
 ts-rs.workspace = true

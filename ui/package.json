@@ -9,9 +9,12 @@
     "icons": "node scripts/icons.ts"
   },
   "dependencies": {
+    "@base-ui/react": "^1.9.0",
     "@tanstack/react-query": "^5.104.5",
     "@tanstack/react-router": "^1.170.45",
     "@tauri-apps/api": "^2.12.4",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.0",
     "lucide-react": "^1.61.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
@@ -25,6 +28,7 @@
     "oxlint": "^1.89.0",
     "oxlint-tsgolint": "^7.0.2004",
     "prettier": "^3.9.10",
+    "shadcn": "^4.22.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"

@@ -1,9 +1,15 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { Users } from "lucide-react";
 import appIcon from "../../../docs/icon.svg";
+import { startupFailure } from "@/api/app";
+import { StartupFailure } from "@/components/startup-failure";
 
 /** Sidebar on the window background, content on a rounded page (docs/ui.md#布局). */
 export function Shell() {
+  const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
+  if (failure.isPending) return null;
+  if (failure.data) return <StartupFailure reason={failure.data} />;
   return (
     <div className="flex h-dvh">
       <aside className="flex w-[228px] shrink-0 flex-col px-3 py-4">

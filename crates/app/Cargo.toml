@@ -13,6 +13,10 @@ api.workspace = true
 db.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-single-instance = "2.5.4"
+tracing.workspace = true
+tracing-appender = "0.2.5"
 tracing-subscriber = "0.3.23"
 
 [build-dependencies]

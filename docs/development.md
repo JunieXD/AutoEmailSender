@@ -32,7 +32,7 @@
 | `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
 | `pnpm package` | 打包安装包 |
 
-- 开发版的数据在仓库的 `.dev-data` 里，和装好的应用分开。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
+- 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
@@ -65,6 +65,7 @@
   - 批量审核时切换草稿前先保存。
   - 列表的筛选、排序和翻页放进网址（TanStack Router 的 search 参数），返回时还在。
 - 界面在 WebKit（macOS 的 WKWebView、iOS Safari）和 Chromium（Windows 的 WebView2、Android）上都要测。
+- 组件用 shadcn/ui：`pnpm --dir ui exec shadcn add <组件>` 加到 `ui/src/components/ui`，再按 [ui.md](ui.md#样式) 改样式，只留用得上的变体。不运行 `shadcn init`：它会换掉 ui.md 定的颜色变量，还会打包字体。
 
 ## 数据库
 
