@@ -67,6 +67,11 @@ CREATE TABLE profile (
   last_backup_at INTEGER
 ) STRICT;
 
+-- The one profile, with defaults.
+INSERT INTO profile (id, font_size_pt, line_height, paragraph_spacing_em, first_line_indent, rotation,
+  ai_fact_check, ai_reply_outcome, ai_reply_todos, reply_notifications, open_tracking, cloud_backup)
+VALUES (1, 10.5, 1.6, 0.8, 0, 'failover', 1, 0, 0, 1, 0, 0);
+
 CREATE TABLE material (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   file_name TEXT NOT NULL,

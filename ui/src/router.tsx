@@ -4,6 +4,7 @@ import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
 import { MailboxesSection } from "./pages/mailboxes";
 import { ModelsSection } from "./pages/models";
+import { ProfileSection } from "./pages/profile";
 import { AboutSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
@@ -56,6 +57,12 @@ const settingsHomeRoute = createRoute({
   path: "/",
 });
 
+const profileRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "profile",
+  component: ProfileSection,
+});
+
 const mailboxesRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "mailboxes",
@@ -81,7 +88,7 @@ export const router = createRouter({
     mentorsRoute,
     trashRoute,
     mentorRoute,
-    settingsRoute.addChildren([settingsHomeRoute, mailboxesRoute, modelsRoute, aboutRoute]),
+    settingsRoute.addChildren([settingsHomeRoute, profileRoute, mailboxesRoute, modelsRoute, aboutRoute]),
   ]),
   history: createHashHistory(),
 });
