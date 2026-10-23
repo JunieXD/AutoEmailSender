@@ -32,9 +32,14 @@ async fn failed_upgrade_keeps_a_copy() {
         .await
         .unwrap();
     db.close().await;
-    // A copy cut short last time is in the way.
-    std::fs::create_dir_all(dir.join("backups")).unwrap();
-    std::fs::write(dir.join("backups/copying.db"), "cut short").unwrap();
+    // A copy cut short last time is in the way, and older copies are dated later, as after the
+    // clock was set back.
+    let backups = dir.join("backups");
+    std::fs::create_dir_all(&backups).unwrap();
+    std::fs::write(backups.join("copying.db"), "cut short").unwrap();
+    for ms in [9_000_000_000_001_u64, 9_000_000_000_002, 9_000_000_000_003] {
+        std::fs::write(backups.join(format!("before-upgrade-{ms}.db")), "").unwrap();
+    }
 
     let Err(db::OpenError::Upgrade {
         backup: Some(backup),

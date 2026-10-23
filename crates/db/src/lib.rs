@@ -111,20 +111,21 @@ async fn back_up(pool: &SqlitePool, dir: &Path) -> Result<PathBuf, sqlx::Error> 
         .map_or(0, |d| d.as_millis());
     let file = dir.join(format!("{BACKUP_PREFIX}{ms}.db"));
     std::fs::rename(&copying, &file)?;
-    let mut copies = Vec::new();
+    let mut older = Vec::new();
     for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(BACKUP_PREFIX)
+        let path = entry?.path();
+        // The new copy is never dropped, even when the clock was set back since the older ones.
+        if path != file
+            && path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(BACKUP_PREFIX))
         {
-            copies.push(entry.path());
+            older.push(path);
         }
     }
     // Same-length millisecond timestamps sort by age.
-    copies.sort();
-    for old in &copies[..copies.len().saturating_sub(BACKUPS_KEPT)] {
+    older.sort();
+    for old in &older[..older.len().saturating_sub(BACKUPS_KEPT - 1)] {
         std::fs::remove_file(old)?;
     }
     Ok(file)
