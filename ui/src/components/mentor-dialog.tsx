@@ -59,7 +59,7 @@ export function MentorDialog<T>({
   action: string;
   initial: MentorForm;
   save: (form: MentorForm) => Promise<T>;
-  onSaved: (result: T) => void;
+  onSaved: (result: T) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [form, setForm] = useState(initial);

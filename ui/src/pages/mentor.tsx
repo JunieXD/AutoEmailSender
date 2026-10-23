@@ -137,7 +137,9 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
           action="保存"
           initial={formOf(m)}
           save={(form) => call("updateMentor", { id: m.id, ...form })}
-          onSaved={(saved) => {
+          onSaved={async (saved) => {
+            // A load still under way may have read the mentor before this save.
+            await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
             queryClient.setQueryData(["getMentor", m.id], saved);
             void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
             setEditing(false);
