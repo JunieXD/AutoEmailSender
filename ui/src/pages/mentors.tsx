@@ -41,9 +41,9 @@ export function MentorsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-4 px-7 pt-6 pb-4">
+      <header className="flex items-center gap-4 px-7 pt-6 pb-4 phone:flex-wrap phone:gap-y-2.5 phone:px-4 phone:pt-3.5 phone:pb-2.5">
         <div>
-          <h1 className="text-2xl font-semibold">导师</h1>
+          <h1 className="text-2xl font-semibold phone:text-[22px]">导师</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">{query.data ? `共 ${total.toLocaleString()} 位` : " "}</p>
         </div>
         <div className="grow" />
@@ -53,7 +53,7 @@ export function MentorsPage() {
         />
       </header>
 
-      <div className="px-7 pb-3">
+      <div className="px-7 pb-3 phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
         <div role="tablist" aria-label="联系状态" className="inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
           {STATUSES.map(([status, label]) => (
             <button
@@ -61,7 +61,7 @@ export function MentorsPage() {
               role="tab"
               aria-selected={search.status === status}
               onClick={() => navigate({ search: (s) => ({ ...s, status, page: undefined }) })}
-              className="h-[30px] rounded-full px-3.5 text-sm text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
+              className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
             >
               {label}
             </button>
@@ -69,7 +69,7 @@ export function MentorsPage() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4">
+      <div className="@container min-h-0 flex-1 overflow-y-auto px-4 phone:px-0">
         {query.isError ? (
           <Notice title="导师列表没能加载" detail={errorMessage(query.error)} />
         ) : query.data && query.data.mentors.length === 0 ? (
@@ -83,7 +83,7 @@ export function MentorsPage() {
         )}
       </div>
 
-      <footer className="flex items-center justify-end gap-2 px-7 py-3 text-sm text-muted-foreground">
+      <footer className="flex items-center justify-end gap-2 px-7 py-3 text-sm text-muted-foreground phone:justify-center phone:px-4">
         <span>
           第 {page} 页，共 {pages} 页
         </span>
@@ -126,7 +126,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (value: strin
     return () => clearTimeout(timer);
   }, [text, value]);
   return (
-    <label className="flex h-10 w-[320px] items-center gap-2 rounded-full bg-muted px-4 text-muted-foreground focus-within:ring-2 focus-within:ring-ring">
+    <label className="flex h-10 w-[320px] items-center gap-2 rounded-full bg-muted px-4 text-muted-foreground focus-within:ring-2 focus-within:ring-ring phone:order-3 phone:w-full">
       <Search className="size-[18px] shrink-0" strokeWidth={1.6} />
       <input
         value={text}
@@ -139,15 +139,21 @@ function SearchBox({ value, onChange }: { value: string; onChange: (value: strin
   );
 }
 
-// docs/ui.md#布局: no tag column at 1240px and below.
+// docs/ui.md#布局: no tag column on narrow windows; each row is a card where the columns do not fit.
 const COLUMNS =
-  "grid grid-cols-[minmax(150px,1.1fr)_minmax(170px,1.2fr)_minmax(180px,1.8fr)_110px_minmax(176px,1fr)_minmax(64px,0.5fr)] items-center gap-3 max-[1240px]:grid-cols-[minmax(140px,1.1fr)_minmax(150px,1.2fr)_minmax(140px,1.4fr)_110px_minmax(170px,1fr)]";
-const TAGS = "max-[1240px]:hidden";
+  "grid grid-cols-[minmax(150px,1.1fr)_minmax(170px,1.2fr)_minmax(180px,1.8fr)_110px_minmax(176px,1fr)_minmax(64px,0.5fr)] items-center gap-3 narrow:grid-cols-[minmax(140px,1.1fr)_minmax(150px,1.2fr)_minmax(140px,1.4fr)_110px_minmax(170px,1fr)]";
+const CARD =
+  "cards:h-auto cards:grid-cols-[minmax(0,1fr)_auto] cards:gap-x-3 cards:gap-y-1 cards:rounded-none cards:border-b cards:border-border cards:px-4 cards:py-3 cards:[grid-template-areas:'who_match'_'place_contact'_'research_research']";
+const TAGS = "narrow:hidden";
 
 function MentorTable({ mentors }: { mentors: MentorRow[] }) {
   return (
-    <div role="table" aria-label="导师" className="flex flex-col gap-[3px] pb-4">
-      <div role="row" className={`${COLUMNS} px-3 pb-1 text-sm text-muted-foreground`}>
+    <div
+      role="table"
+      aria-label="导师"
+      className="flex flex-col gap-[3px] pb-4 cards:gap-0 cards:border-t cards:border-border cards:pb-0"
+    >
+      <div role="row" className={`${COLUMNS} px-3 pb-1 text-sm text-muted-foreground cards:hidden`}>
         {["导师", "学校和学院", "研究方向", "匹配度", "联系"].map((h) => (
           <span key={h} role="columnheader">
             {h}
@@ -158,8 +164,8 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
         </span>
       </div>
       {mentors.map((m) => (
-        <div key={m.id} role="row" className={`${COLUMNS} h-[62px] rounded-md px-3 hover:bg-muted`}>
-          <div role="cell" className="flex min-w-0 items-center gap-3">
+        <div key={m.id} role="row" className={`${COLUMNS} h-[62px] rounded-md px-3 hover:bg-muted ${CARD}`}>
+          <div role="cell" className="flex min-w-0 items-center gap-3 cards:[grid-area:who]">
             <span
               className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-medium ${AVATARS[m.id % AVATARS.length]}`}
             >
@@ -170,19 +176,25 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
               {m.title && <span className="ml-1.5 text-sm text-muted-foreground">{m.title}</span>}
             </span>
           </div>
-          <div role="cell" className="min-w-0 text-sm">
+          <div role="cell" className="min-w-0 text-sm cards:text-muted-foreground cards:[grid-area:place]">
             <div className="truncate">{m.university ?? <Missing>未填写学校</Missing>}</div>
-            <div className="truncate text-muted-foreground">
+            <div className="truncate text-muted-foreground cards:hidden">
               {[m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学院</Missing>}
             </div>
           </div>
-          <div role="cell" className="line-clamp-2 text-sm text-muted-foreground">
+          <div
+            role="cell"
+            className="line-clamp-2 text-sm text-muted-foreground cards:line-clamp-1 cards:[grid-area:research]"
+          >
             {m.research ?? <Missing>未填写研究方向</Missing>}
           </div>
-          <div role="cell">
+          <div role="cell" className="cards:justify-self-end cards:[grid-area:match]">
             <Match state={m.matchState} />
           </div>
-          <div role="cell" className="min-w-0 text-sm">
+          <div
+            role="cell"
+            className="min-w-0 text-sm cards:flex cards:flex-col cards:items-end cards:[grid-area:contact]"
+          >
             <ContactCell contact={m.contact} />
           </div>
           <div role="cell" className={`flex flex-wrap gap-1 ${TAGS}`}>
@@ -213,7 +225,7 @@ function Match({ state }: { state: MatchState }) {
     return (
       <div className="flex items-center gap-2">
         <span className="w-6 font-medium">{state.score}</span>
-        <span className="h-1 w-14 overflow-hidden rounded-full bg-muted">
+        <span className="h-1 w-14 overflow-hidden rounded-full bg-muted cards:w-10">
           <span className="block h-full rounded-full bg-muted-foreground" style={{ width: `${state.score}%` }} />
         </span>
       </div>

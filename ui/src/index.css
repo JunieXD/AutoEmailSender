@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* docs/ui.md#布局: the window widths where the layout changes. */
+@custom-variant narrow (@media (width <= 1240px));
+@custom-variant phone (@media (width <= 760px));
+/* Where the mentor table's narrow-window columns no longer fit, its rows become cards. */
+@custom-variant cards (@container (width < 782px));
+
 /* Tokens from docs/ui.md#颜色; names follow shadcn/ui. */
 :root {
   color-scheme: light;
