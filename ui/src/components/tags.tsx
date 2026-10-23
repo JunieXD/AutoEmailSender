@@ -115,6 +115,10 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
       if (queryClient.isMutating({ mutationKey }) === 1) refreshTags(queryClient);
     },
   });
+  const create = useMutation({
+    mutationFn: (tag: { name: string; color: string }) => call("createTag", tag),
+    onSuccess: (tag) => toggle(tag),
+  });
   async function toggle(tag: Tag) {
     const queryKey = ["getMentor", mentorId];
     // A load still under way read the tags before this tick, so it must not land afterwards.
@@ -134,7 +138,11 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
           <TagChip tag={t} />
         </label>
       ))}
-      <NewTag onCreated={toggle} />
+      <NewTag
+        pending={create.isPending}
+        onSubmit={(name, clear) => create.mutate(newTag(name, tags.data), { onSuccess: clear })}
+      />
+      {create.error && <p className="px-2 text-destructive">{errorMessage(create.error)}</p>}
       <div className="px-2">
         <TagSaveError mentorId={mentorId} />
       </div>
@@ -145,49 +153,64 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
   );
 }
 
-/** Names a new tag, created on Enter with the next preset colour. */
-function NewTag({ onCreated }: { onCreated: (tag: Tag) => unknown }) {
-  const tags = useTags();
+/** Names a new tag; Enter hands the name over, and `clear` empties the field once it is saved. */
+function NewTag({ pending, onSubmit }: { pending: boolean; onSubmit: (name: string, clear: () => void) => void }) {
   const [name, setName] = useState("");
-  const create = useMutation({
-    mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
-    onSuccess: (tag) => {
-      setName("");
-      return onCreated(tag);
-    },
-  });
   return (
-    <>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) create.mutate();
-        }}
-      >
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="新建标签，按回车添加"
-          aria-label="新建标签"
-          className="h-9"
-          disabled={create.isPending}
-        />
-      </form>
-      {create.error && <p className="px-2 text-destructive">{errorMessage(create.error)}</p>}
-    </>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim()) onSubmit(name, () => setName(""));
+      }}
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="新建标签，按回车添加"
+        aria-label="新建标签"
+        className="h-9"
+        disabled={pending}
+      />
+    </form>
   );
 }
 
-/** The batch bar's "添加标签": puts a tag on every ticked mentor. */
-export function AddTagButton({ mentorIds }: { mentorIds: number[] }) {
+/** A new tag takes the preset colours in turn. */
+function newTag(name: string, tags: Tag[] | undefined) {
+  return { name, color: nextColor(tags?.length ?? 0) };
+}
+
+type AddTag = { tag: number | { name: string; color: string }; mentorIds: number[] };
+
+/**
+ * Puts a tag, an existing one or one created on the spot, on the mentors ticked when the user chose
+ * it. Lives in the page, so its error outlasts the popover and the ticks.
+ */
+export function useAddTag() {
   const queryClient = useQueryClient();
-  const tags = useTags();
-  const [open, setOpen] = useState(false);
-  const add = useMutation({
-    mutationFn: (tagId: number) => call("tagMentors", { tagId, mentorIds, on: true }),
-    onSuccess: () => setOpen(false),
+  return useMutation({
+    mutationFn: async ({ tag, mentorIds }: AddTag) => {
+      const tagId = typeof tag === "number" ? tag : (await call("createTag", tag)).id;
+      await call("tagMentors", { tagId, mentorIds, on: true });
+    },
     onSettled: () => refreshTags(queryClient),
   });
+}
+
+/** The batch bar's "添加标签". */
+export function AddTagButton({ mentorIds, add }: { mentorIds: number[]; add: ReturnType<typeof useAddTag> }) {
+  const tags = useTags();
+  const [open, setOpen] = useState(false);
+  const choose = (tag: AddTag["tag"], clear?: () => void) =>
+    add.mutate(
+      { tag, mentorIds },
+      {
+        onSuccess: () => {
+          clear?.();
+          setOpen(false);
+        },
+      },
+    );
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -205,13 +228,12 @@ export function AddTagButton({ mentorIds }: { mentorIds: number[] }) {
             type="button"
             disabled={add.isPending}
             className="flex rounded-md px-2 py-1.5 hover:bg-muted"
-            onClick={() => add.mutate(t.id)}
+            onClick={() => choose(t.id)}
           >
             <TagChip tag={t} />
           </button>
         ))}
-        <NewTag onCreated={(tag: Tag) => add.mutate(tag.id)} />
-        {add.error && <p className="px-2 text-destructive">{errorMessage(add.error)}</p>}
+        <NewTag pending={add.isPending} onSubmit={(name, clear) => choose(newTag(name, tags.data), clear)} />
       </PopoverContent>
     </Popover>
   );

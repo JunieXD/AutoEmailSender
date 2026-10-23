@@ -160,7 +160,7 @@ const pageCount = (total: number) => Math.max(1, Math.ceil(total / PAGE_SIZE));
 
 /**
  * Once the last rows of the last page are gone, moves to the page that is now last. `total` is
- * undefined until the current page's own result arrives.
+ * undefined while the page is loading, so a cached or placeholder total from before never decides.
  */
 export function useLastPage(total: number | undefined, page: number, onPage: (page: number) => void) {
   const go = useEffectEvent(onPage);

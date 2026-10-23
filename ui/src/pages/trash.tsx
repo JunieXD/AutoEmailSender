@@ -27,12 +27,13 @@ export function TrashPage() {
   });
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
-  useLastPage(query.isPlaceholderData ? undefined : query.data?.total, page, (n) =>
+  useLastPage(query.isFetching ? undefined : query.data?.total, page, (n) =>
     navigate({ search: { page: n > 1 ? n : undefined }, replace: true }),
   );
   const act = useMutation({
     mutationFn: ({ op, ids }: { op: "restoreMentors" | "deleteMentors"; ids: number[] }) => call(op, { ids }),
-    onSuccess: () => setSelected(new Set()),
+    // Only these: others may have been ticked while it ran.
+    onSuccess: (_, { ids }) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
     onSettled: () => refreshMentors(queryClient),
   });
   const failed = act.variables?.op === "restoreMentors" ? "没能恢复" : "没能永久删除";
@@ -75,7 +76,7 @@ export function TrashPage() {
         </div>
         <BatchBar
           count={selected.size}
-          error={act.error ? `${failed}：${errorMessage(act.error)}` : undefined}
+          errors={act.error ? [`${failed}：${errorMessage(act.error)}`] : []}
           onClear={() => {
             setSelected(new Set());
             if (!act.isPending) act.reset();

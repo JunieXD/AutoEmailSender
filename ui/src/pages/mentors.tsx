@@ -8,7 +8,7 @@ import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
-import { AddTagButton } from "@/components/tags";
+import { AddTagButton, useAddTag } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 
@@ -48,12 +48,14 @@ export function MentorsPage() {
     setFilter({ status: search.status, q: search.q });
     setSelected(new Set());
   }
-  useLastPage(query.isPlaceholderData ? undefined : query.data?.total, page, (n) =>
+  useLastPage(query.isFetching ? undefined : query.data?.total, page, (n) =>
     navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
   );
+  const addTag = useAddTag();
   const trash = useMutation({
     mutationFn: (ids: number[]) => call("trashMentors", { ids }),
-    onSuccess: () => setSelected(new Set()),
+    // Only these: others may have been ticked while it ran.
+    onSuccess: (_, ids) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
     onSettled: () => refreshMentors(queryClient),
   });
 
@@ -127,13 +129,16 @@ export function MentorsPage() {
         </div>
         <BatchBar
           count={selected.size}
-          error={trash.error ? `没能移入回收站：${errorMessage(trash.error)}` : undefined}
+          errors={[
+            ...(addTag.error ? [`没能添加标签：${errorMessage(addTag.error)}`] : []),
+            ...(trash.error ? [`没能移入回收站：${errorMessage(trash.error)}`] : []),
+          ]}
           onClear={() => {
             setSelected(new Set());
-            if (!trash.isPending) trash.reset();
+            for (const action of [addTag, trash]) if (!action.isPending) action.reset();
           }}
         >
-          <AddTagButton mentorIds={[...selected]} />
+          <AddTagButton mentorIds={[...selected]} add={addTag} />
           <Confirm
             trigger={
               <Button variant="ghost" disabled={trash.isPending}>

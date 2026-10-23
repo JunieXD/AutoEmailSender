@@ -11,21 +11,25 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
  */
 export function BatchBar({
   count,
-  error,
+  errors,
   onClear,
   children,
 }: {
   count: number;
-  error?: string | undefined;
+  errors: string[];
   onClear: () => void;
   children: ReactNode;
 }) {
   // An error outlasts the ticks, which may be cleared while the action is still running.
-  if (count === 0 && !error) return null;
+  if (count === 0 && errors.length === 0) return null;
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
       <div className="pointer-events-auto max-w-full rounded-lg bg-background shadow-pop transition-[opacity,translate] duration-200 starting:translate-y-3 starting:opacity-0">
-        {error && <p className="px-4 pt-2.5 text-sm text-destructive">{error}</p>}
+        {errors.map((e) => (
+          <p key={e} className="px-4 pt-2.5 text-sm text-destructive">
+            {e}
+          </p>
+        ))}
         <div className="flex items-center gap-1 overflow-x-auto p-1.5 [scrollbar-width:none]">
           <Button variant="ghost" size="icon" aria-label="取消选择" onClick={onClear}>
             <X strokeWidth={1.6} />
