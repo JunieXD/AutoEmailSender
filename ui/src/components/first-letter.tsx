@@ -117,7 +117,7 @@ function TemplateMenu({
   const apply = useMutation({
     mutationFn: (t: TemplateSummary) => call("applyTemplate", { templateId: t.id, mentorId }),
   });
-  // Closing the menu resets the mutation, so a template still on its way is not applied.
+  // Closing the menu or canceling resets the mutation, so a template still on its way is not applied.
   function fill(t: TemplateSummary) {
     apply.mutate(t, {
       onSuccess: (filled) => {
@@ -148,7 +148,13 @@ function TemplateMenu({
           <div className="p-1.5">
             <p>用“{chosen.name}”替换现在写的主题和正文？</p>
             <div className="mt-3 flex justify-end gap-2">
-              <Button variant="quiet" onClick={() => setChosen(null)}>
+              <Button
+                variant="quiet"
+                onClick={() => {
+                  setChosen(null);
+                  apply.reset();
+                }}
+              >
                 取消
               </Button>
               <Button disabled={apply.isPending} onClick={() => fill(chosen)}>

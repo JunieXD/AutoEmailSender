@@ -64,4 +64,6 @@ export function refreshMentors(queryClient: QueryClient) {
   for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
+  // The trash cancels drafts, which must not come back from the cache on restore.
+  queryClient.removeQueries({ queryKey: ["getFirstDraft"] });
 }
