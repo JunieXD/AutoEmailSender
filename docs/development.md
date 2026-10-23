@@ -35,6 +35,7 @@
 - 开发版的数据在仓库的 `.dev-data` 里，和装好的应用分开。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
+- CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
 
 ## 代码
 
