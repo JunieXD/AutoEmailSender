@@ -20,7 +20,7 @@ use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::{self, ClientConfig, pki_types::CertificateDer, pki_types::ServerName};
 use tokio_socks::tcp::Socks5Stream;
 
-use crate::proxy::{self, Endpoint, Proxy};
+use crate::proxy::{self, Proxy};
 use crate::{MailError, Server};
 
 /// How long one check or send may take, from connecting to the server's last answer that matters.
@@ -135,27 +135,32 @@ pub(crate) async fn connect(host: &str, port: u16) -> Result<TcpStream, MailErro
 }
 
 async fn tunnel(proxy: Option<&Proxy>, host: &str, port: u16) -> Result<TcpStream, MailError> {
+    let Some(proxy) = proxy else {
+        return direct(host, port).await;
+    };
+    let endpoint = proxy.endpoint();
+    let down = |source| MailError::ProxyDown {
+        proxy: endpoint.to_string(),
+        source,
+    };
+    let failed = |reason: String| MailError::ProxyFailed {
+        proxy: endpoint.to_string(),
+        host: host.into(),
+        port,
+        reason,
+    };
+    let addrs: Vec<_> = tokio::net::lookup_host((endpoint.host.as_str(), endpoint.port))
+        .await
+        .map_err(down)?
+        .collect();
+    let stream = first_to_answer(&addrs).await.map_err(down)?;
     match proxy {
-        None => direct(host, port).await,
-        Some(Proxy::Socks5(p)) => {
-            // The proxy looks up the name, so a poisoned local DNS cannot misdirect it.
-            Socks5Stream::connect((p.host.as_str(), p.port), (host, port))
-                .await
-                .map(Socks5Stream::into_inner)
-                .map_err(|e| match e {
-                    tokio_socks::Error::Io(source) => MailError::ProxyDown {
-                        proxy: p.to_string(),
-                        source,
-                    },
-                    e => MailError::ProxyFailed {
-                        proxy: p.to_string(),
-                        host: host.into(),
-                        port,
-                        reason: e.to_string(),
-                    },
-                })
-        }
-        Some(Proxy::Http(p)) => http_connect(p, host, port).await,
+        // The proxy looks up the name, so a poisoned local DNS cannot misdirect it.
+        Proxy::Socks5(_) => Socks5Stream::connect_with_socket(stream, (host, port))
+            .await
+            .map(Socks5Stream::into_inner)
+            .map_err(|e| failed(e.to_string())),
+        Proxy::Http(_) => http_connect(stream, host, port).await.map_err(failed),
     }
 }
 
@@ -198,39 +203,26 @@ async fn first_to_answer(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
     }
 }
 
-/// Opens a tunnel through an HTTP proxy with CONNECT.
-async fn http_connect(proxy: &Endpoint, host: &str, port: u16) -> Result<TcpStream, MailError> {
-    let down = |source| MailError::ProxyDown {
-        proxy: proxy.to_string(),
-        source,
-    };
-    let failed = |reason: String| MailError::ProxyFailed {
-        proxy: proxy.to_string(),
-        host: host.into(),
-        port,
-        reason,
-    };
-    let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
-        .await
-        .map_err(down)?;
+/// Asks an HTTP proxy, already connected, to open a tunnel; the error is the proxy's reason.
+async fn http_connect(mut stream: TcpStream, host: &str, port: u16) -> Result<TcpStream, String> {
     stream
         .write_all(
             format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes(),
         )
         .await
-        .map_err(|e| failed(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     // Byte by byte, so that nothing the server sends after the reply is read away.
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
         if head.len() > 8192 {
-            return Err(failed("reply too long".into()));
+            return Err("reply too long".into());
         }
-        head.push(stream.read_u8().await.map_err(|e| failed(e.to_string()))?);
+        head.push(stream.read_u8().await.map_err(|e| e.to_string())?);
     }
     let head = String::from_utf8_lossy(&head);
     let status = head.lines().next().unwrap_or_default();
     if status.split(' ').nth(1) != Some("200") {
-        return Err(failed(status.to_owned()));
+        return Err(status.to_owned());
     }
     Ok(stream)
 }
@@ -241,6 +233,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::proxy::Endpoint;
 
     /// Serves each connection with `serve` on a free port.
     async fn listen<F, Fut>(serve: F) -> u16
@@ -340,8 +333,10 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             listener.local_addr().unwrap().port()
         };
-        let down = tunnel(Some(&Proxy::Http(at(closed))), "localhost", 465).await;
-        assert!(matches!(down, Err(MailError::ProxyDown { .. })), "{down:?}");
+        for proxy in [Proxy::Socks5(at(closed)), Proxy::Http(at(closed))] {
+            let down = tunnel(Some(&proxy), "localhost", 465).await;
+            assert!(matches!(down, Err(MailError::ProxyDown { .. })), "{down:?}");
+        }
         let refused = tunnel(Some(&Proxy::Http(at(http().await))), "localhost", 25).await;
         assert!(
             matches!(refused, Err(MailError::ProxyFailed { ref reason, .. }) if reason.contains("403")),
