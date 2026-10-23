@@ -10,6 +10,12 @@ export type Direction = "up" | "down";
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
 
+export type FilledTemplate = { subject: string, bodyMd: string, };
+
+export type FirstDraft = { subject: string | null, bodyMd: string | null, };
+
+export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string, };
+
 export type LetterFont = "song" | "hei";
 
 export type LetterStyle = { 
@@ -220,6 +226,8 @@ export type Template = { id: number, name: string, subject: string, bodyMd: stri
 
 export type TemplateEdit = { id: number, name: string, subject: string, bodyMd: string, };
 
+export type TemplateForMentor = { templateId: number, mentorId: number, };
+
 export type TemplateForm = { name: string, subject: string, bodyMd: string, };
 
 export type TemplateId = { id: number, };
@@ -267,6 +275,9 @@ export interface Operations {
   addTemplate: { input: TemplateForm; output: TemplateId };
   updateTemplate: { input: TemplateEdit; output: null };
   deleteTemplate: { input: TemplateId; output: null };
+  applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
+  getFirstDraft: { input: MentorId; output: FirstDraft | null };
+  saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };

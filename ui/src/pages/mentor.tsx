@@ -6,8 +6,17 @@ import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
+import { FirstLetter } from "@/components/first-letter";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, refreshMentors } from "@/components/mentor";
+import {
+  Avatar,
+  ContactLabel,
+  contactDetail,
+  dropDrafts,
+  MATCH_LABEL,
+  Missing,
+  refreshMentors,
+} from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -28,6 +37,7 @@ export function MentorPage() {
   const trash = useMutation({
     mutationFn: (op: TrashOp) => call(op, { ids: [mentorId] }),
     onSuccess: async (_, op) => {
+      if (op === "trashMentors") dropDrafts(queryClient, [mentorId]);
       if (op === "deleteMentors") await navigate({ to: "/mentors/trash", replace: true });
     },
     onSettled: () => refreshMentors(queryClient),
@@ -78,8 +88,11 @@ export function MentorPage() {
             )}
           </div>
         )}
-        <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
-          {m.contact.status === "none" ? `尚未联系${m.name}老师。` : contactDetail(m.contact)}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
+            {m.contact.status === "none" ? `尚未联系${m.name}老师。` : contactDetail(m.contact)}
+          </div>
+          {!m.trashed && <FirstLetter mentorId={m.id} />}
         </div>
       </section>
       <aside

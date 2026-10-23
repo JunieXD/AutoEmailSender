@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use ts_rs::TS;
 
 /// What may stand in braces in a subject or body, such as `{导师姓名}`.
-pub const PLACEHOLDERS: &[&str] = &[
+pub const PLACEHOLDERS: [&str; 7] = [
     "导师姓名",
     "导师职称",
     "学校",
@@ -15,6 +15,93 @@ pub const PLACEHOLDERS: &[&str] = &[
     "导师研究方向",
     "我的姓名",
 ];
+
+/// What fills the placeholders for one mentor; a missing value leaves its placeholder as written.
+#[derive(Debug)]
+pub struct Fill<'a> {
+    pub mentor_name: &'a str,
+    pub mentor_title: Option<&'a str>,
+    pub university: Option<&'a str>,
+    pub school: Option<&'a str>,
+    pub department: Option<&'a str>,
+    pub research: Option<&'a str>,
+    pub my_name: Option<&'a str>,
+}
+
+impl Fill<'_> {
+    /// Each placeholder's value, in the order of `PLACEHOLDERS`.
+    fn values(&self) -> [Option<&str>; PLACEHOLDERS.len()] {
+        [
+            Some(self.mentor_name),
+            self.mentor_title,
+            self.university,
+            self.school,
+            self.department,
+            self.research,
+            self.my_name,
+        ]
+    }
+
+    pub fn subject(&self, subject: &str) -> String {
+        self.fill(subject, str::to_owned)
+    }
+
+    /// A Markdown body with the values as plain text: links or formatting written on a mentor's
+    /// page never take effect.
+    pub fn body(&self, markdown: &str) -> String {
+        self.fill(markdown, markdown_text)
+    }
+
+    /// Fills in every placeholder in one pass, so a value is never searched for placeholders.
+    fn fill(&self, text: &str, write: impl Fn(&str) -> String) -> String {
+        let values = self.values();
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + 1..];
+            let filled = after.find('}').and_then(|close| {
+                let i = PLACEHOLDERS.iter().position(|p| *p == &after[..close])?;
+                Some((values[i]?, close))
+            });
+            match filled {
+                Some((value, close)) => {
+                    out.push_str(&write(&one_line(value)));
+                    rest = &after[close + 1..];
+                }
+                None => {
+                    out.push('{');
+                    rest = after;
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+}
+
+fn one_line(text: &str) -> String {
+    text.split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Text as Markdown that reads back as the same text, wherever it goes on a line.
+fn markdown_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, c) in text.char_indices() {
+        // A list marker would start a list when the text starts a line.
+        let marker = (i == 0 && matches!(c, '-' | '+'))
+            || (i > 0 && matches!(c, '.' | ')') && text[..i].bytes().all(|b| b.is_ascii_digit()));
+        if marker || r"\*_[]<>&`~!".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// A template in the list, without its body.
 #[derive(Debug, Serialize, TS)]

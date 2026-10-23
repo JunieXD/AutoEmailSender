@@ -66,9 +66,9 @@ describe("a letter reads back as written", () => {
     expect(reread(letter)).toEqual(letter.toJSON());
   });
 
-  test("a link keeps its text when its address has brackets and spaces", () => {
-    const letter = doc(p(t("链接", link("https://example.com/search?q=(a) b"))));
-    expect(reread(letter)).toEqual(doc(p(t("链接", link("https://example.com/search?q=%28a%29%20b")))).toJSON());
+  test("a link keeps its text when its address has brackets, braces and spaces", () => {
+    const letter = doc(p(t("链接", link("https://example.com/search?q=(a) {b}"))));
+    expect(reread(letter)).toEqual(doc(p(t("链接", link("https://example.com/search?q=%28a%29%20%7Bb%7D")))).toJSON());
   });
 
   test.each([

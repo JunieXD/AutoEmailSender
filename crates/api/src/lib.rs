@@ -139,6 +139,9 @@ operations! {
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
+    "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
+    "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
+    "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -667,7 +670,7 @@ pub struct TemplateEdit {
 const NO_TEMPLATE: &str = "找不到这个模板，可能已被删除。";
 
 async fn list_placeholders(_: &Context, _: Nothing) -> Result<&'static [&'static str], CallError> {
-    Ok(template::PLACEHOLDERS)
+    Ok(&template::PLACEHOLDERS)
 }
 
 async fn list_templates(
@@ -703,6 +706,75 @@ async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallE
 
 async fn delete_template(ctx: &Context, input: TemplateId) -> Result<(), CallError> {
     Ok(template::delete(&ctx.db, input.id).await?)
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateForMentor {
+    pub template_id: i64,
+    pub mentor_id: i64,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FilledTemplate {
+    pub subject: String,
+    pub body_md: String,
+}
+
+async fn apply_template(
+    ctx: &Context,
+    input: TemplateForMentor,
+) -> Result<FilledTemplate, CallError> {
+    let t = template::get(&ctx.db, input.template_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_TEMPLATE))?;
+    let m = mentor::get(&ctx.db, input.mentor_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    let me = profile::get(&ctx.db).await?;
+    let fill = template::Fill {
+        mentor_name: &m.name,
+        mentor_title: m.title.as_deref(),
+        university: m.university.as_deref(),
+        school: m.school.as_deref(),
+        department: m.department.as_deref(),
+        research: m.research.as_deref(),
+        my_name: me.name.as_deref(),
+    };
+    Ok(FilledTemplate {
+        subject: fill.subject(&t.subject),
+        body_md: fill.body(&t.body_md),
+    })
+}
+
+async fn get_first_draft(
+    ctx: &Context,
+    input: MentorId,
+) -> Result<Option<email::FirstDraft>, CallError> {
+    Ok(email::first_draft(&ctx.db, input.id).await?)
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FirstDraftEdit {
+    pub mentor_id: i64,
+    pub subject: String,
+    pub body_md: String,
+}
+
+async fn save_first_draft(
+    ctx: &Context,
+    input: FirstDraftEdit,
+) -> Result<Option<email::FirstDraft>, CallError> {
+    Ok(email::save_first_draft(
+        &ctx.db,
+        input.mentor_id,
+        &input.subject,
+        &input.body_md,
+        now(),
+    )
+    .await?)
 }
 
 /// UTC milliseconds.

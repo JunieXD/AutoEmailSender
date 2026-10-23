@@ -1,14 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Template, TemplateForm } from "@/api/types";
 import { Field } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-
-// The editor is most of the interface's code; loaded when first needed, it does not slow the start.
-const LetterEditor = lazy(() => import("@/components/letter-editor").then((m) => ({ default: m.LetterEditor })));
+import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 
 /** The placeholders the core fills in; they never change while the app runs. */
 export function usePlaceholders() {
@@ -87,18 +85,16 @@ export function TemplateDialog({
                 />
               </Field>
               <Field label="正文" id="template-body">
-                <Suspense fallback={<div className="h-[236px] rounded-md bg-muted" />}>
-                  <LetterEditor
-                    id="template-body"
-                    markdown={initial.bodyMd}
-                    placeholders={placeholders}
-                    disabled={save.isPending}
-                    onChange={(bodyMd) => {
-                      setForm((f) => ({ ...f, bodyMd }));
-                      setBodyEdited(true);
-                    }}
-                  />
-                </Suspense>
+                <LazyLetterEditor
+                  id="template-body"
+                  markdown={initial.bodyMd}
+                  placeholders={placeholders}
+                  disabled={save.isPending}
+                  onChange={(bodyMd) => {
+                    setForm((f) => ({ ...f, bodyMd }));
+                    setBodyEdited(true);
+                  }}
+                />
               </Field>
               <p className="text-sm text-muted-foreground">
                 套用模板时，占位符换成这位导师的信息；“我的姓名”取自个人资料。导师缺的信息原样留下，发送前检查会提醒。

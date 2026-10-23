@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 api = { path = "crates/api" }
 db = { path = "crates/db" }
+email = { path = "crates/email" }
 mailbox = { path = "crates/mailbox" }
 mentor = { path = "crates/mentor" }
 model = { path = "crates/model" }

@@ -1,6 +1,7 @@
 //! Generated mentors and mail, for the development app and the benchmark. Fixed seed, so every run
 //! produces the same data.
 
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fastrand::Rng;
@@ -276,10 +277,12 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     .flat_map(|(state, weight)| std::iter::repeat_n(state, weight))
     .collect();
     let mut sent = Vec::new();
+    let mut drafted = HashSet::new();
     for i in 1..=scale.emails {
         let mentor = *pick(&mut rng, &contacted);
         let state = *pick(&mut rng, &states);
-        let kind = if rng.f32() < 0.85 {
+        // A mentor has at most one first email being written outside a task.
+        let kind = if rng.f32() < 0.85 && (state != "review" || drafted.insert(mentor)) {
             "first"
         } else {
             "follow_up"

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject, body_md FROM email\n         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "c51c724818b18b33858dc0a7c6c6130dc36cdf83217e3628d3050b904722309a"
+}

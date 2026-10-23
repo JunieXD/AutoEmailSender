@@ -65,3 +65,15 @@ export function refreshMentors(queryClient: QueryClient) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }
+
+/**
+ * Moving mentors to the trash canceled their drafts, which must not come back on restore from the
+ * cache or a failed save.
+ */
+export function dropDrafts(queryClient: QueryClient, ids: number[]) {
+  const saves = queryClient.getMutationCache();
+  for (const id of ids) {
+    queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
+    for (const m of saves.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) saves.remove(m);
+  }
+}
