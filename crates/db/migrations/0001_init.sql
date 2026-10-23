@@ -213,6 +213,8 @@ CREATE INDEX email_out ON email (mentor_id, sent_at, kind)
 CREATE INDEX email_queue ON email (planned_at) WHERE state = 'approved';
 CREATE INDEX email_task ON email (task_id, state);
 CREATE INDEX email_attention ON email (state) WHERE state IN ('generation_failed', 'failed', 'maybe_sent');
+CREATE UNIQUE INDEX email_first_draft ON email (mentor_id)
+  WHERE kind = 'first' AND task_id IS NULL AND state = 'review';
 CREATE UNIQUE INDEX email_reply_draft ON email (mentor_id) WHERE kind = 'reply' AND state = 'review';
 
 CREATE TABLE email_attachment (

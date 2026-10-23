@@ -57,6 +57,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "api"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "email",
  "mailbox",
  "mentor",
  "model",
@@ -1146,6 +1147,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "email"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "db",
+ "mentor",
+ "serde",
+ "sqlx",
+ "tokio",
+ "ts-rs",
 ]
 
 [[package]]

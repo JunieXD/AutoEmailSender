@@ -7,7 +7,13 @@
 | 目录 | 内容 |
 |---|---|
 | `crates/db` | 迁移和打开数据库 |
-| `crates/mentor` | 导师：列表、搜索、添加 |
+| `crates/net` | 网络：系统代理、TLS 设置 |
+| `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站 |
+| `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
+| `crates/model` | 模型：服务商表、调用和测试 |
+| `crates/profile` | 个人资料和信件样式 |
+| `crates/template` | 模板和占位符 |
+| `crates/email` | 邮件：草稿 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；界面用的 TypeScript 类型从这里生成 |
 | `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |

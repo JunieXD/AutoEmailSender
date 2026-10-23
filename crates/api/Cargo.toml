@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+email.workspace = true
 mailbox.workspace = true
 model.workspace = true
 profile.workspace = true
