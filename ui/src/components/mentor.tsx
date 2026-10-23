@@ -1,4 +1,4 @@
-import type { Contact, ContactStatus, MatchState, TagLabel } from "@/api/types";
+import type { Contact, ContactStatus, MatchState } from "@/api/types";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -16,17 +16,6 @@ export function Avatar({ id, name }: { id: number; name: string }) {
 
 export function Missing({ children }: { children: string }) {
   return <span className="text-faint">{children}</span>;
-}
-
-export function TagChip({ tag }: { tag: TagLabel }) {
-  return (
-    <span
-      className="rounded-full px-2 py-0.5 text-xs whitespace-nowrap"
-      style={{ color: tag.color, backgroundColor: `color-mix(in srgb, ${tag.color} 12%, transparent)` }}
-    >
-      {tag.name}
-    </span>
-  );
 }
 
 const STATUS_STYLE: Record<ContactStatus, [string, string]> = {

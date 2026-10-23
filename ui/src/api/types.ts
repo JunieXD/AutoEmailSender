@@ -6,6 +6,8 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
+export type Direction = "up" | "down";
+
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "internal";
 
 export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
@@ -16,7 +18,7 @@ export type MentorDetail = { id: number, name: string, email: string | null, tit
 /**
  * The page the mentor was found on.
  */
-sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<TagLabel>, };
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<Tag>, };
 
 export type MentorEdit = { id: number, name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
 
@@ -46,9 +48,31 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
-research: string | null, matchState: MatchState, contact: Contact, tags: Array<TagLabel>, };
+research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
-export type TagLabel = { name: string, color: string, };
+export type Nothing = Record<symbol, never>;
+
+export type Tag = { id: number, name: string, 
+/**
+ * `#rrggbb`.
+ */
+color: string, };
+
+export type TagColor = { id: number, color: string, };
+
+export type TagForm = { name: string, color: string, };
+
+export type TagId = { id: number, };
+
+export type TagMentors = { tagId: number, mentorIds: Array<number>, 
+/**
+ * Adds the tag when true, removes it when false.
+ */
+on: boolean, };
+
+export type TagMove = { id: number, direction: Direction, };
+
+export type TagName = { id: number, name: string, };
 
 export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
@@ -56,4 +80,11 @@ export interface Operations {
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  tagMentors: { input: TagMentors; output: null };
+  listTags: { input: Nothing; output: Array<Tag> };
+  createTag: { input: TagForm; output: Tag };
+  renameTag: { input: TagName; output: null };
+  recolorTag: { input: TagColor; output: null };
+  moveTag: { input: TagMove; output: null };
+  deleteTag: { input: TagId; output: null };
 }

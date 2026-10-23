@@ -5,7 +5,8 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { ContactStatus, MatchState, MentorRow } from "@/api/types";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
+import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
+import { TagChip } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 
@@ -232,7 +233,7 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
           </div>
           <div role="cell" className={`flex flex-wrap gap-1 ${TAGS}`}>
             {m.tags.map((t) => (
-              <TagChip key={t.name} tag={t} />
+              <TagChip key={t.id} tag={t} />
             ))}
           </div>
         </div>

@@ -106,7 +106,18 @@ operations! {
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
+    "tagMentors" => tag_mentors(TagMentors) -> ();
+    "listTags" => list_tags(Nothing) -> Vec<mentor::tags::Tag>;
+    "createTag" => create_tag(mentor::tags::TagForm) -> mentor::tags::Tag;
+    "renameTag" => rename_tag(TagName) -> ();
+    "recolorTag" => recolor_tag(TagColor) -> ();
+    "moveTag" => move_tag(TagMove) -> ();
+    "deleteTag" => delete_tag(TagId) -> ();
 }
+
+/// The input of operations that need none.
+#[derive(Debug, Deserialize, TS)]
+pub struct Nothing {}
 
 const NO_MENTOR: &str = "找不到这位导师，可能已被永久删除。";
 
@@ -185,6 +196,91 @@ async fn update_mentor(
         return Err(CallError::not_found(NO_MENTOR));
     }
     get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TagMentors {
+    pub tag_id: i64,
+    pub mentor_ids: Vec<i64>,
+    /// Adds the tag when true, removes it when false.
+    pub on: bool,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TagId {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TagName {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TagColor {
+    pub id: i64,
+    pub color: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TagMove {
+    pub id: i64,
+    pub direction: mentor::tags::Direction,
+}
+
+const NO_TAG: &str = "找不到这个标签，可能已被删除。";
+
+async fn tag_mentors(ctx: &Context, input: TagMentors) -> Result<(), CallError> {
+    Ok(mentor::tags::tag_mentors(&ctx.db, input.tag_id, &input.mentor_ids, input.on).await?)
+}
+
+async fn list_tags(ctx: &Context, _: Nothing) -> Result<Vec<mentor::tags::Tag>, CallError> {
+    Ok(mentor::tags::list(&ctx.db).await?)
+}
+
+async fn create_tag(
+    ctx: &Context,
+    form: mentor::tags::TagForm,
+) -> Result<mentor::tags::Tag, CallError> {
+    let fields = form.check().map_err(CallError::invalid)?;
+    mentor::tags::create(&ctx.db, &fields)
+        .await
+        .map_err(|e| tag_error(e, &fields.name))
+}
+
+async fn rename_tag(ctx: &Context, input: TagName) -> Result<(), CallError> {
+    let name = mentor::tags::checked_name(&input.name).map_err(CallError::invalid)?;
+    match mentor::tags::rename(&ctx.db, input.id, &name).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CallError::not_found(NO_TAG)),
+        Err(e) => Err(tag_error(e, &name)),
+    }
+}
+
+async fn recolor_tag(ctx: &Context, input: TagColor) -> Result<(), CallError> {
+    let color = mentor::tags::checked_color(&input.color).map_err(CallError::invalid)?;
+    if mentor::tags::recolor(&ctx.db, input.id, &color).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_TAG))
+    }
+}
+
+async fn move_tag(ctx: &Context, input: TagMove) -> Result<(), CallError> {
+    Ok(mentor::tags::move_tag(&ctx.db, input.id, input.direction).await?)
+}
+
+async fn delete_tag(ctx: &Context, input: TagId) -> Result<(), CallError> {
+    Ok(mentor::tags::delete(&ctx.db, input.id).await?)
+}
+
+fn tag_error(e: mentor::tags::TagError, name: &str) -> CallError {
+    match e {
+        mentor::tags::TagError::NameTaken => CallError::invalid(format!("已有名为“{name}”的标签")),
+        mentor::tags::TagError::Db(e) => e.into(),
+    }
 }
 
 impl From<mentor::SaveError> for CallError {
