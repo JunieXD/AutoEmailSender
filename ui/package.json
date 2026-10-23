@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "check": "tsc -b && oxlint && prettier --check .",
+    "check": "tsc -b && oxlint && prettier --check . && vitest run",
     "icons": "node scripts/icons.ts"
   },
   "dependencies": {
@@ -14,9 +14,6 @@
     "@tanstack/react-router": "^1.170.45",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-opener": "^2.7.2",
-    "@tiptap/extension-hard-break": "^3.32.0",
-    "@tiptap/extension-link": "^3.32.0",
-    "@tiptap/markdown": "^3.32.0",
     "@tiptap/pm": "^3.32.0",
     "@tiptap/react": "^3.32.0",
     "@tiptap/starter-kit": "^3.32.0",
@@ -24,6 +21,7 @@
     "cn": "^0.5.0",
     "lucide-react": "^1.61.0",
     "marked": "^17.0.6",
+    "marked-cjk-friendly": "^0.1.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
@@ -33,12 +31,14 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "happy-dom": "^21.0.4",
     "oxlint": "^1.89.0",
     "oxlint-tsgolint": "^7.0.2004",
     "prettier": "^3.9.10",
     "shadcn": "^4.22.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }

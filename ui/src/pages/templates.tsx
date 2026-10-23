@@ -79,7 +79,13 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
 }
 
 function EditTemplate({ id, placeholders, onClose }: { id: number; placeholders: string[]; onClose: () => void }) {
-  const template = useQuery({ queryKey: ["getTemplate", id], queryFn: () => call("getTemplate", { id }), gcTime: 0 });
+  // Loaded once: a failed refetch while editing would replace the open dialog with an error.
+  const template = useQuery({
+    queryKey: ["getTemplate", id],
+    queryFn: () => call("getTemplate", { id }),
+    staleTime: Infinity,
+    gcTime: 0,
+  });
   if (template.error) {
     return <p className="text-sm text-destructive">模板没能打开：{errorMessage(template.error)}</p>;
   }

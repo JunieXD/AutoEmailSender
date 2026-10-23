@@ -24,7 +24,7 @@
 | `pnpm install` | 装依赖 |
 | `cargo xtask seed` | 给开发版填示例数据 |
 | `pnpm dev` | 启动开发版，界面改了自动刷新 |
-| `pnpm check` | 提交前的全部检查：格式、clippy、测试，生成的类型和查询元数据是否最新，界面的类型检查和 lint |
+| `pnpm check` | 提交前的全部检查：格式、clippy、测试，生成的类型和查询元数据是否最新，界面的类型检查、lint 和测试 |
 | `pnpm fmt` | 格式化 Rust 和界面的代码 |
 | `pnpm sqlx` | 改了 SQL 或迁移后，重新生成 `.sqlx` 里的查询元数据 |
 | `cargo xtask types` | 改了操作或它们的类型后，重新生成 `ui/src/api/types.ts` |
@@ -35,6 +35,7 @@
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
+- 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
 
 ## 代码
