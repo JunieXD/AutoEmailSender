@@ -38,6 +38,7 @@ describe("a letter reads back as written", () => {
     ["Markdown and HTML characters", doc(p(t("2*3*4 a_b_c \\ <b>x</b> &amp; &#35; `code` ~del~ [x](y)")))],
     ["stars next to bold", doc(p(t("**"), t("粗", "bold"), t("**")))],
     ["two breaks in a row", doc(p(t("甲"), br, br, t("乙")))],
+    ["a Chinese indent", doc(p(t("　　尊敬的老师：")), p(t("　　您好！")))],
     ["bold ending in Chinese punctuation", doc(p(t("你好，", "bold"), t("世界")))],
     ["italic in Chinese brackets", doc(p(t("（研究）", "italic"), t("方向")))],
     ["bold inside a word", doc(p(t("un"), t("believ", "bold"), t("able")))],
@@ -64,8 +65,8 @@ describe("a letter reads back as written", () => {
   });
 
   test("what shows nothing is not kept", () => {
-    const letter = doc(p(t("甲"), br), { type: "paragraph" }, p(t("加粗 ", "bold"), t("乙")));
-    expect(toMarkdown(letter)).toBe("甲\n\n**加粗** 乙");
+    const letter = doc(p(t("甲"), br, t(" ")), { type: "paragraph" }, p(t("加粗 ", "bold"), t("乙"), br));
+    expect(toMarkdown(letter)).toBe("甲 \n\n**加粗** 乙");
   });
 });
 

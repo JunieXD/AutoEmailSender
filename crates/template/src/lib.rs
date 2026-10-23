@@ -52,16 +52,24 @@ pub struct TemplateFields {
 }
 
 impl TemplateForm {
-    /// Trims the text and checks every field is filled in; the error says what to fill in.
+    /// Trims the name and subject and checks every field is filled in; the error says what to fill
+    /// in.
     pub fn check(self) -> Result<TemplateFields, String> {
         let required = |text: &str, missing: &str| match text.trim() {
             "" => Err(missing.to_owned()),
             text => Ok(text.to_owned()),
         };
+        let name = required(&self.name, "请填写模板名称")?;
+        let subject = required(&self.subject, "请填写主题")?;
+        // The body is kept as the editor wrote it: spaces it starts with, such as a Chinese
+        // indent, are text.
+        if self.body_md.trim().is_empty() {
+            return Err("请填写正文".into());
+        }
         Ok(TemplateFields {
-            name: required(&self.name, "请填写模板名称")?,
-            subject: required(&self.subject, "请填写主题")?,
-            body_md: required(&self.body_md, "请填写正文")?,
+            name,
+            subject,
+            body_md: self.body_md,
         })
     }
 }

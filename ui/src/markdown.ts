@@ -107,9 +107,9 @@ function inline(para: Node): string {
   let space = "";
   children.forEach((child, index) => {
     if (child.type.name === "hardBreak") {
-      // A break at the end shows nothing. A backslash, unlike two spaces, keeps two in a row from
-      // reading as a new paragraph.
-      if (children.slice(index + 1).some((c) => c.type.name !== "hardBreak")) out += `${space}\\\n`;
+      // A break with only spaces after it shows nothing, and its backslash would be read as text.
+      // A backslash, unlike two spaces, keeps two breaks in a row from reading as a new paragraph.
+      if (children.slice(index + 1).some((c) => (c.text ?? "").trim() !== "")) out += `${space}\\\n`;
       space = "";
       return;
     }
