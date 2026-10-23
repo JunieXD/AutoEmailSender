@@ -47,7 +47,7 @@ function useTags() {
 
 /** After tags change, everything that shows them is out of date. */
 function refreshTags(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"]]) {
+  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"], ["listTrash"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }
@@ -116,8 +116,8 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     },
   });
   const create = useMutation({
-    mutationFn: (tag: { name: string; color: string }) => call("createTag", tag),
-    onSuccess: (tag) => toggle(tag),
+    mutationFn: (tag: { name: string; color: string }) => call("createTag", { ...tag, mentorIds: [mentorId] }),
+    onSuccess: () => refreshTags(queryClient),
   });
   async function toggle(tag: Tag) {
     const queryKey = ["getMentor", mentorId];
@@ -190,8 +190,9 @@ export function useAddTag() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ tag, mentorIds }: AddTag) => {
-      const tagId = typeof tag === "number" ? tag : (await call("createTag", tag)).id;
-      await call("tagMentors", { tagId, mentorIds, on: true });
+      // A new tag is created and put on the mentors in one step, so a failure leaves nothing behind.
+      if (typeof tag === "number") await call("tagMentors", { tagId: tag, mentorIds, on: true });
+      else await call("createTag", { ...tag, mentorIds });
     },
     onSettled: () => refreshTags(queryClient),
   });

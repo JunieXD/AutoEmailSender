@@ -112,7 +112,7 @@ operations! {
     "deleteMentors" => delete_mentors(MentorIds) -> ();
     "tagMentors" => tag_mentors(TagMentors) -> ();
     "listTags" => list_tags(Nothing) -> Vec<mentor::tags::Tag>;
-    "createTag" => create_tag(mentor::tags::TagForm) -> mentor::tags::Tag;
+    "createTag" => create_tag(NewTag) -> mentor::tags::Tag;
     "renameTag" => rename_tag(TagName) -> ();
     "recolorTag" => recolor_tag(TagColor) -> ();
     "moveTag" => move_tag(TagMove) -> ();
@@ -240,6 +240,15 @@ pub struct TagId {
     pub id: i64,
 }
 
+/// A new tag, put straight on these mentors.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct NewTag {
+    #[serde(flatten)]
+    pub form: mentor::tags::TagForm,
+    pub mentor_ids: Vec<i64>,
+}
+
 #[derive(Debug, Deserialize, TS)]
 pub struct TagName {
     pub id: i64,
@@ -268,12 +277,9 @@ async fn list_tags(ctx: &Context, _: Nothing) -> Result<Vec<mentor::tags::Tag>, 
     Ok(mentor::tags::list(&ctx.db).await?)
 }
 
-async fn create_tag(
-    ctx: &Context,
-    form: mentor::tags::TagForm,
-) -> Result<mentor::tags::Tag, CallError> {
-    let fields = form.check().map_err(CallError::invalid)?;
-    mentor::tags::create(&ctx.db, &fields)
+async fn create_tag(ctx: &Context, input: NewTag) -> Result<mentor::tags::Tag, CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    mentor::tags::create(&ctx.db, &fields, &input.mentor_ids)
         .await
         .map_err(|e| tag_error(e, &fields.name))
 }

@@ -27,7 +27,7 @@ export function TrashPage() {
   });
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
-  useLastPage(query.isFetching ? undefined : query.data?.total, page, (n) =>
+  useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
     navigate({ search: { page: n > 1 ? n : undefined }, replace: true }),
   );
   const act = useMutation({

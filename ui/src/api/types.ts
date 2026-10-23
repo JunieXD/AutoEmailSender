@@ -52,6 +52,8 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
+export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
+
 export type Nothing = Record<symbol, never>;
 
 export type Tag = { id: number, name: string, 
@@ -61,8 +63,6 @@ export type Tag = { id: number, name: string,
 color: string, };
 
 export type TagColor = { id: number, color: string, };
-
-export type TagForm = { name: string, color: string, };
 
 export type TagId = { id: number, };
 
@@ -94,7 +94,7 @@ export interface Operations {
   deleteMentors: { input: MentorIds; output: null };
   tagMentors: { input: TagMentors; output: null };
   listTags: { input: Nothing; output: Array<Tag> };
-  createTag: { input: TagForm; output: Tag };
+  createTag: { input: NewTag; output: Tag };
   renameTag: { input: TagName; output: null };
   recolorTag: { input: TagColor; output: null };
   moveTag: { input: TagMove; output: null };

@@ -48,7 +48,7 @@ export function MentorsPage() {
     setFilter({ status: search.status, q: search.q });
     setSelected(new Set());
   }
-  useLastPage(query.isFetching ? undefined : query.data?.total, page, (n) =>
+  useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
     navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
   );
   const addTag = useAddTag();

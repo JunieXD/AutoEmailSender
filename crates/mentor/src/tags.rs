@@ -87,16 +87,26 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<Tag>, sqlx::Error> {
         .await
 }
 
-/// Adds a tag at the end of the order.
-pub async fn create(db: &SqlitePool, tag: &TagFields) -> Result<Tag, TagError> {
+/// Adds a tag at the end of the order and puts it on these mentors, all or nothing, so creating it
+/// again after a failure does not find the name taken.
+pub async fn create(db: &SqlitePool, tag: &TagFields, mentor_ids: &[i64]) -> Result<Tag, TagError> {
+    let mut tx = db.begin().await?;
     let id = sqlx::query_scalar!(
         "INSERT INTO tag (name, color, position)
          VALUES (?, ?, (SELECT coalesce(max(position) + 1, 0) FROM tag)) RETURNING id",
         tag.name,
         tag.color,
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
+    sqlx::query!(
+        "INSERT INTO mentor_tag (mentor_id, tag_id) SELECT value, ? FROM json_each(?)",
+        id,
+        crate::json_ids(mentor_ids.iter().copied()),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(Tag {
         id,
         name: tag.name.clone(),
