@@ -131,6 +131,8 @@ operations! {
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
     "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
+    "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
@@ -639,6 +641,15 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
 
 async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
     Ok(profile::update(&ctx.db, &form).await?)
+}
+
+async fn get_letter_style(ctx: &Context, _: Nothing) -> Result<profile::LetterStyle, CallError> {
+    Ok(profile::letter_style(&ctx.db).await?)
+}
+
+async fn update_letter_style(ctx: &Context, style: profile::LetterStyle) -> Result<(), CallError> {
+    style.check().map_err(CallError::invalid)?;
+    Ok(profile::update_letter_style(&ctx.db, &style).await?)
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]

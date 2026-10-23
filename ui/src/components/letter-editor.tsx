@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FIELD, Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { toHtml, toMarkdown } from "@/markdown";
+import { linkable, toHtml, toMarkdown } from "@/markdown";
 
 /** The formats docs/design.md#邮件格式 allows, which `toMarkdown` writes. */
 export const letterFormats = StarterKit.configure({
@@ -19,7 +19,7 @@ export const letterFormats = StarterKit.configure({
   strike: false,
   underline: false,
   // Not autolinking also keeps what is typed after a link out of it.
-  link: { openOnClick: false, autolink: false },
+  link: { openOnClick: false, autolink: false, isAllowedUri: linkable },
 });
 
 /** How the editor reads a letter's HTML: spaces typed in it, such as an indent, are text. */
@@ -161,22 +161,34 @@ function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: strin
   );
 }
 
-/** Asks for the address; with nothing selected, the address itself becomes the linked text. */
+/** Where a typed address points: as typed when it has a scheme, else an email or a web address. */
+function linkAddress(typed: string): string {
+  // A colon before digits is a port, as in "example.edu.cn:8443".
+  if (linkable(typed) || /^[a-z][a-z\d+.-]*:(?!\d)/i.test(typed)) return typed;
+  return /^[^\s@/]+@[^\s@/]+$/.test(typed) ? `mailto:${typed}` : `https://${typed}`;
+}
+
+/** Asks for the address; with nothing selected, the address as typed becomes the linked text. */
 function LinkButton({ editor, active, className }: { editor: Editor; active: boolean; className: string }) {
   const [open, setOpen] = useState(false);
   const [href, setHref] = useState("");
-  function apply(address: string) {
+  const [refused, setRefused] = useState(false);
+  function apply(typed: string) {
     const chain = editor.chain().focus().extendMarkRange("link");
-    if (!address) chain.unsetLink().run();
+    const address = linkAddress(typed);
+    if (!typed) chain.unsetLink().run();
     else if (editor.state.selection.empty && !active)
-      chain.insertContent({ type: "text", text: address, marks: [{ type: "link", attrs: { href: address } }] }).run();
+      chain.insertContent({ type: "text", text: typed, marks: [{ type: "link", attrs: { href: address } }] }).run();
     else chain.setLink({ href: address }).run();
   }
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setHref(editor.getAttributes("link").href ?? "");
+        if (next) {
+          setHref(editor.getAttributes("link").href ?? "");
+          setRefused(false);
+        }
         setOpen(next);
       }}
     >
@@ -196,23 +208,35 @@ function LinkButton({ editor, active, className }: { editor: Editor; active: boo
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-2" finalFocus={false}>
         <form
-          className="flex gap-1.5"
+          className="flex flex-col gap-1.5"
           onSubmit={(e) => {
             // The popover is portalled out of the letter's own form, but React events still reach it.
             e.preventDefault();
             e.stopPropagation();
+            const typed = href.trim();
+            if (typed && !linkable(linkAddress(typed))) {
+              setRefused(true);
+              return;
+            }
             setOpen(false);
-            apply(href.trim());
+            apply(typed);
           }}
         >
-          <Input
-            aria-label="链接地址"
-            placeholder="https://"
-            spellCheck={false}
-            value={href}
-            onChange={(e) => setHref(e.target.value)}
-          />
-          <Button type="submit">{href.trim() || !active ? "确定" : "去掉链接"}</Button>
+          <div className="flex gap-1.5">
+            <Input
+              aria-label="链接地址"
+              aria-invalid={refused}
+              placeholder="https://"
+              spellCheck={false}
+              value={href}
+              onChange={(e) => {
+                setHref(e.target.value);
+                setRefused(false);
+              }}
+            />
+            <Button type="submit">{href.trim() || !active ? "确定" : "去掉链接"}</Button>
+          </div>
+          {refused && <p className="text-sm text-destructive">只能链接到网页或邮箱地址。</p>}
         </form>
       </PopoverContent>
     </Popover>

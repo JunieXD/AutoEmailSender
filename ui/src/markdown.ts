@@ -1,9 +1,12 @@
 import type { Node } from "@tiptap/pm/model";
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import cjkFriendly from "marked-cjk-friendly";
 
 // Letters are Markdown with only the formats docs/design.md#邮件格式 allows. This is the app's one
 // Markdown parser, and the editor's serializer that writes what it reads back the same.
+
+/** Whether a letter may link to an address: web pages and email addresses, never scripts. */
+export const linkable = (address: string) => /^(https?|mailto):/i.test(address);
 
 // Markdown for anything else, such as a line starting with "#" or a bare address, stays text: the
 // editor could not hold it, and the letter would lose it.
@@ -28,11 +31,30 @@ marked.use(cjkFriendly(), {
     autolink: off,
   },
   renderer: {
+    // Markdown comes from the model too, so a link elsewhere is only its text.
+    link(token) {
+      return linkable(token.href) ? false : this.parser.parseInline(token.tokens);
+    },
+    // A picture stays as written: a letter has none.
+    image({ raw }) {
+      return this.text({ type: "text", raw, text: raw });
+    },
     // An item whose own text was deleted still holds its nested list, after the empty paragraph the
     // editor needs first.
     listitem(item) {
       return item.tokens[0]?.type === "list" ? `<li><p></p>${this.parser.parse(item.tokens)}</li>\n` : false;
     },
+  },
+  // A task box stays as written, starting its item's text: a letter has none.
+  walkTokens(token) {
+    if (token.type !== "list_item" || !token.tokens) return;
+    const [box, first] = token.tokens;
+    if (box?.type !== "checkbox") return;
+    const text: Tokens.Text = { type: "text", raw: box.raw, text: box.raw };
+    if (first && "tokens" in first && first.tokens) {
+      first.tokens.unshift(text);
+      token.tokens.shift();
+    } else token.tokens[0] = text;
   },
 });
 

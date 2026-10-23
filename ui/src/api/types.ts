@@ -10,6 +10,18 @@ export type Direction = "up" | "down";
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
 
+export type LetterFont = "song" | "hei";
+
+export type LetterStyle = { 
+/**
+ * None leaves the font to the recipient's mail app.
+ */
+font: LetterFont | null, fontSizePt: number, lineHeight: number, paragraphSpacingEm: number, 
+/**
+ * Two characters at the start of each paragraph.
+ */
+firstLineIndent: boolean, };
+
 export type Mailbox = { id: number, address: string, senderName: string, 
 /**
  * A provider's id, or `providers::CUSTOM`.
@@ -247,6 +259,8 @@ export interface Operations {
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
   updateProfile: { input: ProfileForm; output: null };
+  getLetterStyle: { input: Nothing; output: LetterStyle };
+  updateLetterStyle: { input: LetterStyle; output: null };
   listPlaceholders: { input: Nothing; output: Array<string> };
   listTemplates: { input: Nothing; output: Array<TemplateSummary> };
   getTemplate: { input: TemplateId; output: Template };

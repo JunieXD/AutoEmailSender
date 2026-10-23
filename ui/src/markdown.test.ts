@@ -106,6 +106,15 @@ describe("a letter reads back as written", () => {
   });
 });
 
+test("pictures and task boxes read as text", () => {
+  expect(read("![简历](https://a.com/t.png)\n\n- [x] 做过的工作\n- [ ] 没做\n\n  补充说明").toJSON()).toEqual(
+    doc(
+      p(t("![简历](https://a.com/t.png)")),
+      bullets(li(p(t("[x] 做过的工作"))), li(p(t("[ ] 没做")), p(t("补充说明")))),
+    ).toJSON(),
+  );
+});
+
 test("bold and italic written next to Chinese punctuation count", () => {
   expect(read("**你好，**世界 *（研究）*方向").toJSON()).toEqual(
     doc(p(t("你好，", "bold"), t("世界 "), t("（研究）", "italic"), t("方向"))).toJSON(),

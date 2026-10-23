@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET font = ?, font_size_pt = ?, line_height = ?, paragraph_spacing_em = ?,\n           first_line_indent = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "689b2144b626d30023dda689b51845cb1e892f9b2fa1a0aa349f4cf10a553845"
+}

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT font AS \"font: LetterFont\", font_size_pt, line_height, paragraph_spacing_em,\n             first_line_indent AS \"first_line_indent: bool\"\n           FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "font: LetterFont",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "font"
+          }
+        }
+      },
+      {
+        "name": "font_size_pt",
+        "ordinal": 1,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "font_size_pt"
+          }
+        }
+      },
+      {
+        "name": "line_height",
+        "ordinal": 2,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "line_height"
+          }
+        }
+      },
+      {
+        "name": "paragraph_spacing_em",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "paragraph_spacing_em"
+          }
+        }
+      },
+      {
+        "name": "first_line_indent: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "first_line_indent"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ef880e2881215e33e8b9e23bc13c86362554278ff49b852c2f7bbe99e3c89402"
+}
