@@ -16,7 +16,7 @@ export type MentorDetail = { id: number, name: string, email: string | null, tit
 /**
  * The page the mentor was found on.
  */
-sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<TagLabel>, };
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<Tag>, };
 
 export type MentorEdit = { id: number, name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
 
@@ -46,9 +46,25 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
-research: string | null, matchState: MatchState, contact: Contact, tags: Array<TagLabel>, };
+research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
-export type TagLabel = { name: string, color: string, };
+export type MentorTags = { mentorId: number, tagIds: Array<number>, };
+
+export type Nothing = Record<symbol, never>;
+
+export type Tag = { id: number, name: string, 
+/**
+ * `#rrggbb`.
+ */
+color: string, };
+
+export type TagEdit = { id: number, name: string, color: string, };
+
+export type TagForm = { name: string, color: string, };
+
+export type TagId = { id: number, };
+
+export type TagOrder = { ids: Array<number>, };
 
 export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
@@ -56,4 +72,10 @@ export interface Operations {
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  setMentorTags: { input: MentorTags; output: null };
+  listTags: { input: Nothing; output: Array<Tag> };
+  createTag: { input: TagForm; output: Tag };
+  updateTag: { input: TagEdit; output: null };
+  deleteTag: { input: TagId; output: null };
+  reorderTags: { input: TagOrder; output: null };
 }

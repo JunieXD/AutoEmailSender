@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO tag (name, color, position)\n         VALUES (?, ?, (SELECT coalesce(max(position) + 1, 0) FROM tag)) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tag",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2b320c1e754c585d48af278b5063d8fc7deb592ad3a0669ca6f5475e571c5dd9"
+}

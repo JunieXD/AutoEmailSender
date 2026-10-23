@@ -6,7 +6,8 @@ import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
+import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
+import { TagChip, TagPicker } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,6 +49,17 @@ export function MentorPage() {
           返回往来
         </Button>
         <Profile mentor={m} />
+        <Section title="标签" action={<TagPicker mentorId={m.id} selected={m.tags} />}>
+          {m.tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {m.tags.map((t) => (
+                <TagChip key={t.id} tag={t} />
+              ))}
+            </div>
+          ) : (
+            <Missing>未添加标签</Missing>
+          )}
+        </Section>
         <Analysis mentor={m} />
         {m.papers.length > 0 && (
           <Section title="代表论文">
@@ -91,11 +103,6 @@ function Header({ mentor: m, onProfile }: { mentor: MentorDetail; onProfile: () 
         </p>
       </div>
       <ContactLabel contact={m.contact} className="text-sm phone:hidden" />
-      <div className="flex gap-1 narrow:hidden">
-        {m.tags.map((t) => (
-          <TagChip key={t.name} tag={t} />
-        ))}
-      </div>
       <Button variant="ghost" className="hidden px-3 phone:inline-flex" onClick={onProfile}>
         <UserRound strokeWidth={1.6} />
         资料

@@ -9,6 +9,10 @@ use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
+pub mod tags;
+
+use tags::Tag;
+
 pub const PAGE_SIZE: u32 = 50;
 
 /// How far contact with a mentor has got, derived from mail (docs/data-model.md#联系状态).
@@ -54,7 +58,7 @@ pub struct MentorRow {
     pub research: Option<String>,
     pub match_state: MatchState,
     pub contact: Contact,
-    pub tags: Vec<TagLabel>,
+    pub tags: Vec<Tag>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, TS)]
@@ -111,7 +115,7 @@ pub struct MentorDetail {
     pub note: Option<String>,
     pub analysis: MatchResult,
     pub contact: Contact,
-    pub tags: Vec<TagLabel>,
+    pub tags: Vec<Tag>,
 }
 
 /// The latest match analysis in full; `MatchState` is its summary in the list.
@@ -137,12 +141,6 @@ pub enum MatchResult {
     Failed {
         error: String,
     },
-}
-
-#[derive(Debug, Serialize, TS)]
-pub struct TagLabel {
-    pub name: String,
-    pub color: String,
 }
 
 #[derive(Debug, Clone, Copy, sqlx::Type)]
@@ -339,29 +337,31 @@ pub async fn set_note(db: &SqlitePool, id: i64, note: Option<&str>) -> Result<bo
 async fn tags_of(
     db: &SqlitePool,
     ids: impl IntoIterator<Item = i64>,
-) -> Result<BTreeMap<i64, Vec<TagLabel>>, sqlx::Error> {
-    let ids = ids
-        .into_iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
+) -> Result<BTreeMap<i64, Vec<Tag>>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT mt.mentor_id, t.name, t.color
+        r#"SELECT mt.mentor_id, t.id, t.name, t.color
            FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id
            WHERE mt.mentor_id IN (SELECT value FROM json_each(?1))
            ORDER BY t.position"#,
-        format!("[{ids}]"),
+        json_ids(ids),
     )
     .fetch_all(db)
     .await?;
-    let mut tags: BTreeMap<i64, Vec<TagLabel>> = BTreeMap::new();
+    let mut tags: BTreeMap<i64, Vec<Tag>> = BTreeMap::new();
     for t in rows {
-        tags.entry(t.mentor_id).or_default().push(TagLabel {
+        tags.entry(t.mentor_id).or_default().push(Tag {
+            id: t.id,
             name: t.name,
             color: t.color,
         });
     }
     Ok(tags)
+}
+
+/// Ids as a JSON array, for passing a list to `json_each` in one parameter.
+fn json_ids(ids: impl IntoIterator<Item = i64>) -> String {
+    let ids: Vec<String> = ids.into_iter().map(|id| id.to_string()).collect();
+    format!("[{}]", ids.join(","))
 }
 
 /// The contact summary's columns as a `Contact`; they are absent for a mentor never contacted.
