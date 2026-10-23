@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { Contact, ContactStatus, MatchState } from "@/api/types";
 import { day } from "@/format";
 
@@ -57,3 +58,10 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
   failed: ["分析失败", "text-warning"],
   not_analyzed: ["未分析", "text-faint"],
 };
+
+/** After mentors are trashed, restored or deleted, every view of them is out of date. */
+export function refreshMentors(queryClient: QueryClient) {
+  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"]]) {
+    void queryClient.invalidateQueries({ queryKey });
+  }
+}

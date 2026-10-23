@@ -2,6 +2,7 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, redirect
 import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
+import { TrashPage, trashSearch } from "./pages/trash";
 
 const rootRoute = createRootRoute({ component: Shell });
 
@@ -22,6 +23,14 @@ const mentorsRoute = createRoute({
   component: MentorsPage,
 });
 
+// A fixed path, so it wins over a mentor's id.
+const trashRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "mentors/trash",
+  validateSearch: trashSearch,
+  component: TrashPage,
+});
+
 const mentorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "mentors/$mentorId",
@@ -34,7 +43,7 @@ const mentorRoute = createRoute({
 
 // Hash URLs: the app is served as static files, which have nothing at deep paths.
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([homeRoute, mentorsRoute, mentorRoute]),
+  routeTree: rootRoute.addChildren([homeRoute, mentorsRoute, trashRoute, mentorRoute]),
   history: createHashHistory(),
 });
 

@@ -1,5 +1,5 @@
-//! Mentors: the home list with its filters, keyword search, one mentor's page, and adding and
-//! editing mentors.
+//! Mentors: the home list with its filters, keyword search, one mentor's page, adding and editing
+//! mentors, their tags and the trash.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -10,6 +10,7 @@ use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 pub mod tags;
+pub mod trash;
 
 use tags::Tag;
 
@@ -116,6 +117,7 @@ pub struct MentorDetail {
     pub analysis: MatchResult,
     pub contact: Contact,
     pub tags: Vec<Tag>,
+    pub trashed: bool,
 }
 
 /// The latest match analysis in full; `MatchState` is its summary in the list.
@@ -156,32 +158,22 @@ enum MatchColumn {
 ///
 /// The filters test only the mentor row: each `IN` set is built once per query, whereas joining the
 /// contact summary for every mentor made counting 100 000 mentors ten times slower. For the same
-/// reason the page is cut before the joins, so skipped rows are never joined.
+/// reason the page is cut before `rows` joins anything, so skipped rows are never joined.
 pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sqlx::Error> {
     let keyword = query.keyword.as_deref().and_then(keyword);
-    let offset = i64::from(query.page.get() - 1) * i64::from(PAGE_SIZE);
-    let rows = sqlx::query!(
-        r#"SELECT m.id, m.name, m.title, m.university, m.school, m.department,
-                  substr(d.research, 1, 120) AS "research?: String",
-                  m.match_state AS "match_state: MatchColumn", m.match_score,
-                  c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
-                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
-           FROM (SELECT m.id FROM mentor m
-                 WHERE m.trashed_at IS NULL
-                   AND (?1 IS NULL
-                        OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-                   AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-                 ORDER BY m.match_score DESC, m.id
-                 LIMIT ?3 OFFSET ?4) page
-           JOIN mentor m ON m.id = page.id
-           LEFT JOIN mentor_detail d ON d.mentor_id = m.id
-           LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           ORDER BY m.match_score DESC, m.id"#,
+    let ids = sqlx::query_scalar!(
+        "SELECT m.id FROM mentor m
+         WHERE m.trashed_at IS NULL
+           AND (?1 IS NULL
+                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+         ORDER BY m.match_score DESC, m.id
+         LIMIT ?3 OFFSET ?4",
         query.status,
         keyword,
         PAGE_SIZE,
-        offset,
+        offset(query.page),
     )
     .fetch_all(db)
     .await?;
@@ -198,10 +190,35 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
     )
     .fetch_one(db)
     .await?;
+    Ok(MentorPage {
+        mentors: rows(db, &ids).await?,
+        total,
+    })
+}
 
+fn offset(page: NonZeroU32) -> i64 {
+    i64::from(page.get() - 1) * i64::from(PAGE_SIZE)
+}
+
+/// The list rows for these mentors, in the given order.
+async fn rows(db: &SqlitePool, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT m.id, m.name, m.title, m.university, m.school, m.department,
+                  substr(d.research, 1, 120) AS "research?: String",
+                  m.match_state AS "match_state: MatchColumn", m.match_score,
+                  c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
+                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
+           FROM json_each(?) page
+           JOIN mentor m ON m.id = page.value
+           LEFT JOIN mentor_detail d ON d.mentor_id = m.id
+           LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+           ORDER BY page.key"#,
+        json_ids(ids.iter().copied()),
+    )
+    .fetch_all(db)
+    .await?;
     let mut tags = tags_of(db, rows.iter().map(|r| r.id)).await?;
-    let mentors = rows
-        .into_iter()
+    rows.into_iter()
         .map(|r| {
             let match_state = match (r.match_state, r.match_score) {
                 (None, _) => MatchState::NotAnalyzed,
@@ -231,15 +248,14 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
                 tags: tags.remove(&r.id).unwrap_or_default(),
             })
         })
-        .collect::<Result<_, _>>()?;
-    Ok(MentorPage { mentors, total })
+        .collect()
 }
 
 /// Everything the mentor's page shows. None when there is no such mentor.
 pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
     let Some(r) = sqlx::query!(
         r#"SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,
-                  m.homepage_url, m.source_url,
+                  m.homepage_url, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
                   m.match_model, m.match_error,
                   d.research, d.papers AS "papers: Json<Vec<String>>", d.note, d.match_reason,
@@ -318,6 +334,7 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
             r.unread,
         )?,
         tags: tags_of(db, [id]).await?.remove(&id).unwrap_or_default(),
+        trashed: r.trashed,
     }))
 }
 

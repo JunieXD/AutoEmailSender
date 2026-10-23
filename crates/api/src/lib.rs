@@ -106,6 +106,10 @@ operations! {
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
+    "listTrash" => list_trash(mentor::trash::TrashQuery) -> mentor::MentorPage;
+    "trashMentors" => trash_mentors(MentorIds) -> ();
+    "restoreMentors" => restore_mentors(MentorIds) -> ();
+    "deleteMentors" => delete_mentors(MentorIds) -> ();
     "tagMentors" => tag_mentors(TagMentors) -> ();
     "listTags" => list_tags(Nothing) -> Vec<mentor::tags::Tag>;
     "createTag" => create_tag(mentor::tags::TagForm) -> mentor::tags::Tag;
@@ -124,6 +128,11 @@ const NO_MENTOR: &str = "找不到这位导师，可能已被永久删除。";
 #[derive(Debug, Deserialize, Serialize, TS)]
 pub struct MentorId {
     pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorIds {
+    pub ids: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -196,6 +205,25 @@ async fn update_mentor(
         return Err(CallError::not_found(NO_MENTOR));
     }
     get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+async fn list_trash(
+    ctx: &Context,
+    query: mentor::trash::TrashQuery,
+) -> Result<mentor::MentorPage, CallError> {
+    Ok(mentor::trash::list(&ctx.db, &query).await?)
+}
+
+async fn trash_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
+    Ok(mentor::trash::trash(&ctx.db, &input.ids, now()).await?)
+}
+
+async fn restore_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
+    Ok(mentor::trash::restore(&ctx.db, &input.ids, now()).await?)
+}
+
+async fn delete_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
+    Ok(mentor::trash::delete(&ctx.db, &input.ids).await?)
 }
 
 #[derive(Debug, Deserialize, TS)]

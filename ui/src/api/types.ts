@@ -18,13 +18,15 @@ export type MentorDetail = { id: number, name: string, email: string | null, tit
 /**
  * The page the mentor was found on.
  */
-sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<Tag>, };
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<Tag>, trashed: boolean, };
 
 export type MentorEdit = { id: number, name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
 
 export type MentorForm = { name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
 
 export type MentorId = { id: number, };
+
+export type MentorIds = { ids: Array<number>, };
 
 export type MentorNote = { id: number, 
 /**
@@ -74,12 +76,22 @@ export type TagMove = { id: number, direction: Direction, };
 
 export type TagName = { id: number, name: string, };
 
+export type TrashQuery = { 
+/**
+ * Starts at 1.
+ */
+page: number, };
+
 export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  listTrash: { input: TrashQuery; output: MentorPage };
+  trashMentors: { input: MentorIds; output: null };
+  restoreMentors: { input: MentorIds; output: null };
+  deleteMentors: { input: MentorIds; output: null };
   tagMentors: { input: TagMentors; output: null };
   listTags: { input: Nothing; output: Array<Tag> };
   createTag: { input: TagForm; output: Tag };

@@ -1,5 +1,5 @@
 import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, TagIcon } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Direction, MentorDetail, Tag } from "@/api/types";
@@ -104,7 +104,6 @@ export function TagSaveError({ mentorId }: { mentorId: number }) {
 function TagChoices({ mentorId, selected, onManage }: { mentorId: number; selected: Tag[]; onManage: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
-  const [name, setName] = useState("");
   const mutationKey = savingKey(mentorId);
   const save = useMutation({
     mutationKey,
@@ -127,13 +126,6 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     );
     save.mutate({ tagId: tag.id, on });
   }
-  const create = useMutation({
-    mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
-    onSuccess: (tag) => {
-      setName("");
-      return toggle(tag);
-    },
-  });
   return (
     <div className="flex flex-col gap-1">
       {tags.data?.map((t) => (
@@ -142,6 +134,30 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
           <TagChip tag={t} />
         </label>
       ))}
+      <NewTag onCreated={toggle} />
+      <div className="px-2">
+        <TagSaveError mentorId={mentorId} />
+      </div>
+      <Button variant="ghost" className="h-8 justify-start px-2 font-normal" onClick={onManage}>
+        管理标签
+      </Button>
+    </div>
+  );
+}
+
+/** Names a new tag, created on Enter with the next preset colour. */
+function NewTag({ onCreated }: { onCreated: (tag: Tag) => unknown }) {
+  const tags = useTags();
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
+    onSuccess: (tag) => {
+      setName("");
+      return onCreated(tag);
+    },
+  });
+  return (
+    <>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -157,17 +173,47 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
           disabled={create.isPending}
         />
       </form>
-      <div className="px-2">
-        {create.error ? (
-          <p className="text-destructive">{errorMessage(create.error)}</p>
-        ) : (
-          <TagSaveError mentorId={mentorId} />
-        )}
-      </div>
-      <Button variant="ghost" className="h-8 justify-start px-2 font-normal" onClick={onManage}>
-        管理标签
-      </Button>
-    </div>
+      {create.error && <p className="px-2 text-destructive">{errorMessage(create.error)}</p>}
+    </>
+  );
+}
+
+/** The batch bar's "添加标签": puts a tag on every ticked mentor. */
+export function AddTagButton({ mentorIds }: { mentorIds: number[] }) {
+  const queryClient = useQueryClient();
+  const tags = useTags();
+  const [open, setOpen] = useState(false);
+  const add = useMutation({
+    mutationFn: (tagId: number) => call("tagMentors", { tagId, mentorIds, on: true }),
+    onSuccess: () => setOpen(false),
+    onSettled: () => refreshTags(queryClient),
+  });
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button variant="ghost">
+            <TagIcon strokeWidth={1.6} />
+            添加标签
+          </Button>
+        }
+      />
+      <PopoverContent side="top" className="flex flex-col gap-1">
+        {tags.data?.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            disabled={add.isPending}
+            className="flex rounded-md px-2 py-1.5 hover:bg-muted"
+            onClick={() => add.mutate(t.id)}
+          >
+            <TagChip tag={t} />
+          </button>
+        ))}
+        <NewTag onCreated={(tag: Tag) => add.mutate(tag.id)} />
+        {add.error && <p className="px-2 text-destructive">{errorMessage(add.error)}</p>}
+      </PopoverContent>
+    </Popover>
   );
 }
 
