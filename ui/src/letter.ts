@@ -21,11 +21,19 @@ export function letterHtml(markdown: string, style: LetterStyle): string {
     // Written out, as the app's own styles turn list markers off where the letter is previewed.
     list.style.listStyleType = list.tagName === "OL" ? "decimal" : "disc";
   }
-  // Spaces typed in a letter show as typed: HTML would drop one starting a text or following another.
-  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  // Spaces typed in a letter show as typed: HTML would drop one starting a line or following another.
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  let before = ""; // The character before, none at the start of a line.
   while (walker.nextNode()) {
-    const text = walker.currentNode;
-    text.textContent = (text.textContent ?? "").replace(/(?<=^| ) /g, "\u00a0");
+    const node = walker.currentNode;
+    if (node instanceof Text) {
+      const text = node.data;
+      node.data = text.replace(/ /g, (space, i: number) => {
+        const previous = i === 0 ? before : text[i - 1];
+        return previous === "" || previous === " " ? "\u00a0" : space;
+      });
+      before = text.at(-1) ?? before;
+    } else if (["P", "LI", "BR"].includes(node.nodeName)) before = "";
   }
   const page = doc.createElement("div");
   if (style.font) page.style.fontFamily = FONTS[style.font];
