@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use base64::Engine;
 use mailbox::{Account, MailError, Net, Security, Server};
 use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    KeyUsagePurpose,
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -23,7 +23,9 @@ const ADDRESS: &str = "me@example.com";
 const SECRET: &str = "right secret";
 
 /// A test authority and a `localhost` certificate it signed. macOS refuses certificates valid for
-/// over 825 days or without the server purpose, even from an authority it is told to trust.
+/// over 825 days or without the server purpose, even from an authority it is told to trust. Each
+/// authority has its own name, and the certificate names its key: Windows otherwise picks up another
+/// test's authority by name and fails to verify the signature.
 fn pki() -> (CertificateDer<'static>, TlsAcceptor) {
     let now = time::OffsetDateTime::now_utc();
     let valid = |params: &mut CertificateParams| {
@@ -32,6 +34,8 @@ fn pki() -> (CertificateDer<'static>, TlsAcceptor) {
     };
     let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca.distinguished_name
+        .push(DnType::CommonName, format!("test {}", uuid::Uuid::new_v4()));
     ca.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::DigitalSignature,
@@ -40,6 +44,7 @@ fn pki() -> (CertificateDer<'static>, TlsAcceptor) {
     let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
     let mut leaf = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    leaf.use_authority_key_identifier_extension = true;
     valid(&mut leaf);
     let key = KeyPair::generate().unwrap();
     let cert = leaf.signed_by(&key, &ca).unwrap();
