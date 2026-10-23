@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@12.14.0",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "tauri dev --config crates/app/tauri.dev.conf.json",
     "package": "tauri build",
     "check": "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo xtask types --check && pnpm sqlx:db && cargo sqlx prepare --check --workspace -D sqlite:target/sqlx.db -- --all-targets && pnpm --dir ui check",
     "fmt": "cargo fmt && pnpm --dir ui exec prettier --write .",

@@ -13,6 +13,7 @@
   --border: #ece7e3;
   --input: #ddd6d1;
   --primary: #991b1b;
+  --primary-hover: #7f1d1d;
   --primary-foreground: #ffffff;
   --ring: var(--primary);
   --brand-text: #991b1b;
@@ -49,6 +50,7 @@
     --border: #2e2825;
     --input: #3f3733;
     --primary: #c13b3b;
+    --primary-hover: #d04a48;
     --brand-text: #f1958c;
     --selected: #33201e;
     --mine: #2c2321;
@@ -81,6 +83,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-ring: var(--ring);
   --color-brand-text: var(--brand-text);

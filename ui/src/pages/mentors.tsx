@@ -1,9 +1,10 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
-import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Contact, ContactStatus, MatchState, MentorRow } from "@/api/types";
+import { Button } from "@/components/ui/button";
 
 const PAGE_SIZE = 50;
 
@@ -86,20 +87,24 @@ export function MentorsPage() {
         <span>
           第 {page} 页，共 {pages} 页
         </span>
-        <PageButton
-          label="上一页"
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="上一页"
           disabled={page <= 1}
           onClick={() => navigate({ search: (s) => ({ ...s, page: page - 1 > 1 ? page - 1 : undefined }) })}
         >
-          <ChevronLeft className="size-[18px]" strokeWidth={1.6} />
-        </PageButton>
-        <PageButton
-          label="下一页"
+          <ChevronLeft strokeWidth={1.6} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="下一页"
           disabled={page >= pages}
           onClick={() => navigate({ search: (s) => ({ ...s, page: page + 1 }) })}
         >
-          <ChevronRight className="size-[18px]" strokeWidth={1.6} />
-        </PageButton>
+          <ChevronRight strokeWidth={1.6} />
+        </Button>
       </footer>
     </div>
   );
@@ -283,28 +288,5 @@ function Notice({ title, detail }: { title: string; detail: string }) {
         <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
       </div>
     </div>
-  );
-}
-
-function PageButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="grid size-9 place-items-center rounded-md hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent"
-    >
-      {children}
-    </button>
   );
 }
