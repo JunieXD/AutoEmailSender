@@ -141,7 +141,7 @@ operations! {
     "deleteTemplate" => delete_template(TemplateId) -> ();
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
-    "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> ();
+    "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -763,7 +763,10 @@ pub struct FirstDraftEdit {
     pub body_md: String,
 }
 
-async fn save_first_draft(ctx: &Context, input: FirstDraftEdit) -> Result<(), CallError> {
+async fn save_first_draft(
+    ctx: &Context,
+    input: FirstDraftEdit,
+) -> Result<Option<email::FirstDraft>, CallError> {
     Ok(email::save_first_draft(
         &ctx.db,
         input.mentor_id,

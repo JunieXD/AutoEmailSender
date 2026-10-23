@@ -277,7 +277,7 @@ export interface Operations {
   deleteTemplate: { input: TemplateId; output: null };
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
-  saveFirstDraft: { input: FirstDraftEdit; output: null };
+  saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };

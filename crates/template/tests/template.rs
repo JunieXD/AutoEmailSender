@@ -41,11 +41,11 @@ fn missing_values_leave_their_placeholders() {
 
 #[test]
 fn values_in_the_body_are_plain_text() {
-    let research = "[点我](https://example.com) *重点*\n1. 第二行";
+    let research = "[点我](https://example.com) *重点*\r- 第二行\r\n1. 第三行";
     let body = fill("{学校}", Some(research)).body("{导师姓名}老师：\n\n{导师研究方向}");
     assert_eq!(
         body,
-        "{学校}老师：\n\n\\[点我\\](https://example.com) \\*重点\\* 1. 第二行"
+        "{学校}老师：\n\n\\[点我\\](https://example.com) \\*重点\\* - 第二行 1. 第三行"
     );
     let body = fill("王伟", Some("1. 机器学习")).body("{导师研究方向}");
     assert_eq!(body, "1\\. 机器学习");

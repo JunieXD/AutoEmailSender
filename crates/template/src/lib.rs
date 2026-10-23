@@ -81,7 +81,7 @@ impl Fill<'_> {
 }
 
 fn one_line(text: &str) -> String {
-    text.lines()
+    text.split(['\r', '\n'])
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()

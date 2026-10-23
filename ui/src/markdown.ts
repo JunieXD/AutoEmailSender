@@ -209,8 +209,9 @@ function closer(mark: Mark, underscores: boolean): string {
     case "italic":
       return underscores ? "_" : "*";
     case "link":
-      // Brackets and spaces in an address would end the link early.
-      return `](${(mark.href ?? "").replace(/[()<> ]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
+      // Brackets and spaces in an address would end the link early. Braces are encoded too:
+      // placeholders are filled in text only, never in an address.
+      return `](${(mark.href ?? "").replace(/[()<> {}]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
     default:
       throw new Error(`letters have no ${mark.name}`);
   }

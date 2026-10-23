@@ -46,7 +46,11 @@ function Composer({
     mutationKey,
     scope: { id: `saveFirstDraft ${mentorId}` },
     mutationFn: (d: FirstDraftEdit) => call("saveFirstDraft", d),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["getFirstDraft", mentorId] }),
+    // A load still under way may have read the draft before this save, so it must not land afterwards.
+    onSuccess: async (saved) => {
+      await queryClient.cancelQueries({ queryKey: ["getFirstDraft", mentorId] });
+      queryClient.setQueryData(["getFirstDraft", mentorId], saved);
+    },
   });
   const last = useMutationState<MutationState<null, Error, FirstDraftEdit>>({
     filters: { mutationKey },
@@ -112,14 +116,19 @@ function TemplateMenu({
   const templates = useQuery({ queryKey: ["listTemplates"], queryFn: () => call("listTemplates", {}), enabled: open });
   const apply = useMutation({
     mutationFn: (t: TemplateSummary) => call("applyTemplate", { templateId: t.id, mentorId }),
-    onSuccess: (filled) => {
-      setOpen(false);
-      onApply(filled);
-    },
   });
+  // Closing the menu resets the mutation, so a template still on its way is not applied.
+  function fill(t: TemplateSummary) {
+    apply.mutate(t, {
+      onSuccess: (filled) => {
+        setOpen(false);
+        onApply(filled);
+      },
+    });
+  }
   function choose(t: TemplateSummary) {
     if (written) setChosen(t);
-    else apply.mutate(t);
+    else fill(t);
   }
   return (
     <Popover
@@ -142,7 +151,7 @@ function TemplateMenu({
               <Button variant="quiet" onClick={() => setChosen(null)}>
                 取消
               </Button>
-              <Button disabled={apply.isPending} onClick={() => apply.mutate(chosen)}>
+              <Button disabled={apply.isPending} onClick={() => fill(chosen)}>
                 替换
               </Button>
             </div>

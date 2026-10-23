@@ -26,14 +26,15 @@ pub async fn first_draft(
     .await
 }
 
-/// Saves the mentor's first draft; with both parts blank there is none.
+/// Saves the mentor's first draft and returns it as saved: none when both parts are blank, or when
+/// the mentor has been moved to the trash, which canceled the draft.
 pub async fn save_first_draft(
     db: &SqlitePool,
     mentor_id: i64,
     subject: &str,
     body_md: &str,
     now: i64,
-) -> Result<(), sqlx::Error> {
+) -> Result<Option<FirstDraft>, sqlx::Error> {
     let subject = Some(subject.trim()).filter(|s| !s.is_empty());
     let body_md = Some(body_md).filter(|b| !b.trim().is_empty());
     if subject.is_none() && body_md.is_none() {
@@ -44,19 +45,20 @@ pub async fn save_first_draft(
         )
         .execute(db)
         .await?;
-    } else {
-        sqlx::query!(
-            "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)
-             VALUES (?1, 'first', 'review', ?2, ?2, ?3, ?4)
-             ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'
-             DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2",
-            mentor_id,
-            now,
-            subject,
-            body_md,
-        )
-        .execute(db)
-        .await?;
+        return Ok(None);
     }
-    Ok(())
+    sqlx::query_as!(
+        FirstDraft,
+        "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)
+         SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor WHERE id = ?1 AND trashed_at IS NULL
+         ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'
+         DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
+         RETURNING subject, body_md",
+        mentor_id,
+        now,
+        subject,
+        body_md,
+    )
+    .fetch_optional(db)
+    .await
 }
