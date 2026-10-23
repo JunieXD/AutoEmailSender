@@ -139,3 +139,10 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         _ => false,
     }));
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn keyword_does_not_span_fields(db: SqlitePool) {
+    add(&db, "李华", "华东师范大学", "视觉").await;
+    add(&db, "李华东", "清华大学", "视觉").await;
+    assert_eq!(names(&db, None, Some("李华东")).await, ["李华东"]);
+}

@@ -261,15 +261,17 @@ fn bigrams_of(word: &[char]) -> Vec<String> {
 }
 
 /// The text stored in the keyword index: overlapping two-character tokens, so that a phrase of the
-/// query's tokens finds any field containing the query (docs/data-model.md#导师).
+/// query's tokens finds any field containing the query (docs/data-model.md#导师). Words are kept
+/// apart by a one-character token, which no query phrase contains, so a phrase never runs from the
+/// end of one word into the next.
 fn search_text(fields: &[Option<&str>]) -> String {
     fields
         .iter()
         .flatten()
         .flat_map(|f| words(f))
-        .flat_map(|w| bigrams_of(&w))
+        .map(|w| bigrams_of(&w).join(" "))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" 0 ")
 }
 
 /// The name's letters and digits as one-character tokens.
