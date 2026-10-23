@@ -179,7 +179,9 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
             </span>
           </div>
           <div role="cell" className="min-w-0 text-sm cards:flex cards:gap-1.5 cards:[grid-area:place]">
-            <div className="truncate cards:max-w-full cards:shrink-0">{m.university ?? <Missing>未填写学校</Missing>}</div>
+            <div className="truncate cards:max-w-full cards:shrink-0">
+              {m.university ?? <Missing>未填写学校</Missing>}
+            </div>
             <div className="truncate text-muted-foreground">
               {[m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学院</Missing>}
             </div>
