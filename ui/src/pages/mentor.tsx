@@ -213,9 +213,12 @@ function Note({ id, note }: { id: number; note: string | null }) {
     mutationKey,
     scope: { id: `setMentorNote:${id}` },
     mutationFn: (text: string) => call("setMentorNote", { id, note: text }),
-    // The page may be opened again from the cache before it reloads.
-    onSuccess: (_, text) =>
-      queryClient.setQueryData<MentorDetail>(["getMentor", id], (m) => m && { ...m, note: text.trim() ? text : null }),
+    // The page may be opened again from the cache before it reloads. A load still under way may
+    // have read the note before this save, so it must not land afterwards.
+    onSuccess: async (_, text) => {
+      await queryClient.cancelQueries({ queryKey: ["getMentor", id] });
+      queryClient.setQueryData<MentorDetail>(["getMentor", id], (m) => m && { ...m, note: text.trim() ? text : null });
+    },
   });
   const last = useMutationState({ filters: { mutationKey }, select: (m) => m.state }).at(-1);
   const [text, setText] = useState(() => (last && last.status !== "success" ? String(last.variables) : (note ?? "")));
