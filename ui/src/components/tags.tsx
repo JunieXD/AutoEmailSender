@@ -1,4 +1,4 @@
-import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -76,10 +76,28 @@ export function TagPicker({ mentorId, selected }: { mentorId: number; selected: 
 
 const savingKey = (mentorId: number) => ["tagMentors", mentorId];
 
-/** Why the mentor's last tag change failed, if it did; read from the mutation cache, so it shows after the picker closes. */
+type TagSave = { tagId: number; on: boolean };
+
+/**
+ * The tags whose last change for this mentor failed. Read from the mutation cache, so it still shows
+ * after the picker closes; a later change to another tag does not make up for it.
+ */
 export function TagSaveError({ mentorId }: { mentorId: number }) {
-  const last = useMutationState({ filters: { mutationKey: savingKey(mentorId) }, select: (m) => m.state }).at(-1);
-  return last?.status === "error" && <p className="text-destructive">标签未能保存：{errorMessage(last.error)}</p>;
+  const tags = useTags();
+  const saves = useMutationState<MutationState<null, Error, TagSave>>({
+    filters: { mutationKey: savingKey(mentorId) },
+    select: (m) => m.state,
+  });
+  return tags.data?.map((t) => {
+    const last = saves.findLast((s) => s.variables?.tagId === t.id);
+    return (
+      last?.status === "error" && (
+        <p key={t.id} className="text-destructive">
+          标签“{t.name}”未能{last.variables?.on ? "加上" : "去掉"}：{errorMessage(last.error)}
+        </p>
+      )
+    );
+  });
 }
 
 /** Shows the mentor's tags from the page's cache, which each tick updates at once. */
@@ -92,8 +110,7 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     mutationKey,
     // One at a time, so ticking and unticking the same tag land in order.
     scope: { id: `tagMentors:${mentorId}` },
-    mutationFn: ({ tagId, on }: { tagId: number; on: boolean }) =>
-      call("tagMentors", { tagId, mentorIds: [mentorId], on }),
+    mutationFn: ({ tagId, on }: TagSave) => call("tagMentors", { tagId, mentorIds: [mentorId], on }),
     // Reload after the last of a run of quick ticks, so a reload never undoes a later tick.
     onSettled: () => {
       if (queryClient.isMutating({ mutationKey }) === 1) refreshTags(queryClient);
@@ -158,8 +175,16 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
 function TagManager({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
-  // Names being typed, saved on Enter or on leaving the field.
-  const [names, setNames] = useState<ReadonlyMap<number, string>>(new Map());
+  // What is typed in each name field, kept after saving so the field does not flash back before the
+  // reload. Saved on Enter or on leaving the field if typed in since the last save.
+  const [names, setNames] = useState<ReadonlyMap<number, { text: string; saved: boolean }>>(new Map());
+  const setName = (id: number, name?: { text: string; saved: boolean }) =>
+    setNames((old) => {
+      const next = new Map(old);
+      if (name) next.set(id, name);
+      else next.delete(id);
+      return next;
+    });
   const [error, setError] = useState<string>();
   const run = useMutation({
     // In the order clicked: two quick colours end on the second, and moves of different tags add up.
@@ -170,14 +195,14 @@ function TagManager({ onClose }: { onClose: () => void }) {
     onSettled: () => refreshTags(queryClient),
   });
   const list = tags.data ?? [];
-  const nameOf = (t: Tag) => names.get(t.id) ?? t.name;
-  const dirty = list.some((t) => nameOf(t).trim() !== t.name);
+  const dirty = list.some((t) => names.get(t.id)?.saved === false);
   return (
     <Dialog
       open
       onOpenChange={(open, details) => {
         const stray = details.reason === "outside-press" || details.reason === "escape-key";
-        if (!open && !(dirty && stray)) onClose();
+        // A change still saving could fail, and its error needs the dialog to show it.
+        if (!open && !run.isPending && !(dirty && stray)) onClose();
       }}
     >
       <DialogContent className="w-[480px]">
@@ -188,14 +213,20 @@ function TagManager({ onClose }: { onClose: () => void }) {
             <TagRow
               key={t.id}
               tag={t}
-              name={nameOf(t)}
+              name={names.get(t.id)?.text ?? t.name}
               first={i === 0}
               last={i === list.length - 1}
-              onName={(name) => setNames(new Map(names).set(t.id, name))}
+              onName={(text) => setName(t.id, { text, saved: false })}
               onRename={() => {
-                const name = nameOf(t);
-                if (name.trim() !== t.name) run.mutate(() => call("renameTag", { id: t.id, name }));
+                const name = names.get(t.id);
+                if (name?.saved !== false) return;
+                setName(t.id, { text: name.text, saved: true });
+                run.mutate(() => call("renameTag", { id: t.id, name: name.text }), {
+                  // Still unsaved, so the dialog keeps it and Enter tries again.
+                  onError: () => setName(t.id, { text: name.text, saved: false }),
+                });
               }}
+              onRevert={() => setName(t.id)}
               onColor={(color) => run.mutate(() => call("recolorTag", { id: t.id, color }))}
               onMove={(direction) => run.mutate(() => call("moveTag", { id: t.id, direction }))}
               onDelete={() => run.mutate(() => call("deleteTag", { id: t.id }))}
@@ -215,6 +246,7 @@ function TagRow({
   last,
   onName,
   onRename,
+  onRevert,
   onColor,
   onMove,
   onDelete,
@@ -225,6 +257,7 @@ function TagRow({
   last: boolean;
   onName: (name: string) => void;
   onRename: () => void;
+  onRevert: () => void;
   onColor: (color: string) => void;
   onMove: (direction: Direction) => void;
   onDelete: () => void;
@@ -258,7 +291,7 @@ function TagRow({
         onKeyDown={(e) => {
           if (e.key === "Enter") onRename();
           // Esc first gives up the edit; the dialog stays open until it is pressed again.
-          if (e.key === "Escape") onName(tag.name);
+          if (e.key === "Escape") onRevert();
         }}
         aria-label="标签名称"
         className="h-9"
