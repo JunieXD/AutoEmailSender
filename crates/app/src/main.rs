@@ -8,6 +8,7 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 /// The UI's one entry point into the core; see `api::call`.
 #[tauri::command]
@@ -37,6 +38,23 @@ async fn export_logs(app: AppHandle) -> Result<bool, String> {
     logs::export(&app, &dir).map_err(|e| format!("日志未能导出：{e}"))
 }
 
+/// Where the app keeps its data, for the about page.
+#[tauri::command]
+fn data_location(app: AppHandle) -> Result<String, String> {
+    data_dir(&app)
+        .map(|dir| dir.display().to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Opens the data directory in Finder or Explorer. The UI may not open paths itself.
+#[tauri::command]
+fn open_data_location(app: AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| format!("未能打开数据位置：{e}"))
+}
+
 fn main() -> tauri::Result<()> {
     tauri::Builder::default()
         // First, so that launching the app again only brings the running one forward.
@@ -53,7 +71,13 @@ fn main() -> tauri::Result<()> {
             };
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![call, startup_failure, export_logs])
+        .invoke_handler(tauri::generate_handler![
+            call,
+            startup_failure,
+            export_logs,
+            data_location,
+            open_data_location
+        ])
         .run(tauri::generate_context!())
 }
 
@@ -151,7 +175,9 @@ fn show(app: &AppHandle) {
 /// Development builds keep their data in the repository, away from an installed app's data.
 fn data_dir(app: &AppHandle) -> tauri::Result<PathBuf> {
     if cfg!(debug_assertions) {
-        Ok(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.dev-data"))
+        // crates/app is two levels below the repository.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2);
+        Ok(repo.ok_or(tauri::Error::UnknownPath)?.join(".dev-data"))
     } else {
         app.path().app_data_dir()
     }

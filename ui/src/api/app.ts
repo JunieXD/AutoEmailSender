@@ -11,3 +11,13 @@ export function startupFailure(): Promise<string | null> {
 export function exportLogs(): Promise<boolean> {
   return invoke<boolean>("export_logs");
 }
+
+/** Where the app keeps its data. */
+export function dataLocation(): Promise<string> {
+  return invoke<string>("data_location");
+}
+
+/** Opens the data directory in Finder or Explorer. */
+export function openDataLocation(): Promise<void> {
+  return invoke<void>("open_data_location");
+}
