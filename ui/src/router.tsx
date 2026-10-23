@@ -2,7 +2,11 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, redirect
 import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
+import { AboutSection, FIRST_SECTION, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
+
+/** The `phone` breakpoint in index.css. */
+const PHONE = "(width <= 760px)";
 
 const rootRoute = createRootRoute({ component: Shell });
 
@@ -41,9 +45,36 @@ const mentorRoute = createRoute({
   component: MentorPage,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "settings",
+  component: SettingsPage,
+});
+
+// docs/ui.md#页面: a phone lists the groups first; a wider window opens the first section.
+const settingsHomeRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/",
+  beforeLoad: () => {
+    if (!matchMedia(PHONE).matches) throw redirect({ to: FIRST_SECTION });
+  },
+});
+
+const aboutRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "about",
+  component: AboutSection,
+});
+
 // Hash URLs: the app is served as static files, which have nothing at deep paths.
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([homeRoute, mentorsRoute, trashRoute, mentorRoute]),
+  routeTree: rootRoute.addChildren([
+    homeRoute,
+    mentorsRoute,
+    trashRoute,
+    mentorRoute,
+    settingsRoute.addChildren([settingsHomeRoute, aboutRoute]),
+  ]),
   history: createHashHistory(),
 });
 

@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
-import { Users } from "lucide-react";
+import { Settings, Users } from "lucide-react";
 import appIcon from "../../../docs/icon.svg";
 import { startupFailure } from "@/api/app";
 import { StartupFailure } from "@/components/startup-failure";
 
 const NAV = [{ to: "/mentors", label: "导师", icon: Users }] as const;
+
+// docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
+// accounts, the row is settings itself.
+const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 
 /**
  * Sidebar on the window background, content on a rounded page; on a phone-width window the
@@ -23,25 +27,18 @@ export function Shell() {
           Auto Email Sender
         </div>
         <nav className="flex flex-col gap-0.5">
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <Link
-              key={to}
-              to={to}
-              className="flex h-10 items-center gap-3 rounded-md px-3"
-              activeProps={{ className: "bg-background font-medium text-brand-text" }}
-              inactiveProps={{ className: "text-muted-foreground hover:bg-press" }}
-            >
-              <Icon className="size-[18px]" strokeWidth={1.6} />
-              {label}
-            </Link>
+          {NAV.map((item) => (
+            <NavLink key={item.to} {...item} />
           ))}
         </nav>
+        <div className="grow" />
+        <NavLink {...SETTINGS} />
       </aside>
       <main className="my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {NAV.map(({ to, label, icon: Icon }) => (
+        {[...NAV, SETTINGS].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -55,5 +52,19 @@ export function Shell() {
         ))}
       </nav>
     </div>
+  );
+}
+
+function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTINGS) {
+  return (
+    <Link
+      to={to}
+      className="flex h-10 items-center gap-3 rounded-md px-3"
+      activeProps={{ className: "bg-background font-medium text-brand-text" }}
+      inactiveProps={{ className: "text-muted-foreground hover:bg-press" }}
+    >
+      <Icon className="size-[18px]" strokeWidth={1.6} />
+      {label}
+    </Link>
   );
 }
