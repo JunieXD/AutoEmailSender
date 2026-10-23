@@ -4,6 +4,7 @@
 mod logs;
 
 use std::error::Error;
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
@@ -55,11 +56,27 @@ fn main() -> tauri::Result<()> {
         .run(tauri::generate_context!())
 }
 
+/// Holds the data directory for the life of the process.
+struct InstanceLock(#[expect(dead_code, reason = "only kept open")] File);
+
 /// Opens the data directory, the logs and the database.
 async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
     let dir = data_dir(app).map_err(|e| StartupError::DataDir(e.into()))?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| StartupError::DataDir(format!("{}: {e}", dir.display()).into()))?;
+    // The single-instance plugin can miss a second copy launched at the same moment, and two
+    // copies sharing the database could send the same mail twice.
+    let lock = File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("app.lock"))
+        .map_err(|e| StartupError::DataDir(e.into()))?;
+    match lock.try_lock() {
+        Ok(()) => app.manage(InstanceLock(lock)),
+        Err(TryLockError::WouldBlock) => std::process::exit(0),
+        Err(TryLockError::Error(e)) => return Err(StartupError::DataDir(e.into())),
+    };
     logs::init(&dir.join("logs")).map_err(StartupError::Logs)?;
     tracing::info!(
         "starting {} on {} {}",

@@ -96,14 +96,21 @@ async fn upgrading(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
 /// Copies the database into `dir` and drops the oldest copies beyond `BACKUPS_KEPT`.
 async fn back_up(pool: &SqlitePool, dir: &Path) -> Result<PathBuf, sqlx::Error> {
     std::fs::create_dir_all(dir)?;
+    // Copied under another name first, so a copy cut short by a full disk or a crash never counts
+    // as a backup. VACUUM INTO refuses to overwrite such a leftover.
+    let copying = dir.join("copying.db");
+    if copying.exists() {
+        std::fs::remove_file(&copying)?;
+    }
+    sqlx::query("VACUUM INTO ?")
+        .bind(copying.to_string_lossy())
+        .execute(pool)
+        .await?;
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     let file = dir.join(format!("{BACKUP_PREFIX}{ms}.db"));
-    sqlx::query("VACUUM INTO ?")
-        .bind(file.to_string_lossy())
-        .execute(pool)
-        .await?;
+    std::fs::rename(&copying, &file)?;
     let mut copies = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
