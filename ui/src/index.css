@@ -120,6 +120,11 @@
     background: var(--sidebar);
     color: var(--foreground);
   }
+  /* docs/ui.md#颜色: keyboard focus in the brand colour instead of the system blue. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
   /* docs/ui.md#滚动条 */
   * {
     scrollbar-width: thin;
