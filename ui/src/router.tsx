@@ -2,11 +2,8 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, redirect
 import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
-import { AboutSection, FIRST_SECTION, SettingsPage } from "./pages/settings";
+import { AboutSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
-
-/** The `phone` breakpoint in index.css. */
-const PHONE = "(width <= 760px)";
 
 const rootRoute = createRootRoute({ component: Shell });
 
@@ -51,13 +48,10 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-// docs/ui.md#页面: a phone lists the groups first; a wider window opens the first section.
+// The bare /settings: the group list on a phone; SettingsPage moves a wider window on to a section.
 const settingsHomeRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "/",
-  beforeLoad: () => {
-    if (!matchMedia(PHONE).matches) throw redirect({ to: FIRST_SECTION });
-  },
 });
 
 const aboutRoute = createRoute({

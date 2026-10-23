@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, Outlet, useChildMatches } from "@tanstack/react-router";
+import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { dataLocation, exportLogs, openDataLocation } from "@/api/app";
 import { errorMessage } from "@/api/call";
 import { Button } from "@/components/ui/button";
@@ -10,12 +10,24 @@ import { Button } from "@/components/ui/button";
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
 const GROUPS = [{ label: "应用", sections: [{ to: "/settings/about", label: "关于和日志" }] }] as const;
 
-export const FIRST_SECTION = GROUPS[0].sections[0].to;
+/** The `phone` breakpoint in index.css. */
+const PHONE = "(width <= 760px)";
 
 /** The group list beside the open section; on a phone, the list first and then one section. */
 export function SettingsPage() {
   // A section is open unless this is the bare /settings, which on a phone is the group list.
   const open = useChildMatches({ select: (matches) => matches.some((m) => m.routeId !== "/settings/") });
+  // docs/ui.md#页面: a wider window opens the first section, including when a phone-width one widens.
+  const navigate = useNavigate();
+  useEffect(() => {
+    const phone = matchMedia(PHONE);
+    const openFirst = () => {
+      if (!open && !phone.matches) void navigate({ to: GROUPS[0].sections[0].to, replace: true });
+    };
+    openFirst();
+    phone.addEventListener("change", openFirst);
+    return () => phone.removeEventListener("change", openFirst);
+  }, [open, navigate]);
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] phone:grid-cols-1">
       <nav className={`flex flex-col gap-5 overflow-y-auto px-3 py-6 ${open ? "phone:hidden" : ""}`}>
