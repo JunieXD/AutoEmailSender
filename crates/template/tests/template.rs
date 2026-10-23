@@ -12,7 +12,9 @@ async fn the_body_is_saved_as_written(db: SqlitePool) {
         subject: "硕士申请——{我的姓名}\n".into(),
         body_md: body.into(),
     };
-    let id = template::create(&db, &form.check().unwrap(), 0).await.unwrap();
+    let id = template::create(&db, &form.check().unwrap(), 0)
+        .await
+        .unwrap();
     let saved = template::get(&db, id).await.unwrap().unwrap();
     assert_eq!(saved.name, "首封");
     assert_eq!(saved.subject, "硕士申请——{我的姓名}");
