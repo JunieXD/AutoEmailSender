@@ -7,16 +7,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::TS;
 
+mod connect;
 mod error;
 mod imap;
-mod net;
 pub mod providers;
-mod proxy;
 mod smtp;
 
 pub use error::MailError;
 pub use imap::check_receiving;
-pub use net::Net;
 pub use smtp::{check_sending, send_test};
 
 /// A mailbox as the settings show it. Its secret never leaves the core.

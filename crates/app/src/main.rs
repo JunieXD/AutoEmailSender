@@ -112,7 +112,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
     let db = db::open(&dir.join("app.db"))
         .await
         .map_err(StartupError::Database)?;
-    let net = mailbox::Net::new(Vec::new()).map_err(|e| StartupError::Tls(e.into()))?;
+    let net = net::Net::new(Vec::new()).map_err(StartupError::Net)?;
     Ok(api::Context { db, net })
 }
 
@@ -121,7 +121,7 @@ enum StartupError {
     DataDir(Box<dyn Error>),
     Logs(Box<dyn Error>),
     Database(db::OpenError),
-    Tls(Box<dyn Error>),
+    Net(Box<dyn Error + Send + Sync>),
 }
 
 impl std::fmt::Display for StartupError {
@@ -130,7 +130,7 @@ impl std::fmt::Display for StartupError {
             StartupError::DataDir(e) => write!(f, "data directory: {e}"),
             StartupError::Logs(e) => write!(f, "logs: {e}"),
             StartupError::Database(e) => write!(f, "{e}"),
-            StartupError::Tls(e) => write!(f, "tls: {e}"),
+            StartupError::Net(e) => write!(f, "network: {e}"),
         }
     }
 }
@@ -142,7 +142,7 @@ impl StartupError {
         match self {
             StartupError::DataDir(e) => format!("数据目录无法使用：{e}"),
             StartupError::Logs(e) => format!("日志无法写入：{e}"),
-            StartupError::Tls(e) => format!("加密连接无法初始化：{e}"),
+            StartupError::Net(e) => format!("网络连接无法初始化：{e}"),
             StartupError::Database(OpenError::Open(e)) => format!("数据库无法打开：{e}"),
             StartupError::Database(OpenError::Backup(e)) => {
                 format!("升级数据库前未能备份，为保护数据未做升级：{e}")

@@ -14,7 +14,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use crate::net::{self, Net};
+use net::Net;
+
+use crate::connect;
 use crate::{Account, MailError, Security};
 
 /// Greets with an address rather than the computer's name, which in Chinese makes servers refuse
@@ -23,7 +25,7 @@ const HELLO: ClientId = ClientId::Ipv4(Ipv4Addr::LOCALHOST);
 
 /// Logs in to the mailbox's SMTP server and leaves.
 pub async fn check_sending(net: &Net, account: &Account) -> Result<(), MailError> {
-    let conn = net::within(&account.smtp, login(net, account)).await?;
+    let conn = connect::within(&account.smtp, login(net, account)).await?;
     quit(&account.smtp.host, conn);
     Ok(())
 }
@@ -46,7 +48,7 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
             "这封信由 Auto Email Sender 发出，收到它说明这个邮箱能正常发信。",
         ))
         .map_err(|e| MailError::Broken(e.to_string()))?;
-    let conn = net::within(&account.smtp, async {
+    let conn = connect::within(&account.smtp, async {
         let mut conn = login(net, account).await?;
         conn.send(message.envelope(), &message.formatted())
             .await
@@ -60,10 +62,10 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
 
 async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailError> {
     let server = &account.smtp;
-    let tcp = net::connect(&server.host, server.port).await?;
+    let tcp = connect::connect(&server.host, server.port).await?;
     let mut conn = match server.security {
         Security::Tls => {
-            let tls = net.tls(&server.host, tcp).await?;
+            let tls = connect::encrypt(net, &server.host, tcp).await?;
             AsyncSmtpConnection::connect_with_transport(Box::new(Tls(tls)), &HELLO)
                 .await
                 .map_err(refused)?
@@ -72,7 +74,7 @@ async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, Mail
             let mut conn = AsyncSmtpConnection::connect_with_transport(Box::new(tcp), &HELLO)
                 .await
                 .map_err(refused)?;
-            conn.starttls(net.lettre_tls(&server.host)?, &HELLO)
+            conn.starttls(connect::lettre_tls(net, &server.host)?, &HELLO)
                 .await
                 .map_err(|e| {
                     if e.status().is_some() {
@@ -99,7 +101,7 @@ async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, Mail
 }
 
 fn quit(host: &str, mut conn: AsyncSmtpConnection) {
-    net::farewell(host, async move { conn.quit().await.map(drop) });
+    connect::farewell(host, async move { conn.quit().await.map(drop) });
 }
 
 /// A reply from the server, worded by lettre like "permanent error (535): ...", is a refusal;

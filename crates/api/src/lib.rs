@@ -9,7 +9,7 @@ use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
     pub db: SqlitePool,
-    pub net: mailbox::Net,
+    pub net: net::Net,
 }
 
 /// What the UI shows when an operation fails.
@@ -129,6 +129,13 @@ operations! {
     "testSending" => test_sending(MailboxTest) -> ();
     "testReceiving" => test_receiving(MailboxTest) -> ();
     "sendTestMail" => send_test_mail(MailboxId) -> ();
+    "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
+    "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
+    "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
+    "updateModelConfig" => update_model_config(ModelConfigEdit) -> ();
+    "deleteModelConfig" => delete_model_config(ModelConfigId) -> ();
+    "listProviderModels" => list_provider_models(ModelSource) -> Vec<String>;
+    "testModel" => test_model(ModelTest) -> ();
 }
 
 /// The input of operations that need none.
@@ -192,9 +199,16 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
     impl TypeVisitor for Visitor<'_> {
         fn visit<T: TS + 'static + ?Sized>(&mut self) {
             // Only named types have a path to export to; primitives and containers are inlined.
-            if T::output_path().is_some() && !self.decls.contains_key(&T::name(self.cfg)) {
-                self.decls.insert(T::name(self.cfg), T::decl(self.cfg));
-                T::visit_dependencies(self);
+            if T::output_path().is_none() {
+                return;
+            }
+            let (name, decl) = (T::name(self.cfg), T::decl(self.cfg));
+            match self.decls.get(&name) {
+                Some(seen) => assert_eq!(seen, &decl, "two types are named {name}"),
+                None => {
+                    self.decls.insert(name, decl);
+                    T::visit_dependencies(self);
+                }
             }
         }
     }
@@ -456,6 +470,137 @@ impl From<mailbox::SaveError> for CallError {
 /// The details go to the log; the user reads what happened and what to do.
 impl From<mailbox::MailError> for CallError {
     fn from(e: mailbox::MailError) -> Self {
+        tracing::warn!("{e}");
+        CallError {
+            code: ErrorCode::External,
+            message: e.message(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+pub struct ModelConfigId {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct NewModelConfig {
+    #[serde(flatten)]
+    pub form: model::ModelForm,
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelConfigEdit {
+    pub id: i64,
+    #[serde(flatten)]
+    pub form: model::ModelForm,
+    /// Blank keeps the saved one.
+    pub api_key: String,
+}
+
+/// A provider as filled in, perhaps not saved yet, to list its models.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSource {
+    /// The saved configuration being edited, whose API key a blank one stands for.
+    #[ts(optional)]
+    pub id: Option<i64>,
+    pub provider: String,
+    /// Only read for a custom provider.
+    pub base_url: String,
+    pub api_key: String,
+}
+
+/// A configuration as filled in, perhaps not saved yet.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTest {
+    /// The saved configuration being edited, whose API key a blank one stands for.
+    #[ts(optional)]
+    pub id: Option<i64>,
+    #[serde(flatten)]
+    pub form: model::ModelForm,
+    pub api_key: String,
+}
+
+const NO_MODEL_CONFIG: &str = "找不到这个模型配置，可能已被删除。";
+const NO_API_KEY: &str = "请填写 API Key";
+
+async fn list_model_providers(
+    _: &Context,
+    _: Nothing,
+) -> Result<&'static [model::providers::Provider], CallError> {
+    Ok(model::providers::PROVIDERS)
+}
+
+async fn list_model_configs(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<model::ModelConfig>, CallError> {
+    Ok(model::list(&ctx.db).await?)
+}
+
+async fn add_model_config(
+    ctx: &Context,
+    input: NewModelConfig,
+) -> Result<ModelConfigId, CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let api_key = entered_or_saved_key(ctx, &input.api_key, None, &fields.source).await?;
+    let id = model::create(&ctx.db, &fields, &api_key, now()).await?;
+    Ok(ModelConfigId { id })
+}
+
+async fn update_model_config(ctx: &Context, input: ModelConfigEdit) -> Result<(), CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let api_key = model::checked_key(&input.api_key);
+    if model::update(&ctx.db, input.id, &fields, api_key.as_deref()).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_MODEL_CONFIG))
+    }
+}
+
+async fn delete_model_config(ctx: &Context, input: ModelConfigId) -> Result<(), CallError> {
+    Ok(model::delete(&ctx.db, input.id).await?)
+}
+
+async fn list_provider_models(ctx: &Context, input: ModelSource) -> Result<Vec<String>, CallError> {
+    let source =
+        model::Source::check(&input.provider, &input.base_url).map_err(CallError::invalid)?;
+    let api_key = entered_or_saved_key(ctx, &input.api_key, input.id, &source).await?;
+    Ok(model::list_models(&ctx.net, &source.access(api_key)).await?)
+}
+
+async fn test_model(ctx: &Context, input: ModelTest) -> Result<(), CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let api_key = entered_or_saved_key(ctx, &input.api_key, input.id, &fields.source).await?;
+    Ok(model::test(&ctx.net, &fields.source.access(api_key), &fields.model).await?)
+}
+
+/// The API key typed in, else the saved one of the configuration being edited. Models on this
+/// computer, such as Ollama's, need none.
+async fn entered_or_saved_key(
+    ctx: &Context,
+    api_key: &str,
+    id: Option<i64>,
+    source: &model::Source,
+) -> Result<String, CallError> {
+    match (model::checked_key(api_key), id) {
+        (Some(api_key), _) => Ok(api_key),
+        (None, Some(id)) => model::api_key(&ctx.db, id)
+            .await?
+            .ok_or_else(|| CallError::not_found(NO_MODEL_CONFIG)),
+        (None, None) if matches!(source, model::Source::Custom(_)) => Ok(String::new()),
+        (None, None) => Err(CallError::invalid(NO_API_KEY.into())),
+    }
+}
+
+/// The details go to the log; the user reads what happened and what to do.
+impl From<model::ModelError> for CallError {
+    fn from(e: model::ModelError) -> Self {
         tracing::warn!("{e}");
         CallError {
             code: ErrorCode::External,

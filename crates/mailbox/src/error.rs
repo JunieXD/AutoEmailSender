@@ -1,7 +1,5 @@
 use std::io;
 
-use tokio_rustls::rustls;
-
 /// Why talking to a mail server failed. Displays in English for the log; `message` is for the user.
 #[derive(Debug)]
 pub enum MailError {
@@ -96,7 +94,7 @@ impl MailError {
             MailError::TimedOut { host, port } => format!(
                 "{host} 的 {port} 端口迟迟没有响应。检查服务器地址和端口；国内连 Gmail 这类国外邮箱要开代理。"
             ),
-            MailError::Tls { host, source } if untrusted(source) => {
+            MailError::Tls { host, source } if net::untrusted(source) => {
                 format!("{host} 的证书不受信任，连接可能被拦截了。换个网络再试。")
             }
             MailError::Tls { host, source } => format!(
@@ -111,21 +109,4 @@ impl MailError {
             }
         }
     }
-}
-
-/// Whether the server's certificate was the problem rather than the handshake, however deep lettre
-/// or tokio-rustls wrapped the TLS error.
-fn untrusted(e: &io::Error) -> bool {
-    let mut next: Option<&(dyn std::error::Error + 'static)> = Some(e);
-    while let Some(e) = next {
-        if let Some(rustls::Error::InvalidCertificate(_)) = e.downcast_ref::<rustls::Error>() {
-            return true;
-        }
-        // An io::Error's source skips the error it wraps.
-        next = match e.downcast_ref::<io::Error>().and_then(io::Error::get_ref) {
-            Some(inner) => Some(inner),
-            None => e.source(),
-        };
-    }
-    false
 }

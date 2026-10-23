@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, ChevronRight, LoaderCircle, X } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Mailbox, MailboxTest, NewMailbox, Provider, Security, Server } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { Field, TestResult } from "@/components/form";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -296,17 +297,6 @@ export function MailboxDialog({
   );
 }
 
-function Field({ label, id, children }: { label: string; id: string; children: ReactNode }) {
-  return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm text-muted-foreground">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
 /** The recognised provider, or a choice of hosted ones and filling in the servers. */
 function ProviderField({
   form,
@@ -411,28 +401,5 @@ function ServerFields({
         ))}
       </NativeSelect>
     </fieldset>
-  );
-}
-
-function TestResult({
-  label,
-  mutation,
-}: {
-  label: string;
-  mutation: { status: "idle" | "pending" | "success" | "error"; error: Error | null };
-}) {
-  if (mutation.status === "idle") return null;
-  const [icon, text] = {
-    pending: [<LoaderCircle key="i" className="animate-spin text-muted-foreground" />, "正在测试…"],
-    success: [<Check key="i" className="text-success" />, "正常"],
-    error: [<X key="i" className="text-destructive" />, errorMessage(mutation.error)],
-  }[mutation.status];
-  return (
-    <p className="flex gap-2 [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0">
-      {icon}
-      <span>
-        {label}：{text}
-      </span>
-    </p>
   );
 }

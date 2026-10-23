@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT api_key FROM model_config WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "api_key",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "api_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f4128c248d8ef2852b509884f228eeb571ebc63bb904d62b9c06f14e1d03ff38"
+}
