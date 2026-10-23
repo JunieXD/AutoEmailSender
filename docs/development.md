@@ -32,7 +32,7 @@
 | `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
 | `pnpm package` | 打包安装包 |
 
-- 开发版的数据在仓库的 `.dev-data` 里，和装好的应用分开。
+- 开发版的数据在仓库的 `.dev-data` 里，和装好的应用分开。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 
