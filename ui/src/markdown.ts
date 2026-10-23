@@ -35,6 +35,13 @@ marked.use(cjkFriendly(), {
     link(token) {
       return linkable(token.href) ? false : this.parser.parseInline(token.tokens);
     },
+    // Pictures and task boxes stay as written: a letter has neither.
+    image({ raw }) {
+      return this.text({ type: "text", raw, text: raw });
+    },
+    checkbox({ raw }) {
+      return this.text({ type: "text", raw, text: raw });
+    },
     // An item whose own text was deleted still holds its nested list, after the empty paragraph the
     // editor needs first.
     listitem(item) {

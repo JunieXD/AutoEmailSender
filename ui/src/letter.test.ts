@@ -37,3 +37,18 @@ test("links to anything but web pages and email addresses are only text", () => 
   ]);
   expect(page.textContent).toContain("点我");
 });
+
+test("pictures and task boxes stay as written", () => {
+  const page = render("![简历](https://a.com/t.png)\n\n- [x] 做过的工作", style);
+  expect(page.querySelector("img, input")).toBeNull();
+  expect([...page.querySelectorAll("p, li")].map((e) => e.textContent)).toEqual([
+    "![简历](https://a.com/t.png)",
+    "[x] 做过的工作",
+  ]);
+});
+
+test("spaces show as typed", () => {
+  const page = render("    王老师：\n\n张三    计算机专业", style);
+  const shown = [...page.querySelectorAll("p")].map((p) => p.innerHTML);
+  expect(shown).toEqual(["&nbsp;&nbsp;&nbsp;&nbsp;王老师：", "张三 &nbsp;&nbsp;&nbsp;计算机专业"]);
+});

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { LetterFont, LetterStyle } from "@/api/types";
@@ -53,15 +53,29 @@ export function LetterStyleSection() {
   );
 }
 
+const mutationKey = ["updateLetterStyle"];
+
+/**
+ * Saves each choice. Saves run one at a time and outlive this page, so the last choice wins even
+ * after leaving and coming back quickly, and one not yet saved is shown again on return.
+ */
 function LetterStyleFields({ saved }: { saved: LetterStyle }) {
-  const [style, setStyle] = useState(saved);
   const queryClient = useQueryClient();
-  // Saves run one at a time, so the last choice is the one kept.
   const save = useMutation({
+    mutationKey,
     scope: { id: "updateLetterStyle" },
     mutationFn: (s: LetterStyle) => call("updateLetterStyle", s),
-    onSuccess: (_, s) => queryClient.setQueryData(["getLetterStyle"], s),
+    // A load still under way may have read the style before this save, so it must not land afterwards.
+    onSuccess: async (_, s) => {
+      await queryClient.cancelQueries({ queryKey: ["getLetterStyle"] });
+      queryClient.setQueryData(["getLetterStyle"], s);
+    },
   });
+  const last = useMutationState<MutationState<null, Error, LetterStyle>>({
+    filters: { mutationKey },
+    select: (m) => m.state,
+  }).at(-1);
+  const [style, setStyle] = useState(last?.status === "success" ? saved : (last?.variables ?? saved));
   function edit(next: LetterStyle) {
     setStyle(next);
     save.mutate(next);
@@ -114,7 +128,9 @@ function LetterStyleFields({ saved }: { saved: LetterStyle }) {
         />
         段首空两格
       </label>
-      {save.isError && <p className="text-sm text-destructive">信件样式未能保存：{errorMessage(save.error)}</p>}
+      {last?.status === "error" && (
+        <p className="text-sm text-destructive">信件样式未能保存：{errorMessage(last.error)}</p>
+      )}
       <div className="flex flex-col gap-1.5">
         <p className="text-sm text-muted-foreground">预览</p>
         {/* On white whatever the app's theme, as mail apps show letters. */}

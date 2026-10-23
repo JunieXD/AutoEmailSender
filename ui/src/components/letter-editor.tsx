@@ -163,7 +163,8 @@ function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: strin
 
 /** Where a typed address points: as typed when it has a scheme, else an email or a web address. */
 function linkAddress(typed: string): string {
-  if (/^[a-z][a-z\d+.-]*:/i.test(typed)) return typed;
+  // A colon before digits is a port, as in "example.edu.cn:8443".
+  if (/^[a-z][a-z\d+.-]*:(?!\d)/i.test(typed)) return typed;
   return /^[^\s@/]+@[^\s@/]+$/.test(typed) ? `mailto:${typed}` : `https://${typed}`;
 }
 

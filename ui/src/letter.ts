@@ -21,6 +21,12 @@ export function letterHtml(markdown: string, style: LetterStyle): string {
     // Written out, as the app's own styles turn list markers off where the letter is previewed.
     list.style.listStyleType = list.tagName === "OL" ? "decimal" : "disc";
   }
+  // Spaces typed in a letter show as typed: HTML would drop one starting a text or following another.
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const text = walker.currentNode;
+    text.textContent = (text.textContent ?? "").replace(/(?<=^| ) /g, "\u00a0");
+  }
   const page = doc.createElement("div");
   if (style.font) page.style.fontFamily = FONTS[style.font];
   page.style.fontSize = `${style.fontSizePt}pt`;
