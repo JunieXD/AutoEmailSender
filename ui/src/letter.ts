@@ -64,14 +64,27 @@ function listText(el: Element, indent: string): string {
     .map((item, i) => {
       const marker = el.tagName === "OL" ? `${start + i}. ` : "- ";
       const pad = indent + " ".repeat(marker.length);
-      let text = "";
-      const nested: string[] = [];
+      // In the item's order: its text on the marker's line, then nested lists and further paragraphs.
+      const out: string[] = [];
+      let text: string | undefined;
+      const flush = () => {
+        if (text === undefined) return;
+        out.push((out.length === 0 ? indent + marker : pad) + text.replaceAll("\n", `\n${pad}`));
+        text = undefined;
+      };
       for (const node of item.childNodes) {
-        if (node instanceof Element && isList(node)) nested.push(listText(node, pad));
-        else if (node instanceof Element && node.tagName === "P") text += (text && "\n") + inline(node);
-        else text += inline(node);
+        if (node instanceof Text && /^\n*$/.test(node.data)) continue;
+        if (node instanceof Element && isList(node)) {
+          if (out.length === 0) text ??= "";
+          flush();
+          out.push(listText(node, pad));
+        } else if (node instanceof Element && node.tagName === "P") {
+          flush();
+          text = inline(node);
+        } else text = (text ?? "") + inline(node);
       }
-      return [indent + marker + text.replaceAll("\n", `\n${pad}`), ...nested].join("\n");
+      flush();
+      return out.join("\n");
     })
     .join("\n");
 }

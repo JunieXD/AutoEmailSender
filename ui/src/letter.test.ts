@@ -61,7 +61,7 @@ test("the plain text keeps lines, lists and link addresses", () => {
   const markdown = [
     "王老师：",
     "您好！我是**林晓**。\n此致\n敬礼",
-    "- 甲\n  - 乙\n- 丙",
+    "- 甲\n  - 乙\n\n  丁\n- 丙",
     "3. 丁\n\n   戊\n4. 己",
     "主页 [linxiao.dev](https://linxiao.dev)，邮箱 [me@x.com](mailto:me@x.com)",
   ].join("\n\n");
@@ -69,7 +69,7 @@ test("the plain text keeps lines, lists and link addresses", () => {
     [
       "王老师：",
       "您好！我是林晓。\n此致\n敬礼",
-      "- 甲\n  - 乙\n- 丙",
+      "- 甲\n  - 乙\n  丁\n- 丙",
       "3. 丁\n   戊\n4. 己",
       "主页 linxiao.dev <https://linxiao.dev>，邮箱 me@x.com",
     ].join("\n\n"),

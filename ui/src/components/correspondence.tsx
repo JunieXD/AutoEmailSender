@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -20,13 +21,14 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     // Follows emails on their way out until they are out.
     refetchInterval: (query) => (query.state.data?.some(onTheWay) ? 1000 : false),
   });
-  const pending = emails.data?.some(onTheWay) ?? false;
-  const wasPending = useRef(pending);
+  // An email that has gone out, or has failed, changes the mentor's contact status in the header and
+  // the list. Counted, as one may go out between two reads and never be seen on its way.
+  const settled = emails.data?.filter((e) => !onTheWay(e)).length;
+  const wasSettled = useRef(settled);
   useEffect(() => {
-    // Sending changes the mentor's contact status in the header and the list.
-    if (wasPending.current && !pending) refreshMentors(queryClient);
-    wasPending.current = pending;
-  }, [pending, queryClient]);
+    if (wasSettled.current !== undefined && settled !== wasSettled.current) refreshMentors(queryClient);
+    wasSettled.current = settled;
+  }, [settled, queryClient]);
   if (emails.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(emails.error)}</p>;
   }
@@ -70,7 +72,18 @@ function Sent({ email: e, mentorId, actions }: { email: Email; mentorId: number;
     <article className="flex flex-col items-end gap-1.5">
       <div className="max-w-[min(42rem,88%)] rounded-[18px] rounded-br-[6px] bg-mine px-4 py-3">
         <h3 className="mb-2 font-semibold">{e.subject}</h3>
-        <div className={LETTER_BODY} dangerouslySetInnerHTML={{ __html: toHtml(e.bodyMd) }} />
+        <div
+          className={LETTER_BODY}
+          dangerouslySetInnerHTML={{ __html: toHtml(e.bodyMd) }}
+          // Links open in the system's browser or mail app, not in place of the app. The letter keeps
+          // only web and mail links (docs/design.md#邮件格式).
+          onClick={(event) => {
+            const link = event.target instanceof Element ? event.target.closest("a") : null;
+            if (!link) return;
+            event.preventDefault();
+            void openUrl(link.href);
+          }}
+        />
       </div>
       <p className={`max-w-[min(42rem,88%)] text-right text-sm ${tone}`}>{text}</p>
       {actions && (

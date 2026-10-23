@@ -228,20 +228,42 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
 /// Why an email the last run left being sent is only maybe sent.
 pub const INTERRUPTED: &str = "发送途中应用退出，无法确定是否已发出。";
 
-/// Emails the last run left being sent may or may not have gone out.
-pub async fn interrupted(db: &SqlitePool, now: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE email SET state = 'maybe_sent', error = ?, updated_at = ? WHERE state = 'sending'",
+/// An email that has been handed to SMTP, or may have been.
+pub struct Handed {
+    pub mentor_id: i64,
+    /// None once the mailbox is deleted.
+    pub mailbox_id: Option<i64>,
+}
+
+/// Marks the emails the last run left being sent as maybe sent.
+pub async fn interrupted(
+    conn: &mut SqliteConnection,
+    now: i64,
+) -> Result<Vec<Handed>, sqlx::Error> {
+    sqlx::query_as!(
+        Handed,
+        "UPDATE email SET state = 'maybe_sent', error = ?, updated_at = ? WHERE state = 'sending'
+         RETURNING mentor_id, mailbox_id",
         INTERRUPTED,
         now,
     )
-    .execute(db)
-    .await?;
-    Ok(())
+    .fetch_all(conn)
+    .await
 }
 
-/// Marks an approved email as handed to SMTP from this mailbox. False when it is no longer
-/// approved, as when its mentor was moved to the trash meanwhile.
+/// What was approved, as an email is marked as being handed over.
+pub struct Handover {
+    pub mentor_id: i64,
+    pub message_id: String,
+    pub subject: String,
+    pub html: String,
+    pub text: String,
+}
+
+/// Marks an approved email as being handed to SMTP from this mailbox, and returns what was
+/// approved: read together, so that what goes out is the latest approval. None when it is no longer
+/// approved, as when it was taken back or its mentor moved to the trash meanwhile. An email that
+/// already has a Message-ID keeps it.
 pub async fn start_sending(
     conn: &mut SqliteConnection,
     id: i64,
@@ -249,36 +271,38 @@ pub async fn start_sending(
     from_address: &str,
     message_id: &str,
     now: i64,
-) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
-        "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2, message_id = ?3,
-           sent_at = ?4, updated_at = ?4
-         WHERE id = ?5 AND state = 'approved'",
+) -> Result<Option<Handover>, sqlx::Error> {
+    sqlx::query_as!(
+        Handover,
+        r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
+             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
+           WHERE id = ?5 AND state = 'approved'
+           RETURNING mentor_id, message_id AS "message_id!", subject AS "subject!", html AS "html!",
+             text AS "text!""#,
         mailbox_id,
         from_address,
         message_id,
         now,
         id,
     )
-    .execute(conn)
-    .await?;
-    Ok(done.rows_affected() == 1)
+    .fetch_optional(conn)
+    .await
 }
 
-pub async fn sent(db: &SqlitePool, id: i64, now: i64) -> Result<(), sqlx::Error> {
+pub async fn sent(conn: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "UPDATE email SET state = 'sent', sent_at = ?1, updated_at = ?1
          WHERE id = ?2 AND state = 'sending'",
         now,
         id,
     )
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(())
 }
 
 pub async fn maybe_sent(
-    db: &SqlitePool,
+    conn: &mut SqliteConnection,
     id: i64,
     error: &str,
     now: i64,
@@ -290,13 +314,18 @@ pub async fn maybe_sent(
         now,
         id,
     )
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(())
 }
 
 /// Records why an email did not go out, whether it was turned down or never handed over.
-pub async fn failed(db: &SqlitePool, id: i64, error: &str, now: i64) -> Result<(), sqlx::Error> {
+pub async fn failed(
+    conn: &mut SqliteConnection,
+    id: i64,
+    error: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "UPDATE email SET state = 'failed', error = ?, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'sending')",
@@ -304,7 +333,7 @@ pub async fn failed(db: &SqlitePool, id: i64, error: &str, now: i64) -> Result<(
         now,
         id,
     )
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(())
 }

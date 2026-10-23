@@ -4,6 +4,7 @@
 //! Sending approved emails through the fake SMTP server.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 
 use email::{Approval, Delivery};
 use fakemail::{ADDRESS, Inbox, SECRET};
@@ -77,6 +78,15 @@ async fn first_email(db: &SqlitePool, mentor: i64) -> email::Email {
     email::list(db, mentor).await.unwrap().remove(0)
 }
 
+/// The mailbox the mentor is contacted from.
+async fn own_mailbox(db: &SqlitePool, mentor: i64) -> Option<i64> {
+    sqlx::query_scalar("SELECT mailbox_id FROM mentor WHERE id = ?")
+        .bind(mentor)
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
 fn header<'a>(mail: &'a str, name: &str) -> &'a str {
     let headers = mail.split("\r\n\r\n").next().unwrap();
     headers
@@ -90,7 +100,7 @@ async fn an_approved_email_goes_out_once(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let wang = approve(&db, "wang@example.edu.cn", T).await;
 
-    assert_eq!(send::step(&db, &net, T).await.unwrap(), Next::Now);
+    assert_eq!(send::step(&db, &net, || T).await.unwrap(), Next::Now);
     assert_eq!(
         first_email(&db, wang).await.delivery,
         Delivery::Sent {
@@ -98,18 +108,13 @@ async fn an_approved_email_goes_out_once(db: SqlitePool) {
             sent_at: T
         }
     );
-    assert_eq!(send::step(&db, &net, T + DAY).await.unwrap(), Next::Idle);
+    assert_eq!(send::step(&db, &net, || T + DAY).await.unwrap(), Next::Idle);
     let mail = inbox.lock().unwrap().clone();
     assert_eq!(mail.len(), 1);
     assert!(header(&mail[0], "To: ").ends_with(" <wang@example.edu.cn>"));
     assert!(header(&mail[0], "Content-Type: ").starts_with("multipart/alternative"));
     // Later emails to this mentor go from the same mailbox.
-    let own: Option<i64> = sqlx::query_scalar("SELECT mailbox_id FROM mentor WHERE id = ?")
-        .bind(wang)
-        .fetch_one(&db)
-        .await
-        .unwrap();
-    assert!(own.is_some());
+    assert_eq!(own_mailbox(&db, wang).await, Some(1));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -119,18 +124,21 @@ async fn a_mailbox_keeps_to_its_interval_and_daily_limit(db: SqlitePool) {
         approve(&db, address, T).await;
     }
 
-    assert_eq!(send::step(&db, &net, T).await.unwrap(), Next::Now);
+    assert_eq!(send::step(&db, &net, || T).await.unwrap(), Next::Now);
     assert_eq!(
-        send::step(&db, &net, T + 1000).await.unwrap(),
+        send::step(&db, &net, || T + 1000).await.unwrap(),
         Next::At(T + MINUTE)
     );
-    assert_eq!(send::step(&db, &net, T + MINUTE).await.unwrap(), Next::Now);
+    assert_eq!(
+        send::step(&db, &net, || T + MINUTE).await.unwrap(),
+        Next::Now
+    );
     // Two in the last 24 hours: the third waits until the first is a day old.
     assert_eq!(
-        send::step(&db, &net, T + 2 * MINUTE).await.unwrap(),
+        send::step(&db, &net, || T + 2 * MINUTE).await.unwrap(),
         Next::At(T + DAY)
     );
-    assert_eq!(send::step(&db, &net, T + DAY).await.unwrap(), Next::Now);
+    assert_eq!(send::step(&db, &net, || T + DAY).await.unwrap(), Next::Now);
     assert_eq!(inbox.lock().unwrap().len(), 3);
 }
 
@@ -138,22 +146,24 @@ async fn a_mailbox_keeps_to_its_interval_and_daily_limit(db: SqlitePool) {
 async fn a_refused_email_fails_and_a_cut_off_one_may_have_gone_out(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let unknown = approve(&db, "unknown@example.edu.cn", T).await;
-    send::step(&db, &net, T).await.unwrap();
+    send::step(&db, &net, || T).await.unwrap();
     let refused = first_email(&db, unknown).await.delivery;
     assert!(
         matches!(refused, Delivery::Failed { ref error } if error.contains("550")),
         "{refused:?}"
     );
+    // Never contacted, so a retry may still go from any mailbox.
+    assert_eq!(own_mailbox(&db, unknown).await, None);
 
     let hangup = approve(&db, "hangup@example.edu.cn", T + MINUTE).await;
-    send::step(&db, &net, T + MINUTE).await.unwrap();
+    send::step(&db, &net, || T + MINUTE).await.unwrap();
     let cut_off = first_email(&db, hangup).await;
     assert!(matches!(cut_off.delivery, Delivery::MaybeSent { .. }));
     // Not sent again unless the user says so.
-    assert_eq!(send::step(&db, &net, T + DAY).await.unwrap(), Next::Idle);
+    assert_eq!(send::step(&db, &net, || T + DAY).await.unwrap(), Next::Idle);
 
     assert!(email::retry(&db, cut_off.id, T + DAY).await.unwrap());
-    send::step(&db, &net, T + DAY).await.unwrap();
+    send::step(&db, &net, || T + DAY).await.unwrap();
     let inbox = inbox.lock().unwrap();
     assert_eq!(inbox.len(), 2);
     // The same Message-ID, so that a mailbox that got the first copy can drop the second.
@@ -168,7 +178,7 @@ async fn a_refused_login_fails_the_email(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, "wrong").await;
     let wang = approve(&db, "wang@example.edu.cn", T).await;
 
-    assert_eq!(send::step(&db, &net, T).await.unwrap(), Next::Now);
+    assert_eq!(send::step(&db, &net, || T).await.unwrap(), Next::Now);
     assert!(
         matches!(first_email(&db, wang).await.delivery, Delivery::Failed { error } if error.contains("登录被拒绝"))
     );
@@ -185,10 +195,11 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
         email::start_sending(&mut conn, id, 1, ADDRESS, "<x@example.com>", T)
             .await
             .unwrap()
+            .is_some()
     );
     drop(conn);
 
-    email::interrupted(&db, T + 1).await.unwrap();
+    send::recover(&db, T + 1).await.unwrap();
     assert_eq!(
         first_email(&db, wang).await.delivery,
         Delivery::MaybeSent {
@@ -197,13 +208,14 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
             error: email::INTERRUPTED.into()
         }
     );
+    assert_eq!(own_mailbox(&db, wang).await, Some(1));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_mentor_in_the_trash_gets_nothing_more(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let hangup = approve(&db, "hangup@example.edu.cn", T).await;
-    send::step(&db, &net, T).await.unwrap();
+    send::step(&db, &net, || T).await.unwrap();
     let wang = approve(&db, "wang@example.edu.cn", T).await;
     mentor::trash::trash(&db, &[hangup, wang], T + 1)
         .await
@@ -211,6 +223,27 @@ async fn a_mentor_in_the_trash_gets_nothing_more(db: SqlitePool) {
 
     let cut_off = first_email(&db, hangup).await;
     assert!(!email::retry(&db, cut_off.id, T + 2).await.unwrap());
-    assert_eq!(send::step(&db, &net, T + DAY).await.unwrap(), Next::Idle);
+    assert_eq!(send::step(&db, &net, || T + DAY).await.unwrap(), Next::Idle);
     assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn the_time_sent_is_when_the_server_took_it(db: SqlitePool) {
+    let (net, _) = mailbox(&db, SECRET).await;
+    let wang = approve(&db, "wang@example.edu.cn", T).await;
+    // Each look at the clock finds a second gone by, as logging in and handing over take time.
+    let clock = Cell::new(T);
+    let now = || {
+        clock.set(clock.get() + 1000);
+        clock.get()
+    };
+
+    send::step(&db, &net, now).await.unwrap();
+    assert_eq!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Sent {
+            from_address: ADDRESS.into(),
+            sent_at: clock.get()
+        }
+    );
 }

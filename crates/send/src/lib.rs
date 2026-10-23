@@ -3,14 +3,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mailbox::{Letter, MailError, SendError};
+use mailbox::{Letter, SendError};
 use net::Net;
 use profile::Rotation;
-use sqlx::SqlitePool;
+use sqlx::{Connection, SqlitePool};
 use tokio::sync::Notify;
 
 const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
+/// How long to wait before trying the database again.
+const RETRY: Duration = Duration::from_secs(5);
 
 /// Why an email to a mentor without an address did not go out.
 pub const NO_ADDRESS: &str = "导师尚未填写邮箱。在导师资料里填写后重试。";
@@ -27,12 +29,12 @@ impl Sender {
 
 /// Sends emails as they come due, for as long as the app runs.
 pub async fn run(db: SqlitePool, net: Net, sender: Sender) {
-    while let Err(e) = email::interrupted(&db, now()).await {
-        tracing::error!("mark interrupted emails: {e}");
-        tokio::time::sleep(Duration::from_secs(60)).await;
+    while let Err(e) = recover(&db, now()).await {
+        tracing::error!("recover interrupted emails: {e}");
+        tokio::time::sleep(RETRY).await;
     }
     loop {
-        let wait = match step(&db, &net, now()).await {
+        let wait = match step(&db, &net, now).await {
             Ok(Next::Now) => continue,
             Ok(Next::At(at)) => Some(at - now()),
             Ok(Next::Idle) => None,
@@ -53,6 +55,18 @@ pub async fn run(db: SqlitePool, net: Net, sender: Sender) {
     }
 }
 
+/// Emails the last run left being sent may have gone out, so they are marked maybe sent, and their
+/// mentors are contacted from those mailboxes from now on. `run` does this first.
+pub async fn recover(db: &SqlitePool, now: i64) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
+    for e in email::interrupted(&mut tx, now).await? {
+        if let Some(mailbox_id) = e.mailbox_id {
+            mentor::assign_mailbox(&mut tx, e.mentor_id, mailbox_id).await?;
+        }
+    }
+    tx.commit().await
+}
+
 /// What the sender does after a step.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Next {
@@ -64,31 +78,33 @@ pub enum Next {
     Idle,
 }
 
-/// Sends the first approved email that can go at `now`, if any.
-pub async fn step(db: &SqlitePool, net: &Net, now: i64) -> Result<Next, sqlx::Error> {
+/// Sends the first approved email that can go now, if any. `now` tells the time in UTC
+/// milliseconds; sending takes a while.
+pub async fn step(db: &SqlitePool, net: &Net, now: impl Fn() -> i64) -> Result<Next, sqlx::Error> {
+    let at = now();
     let due = sqlx::query!(
         "SELECT e.id, m.mailbox_id AS own FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.state = 'approved' AND e.planned_at <= ?
          ORDER BY e.planned_at, e.id",
-        now
+        at
     )
     .fetch_all(db)
     .await?;
     let mut next = sqlx::query_scalar!(
         r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?"#,
-        now
+        at
     )
     .fetch_one(db)
     .await?;
     let rotation = profile::rotation(db).await?;
-    let mailboxes = usage(db, now).await?;
+    let mailboxes = usage(db, at).await?;
     for e in due {
-        match choose(rotation, e.own, &mailboxes, now) {
-            Some((mailbox, at)) if at <= now => {
-                send(db, net, e.id, mailbox, now).await?;
+        match choose(rotation, e.own, &mailboxes, at) {
+            Some((mailbox, ready)) if ready <= at => {
+                send(db, net, e.id, mailbox, &now).await?;
                 return Ok(Next::Now);
             }
-            Some((_, at)) => next = Some(next.map_or(at, |n| n.min(at))),
+            Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
             // Waits for a mailbox to be added.
             None => {}
         }
@@ -172,80 +188,143 @@ fn choose(
     chosen.map(|m| (m.id, m.ready_at(now)))
 }
 
-/// Logs in, marks the email as being sent, and hands it over (docs/design.md#桌面端).
+/// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
 async fn send(
     db: &SqlitePool,
     net: &Net,
     id: i64,
     mailbox_id: i64,
-    now: i64,
+    now: &impl Fn() -> i64,
 ) -> Result<(), sqlx::Error> {
     // Deleted since the mailboxes were read; the next step picks another.
     let Some(account) = mailbox::account(db, mailbox_id).await? else {
         return Ok(());
     };
-    let e = sqlx::query!(
-        r#"SELECT e.mentor_id, e.message_id, e.subject AS "subject!", e.html AS "html!",
-             e.text AS "text!", m.name, m.email
-           FROM email e JOIN mentor m ON m.id = e.mentor_id WHERE e.id = ?"#,
-        id
-    )
-    .fetch_one(db)
-    .await?;
-    let Some(to) = e.email else {
-        return email::failed(db, id, NO_ADDRESS, now).await;
-    };
-    let message_id = e
-        .message_id
-        .unwrap_or_else(|| mailbox::message_id(&account));
-    let letter = Letter {
-        message_id: &message_id,
-        to_name: &e.name,
-        to: &to,
-        subject: &e.subject,
-        html: &e.html,
-        text: &e.text,
-    };
-    let prepared = async {
-        let outgoing = mailbox::compose(&account, &letter)?;
-        Ok::<_, MailError>((mailbox::login(net, &account).await?, outgoing))
-    };
-    let (smtp, outgoing) = match prepared.await {
-        Ok(prepared) => prepared,
+    let smtp = match mailbox::login(net, &account).await {
+        Ok(smtp) => smtp,
         Err(err) => {
             tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
-            return email::failed(db, id, &err.message(), now).await;
+            return email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await;
         }
     };
-    let mut tx = db.begin().await?;
-    if !email::start_sending(
-        &mut tx,
-        id,
-        mailbox_id,
-        account.address.as_ref(),
-        &message_id,
-        now,
-    )
-    .await?
-    {
+    let Some(m) = mark_sending(db, id, &account, mailbox_id, now()).await? else {
         smtp.quit();
         return Ok(());
-    }
-    mentor::assign_mailbox(&mut tx, e.mentor_id, mailbox_id).await?;
-    tx.commit().await?;
-    match smtp.send(&outgoing).await {
-        Ok(()) => {
-            tracing::info!("email {id} sent from mailbox {mailbox_id}");
-            email::sent(db, id, now).await
-        }
-        Err(err) => {
-            tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
-            match err {
-                SendError::NotSent(_) => email::failed(db, id, &err.message(), now).await,
-                SendError::Unknown(_) => email::maybe_sent(db, id, &err.message(), now).await,
+    };
+    let outgoing = match &m.to {
+        Some(to) => mailbox::compose(
+            &account,
+            &Letter {
+                message_id: &m.handover.message_id,
+                to_name: &m.to_name,
+                to,
+                subject: &m.handover.subject,
+                html: &m.handover.html,
+                text: &m.handover.text,
+            },
+        )
+        .map_err(|e| e.message()),
+        None => Err(NO_ADDRESS.to_owned()),
+    };
+    let outcome = match outgoing {
+        Ok(outgoing) => match smtp.send(&outgoing).await {
+            Ok(()) => {
+                tracing::info!("email {id} sent from mailbox {mailbox_id}");
+                Outcome::Sent
             }
+            Err(err) => {
+                tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
+                match err {
+                    SendError::NotSent(_) => Outcome::Failed(err.message()),
+                    SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
+                }
+            }
+        },
+        Err(error) => {
+            smtp.quit();
+            Outcome::Failed(error)
+        }
+    };
+    // Only this run knows how SMTP answered, so it keeps trying until that is written.
+    while let Err(e) = record(db, id, m.handover.mentor_id, mailbox_id, &outcome, now()).await {
+        tracing::error!("record email {id}: {e}");
+        tokio::time::sleep(RETRY).await;
+    }
+    Ok(())
+}
+
+/// What goes out, read as the email is marked as being handed over.
+struct Marked {
+    handover: email::Handover,
+    to_name: String,
+    to: Option<String>,
+}
+
+/// Marks the email as being handed over in a transaction synced to the disk itself: were the mark
+/// lost to a power cut, the email would go out again after a restart. The connection is closed
+/// after, so the pool's connections keep their faster setting.
+async fn mark_sending(
+    db: &SqlitePool,
+    id: i64,
+    account: &mailbox::Account,
+    mailbox_id: i64,
+    now: i64,
+) -> Result<Option<Marked>, sqlx::Error> {
+    let mut conn = db.acquire().await?.detach();
+    // fullfsync, on macOS, gets the commit past the drive's own cache.
+    sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON")
+        .execute(&mut conn)
+        .await?;
+    let mut tx = conn.begin().await?;
+    let message_id = mailbox::message_id(account);
+    let from: &str = account.address.as_ref();
+    let Some(handover) =
+        email::start_sending(&mut tx, id, mailbox_id, from, &message_id, now).await?
+    else {
+        return Ok(None);
+    };
+    let mentor = sqlx::query!(
+        "SELECT name, email FROM mentor WHERE id = ?",
+        handover.mentor_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    conn.close().await?;
+    Ok(Some(Marked {
+        handover,
+        to_name: mentor.name,
+        to: mentor.email,
+    }))
+}
+
+/// How SMTP answered.
+enum Outcome {
+    Sent,
+    MaybeSent(String),
+    Failed(String),
+}
+
+async fn record(
+    db: &SqlitePool,
+    id: i64,
+    mentor_id: i64,
+    mailbox_id: i64,
+    outcome: &Outcome,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
+    match outcome {
+        Outcome::Sent => email::sent(&mut tx, id, now).await?,
+        Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
+        Outcome::Failed(error) => {
+            email::failed(&mut tx, id, error, now).await?;
+            return tx.commit().await;
         }
     }
+    // It went out, or may have: later emails to this mentor go from the same mailbox.
+    mentor::assign_mailbox(&mut tx, mentor_id, mailbox_id).await?;
+    tx.commit().await
 }
 
 /// UTC milliseconds.
