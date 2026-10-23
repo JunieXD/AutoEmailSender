@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mt.mentor_id, t.name, t.color\n           FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id\n           WHERE mt.mentor_id IN (SELECT value FROM json_each(?1))\n           ORDER BY t.position",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_tag",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tag",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "color",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tag",
+            "name": "color"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3afce856870f848300317075aeb8af4d131b71e373a62dd54ae980bb9ac54297"
+}

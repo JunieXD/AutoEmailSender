@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"n!: i64\"\n           FROM mentor m\n           WHERE m.trashed_at IS NULL\n             AND (?1 IS NULL\n                  OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))\n                  OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))\n             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))\n             AND (?3 IS NULL OR m.name LIKE ?3)",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2edb4be5d08d423c45435d2e0fdd55370f5fbfdccdd00ee055ff282b91376efa"
+}

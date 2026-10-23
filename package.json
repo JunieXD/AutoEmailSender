@@ -1,0 +1,17 @@
+{
+  "name": "auto-email-sender",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "package": "tauri build",
+    "check": "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && cargo xtask types --check && pnpm sqlx:db && cargo sqlx prepare --check --workspace -D sqlite:target/sqlx.db -- --all-targets && pnpm --dir ui check",
+    "fmt": "cargo fmt && pnpm --dir ui exec prettier --write .",
+    "sqlx:db": "cargo sqlx database reset -y --source crates/db/migrations -D sqlite:target/sqlx.db",
+    "sqlx": "pnpm sqlx:db && cargo sqlx prepare --workspace -D sqlite:target/sqlx.db -- --all-targets"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

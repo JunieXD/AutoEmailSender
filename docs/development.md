@@ -2,6 +2,40 @@
 
 [AGENTS.md](../AGENTS.md) 的原则落到这个项目上的具体做法。能由工具检查的写在 lint 和编译配置里，不在这里重复。
 
+## 目录
+
+| 目录 | 内容 |
+|---|---|
+| `crates/db` | 迁移和打开数据库 |
+| `crates/mentor` | 导师：列表、搜索、添加 |
+| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；界面用的 TypeScript 类型从这里生成 |
+| `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |
+| `xtask` | 仓库命令：生成类型、示例数据、基准 |
+| `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
+
+每个领域一个 crate，依赖只朝一个方向：`app` → `api` → 各领域 → `db`。
+
+## 命令
+
+第一次：装好 Rust、Node 和 pnpm，再装 sqlx 的命令行工具：`cargo install sqlx-cli --no-default-features --features sqlite,sqlx-toml`。
+
+| 命令 | 做什么 |
+|---|---|
+| `pnpm install` | 装依赖 |
+| `cargo xtask seed` | 给开发版填示例数据 |
+| `pnpm dev` | 启动开发版，界面改了自动刷新 |
+| `pnpm check` | 提交前的全部检查：格式、clippy、测试，生成的类型和查询元数据是否最新，界面的类型检查和 lint |
+| `pnpm fmt` | 格式化 Rust 和界面的代码 |
+| `pnpm sqlx` | 改了 SQL 或迁移后，重新生成 `.sqlx` 里的查询元数据 |
+| `cargo xtask types` | 改了操作或它们的类型后，重新生成 `ui/src/api/types.ts` |
+| `cargo xtask bench` | 按[性能预算](data-model.md#性能)的规模测高频查询 |
+| `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
+| `pnpm package` | 打包安装包 |
+
+- 开发版的数据在仓库的 `.dev-data` 里，和装好的应用分开。
+- 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
+- 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
+
 ## 代码
 
 - 规则多的逻辑写成纯函数，不碰数据库和网络：服务层读数据、调用纯函数、写回结果。
@@ -36,7 +70,8 @@
 - 迁移只往后加，发布后不改已有的迁移。
 - 每次发布前，用上一版的真实数据库（去掉个人信息后作为测试数据）测一遍升级。
 - 新的高频查询先用 `EXPLAIN QUERY PLAN` 确认走了索引；列表只取要显示的列，并且分页。
-- 基准：生成[数据模型](data-model.md#性能)里那个规模的数据，测首页、往来、发送计划和统计的查询。改表结构或高频查询时跑一遍，超出预算当 bug 修。
+- 可选的筛选条件写成 `(?1 IS NULL OR …)`，一条查询就能在编译时检查。条件只引用列表的主表，别的表上的条件写成 `IN` 子查询：SQLite 每次查询只算一遍这个集合，不会为主表的每一行连接一次别的表。
+- 基准：`cargo xtask bench` 生成[数据模型](data-model.md#性能)里那个规模的数据，测高频查询并检查预算；新的高频查询写好后加进去。改表结构或高频查询时跑一遍，超出预算当 bug 修。
 
 ## 测试
 

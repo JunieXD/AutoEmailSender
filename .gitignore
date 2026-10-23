@@ -1,4 +1,8 @@
 node_modules/
+/target/
+/.dev-data/
+/ui/dist/
+/crates/app/gen/schemas/
 .env
 .DS_Store
 .worktrees/

@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+/* Tokens from docs/ui.md#颜色; names follow shadcn/ui. */
+:root {
+  color-scheme: light;
+  --sidebar: #f3f0ee;
+  --background: #ffffff;
+  --foreground: #292524;
+  --muted-foreground: #6f6762;
+  --faint: #a39b95;
+  --muted: #f6f3f1;
+  --press: #ece7e4;
+  --border: #ece7e3;
+  --input: #ddd6d1;
+  --primary: #991b1b;
+  --primary-foreground: #ffffff;
+  --ring: var(--primary);
+  --brand-text: #991b1b;
+  --selected: #fbeeec;
+  --mine: #fbeeec;
+  --unread: #e5383b;
+  --info: #3f6aa8;
+  --success: #2c7a4f;
+  --success-soft: #e4f2e8;
+  --warning: #985a0c;
+  --warning-soft: #fdf1da;
+  --destructive: #c4321f;
+  --highlight: #ffe9a8;
+  --diff-insert: #dcf0e2;
+  --diff-delete: #fbe1dd;
+  --avatar-1: #f6e2de;
+  --avatar-2: #f3e8d5;
+  --avatar-3: #e2e8f2;
+  --avatar-4: #e3eedf;
+  --avatar-5: #ece3f1;
+  --scroll: color-mix(in srgb, var(--foreground) 20%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --sidebar: #141110;
+    --background: #1d1a18;
+    --foreground: #ede8e4;
+    --muted-foreground: #aba29c;
+    --faint: #7a716b;
+    --muted: #26211e;
+    --press: #302a26;
+    --border: #2e2825;
+    --input: #3f3733;
+    --primary: #c13b3b;
+    --brand-text: #f1958c;
+    --selected: #33201e;
+    --mine: #2c2321;
+    --unread: #ff5b52;
+    --info: #88a9dd;
+    --success: #7cc79a;
+    --success-soft: #18291f;
+    --warning: #e8b25a;
+    --warning-soft: #2f2416;
+    --destructive: #ff7a66;
+    --highlight: #574516;
+    --diff-insert: #183626;
+    --diff-delete: #46231f;
+    --avatar-1: #3d2624;
+    --avatar-2: #382d1e;
+    --avatar-3: #232a3a;
+    --avatar-4: #243122;
+    --avatar-5: #302638;
+  }
+}
+
+@theme inline {
+  --color-sidebar: var(--sidebar);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
+  --color-muted: var(--muted);
+  --color-press: var(--press);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+  --color-brand-text: var(--brand-text);
+  --color-selected: var(--selected);
+  --color-mine: var(--mine);
+  --color-unread: var(--unread);
+  --color-info: var(--info);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-highlight: var(--highlight);
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-5: var(--avatar-5);
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  /* docs/ui.md#字体 */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-2xl: 24px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    font-variant-numeric: tabular-nums;
+    background: var(--sidebar);
+    color: var(--foreground);
+  }
+  /* docs/ui.md#滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: var(--scroll) padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--foreground) 35%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+}
