@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+
+[env]
+# Queries are checked at compile time against the metadata in .sqlx; `pnpm sqlx` refreshes it.
+SQLX_OFFLINE = "true"

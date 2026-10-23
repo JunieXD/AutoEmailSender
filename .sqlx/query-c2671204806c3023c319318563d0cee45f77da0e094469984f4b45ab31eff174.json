@@ -1,0 +1,177 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name, m.title, m.university, m.school, m.department,\n                  substr(d.research, 1, 120) AS \"research?: String\",\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score,\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM (SELECT m.id FROM mentor m\n                 WHERE m.trashed_at IS NULL\n                   AND (?1 IS NULL\n                        OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))\n                        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))\n                   AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))\n                 ORDER BY m.match_score DESC, m.id\n                 LIMIT ?3 OFFSET ?4) page\n           JOIN mentor m ON m.id = page.id\n           LEFT JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           ORDER BY m.match_score DESC, m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "university",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "department",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "name": "research?: String",
+        "ordinal": 6,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "match_state: MatchColumn",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_state"
+          }
+        }
+      },
+      {
+        "name": "match_score",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_score"
+          }
+        }
+      },
+      {
+        "name": "status?: ContactStatus",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "contact_count?",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "contact_count"
+          }
+        }
+      },
+      {
+        "name": "last_out_at",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      },
+      {
+        "name": "last_reply_at",
+        "ordinal": 12,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_reply_at"
+          }
+        }
+      },
+      {
+        "name": "unread?: bool",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "unread"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      null,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c2671204806c3023c319318563d0cee45f77da0e094469984f4b45ab31eff174"
+}
