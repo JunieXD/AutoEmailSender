@@ -1,13 +1,50 @@
+import HardBreak from "@tiptap/extension-hard-break";
+import LinkMark from "@tiptap/extension-link";
 import { Markdown } from "@tiptap/markdown";
 import { Plugin } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { type Editor, EditorContent, Extension, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Bold, Braces, Italic, Link, List, ListOrdered } from "lucide-react";
-import { useState } from "react";
+import { marked } from "marked";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FIELD, Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+// Letters only have the formats docs/design.md#邮件格式 allows. Markdown for anything else, such as a
+// line starting with "#" or a bare address, stays text: the editor could not hold it, and the
+// letter would lose it.
+const off = () => undefined;
+marked.use({
+  // A line break in a letter is meant as one.
+  breaks: true,
+  tokenizer: {
+    heading: off,
+    lheading: off,
+    hr: off,
+    blockquote: off,
+    code: off,
+    fences: off,
+    html: off,
+    def: off,
+    table: off,
+    tag: off,
+    codespan: off,
+    del: off,
+    url: off,
+    autolink: off,
+  },
+});
+
+// Brackets and spaces in an address would end a Markdown link early.
+const LetterLink = LinkMark.extend({
+  renderMarkdown: (node, h) =>
+    `[${h.renderChildren(node)}](${String(node.attrs?.href).replace(/[()<> ]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`,
+});
+
+// A backslash, unlike two trailing spaces, keeps two breaks in a row from reading as a new paragraph.
+const LetterBreak = HardBreak.extend({ renderMarkdown: () => "\\\n" });
 
 /**
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
@@ -50,11 +87,14 @@ export function LetterEditor({
   id,
   markdown,
   placeholders,
+  disabled,
   onChange,
 }: {
   id: string;
   markdown: string;
   placeholders: string[];
+  /** While the letter is being saved, so nothing typed meanwhile goes unsaved. */
+  disabled: boolean;
   onChange: (markdown: string) => void;
 }) {
   const editor = useEditor({
@@ -67,11 +107,13 @@ export function LetterEditor({
         horizontalRule: false,
         strike: false,
         underline: false,
-        // Not autolinking also keeps what is typed after a link out of it.
-        link: { openOnClick: false, autolink: false },
+        link: false,
+        hardBreak: false,
       }),
-      // A line break in a letter is meant as one.
-      Markdown.configure({ markedOptions: { breaks: true } }),
+      // Not autolinking also keeps what is typed after a link out of it.
+      LetterLink.configure({ openOnClick: false, autolink: false }),
+      LetterBreak,
+      Markdown.configure({ marked }),
       highlightPlaceholders(placeholders),
     ],
     content: markdown,
@@ -84,6 +126,7 @@ export function LetterEditor({
     },
     onUpdate: ({ editor: e }) => onChange(e.getMarkdown()),
   });
+  useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
   return (
     <div className="flex flex-col gap-1.5">
       <Toolbar editor={editor} placeholders={placeholders} />

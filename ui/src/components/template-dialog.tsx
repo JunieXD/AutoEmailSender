@@ -92,6 +92,7 @@ export function TemplateDialog({
                     id="template-body"
                     markdown={initial.bodyMd}
                     placeholders={placeholders}
+                    disabled={save.isPending}
                     onChange={(bodyMd) => {
                       setForm((f) => ({ ...f, bodyMd }));
                       setBodyEdited(true);

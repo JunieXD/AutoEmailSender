@@ -41,14 +41,8 @@ export function TemplatesSection() {
 }
 
 function TemplateRow({ template: t, placeholders }: { template: TemplateSummary; placeholders: string[] }) {
-  const [editing, setEditing] = useState(false);
-  // Loaded afresh for each edit, so the dialog never starts from an old body.
-  const full = useQuery({
-    queryKey: ["getTemplate", t.id],
-    queryFn: () => call("getTemplate", { id: t.id }),
-    enabled: editing,
-    gcTime: 0,
-  });
+  // Each edit mounts its own loader, so it starts from the template as saved now.
+  const [edit, setEdit] = useState(0);
   const queryClient = useQueryClient();
   const remove = useMutation({
     mutationFn: () => call("deleteTemplate", { id: t.id }),
@@ -62,11 +56,7 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
           <p className="truncate text-sm text-muted-foreground">{t.subject}</p>
         </div>
         <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            disabled={editing && !full.isError}
-            onClick={() => (editing ? void full.refetch() : setEditing(true))}
-          >
+          <Button variant="ghost" onClick={() => setEdit((n) => n + 1)}>
             编辑
           </Button>
           <Confirm
@@ -82,13 +72,16 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
           />
         </div>
       </div>
-      <p className="text-sm empty:hidden" aria-live="polite">
-        {editing && full.isError && <span className="text-destructive">模板没能打开：{errorMessage(full.error)}</span>}
-        {remove.isError && <span className="text-destructive">{errorMessage(remove.error)}</span>}
-      </p>
-      {editing && full.data && (
-        <TemplateDialog template={full.data} placeholders={placeholders} onClose={() => setEditing(false)} />
-      )}
+      {remove.isError && <p className="text-sm text-destructive">{errorMessage(remove.error)}</p>}
+      {edit > 0 && <EditTemplate key={edit} id={t.id} placeholders={placeholders} onClose={() => setEdit(0)} />}
     </li>
   );
+}
+
+function EditTemplate({ id, placeholders, onClose }: { id: number; placeholders: string[]; onClose: () => void }) {
+  const template = useQuery({ queryKey: ["getTemplate", id], queryFn: () => call("getTemplate", { id }), gcTime: 0 });
+  if (template.error) {
+    return <p className="text-sm text-destructive">模板没能打开：{errorMessage(template.error)}</p>;
+  }
+  return template.data && <TemplateDialog template={template.data} placeholders={placeholders} onClose={onClose} />;
 }
