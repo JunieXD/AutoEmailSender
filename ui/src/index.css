@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* docs/ui.md#布局: the window widths where the layout changes. */
+@custom-variant narrow (@media (width <= 1240px));
+@custom-variant phone (@media (width <= 760px));
+/* Where the mentor table's narrow-window columns no longer fit, its rows become cards. */
+@custom-variant cards (@container (width < 782px));
+
 /* Tokens from docs/ui.md#颜色; names follow shadcn/ui. */
 :root {
   color-scheme: light;
@@ -103,6 +109,8 @@
   --color-avatar-4: var(--avatar-4);
   --color-avatar-5: var(--avatar-5);
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  /* Spacing in pixels: the 15px root font size (docs/ui.md#字体) would otherwise scale it. */
+  --spacing: 4px;
   /* docs/ui.md#字体 */
   --text-xs: 12px;
   --text-sm: 13px;
