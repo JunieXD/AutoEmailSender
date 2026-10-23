@@ -131,6 +131,12 @@ operations! {
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
     "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
+    "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
+    "getTemplate" => get_template(TemplateId) -> template::Template;
+    "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
+    "updateTemplate" => update_template(TemplateEdit) -> ();
+    "deleteTemplate" => delete_template(TemplateId) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -633,6 +639,59 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
 
 async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
     Ok(profile::update(&ctx.db, &form).await?)
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+pub struct TemplateId {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TemplateEdit {
+    pub id: i64,
+    #[serde(flatten)]
+    pub form: template::TemplateForm,
+}
+
+const NO_TEMPLATE: &str = "找不到这个模板，可能已被删除。";
+
+async fn list_placeholders(_: &Context, _: Nothing) -> Result<&'static [&'static str], CallError> {
+    Ok(template::PLACEHOLDERS)
+}
+
+async fn list_templates(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<template::TemplateSummary>, CallError> {
+    Ok(template::list(&ctx.db).await?)
+}
+
+async fn get_template(ctx: &Context, input: TemplateId) -> Result<template::Template, CallError> {
+    template::get(&ctx.db, input.id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_TEMPLATE))
+}
+
+async fn add_template(
+    ctx: &Context,
+    form: template::TemplateForm,
+) -> Result<TemplateId, CallError> {
+    let fields = form.check().map_err(CallError::invalid)?;
+    let id = template::create(&ctx.db, &fields, now()).await?;
+    Ok(TemplateId { id })
+}
+
+async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    if template::update(&ctx.db, input.id, &fields, now()).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_TEMPLATE))
+    }
+}
+
+async fn delete_template(ctx: &Context, input: TemplateId) -> Result<(), CallError> {
+    Ok(template::delete(&ctx.db, input.id).await?)
 }
 
 /// UTC milliseconds.

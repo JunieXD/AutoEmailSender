@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE template SET name = ?, subject = ?, body_md = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "cf8392fb6508aa941ab2ddef0d5623ba092ebe7e256526e5d1ccfdac1a8bb758"
+}

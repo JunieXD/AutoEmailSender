@@ -204,6 +204,16 @@ export type TagMove = { id: number, direction: Direction, };
 
 export type TagName = { id: number, name: string, };
 
+export type Template = { id: number, name: string, subject: string, bodyMd: string, };
+
+export type TemplateEdit = { id: number, name: string, subject: string, bodyMd: string, };
+
+export type TemplateForm = { name: string, subject: string, bodyMd: string, };
+
+export type TemplateId = { id: number, };
+
+export type TemplateSummary = { id: number, name: string, subject: string, };
+
 export type TrashQuery = { 
 /**
  * Starts at 1.
@@ -237,6 +247,12 @@ export interface Operations {
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
   updateProfile: { input: ProfileForm; output: null };
+  listPlaceholders: { input: Nothing; output: Array<string> };
+  listTemplates: { input: Nothing; output: Array<TemplateSummary> };
+  getTemplate: { input: TemplateId; output: Template };
+  addTemplate: { input: TemplateForm; output: TemplateId };
+  updateTemplate: { input: TemplateEdit; output: null };
+  deleteTemplate: { input: TemplateId; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };
