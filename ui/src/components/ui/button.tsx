@@ -9,10 +9,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary-hover",
+        quiet: "bg-muted hover:bg-press",
         ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
       },
       size: {
         default: "h-[38px] px-4",
+        sm: "h-7 rounded-full px-[11px] text-[12.5px] font-normal",
         icon: "size-[34px]",
       },
     },

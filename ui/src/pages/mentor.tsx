@@ -5,9 +5,11 @@ import { ChevronLeft, UserRound } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
+import { formOf, MentorDialog } from "@/components/mentor-dialog";
 import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { day } from "@/format";
 
 /** One mentor: the correspondence in the middle, the profile and match analysis on the right (docs/ui.md#页面). */
@@ -102,18 +104,47 @@ function Header({ mentor: m, onProfile }: { mentor: MentorDetail; onProfile: () 
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section>
-      <h2 className="mb-2 font-medium text-muted-foreground">{title}</h2>
+      <div className="mb-2 flex h-5 items-center justify-between">
+        <h2 className="font-medium text-muted-foreground">{title}</h2>
+        {action}
+      </div>
       {children}
     </section>
   );
 }
 
 function Profile({ mentor: m }: { mentor: MentorDetail }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const edit = (
+    <Button
+      variant="quiet"
+      size="sm"
+      className="text-muted-foreground hover:text-foreground"
+      onClick={() => setEditing(true)}
+    >
+      编辑
+    </Button>
+  );
   return (
-    <Section title="资料">
+    <Section title="资料" action={edit}>
+      {editing && (
+        <MentorDialog
+          title="编辑资料"
+          action="保存"
+          initial={formOf(m)}
+          save={(form) => call("updateMentor", { id: m.id, ...form })}
+          onSaved={() => {
+            void queryClient.invalidateQueries({ queryKey: ["getMentor", m.id] });
+            void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
       <dl className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3 gap-y-2 [&_dd]:wrap-anywhere [&_dt]:text-muted-foreground">
         <dt>邮箱</dt>
         <dd>{m.email ?? <Missing>未填写</Missing>}</dd>
@@ -224,7 +255,7 @@ function Note({ id, note }: { id: number; note: string | null }) {
   const [text, setText] = useState(() => (last && last.status !== "success" ? String(last.variables) : (note ?? "")));
   return (
     <>
-      <textarea
+      <Textarea
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -232,7 +263,6 @@ function Note({ id, note }: { id: number; note: string | null }) {
         }}
         aria-label="备注"
         placeholder="仅自己可见"
-        className="block min-h-16 w-full resize-y rounded-md bg-muted px-3 py-2.5 leading-relaxed outline-none placeholder:text-faint focus:ring-[1.5px] focus:ring-primary focus:ring-inset"
       />
       {last?.status === "error" && <p className="mt-1.5 text-destructive">备注未能保存：{errorMessage(last.error)}</p>}
     </>

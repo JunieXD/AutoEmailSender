@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET name = ?, email = ?, title = ?, university = ?, school = ?, department = ?,\n           homepage_url = ?, updated_at = ?\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "4875abccd07f5350f2d772e69d6e3acb78e692ed9f79370f2c43f83757a680f2"
+}

@@ -1,14 +1,14 @@
 // Marks the whole file as test code, so clippy's test allowances cover it.
 #![cfg(test)]
 
-use mentor::{MatchResult, NewMentor};
+use mentor::{MatchResult, MentorFields};
 use sqlx::SqlitePool;
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn mentor_page_reads_analysis_and_note(db: SqlitePool) {
-    let new = NewMentor {
+    let new = MentorFields {
         name: "张伟".into(),
-        ..NewMentor::default()
+        ..MentorFields::default()
     };
     let id = mentor::create(&db, &new, 0).await.unwrap();
     sqlx::query(

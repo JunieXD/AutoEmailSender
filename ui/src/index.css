@@ -41,6 +41,7 @@
   --avatar-4: #e3eedf;
   --avatar-5: #ece3f1;
   --scroll: color-mix(in srgb, var(--foreground) 20%, transparent);
+  --pop-shadow: rgb(41 37 36 / 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,6 +76,7 @@
     --avatar-3: #232a3a;
     --avatar-4: #243122;
     --avatar-5: #302638;
+    --pop-shadow: rgb(0 0 0 / 0.5);
   }
 }
 
@@ -121,6 +123,8 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 20px;
+  /* Menus, panels and dialogs float over the page. */
+  --shadow-pop: 0 16px 48px var(--pop-shadow), 0 0 0 1px var(--border);
 }
 
 @layer base {

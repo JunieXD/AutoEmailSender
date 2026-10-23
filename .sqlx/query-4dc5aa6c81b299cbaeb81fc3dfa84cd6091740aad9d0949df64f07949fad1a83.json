@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor_detail SET research = ? WHERE mentor_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4dc5aa6c81b299cbaeb81fc3dfa84cd6091740aad9d0949df64f07949fad1a83"
+}

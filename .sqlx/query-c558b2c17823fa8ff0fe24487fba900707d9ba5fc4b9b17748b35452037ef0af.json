@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor_search WHERE rowid = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c558b2c17823fa8ff0fe24487fba900707d9ba5fc4b9b17748b35452037ef0af"
+}

@@ -1,9 +1,10 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { ContactStatus, MatchState, MentorRow } from "@/api/types";
+import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,8 @@ export function MentorsPage() {
   });
   const total = query.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -53,6 +56,23 @@ export function MentorsPage() {
           value={search.q ?? ""}
           onChange={(q) => navigate({ search: (s) => ({ ...s, q: q || undefined, page: undefined }) })}
         />
+        <Button aria-label="添加导师" className="phone:px-2.5" onClick={() => setAdding(true)}>
+          <Plus strokeWidth={1.6} />
+          <span className="phone:hidden">添加导师</span>
+        </Button>
+        {adding && (
+          <MentorDialog
+            title="添加导师"
+            action="添加"
+            initial={EMPTY_FORM}
+            save={(form) => call("addMentor", form)}
+            onSaved={({ id }) => {
+              void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
+              void navigate({ to: "/mentors/$mentorId", params: { mentorId: id } });
+            }}
+            onClose={() => setAdding(false)}
+          />
+        )}
       </header>
 
       <div className="px-7 pb-3 phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
@@ -78,7 +98,7 @@ export function MentorsPage() {
           search.status || search.q ? (
             <Notice title="没有符合条件的导师" detail="换个关键词或联系状态再试。" />
           ) : (
-            <Notice title="还没有导师" detail="从学院官网智能抓取、从导师库添加，或导入表格。" />
+            <Notice title="还没有导师" detail="点“添加导师”填写导师的资料。" />
           )
         ) : (
           <MentorTable mentors={query.data?.mentors ?? []} />
