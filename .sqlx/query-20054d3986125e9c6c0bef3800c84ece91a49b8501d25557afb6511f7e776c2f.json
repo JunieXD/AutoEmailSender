@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port, smtp_security,\n           imap_host, imap_port, imap_security, auth, secret, daily_limit, min_interval_s,\n           rotation_order, created_at)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?, ?,\n           (SELECT coalesce(max(rotation_order), 0) + 1 FROM mailbox), ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "20054d3986125e9c6c0bef3800c84ece91a49b8501d25557afb6511f7e776c2f"
+}

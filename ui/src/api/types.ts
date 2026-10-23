@@ -8,7 +8,31 @@ export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
 export type Direction = "up" | "down";
 
-export type ErrorCode = "bad_input" | "not_found" | "invalid" | "internal";
+export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
+
+export type Mailbox = { id: number, address: string, senderName: string, 
+/**
+ * A provider's id, or `providers::CUSTOM`.
+ */
+provider: string, smtp: Server, imap: Server, dailyLimit: number, 
+/**
+ * The shortest wait between two emails, in seconds.
+ */
+minIntervalS: number, };
+
+export type MailboxEdit = { id: number, 
+/**
+ * Blank keeps the saved one.
+ */
+secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
+
+export type MailboxId = { id: number, };
+
+export type MailboxTest = { 
+/**
+ * The saved mailbox being edited, whose secret a blank one stands for.
+ */
+id?: number, secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
 export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
 
@@ -52,9 +76,36 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
+export type NewMailbox = { secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
+
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
+
+export type Provider = { id: string, name: string, 
+/**
+ * The address domains it serves. Empty for services that host an organisation's own domain,
+ * which the user picks by name.
+ */
+domains: Array<string>, setup: Setup, };
+
+export type Security = "tls" | "starttls";
+
+export type Server = { host: string, port: number, security: Security, };
+
+export type Setup = { "kind": "password", smtp: Server, imap: Server, 
+/**
+ * What the provider calls that password.
+ */
+secret: string, 
+/**
+ * How to turn on SMTP and IMAP and get the password.
+ */
+steps: Array<string>, 
+/**
+ * Where the steps start.
+ */
+url: string, } | { "kind": "unsupported", reason: string, };
 
 export type Tag = { id: number, name: string, 
 /**
@@ -99,4 +150,12 @@ export interface Operations {
   recolorTag: { input: TagColor; output: null };
   moveTag: { input: TagMove; output: null };
   deleteTag: { input: TagId; output: null };
+  listProviders: { input: Nothing; output: Array<Provider> };
+  listMailboxes: { input: Nothing; output: Array<Mailbox> };
+  addMailbox: { input: NewMailbox; output: MailboxId };
+  updateMailbox: { input: MailboxEdit; output: null };
+  deleteMailbox: { input: MailboxId; output: null };
+  testSending: { input: MailboxTest; output: null };
+  testReceiving: { input: MailboxTest; output: null };
+  sendTestMail: { input: MailboxId; output: null };
 }

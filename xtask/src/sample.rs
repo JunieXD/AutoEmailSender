@@ -154,8 +154,9 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     let mut rng = Rng::with_seed(7);
     let mut tx = db.begin().await?;
     sqlx::query(
-        "INSERT INTO mailbox VALUES (1, 'linxiao@buaa.edu.cn', '林晓', 'coremail', 'smtp.buaa.edu.cn', 465,
-           'tls', 'imap.buaa.edu.cn', 993, 'tls', 'password', 100, 60, 1, NULL, NULL, ?)",
+        // A domain with no mail servers, so testing this mailbox reaches no one.
+        "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
+           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, ?)",
     )
     .bind(now)
     .execute(&mut *tx)
@@ -297,7 +298,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         .bind(state)
         .bind(rendered.then_some(at))
         .bind(out.then_some(1))
-        .bind(out.then_some("linxiao@buaa.edu.cn"))
+        .bind(out.then_some("linxiao@example.com"))
         .bind(out.then(|| format!("<e{i}@aes>")))
         .bind(out.then_some(at))
         .bind(matches!(state, "failed" | "bounced" | "canceled").then_some("示例错误"))
