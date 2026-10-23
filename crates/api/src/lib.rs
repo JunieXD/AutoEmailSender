@@ -497,7 +497,7 @@ pub struct ModelConfigEdit {
     pub id: i64,
     #[serde(flatten)]
     pub form: model::ModelForm,
-    /// Blank keeps the saved one.
+    /// Blank keeps the saved one, unless the provider or address changed.
     pub api_key: String,
 }
 
@@ -505,7 +505,8 @@ pub struct ModelConfigEdit {
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelSource {
-    /// The saved configuration being edited, whose API key a blank one stands for.
+    /// The saved configuration being edited, whose API key a blank one stands for while the
+    /// provider and address stay the same.
     #[ts(optional)]
     pub id: Option<i64>,
     pub provider: String,
@@ -518,7 +519,8 @@ pub struct ModelSource {
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelTest {
-    /// The saved configuration being edited, whose API key a blank one stands for.
+    /// The saved configuration being edited, whose API key a blank one stands for while the
+    /// provider and address stay the same.
     #[ts(optional)]
     pub id: Option<i64>,
     #[serde(flatten)]
@@ -555,8 +557,8 @@ async fn add_model_config(
 
 async fn update_model_config(ctx: &Context, input: ModelConfigEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    let api_key = model::checked_key(&input.api_key);
-    if model::update(&ctx.db, input.id, &fields, api_key.as_deref()).await? {
+    let api_key = entered_or_saved_key(ctx, &input.api_key, Some(input.id), &fields.source).await?;
+    if model::update(&ctx.db, input.id, &fields, &api_key).await? {
         Ok(())
     } else {
         Err(CallError::not_found(NO_MODEL_CONFIG))
@@ -580,21 +582,25 @@ async fn test_model(ctx: &Context, input: ModelTest) -> Result<(), CallError> {
     Ok(model::test(&ctx.net, &fields.source.access(api_key), &fields.model).await?)
 }
 
-/// The API key typed in, else the saved one of the configuration being edited. Models on this
-/// computer, such as Ollama's, need none.
+/// The API key typed in, else the saved one of the configuration being edited if it is still for
+/// the same place. Models on this computer, such as Ollama's, need none.
 async fn entered_or_saved_key(
     ctx: &Context,
     api_key: &str,
     id: Option<i64>,
     source: &model::Source,
 ) -> Result<String, CallError> {
-    match (model::checked_key(api_key), id) {
+    if let Some(api_key) = model::checked_key(api_key) {
+        return Ok(api_key);
+    }
+    let saved = match id {
+        Some(id) => model::api_key(&ctx.db, id, source).await?,
+        None => None,
+    };
+    match (saved, source) {
         (Some(api_key), _) => Ok(api_key),
-        (None, Some(id)) => model::api_key(&ctx.db, id)
-            .await?
-            .ok_or_else(|| CallError::not_found(NO_MODEL_CONFIG)),
-        (None, None) if matches!(source, model::Source::Custom(_)) => Ok(String::new()),
-        (None, None) => Err(CallError::invalid(NO_API_KEY.into())),
+        (None, model::Source::Custom(_)) => Ok(String::new()),
+        (None, model::Source::Known(_)) => Err(CallError::invalid(NO_API_KEY.into())),
     }
 }
 

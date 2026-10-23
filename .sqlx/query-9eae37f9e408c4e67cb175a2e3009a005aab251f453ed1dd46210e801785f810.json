@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT api_key FROM model_config WHERE id = ?",
+  "query": "SELECT api_key FROM model_config WHERE id = ? AND provider = ? AND base_url IS ?",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 3
     },
     "nullable": [
       false
     ]
   },
-  "hash": "f4128c248d8ef2852b509884f228eeb571ebc63bb904d62b9c06f14e1d03ff38"
+  "hash": "9eae37f9e408c4e67cb175a2e3009a005aab251f453ed1dd46210e801785f810"
 }

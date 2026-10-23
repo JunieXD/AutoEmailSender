@@ -14,19 +14,18 @@ fn form(provider: &str, base_url: &str) -> ModelForm {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_blank_key_keeps_the_saved_one(db: SqlitePool) {
+async fn a_saved_key_is_only_for_where_it_was_saved(db: SqlitePool) {
     let fields = form("deepseek", "").check().unwrap();
-    let id = model::create(&db, &fields, "first", 0).await.unwrap();
-    let key = async || model::api_key(&db, id).await.unwrap().unwrap();
+    let id = model::create(&db, &fields, "sk-deepseek", 0).await.unwrap();
+    let key = async |source| model::api_key(&db, id, &source).await.unwrap();
 
-    assert!(model::update(&db, id, &fields, None).await.unwrap());
-    assert_eq!(key().await, "first");
-    assert!(
-        model::update(&db, id, &fields, Some("second"))
-            .await
-            .unwrap()
+    assert_eq!(
+        key(Source::check("deepseek", "").unwrap()).await.as_deref(),
+        Some("sk-deepseek")
     );
-    assert_eq!(key().await, "second");
+    assert_eq!(key(Source::check("openai", "").unwrap()).await, None);
+    let elsewhere = Source::check("custom", "https://api.example.com/v1").unwrap();
+    assert_eq!(key(elsewhere).await, None);
 }
 
 #[test]

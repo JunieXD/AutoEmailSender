@@ -161,17 +161,16 @@ pub async fn create(
     Ok(row.last_insert_rowid())
 }
 
-/// Saves the fields, and the API key unless it is None. False when there is no such configuration.
+/// False when there is no such configuration.
 pub async fn update(
     db: &SqlitePool,
     id: i64,
     fields: &ModelFields,
-    api_key: Option<&str>,
+    api_key: &str,
 ) -> Result<bool, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "UPDATE model_config SET name = ?, provider = ?, base_url = ?, model = ?,
-           api_key = coalesce(?, api_key)
+        "UPDATE model_config SET name = ?, provider = ?, base_url = ?, model = ?, api_key = ?
          WHERE id = ?",
         fields.name,
         provider,
@@ -193,9 +192,20 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// The saved API key of a configuration, for testing an edit that leaves it blank.
-pub async fn api_key(db: &SqlitePool, id: i64) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar!("SELECT api_key FROM model_config WHERE id = ?", id)
-        .fetch_optional(db)
-        .await
+/// The saved API key of a configuration, for an edit that leaves it blank; None when the
+/// configuration was saved for another provider or address, which must not get this key.
+pub async fn api_key(
+    db: &SqlitePool,
+    id: i64,
+    source: &Source,
+) -> Result<Option<String>, sqlx::Error> {
+    let (provider, base_url) = (source.id(), source.custom_url());
+    sqlx::query_scalar!(
+        "SELECT api_key FROM model_config WHERE id = ? AND provider = ? AND base_url IS ?",
+        id,
+        provider,
+        base_url,
+    )
+    .fetch_optional(db)
+    .await
 }

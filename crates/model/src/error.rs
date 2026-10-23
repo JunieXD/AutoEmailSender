@@ -16,6 +16,10 @@ pub enum ModelError {
         status: u16,
         reply: String,
     },
+    /// The model replied without an answer, such as when it spent everything on thinking.
+    NoAnswer {
+        finish_reason: Option<String>,
+    },
     /// The provider answered in a way that makes no sense.
     Broken(String),
 }
@@ -35,6 +39,9 @@ impl std::fmt::Display for ModelError {
             }
             ModelError::TimedOut { address } => write!(f, "{address} timed out"),
             ModelError::Refused { status, reply } => write!(f, "refused with {status}: {reply}"),
+            ModelError::NoAnswer { finish_reason } => {
+                write!(f, "no answer, finish reason {finish_reason:?}")
+            }
             ModelError::Broken(e) => write!(f, "{e}"),
         }
     }
@@ -71,6 +78,10 @@ impl ModelError {
                     "服务商拒绝了请求（{status}：{reply}）。检查模型名有没有填错，这个模型是否支持对话。"
                 ),
             },
+            ModelError::NoAnswer { finish_reason } => format!(
+                "模型没有给出回答（结束原因：{}）。换个模型再试。",
+                finish_reason.as_deref().unwrap_or("未说明")
+            ),
             ModelError::Broken(e) => format!(
                 "服务商的回复看不懂（{e}）。检查接口地址是不是 OpenAI 兼容接口；一直出错时，导出日志发给开发者。"
             ),

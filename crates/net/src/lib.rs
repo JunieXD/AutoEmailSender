@@ -30,7 +30,7 @@ impl Net {
             .with_no_client_auth();
         let http = reqwest::Client::builder()
             .tls_backend_preconfigured(tls.clone())
-            // Asked for every request, so changing the system proxy takes effect at once.
+            // Asked for each new connection, so a changed system proxy applies from the next one.
             .proxy(reqwest::Proxy::custom(|url| {
                 proxy::for_host(url.host_str()?).map(|p| p.url())
             }))

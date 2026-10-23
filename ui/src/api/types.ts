@@ -92,7 +92,7 @@ baseUrl: string | null, model: string, };
 
 export type ModelConfigEdit = { id: number, 
 /**
- * Blank keeps the saved one.
+ * Blank keeps the saved one, unless the provider or address changed.
  */
 apiKey: string, 
 /**
@@ -114,7 +114,8 @@ keyUrl: string, };
 
 export type ModelSource = { 
 /**
- * The saved configuration being edited, whose API key a blank one stands for.
+ * The saved configuration being edited, whose API key a blank one stands for while the
+ * provider and address stay the same.
  */
 id?: number, provider: string, 
 /**
@@ -124,7 +125,8 @@ baseUrl: string, apiKey: string, };
 
 export type ModelTest = { 
 /**
- * The saved configuration being edited, whose API key a blank one stands for.
+ * The saved configuration being edited, whose API key a blank one stands for while the
+ * provider and address stay the same.
  */
 id?: number, apiKey: string, 
 /**

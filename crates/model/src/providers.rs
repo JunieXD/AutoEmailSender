@@ -25,13 +25,12 @@ pub struct Provider {
     pub no_thinking: Option<NoThinking>,
 }
 
-/// How a provider is told not to think, where one way works for all its models.
+/// How a provider is told not to think, where one way works for all its models. Most providers
+/// also serve models that cannot stop thinking, such as GLM-5.3 and Kimi K3, so they get none.
 #[derive(Debug, Clone, Copy)]
 pub enum NoThinking {
     /// `"thinking": {"type": "disabled"}`
     ThinkingDisabled,
-    /// `"enable_thinking": false`
-    EnableThinkingFalse,
 }
 
 impl NoThinking {
@@ -39,7 +38,6 @@ impl NoThinking {
     pub(crate) fn apply(self, body: &mut Value) {
         match self {
             NoThinking::ThinkingDisabled => body["thinking"] = json!({"type": "disabled"}),
-            NoThinking::EnableThinkingFalse => body["enable_thinking"] = json!(false),
         }
     }
 }
@@ -61,23 +59,22 @@ pub static PROVIDERS: &[Provider] = &[
         name: "通义千问（阿里云百炼）",
         key_url: "https://bailian.console.aliyun.com",
         base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        no_thinking: Some(NoThinking::EnableThinkingFalse),
+        no_thinking: None,
     },
     Provider {
         id: "glm",
         name: "智谱 GLM",
         key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
-        no_thinking: Some(NoThinking::ThinkingDisabled),
+        no_thinking: None,
     },
     Provider {
         id: "doubao",
         name: "豆包（火山方舟）",
         key_url: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
         base_url: "https://ark.cn-beijing.volces.com/api/v3",
-        no_thinking: Some(NoThinking::ThinkingDisabled),
+        no_thinking: None,
     },
-    // Some Kimi models cannot stop thinking and refuse the parameter.
     Provider {
         id: "kimi",
         name: "Kimi（月之暗面）",
@@ -90,7 +87,7 @@ pub static PROVIDERS: &[Provider] = &[
         name: "硅基流动",
         key_url: "https://cloud.siliconflow.cn/account/ak",
         base_url: "https://api.siliconflow.cn/v1",
-        no_thinking: Some(NoThinking::EnableThinkingFalse),
+        no_thinking: None,
     },
     Provider {
         id: "openai",

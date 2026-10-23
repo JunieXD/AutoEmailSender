@@ -108,13 +108,36 @@ async fn a_refusal_says_what_the_provider_said() {
     assert!(result.unwrap_err().message().contains("API Key"));
 }
 
-/// As when a custom address is a website rather than its API.
 #[tokio::test]
-async fn a_page_that_is_not_an_api_is_not_a_pass() {
-    let (address, _) = provider(200, "<!doctype html><title>Home</title>").await;
+async fn a_key_quoted_back_is_not_shown() {
+    let (address, _) = provider(401, r#"{"error":{"message":"Invalid API key: sk-test"}}"#).await;
     let net = Net::new(Vec::new()).unwrap();
-    let result = model::test(&net, &access(address, None), "gpt").await;
+    let error = model::test(&net, &access(address, None), "gpt")
+        .await
+        .unwrap_err();
+    assert!(error.message().contains("Invalid API key: ***"), "{error}");
+    assert!(!error.message().contains("sk-test"), "{error}");
+    assert!(!error.to_string().contains("sk-test"), "{error}");
+}
+
+#[tokio::test]
+async fn a_reply_without_an_answer_is_not_a_pass() {
+    let net = Net::new(Vec::new()).unwrap();
+    // As when a custom address is a website rather than its API.
+    let (website, _) = provider(200, "<!doctype html><title>Home</title>").await;
+    let result = model::test(&net, &access(website, None), "gpt").await;
     assert!(matches!(result, Err(ModelError::Broken(_))), "{result:?}");
+    // As when a model spends all it may write on thinking.
+    let (thinker, _) = provider(
+        200,
+        r#"{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"嗯……"},"finish_reason":"length"}]}"#,
+    )
+    .await;
+    let result = model::test(&net, &access(thinker, None), "r1").await;
+    assert!(
+        matches!(result, Err(ModelError::NoAnswer { ref finish_reason }) if finish_reason.as_deref() == Some("length")),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]
