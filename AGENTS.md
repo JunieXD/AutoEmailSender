@@ -84,7 +84,7 @@ Auto Email Sender 是帮学生联系导师的桌面应用：整理导师信息�
 
 ## 文档
 
-- 项目文档：[总体设计](docs/design.md)、[数据模型](docs/data-model.md)、[开发约定](docs/development.md)。
+- 项目文档：[总体设计](docs/design.md)、[数据模型](docs/data-model.md)、[界面](docs/ui.md)、[开发约定](docs/development.md)。
 - 写现状和决定，不写讨论过程和改动历史。
 - 同一件事只在一处写细节，别处链接过去。
 - 行为或决定变了，在同一个改动里更新文档。

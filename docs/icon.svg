@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title">
+  <title id="title">Auto Email Sender</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b52626"/>
+      <stop offset="1" stop-color="#861717"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7.5" fill="url(#bg)"/>
+  <g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5.5" y="11.5" width="18.5" height="14" rx="2.4"/>
+    <path d="M24 13.7 16.65 17.5Q14.75 18.8 12.85 17.5L5.5 13.7"/>
+  </g>
+  <path d="M24 5Q24.83 9.37 29.2 10.2 24.83 11.03 24 15.4 23.17 11.03 18.8 10.2 23.17 9.37 24 5Z" fill="#fff" stroke="url(#bg)" stroke-width="2.4" paint-order="stroke"/>
+  <path d="M18.2 2.5Q18.66 4.34 20.5 4.8 18.66 5.26 18.2 7.1 17.74 5.26 15.9 4.8 17.74 4.34 18.2 2.5Z" fill="#fff"/>
+</svg>
