@@ -37,6 +37,10 @@ const EMPTY: NewMailbox = {
 const U16 = 65535;
 const U32 = 4294967295;
 
+function sameHost(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /** Whether a number field holds a whole number in range; the core cannot even read others. */
 function whole(n: number, min: number, max: number): boolean {
   return Number.isInteger(n) && n >= min && n <= max;
@@ -106,6 +110,9 @@ export function MailboxDialog({
   const provider = providers.find((p) => p.id === form.provider);
   const setup = provider?.setup;
   const usable = form.provider === CUSTOM || setup?.kind === "password";
+  // The core only uses the saved secret with the servers it was saved for, as it compares them.
+  const secretSaved =
+    mailbox !== null && sameHost(form.smtp.host, mailbox.smtp.host) && sameHost(form.imap.host, mailbox.imap.host);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const numbers =
     whole(form.dailyLimit, 1, U32) &&
@@ -117,7 +124,7 @@ export function MailboxDialog({
     numbers &&
     form.address.trim() !== "" &&
     form.senderName.trim() !== "" &&
-    (mailbox !== null || form.secret.trim() !== "");
+    (secretSaved || form.secret.trim() !== "");
 
   /** Changes the form; earlier test results no longer apply. */
   function edit(next: NewMailbox) {
@@ -202,7 +209,7 @@ export function MailboxDialog({
                       id="mailbox-secret"
                       type="password"
                       autoComplete="off"
-                      placeholder={mailbox ? "不修改就留空" : undefined}
+                      placeholder={secretSaved ? "不修改就留空" : undefined}
                       value={form.secret}
                       onChange={(e) => edit({ ...form, secret: e.target.value })}
                     />

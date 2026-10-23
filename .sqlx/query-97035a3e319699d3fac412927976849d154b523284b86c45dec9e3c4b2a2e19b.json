@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT secret FROM mailbox\n         WHERE id = ? AND smtp_host = ? COLLATE NOCASE AND imap_host = ? COLLATE NOCASE",
+  "describe": {
+    "columns": [
+      {
+        "name": "secret",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "secret"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "97035a3e319699d3fac412927976849d154b523284b86c45dec9e3c4b2a2e19b"
+}
