@@ -75,12 +75,14 @@ export function TagPicker({ mentorId, selected }: { mentorId: number; selected: 
 }
 
 const savingKey = (mentorId: number) => ["tagMentors", mentorId];
+const creatingKey = (mentorId: number) => ["createTag", mentorId];
 
 type TagSave = { tagId: number; on: boolean };
 
 /**
- * The tags whose last change for this mentor failed. Read from the mutation cache, so it still shows
- * after the picker closes; a later change to another tag does not make up for it.
+ * The mentor's tag changes that failed: each tag's last change, and the last new tag. Read from the
+ * mutation cache, so they still show after the picker closes; a later change to another tag does not
+ * make up for a failed one.
  */
 export function TagSaveError({ mentorId }: { mentorId: number }) {
   const tags = useTags();
@@ -88,16 +90,22 @@ export function TagSaveError({ mentorId }: { mentorId: number }) {
     filters: { mutationKey: savingKey(mentorId) },
     select: (m) => m.state,
   });
-  return tags.data?.map((t) => {
-    const last = saves.findLast((s) => s.variables?.tagId === t.id);
-    return (
-      last?.status === "error" && (
-        <p key={t.id} className="text-destructive">
-          标签“{t.name}”未能{last.variables?.on ? "加上" : "去掉"}：{errorMessage(last.error)}
-        </p>
-      )
-    );
-  });
+  const created = useMutationState({ filters: { mutationKey: creatingKey(mentorId) }, select: (m) => m.state }).at(-1);
+  return (
+    <>
+      {tags.data?.map((t) => {
+        const last = saves.findLast((s) => s.variables?.tagId === t.id);
+        return (
+          last?.status === "error" && (
+            <p key={t.id} className="text-destructive">
+              标签“{t.name}”未能{last.variables?.on ? "加上" : "去掉"}：{errorMessage(last.error)}
+            </p>
+          )
+        );
+      })}
+      {created?.status === "error" && <p className="text-destructive">没能新建标签：{errorMessage(created.error)}</p>}
+    </>
+  );
 }
 
 /** Shows the mentor's tags from the page's cache, which each tick updates at once. */
@@ -116,6 +124,7 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     },
   });
   const create = useMutation({
+    mutationKey: creatingKey(mentorId),
     mutationFn: (tag: { name: string; color: string }) => call("createTag", { ...tag, mentorIds: [mentorId] }),
     onSuccess: () => refreshTags(queryClient),
   });
@@ -142,7 +151,6 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
         pending={create.isPending}
         onSubmit={(name, clear) => create.mutate(newTag(name, tags.data), { onSuccess: clear })}
       />
-      {create.error && <p className="px-2 text-destructive">{errorMessage(create.error)}</p>}
       <div className="px-2">
         <TagSaveError mentorId={mentorId} />
       </div>
