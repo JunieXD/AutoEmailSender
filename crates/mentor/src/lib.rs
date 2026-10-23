@@ -161,6 +161,8 @@ enum MatchColumn {
 /// reason the page is cut before `rows` joins anything, so skipped rows are never joined.
 pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sqlx::Error> {
     let keyword = query.keyword.as_deref().and_then(keyword);
+    // One snapshot for the page, the total and the rows; read only, so it simply ends when dropped.
+    let mut tx = db.begin().await?;
     let ids = sqlx::query_scalar!(
         "SELECT m.id FROM mentor m
          WHERE m.trashed_at IS NULL
@@ -175,7 +177,7 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
         PAGE_SIZE,
         offset(query.page),
     )
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64"
@@ -188,10 +190,10 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
         query.status,
         keyword,
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
     Ok(MentorPage {
-        mentors: rows(db, &ids).await?,
+        mentors: rows(&mut tx, &ids).await?,
         total,
     })
 }
@@ -201,7 +203,7 @@ fn offset(page: NonZeroU32) -> i64 {
 }
 
 /// The list rows for these mentors, in the given order.
-async fn rows(db: &SqlitePool, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Error> {
+async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.name, m.title, m.university, m.school, m.department,
                   substr(d.research, 1, 120) AS "research?: String",
@@ -215,9 +217,9 @@ async fn rows(db: &SqlitePool, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Erro
            ORDER BY page.key"#,
         json_ids(ids.iter().copied()),
     )
-    .fetch_all(db)
+    .fetch_all(&mut *conn)
     .await?;
-    let mut tags = tags_of(db, rows.iter().map(|r| r.id)).await?;
+    let mut tags = tags_of(conn, rows.iter().map(|r| r.id)).await?;
     rows.into_iter()
         .map(|r| {
             let match_state = match (r.match_state, r.match_score) {
@@ -253,6 +255,7 @@ async fn rows(db: &SqlitePool, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Erro
 
 /// Everything the mentor's page shows. None when there is no such mentor.
 pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let Some(r) = sqlx::query!(
         r#"SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,
                   m.homepage_url, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
@@ -270,7 +273,7 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
            WHERE m.id = ?"#,
         id,
     )
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?
     else {
         return Ok(None);
@@ -333,7 +336,10 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
             r.last_reply_at,
             r.unread,
         )?,
-        tags: tags_of(db, [id]).await?.remove(&id).unwrap_or_default(),
+        tags: tags_of(&mut tx, [id])
+            .await?
+            .remove(&id)
+            .unwrap_or_default(),
         trashed: r.trashed,
     }))
 }
@@ -352,7 +358,7 @@ pub async fn set_note(db: &SqlitePool, id: i64, note: Option<&str>) -> Result<bo
 
 /// The tags of each of `ids`, in the user's order.
 async fn tags_of(
-    db: &SqlitePool,
+    conn: &mut SqliteConnection,
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<BTreeMap<i64, Vec<Tag>>, sqlx::Error> {
     let rows = sqlx::query!(
@@ -362,7 +368,7 @@ async fn tags_of(
            ORDER BY t.position"#,
         json_ids(ids),
     )
-    .fetch_all(db)
+    .fetch_all(conn)
     .await?;
     let mut tags: BTreeMap<i64, Vec<Tag>> = BTreeMap::new();
     for t in rows {

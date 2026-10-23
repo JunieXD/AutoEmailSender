@@ -5,7 +5,7 @@ import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { refreshMentors } from "@/components/mentor";
-import { MentorTable, Pager, pageParam } from "@/components/mentor-table";
+import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 
@@ -27,6 +27,9 @@ export function TrashPage() {
   });
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  useLastPage(query.isPlaceholderData ? undefined : query.data?.total, page, (n) =>
+    navigate({ search: { page: n > 1 ? n : undefined }, replace: true }),
+  );
   const act = useMutation({
     mutationFn: ({ op, ids }: { op: "restoreMentors" | "deleteMentors"; ids: number[] }) => call(op, { ids }),
     onSuccess: () => setSelected(new Set()),
@@ -59,10 +62,15 @@ export function TrashPage() {
         >
           {query.isError ? (
             <Notice title="回收站没能加载" detail={errorMessage(query.error)} />
-          ) : query.data && query.data.mentors.length === 0 ? (
+          ) : query.data?.total === 0 ? (
             <Notice title="回收站是空的" detail="移入回收站的导师会出现在这里，可以恢复或永久删除。" />
           ) : (
-            <MentorTable mentors={query.data?.mentors ?? []} selected={selected} onSelect={setSelected} />
+            <MentorTable
+              mentors={query.data?.mentors ?? []}
+              selected={selected}
+              selectable={!query.isPlaceholderData}
+              onSelect={setSelected}
+            />
           )}
         </div>
         <BatchBar
@@ -70,7 +78,7 @@ export function TrashPage() {
           error={act.error ? `${failed}：${errorMessage(act.error)}` : undefined}
           onClear={() => {
             setSelected(new Set());
-            act.reset();
+            if (!act.isPending) act.reset();
           }}
         >
           <Button

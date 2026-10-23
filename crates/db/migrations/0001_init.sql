@@ -2,7 +2,7 @@
 -- Local civil dates/times (schedule windows, todo due) are TEXT 'YYYY-MM-DD' / 'HH:MM'.
 
 CREATE TABLE model_config (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   provider TEXT NOT NULL,
   base_url TEXT,
@@ -14,7 +14,7 @@ CREATE TABLE model_config (
 ) STRICT;
 
 CREATE TABLE template (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   subject TEXT NOT NULL,
   body_md TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE template (
 ) STRICT;
 
 CREATE TABLE mailbox (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   address TEXT NOT NULL UNIQUE COLLATE NOCASE,
   sender_name TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE profile (
 ) STRICT;
 
 CREATE TABLE material (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   file_name TEXT NOT NULL,
   size INTEGER NOT NULL,
   for_matching INTEGER NOT NULL CHECK (for_matching IN (0, 1)),
@@ -78,7 +78,7 @@ CREATE TABLE material (
 ) STRICT;
 
 CREATE TABLE mentor (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL CHECK (name <> ''),
   email TEXT UNIQUE COLLATE NOCASE CHECK (email <> ''),
   title TEXT CHECK (title <> ''),
@@ -120,7 +120,7 @@ CREATE INDEX mentor_by_score ON mentor (trashed_at, match_score DESC, id);
 CREATE INDEX mentor_mailbox ON mentor (mailbox_id) WHERE mailbox_id IS NOT NULL;
 
 CREATE TABLE tag (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   color TEXT NOT NULL,
   position INTEGER NOT NULL
@@ -134,7 +134,7 @@ CREATE TABLE mentor_tag (
 CREATE INDEX mentor_tag_mentor ON mentor_tag (mentor_id);
 
 CREATE TABLE library_update (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('conflict', 'notice')),
   field TEXT NOT NULL,
@@ -144,7 +144,7 @@ CREATE TABLE library_update (
 CREATE INDEX library_update_mentor ON library_update (mentor_id);
 
 CREATE TABLE task (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('first', 'follow_up')),
   writer TEXT NOT NULL CHECK (writer IN ('ai', 'template')),
@@ -170,7 +170,7 @@ CREATE TABLE task_material (
 
 -- An email the app writes and sends. Large columns last.
 CREATE TABLE email (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   task_id INTEGER REFERENCES task(id) ON DELETE SET NULL,
   kind TEXT NOT NULL CHECK (kind IN ('first', 'follow_up', 'reply')),
@@ -218,7 +218,7 @@ CREATE TABLE email_attachment (
 
 -- A message seen in a mailbox that the app did not send.
 CREATE TABLE message (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
   folder TEXT NOT NULL,
   uidvalidity INTEGER NOT NULL,
@@ -250,7 +250,7 @@ CREATE TABLE message_mentor (
 CREATE INDEX message_mentor_message ON message_mentor (message_id);
 
 CREATE TABLE todo (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   message_id INTEGER REFERENCES message(id) ON DELETE SET NULL,
   text TEXT NOT NULL,
@@ -265,7 +265,7 @@ CREATE INDEX todo_open ON todo (due_date) WHERE done_at IS NULL;
 CREATE INDEX todo_mentor ON todo (mentor_id);
 
 CREATE TABLE usage (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   at INTEGER NOT NULL,
   model_config_id INTEGER REFERENCES model_config(id) ON DELETE SET NULL,
   model TEXT NOT NULL,
@@ -281,7 +281,7 @@ CREATE INDEX usage_at ON usage (at);
 CREATE INDEX usage_crawl ON usage (crawl_id) WHERE crawl_id IS NOT NULL;
 
 CREATE TABLE crawl (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL CHECK (kind IN ('site', 'agent')),
   university TEXT,
   school TEXT,
@@ -295,7 +295,7 @@ CREATE TABLE crawl (
 ) STRICT;
 
 CREATE TABLE crawl_run (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
   app_version TEXT NOT NULL,
   started_at INTEGER NOT NULL,
@@ -304,7 +304,7 @@ CREATE TABLE crawl_run (
 CREATE INDEX crawl_run_crawl ON crawl_run (crawl_id);
 
 CREATE TABLE crawl_page (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
   mode TEXT NOT NULL CHECK (mode IN ('http', 'webview')),
@@ -315,7 +315,7 @@ CREATE TABLE crawl_page (
 ) STRICT;
 
 CREATE TABLE candidate (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
@@ -351,7 +351,7 @@ CREATE TABLE mentor_scan (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE device (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   public_key BLOB NOT NULL UNIQUE,
   paired_at INTEGER NOT NULL,

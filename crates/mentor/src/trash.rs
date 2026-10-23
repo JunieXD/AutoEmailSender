@@ -19,21 +19,22 @@ pub struct TrashQuery {
 
 /// One page of the trash, most recently trashed first.
 pub async fn list(db: &SqlitePool, query: &TrashQuery) -> Result<MentorPage, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let ids = sqlx::query_scalar!(
         "SELECT id FROM mentor WHERE trashed_at IS NOT NULL
          ORDER BY trashed_at DESC, id LIMIT ? OFFSET ?",
         PAGE_SIZE,
         offset(query.page),
     )
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64" FROM mentor WHERE trashed_at IS NOT NULL"#
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
     Ok(MentorPage {
-        mentors: rows(db, &ids).await?,
+        mentors: rows(&mut tx, &ids).await?,
         total,
     })
 }

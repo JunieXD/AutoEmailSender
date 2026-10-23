@@ -7,7 +7,7 @@ import type { ContactStatus } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { refreshMentors } from "@/components/mentor";
-import { MentorTable, Pager, pageParam } from "@/components/mentor-table";
+import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -48,6 +48,9 @@ export function MentorsPage() {
     setFilter({ status: search.status, q: search.q });
     setSelected(new Set());
   }
+  useLastPage(query.isPlaceholderData ? undefined : query.data?.total, page, (n) =>
+    navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
+  );
   const trash = useMutation({
     mutationFn: (ids: number[]) => call("trashMentors", { ids }),
     onSuccess: () => setSelected(new Set()),
@@ -107,14 +110,19 @@ export function MentorsPage() {
         >
           {query.isError ? (
             <Notice title="导师列表没能加载" detail={errorMessage(query.error)} />
-          ) : query.data && query.data.mentors.length === 0 ? (
+          ) : query.data?.total === 0 ? (
             search.status || search.q ? (
               <Notice title="没有符合条件的导师" detail="换个关键词或联系状态再试。" />
             ) : (
               <Notice title="还没有导师" detail="点“添加导师”填写导师的资料。" />
             )
           ) : (
-            <MentorTable mentors={query.data?.mentors ?? []} selected={selected} onSelect={setSelected} />
+            <MentorTable
+              mentors={query.data?.mentors ?? []}
+              selected={selected}
+              selectable={!query.isPlaceholderData}
+              onSelect={setSelected}
+            />
           )}
         </div>
         <BatchBar
@@ -122,7 +130,7 @@ export function MentorsPage() {
           error={trash.error ? `没能移入回收站：${errorMessage(trash.error)}` : undefined}
           onClear={() => {
             setSelected(new Set());
-            trash.reset();
+            if (!trash.isPending) trash.reset();
           }}
         >
           <AddTagButton mentorIds={[...selected]} />

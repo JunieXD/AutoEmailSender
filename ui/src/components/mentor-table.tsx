@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useEffectEvent } from "react";
 import type { MatchState, MentorRow } from "@/api/types";
 import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
 import { TagChip } from "@/components/tags";
@@ -20,14 +21,20 @@ const CARD =
   "cards:h-auto cards:grid-cols-[16px_minmax(0,1fr)_auto] cards:gap-x-3 cards:gap-y-1 cards:rounded-none cards:border-b cards:border-border cards:px-4 cards:py-3 cards:[grid-template-areas:'check_who_match'_'check_place_contact'_'check_research_research']";
 const TAGS = "narrow:hidden";
 
-/** The mentor table of the list and the trash, with a tick box on each row (docs/ui.md#交互). */
+/**
+ * The mentor table of the list and the trash, with a tick box on each row (docs/ui.md#交互). The
+ * boxes are off while the rows are the previous page or filter, kept on screen until the new ones
+ * arrive, so nothing out of view gets ticked.
+ */
 export function MentorTable({
   mentors,
   selected,
+  selectable,
   onSelect,
 }: {
   mentors: MentorRow[];
   selected: ReadonlySet<number>;
+  selectable: boolean;
   onSelect: (selected: ReadonlySet<number>) => void;
 }) {
   const ticked = mentors.filter((m) => selected.has(m.id)).length;
@@ -49,6 +56,7 @@ export function MentorTable({
         <span role="columnheader" className="flex">
           <Checkbox
             aria-label="选择本页全部导师"
+            disabled={!selectable}
             checked={mentors.length > 0 && ticked === mentors.length}
             indeterminate={ticked > 0 && ticked < mentors.length}
             onCheckedChange={(on) =>
@@ -80,6 +88,7 @@ export function MentorTable({
           <div role="cell" className="relative z-10 flex cards:self-start cards:pt-2.5 cards:[grid-area:check]">
             <Checkbox
               aria-label={`选择${m.name}`}
+              disabled={!selectable}
               checked={selected.has(m.id)}
               onCheckedChange={(on) => tick([m.id], on)}
               className="relative after:absolute after:-inset-3"
@@ -147,9 +156,22 @@ function Match({ state }: { state: MatchState }) {
   return <span className={`text-sm ${color}`}>{label}</span>;
 }
 
+const pageCount = (total: number) => Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+/**
+ * Once the last rows of the last page are gone, moves to the page that is now last. `total` is
+ * undefined until the current page's own result arrives.
+ */
+export function useLastPage(total: number | undefined, page: number, onPage: (page: number) => void) {
+  const go = useEffectEvent(onPage);
+  useEffect(() => {
+    if (total !== undefined && page > pageCount(total)) go(pageCount(total));
+  }, [total, page]);
+}
+
 /** "第 2 页，共 9 页" with previous and next. */
 export function Pager({ page, total, onPage }: { page: number; total: number; onPage: (page: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = pageCount(total);
   return (
     <div className="flex items-center gap-2">
       <span>

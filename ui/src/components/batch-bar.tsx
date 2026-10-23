@@ -6,7 +6,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 /**
  * docs/ui.md#交互: floats at the bottom middle of the table area while mentors are ticked, rising in
- * when it appears. The area under it needs room to scroll the last rows clear of it.
+ * when it appears. The area under it needs room to scroll the last rows clear of it. Clearing does not
+ * forget an action still running: its error shows here when it fails.
  */
 export function BatchBar({
   count,
@@ -19,7 +20,8 @@ export function BatchBar({
   onClear: () => void;
   children: ReactNode;
 }) {
-  if (count === 0) return null;
+  // An error outlasts the ticks, which may be cleared while the action is still running.
+  if (count === 0 && !error) return null;
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
       <div className="pointer-events-auto max-w-full rounded-lg bg-background shadow-pop transition-[opacity,translate] duration-200 starting:translate-y-3 starting:opacity-0">
@@ -28,8 +30,12 @@ export function BatchBar({
           <Button variant="ghost" size="icon" aria-label="取消选择" onClick={onClear}>
             <X strokeWidth={1.6} />
           </Button>
-          <span className="pr-2 text-sm whitespace-nowrap">已选 {count} 位</span>
-          {children}
+          {count > 0 && (
+            <>
+              <span className="pr-2 text-sm whitespace-nowrap">已选 {count} 位</span>
+              {children}
+            </>
+          )}
         </div>
       </div>
     </div>

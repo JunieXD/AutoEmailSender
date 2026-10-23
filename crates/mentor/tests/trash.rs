@@ -157,3 +157,11 @@ async fn deleting_for_good_takes_only_what_is_the_mentors_alone(db: SqlitePool) 
     .unwrap();
     assert_eq!(drift, 0);
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_deleted_mentors_id_is_never_reused(db: SqlitePool) {
+    let newest = mentor(&db, "张伟").await;
+    trash::trash(&db, &[newest], 10).await.unwrap();
+    trash::delete(&db, &[newest]).await.unwrap();
+    assert!(mentor(&db, "李静").await > newest);
+}
