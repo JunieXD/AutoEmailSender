@@ -96,7 +96,10 @@ V3 的产品范围和全局决定。
 
 给导师的信是一对一的私人邮件，越像手写的越容易进收件箱。内容和样式分开存，AI 改写就不会弄乱格式。
 
-- 草稿和模板的内容存成 Markdown，只允许段落、换行、加粗、斜体、链接、有序和无序列表、占位符。不支持给个别文字设字体、字号和颜色。
+- 草稿和模板的内容存成 Markdown，只允许段落、换行、加粗、斜体、链接、有序和无序列表、占位符。不支持给个别文字设字体、字号和颜色。加粗和斜体按照顾中文的规则解析，紧挨中文标点也能生效。
+- 段落里的换行就是换行（按 Markdown 的 `breaks` 规则解析），"此致""敬礼"这样分行不用另起一段。段落之间多打的空行不保留，段距在信件样式里设置。
+- 其他 Markdown 写法（标题、引用、代码、表格、HTML、不带链接的网址）解析时都当普通文字，不会变成别的格式，也不会丢字；链接只来自链接按钮或粘贴的链接。
+- 占位符写成 `{导师姓名}` 这样，主题和正文都能用：导师姓名、导师职称、学校、学院、系所、导师研究方向、我的姓名（取自个人资料）。套用模板时由核心换成这位导师的信息；导师缺的那一项原样留下，由发送前检查提示。
 - 字体、字号、行距、段距和首行缩进在"信件样式"里统一设置；字体可以选"跟随收件人邮箱的默认字体"。
 - AI 生成和改写都读写 Markdown。改写结果先显示改动对比，改了日期、数字或链接的地方单独标出、提醒核对，用户确认后再替换。
 - 批准时由界面把 Markdown 套上信件样式，渲染成 HTML 和纯文本两个版本交给核心保存，发信时原样发出。核心不解析 Markdown，整个应用只有界面里一个 Markdown 解析器。
@@ -245,7 +248,7 @@ V3 的产品范围和全局决定。
   - 访问过的页面存进数据库，内存里的缓存有上限，长时间抓取时内存不随页数增长。
   - 基准：V2 在 113 个学院上的实测结果（`git show v2.6.5:website/data/crawl-benchmark.json`），中位数是每位导师约 4,700 token、19 秒，一个学院 26 分钟，邮箱覆盖率 88%。V3 用同一批学院对比，不能比它差。
 - 文档：PDF 提取文字用 pdf_oxide 或 pdfium，用真实的中文简历实测后选定；DOCX 解析成 Markdown。表格用 calamine 读、rust_xlsxwriter 写。
-- 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap 加它的 Markdown 扩展，图表用 Recharts。
+- 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap，Markdown 用 marked 解析、写回由界面自己的序列化器完成（`ui/src/markdown.ts`），图表用 Recharts。
 - CLI 和 MCP：一个 Rust 小程序，MCP 用官方的 Rust SDK。用户在设置里开启后装到 PATH，也可以一键写进 Claude、Cursor 等工具的 MCP 配置。在 Windows 的 PowerShell 和 cmd 里读到的中文输出不能乱码。
 
 ### 服务端
