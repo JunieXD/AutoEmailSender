@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 use mentor::MentorFields;
-use mentor::tags::{self, TagError, TagForm};
+use mentor::tags::{self, Direction, TagError, TagForm};
 use sqlx::SqlitePool;
 
 fn tag(name: &str) -> tags::TagFields {
@@ -51,9 +51,16 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(names_on(&db, id).await, ["梦导", "保底"]);
-    tags::reorder(&db, &[safe.id, camp.id, dream.id])
-        .await
-        .unwrap();
+    // Two quick moves both count; moving past either end does nothing.
+    for (tag, direction) in [
+        (safe.id, Direction::Up),
+        (safe.id, Direction::Up),
+        (safe.id, Direction::Up),
+        (dream.id, Direction::Down),
+        (dream.id, Direction::Down),
+    ] {
+        tags::move_tag(&db, tag, direction).await.unwrap();
+    }
     let all: Vec<String> = tags::list(&db)
         .await
         .unwrap()
@@ -62,6 +69,10 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         .collect();
     assert_eq!(all, ["保底", "夏令营", "梦导"]);
     assert_eq!(names_on(&db, id).await, ["保底", "梦导"]);
+    assert!(matches!(
+        tags::rename(&db, camp.id, "梦导").await,
+        Err(TagError::NameTaken)
+    ));
 
     tags::set_for_mentor(&db, id, &[camp.id]).await.unwrap();
     assert_eq!(names_on(&db, id).await, ["夏令营"]);

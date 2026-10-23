@@ -6,6 +6,8 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
+export type Direction = "up" | "down";
+
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "internal";
 
 export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
@@ -58,13 +60,15 @@ export type Tag = { id: number, name: string,
  */
 color: string, };
 
-export type TagEdit = { id: number, name: string, color: string, };
+export type TagColor = { id: number, color: string, };
 
 export type TagForm = { name: string, color: string, };
 
 export type TagId = { id: number, };
 
-export type TagOrder = { ids: Array<number>, };
+export type TagMove = { id: number, direction: Direction, };
+
+export type TagName = { id: number, name: string, };
 
 export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
@@ -75,7 +79,8 @@ export interface Operations {
   setMentorTags: { input: MentorTags; output: null };
   listTags: { input: Nothing; output: Array<Tag> };
   createTag: { input: TagForm; output: Tag };
-  updateTag: { input: TagEdit; output: null };
+  renameTag: { input: TagName; output: null };
+  recolorTag: { input: TagColor; output: null };
+  moveTag: { input: TagMove; output: null };
   deleteTag: { input: TagId; output: null };
-  reorderTags: { input: TagOrder; output: null };
 }

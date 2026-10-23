@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Tag } from "@/api/types";
+import type { Direction, MentorDetail, Tag } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogHeader } from "@/components/ui/dialog";
@@ -74,38 +74,46 @@ export function TagPicker({ mentorId, selected }: { mentorId: number; selected: 
   );
 }
 
-/** Mounted while the picker is open, so it starts from the mentor's current tags. */
+/** Shows the mentor's tags from the page's cache, which each tick updates at once. */
 function TagChoices({ mentorId, selected, onManage }: { mentorId: number; selected: Tag[]; onManage: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
-  const [ids, setIds] = useState(() => selected.map((t) => t.id));
   const [name, setName] = useState("");
+  const mutationKey = ["setMentorTags", mentorId];
   const save = useMutation({
+    mutationKey,
     // One at a time, so quick clicks land in order.
     scope: { id: `setMentorTags:${mentorId}` },
     mutationFn: (tagIds: number[]) => call("setMentorTags", { mentorId, tagIds }),
-    onSuccess: () => refreshTags(queryClient),
+    // Reload after the last of a run of quick ticks, so a reload never undoes a later tick.
+    onSettled: () => {
+      if (queryClient.isMutating({ mutationKey }) === 1) refreshTags(queryClient);
+    },
   });
+  async function toggle(tag: Tag) {
+    const queryKey = ["getMentor", mentorId];
+    // A load still under way read the tags before this tick, so it must not land afterwards.
+    await queryClient.cancelQueries({ queryKey });
+    const mentor = queryClient.setQueryData<MentorDetail>(queryKey, (m) => {
+      if (!m) return m;
+      const on = m.tags.some((t) => t.id === tag.id);
+      return { ...m, tags: on ? m.tags.filter((t) => t.id !== tag.id) : [...m.tags, tag] };
+    });
+    if (mentor) save.mutate(mentor.tags.map((t) => t.id));
+  }
   const create = useMutation({
     mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
     onSuccess: (tag) => {
       setName("");
-      choose([...ids, tag.id]);
+      return toggle(tag);
     },
   });
-  function choose(next: number[]) {
-    setIds(next);
-    save.mutate(next);
-  }
   const error = save.error ?? create.error;
   return (
     <div className="flex flex-col gap-1">
       {tags.data?.map((t) => (
         <label key={t.id} className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted">
-          <Checkbox
-            checked={ids.includes(t.id)}
-            onCheckedChange={(on) => choose(on ? [...ids, t.id] : ids.filter((id) => id !== t.id))}
-          />
+          <Checkbox checked={selected.some((s) => s.id === t.id)} onCheckedChange={() => void toggle(t)} />
           <TagChip tag={t} />
         </label>
       ))}
@@ -132,10 +140,12 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
   );
 }
 
-/** Renames, recolours, reorders and deletes tags. */
+/** Renames, recolours, reorders and deletes tags, each change its own small write. */
 function TagManager({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
+  // Names being typed, saved on Enter or on leaving the field.
+  const [names, setNames] = useState<ReadonlyMap<number, string>>(new Map());
   const [error, setError] = useState<string>();
   const run = useMutation({
     mutationFn: (op: () => Promise<unknown>) => op(),
@@ -144,16 +154,16 @@ function TagManager({ onClose }: { onClose: () => void }) {
     onSettled: () => refreshTags(queryClient),
   });
   const list = tags.data ?? [];
-  function move(index: number, by: -1 | 1) {
-    // Half a place past the neighbour, so sorting puts the tag on the neighbour's other side.
-    const ids = list
-      .map((t, i) => ({ id: t.id, at: i === index ? i + by * 1.5 : i }))
-      .toSorted((a, b) => a.at - b.at)
-      .map((t) => t.id);
-    run.mutate(() => call("reorderTags", { ids }));
-  }
+  const nameOf = (t: Tag) => names.get(t.id) ?? t.name;
+  const dirty = list.some((t) => nameOf(t).trim() !== t.name);
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open
+      onOpenChange={(open, details) => {
+        const stray = details.reason === "outside-press" || details.reason === "escape-key";
+        if (!open && !(dirty && stray)) onClose();
+      }}
+    >
       <DialogContent className="w-[480px]">
         <DialogHeader>管理标签</DialogHeader>
         <DialogBody className="flex flex-col gap-1.5 pb-5">
@@ -162,10 +172,16 @@ function TagManager({ onClose }: { onClose: () => void }) {
             <TagRow
               key={t.id}
               tag={t}
+              name={nameOf(t)}
               first={i === 0}
               last={i === list.length - 1}
-              onChange={(name, color) => run.mutate(() => call("updateTag", { id: t.id, name, color }))}
-              onMove={(by) => move(i, by)}
+              onName={(name) => setNames(new Map(names).set(t.id, name))}
+              onRename={() => {
+                const name = nameOf(t);
+                if (name.trim() !== t.name) run.mutate(() => call("renameTag", { id: t.id, name }));
+              }}
+              onColor={(color) => run.mutate(() => call("recolorTag", { id: t.id, color }))}
+              onMove={(direction) => run.mutate(() => call("moveTag", { id: t.id, direction }))}
               onDelete={() => run.mutate(() => call("deleteTag", { id: t.id }))}
             />
           ))}
@@ -178,24 +194,26 @@ function TagManager({ onClose }: { onClose: () => void }) {
 
 function TagRow({
   tag,
+  name,
   first,
   last,
-  onChange,
+  onName,
+  onRename,
+  onColor,
   onMove,
   onDelete,
 }: {
   tag: Tag;
+  name: string;
   first: boolean;
   last: boolean;
-  onChange: (name: string, color: string) => void;
-  onMove: (by: -1 | 1) => void;
+  onName: (name: string) => void;
+  onRename: () => void;
+  onColor: (color: string) => void;
+  onMove: (direction: Direction) => void;
   onDelete: () => void;
 }) {
-  const [name, setName] = useState(tag.name);
   const [confirming, setConfirming] = useState(false);
-  const rename = () => {
-    if (name.trim() !== tag.name) onChange(name, tag.color);
-  };
   return (
     <div className="flex items-center gap-2">
       <Popover>
@@ -210,7 +228,7 @@ function TagRow({
               aria-label={c}
               aria-pressed={c === tag.color}
               className="grid size-8 place-items-center rounded-md hover:bg-muted aria-pressed:bg-muted"
-              onClick={() => onChange(tag.name, c)}
+              onClick={() => onColor(c)}
             >
               <span className="size-4 rounded-full" style={{ backgroundColor: c }} />
             </button>
@@ -219,16 +237,20 @@ function TagRow({
       </Popover>
       <Input
         value={name}
-        onChange={(e) => setName(e.target.value)}
-        onBlur={rename}
-        onKeyDown={(e) => e.key === "Enter" && rename()}
+        onChange={(e) => onName(e.target.value)}
+        onBlur={onRename}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onRename();
+          // Esc first gives up the edit; the dialog stays open until it is pressed again.
+          if (e.key === "Escape") onName(tag.name);
+        }}
         aria-label="标签名称"
         className="h-9"
       />
-      <Button variant="ghost" size="icon" aria-label="上移" disabled={first} onClick={() => onMove(-1)}>
+      <Button variant="ghost" size="icon" aria-label="上移" disabled={first} onClick={() => onMove("up")}>
         <ChevronUp strokeWidth={1.6} />
       </Button>
-      <Button variant="ghost" size="icon" aria-label="下移" disabled={last} onClick={() => onMove(1)}>
+      <Button variant="ghost" size="icon" aria-label="下移" disabled={last} onClick={() => onMove("down")}>
         <ChevronDown strokeWidth={1.6} />
       </Button>
       {confirming ? (

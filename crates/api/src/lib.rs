@@ -109,9 +109,10 @@ operations! {
     "setMentorTags" => set_mentor_tags(MentorTags) -> ();
     "listTags" => list_tags(Nothing) -> Vec<mentor::tags::Tag>;
     "createTag" => create_tag(mentor::tags::TagForm) -> mentor::tags::Tag;
-    "updateTag" => update_tag(TagEdit) -> ();
+    "renameTag" => rename_tag(TagName) -> ();
+    "recolorTag" => recolor_tag(TagColor) -> ();
+    "moveTag" => move_tag(TagMove) -> ();
     "deleteTag" => delete_tag(TagId) -> ();
-    "reorderTags" => reorder_tags(TagOrder) -> ();
 }
 
 /// The input of operations that need none.
@@ -210,15 +211,21 @@ pub struct TagId {
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct TagEdit {
+pub struct TagName {
     pub id: i64,
-    #[serde(flatten)]
-    pub form: mentor::tags::TagForm,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, TS)]
-pub struct TagOrder {
-    pub ids: Vec<i64>,
+pub struct TagColor {
+    pub id: i64,
+    pub color: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct TagMove {
+    pub id: i64,
+    pub direction: mentor::tags::Direction,
 }
 
 const NO_TAG: &str = "找不到这个标签，可能已被删除。";
@@ -241,21 +248,30 @@ async fn create_tag(
         .map_err(|e| tag_error(e, &fields.name))
 }
 
-async fn update_tag(ctx: &Context, input: TagEdit) -> Result<(), CallError> {
-    let fields = input.form.check().map_err(CallError::invalid)?;
-    match mentor::tags::update(&ctx.db, input.id, &fields).await {
+async fn rename_tag(ctx: &Context, input: TagName) -> Result<(), CallError> {
+    let name = mentor::tags::checked_name(&input.name).map_err(CallError::invalid)?;
+    match mentor::tags::rename(&ctx.db, input.id, &name).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(CallError::not_found(NO_TAG)),
-        Err(e) => Err(tag_error(e, &fields.name)),
+        Err(e) => Err(tag_error(e, &name)),
     }
+}
+
+async fn recolor_tag(ctx: &Context, input: TagColor) -> Result<(), CallError> {
+    let color = mentor::tags::checked_color(&input.color).map_err(CallError::invalid)?;
+    if mentor::tags::recolor(&ctx.db, input.id, &color).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_TAG))
+    }
+}
+
+async fn move_tag(ctx: &Context, input: TagMove) -> Result<(), CallError> {
+    Ok(mentor::tags::move_tag(&ctx.db, input.id, input.direction).await?)
 }
 
 async fn delete_tag(ctx: &Context, input: TagId) -> Result<(), CallError> {
     Ok(mentor::tags::delete(&ctx.db, input.id).await?)
-}
-
-async fn reorder_tags(ctx: &Context, input: TagOrder) -> Result<(), CallError> {
-    Ok(mentor::tags::reorder(&ctx.db, &input.ids).await?)
 }
 
 fn tag_error(e: mentor::tags::TagError, name: &str) -> CallError {

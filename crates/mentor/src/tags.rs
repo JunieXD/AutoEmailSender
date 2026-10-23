@@ -28,19 +28,37 @@ pub struct TagFields {
 
 impl TagForm {
     pub fn check(self) -> Result<TagFields, String> {
-        let name = self.name.trim();
-        if name.is_empty() {
-            return Err("请填写标签名称".into());
-        }
-        let hex = self.color.strip_prefix('#').unwrap_or_default();
-        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("标签颜色不正确".into());
-        }
         Ok(TagFields {
-            name: name.to_owned(),
-            color: self.color.to_ascii_lowercase(),
+            name: checked_name(&self.name)?,
+            color: checked_color(&self.color)?,
         })
     }
+}
+
+/// A tag name as the user typed it, trimmed.
+pub fn checked_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("请填写标签名称".into());
+    }
+    Ok(name.to_owned())
+}
+
+/// A `#rrggbb` colour, lowercased.
+pub fn checked_color(color: &str) -> Result<String, String> {
+    let hex = color.strip_prefix('#').unwrap_or_default();
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("标签颜色不正确".into());
+    }
+    Ok(color.to_ascii_lowercase())
+}
+
+/// Which way a tag moves in the user's order.
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum Direction {
+    Up,
+    Down,
 }
 
 #[derive(Debug)]
@@ -86,16 +104,22 @@ pub async fn create(db: &SqlitePool, tag: &TagFields) -> Result<Tag, TagError> {
     })
 }
 
-/// Renames and recolours a tag. False when there is no such tag.
-pub async fn update(db: &SqlitePool, id: i64, tag: &TagFields) -> Result<bool, TagError> {
-    let done = sqlx::query!(
-        "UPDATE tag SET name = ?, color = ? WHERE id = ?",
-        tag.name,
-        tag.color,
-        id
-    )
-    .execute(db)
-    .await?;
+// Renaming and recolouring are separate writes, so a quick change to one never carries a stale
+// value of the other.
+
+/// Renames a tag. False when there is no such tag.
+pub async fn rename(db: &SqlitePool, id: i64, name: &str) -> Result<bool, TagError> {
+    let done = sqlx::query!("UPDATE tag SET name = ? WHERE id = ?", name, id)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Recolours a tag. False when there is no such tag.
+pub async fn recolor(db: &SqlitePool, id: i64, color: &str) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!("UPDATE tag SET color = ? WHERE id = ?", color, id)
+        .execute(db)
+        .await?;
     Ok(done.rows_affected() == 1)
 }
 
@@ -107,13 +131,22 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Puts the tags in the order of `ids`.
-pub async fn reorder(db: &SqlitePool, ids: &[i64]) -> Result<(), sqlx::Error> {
-    let ids = crate::json_ids(ids.iter().copied());
+/// Swaps a tag with its neighbour in the given direction; nothing happens at either end. One
+/// statement against the saved order, so quick repeated moves each take effect.
+pub async fn move_tag(db: &SqlitePool, id: i64, direction: Direction) -> Result<(), sqlx::Error> {
+    let step: i64 = match direction {
+        Direction::Up => -1,
+        Direction::Down => 1,
+    };
     sqlx::query!(
-        "UPDATE tag SET position = (SELECT key FROM json_each(?1) WHERE value = tag.id)
-         WHERE id IN (SELECT value FROM json_each(?1))",
-        ids
+        "UPDATE tag SET position = CASE tag.id WHEN ?1 THEN other.position ELSE me.position END
+         FROM (SELECT position FROM tag WHERE id = ?1) AS me,
+              (SELECT id, position FROM tag
+               WHERE (position - (SELECT position FROM tag WHERE id = ?1)) * ?2 > 0
+               ORDER BY position * ?2 LIMIT 1) AS other
+         WHERE tag.id IN (?1, other.id)",
+        id,
+        step,
     )
     .execute(db)
     .await?;

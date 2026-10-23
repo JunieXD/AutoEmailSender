@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE tag SET position = CASE tag.id WHEN ?1 THEN other.position ELSE me.position END\n         FROM (SELECT position FROM tag WHERE id = ?1) AS me,\n              (SELECT id, position FROM tag\n               WHERE (position - (SELECT position FROM tag WHERE id = ?1)) * ?2 > 0\n               ORDER BY position * ?2 LIMIT 1) AS other\n         WHERE tag.id IN (?1, other.id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0c7fe75f5d83a7c305980a08ba5eae57ba9bc15f9806aa36983a63e963c7c9f8"
+}
