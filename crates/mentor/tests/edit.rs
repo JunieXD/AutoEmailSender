@@ -37,6 +37,10 @@ fn form_is_trimmed_and_checked() {
         "zhang wei@x.cn",
         "@x.cn",
         "a@x..cn",
+        "zhang..wei@x.cn",
+        "zhang@tsinghua.edu.cn;",
+        "zhang@tsinghua.edu.cn，",
+        "zhang@x.cn/people",
     ] {
         assert_eq!(
             form("张伟", email, "").check().unwrap_err(),
@@ -44,7 +48,22 @@ fn form_is_trimmed_and_checked() {
             "{email}"
         );
     }
-    assert!(form("张伟", "", "www.x.cn").check().is_err());
+    for email in ["o'brien+phd@x.edu.cn", "Zhang.Wei@mail.x-y.cn"] {
+        assert!(form("张伟", email, "").check().is_ok(), "{email}");
+    }
+    for homepage in [
+        "www.x.cn",
+        "https://",
+        "https://bad host/zhang",
+        "ftp://x.cn",
+    ] {
+        assert!(form("张伟", "", homepage).check().is_err(), "{homepage}");
+    }
+    assert!(
+        form("张伟", "", "HTTPS://faculty.x.cn/Zhang")
+            .check()
+            .is_ok()
+    );
 }
 
 async fn names(db: &SqlitePool, keyword: &str) -> Vec<String> {
@@ -89,4 +108,30 @@ async fn an_email_belongs_to_one_mentor(db: SqlitePool) {
     assert_eq!((name.as_str(), trashed), ("张伟", false));
     // Saving a mentor with its own email is fine.
     assert!(mentor::update(&db, id, &zhang, 1).await.unwrap());
+}
+
+#[tokio::test]
+async fn concurrent_saves_wait_their_turn() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("concurrent-saves");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = db::open(&dir.join("app.db")).await.unwrap();
+    let saves: Vec<_> = (0..8)
+        .map(|i| {
+            let db = db.clone();
+            tokio::spawn(async move {
+                let fields = MentorFields {
+                    name: format!("导师{i}"),
+                    email: Some(format!("m{i}@x.cn")),
+                    ..MentorFields::default()
+                };
+                mentor::create(&db, &fields, 0).await
+            })
+        })
+        .collect();
+    for save in saves {
+        save.await.unwrap().unwrap();
+    }
 }

@@ -55,5 +55,5 @@ export interface Operations {
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
-  updateMentor: { input: MentorEdit; output: null };
+  updateMentor: { input: MentorEdit; output: MentorDetail };
 }

@@ -137,8 +137,8 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
           action="保存"
           initial={formOf(m)}
           save={(form) => call("updateMentor", { id: m.id, ...form })}
-          onSaved={() => {
-            void queryClient.invalidateQueries({ queryKey: ["getMentor", m.id] });
+          onSaved={(saved) => {
+            queryClient.setQueryData(["getMentor", m.id], saved);
             void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
             setEditing(false);
           }}

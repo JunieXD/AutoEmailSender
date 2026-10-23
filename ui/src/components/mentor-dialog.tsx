@@ -70,8 +70,10 @@ export function MentorDialog<T>({
     <Dialog
       open
       onOpenChange={(open, details) => {
-        // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc.
-        if (!open && !(dirty && (details.reason === "outside-press" || details.reason === "escape-key"))) onClose();
+        // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc,
+        // nor while it is being saved.
+        const stray = details.reason === "outside-press" || details.reason === "escape-key";
+        if (!open && !mutation.isPending && !(dirty && stray)) onClose();
       }}
     >
       <DialogContent initialFocus={nameRef}>
@@ -83,26 +85,31 @@ export function MentorDialog<T>({
           }}
         >
           <DialogHeader>{title}</DialogHeader>
-          <DialogBody className="grid grid-cols-2 content-start gap-x-4 gap-y-3.5 phone:grid-cols-1">
-            {FIELDS.map((f) => {
-              const props = {
-                id: `mentor-${f.key}`,
-                value: form[f.key],
-                onChange: (e: { target: { value: string } }) => setForm({ ...form, [f.key]: e.target.value }),
-              };
-              return (
-                <div key={f.key} className={f.wide ? "col-span-full" : ""}>
-                  <label htmlFor={props.id} className="mb-1.5 block text-sm text-muted-foreground">
-                    {f.label}
-                  </label>
-                  {f.wide ? (
-                    <Textarea rows={3} {...props} />
-                  ) : (
-                    <Input ref={f.key === "name" ? nameRef : undefined} {...props} />
-                  )}
-                </div>
-              );
-            })}
+          <DialogBody>
+            <fieldset
+              disabled={mutation.isPending}
+              className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3.5 phone:grid-cols-1"
+            >
+              {FIELDS.map((f) => {
+                const props = {
+                  id: `mentor-${f.key}`,
+                  value: form[f.key],
+                  onChange: (e: { target: { value: string } }) => setForm({ ...form, [f.key]: e.target.value }),
+                };
+                return (
+                  <div key={f.key} className={f.wide ? "col-span-full" : ""}>
+                    <label htmlFor={props.id} className="mb-1.5 block text-sm text-muted-foreground">
+                      {f.label}
+                    </label>
+                    {f.wide ? (
+                      <Textarea rows={3} {...props} />
+                    ) : (
+                      <Input ref={f.key === "name" ? nameRef : undefined} {...props} />
+                    )}
+                  </div>
+                );
+              })}
+            </fieldset>
           </DialogBody>
           <DialogFooter>
             <p className="grow text-sm text-destructive" role="alert">

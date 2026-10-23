@@ -105,7 +105,7 @@ operations! {
     "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
-    "updateMentor" => update_mentor(MentorEdit) -> ();
+    "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
 }
 
 const NO_MENTOR: &str = "找不到这位导师，可能已被永久删除。";
@@ -175,13 +175,16 @@ async fn add_mentor(ctx: &Context, form: mentor::MentorForm) -> Result<MentorId,
     Ok(MentorId { id })
 }
 
-async fn update_mentor(ctx: &Context, input: MentorEdit) -> Result<(), CallError> {
+/// Returns the mentor as saved, so the page shows it at once.
+async fn update_mentor(
+    ctx: &Context,
+    input: MentorEdit,
+) -> Result<mentor::MentorDetail, CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    if mentor::update(&ctx.db, input.id, &fields, now()).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MENTOR))
+    if !mentor::update(&ctx.db, input.id, &fields, now()).await? {
+        return Err(CallError::not_found(NO_MENTOR));
     }
+    get_mentor(ctx, MentorId { id: input.id }).await
 }
 
 impl From<mentor::SaveError> for CallError {

@@ -476,11 +476,8 @@ impl MentorForm {
             return Err("邮箱地址格式不正确".into());
         }
         let homepage_url = text(self.homepage_url);
-        if homepage_url
-            .as_deref()
-            .is_some_and(|u| !(u.starts_with("http://") || u.starts_with("https://")))
-        {
-            return Err("主页地址需以 http:// 或 https:// 开头".into());
+        if homepage_url.as_deref().is_some_and(|u| !is_web_page(u)) {
+            return Err("主页地址不正确，需以 http:// 或 https:// 开头".into());
         }
         Ok(MentorFields {
             name,
@@ -495,14 +492,33 @@ impl MentorForm {
     }
 }
 
-/// One `@` with something on each side and a dot in the domain: enough to catch typos without
-/// rejecting real addresses.
+/// A plain address as people write them: `local@domain`, where the local part is dot-separated
+/// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
+/// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
 fn is_email(s: &str) -> bool {
-    s.split_once('@').is_some_and(|(local, domain)| {
-        !local.is_empty()
-            && !domain.contains('@')
-            && domain.split('.').count() > 1
-            && domain.split('.').all(|part| !part.is_empty())
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    let atom = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_alphanumeric() || "!#$%&'*+/=?^_`{|}~-".contains(c))
+    };
+    let label = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '-')
+    };
+    local.split('.').all(atom) && domain.split('.').count() > 1 && domain.split('.').all(label)
+}
+
+/// An http or https address with a host, in any letter case.
+fn is_web_page(s: &str) -> bool {
+    url::Url::parse(s).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.host().is_some()
             && !s.contains(char::is_whitespace)
     })
 }
@@ -554,8 +570,7 @@ pub async fn create<'c>(
     now: i64,
 ) -> Result<i64, SaveError> {
     let mut tx = conn.begin().await?;
-    check_email(&mut tx, mentor, None).await?;
-    let id = sqlx::query_scalar!(
+    let inserted = sqlx::query_scalar!(
         "INSERT INTO mentor (name, email, title, university, school, department, homepage_url, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         mentor.name,
@@ -569,7 +584,11 @@ pub async fn create<'c>(
         now,
     )
     .fetch_one(&mut *tx)
-    .await?;
+    .await;
+    let id = match inserted {
+        Ok(id) => id,
+        Err(e) => return Err(save_error(&mut tx, e, mentor, None).await),
+    };
     sqlx::query!(
         "INSERT INTO mentor_detail (mentor_id, research) VALUES (?, ?)",
         id,
@@ -590,8 +609,7 @@ pub async fn update(
     now: i64,
 ) -> Result<bool, SaveError> {
     let mut tx = db.begin().await?;
-    check_email(&mut tx, mentor, Some(id)).await?;
-    let done = sqlx::query!(
+    let updated = sqlx::query!(
         "UPDATE mentor SET name = ?, email = ?, title = ?, university = ?, school = ?, department = ?,
            homepage_url = ?, updated_at = ?
          WHERE id = ?",
@@ -606,7 +624,11 @@ pub async fn update(
         id,
     )
     .execute(&mut *tx)
-    .await?;
+    .await;
+    let done = match updated {
+        Ok(done) => done,
+        Err(e) => return Err(save_error(&mut tx, e, mentor, Some(id)).await),
+    };
     if done.rows_affected() == 0 {
         return Ok(false);
     }
@@ -622,15 +644,21 @@ pub async fn update(
     Ok(true)
 }
 
-/// Fails when a mentor other than `id` has the email. The unique index would refuse it anyway, but
-/// this way the user learns who has it.
-async fn check_email(
+/// Explains a failed insert or update. The unique index on email is the only one these statements
+/// can break, so the user learns which mentor has the address. Writing first and explaining
+/// afterwards keeps the transaction a plain write: reading before writing would make it fail at
+/// once instead of waiting whenever another save commits in between.
+async fn save_error(
     tx: &mut SqliteConnection,
+    error: sqlx::Error,
     mentor: &MentorFields,
     id: Option<i64>,
-) -> Result<(), SaveError> {
-    let Some(email) = &mentor.email else {
-        return Ok(());
+) -> SaveError {
+    let unique = error
+        .as_database_error()
+        .is_some_and(|e| e.is_unique_violation());
+    let Some(email) = mentor.email.as_deref().filter(|_| unique) else {
+        return error.into();
     };
     // The column's NOCASE collation applies, as it does for the unique index.
     let owner = sqlx::query!(
@@ -640,13 +668,14 @@ async fn check_email(
         id
     )
     .fetch_optional(&mut *tx)
-    .await?;
+    .await;
     match owner {
-        Some(o) => Err(SaveError::EmailTaken {
+        Ok(Some(o)) => SaveError::EmailTaken {
             name: o.name,
             trashed: o.trashed,
-        }),
-        None => Ok(()),
+        },
+        Ok(None) => error.into(),
+        Err(e) => e.into(),
     }
 }
 
