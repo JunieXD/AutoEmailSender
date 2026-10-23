@@ -153,24 +153,31 @@ pub async fn move_tag(db: &SqlitePool, id: i64, direction: Direction) -> Result<
     Ok(())
 }
 
-/// Gives the mentor exactly these tags.
-pub async fn set_for_mentor(
+/// Puts the tag on these mentors, or takes it off them. Adding or removing one tag at a time means a
+/// change made from an out-of-date view never undoes another tag.
+pub async fn tag_mentors(
     db: &SqlitePool,
-    mentor_id: i64,
-    tag_ids: &[i64],
+    tag_id: i64,
+    mentor_ids: &[i64],
+    on: bool,
 ) -> Result<(), sqlx::Error> {
-    let tag_ids = crate::json_ids(tag_ids.iter().copied());
-    let mut tx = db.begin().await?;
-    sqlx::query!("DELETE FROM mentor_tag WHERE mentor_id = ?", mentor_id)
-        .execute(&mut *tx)
+    let mentor_ids = crate::json_ids(mentor_ids.iter().copied());
+    if on {
+        sqlx::query!(
+            "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id) SELECT value, ? FROM json_each(?)",
+            tag_id,
+            mentor_ids
+        )
+        .execute(db)
         .await?;
-    sqlx::query!(
-        "INSERT INTO mentor_tag (mentor_id, tag_id) SELECT ?, value FROM json_each(?)",
-        mentor_id,
-        tag_ids
-    )
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
+    } else {
+        sqlx::query!(
+            "DELETE FROM mentor_tag WHERE tag_id = ? AND mentor_id IN (SELECT value FROM json_each(?))",
+            tag_id,
+            mentor_ids
+        )
+        .execute(db)
+        .await?;
+    }
     Ok(())
 }

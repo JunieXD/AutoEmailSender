@@ -7,7 +7,7 @@ import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
 import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
-import { TagChip, TagPicker } from "@/components/tags";
+import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +59,7 @@ export function MentorPage() {
           ) : (
             <Missing>未添加标签</Missing>
           )}
+          <TagSaveError mentorId={m.id} />
         </Section>
         <Analysis mentor={m} />
         {m.papers.length > 0 && (

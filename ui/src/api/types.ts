@@ -50,8 +50,6 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
-export type MentorTags = { mentorId: number, tagIds: Array<number>, };
-
 export type Nothing = Record<symbol, never>;
 
 export type Tag = { id: number, name: string, 
@@ -66,6 +64,12 @@ export type TagForm = { name: string, color: string, };
 
 export type TagId = { id: number, };
 
+export type TagMentors = { tagId: number, mentorIds: Array<number>, 
+/**
+ * Adds the tag when true, removes it when false.
+ */
+on: boolean, };
+
 export type TagMove = { id: number, direction: Direction, };
 
 export type TagName = { id: number, name: string, };
@@ -76,7 +80,7 @@ export interface Operations {
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
-  setMentorTags: { input: MentorTags; output: null };
+  tagMentors: { input: TagMentors; output: null };
   listTags: { input: Nothing; output: Array<Tag> };
   createTag: { input: TagForm; output: Tag };
   renameTag: { input: TagName; output: null };

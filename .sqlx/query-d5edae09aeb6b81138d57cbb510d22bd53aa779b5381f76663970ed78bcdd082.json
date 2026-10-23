@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor_tag WHERE tag_id = ? AND mentor_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d5edae09aeb6b81138d57cbb510d22bd53aa779b5381f76663970ed78bcdd082"
+}

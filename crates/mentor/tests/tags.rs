@@ -47,9 +47,9 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         Err(TagError::NameTaken)
     ));
 
-    tags::set_for_mentor(&db, id, &[safe.id, dream.id])
-        .await
-        .unwrap();
+    for tag in [safe.id, dream.id, dream.id] {
+        tags::tag_mentors(&db, tag, &[id], true).await.unwrap();
+    }
     assert_eq!(names_on(&db, id).await, ["梦导", "保底"]);
     // Two quick moves both count; moving past either end does nothing.
     for (tag, direction) in [
@@ -74,7 +74,10 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         Err(TagError::NameTaken)
     ));
 
-    tags::set_for_mentor(&db, id, &[camp.id]).await.unwrap();
+    tags::tag_mentors(&db, camp.id, &[id], true).await.unwrap();
+    for tag in [safe.id, dream.id] {
+        tags::tag_mentors(&db, tag, &[id], false).await.unwrap();
+    }
     assert_eq!(names_on(&db, id).await, ["夏令营"]);
     tags::delete(&db, camp.id).await.unwrap();
     assert!(names_on(&db, id).await.is_empty());

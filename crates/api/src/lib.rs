@@ -106,7 +106,7 @@ operations! {
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
-    "setMentorTags" => set_mentor_tags(MentorTags) -> ();
+    "tagMentors" => tag_mentors(TagMentors) -> ();
     "listTags" => list_tags(Nothing) -> Vec<mentor::tags::Tag>;
     "createTag" => create_tag(mentor::tags::TagForm) -> mentor::tags::Tag;
     "renameTag" => rename_tag(TagName) -> ();
@@ -200,9 +200,11 @@ async fn update_mentor(
 
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct MentorTags {
-    pub mentor_id: i64,
-    pub tag_ids: Vec<i64>,
+pub struct TagMentors {
+    pub tag_id: i64,
+    pub mentor_ids: Vec<i64>,
+    /// Adds the tag when true, removes it when false.
+    pub on: bool,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -230,8 +232,8 @@ pub struct TagMove {
 
 const NO_TAG: &str = "找不到这个标签，可能已被删除。";
 
-async fn set_mentor_tags(ctx: &Context, input: MentorTags) -> Result<(), CallError> {
-    Ok(mentor::tags::set_for_mentor(&ctx.db, input.mentor_id, &input.tag_ids).await?)
+async fn tag_mentors(ctx: &Context, input: TagMentors) -> Result<(), CallError> {
+    Ok(mentor::tags::tag_mentors(&ctx.db, input.tag_id, &input.mentor_ids, input.on).await?)
 }
 
 async fn list_tags(ctx: &Context, _: Nothing) -> Result<Vec<mentor::tags::Tag>, CallError> {

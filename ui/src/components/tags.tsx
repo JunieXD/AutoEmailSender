@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -74,17 +74,26 @@ export function TagPicker({ mentorId, selected }: { mentorId: number; selected: 
   );
 }
 
+const savingKey = (mentorId: number) => ["tagMentors", mentorId];
+
+/** Why the mentor's last tag change failed, if it did; read from the mutation cache, so it shows after the picker closes. */
+export function TagSaveError({ mentorId }: { mentorId: number }) {
+  const last = useMutationState({ filters: { mutationKey: savingKey(mentorId) }, select: (m) => m.state }).at(-1);
+  return last?.status === "error" && <p className="text-destructive">标签未能保存：{errorMessage(last.error)}</p>;
+}
+
 /** Shows the mentor's tags from the page's cache, which each tick updates at once. */
 function TagChoices({ mentorId, selected, onManage }: { mentorId: number; selected: Tag[]; onManage: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
   const [name, setName] = useState("");
-  const mutationKey = ["setMentorTags", mentorId];
+  const mutationKey = savingKey(mentorId);
   const save = useMutation({
     mutationKey,
-    // One at a time, so quick clicks land in order.
-    scope: { id: `setMentorTags:${mentorId}` },
-    mutationFn: (tagIds: number[]) => call("setMentorTags", { mentorId, tagIds }),
+    // One at a time, so ticking and unticking the same tag land in order.
+    scope: { id: `tagMentors:${mentorId}` },
+    mutationFn: ({ tagId, on }: { tagId: number; on: boolean }) =>
+      call("tagMentors", { tagId, mentorIds: [mentorId], on }),
     // Reload after the last of a run of quick ticks, so a reload never undoes a later tick.
     onSettled: () => {
       if (queryClient.isMutating({ mutationKey }) === 1) refreshTags(queryClient);
@@ -94,12 +103,12 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     const queryKey = ["getMentor", mentorId];
     // A load still under way read the tags before this tick, so it must not land afterwards.
     await queryClient.cancelQueries({ queryKey });
-    const mentor = queryClient.setQueryData<MentorDetail>(queryKey, (m) => {
-      if (!m) return m;
-      const on = m.tags.some((t) => t.id === tag.id);
-      return { ...m, tags: on ? m.tags.filter((t) => t.id !== tag.id) : [...m.tags, tag] };
-    });
-    if (mentor) save.mutate(mentor.tags.map((t) => t.id));
+    const on = !queryClient.getQueryData<MentorDetail>(queryKey)?.tags.some((t) => t.id === tag.id);
+    queryClient.setQueryData<MentorDetail>(
+      queryKey,
+      (m) => m && { ...m, tags: on ? [...m.tags, tag] : m.tags.filter((t) => t.id !== tag.id) },
+    );
+    save.mutate({ tagId: tag.id, on });
   }
   const create = useMutation({
     mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
@@ -108,7 +117,6 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
       return toggle(tag);
     },
   });
-  const error = save.error ?? create.error;
   return (
     <div className="flex flex-col gap-1">
       {tags.data?.map((t) => (
@@ -132,7 +140,13 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
           disabled={create.isPending}
         />
       </form>
-      {error && <p className="px-2 text-destructive">{errorMessage(error)}</p>}
+      <div className="px-2">
+        {create.error ? (
+          <p className="text-destructive">{errorMessage(create.error)}</p>
+        ) : (
+          <TagSaveError mentorId={mentorId} />
+        )}
+      </div>
       <Button variant="ghost" className="h-8 justify-start px-2 font-normal" onClick={onManage}>
         管理标签
       </Button>
@@ -148,6 +162,8 @@ function TagManager({ onClose }: { onClose: () => void }) {
   const [names, setNames] = useState<ReadonlyMap<number, string>>(new Map());
   const [error, setError] = useState<string>();
   const run = useMutation({
+    // In the order clicked: two quick colours end on the second, and moves of different tags add up.
+    scope: { id: "manageTags" },
     mutationFn: (op: () => Promise<unknown>) => op(),
     onSuccess: () => setError(undefined),
     onError: (e) => setError(errorMessage(e)),
