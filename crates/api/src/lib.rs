@@ -25,6 +25,8 @@ pub enum ErrorCode {
     BadInput,
     /// What the caller asked for no longer exists, such as a mentor deleted since the page opened.
     NotFound,
+    /// What the user filled in cannot be saved; the message says what to change.
+    Invalid,
     Internal,
 }
 
@@ -33,6 +35,13 @@ impl CallError {
         CallError {
             code: ErrorCode::BadInput,
             message: format!("参数不正确：{e}"),
+        }
+    }
+
+    fn invalid(message: String) -> Self {
+        CallError {
+            code: ErrorCode::Invalid,
+            message,
         }
     }
 
@@ -95,13 +104,22 @@ operations! {
     "listMentors" => list_mentors(mentor::MentorQuery) -> mentor::MentorPage;
     "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
+    "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
+    "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
 }
 
 const NO_MENTOR: &str = "找不到这位导师，可能已被永久删除。";
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct MentorId {
     pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorEdit {
+    pub id: i64,
+    #[serde(flatten)]
+    pub form: mentor::MentorForm,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -149,4 +167,42 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
         }
     }
     Visitor { cfg, decls }.visit::<T>();
+}
+
+async fn add_mentor(ctx: &Context, form: mentor::MentorForm) -> Result<MentorId, CallError> {
+    let fields = form.check().map_err(CallError::invalid)?;
+    let id = mentor::create(&ctx.db, &fields, now()).await?;
+    Ok(MentorId { id })
+}
+
+/// Returns the mentor as saved, so the page shows it at once.
+async fn update_mentor(
+    ctx: &Context,
+    input: MentorEdit,
+) -> Result<mentor::MentorDetail, CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    if !mentor::update(&ctx.db, input.id, &fields, now()).await? {
+        return Err(CallError::not_found(NO_MENTOR));
+    }
+    get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+impl From<mentor::SaveError> for CallError {
+    fn from(e: mentor::SaveError) -> Self {
+        match e {
+            mentor::SaveError::EmailTaken { name, trashed } => CallError::invalid(if trashed {
+                format!("这个邮箱已用于回收站里的导师{name}")
+            } else {
+                format!("这个邮箱已用于导师{name}")
+            }),
+            mentor::SaveError::Db(e) => e.into(),
+        }
+    }
+}
+
+/// UTC milliseconds.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }

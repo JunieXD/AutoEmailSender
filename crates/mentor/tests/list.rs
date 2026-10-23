@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU32;
 
-use mentor::{Contact, ContactStatus, MatchState, MentorQuery, NewMentor, PAGE_SIZE};
+use mentor::{Contact, ContactStatus, MatchState, MentorFields, MentorQuery, PAGE_SIZE};
 use sqlx::SqlitePool;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
@@ -25,11 +25,11 @@ async fn names(
 }
 
 async fn add(db: &SqlitePool, name: &str, university: &str, research: &str) -> i64 {
-    let mentor = NewMentor {
+    let mentor = MentorFields {
         name: name.into(),
         university: Some(university.into()),
         research: Some(research.into()),
-        ..NewMentor::default()
+        ..MentorFields::default()
     };
     mentor::create(db, &mentor, 0).await.unwrap()
 }

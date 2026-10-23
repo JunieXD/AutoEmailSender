@@ -1,11 +1,12 @@
-//! Mentors: the home list with its filters, keyword search, one mentor's page and adding mentors.
+//! Mentors: the home list with its filters, keyword search, one mentor's page, and adding and
+//! editing mentors.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
-use sqlx::{Acquire, Sqlite, SqlitePool};
+use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 pub const PAGE_SIZE: u32 = 50;
@@ -447,8 +448,84 @@ fn name_chars(name: &str) -> String {
         .join(" ")
 }
 
+/// A mentor's fields as the user typed them in the form; `check` turns them into `MentorFields`.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MentorForm {
+    pub name: String,
+    pub title: String,
+    pub email: String,
+    pub university: String,
+    pub school: String,
+    pub department: String,
+    pub homepage_url: String,
+    pub research: String,
+}
+
+impl MentorForm {
+    /// Trims every field, leaving blank ones empty, and checks those with a format. The error says
+    /// what to fix.
+    pub fn check(self) -> Result<MentorFields, String> {
+        fn text(s: String) -> Option<String> {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_owned())
+        }
+        let name = text(self.name).ok_or("请填写姓名")?;
+        let email = text(self.email);
+        if email.as_deref().is_some_and(|e| !is_email(e)) {
+            return Err("邮箱地址格式不正确".into());
+        }
+        let homepage_url = text(self.homepage_url);
+        if homepage_url.as_deref().is_some_and(|u| !is_web_page(u)) {
+            return Err("主页地址不正确，需以 http:// 或 https:// 开头".into());
+        }
+        Ok(MentorFields {
+            name,
+            email,
+            title: text(self.title),
+            university: text(self.university),
+            school: text(self.school),
+            department: text(self.department),
+            homepage_url,
+            research: text(self.research),
+        })
+    }
+}
+
+/// A plain address as people write them: `local@domain`, where the local part is dot-separated
+/// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
+/// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
+fn is_email(s: &str) -> bool {
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    let atom = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_alphanumeric() || "!#$%&'*+/=?^_`{|}~-".contains(c))
+    };
+    let label = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '-')
+    };
+    local.split('.').all(atom) && domain.split('.').count() > 1 && domain.split('.').all(label)
+}
+
+/// An http or https address with a host, in any letter case.
+fn is_web_page(s: &str) -> bool {
+    url::Url::parse(s).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.host().is_some()
+            && !s.contains(char::is_whitespace)
+    })
+}
+
+/// A mentor's own fields, checked; blank ones are None.
 #[derive(Debug, Default)]
-pub struct NewMentor {
+pub struct MentorFields {
     pub name: String,
     pub email: Option<String>,
     pub title: Option<String>,
@@ -459,14 +536,41 @@ pub struct NewMentor {
     pub research: Option<String>,
 }
 
+#[derive(Debug)]
+pub enum SaveError {
+    /// Another mentor, perhaps one in the trash, already has the email.
+    EmailTaken {
+        name: String,
+        trashed: bool,
+    },
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for SaveError {
+    fn from(e: sqlx::Error) -> Self {
+        SaveError::Db(e)
+    }
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveError::EmailTaken { .. } => write!(f, "email belongs to another mentor"),
+            SaveError::Db(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {}
+
 /// Adds a mentor and indexes it for keyword search. `now` is UTC milliseconds.
 pub async fn create<'c>(
     conn: impl Acquire<'c, Database = Sqlite>,
-    mentor: &NewMentor,
+    mentor: &MentorFields,
     now: i64,
-) -> Result<i64, sqlx::Error> {
+) -> Result<i64, SaveError> {
     let mut tx = conn.begin().await?;
-    let id = sqlx::query_scalar!(
+    let inserted = sqlx::query_scalar!(
         "INSERT INTO mentor (name, email, title, university, school, department, homepage_url, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         mentor.name,
@@ -480,7 +584,11 @@ pub async fn create<'c>(
         now,
     )
     .fetch_one(&mut *tx)
-    .await?;
+    .await;
+    let id = match inserted {
+        Ok(id) => id,
+        Err(e) => return Err(save_error(&mut tx, e, mentor, None).await),
+    };
     sqlx::query!(
         "INSERT INTO mentor_detail (mentor_id, research) VALUES (?, ?)",
         id,
@@ -488,6 +596,95 @@ pub async fn create<'c>(
     )
     .execute(&mut *tx)
     .await?;
+    index(&mut tx, id, mentor).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Replaces the mentor's own fields and reindexes it. False when there is no such mentor.
+pub async fn update(
+    db: &SqlitePool,
+    id: i64,
+    mentor: &MentorFields,
+    now: i64,
+) -> Result<bool, SaveError> {
+    let mut tx = db.begin().await?;
+    let updated = sqlx::query!(
+        "UPDATE mentor SET name = ?, email = ?, title = ?, university = ?, school = ?, department = ?,
+           homepage_url = ?, updated_at = ?
+         WHERE id = ?",
+        mentor.name,
+        mentor.email,
+        mentor.title,
+        mentor.university,
+        mentor.school,
+        mentor.department,
+        mentor.homepage_url,
+        now,
+        id,
+    )
+    .execute(&mut *tx)
+    .await;
+    let done = match updated {
+        Ok(done) => done,
+        Err(e) => return Err(save_error(&mut tx, e, mentor, Some(id)).await),
+    };
+    if done.rows_affected() == 0 {
+        return Ok(false);
+    }
+    sqlx::query!(
+        "UPDATE mentor_detail SET research = ? WHERE mentor_id = ?",
+        mentor.research,
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
+    index(&mut tx, id, mentor).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// Explains a failed insert or update. The unique index on email is the only one these statements
+/// can break, so the user learns which mentor has the address. Writing first and explaining
+/// afterwards keeps the transaction a plain write: reading before writing would make it fail at
+/// once instead of waiting whenever another save commits in between.
+async fn save_error(
+    tx: &mut SqliteConnection,
+    error: sqlx::Error,
+    mentor: &MentorFields,
+    id: Option<i64>,
+) -> SaveError {
+    let unique = error
+        .as_database_error()
+        .is_some_and(|e| e.is_unique_violation());
+    let Some(email) = mentor.email.as_deref().filter(|_| unique) else {
+        return error.into();
+    };
+    // The column's NOCASE collation applies, as it does for the unique index.
+    let owner = sqlx::query!(
+        r#"SELECT name, trashed_at IS NOT NULL AS "trashed!: bool"
+           FROM mentor WHERE email = ? AND id IS NOT ?"#,
+        email,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await;
+    match owner {
+        Ok(Some(o)) => SaveError::EmailTaken {
+            name: o.name,
+            trashed: o.trashed,
+        },
+        Ok(None) => error.into(),
+        Err(e) => e.into(),
+    }
+}
+
+/// Writes the mentor's keyword index entry, replacing any earlier one.
+async fn index(
+    tx: &mut SqliteConnection,
+    id: i64,
+    mentor: &MentorFields,
+) -> Result<(), sqlx::Error> {
     let text = search_text(&[
         Some(&mentor.name),
         mentor.university.as_deref(),
@@ -495,6 +692,9 @@ pub async fn create<'c>(
         mentor.department.as_deref(),
         mentor.research.as_deref(),
     ]);
+    sqlx::query!("DELETE FROM mentor_search WHERE rowid = ?", id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query!(
         "INSERT INTO mentor_search (rowid, body, name) VALUES (?, ?, ?)",
         id,
@@ -503,6 +703,5 @@ pub async fn create<'c>(
     )
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
-    Ok(id)
+    Ok(())
 }

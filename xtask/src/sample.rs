@@ -4,7 +4,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fastrand::Rng;
-use mentor::NewMentor;
+use mentor::MentorFields;
 use sqlx::SqlitePool;
 
 use crate::Result;
@@ -127,14 +127,14 @@ fn chars(rng: &mut Rng, from: &str, n: usize) -> String {
     (0..n).map(|_| *pick(rng, &all)).collect()
 }
 
-fn mentor(rng: &mut Rng, i: usize) -> NewMentor {
+fn mentor(rng: &mut Rng, i: usize) -> MentorFields {
     let university = *pick(rng, UNIVERSITIES);
     // The first topic is the recent focus; the rest are listed.
     let n = rng.usize(3..6);
     let mut topics = rng.choose_multiple(TOPICS.iter().copied(), n);
     rng.shuffle(&mut topics);
     let given = rng.usize(1..3);
-    NewMentor {
+    MentorFields {
         name: chars(rng, SURNAMES, 1) + &chars(rng, GIVEN, given),
         email: (rng.f32() < 0.9).then(|| format!("m{i}@example.edu.cn")),
         title: pick(rng, TITLES).map(Into::into),

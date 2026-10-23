@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name, trashed_at IS NOT NULL AS \"trashed!: bool\"\n           FROM mentor WHERE email = ? AND id IS NOT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "trashed!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7e69757f471296f473e56ca65871860abd64978ba6872b24429b7cce42377397"
+}

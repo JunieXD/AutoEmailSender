@@ -6,7 +6,7 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
-export type ErrorCode = "bad_input" | "not_found" | "internal";
+export type ErrorCode = "bad_input" | "not_found" | "invalid" | "internal";
 
 export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
 
@@ -17,6 +17,10 @@ export type MentorDetail = { id: number, name: string, email: string | null, tit
  * The page the mentor was found on.
  */
 sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<TagLabel>, };
+
+export type MentorEdit = { id: number, name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
+
+export type MentorForm = { name: string, title: string, email: string, university: string, school: string, department: string, homepageUrl: string, research: string, };
 
 export type MentorId = { id: number, };
 
@@ -50,4 +54,6 @@ export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };
+  addMentor: { input: MentorForm; output: MentorId };
+  updateMentor: { input: MentorEdit; output: MentorDetail };
 }
