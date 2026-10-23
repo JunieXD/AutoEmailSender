@@ -61,7 +61,7 @@ export function MentorsPage() {
               role="tab"
               aria-selected={search.status === status}
               onClick={() => navigate({ search: (s) => ({ ...s, status, page: undefined }) })}
-              className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
+              className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap phone:h-10 text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
             >
               {label}
             </button>
@@ -90,6 +90,7 @@ export function MentorsPage() {
         <Button
           variant="ghost"
           size="icon"
+          className="phone:size-10"
           aria-label="上一页"
           disabled={page <= 1}
           onClick={() => navigate({ search: (s) => ({ ...s, page: page - 1 > 1 ? page - 1 : undefined }) })}
@@ -99,6 +100,7 @@ export function MentorsPage() {
         <Button
           variant="ghost"
           size="icon"
+          className="phone:size-10"
           aria-label="下一页"
           disabled={page >= pages}
           onClick={() => navigate({ search: (s) => ({ ...s, page: page + 1 }) })}
@@ -176,9 +178,9 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
               {m.title && <span className="ml-1.5 text-sm text-muted-foreground">{m.title}</span>}
             </span>
           </div>
-          <div role="cell" className="min-w-0 text-sm cards:text-muted-foreground cards:[grid-area:place]">
-            <div className="truncate">{m.university ?? <Missing>未填写学校</Missing>}</div>
-            <div className="truncate text-muted-foreground cards:hidden">
+          <div role="cell" className="min-w-0 text-sm cards:flex cards:gap-1.5 cards:[grid-area:place]">
+            <div className="truncate cards:shrink-0">{m.university ?? <Missing>未填写学校</Missing>}</div>
+            <div className="truncate text-muted-foreground">
               {[m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学院</Missing>}
             </div>
           </div>
@@ -191,10 +193,7 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
           <div role="cell" className="cards:justify-self-end cards:[grid-area:match]">
             <Match state={m.matchState} />
           </div>
-          <div
-            role="cell"
-            className="min-w-0 text-sm cards:flex cards:flex-col cards:items-end cards:[grid-area:contact]"
-          >
+          <div role="cell" className="min-w-0 text-sm cards:max-w-[45cqw] cards:text-right cards:[grid-area:contact]">
             <ContactCell contact={m.contact} />
           </div>
           <div role="cell" className={`flex flex-wrap gap-1 ${TAGS}`}>
@@ -260,7 +259,7 @@ function ContactCell({ contact }: { contact: Contact }) {
         : `${times(contact.count)}${day(contact.lastOutAt)}发出`;
   return (
     <>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 cards:justify-end">
         <span className={`size-2 rounded-full ${dot}`} />
         {label}
         {contact.status === "replied" && contact.unread && (

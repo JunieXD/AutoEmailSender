@@ -109,6 +109,8 @@
   --color-avatar-4: var(--avatar-4);
   --color-avatar-5: var(--avatar-5);
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  /* Spacing in pixels: the 15px root font size (docs/ui.md#字体) would otherwise scale it. */
+  --spacing: 4px;
   /* docs/ui.md#字体 */
   --text-xs: 12px;
   --text-sm: 13px;
