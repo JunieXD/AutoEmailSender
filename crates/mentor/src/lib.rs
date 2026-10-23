@@ -109,13 +109,10 @@ enum MatchColumn {
 /// One page of the home list, best matches first.
 ///
 /// The filters test only the mentor row: each `IN` set is built once per query, whereas joining the
-/// contact summary for every mentor made counting 100 000 mentors ten times slower.
+/// contact summary for every mentor made counting 100 000 mentors ten times slower. For the same
+/// reason the page is cut before the joins, so skipped rows are never joined.
 pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sqlx::Error> {
-    let (phrases, name_like) = match query.keyword.as_deref().and_then(keyword) {
-        Some(Keyword::Phrases(p)) => (Some(p), None),
-        Some(Keyword::NameChar(c)) => (None, Some(format!("%{c}%"))),
-        None => (None, None),
-    };
+    let keyword = query.keyword.as_deref().and_then(keyword);
     let offset = i64::from(query.page.get() - 1) * i64::from(PAGE_SIZE);
     let rows = sqlx::query!(
         r#"SELECT m.id, m.name, m.title, m.university, m.school, m.department,
@@ -123,20 +120,20 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
                   m.match_state AS "match_state: MatchColumn", m.match_score,
                   c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
                   c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
-           FROM mentor m
+           FROM (SELECT m.id FROM mentor m
+                 WHERE m.trashed_at IS NULL
+                   AND (?1 IS NULL
+                        OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+                        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+                   AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+                 ORDER BY m.match_score DESC, m.id
+                 LIMIT ?3 OFFSET ?4) page
+           JOIN mentor m ON m.id = page.id
            LEFT JOIN mentor_detail d ON d.mentor_id = m.id
            LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           WHERE m.trashed_at IS NULL
-             AND (?1 IS NULL
-                  OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                  OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-             AND (?3 IS NULL OR m.name LIKE ?3)
-           ORDER BY m.match_score DESC, m.id
-           LIMIT ?4 OFFSET ?5"#,
+           ORDER BY m.match_score DESC, m.id"#,
         query.status,
-        phrases,
-        name_like,
+        keyword,
         PAGE_SIZE,
         offset,
     )
@@ -149,11 +146,9 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
              AND (?1 IS NULL
                   OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
                   OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-             AND (?3 IS NULL OR m.name LIKE ?3)"#,
+             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))"#,
         query.status,
-        phrases,
-        name_like,
+        keyword,
     )
     .fetch_one(db)
     .await?;
@@ -241,27 +236,17 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
     Ok(MentorPage { mentors, total })
 }
 
-enum Keyword {
-    /// FTS5 query: one quoted phrase of bigrams per word, all of which must appear.
-    Phrases(String),
-    /// A single character only searches names.
-    NameChar(char),
-}
-
-/// None when the text has nothing to search for.
-fn keyword(text: &str) -> Option<Keyword> {
-    let words: Vec<Vec<char>> = words(text).collect();
-    if let [word] = words.as_slice()
-        && let [c] = word.as_slice()
-    {
-        return Some(Keyword::NameChar(*c));
-    }
-    let phrases: Vec<String> = words
-        .iter()
-        .filter(|w| w.len() >= 2)
-        .map(|w| format!("\"{}\"", bigrams_of(w).join(" ")))
+/// The FTS5 query for a keyword search, in which every word must appear: a phrase of bigrams per
+/// word. A single character would match nearly every mentor's text, so a one-character word only
+/// searches the characters of names. None when the text has nothing to search for.
+fn keyword(text: &str) -> Option<String> {
+    let terms: Vec<String> = words(text)
+        .map(|w| match w.as_slice() {
+            [c] => format!("name:\"{c}\""),
+            _ => format!("\"{}\"", bigrams_of(&w).join(" ")),
+        })
         .collect();
-    (!phrases.is_empty()).then(|| Keyword::Phrases(phrases.join(" ")))
+    (!terms.is_empty()).then(|| terms.join(" "))
 }
 
 /// Runs of letters and digits, lowercased.
@@ -272,11 +257,7 @@ fn words(text: &str) -> impl Iterator<Item = Vec<char>> {
 }
 
 fn bigrams_of(word: &[char]) -> Vec<String> {
-    if word.len() == 1 {
-        vec![word.iter().collect()]
-    } else {
-        word.windows(2).map(|w| w.iter().collect()).collect()
-    }
+    word.windows(2).map(|w| w.iter().collect()).collect()
 }
 
 /// The text stored in the keyword index: overlapping two-character tokens, so that a phrase of the
@@ -287,6 +268,15 @@ fn search_text(fields: &[Option<&str>]) -> String {
         .flatten()
         .flat_map(|f| words(f))
         .flat_map(|w| bigrams_of(&w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The name's letters and digits as one-character tokens.
+fn name_chars(name: &str) -> String {
+    words(name)
+        .flatten()
+        .map(String::from)
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -340,9 +330,10 @@ pub async fn create<'c>(
         mentor.research.as_deref(),
     ]);
     sqlx::query!(
-        "INSERT INTO mentor_search (rowid, body) VALUES (?, ?)",
+        "INSERT INTO mentor_search (rowid, body, name) VALUES (?, ?, ?)",
         id,
-        text
+        text,
+        name_chars(&mentor.name),
     )
     .execute(&mut *tx)
     .await?;

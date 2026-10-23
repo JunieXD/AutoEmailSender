@@ -50,6 +50,9 @@ async fn keyword_finds_text_containing_it(db: SqlitePool) {
     // One character only matches names, otherwise it would hit nearly everyone.
     assert_eq!(names(&db, None, Some("静")).await, ["李静"]);
     assert!(names(&db, None, Some("学")).await.is_empty());
+    assert_eq!(names(&db, None, Some("李 语言")).await, ["李静"]);
+    assert!(names(&db, None, Some("张 语言")).await.is_empty());
+    assert_eq!(names(&db, None, Some("静 李")).await, ["李静"]);
     assert_eq!(names(&db, None, Some("、！")).await.len(), 3);
 }
 

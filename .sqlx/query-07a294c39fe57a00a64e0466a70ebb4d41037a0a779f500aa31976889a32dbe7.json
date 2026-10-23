@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mentor_search (rowid, body, name) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "07a294c39fe57a00a64e0466a70ebb4d41037a0a779f500aa31976889a32dbe7"
+}

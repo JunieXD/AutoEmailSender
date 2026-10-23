@@ -234,14 +234,13 @@ const STATUS_STYLE: Record<ContactStatus, [string, string]> = {
 
 function ContactCell({ contact }: { contact: Contact }) {
   const [label, dot] = STATUS_STYLE[contact.status];
+  // A bounce can arrive days later, so a bounced mentor shows when the mail went out.
   const detail =
-    contact.status === "contacted"
-      ? `${times(contact.count)}${day(contact.lastOutAt)}发出`
+    contact.status === "none"
+      ? null
       : contact.status === "replied"
         ? `${times(contact.count)}${day(contact.lastReplyAt)}回复`
-        : contact.status === "bounced"
-          ? `${day(contact.lastOutAt)}退信`
-          : null;
+        : `${times(contact.count)}${day(contact.lastOutAt)}发出`;
   return (
     <>
       <div className="flex items-center gap-1.5">

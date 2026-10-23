@@ -111,9 +111,10 @@ CREATE TABLE mentor_detail (
   match_highlights TEXT,
   match_risks TEXT
 ) STRICT;
--- Keyword search: the app writes name/school/department/research as space-separated
--- character bigrams, and searches with a phrase of the query's bigrams.
-CREATE VIRTUAL TABLE mentor_search USING fts5(body, content='', contentless_delete=1);
+-- Keyword search: the app writes name/school/department/research into body as space-separated
+-- character bigrams, and searches with a phrase of the query's bigrams. name holds the name's
+-- single characters, which a one-character word searches.
+CREATE VIRTUAL TABLE mentor_search USING fts5(body, name, content='', contentless_delete=1);
 CREATE INDEX mentor_list ON mentor (trashed_at, university, school, department);
 CREATE INDEX mentor_by_score ON mentor (trashed_at, match_score DESC, id);
 CREATE INDEX mentor_mailbox ON mentor (mailbox_id) WHERE mailbox_id IS NOT NULL;
@@ -428,6 +429,11 @@ END;
 CREATE TRIGGER message_mentor_ad AFTER DELETE ON message_mentor BEGIN
   DELETE FROM mentor_contact WHERE mentor_id = OLD.mentor_id;
   INSERT INTO mentor_contact SELECT * FROM mentor_contact_live WHERE mentor_id = OLD.mentor_id;
+END;
+
+CREATE TRIGGER message_mentor_au AFTER UPDATE ON message_mentor BEGIN
+  DELETE FROM mentor_contact WHERE mentor_id IN (OLD.mentor_id, NEW.mentor_id);
+  INSERT INTO mentor_contact SELECT * FROM mentor_contact_live WHERE mentor_id IN (OLD.mentor_id, NEW.mentor_id);
 END;
 
 CREATE TRIGGER message_au AFTER UPDATE OF kind, sent_at, read_at, in_reply_to, bounce_reason ON message BEGIN

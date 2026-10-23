@@ -173,6 +173,14 @@ async fn summary_follows_mail(pool: SqlitePool) {
     )
     .await;
     reconciled(conn).await;
+    // Merging duplicate mentors moves their messages over.
+    sqlx::query("UPDATE message_mentor SET mentor_id = ? WHERE message_id = ?")
+        .bind(b)
+        .bind(reply)
+        .execute(&mut **conn)
+        .await
+        .unwrap();
+    assert_eq!(reconciled(conn).await[1].1, "replied");
     exec(
         conn,
         "DELETE FROM message_mentor WHERE message_id = ?",

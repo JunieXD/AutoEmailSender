@@ -48,6 +48,7 @@ pub async fn run(path: &Path) -> Result {
     for (label, query) in [
         ("首页，全部，第 1 页", page(None, None, 1)),
         ("首页，全部，第 100 页", page(None, None, 100)),
+        ("首页，全部，第 1900 页", page(None, None, 1900)),
         (
             "首页，已联系",
             page(Some(ContactStatus::Contacted), None, 1),
@@ -56,6 +57,7 @@ pub async fn run(path: &Path) -> Result {
         ("首页，关键词，命中少", page(None, Some("量子计算"), 1)),
         ("首页，关键词，命中七成以上", page(None, Some("学习"), 1)),
         ("首页，关键词，一个字", page(None, Some("伟"), 1)),
+        ("首页，关键词，姓加方向", page(None, Some("王 学习"), 1)),
     ] {
         report(
             label,
