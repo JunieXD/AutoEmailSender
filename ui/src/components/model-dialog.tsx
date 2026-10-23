@@ -57,7 +57,10 @@ export function ModelDialog({
 
   const provider = providers.find((p) => p.id === form.provider);
   // The core only uses the saved key where it was saved for.
-  const keySaved = config !== null && form.provider === initial.provider && form.baseUrl === initial.baseUrl;
+  const keySaved =
+    config !== null &&
+    form.provider === initial.provider &&
+    (form.provider !== CUSTOM || form.baseUrl === initial.baseUrl);
   const reachable =
     (provider !== undefined || (form.provider === CUSTOM && form.baseUrl.trim() !== "")) &&
     (keySaved || form.provider === CUSTOM || form.apiKey.trim() !== "");

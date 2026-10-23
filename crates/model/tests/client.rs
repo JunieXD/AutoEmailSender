@@ -77,7 +77,14 @@ fn access(base_url: String, no_thinking: Option<NoThinking>) -> Access {
 async fn a_test_asks_the_model_not_to_think() {
     let (address, received) = provider(
         200,
-        r#"{"choices":[{"message":{"role":"assistant","content":"好"}}]}"#,
+        concat!(
+            r#"data: {"choices":[{"delta":{"role":"assistant","content":""}}]}"#,
+            "\n\n",
+            r#"data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}]}"#,
+            "\n\n",
+            r#"data: {"choices":[],"usage":{"total_tokens":9}}"#,
+            "\n\ndata: [DONE]\n\n",
+        ),
     )
     .await;
     let net = Net::new(Vec::new()).unwrap();
@@ -89,6 +96,7 @@ async fn a_test_asks_the_model_not_to_think() {
     assert_eq!(received[0].authorization, "Bearer sk-test");
     let body: Value = serde_json::from_str(&received[0].body).unwrap();
     assert_eq!(body["model"], "deepseek-chat");
+    assert_eq!(body["stream"], true);
     assert_eq!(body["thinking"], json!({"type": "disabled"}));
 }
 
@@ -130,7 +138,12 @@ async fn a_reply_without_an_answer_is_not_a_pass() {
     // As when a model spends all it may write on thinking.
     let (thinker, _) = provider(
         200,
-        r#"{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"嗯……"},"finish_reason":"length"}]}"#,
+        concat!(
+            r#"data: {"choices":[{"delta":{"reasoning_content":"嗯……"}}]}"#,
+            "\n\n",
+            r#"data: {"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+            "\n\ndata: [DONE]\n\n",
+        ),
     )
     .await;
     let result = model::test(&net, &access(thinker, None), "r1").await;

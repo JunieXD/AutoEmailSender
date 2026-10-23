@@ -42,23 +42,26 @@ pub async fn list_models(net: &Net, access: &Access) -> Result<Vec<String>, Mode
 }
 
 /// Asks the model for a one-word answer, which proves the address, the key and the model name.
+/// Streamed, as some models only think that way and not all can stop thinking.
 pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelError> {
     #[derive(Deserialize)]
-    struct Completion {
+    struct Chunk {
         choices: Vec<Choice>,
     }
     #[derive(Deserialize)]
     struct Choice {
-        message: Message,
+        #[serde(default)]
+        delta: Delta,
         finish_reason: Option<String>,
     }
-    #[derive(Deserialize)]
-    struct Message {
+    #[derive(Default, Deserialize)]
+    struct Delta {
         content: Option<String>,
     }
     let mut body = json!({
         "model": model,
         "messages": [{"role": "user", "content": "请只回复一个字：好"}],
+        "stream": true,
     });
     if let Some(no_thinking) = access.no_thinking {
         no_thinking.apply(&mut body);
@@ -71,18 +74,30 @@ pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelEr
         // Models that think first may take a while even for one word.
         .timeout(Duration::from_secs(60));
     let reply = send(request, access).await?;
-    let completion: Completion = serde_json::from_str(&reply)
-        .map_err(|_| ModelError::Broken(format!("unexpected reply: {}", quote(&reply, access))))?;
-    match completion.choices.into_iter().next() {
-        Some(Choice {
-            message: Message {
-                content: Some(answer),
-            },
-            ..
-        }) if !answer.trim().is_empty() => Ok(()),
-        choice => Err(ModelError::NoAnswer {
-            finish_reason: choice.and_then(|c| c.finish_reason),
-        }),
+    let broken = || ModelError::Broken(format!("unexpected reply: {}", quote(&reply, access)));
+    // Server-sent events, each a `data:` line, until `data: [DONE]`.
+    let mut events = reply
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(str::trim)
+        .filter(|data| *data != "[DONE]")
+        .peekable();
+    if events.peek().is_none() {
+        return Err(broken());
+    }
+    let (mut answer, mut finish_reason) = (String::new(), None);
+    for data in events {
+        let chunk: Chunk = serde_json::from_str(data).map_err(|_| broken())?;
+        // The last chunk may only count tokens.
+        if let Some(choice) = chunk.choices.into_iter().next() {
+            answer.extend(choice.delta.content);
+            finish_reason = choice.finish_reason.or(finish_reason);
+        }
+    }
+    if answer.trim().is_empty() {
+        Err(ModelError::NoAnswer { finish_reason })
+    } else {
+        Ok(())
     }
 }
 
