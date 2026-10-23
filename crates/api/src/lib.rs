@@ -376,14 +376,15 @@ pub struct MailboxEdit {
     pub id: i64,
     #[serde(flatten)]
     pub form: mailbox::MailboxForm,
-    /// Blank keeps the saved one.
+    /// Blank keeps the saved one, unless the servers changed.
     pub secret: String,
 }
 
 /// A mailbox as filled in, perhaps not saved yet.
 #[derive(Debug, Deserialize, TS)]
 pub struct MailboxTest {
-    /// The saved mailbox being edited, whose secret a blank one stands for.
+    /// The saved mailbox being edited, whose secret a blank one stands for while the servers stay
+    /// the same.
     #[ts(optional)]
     pub id: Option<i64>,
     #[serde(flatten)]
@@ -415,8 +416,8 @@ async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, Call
 
 async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    let secret = mailbox::checked_secret(&input.secret);
-    if mailbox::update(&ctx.db, input.id, &fields, secret.as_deref()).await? {
+    let secret = entered_or_saved_secret(ctx, &input.secret, Some(input.id), &fields).await?;
+    if mailbox::update(&ctx.db, input.id, &fields, &secret).await? {
         Ok(())
     } else {
         Err(CallError::not_found(NO_MAILBOX))
@@ -439,23 +440,32 @@ async fn test_receiving(ctx: &Context, input: MailboxTest) -> Result<(), CallErr
 
 async fn test_account(ctx: &Context, input: MailboxTest) -> Result<mailbox::Account, CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    let secret = match (mailbox::checked_secret(&input.secret), input.id) {
-        (Some(secret), _) => secret,
-        (None, Some(id)) => saved_account(ctx, id).await?.secret,
-        (None, None) => return Err(CallError::invalid(NO_SECRET.into())),
-    };
+    let secret = entered_or_saved_secret(ctx, &input.secret, input.id, &fields).await?;
     Ok(fields.account(secret))
 }
 
-async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
-    let account = saved_account(ctx, input.id).await?;
-    Ok(mailbox::send_test(&ctx.net, &account).await?)
+/// The secret typed in, else the saved one of the mailbox being edited if its servers stay the same.
+async fn entered_or_saved_secret(
+    ctx: &Context,
+    secret: &str,
+    id: Option<i64>,
+    fields: &mailbox::MailboxFields,
+) -> Result<String, CallError> {
+    if let Some(secret) = mailbox::checked_secret(secret) {
+        return Ok(secret);
+    }
+    let saved = match id {
+        Some(id) => mailbox::secret(&ctx.db, id, fields).await?,
+        None => None,
+    };
+    saved.ok_or_else(|| CallError::invalid(NO_SECRET.into()))
 }
 
-async fn saved_account(ctx: &Context, id: i64) -> Result<mailbox::Account, CallError> {
-    mailbox::account(&ctx.db, id)
+async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    let account = mailbox::account(&ctx.db, input.id)
         .await?
-        .ok_or_else(|| CallError::not_found(NO_MAILBOX))
+        .ok_or_else(|| CallError::not_found(NO_MAILBOX))?;
+    Ok(mailbox::send_test(&ctx.net, &account).await?)
 }
 
 impl From<mailbox::SaveError> for CallError {

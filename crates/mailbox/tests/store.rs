@@ -24,19 +24,19 @@ fn form(address: &str) -> MailboxForm {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_blank_secret_keeps_the_saved_one(db: SqlitePool) {
+async fn a_saved_secret_is_only_for_its_servers(db: SqlitePool) {
     let fields = form("me@qq.com").check().unwrap();
-    let id = mailbox::create(&db, &fields, "first", 0).await.unwrap();
-    let secret = async || mailbox::account(&db, id).await.unwrap().unwrap().secret;
+    let id = mailbox::create(&db, &fields, "secret", 0).await.unwrap();
 
-    assert!(mailbox::update(&db, id, &fields, None).await.unwrap());
-    assert_eq!(secret().await, "first");
-    assert!(
-        mailbox::update(&db, id, &fields, Some("second"))
-            .await
-            .unwrap()
+    let same = form("me@qq.com").check().unwrap();
+    assert_eq!(
+        mailbox::secret(&db, id, &same).await.unwrap().as_deref(),
+        Some("secret")
     );
-    assert_eq!(secret().await, "second");
+    let mut moved = form("me@qq.com");
+    moved.smtp.host = Cow::Borrowed("smtp.example.com");
+    let moved = moved.check().unwrap();
+    assert_eq!(mailbox::secret(&db, id, &moved).await.unwrap(), None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

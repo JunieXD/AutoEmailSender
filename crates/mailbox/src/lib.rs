@@ -236,18 +236,18 @@ pub async fn create(
     Ok(row.last_insert_rowid())
 }
 
-/// Saves the fields, and the secret unless it is None. False when there is no such mailbox.
+/// False when there is no such mailbox.
 pub async fn update(
     db: &SqlitePool,
     id: i64,
     fields: &MailboxFields,
-    secret: Option<&str>,
+    secret: &str,
 ) -> Result<bool, SaveError> {
     let address: &str = fields.address.as_ref();
     let row = sqlx::query!(
         "UPDATE mailbox SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,
            smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,
-           secret = coalesce(?, secret), daily_limit = ?, min_interval_s = ?
+           secret = ?, daily_limit = ?, min_interval_s = ?
          WHERE id = ?",
         address,
         fields.sender_name,
@@ -275,6 +275,24 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// The saved secret of a mailbox, for an edit that leaves it blank; None when the edit changed
+/// its servers, which must not get this secret.
+pub async fn secret(
+    db: &SqlitePool,
+    id: i64,
+    fields: &MailboxFields,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT secret FROM mailbox
+         WHERE id = ? AND smtp_host = ? COLLATE NOCASE AND imap_host = ? COLLATE NOCASE",
+        id,
+        fields.smtp.host,
+        fields.imap.host,
+    )
+    .fetch_optional(db)
+    .await
 }
 
 /// What logging in to a saved mailbox takes.

@@ -22,7 +22,7 @@ minIntervalS: number, };
 
 export type MailboxEdit = { id: number, 
 /**
- * Blank keeps the saved one.
+ * Blank keeps the saved one, unless the servers changed.
  */
 secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
@@ -30,7 +30,8 @@ export type MailboxId = { id: number, };
 
 export type MailboxTest = { 
 /**
- * The saved mailbox being edited, whose secret a blank one stands for.
+ * The saved mailbox being edited, whose secret a blank one stands for while the servers stay
+ * the same.
  */
 id?: number, secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
