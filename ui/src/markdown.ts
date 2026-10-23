@@ -27,6 +27,13 @@ marked.use(cjkFriendly(), {
     url: off,
     autolink: off,
   },
+  renderer: {
+    // An item whose own text was deleted still holds its nested list, after the empty paragraph the
+    // editor needs first.
+    listitem(item) {
+      return item.tokens[0]?.type === "list" ? `<li><p></p>${this.parser.parse(item.tokens)}</li>\n` : false;
+    },
+  },
 });
 
 /** A letter's Markdown as HTML. */
@@ -43,7 +50,7 @@ export function toMarkdown(doc: Node): string {
 
 type Block = { node: Node; text: string; otherMarker: boolean };
 
-/** Markdown has no empty paragraphs, so blank lines typed between paragraphs are not kept. */
+/** Markdown has no blank paragraphs, so blank lines typed between paragraphs are not kept. */
 function blocksOf(parent: Node): Block[] {
   const out: Block[] = [];
   parent.forEach((node) => {
@@ -51,7 +58,7 @@ function blocksOf(parent: Node): Block[] {
     // Two lists of a kind in a row would read as one, unless their markers differ.
     const otherMarker = previous?.node.type === node.type && !previous.otherMarker;
     const text = block(node, otherMarker);
-    if (text !== "") out.push({ node, text, otherMarker });
+    if (!/^[ \t]*$/.test(text)) out.push({ node, text, otherMarker });
   });
   return out;
 }
@@ -117,7 +124,9 @@ function inline(para: Node): string {
   // not count as emphasis.
   let space = "";
   children.forEach((child, index) => {
-    const marks = marksOf(child);
+    // Marks close before a break: one kept open across it, but not by the text after it, would be
+    // closed after the backslash and leave it as text.
+    const marks = child.type.name === "hardBreak" ? [] : marksOf(child);
     // Marks stay open up to the first that this child does not have.
     let keep = open.findIndex((o) => !marks.some((m) => sameMark(m, o)));
     if (keep === -1) keep = open.length;

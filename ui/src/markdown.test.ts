@@ -42,7 +42,6 @@ describe("a letter reads back as written", () => {
       "formats ending at a break",
       doc(p(t("尊敬的老师：", "bold"), br, t("您好", link("https://a.com")), br, t("此致"))),
     ],
-    ["bold across a break", doc(p(t("甲", "bold"), { type: "hardBreak", marks: [{ type: "bold" }] }, t("乙", "bold")))],
     ["spaces typed in a letter", doc(p(t("    尊敬的老师：")), p(t("甲  乙")))],
     ["a Chinese indent", doc(p(t("　　尊敬的老师：")), p(t("　　您好！")))],
     ["bold ending in Chinese punctuation", doc(p(t("你好，", "bold"), t("世界")))],
@@ -57,6 +56,7 @@ describe("a letter reads back as written", () => {
     ["a link inside bold", doc(p(t("前", "bold"), t("链", "bold", link("https://a.com")), t("后", "bold")))],
     ["a placeholder in bold", doc(p(t("{导师姓名}", "bold"), t("老师")))],
     ["a link right after an exclamation mark", doc(p(t("Hi!"), t("简历", link("https://a.com/cv.pdf"))))],
+    ["a nested list under an item without text", doc(bullets(li({ type: "paragraph" }, bullets(li(p(t("子级")))))))],
     ["nested lists", doc(bullets(li(p(t("一")), numbers(1, li(p(t("甲"))), li(p(t("乙"))))), li(p(t("二")))))],
     [
       "list items with paragraphs and breaks",
@@ -82,6 +82,13 @@ describe("a letter reads back as written", () => {
     }
   });
 
+  test("a break closes the formats on it", () => {
+    const boldBreak = { type: "hardBreak", marks: [{ type: "bold" }] };
+    expect(reread(doc(p(t("甲", "bold"), boldBreak, t("乙", "bold")), p(t("丙", "bold"), boldBreak, t("丁"))))).toEqual(
+      doc(p(t("甲", "bold"), br, t("乙", "bold")), p(t("丙", "bold"), br, t("丁"))).toJSON(),
+    );
+  });
+
   test("lists in a row stay apart", () => {
     const first = numbers(1, li(p(t("研究计划"))));
     const others = [
@@ -90,7 +97,7 @@ describe("a letter reads back as written", () => {
       bullets(li(p(t("乙")))),
       bullets(li(p(t("丙")))),
     ];
-    expect(reread(doc(first, { type: "paragraph" }, ...others))).toEqual(doc(first, ...others).toJSON());
+    expect(reread(doc(first, { type: "paragraph" }, p(t(" ")), ...others))).toEqual(doc(first, ...others).toJSON());
   });
 
   test("what shows nothing is not kept", () => {
