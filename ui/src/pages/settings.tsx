@@ -14,6 +14,7 @@ const GROUPS = [
     sections: [
       { to: "/settings/profile", label: "个人资料" },
       { to: "/settings/templates", label: "模板" },
+      { to: "/settings/letter-style", label: "信件样式" },
     ],
   },
   { label: "邮件", sections: [{ to: "/settings/mailboxes", label: "邮箱" }] },

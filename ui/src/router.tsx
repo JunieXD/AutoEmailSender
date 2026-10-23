@@ -6,6 +6,7 @@ import { MailboxesSection } from "./pages/mailboxes";
 import { ModelsSection } from "./pages/models";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
+import { LetterStyleSection } from "./pages/letter-style";
 import { AboutSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
@@ -70,6 +71,12 @@ const templatesRoute = createRoute({
   component: TemplatesSection,
 });
 
+const letterStyleRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "letter-style",
+  component: LetterStyleSection,
+});
+
 const mailboxesRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "mailboxes",
@@ -99,6 +106,7 @@ export const router = createRouter({
       settingsHomeRoute,
       profileRoute,
       templatesRoute,
+      letterStyleRoute,
       mailboxesRoute,
       modelsRoute,
       aboutRoute,

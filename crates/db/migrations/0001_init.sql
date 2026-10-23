@@ -50,7 +50,7 @@ CREATE TABLE profile (
   name TEXT,
   research_interests TEXT,
   rewrite_preference TEXT,
-  font_family TEXT,            -- NULL = recipient's default font
+  font TEXT CHECK (font IN ('song', 'hei')), -- NULL = the recipient's default font
   font_size_pt REAL NOT NULL,
   line_height REAL NOT NULL,
   paragraph_spacing_em REAL NOT NULL,

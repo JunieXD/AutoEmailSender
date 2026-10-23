@@ -5,6 +5,9 @@ import cjkFriendly from "marked-cjk-friendly";
 // Letters are Markdown with only the formats docs/design.md#邮件格式 allows. This is the app's one
 // Markdown parser, and the editor's serializer that writes what it reads back the same.
 
+/** Whether a letter may link to an address: web pages and email addresses, never scripts. */
+export const linkable = (address: string) => /^(https?|mailto):/i.test(address);
+
 // Markdown for anything else, such as a line starting with "#" or a bare address, stays text: the
 // editor could not hold it, and the letter would lose it.
 const off = () => undefined;
@@ -28,6 +31,10 @@ marked.use(cjkFriendly(), {
     autolink: off,
   },
   renderer: {
+    // Markdown comes from the model too, so a link elsewhere is only its text.
+    link(token) {
+      return linkable(token.href) ? false : this.parser.parseInline(token.tokens);
+    },
     // An item whose own text was deleted still holds its nested list, after the empty paragraph the
     // editor needs first.
     listitem(item) {
