@@ -16,6 +16,8 @@ pub enum ModelError {
         status: u16,
         reply: String,
     },
+    /// The provider failed partway through its reply, in its words.
+    Failed(String),
     /// The model replied without an answer, such as when it spent everything on thinking.
     NoAnswer {
         finish_reason: Option<String>,
@@ -39,6 +41,7 @@ impl std::fmt::Display for ModelError {
             }
             ModelError::TimedOut { address } => write!(f, "{address} timed out"),
             ModelError::Refused { status, reply } => write!(f, "refused with {status}: {reply}"),
+            ModelError::Failed(reply) => write!(f, "failed partway: {reply}"),
             ModelError::NoAnswer { finish_reason } => {
                 write!(f, "no answer, finish reason {finish_reason:?}")
             }
@@ -78,6 +81,9 @@ impl ModelError {
                     "服务商拒绝了请求（{status}：{reply}）。检查模型名有没有填错，这个模型是否支持对话。"
                 ),
             },
+            ModelError::Failed(reply) => {
+                format!("服务商中途出错了（服务商回复：{reply}）。稍后再试。")
+            }
             ModelError::NoAnswer { finish_reason } => format!(
                 "模型没有给出回答（结束原因：{}）。换个模型再试。",
                 finish_reason.as_deref().unwrap_or("未说明")

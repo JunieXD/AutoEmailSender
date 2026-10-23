@@ -129,7 +129,7 @@ async fn a_key_quoted_back_is_not_shown() {
 }
 
 #[tokio::test]
-async fn a_reply_without_an_answer_is_not_a_pass() {
+async fn a_reply_without_a_whole_answer_is_not_a_pass() {
     let net = Net::new(Vec::new()).unwrap();
     // As when a custom address is a website rather than its API.
     let (website, _) = provider(200, "<!doctype html><title>Home</title>").await;
@@ -149,6 +149,22 @@ async fn a_reply_without_an_answer_is_not_a_pass() {
     let result = model::test(&net, &access(thinker, None), "r1").await;
     assert!(
         matches!(result, Err(ModelError::NoAnswer { ref finish_reason }) if finish_reason.as_deref() == Some("length")),
+        "{result:?}"
+    );
+    // As OpenRouter reports an upstream failure after it has started answering.
+    let (failing, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"好"},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"error":{"code":"server_error","message":"Provider disconnected"},"choices":[{"delta":{"content":""},"finish_reason":"error"}]}"#,
+            "\n\n",
+        ),
+    )
+    .await;
+    let result = model::test(&net, &access(failing, None), "gpt").await;
+    assert!(
+        matches!(result, Err(ModelError::Failed(ref reply)) if reply == "Provider disconnected"),
         "{result:?}"
     );
 }

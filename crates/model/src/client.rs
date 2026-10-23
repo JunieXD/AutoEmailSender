@@ -46,7 +46,14 @@ pub async fn list_models(net: &Net, access: &Access) -> Result<Vec<String>, Mode
 pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelError> {
     #[derive(Deserialize)]
     struct Chunk {
+        #[serde(default)]
         choices: Vec<Choice>,
+        /// Some providers, such as OpenRouter, report failing partway here, after a success status.
+        error: Option<Failure>,
+    }
+    #[derive(Deserialize)]
+    struct Failure {
+        message: String,
     }
     #[derive(Deserialize)]
     struct Choice {
@@ -88,6 +95,9 @@ pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelEr
     let (mut answer, mut finish_reason) = (String::new(), None);
     for data in events {
         let chunk: Chunk = serde_json::from_str(data).map_err(|_| broken())?;
+        if let Some(failure) = chunk.error {
+            return Err(ModelError::Failed(quote(&failure.message, access)));
+        }
         // The last chunk may only count tokens.
         if let Some(choice) = chunk.choices.into_iter().next() {
             answer.extend(choice.delta.content);
