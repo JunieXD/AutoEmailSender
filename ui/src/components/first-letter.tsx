@@ -69,7 +69,9 @@ function Composer({
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const approveKey = ["approveFirstEmail", mentorId];
   const approve = useMutation({
+    mutationKey: approveKey,
     scope,
     mutationFn: (e: FirstEmail) => call("approveFirstEmail", e),
     onSuccess: async () => {
@@ -78,7 +80,10 @@ function Composer({
       dropDrafts(queryClient, [mentorId]);
     },
   });
-  const sending = approve.isPending || approve.isSuccess;
+  // An approval still waiting for the saves before it holds the letter even after leaving and coming
+  // back, so that no second email can be written and approved meanwhile.
+  const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
+  const sending = approving || approve.isSuccess;
   function edit(next: FirstDraftEdit) {
     setLetter(next);
     save.mutate(next);

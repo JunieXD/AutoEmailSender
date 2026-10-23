@@ -625,14 +625,15 @@ pub async fn create<'c>(
 }
 
 /// Records the mailbox that first sends to the mentor as the one to contact them from, unless the
-/// mentor has one (docs/data-model.md#导师).
+/// mentor has one (docs/data-model.md#导师), or the mailbox has been deleted while it sent.
 pub async fn assign_mailbox(
     conn: &mut SqliteConnection,
     id: i64,
     mailbox_id: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE mentor SET mailbox_id = ? WHERE id = ? AND mailbox_id IS NULL",
+        "UPDATE mentor SET mailbox_id = ?1
+         WHERE id = ?2 AND mailbox_id IS NULL AND ?1 IN (SELECT id FROM mailbox)",
         mailbox_id,
         id,
     )

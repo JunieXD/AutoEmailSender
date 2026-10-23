@@ -246,7 +246,8 @@ async fn send(
         }
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
-    while let Err(e) = record(db, id, m.handover.mentor_id, mailbox_id, &outcome, now()).await {
+    let answered = now();
+    while let Err(e) = record(db, id, m.handover.mentor_id, mailbox_id, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }

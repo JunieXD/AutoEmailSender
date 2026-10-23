@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET mailbox_id = ?1\n         WHERE id = ?2 AND mailbox_id IS NULL AND ?1 IN (SELECT id FROM mailbox)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1ca6c50e4e036b57dca2a355f3addcf199412cc37305e09c995110d6d4ddb62c"
+}

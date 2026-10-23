@@ -21,14 +21,16 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     // Follows emails on their way out until they are out.
     refetchInterval: (query) => (query.state.data?.some(onTheWay) ? 1000 : false),
   });
-  // An email that has gone out, or has failed, changes the mentor's contact status in the header and
-  // the list. Counted, as one may go out between two reads and never be seen on its way.
-  const settled = emails.data?.filter((e) => !onTheWay(e)).length;
-  const wasSettled = useRef(settled);
+  // An email going out changes the mentor's contact status in the header and the list. Counted, as
+  // one may go out between two reads and never be seen on its way.
+  const out = emails.data?.filter(
+    (e) => e.state === "sent" || e.state === "maybe_sent" || e.state === "bounced",
+  ).length;
+  const wasOut = useRef(out);
   useEffect(() => {
-    if (wasSettled.current !== undefined && settled !== wasSettled.current) refreshMentors(queryClient);
-    wasSettled.current = settled;
-  }, [settled, queryClient]);
+    if (wasOut.current !== undefined && out !== wasOut.current) refreshMentors(queryClient);
+    wasOut.current = out;
+  }, [out, queryClient]);
   if (emails.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(emails.error)}</p>;
   }
