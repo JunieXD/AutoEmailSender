@@ -190,10 +190,15 @@ function TagManager({ onClose }: { onClose: () => void }) {
     // In the order clicked: two quick colours end on the second, and moves of different tags add up.
     scope: { id: "manageTags" },
     mutationFn: (op: () => Promise<unknown>) => op(),
-    onSuccess: () => setError(undefined),
     onError: (e) => setError(errorMessage(e)),
     onSettled: () => refreshTags(queryClient),
   });
+  // The error stays until the user does something else: a later change that works says nothing
+  // about an earlier one that failed.
+  const act = (op: () => Promise<unknown>) => {
+    setError(undefined);
+    run.mutate(op);
+  };
   const list = tags.data ?? [];
   const dirty = list.some((t) => names.get(t.id)?.saved === false);
   return (
@@ -220,16 +225,25 @@ function TagManager({ onClose }: { onClose: () => void }) {
               onRename={() => {
                 const name = names.get(t.id);
                 if (name?.saved !== false) return;
-                setName(t.id, { text: name.text, saved: true });
-                run.mutate(() => call("renameTag", { id: t.id, name: name.text }), {
-                  // Still unsaved, so the dialog keeps it and Enter tries again.
-                  onError: () => setName(t.id, { text: name.text, saved: false }),
+                const sent = { text: name.text, saved: true };
+                setName(t.id, sent);
+                act(async () => {
+                  try {
+                    await call("renameTag", { id: t.id, name: sent.text });
+                  } catch (e) {
+                    // Unsaved again, so the dialog keeps it and Enter tries again; unless the field
+                    // has since been typed in or given up.
+                    setNames((old) =>
+                      old.get(t.id) === sent ? new Map(old).set(t.id, { ...sent, saved: false }) : old,
+                    );
+                    throw e;
+                  }
                 });
               }}
               onRevert={() => setName(t.id)}
-              onColor={(color) => run.mutate(() => call("recolorTag", { id: t.id, color }))}
-              onMove={(direction) => run.mutate(() => call("moveTag", { id: t.id, direction }))}
-              onDelete={() => run.mutate(() => call("deleteTag", { id: t.id }))}
+              onColor={(color) => act(() => call("recolorTag", { id: t.id, color }))}
+              onMove={(direction) => act(() => call("moveTag", { id: t.id, direction }))}
+              onDelete={() => act(() => call("deleteTag", { id: t.id }))}
             />
           ))}
           {error && <p className="text-sm text-destructive">{error}</p>}
