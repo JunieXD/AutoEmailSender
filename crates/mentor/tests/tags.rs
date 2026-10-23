@@ -39,18 +39,18 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         ..MentorFields::default()
     };
     let id = mentor::create(&db, &mentor, 0).await.unwrap();
-    let dream = tags::create(&db, &tag("梦导")).await.unwrap();
-    let camp = tags::create(&db, &tag("夏令营")).await.unwrap();
-    let safe = tags::create(&db, &tag("保底")).await.unwrap();
+    let dream = tags::create(&db, &tag("梦导"), &[]).await.unwrap();
+    let camp = tags::create(&db, &tag("夏令营"), &[id]).await.unwrap();
+    let safe = tags::create(&db, &tag("保底"), &[]).await.unwrap();
     assert!(matches!(
-        tags::create(&db, &tag("梦导")).await,
+        tags::create(&db, &tag("梦导"), &[id]).await,
         Err(TagError::NameTaken)
     ));
 
     for tag in [safe.id, dream.id, dream.id] {
         tags::tag_mentors(&db, tag, &[id], true).await.unwrap();
     }
-    assert_eq!(names_on(&db, id).await, ["梦导", "保底"]);
+    assert_eq!(names_on(&db, id).await, ["梦导", "夏令营", "保底"]);
     // Two quick moves both count; moving past either end does nothing.
     for (tag, direction) in [
         (safe.id, Direction::Up),
@@ -68,7 +68,7 @@ async fn tags_keep_the_users_order(db: SqlitePool) {
         .map(|t| t.name)
         .collect();
     assert_eq!(all, ["保底", "夏令营", "梦导"]);
-    assert_eq!(names_on(&db, id).await, ["保底", "梦导"]);
+    assert_eq!(names_on(&db, id).await, ["保底", "夏令营", "梦导"]);
     assert!(matches!(
         tags::rename(&db, camp.id, "梦导").await,
         Err(TagError::NameTaken)

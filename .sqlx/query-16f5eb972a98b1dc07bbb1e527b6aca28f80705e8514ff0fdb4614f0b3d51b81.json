@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,\n                  m.homepage_url, m.source_url,\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n                  m.match_model, m.match_error,\n                  d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note, d.match_reason,\n                  d.match_directions AS \"match_directions: Json<Vec<String>>\",\n                  d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n                  d.match_risks AS \"match_risks: Json<Vec<String>>\",\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM mentor m\n           JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           WHERE m.id = ?",
+  "query": "SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,\n                  m.homepage_url, m.source_url, m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n                  m.match_model, m.match_error,\n                  d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note, d.match_reason,\n                  d.match_directions AS \"match_directions: Json<Vec<String>>\",\n                  d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n                  d.match_risks AS \"match_risks: Json<Vec<String>>\",\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM mentor m\n           JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           WHERE m.id = ?",
   "describe": {
     "columns": [
       {
@@ -103,8 +103,14 @@
         }
       },
       {
-        "name": "match_state: MatchColumn",
+        "name": "trashed!: bool",
         "ordinal": 9,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "match_state: MatchColumn",
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,7 +121,7 @@
       },
       {
         "name": "match_score",
-        "ordinal": 10,
+        "ordinal": 11,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -126,7 +132,7 @@
       },
       {
         "name": "matched_at",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -137,7 +143,7 @@
       },
       {
         "name": "match_model",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -148,7 +154,7 @@
       },
       {
         "name": "match_error",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -159,7 +165,7 @@
       },
       {
         "name": "research",
-        "ordinal": 14,
+        "ordinal": 15,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -170,7 +176,7 @@
       },
       {
         "name": "papers: Json<Vec<String>>",
-        "ordinal": 15,
+        "ordinal": 16,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -181,7 +187,7 @@
       },
       {
         "name": "note",
-        "ordinal": 16,
+        "ordinal": 17,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -192,7 +198,7 @@
       },
       {
         "name": "match_reason",
-        "ordinal": 17,
+        "ordinal": 18,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -203,7 +209,7 @@
       },
       {
         "name": "match_directions: Json<Vec<String>>",
-        "ordinal": 18,
+        "ordinal": 19,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -214,7 +220,7 @@
       },
       {
         "name": "match_highlights: Json<Vec<String>>",
-        "ordinal": 19,
+        "ordinal": 20,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -225,7 +231,7 @@
       },
       {
         "name": "match_risks: Json<Vec<String>>",
-        "ordinal": 20,
+        "ordinal": 21,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -236,7 +242,7 @@
       },
       {
         "name": "status?: ContactStatus",
-        "ordinal": 21,
+        "ordinal": 22,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -247,7 +253,7 @@
       },
       {
         "name": "contact_count?",
-        "ordinal": 22,
+        "ordinal": 23,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -258,7 +264,7 @@
       },
       {
         "name": "last_out_at",
-        "ordinal": 23,
+        "ordinal": 24,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -269,7 +275,7 @@
       },
       {
         "name": "last_reply_at",
-        "ordinal": 24,
+        "ordinal": 25,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -280,7 +286,7 @@
       },
       {
         "name": "unread?: bool",
-        "ordinal": 25,
+        "ordinal": 26,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -303,6 +309,7 @@
       true,
       true,
       true,
+      false,
       true,
       true,
       true,
@@ -322,5 +329,5 @@
       true
     ]
   },
-  "hash": "d6ddf26ace411d9fda2c4eca8abfe867b9e8515497ad5580017bedc11672deb9"
+  "hash": "16f5eb972a98b1dc07bbb1e527b6aca28f80705e8514ff0fdb4614f0b3d51b81"
 }

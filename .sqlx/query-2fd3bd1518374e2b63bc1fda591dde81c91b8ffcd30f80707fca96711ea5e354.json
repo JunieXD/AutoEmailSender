@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2fd3bd1518374e2b63bc1fda591dde81c91b8ffcd30f80707fca96711ea5e354"
+}

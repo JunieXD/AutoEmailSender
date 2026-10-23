@@ -1,5 +1,5 @@
 import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, TagIcon } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Direction, MentorDetail, Tag } from "@/api/types";
@@ -47,7 +47,7 @@ function useTags() {
 
 /** After tags change, everything that shows them is out of date. */
 function refreshTags(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"]]) {
+  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"], ["listTrash"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }
@@ -75,12 +75,14 @@ export function TagPicker({ mentorId, selected }: { mentorId: number; selected: 
 }
 
 const savingKey = (mentorId: number) => ["tagMentors", mentorId];
+const creatingKey = (mentorId: number) => ["createTag", mentorId];
 
 type TagSave = { tagId: number; on: boolean };
 
 /**
- * The tags whose last change for this mentor failed. Read from the mutation cache, so it still shows
- * after the picker closes; a later change to another tag does not make up for it.
+ * The mentor's tag changes that failed: each tag's last change, and the last new tag. Read from the
+ * mutation cache, so they still show after the picker closes; a later change to another tag does not
+ * make up for a failed one.
  */
 export function TagSaveError({ mentorId }: { mentorId: number }) {
   const tags = useTags();
@@ -88,23 +90,28 @@ export function TagSaveError({ mentorId }: { mentorId: number }) {
     filters: { mutationKey: savingKey(mentorId) },
     select: (m) => m.state,
   });
-  return tags.data?.map((t) => {
-    const last = saves.findLast((s) => s.variables?.tagId === t.id);
-    return (
-      last?.status === "error" && (
-        <p key={t.id} className="text-destructive">
-          标签“{t.name}”未能{last.variables?.on ? "加上" : "去掉"}：{errorMessage(last.error)}
-        </p>
-      )
-    );
-  });
+  const created = useMutationState({ filters: { mutationKey: creatingKey(mentorId) }, select: (m) => m.state }).at(-1);
+  return (
+    <>
+      {tags.data?.map((t) => {
+        const last = saves.findLast((s) => s.variables?.tagId === t.id);
+        return (
+          last?.status === "error" && (
+            <p key={t.id} className="text-destructive">
+              标签“{t.name}”未能{last.variables?.on ? "加上" : "去掉"}：{errorMessage(last.error)}
+            </p>
+          )
+        );
+      })}
+      {created?.status === "error" && <p className="text-destructive">没能新建标签：{errorMessage(created.error)}</p>}
+    </>
+  );
 }
 
 /** Shows the mentor's tags from the page's cache, which each tick updates at once. */
 function TagChoices({ mentorId, selected, onManage }: { mentorId: number; selected: Tag[]; onManage: () => void }) {
   const queryClient = useQueryClient();
   const tags = useTags();
-  const [name, setName] = useState("");
   const mutationKey = savingKey(mentorId);
   const save = useMutation({
     mutationKey,
@@ -115,6 +122,11 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     onSettled: () => {
       if (queryClient.isMutating({ mutationKey }) === 1) refreshTags(queryClient);
     },
+  });
+  const create = useMutation({
+    mutationKey: creatingKey(mentorId),
+    mutationFn: (tag: { name: string; color: string }) => call("createTag", { ...tag, mentorIds: [mentorId] }),
+    onSuccess: () => refreshTags(queryClient),
   });
   async function toggle(tag: Tag) {
     const queryKey = ["getMentor", mentorId];
@@ -127,13 +139,6 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
     );
     save.mutate({ tagId: tag.id, on });
   }
-  const create = useMutation({
-    mutationFn: () => call("createTag", { name, color: nextColor(tags.data?.length ?? 0) }),
-    onSuccess: (tag) => {
-      setName("");
-      return toggle(tag);
-    },
-  });
   return (
     <div className="flex flex-col gap-1">
       {tags.data?.map((t) => (
@@ -142,32 +147,104 @@ function TagChoices({ mentorId, selected, onManage }: { mentorId: number; select
           <TagChip tag={t} />
         </label>
       ))}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (name.trim()) create.mutate();
-        }}
-      >
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="新建标签，按回车添加"
-          aria-label="新建标签"
-          className="h-9"
-          disabled={create.isPending}
-        />
-      </form>
+      <NewTag
+        pending={create.isPending}
+        onSubmit={(name, clear) => create.mutate(newTag(name, tags.data), { onSuccess: clear })}
+      />
       <div className="px-2">
-        {create.error ? (
-          <p className="text-destructive">{errorMessage(create.error)}</p>
-        ) : (
-          <TagSaveError mentorId={mentorId} />
-        )}
+        <TagSaveError mentorId={mentorId} />
       </div>
       <Button variant="ghost" className="h-8 justify-start px-2 font-normal" onClick={onManage}>
         管理标签
       </Button>
     </div>
+  );
+}
+
+/** Names a new tag; Enter hands the name over, and `clear` empties the field once it is saved. */
+function NewTag({ pending, onSubmit }: { pending: boolean; onSubmit: (name: string, clear: () => void) => void }) {
+  const [name, setName] = useState("");
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim()) onSubmit(name, () => setName(""));
+      }}
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="新建标签，按回车添加"
+        aria-label="新建标签"
+        className="h-9"
+        disabled={pending}
+      />
+    </form>
+  );
+}
+
+/** A new tag takes the preset colours in turn. */
+function newTag(name: string, tags: Tag[] | undefined) {
+  return { name, color: nextColor(tags?.length ?? 0) };
+}
+
+type AddTag = { tag: number | { name: string; color: string }; mentorIds: number[] };
+
+/**
+ * Puts a tag, an existing one or one created on the spot, on the mentors ticked when the user chose
+ * it. Lives in the page, so its error outlasts the popover and the ticks.
+ */
+export function useAddTag() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ tag, mentorIds }: AddTag) => {
+      // A new tag is created and put on the mentors in one step, so a failure leaves nothing behind.
+      if (typeof tag === "number") await call("tagMentors", { tagId: tag, mentorIds, on: true });
+      else await call("createTag", { ...tag, mentorIds });
+    },
+    onSettled: () => refreshTags(queryClient),
+  });
+}
+
+/** The batch bar's "添加标签". */
+export function AddTagButton({ mentorIds, add }: { mentorIds: number[]; add: ReturnType<typeof useAddTag> }) {
+  const tags = useTags();
+  const [open, setOpen] = useState(false);
+  const choose = (tag: AddTag["tag"], clear?: () => void) =>
+    add.mutate(
+      { tag, mentorIds },
+      {
+        onSuccess: () => {
+          clear?.();
+          setOpen(false);
+        },
+      },
+    );
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button variant="ghost">
+            <TagIcon strokeWidth={1.6} />
+            添加标签
+          </Button>
+        }
+      />
+      <PopoverContent side="top" className="flex flex-col gap-1">
+        {tags.data?.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            disabled={add.isPending}
+            className="flex rounded-md px-2 py-1.5 hover:bg-muted"
+            onClick={() => choose(t.id)}
+          >
+            <TagChip tag={t} />
+          </button>
+        ))}
+        <NewTag pending={add.isPending} onSubmit={(name, clear) => choose(newTag(name, tags.data), clear)} />
+      </PopoverContent>
+    </Popover>
   );
 }
 

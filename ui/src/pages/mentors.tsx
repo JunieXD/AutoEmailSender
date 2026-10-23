@@ -1,16 +1,16 @@
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { ContactStatus, MatchState, MentorRow } from "@/api/types";
+import type { ContactStatus } from "@/api/types";
+import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
-import { TagChip } from "@/components/tags";
+import { refreshMentors } from "@/components/mentor";
+import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
+import { AddTagButton, useAddTag } from "@/components/tags";
 import { Notice } from "@/components/notice";
-import { Button } from "@/components/ui/button";
-
-const PAGE_SIZE = 50;
+import { Button, buttonVariants } from "@/components/ui/button";
 
 const STATUSES: [ContactStatus | undefined, string][] = [
   [undefined, "全部"],
@@ -26,9 +26,7 @@ export type MentorSearch = { status?: ContactStatus; q?: string; page?: number }
 export function mentorSearch(search: Record<string, unknown>): MentorSearch {
   const status = STATUSES.find(([s]) => s !== undefined && s === search.status)?.[0];
   const q = typeof search.q === "string" && search.q !== "" ? search.q : undefined;
-  const page =
-    typeof search.page === "number" && Number.isInteger(search.page) && search.page > 1 ? search.page : undefined;
-  return { status, q, page };
+  return { status, q, page: pageParam(search.page) };
 }
 
 export function MentorsPage() {
@@ -41,9 +39,25 @@ export function MentorsPage() {
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
+  // Ticks belong to one filter: changing it, including by going back, starts over.
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const [filter, setFilter] = useState({ status: search.status, q: search.q });
+  if (filter.status !== search.status || filter.q !== search.q) {
+    setFilter({ status: search.status, q: search.q });
+    setSelected(new Set());
+  }
+  useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
+    navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
+  );
+  const addTag = useAddTag();
+  const trash = useMutation({
+    mutationFn: (ids: number[]) => call("trashMentors", { ids }),
+    // Only these: others may have been ticked while it ran.
+    onSuccess: (_, ids) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
+    onSettled: () => refreshMentors(queryClient),
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -92,44 +106,63 @@ export function MentorsPage() {
         </div>
       </div>
 
-      <div className="@container min-h-0 flex-1 overflow-y-auto px-4 phone:px-0">
-        {query.isError ? (
-          <Notice title="导师列表没能加载" detail={errorMessage(query.error)} />
-        ) : query.data && query.data.mentors.length === 0 ? (
-          search.status || search.q ? (
-            <Notice title="没有符合条件的导师" detail="换个关键词或联系状态再试。" />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          className={`@container min-h-0 flex-1 overflow-y-auto px-4 phone:px-0 ${selected.size > 0 ? "pb-20" : ""}`}
+        >
+          {query.isError ? (
+            <Notice title="导师列表没能加载" detail={errorMessage(query.error)} />
+          ) : query.data?.total === 0 ? (
+            search.status || search.q ? (
+              <Notice title="没有符合条件的导师" detail="换个关键词或联系状态再试。" />
+            ) : (
+              <Notice title="还没有导师" detail="点“添加导师”填写导师的资料。" />
+            )
           ) : (
-            <Notice title="还没有导师" detail="点“添加导师”填写导师的资料。" />
-          )
-        ) : (
-          <MentorTable mentors={query.data?.mentors ?? []} />
-        )}
+            <MentorTable
+              mentors={query.data?.mentors ?? []}
+              selected={selected}
+              selectable={!query.isPlaceholderData}
+              onSelect={setSelected}
+            />
+          )}
+        </div>
+        <BatchBar
+          count={selected.size}
+          errors={[
+            ...(addTag.error ? [`没能添加标签：${errorMessage(addTag.error)}`] : []),
+            ...(trash.error ? [`没能移入回收站：${errorMessage(trash.error)}`] : []),
+          ]}
+          onClear={() => {
+            setSelected(new Set());
+            for (const action of [addTag, trash]) if (!action.isPending) action.reset();
+          }}
+        >
+          <AddTagButton mentorIds={[...selected]} add={addTag} />
+          <Confirm
+            trigger={
+              <Button variant="ghost" disabled={trash.isPending}>
+                <Trash2 strokeWidth={1.6} />
+                移入回收站
+              </Button>
+            }
+            message={`把选中的 ${selected.size} 位导师移入回收站？没发出的邮件会取消，恢复导师后也不会恢复。`}
+            action="移入回收站"
+            onConfirm={() => trash.mutate([...selected])}
+          />
+        </BatchBar>
       </div>
 
-      <footer className="flex items-center justify-end gap-2 px-7 py-3 text-sm text-muted-foreground phone:justify-center phone:px-4">
-        <span>
-          第 {page} 页，共 {pages} 页
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="phone:size-10"
-          aria-label="上一页"
-          disabled={page <= 1}
-          onClick={() => navigate({ search: (s) => ({ ...s, page: page - 1 > 1 ? page - 1 : undefined }) })}
-        >
-          <ChevronLeft strokeWidth={1.6} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="phone:size-10"
-          aria-label="下一页"
-          disabled={page >= pages}
-          onClick={() => navigate({ search: (s) => ({ ...s, page: page + 1 }) })}
-        >
-          <ChevronRight strokeWidth={1.6} />
-        </Button>
+      <footer className="flex items-center justify-between gap-2 px-7 py-3 text-sm text-muted-foreground phone:px-4">
+        <Link to="/mentors/trash" className={buttonVariants({ variant: "ghost", className: "-ml-3 px-3" })}>
+          <Trash2 strokeWidth={1.6} />
+          回收站
+        </Link>
+        <Pager
+          page={page}
+          total={total}
+          onPage={(n) => navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }) })}
+        />
       </footer>
     </div>
   );
@@ -162,97 +195,4 @@ function SearchBox({ value, onChange }: { value: string; onChange: (value: strin
       />
     </label>
   );
-}
-
-// docs/ui.md#布局: no tag column on narrow windows; each row is a card where the columns do not fit.
-const COLUMNS =
-  "grid grid-cols-[minmax(150px,1.1fr)_minmax(170px,1.2fr)_minmax(180px,1.8fr)_110px_minmax(176px,1fr)_minmax(64px,0.5fr)] items-center gap-3 narrow:grid-cols-[minmax(140px,1.1fr)_minmax(150px,1.2fr)_minmax(140px,1.4fr)_110px_minmax(170px,1fr)]";
-const CARD =
-  "cards:h-auto cards:grid-cols-[minmax(0,1fr)_auto] cards:gap-x-3 cards:gap-y-1 cards:rounded-none cards:border-b cards:border-border cards:px-4 cards:py-3 cards:[grid-template-areas:'who_match'_'place_contact'_'research_research']";
-const TAGS = "narrow:hidden";
-
-function MentorTable({ mentors }: { mentors: MentorRow[] }) {
-  return (
-    <div
-      role="table"
-      aria-label="导师"
-      className="flex flex-col gap-[3px] pb-4 cards:gap-0 cards:border-t cards:border-border cards:pb-0"
-    >
-      <div role="row" className={`${COLUMNS} px-3 pb-1 text-sm text-muted-foreground cards:hidden`}>
-        {["导师", "学校和学院", "研究方向", "匹配度", "联系"].map((h) => (
-          <span key={h} role="columnheader">
-            {h}
-          </span>
-        ))}
-        <span role="columnheader" className={TAGS}>
-          标签
-        </span>
-      </div>
-      {mentors.map((m) => (
-        // The name links to the mentor's page and stretches over the row, so the whole row opens it.
-        <div
-          key={m.id}
-          role="row"
-          className={`${COLUMNS} relative h-[62px] rounded-md px-3 outline-ring hover:bg-muted has-focus-visible:outline-2 ${CARD}`}
-        >
-          <div role="cell" className="flex min-w-0 items-center gap-3 cards:[grid-area:who]">
-            <Avatar id={m.id} name={m.name} />
-            <span className="truncate">
-              <Link
-                to="/mentors/$mentorId"
-                params={{ mentorId: m.id }}
-                className="font-medium outline-none after:absolute after:inset-0"
-              >
-                {m.name}
-              </Link>
-              {m.title && <span className="ml-1.5 text-sm text-muted-foreground">{m.title}</span>}
-            </span>
-          </div>
-          <div role="cell" className="min-w-0 text-sm cards:flex cards:gap-1.5 cards:[grid-area:place]">
-            <div className="truncate cards:max-w-full cards:shrink-0">
-              {m.university ?? <Missing>未填写学校</Missing>}
-            </div>
-            <div className="truncate text-muted-foreground">
-              {[m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学院</Missing>}
-            </div>
-          </div>
-          <div
-            role="cell"
-            className="line-clamp-2 text-sm text-muted-foreground cards:line-clamp-1 cards:[grid-area:research]"
-          >
-            {m.research ?? <Missing>未填写研究方向</Missing>}
-          </div>
-          <div role="cell" className="cards:justify-self-end cards:[grid-area:match]">
-            <Match state={m.matchState} />
-          </div>
-          <div role="cell" className="min-w-0 text-sm cards:max-w-[45cqw] cards:text-right cards:[grid-area:contact]">
-            <ContactLabel contact={m.contact} className="cards:justify-end" />
-            {contactDetail(m.contact) && (
-              <div className="truncate text-muted-foreground">{contactDetail(m.contact)}</div>
-            )}
-          </div>
-          <div role="cell" className={`flex flex-wrap gap-1 ${TAGS}`}>
-            {m.tags.map((t) => (
-              <TagChip key={t.id} tag={t} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Match({ state }: { state: MatchState }) {
-  if (state.state === "done") {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="w-6 font-medium">{state.score}</span>
-        <span className="h-1 w-14 overflow-hidden rounded-full bg-muted cards:w-10">
-          <span className="block h-full rounded-full bg-muted-foreground" style={{ width: `${state.score}%` }} />
-        </span>
-      </div>
-    );
-  }
-  const [label, color] = MATCH_LABEL[state.state];
-  return <span className={`text-sm ${color}`}>{label}</span>;
 }

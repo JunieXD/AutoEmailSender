@@ -1,12 +1,13 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useCanGoBack, useParams, useRouter } from "@tanstack/react-router";
+import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ChevronLeft, UserRound } from "lucide-react";
+import { ChevronLeft, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
+import { Confirm } from "@/components/batch-bar";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
+import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, refreshMentors } from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,15 @@ export function MentorPage() {
   });
   // On a phone the profile replaces the correspondence instead of sitting beside it.
   const [profile, setProfile] = useState(false);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const trash = useMutation({
+    mutationFn: (op: TrashOp) => call(op, { ids: [mentorId] }),
+    onSuccess: async (_, op) => {
+      if (op === "deleteMentors") await navigate({ to: "/mentors/trash", replace: true });
+    },
+    onSettled: () => refreshMentors(queryClient),
+  });
   if (query.isPending) return null;
   if (query.isError) {
     return (
@@ -36,7 +46,38 @@ export function MentorPage() {
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px] phone:grid-cols-1">
       <section className={`flex min-h-0 min-w-0 flex-col ${profile ? "phone:hidden" : ""}`}>
-        <Header mentor={m} onProfile={() => setProfile(true)} />
+        <Header mentor={m} onProfile={() => setProfile(true)} onTrash={() => trash.mutate("trashMentors")} />
+        {(m.trashed || trash.isError) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-muted px-5 py-2 text-sm phone:px-3">
+            {trash.isError ? (
+              <p className="grow text-destructive">
+                没能{TRASH_LABEL[trash.variables]}：{errorMessage(trash.error)}
+              </p>
+            ) : (
+              <p className="grow">这位导师在回收站里。</p>
+            )}
+            {m.trashed && (
+              <div className="flex gap-1">
+                <Button variant="ghost" disabled={trash.isPending} onClick={() => trash.mutate("restoreMentors")}>
+                  <RotateCcw strokeWidth={1.6} />
+                  恢复
+                </Button>
+                <Confirm
+                  trigger={
+                    <Button variant="ghost" disabled={trash.isPending}>
+                      <Trash2 strokeWidth={1.6} />
+                      永久删除
+                    </Button>
+                  }
+                  message={`永久删除${m.name}？这位导师的邮件、往来和匹配结果会一起删除，不能撤销；邮箱里的原信不受影响。`}
+                  action="永久删除"
+                  side="bottom"
+                  onConfirm={() => trash.mutate("deleteMentors")}
+                />
+              </div>
+            )}
+          </div>
+        )}
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
           {m.contact.status === "none" ? `尚未联系${m.name}老师。` : contactDetail(m.contact)}
         </div>
@@ -79,7 +120,23 @@ export function MentorPage() {
   );
 }
 
-function Header({ mentor: m, onProfile }: { mentor: MentorDetail; onProfile: () => void }) {
+type TrashOp = "trashMentors" | "restoreMentors" | "deleteMentors";
+
+const TRASH_LABEL: Record<TrashOp, string> = {
+  trashMentors: "移入回收站",
+  restoreMentors: "恢复",
+  deleteMentors: "永久删除",
+};
+
+function Header({
+  mentor: m,
+  onProfile,
+  onTrash,
+}: {
+  mentor: MentorDetail;
+  onProfile: () => void;
+  onTrash: () => void;
+}) {
   const router = useRouter();
   const canGoBack = useCanGoBack();
   return (
@@ -108,6 +165,19 @@ function Header({ mentor: m, onProfile }: { mentor: MentorDetail; onProfile: () 
         <UserRound strokeWidth={1.6} />
         资料
       </Button>
+      {!m.trashed && (
+        <Confirm
+          trigger={
+            <Button variant="ghost" size="icon" aria-label="移入回收站">
+              <Trash2 strokeWidth={1.6} />
+            </Button>
+          }
+          message={`把${m.name}移入回收站？没发出的邮件会取消，恢复后也不会恢复。`}
+          action="移入回收站"
+          side="bottom"
+          onConfirm={onTrash}
+        />
+      )}
     </header>
   );
 }

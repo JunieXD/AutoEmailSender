@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'canceled', error = ?1, updated_at = ?2\n         WHERE mentor_id IN (SELECT value FROM json_each(?3))\n           AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "05f64e06598820a30e6a8f03aa8b30b5150f3e564ea56068474a7b4ded2f0354"
+}
