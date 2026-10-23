@@ -1,8 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useParams, useRouter } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, UserRound } from "lucide-react";
-import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
 import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
@@ -136,19 +136,31 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
 
 /** Opens in the system browser. Addresses come from web pages and imports, so only web links are links. */
 function ExternalLink({ url }: { url: string }) {
-  if (!/^https?:\/\//i.test(url)) return <>{url}</>;
+  const href = webUrl(url);
+  if (!href) return <>{url}</>;
   return (
     <a
-      href={url}
+      href={href}
       className="text-brand-text hover:underline"
       onClick={(e) => {
         e.preventDefault();
-        void openUrl(url);
+        void openUrl(href);
       }}
     >
       {url}
     </a>
   );
+}
+
+/** The address in the normalised form the opener's permission accepts (lowercase scheme), if it is a web page. */
+function webUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    // Not an address at all.
+    return null;
+  }
 }
 
 function Analysis({ mentor: m }: { mentor: MentorDetail }) {
@@ -190,52 +202,36 @@ function Points({ title, items, marker = "" }: { title: string; items: string[];
   );
 }
 
-/** Saves as the user pauses typing and when they leave, one save at a time so the last text wins. */
+/**
+ * Saves as the user types. One mentor's saves run one at a time and outlive this page, so the last
+ * text wins even after leaving and coming back quickly, and an unsaved note is shown again on return.
+ */
 function Note({ id, note }: { id: number; note: string | null }) {
   const queryClient = useQueryClient();
-  const [text, setText] = useState(note ?? "");
-  const [error, setError] = useState<string>();
-  const saved = useRef<string | null>(note ?? "");
-  const saving = useRef(Promise.resolve());
-  function save(value: string) {
-    if (value === saved.current) return;
-    saved.current = value;
-    saving.current = saving.current
-      .then(() => call("setMentorNote", { id, note: value }))
-      .then(
-        () => {
-          setError(undefined);
-          // The page may be opened again from the cache before it reloads.
-          queryClient.setQueryData<MentorDetail>(
-            ["getMentor", id],
-            (m) => m && { ...m, note: value.trim() ? value : null },
-          );
-        },
-        (e: unknown) => {
-          // Unsaved again, so the next pause or leaving retries.
-          saved.current = null;
-          setError(`备注未能保存：${errorMessage(e)}`);
-        },
-      );
-  }
-  const saveLater = useEffectEvent(save);
-  const saveNow = useEffectEvent(() => save(text));
-  useEffect(() => {
-    const timer = setTimeout(() => saveLater(text), 600);
-    return () => clearTimeout(timer);
-  }, [text]);
-  useEffect(() => () => saveNow(), []);
+  const mutationKey = ["setMentorNote", id];
+  const save = useMutation({
+    mutationKey,
+    scope: { id: `setMentorNote:${id}` },
+    mutationFn: (text: string) => call("setMentorNote", { id, note: text }),
+    // The page may be opened again from the cache before it reloads.
+    onSuccess: (_, text) =>
+      queryClient.setQueryData<MentorDetail>(["getMentor", id], (m) => m && { ...m, note: text.trim() ? text : null }),
+  });
+  const last = useMutationState({ filters: { mutationKey }, select: (m) => m.state }).at(-1);
+  const [text, setText] = useState(() => (last && last.status !== "success" ? String(last.variables) : (note ?? "")));
   return (
     <>
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => save(text)}
+        onChange={(e) => {
+          setText(e.target.value);
+          save.mutate(e.target.value);
+        }}
         aria-label="备注"
         placeholder="仅自己可见"
         className="block min-h-16 w-full resize-y rounded-md bg-muted px-3 py-2.5 leading-relaxed outline-none placeholder:text-faint focus:ring-[1.5px] focus:ring-primary focus:ring-inset"
       />
-      {error && <p className="mt-1.5 text-destructive">{error}</p>}
+      {last?.status === "error" && <p className="mt-1.5 text-destructive">备注未能保存：{errorMessage(last.error)}</p>}
     </>
   );
 }
