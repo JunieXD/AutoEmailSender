@@ -15,7 +15,9 @@ mod smtp;
 
 pub use error::MailError;
 pub use imap::check_receiving;
-pub use smtp::{check_sending, send_test};
+pub use smtp::{
+    Letter, Outgoing, SendError, Smtp, check_sending, compose, login, message_id, send_test,
+};
 
 /// A mailbox as the settings show it. Its secret never leaves the core.
 #[derive(Debug, Serialize, TS)]

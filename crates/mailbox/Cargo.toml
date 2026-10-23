@@ -23,8 +23,6 @@ ts-rs.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-base64 = "0.22"
 db.workspace = true
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
-time = "0.3"
+fakemail.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

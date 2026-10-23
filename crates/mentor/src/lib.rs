@@ -624,6 +624,23 @@ pub async fn create<'c>(
     Ok(id)
 }
 
+/// Records the mailbox that first sends to the mentor as the one to contact them from, unless the
+/// mentor has one (docs/data-model.md#导师).
+pub async fn assign_mailbox(
+    conn: &mut SqliteConnection,
+    id: i64,
+    mailbox_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE mentor SET mailbox_id = ? WHERE id = ? AND mailbox_id IS NULL",
+        mailbox_id,
+        id,
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Replaces the mentor's own fields and reindexes it. False when there is no such mentor.
 pub async fn update(
     db: &SqlitePool,

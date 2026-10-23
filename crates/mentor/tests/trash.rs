@@ -19,8 +19,8 @@ async fn email(db: &SqlitePool, mentor: i64, state: &str) -> i64 {
     let out = state == "sent";
     sqlx::query(
         "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, message_id, sent_at,
-           created_at, updated_at, html, text)
-         VALUES (?, 'first', ?, 1, ?, ?, ?, 0, 0, '<p>信</p>', '信')",
+           created_at, updated_at, subject, body_md, html, text)
+         VALUES (?, 'first', ?, 1, ?, ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
     )
     .bind(mentor)
     .bind(state)

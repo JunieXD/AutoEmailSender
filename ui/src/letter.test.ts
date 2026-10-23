@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { expect, test } from "vitest";
 import type { LetterStyle } from "@/api/types";
-import { letterHtml } from "@/letter";
+import { letterHtml, letterText } from "@/letter";
 
 const style: LetterStyle = {
   font: null,
@@ -55,4 +55,23 @@ test("spaces show as typed", () => {
     "&nbsp;&nbsp;&nbsp;&nbsp;王老师：",
     "张三 &nbsp;&nbsp;&nbsp;计算机专业<br>&nbsp;&nbsp;<strong>large</strong> &nbsp;language <strong>models</strong> too",
   ]);
+});
+
+test("the plain text keeps lines, lists and link addresses", () => {
+  const markdown = [
+    "王老师：",
+    "您好！我是**林晓**。\n此致\n敬礼",
+    "- 甲\n  - 乙\n- 丙",
+    "3. 丁\n\n   戊\n4. 己",
+    "主页 [linxiao.dev](https://linxiao.dev)，邮箱 [me@x.com](mailto:me@x.com)",
+  ].join("\n\n");
+  expect(letterText(markdown)).toBe(
+    [
+      "王老师：",
+      "您好！我是林晓。\n此致\n敬礼",
+      "- 甲\n  - 乙\n- 丙",
+      "3. 丁\n   戊\n4. 己",
+      "主页 linxiao.dev <https://linxiao.dev>，邮箱 me@x.com",
+    ].join("\n\n"),
+  );
 });

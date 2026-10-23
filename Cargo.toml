@@ -12,10 +12,12 @@ publish = false
 api = { path = "crates/api" }
 db = { path = "crates/db" }
 email = { path = "crates/email" }
+fakemail = { path = "crates/fakemail" }
 mailbox = { path = "crates/mailbox" }
 mentor = { path = "crates/mentor" }
 model = { path = "crates/model" }
 profile = { path = "crates/profile" }
+send = { path = "crates/send" }
 template = { path = "crates/template" }
 net = { path = "crates/net" }
 serde = { version = "1.0.229", features = ["derive"] }

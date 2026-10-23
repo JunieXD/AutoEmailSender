@@ -12,6 +12,8 @@ pub mod proxy;
 
 pub use rustls;
 
+/// Cheap to clone: clones share the TLS settings and the HTTP connection pool.
+#[derive(Clone)]
 pub struct Net {
     tls: Arc<ClientConfig>,
     roots: Vec<CertificateDer<'static>>,

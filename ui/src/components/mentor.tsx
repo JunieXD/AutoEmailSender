@@ -67,8 +67,8 @@ export function refreshMentors(queryClient: QueryClient) {
 }
 
 /**
- * Moving mentors to the trash canceled their drafts, which must not come back on restore from the
- * cache or a failed save.
+ * Drafts the trash canceled or the user approved are gone, and must not come back from the cache or
+ * a failed save when the mentor is restored or the email taken back to a draft.
  */
 export function dropDrafts(queryClient: QueryClient, ids: number[]) {
   const saves = queryClient.getMutationCache();

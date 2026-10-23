@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FIELD, Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { LETTER_BODY } from "@/letter";
 import { linkable, toHtml, toMarkdown } from "@/markdown";
 
 /** The formats docs/design.md#邮件格式 allows, which `toMarkdown` writes. */
@@ -83,7 +84,7 @@ export function LetterEditor({
     editorProps: {
       attributes: {
         id,
-        class: `${FIELD} min-h-48 py-2.5 leading-relaxed [&_a]:text-brand-text [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-6 [&>*+*]:mt-3 [&_ul]:list-disc [&_ul]:pl-6`,
+        class: `${FIELD} min-h-48 py-2.5 ${LETTER_BODY}`,
       },
     },
     onUpdate: ({ editor: e }) => onChange(toMarkdown(e.state.doc)),

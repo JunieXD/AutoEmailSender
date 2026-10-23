@@ -7,6 +7,10 @@ const FONTS: Record<LetterFont, string> = {
   hei: 'Arial, "Microsoft YaHei", "PingFang SC", sans-serif',
 };
 
+/** How the app shows a letter's body, in the editor and in the correspondence. */
+export const LETTER_BODY =
+  "leading-relaxed [&_a]:text-brand-text [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-6 [&>*+*]:mt-3 [&_ul]:list-disc [&_ul]:pl-6";
+
 /** A letter's body as the HTML sent, in the letter style. Styles are inline: mail apps drop style sheets. */
 export function letterHtml(markdown: string, style: LetterStyle): string {
   const doc = new DOMParser().parseFromString(toHtml(markdown), "text/html");
@@ -41,4 +45,48 @@ export function letterHtml(markdown: string, style: LetterStyle): string {
   page.style.lineHeight = String(style.lineHeight);
   page.append(...doc.body.childNodes);
   return page.outerHTML;
+}
+
+/** A letter's body as plain text, for mail apps that show no HTML. */
+export function letterText(markdown: string): string {
+  const doc = new DOMParser().parseFromString(toHtml(markdown), "text/html");
+  return blocks(doc.body, "").join("\n\n");
+}
+
+/** Paragraphs and lists, each a block of lines. */
+function blocks(parent: Element, indent: string): string[] {
+  return [...parent.children].map((el) => (isList(el) ? listText(el, indent) : indent + inline(el)));
+}
+
+function listText(el: Element, indent: string): string {
+  const start = Number(el.getAttribute("start") ?? 1);
+  return [...el.children]
+    .map((item, i) => {
+      const marker = el.tagName === "OL" ? `${start + i}. ` : "- ";
+      const pad = indent + " ".repeat(marker.length);
+      let text = "";
+      const nested: string[] = [];
+      for (const node of item.childNodes) {
+        if (node instanceof Element && isList(node)) nested.push(listText(node, pad));
+        else if (node instanceof Element && node.tagName === "P") text += (text && "\n") + inline(node);
+        else text += inline(node);
+      }
+      return [indent + marker + text.replaceAll("\n", `\n${pad}`), ...nested].join("\n");
+    })
+    .join("\n");
+}
+
+function isList(el: Element): boolean {
+  return el.tagName === "UL" || el.tagName === "OL";
+}
+
+/** Text with its line breaks; a link keeps its address unless the text already shows it. */
+function inline(node: Node): string {
+  if (node instanceof HTMLBRElement) return "\n";
+  // Line breaks in the HTML's own text only lay out the markup; the letter's are <br>.
+  if (!(node instanceof Element)) return (node.textContent ?? "").replaceAll("\n", "");
+  const text = [...node.childNodes].map(inline).join("");
+  if (!(node instanceof HTMLAnchorElement)) return text;
+  const address = node.getAttribute("href")?.replace(/^mailto:/, "") ?? "";
+  return text === address ? text : `${text} <${address}>`;
 }

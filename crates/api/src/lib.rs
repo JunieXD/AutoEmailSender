@@ -10,6 +10,7 @@ use ts_rs::{Config, TS, TypeVisitor};
 pub struct Context {
     pub db: SqlitePool,
     pub net: net::Net,
+    pub sender: send::Sender,
 }
 
 /// What the UI shows when an operation fails.
@@ -142,6 +143,10 @@ operations! {
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
+    "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
+    "listEmails" => list_emails(MentorId) -> Vec<email::Email>;
+    "withdrawEmail" => withdraw_email(EmailId) -> ();
+    "retryEmail" => retry_email(EmailId) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -424,6 +429,8 @@ async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, Call
     let secret = mailbox::checked_secret(&input.secret)
         .ok_or_else(|| CallError::invalid(NO_SECRET.into()))?;
     let id = mailbox::create(&ctx.db, &fields, &secret, now()).await?;
+    // Emails may be waiting for a mailbox.
+    ctx.sender.wake();
     Ok(MailboxId { id })
 }
 
@@ -431,6 +438,8 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
     let fields = input.form.check().map_err(CallError::invalid)?;
     let secret = entered_or_saved_secret(ctx, &input.secret, Some(input.id), &fields).await?;
     if mailbox::update(&ctx.db, input.id, &fields, &secret).await? {
+        // A higher limit or a shorter interval may let a waiting email go.
+        ctx.sender.wake();
         Ok(())
     } else {
         Err(CallError::not_found(NO_MAILBOX))
@@ -775,6 +784,80 @@ async fn save_first_draft(
         now(),
     )
     .await?)
+}
+
+/// The mentor's first draft as the user approved it, with the HTML and plain text the interface
+/// rendered from it in the letter style.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FirstEmail {
+    pub mentor_id: i64,
+    pub subject: String,
+    pub body_md: String,
+    pub html: String,
+    pub text: String,
+}
+
+async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), CallError> {
+    let subject = input.subject.trim();
+    if subject.is_empty() || input.body_md.trim().is_empty() {
+        return Err(CallError::invalid("主题和正文都要填写".into()));
+    }
+    let m = mentor::get(&ctx.db, input.mentor_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    if m.email.is_none() {
+        return Err(CallError::invalid(
+            "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
+        ));
+    }
+    if mailbox::list(&ctx.db).await?.is_empty() {
+        return Err(CallError::invalid(
+            "尚未添加发信的邮箱。在“设置 › 邮件 › 邮箱”里添加后再发送。".into(),
+        ));
+    }
+    let approval = email::Approval {
+        subject,
+        body_md: &input.body_md,
+        html: &input.html,
+        text: &input.text,
+    };
+    if !email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
+        return Err(CallError::not_found(
+            "草稿已不存在：可能已经发送，或导师已移入回收站。",
+        ));
+    }
+    ctx.sender.wake();
+    Ok(())
+}
+
+async fn list_emails(ctx: &Context, input: MentorId) -> Result<Vec<email::Email>, CallError> {
+    Ok(email::list(&ctx.db, input.id).await?)
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct EmailId {
+    pub id: i64,
+}
+
+async fn withdraw_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
+    if email::withdraw(&ctx.db, input.id, now()).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(
+            "这封邮件已在发送或已发出，无法改回草稿。",
+        ))
+    }
+}
+
+async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
+    if !email::retry(&ctx.db, input.id, now()).await? {
+        return Err(CallError::not_found(
+            "这封邮件已在发送或已发出，或导师已移入回收站。",
+        ));
+    }
+    ctx.sender.wake();
+    Ok(())
 }
 
 /// UTC milliseconds.

@@ -6,10 +6,12 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use lettre::Message;
+use lettre::message::MultiPart;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{AsyncSmtpConnection, AsyncTokioStream};
-use lettre::transport::smtp::extension::ClientId;
+use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
+use lettre::transport::smtp::extension::{ClientId, MailParameter};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
@@ -17,7 +19,7 @@ use tokio_rustls::client::TlsStream;
 use net::Net;
 
 use crate::connect;
-use crate::{Account, MailError, Security};
+use crate::{Account, MailError, Security, Server};
 
 /// Greets with an address rather than the computer's name, which in Chinese makes servers refuse
 /// the greeting (docs/design.md#桌面端).
@@ -25,8 +27,7 @@ const HELLO: ClientId = ClientId::Ipv4(Ipv4Addr::LOCALHOST);
 
 /// Logs in to the mailbox's SMTP server and leaves.
 pub async fn check_sending(net: &Net, account: &Account) -> Result<(), MailError> {
-    let conn = connect::within(&account.smtp, login(net, account)).await?;
-    quit(&account.smtp.host, conn);
+    login(net, account).await?.quit();
     Ok(())
 }
 
@@ -35,11 +36,7 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
     let me =
         lettre::message::Mailbox::new(Some(account.sender_name.clone()), account.address.clone());
     let message = Message::builder()
-        .message_id(Some(format!(
-            "<{}@{}>",
-            uuid::Uuid::new_v4(),
-            account.address.domain()
-        )))
+        .message_id(Some(message_id(account)))
         .from(me.clone())
         .to(me)
         .subject("Auto Email Sender 测试信")
@@ -48,19 +45,161 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
             "这封信由 Auto Email Sender 发出，收到它说明这个邮箱能正常发信。",
         ))
         .map_err(|e| MailError::Broken(e.to_string()))?;
-    let conn = connect::within(&account.smtp, async {
-        let mut conn = login(net, account).await?;
-        conn.send(message.envelope(), &message.formatted())
-            .await
-            .map_err(refused)?;
-        Ok(conn)
-    })
-    .await?;
-    quit(&account.smtp.host, conn);
-    Ok(())
+    login(net, account)
+        .await?
+        .send(&Outgoing(message))
+        .await
+        .map_err(|(SendError::NotSent(e) | SendError::Unknown(e))| e)
 }
 
-async fn login(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailError> {
+/// A new Message-ID for an email from this mailbox, named after its domain rather than the computer.
+pub fn message_id(account: &Account) -> String {
+    format!("<{}@{}>", uuid::Uuid::new_v4(), account.address.domain())
+}
+
+/// What an email to a mentor is made of.
+pub struct Letter<'a> {
+    pub message_id: &'a str,
+    pub to_name: &'a str,
+    pub to: &'a str,
+    pub subject: &'a str,
+    pub html: &'a str,
+    pub text: &'a str,
+}
+
+/// An email ready to hand to the server.
+pub struct Outgoing(Message);
+
+/// Puts an email from the mailbox together, with the letter as HTML and as plain text for mail apps
+/// that show no HTML.
+pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError> {
+    let to = letter
+        .to
+        .parse()
+        .map_err(|_| MailError::Recipient(letter.to.to_owned()))?;
+    Message::builder()
+        .message_id(Some(letter.message_id.to_owned()))
+        .from(lettre::message::Mailbox::new(
+            Some(account.sender_name.clone()),
+            account.address.clone(),
+        ))
+        .to(lettre::message::Mailbox::new(
+            Some(letter.to_name.to_owned()),
+            to,
+        ))
+        .subject(letter.subject)
+        .multipart(MultiPart::alternative_plain_html(
+            letter.text.to_owned(),
+            letter.html.to_owned(),
+        ))
+        .map(Outgoing)
+        .map_err(|e| MailError::Broken(e.to_string()))
+}
+
+/// Why an email may not have gone out.
+#[derive(Debug)]
+pub enum SendError {
+    /// It did not go out: the server turned it down, or the connection failed before it was
+    /// handed over.
+    NotSent(MailError),
+    /// The connection broke off or timed out while it was being handed over: it may have gone out.
+    Unknown(MailError),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::NotSent(e) => write!(f, "not sent: {e}"),
+            SendError::Unknown(e) => write!(f, "may have gone out: {e}"),
+        }
+    }
+}
+
+impl SendError {
+    /// What happened and what to do about it.
+    pub fn message(&self) -> String {
+        match self {
+            SendError::NotSent(MailError::Refused(reply)) => format!(
+                "服务器拒收了这封邮件（服务器回复：{reply}）。检查导师的邮箱地址有没有填错；回复里提到垃圾邮件或发送频率时，稍后再重试。"
+            ),
+            SendError::NotSent(e) => e.message(),
+            SendError::Unknown(_) => "交给服务器的途中连接中断，无法确定是否已发出。".into(),
+        }
+    }
+}
+
+/// A connection to a mailbox's SMTP server, logged in.
+pub struct Smtp {
+    server: Server,
+    conn: AsyncSmtpConnection,
+}
+
+/// Connects to the mailbox's SMTP server and logs in; nothing is sent yet.
+pub async fn login(net: &Net, account: &Account) -> Result<Smtp, MailError> {
+    let conn = connect::within(&account.smtp, open(net, account)).await?;
+    Ok(Smtp {
+        server: account.smtp.clone(),
+        conn,
+    })
+}
+
+impl Smtp {
+    /// Hands the email over and leaves. Takes the steps one by one rather than with lettre's
+    /// `send`, which on a refusal waits for the server to answer QUIT, and some never do.
+    pub async fn send(self, email: &Outgoing) -> Result<(), SendError> {
+        let Smtp { server, mut conn } = self;
+        let envelope = email.0.envelope();
+        let ready = connect::within(&server, async {
+            // A server without SMTPUTF8 turns down addresses that are not ASCII.
+            let utf8 = envelope
+                .to()
+                .iter()
+                .chain(envelope.from())
+                .any(|a| !(a.user().is_ascii() && a.domain().is_ascii()));
+            let options = if utf8 {
+                vec![MailParameter::SmtpUtfEight]
+            } else {
+                Vec::new()
+            };
+            conn.command(Mail::new(envelope.from().cloned(), options))
+                .await
+                .map_err(refused)?;
+            for to in envelope.to() {
+                conn.command(Rcpt::new(to.clone(), Vec::new()))
+                    .await
+                    .map_err(refused)?;
+            }
+            conn.command(Data).await.map_err(refused)
+        })
+        .await;
+        if let Err(e) = ready {
+            quit(&server.host, conn);
+            return Err(SendError::NotSent(e));
+        }
+        // From here on, a server that got the whole email may have taken it, whatever happens next.
+        let sent = connect::within(&server, async {
+            conn.message(&email.0.formatted()).await.map_err(refused)
+        })
+        .await;
+        match sent {
+            Ok(_) => {
+                quit(&server.host, conn);
+                Ok(())
+            }
+            Err(e @ MailError::Refused(_)) => {
+                quit(&server.host, conn);
+                Err(SendError::NotSent(e))
+            }
+            Err(e) => Err(SendError::Unknown(e)),
+        }
+    }
+
+    pub fn quit(self) {
+        quit(&self.server.host, self.conn);
+    }
+}
+
+async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailError> {
     let server = &account.smtp;
     let tcp = connect::connect(&server.host, server.port).await?;
     let mut conn = match server.security {

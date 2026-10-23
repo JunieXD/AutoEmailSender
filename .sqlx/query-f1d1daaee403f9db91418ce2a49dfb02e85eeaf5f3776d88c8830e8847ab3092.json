@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'maybe_sent', error = ?, updated_at = ? WHERE state = 'sending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f1d1daaee403f9db91418ce2a49dfb02e85eeaf5f3776d88c8830e8847ab3092"
+}

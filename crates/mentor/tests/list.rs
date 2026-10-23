@@ -68,8 +68,8 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         .unwrap();
     sqlx::query(
         "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, message_id, sent_at,
-           created_at, updated_at, html, text)
-         VALUES (?, 'first', 'sent', 5, 'me@qq.com', '<1@aes>', 5, 0, 0, '<p>信</p>', '信')",
+           created_at, updated_at, subject, body_md, html, text)
+         VALUES (?, 'first', 'sent', 5, 'me@qq.com', '<1@aes>', 5, 0, 0, '申请', '信', '<p>信</p>', '信')",
     )
     .bind(contacted)
     .execute(&db)

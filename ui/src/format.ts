@@ -9,6 +9,12 @@ export function day(ms: number): string {
   return date.getFullYear() === today.getFullYear() ? md : `${date.getFullYear()}年${md}`;
 }
 
+/** "09:30", in the user's time zone. */
+export function time(ms: number): string {
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }

@@ -1,29 +1,30 @@
 import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FileText } from "lucide-react";
+import { FileText, Send } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { FirstDraft, FirstDraftEdit, TemplateSummary } from "@/api/types";
+import type { FirstDraft, FirstDraftEdit, FirstEmail, MentorDetail, TemplateSummary } from "@/api/types";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
+import { dropDrafts } from "@/components/mentor";
 import { usePlaceholders } from "@/components/template-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { letterHtml, letterText } from "@/letter";
 
 /** Writing the first email to a mentor on their page (docs/ui.md#交互). */
-export function FirstLetter({ mentorId }: { mentorId: number }) {
+export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
+  const mentorId = mentor.id;
   const draft = useQuery({
     queryKey: ["getFirstDraft", mentorId],
     queryFn: () => call("getFirstDraft", { id: mentorId }),
   });
   const placeholders = usePlaceholders();
   const error = draft.error ?? placeholders.error;
-  if (error) return <p className="px-5 py-4 text-sm text-destructive">草稿没能加载：{errorMessage(error)}</p>;
+  if (error) return <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(error)}</p>;
   return (
     draft.isSuccess &&
-    placeholders.data && (
-      <Composer key={mentorId} mentorId={mentorId} draft={draft.data} placeholders={placeholders.data} />
-    )
+    placeholders.data && <Composer key={mentorId} mentor={mentor} draft={draft.data} placeholders={placeholders.data} />
   );
 }
 
@@ -32,19 +33,22 @@ export function FirstLetter({ mentorId }: { mentorId: number }) {
  * even after leaving and coming back quickly, and unsaved text is shown again on return.
  */
 function Composer({
-  mentorId,
+  mentor,
   draft,
   placeholders,
 }: {
-  mentorId: number;
+  mentor: MentorDetail;
   draft: FirstDraft | null;
   placeholders: string[];
 }) {
+  const mentorId = mentor.id;
   const queryClient = useQueryClient();
   const mutationKey = ["saveFirstDraft", mentorId];
+  // Approving waits for the saves before it, which share this scope.
+  const scope = { id: `saveFirstDraft ${mentorId}` };
   const save = useMutation({
     mutationKey,
-    scope: { id: `saveFirstDraft ${mentorId}` },
+    scope,
     mutationFn: (d: FirstDraftEdit) => call("saveFirstDraft", d),
     // A load still under way may have read the draft before this save, so it must not land afterwards.
     onSuccess: async (saved) => {
@@ -63,10 +67,33 @@ function Composer({
   );
   // The editor reads its text when mounted, so a template applied mounts a new one.
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
+  const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
+  const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const approve = useMutation({
+    scope,
+    mutationFn: (e: FirstEmail) => call("approveFirstEmail", e),
+    onSuccess: async () => {
+      // The correspondence takes this composer's place first, so that it does not show the draft emptied.
+      await queryClient.invalidateQueries({ queryKey: ["listEmails", mentorId] });
+      dropDrafts(queryClient, [mentorId]);
+    },
+  });
+  const sending = approve.isPending || approve.isSuccess;
   function edit(next: FirstDraftEdit) {
     setLetter(next);
     save.mutate(next);
   }
+  const blocker = !mentor.email ? (
+    "导师尚未填写邮箱，可在资料里填写。"
+  ) : mailboxes.data?.length === 0 ? (
+    <>
+      尚未添加发信的邮箱，可在
+      <Link to="/settings/mailboxes" className="text-brand-text">
+        设置 › 邮件 › 邮箱
+      </Link>
+      里添加。
+    </>
+  ) : null;
   return (
     <div className="flex flex-col gap-2 border-t border-border px-5 py-4 phone:px-3">
       <Input
@@ -74,6 +101,7 @@ function Composer({
         placeholder="主题"
         autoComplete="off"
         value={letter.subject}
+        disabled={sending}
         onChange={(e) => edit({ ...letter, subject: e.target.value })}
       />
       <LazyLetterEditor
@@ -81,12 +109,13 @@ function Composer({
         id={`first-letter-${mentorId}`}
         markdown={body.markdown}
         placeholders={placeholders}
-        disabled={false}
+        disabled={sending}
         onChange={(bodyMd) => edit({ ...letter, bodyMd })}
       />
       <div className="flex flex-wrap items-center gap-2">
         <TemplateMenu
           mentorId={mentorId}
+          disabled={sending}
           written={letter.subject.trim() !== "" || letter.bodyMd.trim() !== ""}
           onApply={(filled) => {
             edit({ mentorId, ...filled });
@@ -96,7 +125,37 @@ function Composer({
         {last?.status === "error" && (
           <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>
         )}
+        <div className="ml-auto flex items-center gap-3">
+          {blocker && <p className="text-sm text-muted-foreground">{blocker}</p>}
+          <Button
+            disabled={
+              sending ||
+              blocker !== null ||
+              !style.data ||
+              !mailboxes.data ||
+              letter.subject.trim() === "" ||
+              letter.bodyMd.trim() === ""
+            }
+            onClick={() => {
+              if (style.data) {
+                approve.mutate({
+                  ...letter,
+                  html: letterHtml(letter.bodyMd, style.data),
+                  text: letterText(letter.bodyMd),
+                });
+              }
+            }}
+          >
+            <Send strokeWidth={1.8} />
+            发送
+          </Button>
+        </div>
       </div>
+      {(style.error ?? mailboxes.error ?? approve.error) && (
+        <p className="text-sm text-destructive">
+          未能发送：{errorMessage(style.error ?? mailboxes.error ?? approve.error)}
+        </p>
+      )}
     </div>
   );
 }
@@ -104,10 +163,12 @@ function Composer({
 /** Lists the templates; a letter already written is replaced only once confirmed. */
 function TemplateMenu({
   mentorId,
+  disabled,
   written,
   onApply,
 }: {
   mentorId: number;
+  disabled: boolean;
   written: boolean;
   onApply: (filled: { subject: string; bodyMd: string }) => void;
 }) {
@@ -139,7 +200,7 @@ function TemplateMenu({
         apply.reset();
       }}
     >
-      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" />}>
+      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled} />}>
         <FileText strokeWidth={1.8} />
         使用模板
       </PopoverTrigger>
@@ -164,7 +225,7 @@ function TemplateMenu({
           </div>
         ) : templates.data?.length === 0 ? (
           <p className="p-1.5 text-sm text-muted-foreground">
-            还没有模板，可以在
+            尚未添加模板，可在
             <Link to="/settings/templates" className="text-brand-text">
               设置 › 个人 › 模板
             </Link>

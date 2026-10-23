@@ -203,14 +203,19 @@ CREATE TABLE email (
   text TEXT,
   CHECK ((kind = 'first') = (reply_to IS NULL)),
   CHECK (state NOT IN ('approved', 'cloud', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
-         OR (html IS NOT NULL AND text IS NOT NULL AND planned_at IS NOT NULL)),
+         OR (subject IS NOT NULL AND body_md IS NOT NULL AND html IS NOT NULL AND text IS NOT NULL
+             AND planned_at IS NOT NULL)),
   CHECK (state NOT IN ('sending', 'maybe_sent', 'sent', 'bounced')
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
-  CHECK (state NOT IN ('generation_failed', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
+  CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)
   WHERE state IN ('maybe_sent', 'sent', 'bounced');
 CREATE INDEX email_queue ON email (planned_at) WHERE state = 'approved';
+CREATE INDEX email_mentor ON email (mentor_id, state);
+-- What each mailbox has sent lately, for its daily limit and minimum interval.
+CREATE INDEX email_mailbox_out ON email (mailbox_id, sent_at)
+  WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced');
 CREATE INDEX email_task ON email (task_id, state);
 CREATE INDEX email_attention ON email (state) WHERE state IN ('generation_failed', 'failed', 'maybe_sent');
 CREATE UNIQUE INDEX email_first_draft ON email (mentor_id)

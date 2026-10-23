@@ -38,8 +38,8 @@ async fn sent(conn: &mut SqliteConnection, mentor: i64, kind: &str, at: i64) -> 
     let reply_to = (kind != "first").then_some("<earlier@aes>");
     sqlx::query(
         "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, from_address, message_id,
-           sent_at, created_at, updated_at, html, text)
-         VALUES (?, ?, ?, 'sent', ?, 'me@qq.com', ?, ?, 0, 0, '<p>信</p>', '信')",
+           sent_at, created_at, updated_at, subject, body_md, html, text)
+         VALUES (?, ?, ?, 'sent', ?, 'me@qq.com', ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
     )
     .bind(mentor)
     .bind(kind)
