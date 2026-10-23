@@ -42,6 +42,7 @@ fn main() -> tauri::Result<()> {
         // First, so that launching the app again only brings the running one forward.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok(ctx) => app.manage(ctx),

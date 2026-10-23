@@ -1,0 +1,326 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,\n                  m.homepage_url, m.source_url,\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n                  m.match_model, m.match_error,\n                  d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note, d.match_reason,\n                  d.match_directions AS \"match_directions: Json<Vec<String>>\",\n                  d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n                  d.match_risks AS \"match_risks: Json<Vec<String>>\",\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM mentor m\n           JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           WHERE m.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "email",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "university",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "department",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "name": "homepage_url",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "homepage_url"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "source_url"
+          }
+        }
+      },
+      {
+        "name": "match_state: MatchColumn",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_state"
+          }
+        }
+      },
+      {
+        "name": "match_score",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_score"
+          }
+        }
+      },
+      {
+        "name": "matched_at",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "matched_at"
+          }
+        }
+      },
+      {
+        "name": "match_model",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_model"
+          }
+        }
+      },
+      {
+        "name": "match_error",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_error"
+          }
+        }
+      },
+      {
+        "name": "research",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "research"
+          }
+        }
+      },
+      {
+        "name": "papers: Json<Vec<String>>",
+        "ordinal": 15,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "papers"
+          }
+        }
+      },
+      {
+        "name": "note",
+        "ordinal": 16,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "name": "match_reason",
+        "ordinal": 17,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "match_reason"
+          }
+        }
+      },
+      {
+        "name": "match_directions: Json<Vec<String>>",
+        "ordinal": 18,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "match_directions"
+          }
+        }
+      },
+      {
+        "name": "match_highlights: Json<Vec<String>>",
+        "ordinal": 19,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "match_highlights"
+          }
+        }
+      },
+      {
+        "name": "match_risks: Json<Vec<String>>",
+        "ordinal": 20,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "match_risks"
+          }
+        }
+      },
+      {
+        "name": "status?: ContactStatus",
+        "ordinal": 21,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "contact_count?",
+        "ordinal": 22,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "contact_count"
+          }
+        }
+      },
+      {
+        "name": "last_out_at",
+        "ordinal": 23,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      },
+      {
+        "name": "last_reply_at",
+        "ordinal": 24,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_reply_at"
+          }
+        }
+      },
+      {
+        "name": "unread?: bool",
+        "ordinal": 25,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "unread"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "d6ddf26ace411d9fda2c4eca8abfe867b9e8515497ad5580017bedc11672deb9"
+}

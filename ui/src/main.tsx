@@ -5,8 +5,14 @@ import { createRoot } from "react-dom/client";
 import { router } from "./router";
 import "./index.css";
 
-// Queries call the local core, where retrying at once rarely helps and only delays the error.
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+// Everything goes to the local core: retrying at once rarely helps and only delays the error, and
+// whether the computer is online says nothing about whether a call can run.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false, networkMode: "always" },
+    mutations: { networkMode: "always" },
+  },
+});
 
 const root = document.getElementById("root");
 if (root) {

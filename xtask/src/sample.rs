@@ -194,6 +194,53 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .bind(id)
             .execute(&mut *tx)
             .await?;
+            if done {
+                let [a, b, c] = [0; 3].map(|_| *pick(&mut rng, TOPICS));
+                sqlx::query(
+                    "UPDATE mentor_detail SET match_reason = ?, match_directions = ?,
+                       match_highlights = ?, match_risks = ? WHERE mentor_id = ?",
+                )
+                .bind(format!(
+                    "你的{a}项目经历和导师近年的{b}工作直接相关，本科课题也用到了{c}的方法。"
+                ))
+                .bind(serde_json::json!([format!("{a}在{b}中的应用"), c]).to_string())
+                .bind(
+                    serde_json::json!([
+                        format!("{a}项目里独立完成的实验和开源代码"),
+                        "数学和编程课程的成绩",
+                    ])
+                    .to_string(),
+                )
+                .bind(serde_json::json!([format!("没有{b}方向的论文")]).to_string())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        sqlx::query("UPDATE mentor SET source_url = ? WHERE id = ?")
+            .bind(format!("https://example.edu.cn/faculty/list{}.htm", i % 9))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        if rng.f32() < 0.5 {
+            let papers: Vec<String> = (0..rng.usize(1..4))
+                .map(|n| {
+                    let topic = pick(&mut rng, TOPICS);
+                    format!("面向{topic}的高效方法研究（{}）", 2025 - n)
+                })
+                .collect();
+            sqlx::query("UPDATE mentor_detail SET papers = ? WHERE mentor_id = ?")
+                .bind(serde_json::to_string(&papers)?)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if rng.f32() < 0.05 {
+            sqlx::query("UPDATE mentor_detail SET note = ? WHERE mentor_id = ?")
+                .bind("学长说组里氛围好，每周组会。")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
         if rng.f32() < 0.03 {
             sqlx::query("UPDATE mentor SET trashed_at = ? WHERE id = ?")

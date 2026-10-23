@@ -1,19 +1,40 @@
-import { createHashHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { Shell } from "./components/shell";
+import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
 
 const rootRoute = createRootRoute({ component: Shell });
 
-const mentorsRoute = createRoute({
+// The mentor list is the home page. It lives under /mentors so that its navigation entry stays
+// current on a mentor's page.
+const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/mentors" });
+  },
+});
+
+const mentorsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "mentors",
   validateSearch: mentorSearch,
   component: MentorsPage,
 });
 
+const mentorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "mentors/$mentorId",
+  params: {
+    parse: ({ mentorId }) => ({ mentorId: Number(mentorId) }),
+    stringify: ({ mentorId }) => ({ mentorId: String(mentorId) }),
+  },
+  component: MentorPage,
+});
+
 // Hash URLs: the app is served as static files, which have nothing at deep paths.
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([mentorsRoute]),
+  routeTree: rootRoute.addChildren([homeRoute, mentorsRoute, mentorRoute]),
   history: createHashHistory(),
 });
 

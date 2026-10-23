@@ -1,9 +1,10 @@
-//! Mentors: the home list with its filters, keyword search and adding mentors.
+//! Mentors: the home list with its filters, keyword search, one mentor's page and adding mentors.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqlitePool};
 use ts_rs::TS;
 
@@ -92,6 +93,52 @@ pub enum Contact {
 }
 
 #[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MentorDetail {
+    pub id: i64,
+    pub name: String,
+    pub email: Option<String>,
+    pub title: Option<String>,
+    pub university: Option<String>,
+    pub school: Option<String>,
+    pub department: Option<String>,
+    pub homepage_url: Option<String>,
+    /// The page the mentor was found on.
+    pub source_url: Option<String>,
+    pub research: Option<String>,
+    pub papers: Vec<String>,
+    pub note: Option<String>,
+    pub analysis: MatchResult,
+    pub contact: Contact,
+    pub tags: Vec<TagLabel>,
+}
+
+/// The latest match analysis in full; `MatchState` is its summary in the list.
+#[derive(Debug, Serialize, TS)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum MatchResult {
+    NotAnalyzed,
+    Queued,
+    Running,
+    Done {
+        score: i64,
+        matched_at: i64,
+        model: String,
+        reason: String,
+        directions: Vec<String>,
+        highlights: Vec<String>,
+        risks: Vec<String>,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+#[derive(Debug, Serialize, TS)]
 pub struct TagLabel {
     pub name: String,
     pub color: String,
@@ -153,71 +200,17 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
     .fetch_one(db)
     .await?;
 
-    let ids = rows
-        .iter()
-        .map(|r| r.id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let tag_rows = sqlx::query!(
-        r#"SELECT mt.mentor_id, t.name, t.color
-           FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id
-           WHERE mt.mentor_id IN (SELECT value FROM json_each(?1))
-           ORDER BY t.position"#,
-        format!("[{ids}]"),
-    )
-    .fetch_all(db)
-    .await?;
-    let mut tags: BTreeMap<i64, Vec<TagLabel>> = BTreeMap::new();
-    for t in tag_rows {
-        tags.entry(t.mentor_id).or_default().push(TagLabel {
-            name: t.name,
-            color: t.color,
-        });
-    }
-
+    let mut tags = tags_of(db, rows.iter().map(|r| r.id)).await?;
     let mentors = rows
         .into_iter()
         .map(|r| {
-            let inconsistent = || {
-                sqlx::Error::Decode(
-                    format!("mentor {} has inconsistent match or contact columns", r.id).into(),
-                )
-            };
             let match_state = match (r.match_state, r.match_score) {
                 (None, _) => MatchState::NotAnalyzed,
                 (Some(MatchColumn::Queued), _) => MatchState::Queued,
                 (Some(MatchColumn::Running), _) => MatchState::Running,
                 (Some(MatchColumn::Done), Some(score)) => MatchState::Done { score },
                 (Some(MatchColumn::Failed), _) => MatchState::Failed,
-                (Some(MatchColumn::Done), None) => return Err(inconsistent()),
-            };
-            let contact = match (
-                r.status,
-                r.contact_count,
-                r.last_out_at,
-                r.last_reply_at,
-                r.unread,
-            ) {
-                (None, ..) => Contact::None,
-                (Some(ContactStatus::Contacted), Some(count), Some(last_out_at), _, _) => {
-                    Contact::Contacted { count, last_out_at }
-                }
-                (Some(ContactStatus::Bounced), Some(count), Some(last_out_at), _, _) => {
-                    Contact::Bounced { count, last_out_at }
-                }
-                (
-                    Some(ContactStatus::Replied),
-                    Some(count),
-                    last_out_at,
-                    Some(last_reply_at),
-                    Some(unread),
-                ) => Contact::Replied {
-                    count,
-                    last_out_at,
-                    last_reply_at,
-                    unread,
-                },
-                _ => return Err(inconsistent()),
+                (Some(MatchColumn::Done), None) => return Err(inconsistent(r.id)),
             };
             Ok(MentorRow {
                 id: r.id,
@@ -228,12 +221,183 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
                 department: r.department,
                 research: r.research,
                 match_state,
-                contact,
+                contact: contact(
+                    r.id,
+                    r.status,
+                    r.contact_count,
+                    r.last_out_at,
+                    r.last_reply_at,
+                    r.unread,
+                )?,
                 tags: tags.remove(&r.id).unwrap_or_default(),
             })
         })
         .collect::<Result<_, _>>()?;
     Ok(MentorPage { mentors, total })
+}
+
+/// Everything the mentor's page shows. None when there is no such mentor.
+pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
+    let Some(r) = sqlx::query!(
+        r#"SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,
+                  m.homepage_url, m.source_url,
+                  m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
+                  m.match_model, m.match_error,
+                  d.research, d.papers AS "papers: Json<Vec<String>>", d.note, d.match_reason,
+                  d.match_directions AS "match_directions: Json<Vec<String>>",
+                  d.match_highlights AS "match_highlights: Json<Vec<String>>",
+                  d.match_risks AS "match_risks: Json<Vec<String>>",
+                  c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
+                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
+           FROM mentor m
+           JOIN mentor_detail d ON d.mentor_id = m.id
+           LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+           WHERE m.id = ?"#,
+        id,
+    )
+    .fetch_optional(db)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let analysis = match r.match_state {
+        None => MatchResult::NotAnalyzed,
+        Some(MatchColumn::Queued) => MatchResult::Queued,
+        Some(MatchColumn::Running) => MatchResult::Running,
+        Some(MatchColumn::Done) => match (
+            r.match_score,
+            r.matched_at,
+            r.match_model,
+            r.match_reason,
+            r.match_directions,
+            r.match_highlights,
+            r.match_risks,
+        ) {
+            (
+                Some(score),
+                Some(matched_at),
+                Some(model),
+                Some(reason),
+                Some(Json(directions)),
+                Some(Json(highlights)),
+                Some(Json(risks)),
+            ) => MatchResult::Done {
+                score,
+                matched_at,
+                model,
+                reason,
+                directions,
+                highlights,
+                risks,
+            },
+            _ => return Err(inconsistent(id)),
+        },
+        Some(MatchColumn::Failed) => MatchResult::Failed {
+            error: r.match_error.ok_or_else(|| inconsistent(id))?,
+        },
+    };
+    Ok(Some(MentorDetail {
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        title: r.title,
+        university: r.university,
+        school: r.school,
+        department: r.department,
+        homepage_url: r.homepage_url,
+        source_url: r.source_url,
+        research: r.research,
+        papers: r.papers.map(|Json(p)| p).unwrap_or_default(),
+        note: r.note,
+        analysis,
+        contact: contact(
+            id,
+            r.status,
+            r.contact_count,
+            r.last_out_at,
+            r.last_reply_at,
+            r.unread,
+        )?,
+        tags: tags_of(db, [id]).await?.remove(&id).unwrap_or_default(),
+    }))
+}
+
+/// Replaces the mentor's private note; None clears it. False when there is no such mentor.
+pub async fn set_note(db: &SqlitePool, id: i64, note: Option<&str>) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE mentor_detail SET note = ? WHERE mentor_id = ?",
+        note,
+        id
+    )
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// The tags of each of `ids`, in the user's order.
+async fn tags_of(
+    db: &SqlitePool,
+    ids: impl IntoIterator<Item = i64>,
+) -> Result<BTreeMap<i64, Vec<TagLabel>>, sqlx::Error> {
+    let ids = ids
+        .into_iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = sqlx::query!(
+        r#"SELECT mt.mentor_id, t.name, t.color
+           FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id
+           WHERE mt.mentor_id IN (SELECT value FROM json_each(?1))
+           ORDER BY t.position"#,
+        format!("[{ids}]"),
+    )
+    .fetch_all(db)
+    .await?;
+    let mut tags: BTreeMap<i64, Vec<TagLabel>> = BTreeMap::new();
+    for t in rows {
+        tags.entry(t.mentor_id).or_default().push(TagLabel {
+            name: t.name,
+            color: t.color,
+        });
+    }
+    Ok(tags)
+}
+
+/// The contact summary's columns as a `Contact`; they are absent for a mentor never contacted.
+fn contact(
+    id: i64,
+    status: Option<ContactStatus>,
+    count: Option<i64>,
+    last_out_at: Option<i64>,
+    last_reply_at: Option<i64>,
+    unread: Option<bool>,
+) -> Result<Contact, sqlx::Error> {
+    Ok(match (status, count, last_out_at, last_reply_at, unread) {
+        (None, ..) => Contact::None,
+        (Some(ContactStatus::Contacted), Some(count), Some(last_out_at), _, _) => {
+            Contact::Contacted { count, last_out_at }
+        }
+        (Some(ContactStatus::Bounced), Some(count), Some(last_out_at), _, _) => {
+            Contact::Bounced { count, last_out_at }
+        }
+        (
+            Some(ContactStatus::Replied),
+            Some(count),
+            last_out_at,
+            Some(last_reply_at),
+            Some(unread),
+        ) => Contact::Replied {
+            count,
+            last_out_at,
+            last_reply_at,
+            unread,
+        },
+        _ => return Err(inconsistent(id)),
+    })
+}
+
+fn inconsistent(id: i64) -> sqlx::Error {
+    sqlx::Error::Decode(format!("mentor {id} has inconsistent match or contact columns").into())
 }
 
 /// The FTS5 query for a keyword search, in which every word must appear: a phrase of bigrams per

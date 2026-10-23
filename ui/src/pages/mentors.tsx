@@ -1,9 +1,11 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Contact, ContactStatus, MatchState, MentorRow } from "@/api/types";
+import type { ContactStatus, MatchState, MentorRow } from "@/api/types";
+import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing, TagChip } from "@/components/mentor";
+import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 
 const PAGE_SIZE = 50;
@@ -28,8 +30,8 @@ export function mentorSearch(search: Record<string, unknown>): MentorSearch {
 }
 
 export function MentorsPage() {
-  const search = useSearch({ from: "/" });
-  const navigate = useNavigate({ from: "/" });
+  const search = useSearch({ from: "/mentors" });
+  const navigate = useNavigate({ from: "/mentors" });
   const page = search.page ?? 1;
   const query = useQuery({
     queryKey: ["listMentors", search],
@@ -166,15 +168,22 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
         </span>
       </div>
       {mentors.map((m) => (
-        <div key={m.id} role="row" className={`${COLUMNS} h-[62px] rounded-md px-3 hover:bg-muted ${CARD}`}>
+        // The name links to the mentor's page and stretches over the row, so the whole row opens it.
+        <div
+          key={m.id}
+          role="row"
+          className={`${COLUMNS} relative h-[62px] rounded-md px-3 outline-ring hover:bg-muted has-focus-visible:outline-2 ${CARD}`}
+        >
           <div role="cell" className="flex min-w-0 items-center gap-3 cards:[grid-area:who]">
-            <span
-              className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-medium ${AVATARS[m.id % AVATARS.length]}`}
-            >
-              {m.name.slice(0, 1)}
-            </span>
+            <Avatar id={m.id} name={m.name} />
             <span className="truncate">
-              <span className="font-medium">{m.name}</span>
+              <Link
+                to="/mentors/$mentorId"
+                params={{ mentorId: m.id }}
+                className="font-medium outline-none after:absolute after:inset-0"
+              >
+                {m.name}
+              </Link>
               {m.title && <span className="ml-1.5 text-sm text-muted-foreground">{m.title}</span>}
             </span>
           </div>
@@ -196,29 +205,20 @@ function MentorTable({ mentors }: { mentors: MentorRow[] }) {
             <Match state={m.matchState} />
           </div>
           <div role="cell" className="min-w-0 text-sm cards:max-w-[45cqw] cards:text-right cards:[grid-area:contact]">
-            <ContactCell contact={m.contact} />
+            <ContactLabel contact={m.contact} className="cards:justify-end" />
+            {contactDetail(m.contact) && (
+              <div className="truncate text-muted-foreground">{contactDetail(m.contact)}</div>
+            )}
           </div>
           <div role="cell" className={`flex flex-wrap gap-1 ${TAGS}`}>
             {m.tags.map((t) => (
-              <span
-                key={t.name}
-                className="rounded-full px-2 py-0.5 text-xs"
-                style={{ color: t.color, backgroundColor: `color-mix(in srgb, ${t.color} 12%, transparent)` }}
-              >
-                {t.name}
-              </span>
+              <TagChip key={t.name} tag={t} />
             ))}
           </div>
         </div>
       ))}
     </div>
   );
-}
-
-const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
-
-function Missing({ children }: { children: string }) {
-  return <span className="text-faint">{children}</span>;
 }
 
 function Match({ state }: { state: MatchState }) {
@@ -234,72 +234,4 @@ function Match({ state }: { state: MatchState }) {
   }
   const [label, color] = MATCH_LABEL[state.state];
   return <span className={`text-sm ${color}`}>{label}</span>;
-}
-
-const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, string]> = {
-  running: ["分析中", "text-muted-foreground"],
-  queued: ["排队中", "text-muted-foreground"],
-  failed: ["分析失败", "text-warning"],
-  not_analyzed: ["未分析", "text-faint"],
-};
-
-const STATUS_STYLE: Record<ContactStatus, [string, string]> = {
-  none: ["未联系", "border border-input"],
-  contacted: ["已联系", "bg-info"],
-  replied: ["已回复", "bg-success"],
-  bounced: ["退信", "bg-warning"],
-};
-
-function ContactCell({ contact }: { contact: Contact }) {
-  const [label, dot] = STATUS_STYLE[contact.status];
-  // A bounce can arrive days later, so a bounced mentor shows when the mail went out.
-  const detail =
-    contact.status === "none"
-      ? null
-      : contact.status === "replied"
-        ? `${times(contact.count)}${day(contact.lastReplyAt)}回复`
-        : `${times(contact.count)}${day(contact.lastOutAt)}发出`;
-  return (
-    <>
-      <div className="flex items-center gap-1.5 cards:justify-end">
-        <span className={`size-2 rounded-full ${dot}`} />
-        {label}
-        {contact.status === "replied" && contact.unread && (
-          <span className="size-2 rounded-full bg-unread" aria-label="有新回信" />
-        )}
-      </div>
-      {detail && <div className="truncate text-muted-foreground">{detail}</div>}
-    </>
-  );
-}
-
-/** Nothing for zero: a mentor who wrote first, or was only answered elsewhere, has no counted email. */
-function times(count: number): string {
-  return count > 0 ? `联系 ${count} 次，` : "";
-}
-
-/** "今天", "昨天", or the date, in the user's time zone. */
-function day(ms: number): string {
-  const date = new Date(ms);
-  const today = new Date();
-  const days = Math.round((startOfDay(today) - startOfDay(date)) / 86_400_000);
-  if (days === 0) return "今天";
-  if (days === 1) return "昨天";
-  const md = `${date.getMonth() + 1}月${date.getDate()}日`;
-  return date.getFullYear() === today.getFullYear() ? md : `${date.getFullYear()}年${md}`;
-}
-
-function startOfDay(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function Notice({ title, detail }: { title: string; detail: string }) {
-  return (
-    <div className="grid h-full place-items-center text-center">
-      <div>
-        <p className="text-lg font-medium">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
-      </div>
-    </div>
-  );
 }

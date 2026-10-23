@@ -5,7 +5,7 @@ import appIcon from "../../../docs/icon.svg";
 import { startupFailure } from "@/api/app";
 import { StartupFailure } from "@/components/startup-failure";
 
-const NAV = [{ to: "/", label: "导师", icon: Users }] as const;
+const NAV = [{ to: "/mentors", label: "导师", icon: Users }] as const;
 
 /**
  * Sidebar on the window background, content on a rounded page; on a phone-width window the
