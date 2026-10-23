@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "What the main window may use",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "opener:allow-open-url", "opener:allow-default-urls"]
 }

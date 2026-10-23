@@ -1,0 +1,70 @@
+import type { Contact, ContactStatus, MatchState, TagLabel } from "@/api/types";
+import { day } from "@/format";
+
+const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
+
+/** The name's first character on a tint chosen by id, so a mentor looks the same everywhere. */
+export function Avatar({ id, name }: { id: number; name: string }) {
+  return (
+    <span
+      className={`grid size-9 shrink-0 place-items-center rounded-full text-sm font-medium ${AVATARS[id % AVATARS.length]}`}
+    >
+      {name.slice(0, 1)}
+    </span>
+  );
+}
+
+export function Missing({ children }: { children: string }) {
+  return <span className="text-faint">{children}</span>;
+}
+
+export function TagChip({ tag }: { tag: TagLabel }) {
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-xs whitespace-nowrap"
+      style={{ color: tag.color, backgroundColor: `color-mix(in srgb, ${tag.color} 12%, transparent)` }}
+    >
+      {tag.name}
+    </span>
+  );
+}
+
+const STATUS_STYLE: Record<ContactStatus, [string, string]> = {
+  none: ["未联系", "border border-input"],
+  contacted: ["已联系", "bg-info"],
+  replied: ["已回复", "bg-success"],
+  bounced: ["退信", "bg-warning"],
+};
+
+/** The contact status after its coloured dot, with a red dot for a new reply. */
+export function ContactLabel({ contact, className = "" }: { contact: Contact; className?: string }) {
+  const [label, dot] = STATUS_STYLE[contact.status];
+  return (
+    <div className={`flex items-center gap-1.5 ${className}`}>
+      <span className={`size-2 shrink-0 rounded-full ${dot}`} />
+      {label}
+      {contact.status === "replied" && contact.unread && (
+        <span className="size-2 shrink-0 rounded-full bg-unread" aria-label="有新回信" />
+      )}
+    </div>
+  );
+}
+
+/** How often and when, such as "联系 2 次，昨天回复"; null for a mentor never contacted. */
+export function contactDetail(contact: Contact): string | null {
+  if (contact.status === "none") return null;
+  // Nothing for zero: a mentor who wrote first, or was only answered elsewhere, has no counted email.
+  const times = contact.count > 0 ? `联系 ${contact.count} 次，` : "";
+  // A bounce can arrive days later, so a bounced mentor shows when the mail went out.
+  return contact.status === "replied"
+    ? `${times}${day(contact.lastReplyAt)}回复`
+    : `${times}${day(contact.lastOutAt)}发出`;
+}
+
+/** Labels and colours for a match analysis that has no score. */
+export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, string]> = {
+  running: ["分析中", "text-muted-foreground"],
+  queued: ["排队中", "text-muted-foreground"],
+  failed: ["分析失败", "text-warning"],
+  not_analyzed: ["未分析", "text-faint"],
+};

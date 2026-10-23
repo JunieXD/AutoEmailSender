@@ -6,9 +6,25 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
-export type ErrorCode = "bad_input" | "internal";
+export type ErrorCode = "bad_input" | "not_found" | "internal";
+
+export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
 
 export type MatchState = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, } | { "state": "failed" };
+
+export type MentorDetail = { id: number, name: string, email: string | null, title: string | null, university: string | null, school: string | null, department: string | null, homepageUrl: string | null, 
+/**
+ * The page the mentor was found on.
+ */
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<TagLabel>, };
+
+export type MentorId = { id: number, };
+
+export type MentorNote = { id: number, 
+/**
+ * Blank clears the note.
+ */
+note: string, };
 
 export type MentorPage = { mentors: Array<MentorRow>, total: number, };
 
@@ -32,4 +48,6 @@ export type TagLabel = { name: string, color: string, };
 
 export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
+  getMentor: { input: MentorId; output: MentorDetail };
+  setMentorNote: { input: MentorNote; output: null };
 }

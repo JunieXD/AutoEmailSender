@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
@@ -23,6 +23,8 @@ pub struct CallError {
 pub enum ErrorCode {
     /// The caller sent something the operation does not accept; a bug in the caller.
     BadInput,
+    /// What the caller asked for no longer exists, such as a mentor deleted since the page opened.
+    NotFound,
     Internal,
 }
 
@@ -31,6 +33,13 @@ impl CallError {
         CallError {
             code: ErrorCode::BadInput,
             message: format!("参数不正确：{e}"),
+        }
+    }
+
+    fn not_found(message: &str) -> Self {
+        CallError {
+            code: ErrorCode::NotFound,
+            message: message.into(),
         }
     }
 
@@ -84,6 +93,22 @@ macro_rules! operations {
 
 operations! {
     "listMentors" => list_mentors(mentor::MentorQuery) -> mentor::MentorPage;
+    "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
+    "setMentorNote" => set_mentor_note(MentorNote) -> ();
+}
+
+const NO_MENTOR: &str = "找不到这位导师，可能已被永久删除。";
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorId {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorNote {
+    pub id: i64,
+    /// Blank clears the note.
+    pub note: String,
 }
 
 async fn list_mentors(
@@ -91,6 +116,21 @@ async fn list_mentors(
     query: mentor::MentorQuery,
 ) -> Result<mentor::MentorPage, CallError> {
     Ok(mentor::list(&ctx.db, &query).await?)
+}
+
+async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDetail, CallError> {
+    mentor::get(&ctx.db, input.id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MENTOR))
+}
+
+async fn set_mentor_note(ctx: &Context, input: MentorNote) -> Result<(), CallError> {
+    let note = Some(input.note.as_str()).filter(|n| !n.trim().is_empty());
+    if mentor::set_note(&ctx.db, input.id, note).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_MENTOR))
+    }
 }
 
 /// Adds the declarations of `T` and every named type it refers to, keyed by name.
