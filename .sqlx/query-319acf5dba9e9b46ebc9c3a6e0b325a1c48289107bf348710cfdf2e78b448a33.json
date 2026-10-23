@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT address, sender_name, secret,\n             smtp_host, smtp_port AS \"smtp_port: u16\", smtp_security AS \"smtp_security: Security\",\n             imap_host, imap_port AS \"imap_port: u16\", imap_security AS \"imap_security: Security\"\n           FROM mailbox WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "sender_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "sender_name"
+          }
+        }
+      },
+      {
+        "name": "secret",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "secret"
+          }
+        }
+      },
+      {
+        "name": "smtp_host",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "smtp_host"
+          }
+        }
+      },
+      {
+        "name": "smtp_port: u16",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "smtp_port"
+          }
+        }
+      },
+      {
+        "name": "smtp_security: Security",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "smtp_security"
+          }
+        }
+      },
+      {
+        "name": "imap_host",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "imap_host"
+          }
+        }
+      },
+      {
+        "name": "imap_port: u16",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "imap_port"
+          }
+        }
+      },
+      {
+        "name": "imap_security: Security",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "imap_security"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "319acf5dba9e9b46ebc9c3a6e0b325a1c48289107bf348710cfdf2e78b448a33"
+}

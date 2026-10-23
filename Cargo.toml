@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 api = { path = "crates/api" }
 db = { path = "crates/db" }
+mailbox = { path = "crates/mailbox" }
 mentor = { path = "crates/mentor" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

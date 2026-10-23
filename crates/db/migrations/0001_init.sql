@@ -34,6 +34,7 @@ CREATE TABLE mailbox (
   imap_port INTEGER NOT NULL,
   imap_security TEXT NOT NULL CHECK (imap_security IN ('tls', 'starttls')),
   auth TEXT NOT NULL CHECK (auth IN ('password', 'oauth')),
+  secret TEXT NOT NULL,         -- password, app password or OAuth token; never sent to the UI
   daily_limit INTEGER NOT NULL,
   min_interval_s INTEGER NOT NULL,
   rotation_order INTEGER NOT NULL,

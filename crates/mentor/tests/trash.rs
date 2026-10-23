@@ -112,7 +112,7 @@ async fn trashing_cancels_unsent_mail_and_restoring_keeps_it_canceled(db: Sqlite
 async fn deleting_for_good_takes_only_what_is_the_mentors_alone(db: SqlitePool) {
     sqlx::query(
         "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 50, 60, 1, NULL, NULL, 0)",
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, 0)",
     )
     .execute(&db)
     .await

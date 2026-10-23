@@ -94,7 +94,7 @@ async fn summary_follows_mail(pool: SqlitePool) {
     let conn = &mut pool.acquire().await.unwrap();
     sqlx::query(
         "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 50, 60, 1, NULL, NULL, 0)",
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, 0)",
     )
     .execute(&mut **conn)
     .await

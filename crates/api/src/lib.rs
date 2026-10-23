@@ -9,6 +9,7 @@ use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
     pub db: SqlitePool,
+    pub net: mailbox::Net,
 }
 
 /// What the UI shows when an operation fails.
@@ -27,6 +28,9 @@ pub enum ErrorCode {
     NotFound,
     /// What the user filled in cannot be saved; the message says what to change.
     Invalid,
+    /// A service outside the app, such as a mail server, did not do what was asked; the message
+    /// says why and what to do.
+    External,
     Internal,
 }
 
@@ -117,6 +121,14 @@ operations! {
     "recolorTag" => recolor_tag(TagColor) -> ();
     "moveTag" => move_tag(TagMove) -> ();
     "deleteTag" => delete_tag(TagId) -> ();
+    "listProviders" => list_providers(Nothing) -> &'static [mailbox::providers::Provider];
+    "listMailboxes" => list_mailboxes(Nothing) -> Vec<mailbox::Mailbox>;
+    "addMailbox" => add_mailbox(NewMailbox) -> MailboxId;
+    "updateMailbox" => update_mailbox(MailboxEdit) -> ();
+    "deleteMailbox" => delete_mailbox(MailboxId) -> ();
+    "testSending" => test_sending(MailboxTest) -> ();
+    "testReceiving" => test_receiving(MailboxTest) -> ();
+    "sendTestMail" => send_test_mail(MailboxId) -> ();
 }
 
 /// The input of operations that need none.
@@ -186,7 +198,10 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
             }
         }
     }
-    Visitor { cfg, decls }.visit::<T>();
+    let mut visitor = Visitor { cfg, decls };
+    visitor.visit::<T>();
+    // What a container such as `Vec<T>` holds.
+    T::visit_generics(&mut visitor);
 }
 
 async fn add_mentor(ctx: &Context, form: mentor::MentorForm) -> Result<MentorId, CallError> {
@@ -326,6 +341,125 @@ impl From<mentor::SaveError> for CallError {
                 format!("这个邮箱已用于导师{name}")
             }),
             mentor::SaveError::Db(e) => e.into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+pub struct MailboxId {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct NewMailbox {
+    #[serde(flatten)]
+    pub form: mailbox::MailboxForm,
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MailboxEdit {
+    pub id: i64,
+    #[serde(flatten)]
+    pub form: mailbox::MailboxForm,
+    /// Blank keeps the saved one.
+    pub secret: String,
+}
+
+/// A mailbox as filled in, perhaps not saved yet.
+#[derive(Debug, Deserialize, TS)]
+pub struct MailboxTest {
+    /// The saved mailbox being edited, whose secret a blank one stands for.
+    #[ts(optional)]
+    pub id: Option<i64>,
+    #[serde(flatten)]
+    pub form: mailbox::MailboxForm,
+    pub secret: String,
+}
+
+const NO_MAILBOX: &str = "找不到这个邮箱，可能已被删除。";
+const NO_SECRET: &str = "请填写授权码或密码";
+
+async fn list_providers(
+    _: &Context,
+    _: Nothing,
+) -> Result<&'static [mailbox::providers::Provider], CallError> {
+    Ok(mailbox::providers::PROVIDERS)
+}
+
+async fn list_mailboxes(ctx: &Context, _: Nothing) -> Result<Vec<mailbox::Mailbox>, CallError> {
+    Ok(mailbox::list(&ctx.db).await?)
+}
+
+async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let secret = mailbox::checked_secret(&input.secret)
+        .ok_or_else(|| CallError::invalid(NO_SECRET.into()))?;
+    let id = mailbox::create(&ctx.db, &fields, &secret, now()).await?;
+    Ok(MailboxId { id })
+}
+
+async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let secret = mailbox::checked_secret(&input.secret);
+    if mailbox::update(&ctx.db, input.id, &fields, secret.as_deref()).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_MAILBOX))
+    }
+}
+
+async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    Ok(mailbox::delete(&ctx.db, input.id).await?)
+}
+
+async fn test_sending(ctx: &Context, input: MailboxTest) -> Result<(), CallError> {
+    let account = test_account(ctx, input).await?;
+    Ok(mailbox::check_sending(&ctx.net, &account).await?)
+}
+
+async fn test_receiving(ctx: &Context, input: MailboxTest) -> Result<(), CallError> {
+    let account = test_account(ctx, input).await?;
+    Ok(mailbox::check_receiving(&ctx.net, &account).await?)
+}
+
+async fn test_account(ctx: &Context, input: MailboxTest) -> Result<mailbox::Account, CallError> {
+    let fields = input.form.check().map_err(CallError::invalid)?;
+    let secret = match (mailbox::checked_secret(&input.secret), input.id) {
+        (Some(secret), _) => secret,
+        (None, Some(id)) => saved_account(ctx, id).await?.secret,
+        (None, None) => return Err(CallError::invalid(NO_SECRET.into())),
+    };
+    Ok(fields.account(secret))
+}
+
+async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    let account = saved_account(ctx, input.id).await?;
+    Ok(mailbox::send_test(&ctx.net, &account).await?)
+}
+
+async fn saved_account(ctx: &Context, id: i64) -> Result<mailbox::Account, CallError> {
+    mailbox::account(&ctx.db, id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MAILBOX))
+}
+
+impl From<mailbox::SaveError> for CallError {
+    fn from(e: mailbox::SaveError) -> Self {
+        match e {
+            mailbox::SaveError::AddressTaken => CallError::invalid("这个邮箱已经添加过了".into()),
+            mailbox::SaveError::Db(e) => e.into(),
+        }
+    }
+}
+
+/// The details go to the log; the user reads what happened and what to do.
+impl From<mailbox::MailError> for CallError {
+    fn from(e: mailbox::MailError) -> Self {
+        tracing::warn!("{e}");
+        CallError {
+            code: ErrorCode::External,
+            message: e.message(),
         }
     }
 }

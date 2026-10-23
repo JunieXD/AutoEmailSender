@@ -2,6 +2,7 @@ import { createHashHistory, createRootRoute, createRoute, createRouter, redirect
 import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
+import { MailboxesSection } from "./pages/mailboxes";
 import { AboutSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
@@ -54,6 +55,12 @@ const settingsHomeRoute = createRoute({
   path: "/",
 });
 
+const mailboxesRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "mailboxes",
+  component: MailboxesSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -67,7 +74,7 @@ export const router = createRouter({
     mentorsRoute,
     trashRoute,
     mentorRoute,
-    settingsRoute.addChildren([settingsHomeRoute, aboutRoute]),
+    settingsRoute.addChildren([settingsHomeRoute, mailboxesRoute, aboutRoute]),
   ]),
   history: createHashHistory(),
 });

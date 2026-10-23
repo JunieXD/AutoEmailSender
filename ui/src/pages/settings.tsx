@@ -8,7 +8,10 @@ import { errorMessage } from "@/api/call";
 import { Button } from "@/components/ui/button";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
-const GROUPS = [{ label: "应用", sections: [{ to: "/settings/about", label: "关于和日志" }] }] as const;
+const GROUPS = [
+  { label: "邮件", sections: [{ to: "/settings/mailboxes", label: "邮箱" }] },
+  { label: "应用", sections: [{ to: "/settings/about", label: "关于和日志" }] },
+] as const;
 
 /** The `phone` breakpoint in index.css. */
 const PHONE = "(width <= 760px)";
@@ -58,7 +61,7 @@ export function SettingsPage() {
 }
 
 /** A settings section: its title, with the way back to the list on a phone. */
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex max-w-[640px] flex-col gap-6 px-8 py-6 phone:px-4 phone:py-3">
       <header className="flex items-center gap-1">
