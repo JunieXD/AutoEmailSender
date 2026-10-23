@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET name = ?, research_interests = ?, rewrite_preference = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8f8ceb02b261dfeddfbaf6a31b076dc5a130b1d57f8af0b7e0518ea061df78c6"
+}

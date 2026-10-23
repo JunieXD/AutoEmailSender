@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 mailbox.workspace = true
 model.workspace = true
+profile.workspace = true
 mentor.workspace = true
 net.workspace = true
 serde.workspace = true

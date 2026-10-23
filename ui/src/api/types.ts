@@ -155,6 +155,10 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
 
+export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
+
+export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
+
 export type Provider = { id: string, name: string, 
 /**
  * The address domains it serves. Empty for services that host an organisation's own domain,
@@ -231,6 +235,8 @@ export interface Operations {
   testSending: { input: MailboxTest; output: null };
   testReceiving: { input: MailboxTest; output: null };
   sendTestMail: { input: MailboxId; output: null };
+  getProfile: { input: Nothing; output: Profile };
+  updateProfile: { input: ProfileForm; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };

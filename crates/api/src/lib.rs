@@ -129,6 +129,8 @@ operations! {
     "testSending" => test_sending(MailboxTest) -> ();
     "testReceiving" => test_receiving(MailboxTest) -> ();
     "sendTestMail" => send_test_mail(MailboxId) -> ();
+    "getProfile" => get_profile(Nothing) -> profile::Profile;
+    "updateProfile" => update_profile(profile::ProfileForm) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -623,6 +625,14 @@ impl From<model::ModelError> for CallError {
             message: e.message(),
         }
     }
+}
+
+async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, CallError> {
+    Ok(profile::get(&ctx.db).await?)
+}
+
+async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
+    Ok(profile::update(&ctx.db, &form).await?)
 }
 
 /// UTC milliseconds.
