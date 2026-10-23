@@ -56,7 +56,7 @@ export function MentorsPage() {
     mutationFn: (ids: number[]) => call("trashMentors", { ids }),
     // Only these: others may have been ticked while it ran.
     onSuccess: (_, ids) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
-    onSettled: () => refreshMentors(queryClient),
+    onSettled: (_, __, ids) => refreshMentors(queryClient, ids),
   });
 
   return (

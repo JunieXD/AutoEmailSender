@@ -31,7 +31,7 @@ export function MentorPage() {
     onSuccess: async (_, op) => {
       if (op === "deleteMentors") await navigate({ to: "/mentors/trash", replace: true });
     },
-    onSettled: () => refreshMentors(queryClient),
+    onSettled: () => refreshMentors(queryClient, [mentorId]),
   });
   if (query.isPending) return null;
   if (query.isError) {

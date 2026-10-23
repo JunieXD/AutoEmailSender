@@ -34,7 +34,7 @@ export function TrashPage() {
     mutationFn: ({ op, ids }: { op: "restoreMentors" | "deleteMentors"; ids: number[] }) => call(op, { ids }),
     // Only these: others may have been ticked while it ran.
     onSuccess: (_, { ids }) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id)))),
-    onSettled: () => refreshMentors(queryClient),
+    onSettled: (_, __, { ids }) => refreshMentors(queryClient, ids),
   });
   const failed = act.variables?.op === "restoreMentors" ? "没能恢复" : "没能永久删除";
 
