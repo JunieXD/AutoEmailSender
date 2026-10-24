@@ -26,3 +26,13 @@ test("a link changed anywhere and a number taken out are facts to check", () => 
   expect(facts("主页 <https://example.org/old/cv>", "主页 <https://example.org/cv>")).toEqual([["removed", "old/"]]);
   expect(facts("成绩 90 分", "成绩优秀")).toEqual([["removed", " 90 分"]]);
 });
+
+test("a date in Chinese is a fact, and a sentence after an address is not part of it", () => {
+  expect(facts("十一月三日周二有空", "十一月五日周四有空")).toEqual([
+    ["removed", "三日周二"],
+    ["added", "五日周四"],
+  ]);
+  expect(
+    facts("主页https://example.org。我的方向是人工智能。", "主页https://example.org。我的方向是计算机视觉。"),
+  ).toEqual([]);
+});

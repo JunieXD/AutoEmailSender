@@ -35,7 +35,7 @@ pub async fn list_models(net: &Net, access: &Access) -> Result<Vec<String>, Mode
         .get(format!("{}/models", access.base_url))
         .bearer_auth(&access.api_key)
         .timeout(Duration::from_secs(20));
-    let body = send(request, access).await?;
+    let body = read(send(request, access).await?, access).await?;
     let models: Models =
         serde_json::from_str(&body).map_err(|e| ModelError::Broken(format!("model list: {e}")))?;
     let mut names: Vec<String> = models.data.into_iter().map(|m| m.id).collect();
@@ -146,40 +146,43 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
         .post(format!("{}/chat/completions", access.base_url))
         .bearer_auth(&access.api_key)
         .json(&body);
-    let reply = send(request, access).await?;
-    // Server-sent events, each a `data:` line, until `data: [DONE]`.
-    let mut events = reply
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim)
-        .filter(|data| *data != "[DONE]")
-        .peekable();
-    if events.peek().is_none() {
-        let start: String = reply.chars().take(20).collect();
-        return Err(ModelError::Broken(format!(
-            "not an event stream: {} bytes starting {start:?}",
-            reply.len()
-        )));
-    }
+    let mut response = send(request, access).await?;
     let (mut text, mut finish_reason, mut tokens) = (String::new(), None, None);
-    for (i, data) in events.enumerate() {
-        let chunk: Chunk = serde_json::from_str(data).map_err(|e| {
-            ModelError::Broken(format!(
-                "event {i}: {:?} error at column {}",
-                e.classify(),
-                e.column()
-            ))
-        })?;
-        if let Some(failure) = chunk.error {
-            return Err(ModelError::Failed(quote(&failure.message, access)));
+    let (mut pending, mut events) = (Vec::new(), 0);
+    // Server-sent events, each a `data:` line, until `data: [DONE]`: what may follow it, or a
+    // connection kept open after it, is not part of the answer.
+    'read: while more(&mut response, &mut pending, access).await? {
+        while let Some(end) = pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = pending.drain(..=end).collect();
+            let line = String::from_utf8_lossy(&line);
+            let Some(data) = line.trim().strip_prefix("data:").map(str::trim) else {
+                continue;
+            };
+            if data == "[DONE]" {
+                break 'read;
+            }
+            events += 1;
+            let chunk: Chunk = serde_json::from_str(data).map_err(|e| {
+                ModelError::Broken(format!(
+                    "event {events}: {:?} error at column {}",
+                    e.classify(),
+                    e.column()
+                ))
+            })?;
+            if let Some(failure) = chunk.error {
+                return Err(ModelError::Failed(quote(&failure.message, access)));
+            }
+            tokens = chunk.usage.or(tokens);
+            // The last chunk may only count tokens.
+            if let Some(choice) = chunk.choices.into_iter().next() {
+                text.extend(choice.delta.content);
+                finish_reason = choice.finish_reason.or(finish_reason);
+                tokens = choice.usage.or(tokens);
+            }
         }
-        tokens = chunk.usage.or(tokens);
-        // The last chunk may only count tokens.
-        if let Some(choice) = chunk.choices.into_iter().next() {
-            text.extend(choice.delta.content);
-            finish_reason = choice.finish_reason.or(finish_reason);
-            tokens = choice.usage.or(tokens);
-        }
+    }
+    if events == 0 {
+        return Err(ModelError::Broken("not an event stream".into()));
     }
     let usage = tokens.and_then(|t| {
         Some(Usage {
@@ -201,37 +204,19 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
 }
 
 /// Sends the request; any status but success becomes the provider's refusal, in its words.
-async fn send(request: reqwest::RequestBuilder, access: &Access) -> Result<String, ModelError> {
-    let timed_out = || ModelError::TimedOut {
-        address: access.base_url.clone(),
-    };
-    let unreachable = |source: reqwest::Error| {
-        if source.is_timeout() {
-            timed_out()
-        } else {
-            ModelError::Unreachable {
-                address: access.base_url.clone(),
-                source,
-            }
-        }
-    };
-    let mut response = timeout(IDLE, request.send())
+async fn send(
+    request: reqwest::RequestBuilder,
+    access: &Access,
+) -> Result<reqwest::Response, ModelError> {
+    let response = timeout(IDLE, request.send())
         .await
-        .map_err(|_| timed_out())?
-        .map_err(unreachable)?;
+        .map_err(|_| timed_out(access))?
+        .map_err(|e| unreachable(access, e))?;
     let status = response.status();
-    let mut body = Vec::new();
-    while let Some(chunk) = timeout(IDLE, response.chunk())
-        .await
-        .map_err(|_| timed_out())?
-        .map_err(unreachable)?
-    {
-        body.extend_from_slice(&chunk);
-    }
-    let body = String::from_utf8_lossy(&body);
     if status.is_success() {
-        return Ok(body.into_owned());
+        return Ok(response);
     }
+    let body = read(response, access).await?;
     // OpenAI-compatible APIs explain errors in `error.message`.
     let words = serde_json::from_str::<Value>(&body).ok().and_then(|v| {
         v["error"]["message"]
@@ -243,6 +228,50 @@ async fn send(request: reqwest::RequestBuilder, access: &Access) -> Result<Strin
         status: status.as_u16(),
         reply: quote(words.as_deref().unwrap_or(&body), access),
     })
+}
+
+/// The whole body of the response.
+async fn read(mut response: reqwest::Response, access: &Access) -> Result<String, ModelError> {
+    let mut body = Vec::new();
+    while more(&mut response, &mut body, access).await? {}
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Adds the next piece of the body to `buffer`; false at its end. Gives up when the provider has
+/// sent nothing for `IDLE`.
+async fn more(
+    response: &mut reqwest::Response,
+    buffer: &mut Vec<u8>,
+    access: &Access,
+) -> Result<bool, ModelError> {
+    let chunk = timeout(IDLE, response.chunk())
+        .await
+        .map_err(|_| timed_out(access))?
+        .map_err(|e| unreachable(access, e))?;
+    match chunk {
+        Some(chunk) => {
+            buffer.extend_from_slice(&chunk);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+fn timed_out(access: &Access) -> ModelError {
+    ModelError::TimedOut {
+        address: access.base_url.clone(),
+    }
+}
+
+fn unreachable(access: &Access, source: reqwest::Error) -> ModelError {
+    if source.is_timeout() {
+        timed_out(access)
+    } else {
+        ModelError::Unreachable {
+            address: access.base_url.clone(),
+            source,
+        }
+    }
 }
 
 /// Up to 200 characters of what the provider said, for the user and the log. Without the key, in

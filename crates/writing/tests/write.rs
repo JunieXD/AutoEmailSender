@@ -185,12 +185,17 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
 async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool) {
     let (mentor, _) = setup(&db).await;
     let (address, received) = provider(vec![
-        // As a model that thinks aloud before answering, about a letter that mentions a tag.
+        // As a model that thinks aloud before answering, about a letter that mentions the tags.
         (
-            "先想想格式：<subject>主题</subject><body>正文</body>。\n<subject>\n申请攻读\n博士学位\n</subject>\n<body>\n王伟老师：我写过解析 <subject> 标签的程序。\n</body>",
+            "<think>按格式：<subject>主题</subject><body>正文</body>。</think>\n<subject>\n申请攻读\n博士学位\n</subject>\n<body>\n王伟老师：我写过解析 <body> 和 <subject> 标签的程序。\n</body>",
             "stop",
         ),
         ("王伟老师：您好！", "stop"),
+        // Only an example of the format in the thinking.
+        (
+            "<think>按格式：<subject>主题</subject><body>正文</body>。</think>\n<body>王伟老师：您好！</body>",
+            "stop",
+        ),
         // Cut short while still thinking about the format.
         ("<think>按格式 <subject>主题</subject><body>正文</body> 回答", "length"),
         ("", "length"),
@@ -208,7 +213,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     assert_eq!(letter.subject, "申请攻读 博士学位");
     assert_eq!(
         letter.body_md,
-        "王伟老师：我写过解析 <subject> 标签的程序。"
+        "王伟老师：我写过解析 <body> 和 <subject> 标签的程序。"
     );
     let (_, message) = received.lock().unwrap().pop().unwrap();
     let data: Value = serde_json::from_str(&message).unwrap();
@@ -218,11 +223,13 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     );
     assert_eq!(data.get("附件"), None);
 
-    let result = write().await;
-    assert!(
-        matches!(result, Err(Error::NotALetter { finish_reason: Some(ref r) }) if r == "stop"),
-        "{result:?}"
-    );
+    for _ in 0..2 {
+        let result = write().await;
+        assert!(
+            matches!(result, Err(Error::NotALetter { finish_reason: Some(ref r) }) if r == "stop"),
+            "{result:?}"
+        );
+    }
     let result = write().await;
     assert!(
         matches!(result, Err(Error::NotALetter { finish_reason: Some(ref r) }) if r == "length"),
@@ -235,7 +242,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     );
     // The tokens were spent all the same.
     let purposes: Vec<_> = usage(&db).await.into_iter().map(|u| u.0).collect();
-    assert_eq!(purposes, ["rewrite"; 4]);
+    assert_eq!(purposes, ["rewrite"; 5]);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

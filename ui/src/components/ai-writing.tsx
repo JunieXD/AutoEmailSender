@@ -117,7 +117,7 @@ export function Rewrite({ before, after }: { before: Letter; after: Letter }) {
       {facts && (
         <p className="flex items-start gap-2 text-sm text-warning">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
-          改动里有数字或链接，已标黄，请核对后再采用。
+          改动里有日期、数字或链接，已标黄，请核对后再采用。
         </p>
       )}
     </div>

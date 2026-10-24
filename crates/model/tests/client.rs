@@ -238,6 +238,29 @@ async fn what_the_model_wrote_stays_out_of_errors() {
     assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
     assert!(!error.to_string().contains("3.8"), "{error}");
     assert!(!error.message().contains("3.8"), "{error}");
+    // As a gateway that answers in plain text.
+    let (address, _) = provider(200, "我的绩点是 3.8").await;
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap_err();
+    assert!(!error.to_string().contains("3.8"), "{error}");
+}
+
+#[tokio::test]
+async fn an_answer_ends_where_the_stream_says_it_is_done() {
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}]}"#,
+            "\n\ndata: [DONE]\n\ndata: heartbeat\n\n",
+        ),
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "好的");
 }
 
 #[tokio::test]

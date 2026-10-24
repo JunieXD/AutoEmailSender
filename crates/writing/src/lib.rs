@@ -212,20 +212,23 @@ fn filled(value: &Value) -> bool {
     }
 }
 
-/// The subject and body the model wrote, when it answered as told. The answer is the last body: a
-/// model that thinks aloud may write the tags before it, and a letter may mention them in its body.
+/// The subject and body the model wrote, when it answered as told: after any thinking it wrote out,
+/// the subject first, then the body, which may itself mention the tags.
 fn letter(answer: &str) -> Option<Letter> {
-    let open = answer.rfind("<body>")?;
-    let rest = &answer[open + "<body>".len()..];
-    let body_md = rest[..rest.rfind("</body>")?].trim();
-    let before = &answer[..open];
-    let start = before.rfind("<subject>")? + "<subject>".len();
-    let subject = before[start..start + before[start..].find("</subject>")?]
+    let answer = answer
+        .rsplit_once("</think>")
+        .map_or(answer, |(_, after)| after);
+    let (_, rest) = answer.split_once("<subject>")?;
+    let (subject, rest) = rest.split_once("</subject>")?;
+    let (_, rest) = rest.split_once("<body>")?;
+    let (body_md, _) = rest.rsplit_once("</body>")?;
+    let subject = subject
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
+    let body_md = body_md.trim();
     (!subject.is_empty() && !body_md.is_empty()).then(|| Letter {
         subject,
         body_md: body_md.to_owned(),
