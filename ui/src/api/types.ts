@@ -181,7 +181,7 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
 
-export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "cannot_receive", domain: string, };
+export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
 

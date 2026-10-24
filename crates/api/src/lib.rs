@@ -804,11 +804,19 @@ pub struct MailAddress {
     pub address: String,
 }
 
+/// A lookup that fails, such as when offline, tells nothing: the interface shows no error and
+/// asks again later (docs/design.md#联系).
 async fn check_mail_domain(
     _: &Context,
     input: MailAddress,
 ) -> Result<Option<check::Problem>, CallError> {
-    Ok(check::mail_domain(&input.address).await)
+    check::mail_domain(&input.address).await.map_err(|e| {
+        tracing::warn!("looking up a mail domain: {e}");
+        CallError {
+            code: ErrorCode::External,
+            message: "未能查询导师邮箱的域名。".into(),
+        }
+    })
 }
 
 /// The mentor's first draft as the user approved it, with the HTML and plain text the interface

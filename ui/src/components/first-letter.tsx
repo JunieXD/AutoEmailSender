@@ -79,13 +79,16 @@ function Composer({
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
-    queryKey: ["checkFirstDraft", letter],
+    // The name too, which the check reads from the mentor, so that one edited is checked anew.
+    queryKey: ["checkFirstDraft", letter, mentor.name],
     queryFn: () => call("checkFirstDraft", letter),
     placeholderData: keepPreviousData,
     // Checked again as the user types; what an earlier text had is of no more use.
     gcTime: 0,
   });
   const address = mentor.email;
+  // A lookup that fails shows nothing (docs/design.md#联系) and is tried again on coming back or
+  // reconnecting; one that tells is kept.
   const domain = useQuery({
     queryKey: ["checkMailDomain", address],
     queryFn: address ? () => call("checkMailDomain", { address }) : skipToken,
@@ -187,9 +190,7 @@ function Composer({
           ))}
         </ul>
       )}
-      {(checks.error ?? domain.error) && (
-        <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error ?? domain.error)}</p>
-      )}
+      {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <TemplateMenu
           mentorId={mentorId}
@@ -320,5 +321,5 @@ function TemplateMenu({
 function problemText(p: Problem): string {
   if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
   if (p.kind === "no_salutation") return "正文里没有称呼导师。";
-  return `导师邮箱的域名 ${p.domain} 收不了信，请核对邮箱地址。`;
+  return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }

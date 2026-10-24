@@ -635,7 +635,6 @@ dependencies = [
  "hickory-resolver",
  "serde",
  "template",
- "tracing",
  "ts-rs",
 ]
 
