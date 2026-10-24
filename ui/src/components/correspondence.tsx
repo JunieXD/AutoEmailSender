@@ -51,7 +51,13 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
       {entries.data.map((e) =>
         "email" in e ? (
-          <Sent key={`email ${e.email.id}`} email={e.email} mentorId={mentor.id} actions={!mentor.trashed} />
+          <Sent
+            key={`email ${e.email.id}`}
+            email={e.email}
+            mentorId={mentor.id}
+            actions={!mentor.trashed}
+            several={mentor.emails.length > 1}
+          />
         ) : (
           <Seen
             key={`message ${e.message.id}`}
@@ -100,7 +106,18 @@ function onTheWay(e: Email): boolean {
 }
 
 /** One of the user's emails, on the right like their messages in a chat. */
-function Sent({ email: e, mentorId, actions }: { email: Email; mentorId: number; actions: boolean }) {
+function Sent({
+  email: e,
+  mentorId,
+  actions,
+  several,
+}: {
+  email: Email;
+  mentorId: number;
+  actions: boolean;
+  /** Whether the mentor has several addresses, so which one it went to is worth saying. */
+  several: boolean;
+}) {
   const queryClient = useQueryClient();
   const act = useMutation({
     mutationFn: (op: "withdrawEmail" | "retryEmail") => call(op, { id: e.id }),
@@ -110,7 +127,7 @@ function Sent({ email: e, mentorId, actions }: { email: Email; mentorId: number;
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] }),
   });
-  const [text, tone] = status(e);
+  const [text, tone] = status(e, several);
   return (
     <article className="flex flex-col items-end gap-1.5">
       <div className="max-w-[min(42rem,88%)] rounded-[18px] rounded-br-[6px] bg-mine px-4 py-3">
@@ -167,15 +184,20 @@ function Sent({ email: e, mentorId, actions }: { email: Email; mentorId: number;
   );
 }
 
-/** What an email's state reads as, and its colour. */
-function status(e: Email): [string, string] {
+/** What an email's state reads as, and its colour. A bounce always says which address it came back from. */
+function status(e: Email, several: boolean): [string, string] {
   if (e.state === "approved") return ["待发送", "text-muted-foreground"];
   if (e.state === "sending") return ["发送中", "text-muted-foreground"];
-  if (e.state === "sent")
-    return [`${day(e.sentAt)} ${time(e.sentAt)} 由 ${e.fromAddress} 发出`, "text-muted-foreground"];
-  if (e.state === "maybe_sent") return [`可能已发出：${e.error}确认导师未收到时，可重新发送。`, "text-warning"];
+  if (e.state === "sent") {
+    const to = several ? `，发到 ${e.toAddress}` : "";
+    return [`${day(e.sentAt)} ${time(e.sentAt)} 由 ${e.fromAddress} 发出${to}`, "text-muted-foreground"];
+  }
+  if (e.state === "maybe_sent") {
+    const to = several && e.toAddress ? `（发到 ${e.toAddress}）` : "";
+    return [`可能已发出${to}：${e.error}确认导师未收到时，可重新发送。`, "text-warning"];
+  }
   if (e.state === "failed") return [`发送失败：${e.error}`, "text-destructive"];
-  return [`退信：${e.error}`, "text-warning"];
+  return [`退信（发到 ${e.toAddress}）：${e.error}`, "text-warning"];
 }
 
 /** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
@@ -194,8 +216,9 @@ function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorD
       </button>
     );
   }
-  // Someone writing for the mentor, such as a secretary, is named.
-  const from = mine || m.fromAddress === mentor.email?.toLowerCase() ? "" : `，来自 ${m.fromAddress}`;
+  // Someone writing for the mentor, such as a secretary, or from an address not in their profile, is named.
+  const known = mentor.emails.some((e) => e.toLowerCase() === m.fromAddress);
+  const from = mine || known ? "" : `，来自 ${m.fromAddress}`;
   return (
     <article className={`flex flex-col gap-1.5 ${mine ? "items-end" : "items-start"}`}>
       <div

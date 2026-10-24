@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT name, trashed_at IS NOT NULL AS \"trashed!: bool\"\n           FROM mentor WHERE email = ? AND id IS NOT ?",
+  "query": "SELECT m.name, m.trashed_at IS NOT NULL AS \"trashed!: bool\"\n           FROM mentor_email e JOIN mentor m ON m.id = e.mentor_id WHERE e.address = ?",
   "describe": {
     "columns": [
       {
@@ -22,12 +22,12 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "7e69757f471296f473e56ca65871860abd64978ba6872b24429b7cce42377397"
+  "hash": "4a1dd20a05c2b9481e60af52c8db0cf9c2a6abe378c1b3eabbea3c78be3b63b0"
 }

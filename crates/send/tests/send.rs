@@ -11,7 +11,7 @@ use base64::Engine;
 use email::{Approval, Delivery};
 use fakemail::{ADDRESS, Inbox, SECRET};
 use mailbox::{MailboxForm, Security, Server};
-use mentor::MentorForm;
+use mentor::MentorFields;
 use net::Net;
 use send::Next;
 use sqlx::SqlitePool;
@@ -47,19 +47,12 @@ async fn mailbox(db: &SqlitePool, secret: &str) -> (Net, Inbox) {
 /// Writes a first email to a new mentor at this address and approves it with these materials
 /// attached; returns the mentor.
 async fn approve(db: &SqlitePool, address: &str, attachments: &[i64], now: i64) -> i64 {
-    let form = MentorForm {
+    let fields = MentorFields {
         name: "王伟".into(),
-        title: String::new(),
-        email: address.into(),
-        university: String::new(),
-        school: String::new(),
-        department: String::new(),
-        homepage_url: String::new(),
-        research: String::new(),
+        emails: vec![address.into()],
+        ..MentorFields::default()
     };
-    let mentor = mentor::create(db, &form.check().unwrap(), now)
-        .await
-        .unwrap();
+    let mentor = mentor::create(db, &fields, now).await.unwrap();
     email::save_first_draft(db, mentor, "申请硕士", "王老师：您好！", attachments, now)
         .await
         .unwrap();
@@ -133,6 +126,7 @@ async fn an_approved_email_goes_out_once(db: SqlitePool) {
         first_email(&db, wang).await.delivery,
         Delivery::Sent {
             from_address: ADDRESS.into(),
+            to_address: "wang@example.edu.cn".into(),
             sent_at: T
         }
     );
@@ -146,6 +140,26 @@ async fn an_approved_email_goes_out_once(db: SqlitePool) {
     assert!(header(&mail[0], "Content-Type: ").starts_with("multipart/alternative"));
     // Later emails to this mentor go from the same mailbox.
     assert_eq!(own_mailbox(&db, wang).await, Some(1));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn mail_goes_to_the_first_address_when_handed_over(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
+    // Put first after the email was approved.
+    let fields = MentorFields {
+        name: "王伟".into(),
+        emails: vec!["wangwei@gmail.com".into(), "wang@example.edu.cn".into()],
+        ..MentorFields::default()
+    };
+    assert!(mentor::update(&db, wang, &fields, T).await.unwrap());
+
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert!(matches!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Sent { to_address, .. } if to_address == "wangwei@gmail.com"
+    ));
+    assert!(header(&inbox.lock().unwrap()[0], "To: ").ends_with(" <wangwei@gmail.com>"));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -285,6 +299,7 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
         first_email(&db, wang).await.delivery,
         Delivery::MaybeSent {
             from_address: ADDRESS.into(),
+            to_address: "wang@example.edu.cn".into(),
             sent_at: T,
             error: email::INTERRUPTED.into()
         }
@@ -296,7 +311,7 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
 async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
     let (_, _) = mailbox(&db, SECRET).await;
     let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
-    sqlx::query("UPDATE mentor SET email = NULL WHERE id = ?")
+    sqlx::query("DELETE FROM mentor_email WHERE mentor_id = ?")
         .bind(wang)
         .execute(&db)
         .await
@@ -360,6 +375,7 @@ async fn the_time_sent_is_when_the_server_took_it(db: SqlitePool) {
         first_email(&db, wang).await.delivery,
         Delivery::Sent {
             from_address: ADDRESS.into(),
+            to_address: "wang@example.edu.cn".into(),
             sent_at: clock.get()
         }
     );

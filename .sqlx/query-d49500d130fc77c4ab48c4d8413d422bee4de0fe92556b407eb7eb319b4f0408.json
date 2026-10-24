@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT url FROM mentor_homepage WHERE mentor_id = ? ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "url",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_homepage",
+            "name": "url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d49500d130fc77c4ab48c4d8413d422bee4de0fe92556b407eb7eb319b4f0408"
+}

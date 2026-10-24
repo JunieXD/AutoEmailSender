@@ -103,9 +103,10 @@ function Composer({
   // follows their details as they are edited until the user changes the letter.
   const [blank] = useState(!restored && draft === null);
   const [touched, setTouched] = useState(!blank);
-  const { name, title, university, school, department, research } = mentor;
+  const { name, research } = mentor;
+  const main = mentor.affiliations.at(0);
   const prefill = useQuery({
-    queryKey: ["applyDefaultTemplate", mentorId, name, title, university, school, department, research],
+    queryKey: ["applyDefaultTemplate", mentorId, name, main, research],
     queryFn: blank ? () => call("applyDefaultTemplate", { id: mentorId }) : skipToken,
     placeholderData: keepPreviousData,
     gcTime: 0,
@@ -147,14 +148,14 @@ function Composer({
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
-    // The name too, which the check reads from the mentor, so that one edited is checked anew.
-    queryKey: ["checkFirstDraft", letter, mentor.name],
+    // The names too, which the check reads from the mentor, so that one edited is checked anew.
+    queryKey: ["checkFirstDraft", letter, mentor.name, mentor.aliases],
     queryFn: () => call("checkFirstDraft", letter),
     placeholderData: keepPreviousData,
     // Checked again as the user types; what an earlier text had is of no more use.
     gcTime: 0,
   });
-  const address = mentor.email;
+  const address = mentor.emails.at(0);
   // A lookup that fails shows nothing (docs/design.md#联系) and is tried again on coming back or
   // reconnecting; one that tells is kept.
   const domain = useQuery({
@@ -191,7 +192,7 @@ function Composer({
     edit(next);
     setBody({ version: body.version + 1, markdown: next.bodyMd });
   }
-  const blocker = !mentor.email ? (
+  const blocker = !address ? (
     "导师尚未填写邮箱，可在资料里填写。"
   ) : mailboxes.data?.length === 0 ? (
     <>

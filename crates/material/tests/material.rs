@@ -117,19 +117,11 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
     let id = material::add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
         .await
         .unwrap();
-    let form = mentor::MentorForm {
+    let fields = mentor::MentorFields {
         name: "王伟".into(),
-        title: String::new(),
-        email: String::new(),
-        university: String::new(),
-        school: String::new(),
-        department: String::new(),
-        homepage_url: String::new(),
-        research: String::new(),
+        ..mentor::MentorFields::default()
     };
-    let mentor = mentor::create(&db, &form.check().unwrap(), 1)
-        .await
-        .unwrap();
+    let mentor = mentor::create(&db, &fields, 1).await.unwrap();
     email::save_first_draft(&db, mentor, "申请", "王老师：", &[id], 1)
         .await
         .unwrap();

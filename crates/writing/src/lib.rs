@@ -162,7 +162,8 @@ fn message(
     format!("{{{}}}", fields.join(","))
 }
 
-/// The mentor's details a letter may draw on; their email address and the user's note stay out.
+/// The mentor's details a letter may draw on; their addresses, homepages and the user's note stay
+/// out.
 fn about(m: &MentorDetail) -> Value {
     let analysis = match &m.analysis {
         MatchResult::Done {
@@ -179,12 +180,22 @@ fn about(m: &MentorDetail) -> Value {
         ]),
         _ => Value::Null,
     };
+    let affiliations: Vec<Value> = m
+        .affiliations
+        .iter()
+        .map(|a| {
+            fields([
+                ("学校", json!(a.university)),
+                ("学院", json!(a.school)),
+                ("系所", json!(a.department)),
+                ("职称", json!(a.title)),
+            ])
+        })
+        .collect();
     fields([
         ("姓名", json!(m.name)),
-        ("职称", json!(m.title)),
-        ("学校", json!(m.university)),
-        ("学院", json!(m.school)),
-        ("系所", json!(m.department)),
+        ("别名", json!(m.aliases)),
+        ("单位", json!(affiliations)),
         ("研究方向", json!(m.research)),
         ("代表论文", json!(m.papers)),
         ("匹配分析", analysis),

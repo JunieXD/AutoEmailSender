@@ -1,21 +1,15 @@
 // Marks the whole file as test code, so clippy's test allowances cover it.
 #![cfg(test)]
 
-use mentor::MentorForm;
+use mentor::MentorFields;
 use sqlx::SqlitePool;
 
 async fn add_mentor(db: &SqlitePool) -> i64 {
-    let form = MentorForm {
+    let fields = MentorFields {
         name: "王伟".into(),
-        title: String::new(),
-        email: String::new(),
-        university: String::new(),
-        school: String::new(),
-        department: String::new(),
-        homepage_url: String::new(),
-        research: String::new(),
+        ..MentorFields::default()
     };
-    mentor::create(db, &form.check().unwrap(), 0).await.unwrap()
+    mentor::create(db, &fields, 0).await.unwrap()
 }
 
 /// A material, without the file that only sending reads.

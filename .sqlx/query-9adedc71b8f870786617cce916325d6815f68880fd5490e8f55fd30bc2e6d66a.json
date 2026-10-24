@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT university, school, department, title FROM mentor_affiliation\n         WHERE mentor_id = ? ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "university",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "department",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "title"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9adedc71b8f870786617cce916325d6815f68880fd5490e8f55fd30bc2e6d66a"
+}

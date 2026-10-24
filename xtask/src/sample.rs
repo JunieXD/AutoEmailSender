@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fastrand::Rng;
-use mentor::MentorFields;
+use mentor::{Affiliation, MentorFields};
 use sqlx::SqlitePool;
 
 use crate::Result;
@@ -128,21 +128,39 @@ fn chars(rng: &mut Rng, from: &str, n: usize) -> String {
     (0..n).map(|_| *pick(rng, &all)).collect()
 }
 
+fn affiliation(rng: &mut Rng) -> Affiliation {
+    Affiliation {
+        university: Some((*pick(rng, UNIVERSITIES)).into()),
+        school: Some((*pick(rng, SCHOOLS)).into()),
+        department: (rng.f32() < 0.6).then(|| (*pick(rng, DEPARTMENTS)).into()),
+        title: pick(rng, TITLES).map(Into::into),
+    }
+}
+
 fn mentor(rng: &mut Rng, i: usize) -> MentorFields {
-    let university = *pick(rng, UNIVERSITIES);
     // The first topic is the recent focus; the rest are listed.
     let n = rng.usize(3..6);
     let mut topics = rng.choose_multiple(TOPICS.iter().copied(), n);
     rng.shuffle(&mut topics);
     let given = rng.usize(1..3);
+    // A few work in two places, or write from a second address too.
+    let mut affiliations = vec![affiliation(rng)];
+    if rng.f32() < 0.05 {
+        affiliations.push(affiliation(rng));
+    }
+    let mut emails = Vec::new();
+    if rng.f32() < 0.9 {
+        emails.push(format!("m{i}@example.edu.cn"));
+    }
+    if rng.f32() < 0.1 {
+        emails.push(format!("m{i}@example.com"));
+    }
     MentorFields {
         name: chars(rng, SURNAMES, 1) + &chars(rng, GIVEN, given),
-        email: (rng.f32() < 0.9).then(|| format!("m{i}@example.edu.cn")),
-        title: pick(rng, TITLES).map(Into::into),
-        university: Some(university.into()),
-        school: Some((*pick(rng, SCHOOLS)).into()),
-        department: (rng.f32() < 0.6).then(|| (*pick(rng, DEPARTMENTS)).into()),
-        homepage_url: Some(format!("https://example.edu.cn/~m{i}")),
+        aliases: Vec::new(),
+        emails,
+        affiliations,
+        homepages: vec![format!("https://example.edu.cn/~m{i}")],
         research: Some(format!(
             "{}，近期关注{}方向的应用。",
             topics[1..].join("、"),

@@ -273,7 +273,7 @@ async fn update_mentor(
     get_mentor(ctx, MentorId { id: input.id }).await
 }
 
-/// Looks up the earlier mail with a mentor with a new address without waiting for the next round.
+/// Looks up the earlier mail at a mentor's new addresses without waiting for the next round.
 async fn look_up(ctx: &Context, mentor_id: i64) -> Result<(), CallError> {
     if receive::queued(&ctx.db, mentor_id).await? {
         ctx.receiver.wake();
@@ -394,10 +394,14 @@ fn tag_error(e: mentor::tags::TagError, name: &str) -> CallError {
 impl From<mentor::SaveError> for CallError {
     fn from(e: mentor::SaveError) -> Self {
         match e {
-            mentor::SaveError::EmailTaken { name, trashed } => CallError::invalid(if trashed {
-                format!("这个邮箱已用于回收站里的导师{name}")
+            mentor::SaveError::EmailTaken {
+                address,
+                name,
+                trashed,
+            } => CallError::invalid(if trashed {
+                format!("邮箱“{address}”已用于回收站里的导师{name}")
             } else {
-                format!("这个邮箱已用于导师{name}")
+                format!("邮箱“{address}”已用于导师{name}")
             }),
             mentor::SaveError::Db(e) => e.into(),
         }
@@ -919,12 +923,13 @@ async fn fill(
         .await?
         .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
     let me = profile::get(&ctx.db).await?;
+    let main = m.affiliations.first().cloned().unwrap_or_default();
     let fill = template::Fill {
         mentor_name: &m.name,
-        mentor_title: m.title.as_deref(),
-        university: m.university.as_deref(),
-        school: m.school.as_deref(),
-        department: m.department.as_deref(),
+        mentor_title: main.title.as_deref(),
+        university: main.university.as_deref(),
+        school: main.school.as_deref(),
+        department: main.department.as_deref(),
         research: m.research.as_deref(),
         my_name: me.name.as_deref(),
     };
@@ -976,6 +981,7 @@ async fn check_first_draft(
         .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
     Ok(check::letter(
         &m.name,
+        &m.aliases,
         &input.subject,
         &input.body_md,
         !input.attachments.is_empty(),
@@ -1069,7 +1075,7 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
     let m = mentor::get(&ctx.db, input.mentor_id)
         .await?
         .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
-    if m.email.is_none() {
+    if m.emails.is_empty() {
         return Err(CallError::invalid(
             "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
         ));

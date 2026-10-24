@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE message_mentor SET bounce_reason = ?1\n                 WHERE bounce_reason IS NULL\n                   AND message_id = (SELECT id FROM message WHERE message_id = ?2 AND kind = 'sent')\n                   AND (json_array_length(?3) = 0 OR mentor_id IN (\n                     SELECT mentor_id FROM mentor_email\n                     WHERE address IN (SELECT value FROM json_each(?3))))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f40889e255c551d798aeafdf33c9ec18e5b0be33e5f2062c83eef3dd1c15550d"
+}

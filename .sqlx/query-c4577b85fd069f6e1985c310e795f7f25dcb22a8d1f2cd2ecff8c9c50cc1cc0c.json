@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor_affiliation WHERE mentor_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c4577b85fd069f6e1985c310e795f7f25dcb22a8d1f2cd2ecff8c9c50cc1cc0c"
+}

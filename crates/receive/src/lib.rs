@@ -27,9 +27,9 @@ const SOON: Duration = Duration::from_secs(30);
 const REFUSED: i64 = 60 * MINUTE;
 /// How far back earlier mail is looked up.
 const HISTORY: i64 = 730 * 24 * 60 * MINUTE;
-/// Mentors looked up in one search.
+/// Mentor addresses looked up in one search.
 const BATCH: usize = 20;
-/// Mentors looked up in one round, in one mailbox.
+/// Mentor addresses looked up in one round, in one mailbox.
 const SCANS: i64 = 200;
 /// Messages whose headers are fetched at once.
 const CHUNK: usize = 50;
@@ -261,8 +261,8 @@ impl Session<'_> {
             .execute(&mut *tx)
             .await?;
             sqlx::query!(
-                "INSERT OR IGNORE INTO mentor_scan (mailbox_id, mentor_id, email)
-                 SELECT ?, id, email FROM mentor WHERE email IS NOT NULL",
+                "INSERT OR IGNORE INTO mentor_scan (mailbox_id, address)
+                 SELECT ?, address FROM mentor_email",
                 self.mailbox_id
             )
             .execute(&mut *tx)
@@ -298,12 +298,12 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Looks up the earlier mail with the mentors whose turn it is: up to `SCANS` of them, `BATCH`
-    /// to a search.
+    /// Looks up the earlier mail at the mentor addresses whose turn it is, the newest mentors'
+    /// first: up to `SCANS` of them, `BATCH` to a search.
     async fn look_up(&mut self, folders: &[(Role, String)]) -> Result<(), Error> {
-        let pending = sqlx::query!(
-            "SELECT mentor_id, email FROM mentor_scan WHERE mailbox_id = ?
-             ORDER BY mentor_id DESC LIMIT ?",
+        let pending = sqlx::query_scalar!(
+            "SELECT s.address FROM mentor_scan s JOIN mentor_email e ON e.address = s.address
+             WHERE s.mailbox_id = ? ORDER BY e.mentor_id DESC LIMIT ?",
             self.mailbox_id,
             SCANS + 1
         )
@@ -317,7 +317,7 @@ impl Session<'_> {
         // Searches are in ASCII; an address with other characters can only be matched as it comes.
         let addresses: Vec<&str> = pending
             .iter()
-            .map(|p| p.email.as_str())
+            .map(String::as_str)
             .filter(|a| a.is_ascii())
             .collect();
         let since = self.now - HISTORY;
@@ -333,14 +333,12 @@ impl Session<'_> {
                 }
             }
         }
-        // At the address looked up: a mentor whose address changed meanwhile waits for the new one.
         let mut tx = self.db.begin().await?;
-        for p in pending {
+        for address in pending {
             sqlx::query!(
-                "DELETE FROM mentor_scan WHERE mailbox_id = ? AND mentor_id = ? AND email = ?",
+                "DELETE FROM mentor_scan WHERE mailbox_id = ? AND address = ?",
                 self.mailbox_id,
-                p.mentor_id,
-                p.email
+                address
             )
             .execute(&mut *tx)
             .await?;
@@ -487,7 +485,8 @@ impl Session<'_> {
     async fn mentors_at(&self, addresses: &[String]) -> Result<Vec<i64>, Error> {
         let addresses = json(addresses)?;
         Ok(sqlx::query_scalar!(
-            r#"SELECT id AS "id!" FROM mentor WHERE email IN (SELECT value FROM json_each(?))"#,
+            r#"SELECT DISTINCT mentor_id FROM mentor_email
+               WHERE address IN (SELECT value FROM json_each(?))"#,
             addresses
         )
         .fetch_all(self.db)
@@ -649,7 +648,8 @@ impl Session<'_> {
                  WHERE bounce_reason IS NULL
                    AND message_id = (SELECT id FROM message WHERE message_id = ?2 AND kind = 'sent')
                    AND (json_array_length(?3) = 0 OR mentor_id IN (
-                     SELECT id FROM mentor WHERE email IN (SELECT value FROM json_each(?3))))",
+                     SELECT mentor_id FROM mentor_email
+                     WHERE address IN (SELECT value FROM json_each(?3))))",
                 failure.reason,
                 bounce.original,
                 recipients
@@ -793,10 +793,11 @@ pub async fn mark_read(db: &SqlitePool, mentor_id: i64, now: i64) -> Result<(), 
     Ok(())
 }
 
-/// Whether the earlier mail with a mentor is still to be looked up.
+/// Whether the earlier mail at any of a mentor's addresses is still to be looked up.
 pub async fn queued(db: &SqlitePool, mentor_id: i64) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM mentor_scan WHERE mentor_id = ?) AS "queued: bool""#,
+        r#"SELECT EXISTS (SELECT 1 FROM mentor_scan s JOIN mentor_email e ON e.address = s.address
+                          WHERE e.mentor_id = ?) AS "queued: bool""#,
         mentor_id
     )
     .fetch_one(db)

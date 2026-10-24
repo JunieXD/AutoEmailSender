@@ -1,51 +1,50 @@
 import { useMutation } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
 import { errorMessage } from "@/api/call";
-import type { MentorDetail, MentorForm } from "@/api/types";
+import type { Affiliation, MentorDetail, MentorForm } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-const FIELDS: { key: keyof MentorForm; label: string; wide?: boolean }[] = [
-  { key: "name", label: "姓名" },
-  { key: "title", label: "职称" },
-  { key: "email", label: "邮箱" },
-  { key: "homepageUrl", label: "主页" },
+export const EMPTY_FORM: MentorForm = {
+  name: "",
+  aliases: [],
+  emails: [],
+  affiliations: [],
+  homepages: [],
+  research: "",
+};
+
+const NO_AFFILIATION: Affiliation = { university: null, school: null, department: null, title: null };
+
+const PLACES: { key: keyof Affiliation; label: string }[] = [
   { key: "university", label: "学校" },
   { key: "school", label: "学院" },
   { key: "department", label: "系所" },
-  { key: "research", label: "研究方向", wide: true },
+  { key: "title", label: "职称" },
 ];
 
-export const EMPTY_FORM: MentorForm = {
-  name: "",
-  title: "",
-  email: "",
-  homepageUrl: "",
-  university: "",
-  school: "",
-  department: "",
-  research: "",
-};
+const text = (label: string, value: string, onChange: (value: string) => void) => (
+  <Input aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} />
+);
 
 /** The form for a mentor's existing fields; blank ones stay blank. */
 export function formOf(m: MentorDetail): MentorForm {
   return {
     name: m.name,
-    title: m.title ?? "",
-    email: m.email ?? "",
-    homepageUrl: m.homepageUrl ?? "",
-    university: m.university ?? "",
-    school: m.school ?? "",
-    department: m.department ?? "",
+    aliases: m.aliases,
+    emails: m.emails,
+    affiliations: m.affiliations,
+    homepages: m.homepages,
     research: m.research ?? "",
   };
 }
 
 /**
- * Adding or editing a mentor's own fields. The core trims and checks them and says what to fix.
- * Mounted while open, so every opening starts from `initial`.
+ * Adding or editing a mentor's own fields. The core trims and checks them, leaves out blank rows and
+ * says what to fix. Mounted while open, so every opening starts from `initial`.
  */
 export function MentorDialog<T>({
   title,
@@ -64,7 +63,7 @@ export function MentorDialog<T>({
 }) {
   const [form, setForm] = useState(initial);
   const mutation = useMutation({ mutationFn: save, onSuccess: onSaved });
-  const dirty = FIELDS.some((f) => form[f.key] !== initial[f.key]);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const nameRef = useRef<HTMLInputElement>(null);
   return (
     <Dialog
@@ -86,29 +85,79 @@ export function MentorDialog<T>({
         >
           <DialogHeader>{title}</DialogHeader>
           <DialogBody>
-            <fieldset
-              disabled={mutation.isPending}
-              className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3.5 phone:grid-cols-1"
-            >
-              {FIELDS.map((f) => {
-                const props = {
-                  id: `mentor-${f.key}`,
-                  value: form[f.key],
-                  onChange: (e: { target: { value: string } }) => setForm({ ...form, [f.key]: e.target.value }),
-                };
-                return (
-                  <div key={f.key} className={f.wide ? "col-span-full" : ""}>
-                    <label htmlFor={props.id} className="mb-1.5 block text-sm text-muted-foreground">
-                      {f.label}
-                    </label>
-                    {f.wide ? (
-                      <Textarea rows={3} {...props} />
-                    ) : (
-                      <Input ref={f.key === "name" ? nameRef : undefined} {...props} />
-                    )}
+            <fieldset disabled={mutation.isPending} className="flex min-w-0 flex-col gap-3.5">
+              <div>
+                <label htmlFor="mentor-name" className="mb-1.5 block text-sm text-muted-foreground">
+                  姓名
+                </label>
+                <Input
+                  ref={nameRef}
+                  id="mentor-name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <Rows
+                label="别名"
+                add="添加别名"
+                items={form.aliases}
+                blank=""
+                onChange={(aliases) => setForm({ ...form, aliases })}
+              >
+                {(alias, update) => text("别名", alias, update)}
+              </Rows>
+              <Rows
+                label="邮箱"
+                add="添加邮箱"
+                first={["发信", "设为发信地址"]}
+                items={form.emails}
+                blank=""
+                onChange={(emails) => setForm({ ...form, emails })}
+              >
+                {(email, update) => text("邮箱", email, update)}
+              </Rows>
+              <Rows
+                label="单位"
+                add="添加单位"
+                first={["主要", "设为主要"]}
+                items={form.affiliations}
+                blank={NO_AFFILIATION}
+                onChange={(affiliations) => setForm({ ...form, affiliations })}
+              >
+                {(a, update) => (
+                  <div className="grid grid-cols-2 gap-2 py-1.5 phone:grid-cols-1">
+                    {PLACES.map((p) => (
+                      <Input
+                        key={p.key}
+                        aria-label={p.label}
+                        placeholder={p.label}
+                        value={a[p.key] ?? ""}
+                        onChange={(e) => update({ ...a, [p.key]: e.target.value })}
+                      />
+                    ))}
                   </div>
-                );
-              })}
+                )}
+              </Rows>
+              <Rows
+                label="主页"
+                add="添加主页"
+                items={form.homepages}
+                blank=""
+                onChange={(homepages) => setForm({ ...form, homepages })}
+              >
+                {(url, update) => text("主页", url, update)}
+              </Rows>
+              <div>
+                <label htmlFor="mentor-research" className="mb-1.5 block text-sm text-muted-foreground">
+                  研究方向
+                </label>
+                <Textarea
+                  id="mentor-research"
+                  rows={3}
+                  value={form.research}
+                  onChange={(e) => setForm({ ...form, research: e.target.value })}
+                />
+              </div>
             </fieldset>
           </DialogBody>
           <DialogFooter>
@@ -123,5 +172,80 @@ export function MentorDialog<T>({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Something a mentor may have several of, a row each. With more than one, the first is marked
+ * (docs/data-model.md#导师) and any other can be moved first, and each can be taken out.
+ */
+function Rows<T>({
+  label,
+  add,
+  first,
+  items,
+  blank,
+  onChange,
+  children,
+}: {
+  label: string;
+  add: string;
+  /** What marks the first row, and what moves another row first. */
+  first?: [mark: string, promote: string];
+  items: T[];
+  blank: T;
+  onChange: (items: T[]) => void;
+  children: (item: T, update: (item: T) => void) => ReactNode;
+}) {
+  // An empty list shows one blank row to type in.
+  const rows = items.length > 0 ? items : [blank];
+  const several = rows.length > 1;
+  return (
+    <div role="group" aria-label={label}>
+      <div className="mb-1.5 text-sm text-muted-foreground">{label}</div>
+      <div className="flex flex-col gap-2">
+        {rows.map((item, i) => (
+          // Rows have nothing steadier than their place to tell them apart.
+          <div key={i} className="flex items-center gap-2">
+            <div className="min-w-0 grow">{children(item, (next) => onChange(rows.with(i, next)))}</div>
+            {several && first && i === 0 && (
+              <span className="w-[86px] shrink-0 text-center text-sm text-muted-foreground">{first[0]}</span>
+            )}
+            {several && first && i > 0 && (
+              <Button
+                type="button"
+                variant="quiet"
+                size="sm"
+                className="w-[86px]"
+                onClick={() => onChange([item, ...rows.toSpliced(i, 1)])}
+              >
+                {first[1]}
+              </Button>
+            )}
+            {several && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="去掉"
+                onClick={() => onChange(rows.toSpliced(i, 1))}
+              >
+                <X strokeWidth={1.6} />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="mt-1.5 -ml-2.5"
+        onClick={() => onChange([...rows, blank])}
+      >
+        <Plus strokeWidth={1.6} />
+        {add}
+      </Button>
+    </div>
   );
 }

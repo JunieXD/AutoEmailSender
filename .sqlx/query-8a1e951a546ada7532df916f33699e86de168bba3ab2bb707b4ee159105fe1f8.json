@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!\" FROM mentor WHERE email IN (SELECT value FROM json_each(?))",
+  "query": "INSERT INTO mentor (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
   "describe": {
     "columns": [
       {
-        "name": "id!",
+        "name": "id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 3
     },
     "nullable": [
       false
     ]
   },
-  "hash": "76dc4ea29f6b010500140221df745edcfafda0cda981e3426079dfde74ed0c29"
+  "hash": "8a1e951a546ada7532df916f33699e86de168bba3ab2bb707b4ee159105fe1f8"
 }

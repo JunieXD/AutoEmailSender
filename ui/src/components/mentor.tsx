@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { Contact, ContactStatus, MatchState } from "@/api/types";
+import type { Affiliation, Contact, ContactStatus, MatchState } from "@/api/types";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -13,6 +13,11 @@ export function Avatar({ id, name }: { id: number; name: string }) {
       {name.slice(0, 1)}
     </span>
   );
+}
+
+/** Where in a university an affiliation is, as in "北京大学 计算机学院 软件系". */
+export function placeOf(a: Affiliation): string {
+  return [a.university, a.school, a.department].filter(Boolean).join(" ");
 }
 
 export function Missing({ children }: { children: string }) {
