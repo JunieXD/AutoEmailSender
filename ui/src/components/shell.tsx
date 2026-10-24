@@ -1,23 +1,27 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { MessagesSquare, Settings, Users } from "lucide-react";
+import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
 import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
-import type { MatchFinished } from "@/api/types";
+import type { MatchFinished, DraftsFinished } from "@/api/types";
+import { refreshTasks } from "@/pages/tasks";
 import { refreshMentors } from "@/components/mentor";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 
 const NAV = [
   { to: "/mentors", label: "导师", icon: Users },
   { to: "/conversations", label: "往来", icon: MessagesSquare },
+  { to: "/tasks", label: "任务", icon: ListTodo },
 ] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
 // accounts, the row is settings itself.
+const MORE = { to: "/more", label: "更多", icon: Settings } as const;
 const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 
 /**
@@ -34,7 +38,14 @@ export function Shell() {
       refreshMentors(queryClient);
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
+    const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
+    const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
+      refreshTasks(queryClient);
+      setCompleted(`任务“${p.name}”的草稿写好了：${p.generated} 封，失败 ${p.failed} 封`);
+    });
     return () => {
+      void tasksChanged.then((f) => f());
+      void draftsDone.then((f) => f());
       void stop.then((f) => f());
       void done.then((f) => f());
     };
@@ -70,6 +81,7 @@ export function Shell() {
           ))}
         </nav>
         <div className="grow" />
+        <Background />
         <NavLink {...SETTINGS} />
       </aside>
       <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
@@ -87,7 +99,7 @@ export function Shell() {
         )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {[...NAV, SETTINGS].map(({ to, label, icon: Icon }) => (
+        {[...NAV, MORE].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -133,5 +145,85 @@ function UnreadBadge({ className }: { className?: string }) {
     >
       {unread.isError ? "!" : unread.data > 99 ? "99+" : unread.data}
     </span>
+  );
+}
+
+function Background() {
+  const tasks = useQuery({
+    queryKey: ["taskWork"],
+    queryFn: () => call("taskWork", {}),
+    refetchInterval: 3000,
+  });
+  const matching = useQuery({
+    queryKey: ["matchingProgress"],
+    queryFn: () => call("matchingProgress", {}),
+    refetchInterval: 3000,
+  });
+  const active = tasks.data?.filter((t) => t.progress.generating > 0) ?? [];
+  const pending =
+    tasks.data?.filter((t) => t.state === "paused" || t.progress.generationFailed > 0 || t.progress.failed > 0) ?? [];
+  const count = active.length + (matching.data && matching.data.remaining > 0 ? 1 : 0);
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            className={`mb-1 flex h-10 items-center gap-2 rounded-md px-3 text-sm text-muted-foreground hover:bg-press `}
+          />
+        }
+      >
+        <LoaderCircle className={`size-4 ${count > 0 ? "animate-spin" : ""}`} />
+        后台{count > 0 && <span>{count}</span>}
+        {pending.length > 0 && <span className="text-warning">{pending.length}</span>}
+      </PopoverTrigger>
+      <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-3 overflow-y-auto p-4 text-sm">
+        <h2 className="font-medium">后台工作</h2>
+        {pending.length > 0 && (
+          <div>
+            <h3 className="mb-2 text-warning">待处理</h3>
+            {pending.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className="block py-2">
+                {t.name}
+                <span className="block text-xs text-muted-foreground">
+                  {t.pauseReason ?? `${t.progress.generationFailed} 封生成失败，${t.progress.failed} 封发送失败`}
+                </span>
+              </Link>
+            ))}
+          </div>
+        )}
+        {active.length > 0 && (
+          <div>
+            <h3 className="text-muted-foreground">生成草稿</h3>
+            {active.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className="block py-2">
+                {t.name} · 还剩 {t.progress.generating} 封
+              </Link>
+            ))}
+          </div>
+        )}
+        {matching.data && matching.data.remaining > 0 && (
+          <Link to="/mentors" className="block">
+            匹配分析 · 还剩 {matching.data.remaining} 位
+          </Link>
+        )}
+        {count === 0 && pending.length === 0 && <p className="text-muted-foreground">当前没有后台工作</p>}
+        {(tasks.error ?? matching.error) && (
+          <p className="text-destructive">{errorMessage(tasks.error ?? matching.error)}</p>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function MorePage() {
+  return (
+    <div className="p-5">
+      <h1 className="mb-5 text-2xl font-semibold">更多</h1>
+      <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
+        <Settings className="size-5" />
+        设置
+      </Link>
+      <Background />
+    </div>
   );
 }

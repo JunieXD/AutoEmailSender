@@ -37,6 +37,26 @@ impl From<sqlx::Error> for Error {
     }
 }
 
+pub struct Basis<'a> {
+    pub chosen: &'a model::Chosen,
+    pub references: &'a [material::Reference],
+}
+
+/// Token estimate uses the same prompt as generation.
+pub fn estimate(
+    me: &profile::Profile,
+    references: &[material::Reference],
+    attached: &[String],
+    mentor: &MentorDetail,
+    current: Option<&Letter>,
+) -> (i64, i64) {
+    (
+        model::background::tokens(SYSTEM)
+            + model::background::tokens(&message(me, references, attached, mentor, current)),
+        1200,
+    )
+}
+
 /// Drafts a letter to the mentor when `current` is blank, and otherwise rewrites it; the letter
 /// may mention the materials attached.
 pub async fn write(
@@ -46,14 +66,14 @@ pub async fn write(
     current: &Letter,
     attachments: &[i64],
     now: i64,
+    basis: Basis<'_>,
 ) -> Result<Letter, Error> {
-    let chosen = model::chosen(db).await?.ok_or(Error::NoModel)?;
+    let Basis { chosen, references } = basis;
     if !chosen.agreed {
         return Err(Error::NotAgreed);
     }
     let mentor = mentor::get(db, mentor_id).await?.ok_or(Error::NoMentor)?;
     let me = profile::get(db).await?;
-    let references = material::for_writing(db).await?;
     let attached: Vec<String> = material::list(db)
         .await?
         .into_iter()
@@ -69,7 +89,7 @@ pub async fn write(
         }
         None => SYSTEM.to_owned(),
     };
-    let message = message(&me, &references, &attached, &mentor, current);
+    let message = message(&me, references, &attached, &mentor, current);
     let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
         .await
         .map_err(Error::Model)?;

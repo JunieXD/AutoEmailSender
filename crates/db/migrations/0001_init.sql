@@ -211,6 +211,10 @@ CREATE TABLE task (
   writer TEXT NOT NULL CHECK (writer IN ('ai', 'template')),
   template_id INTEGER REFERENCES template(id) ON DELETE SET NULL,
   model_config_id INTEGER REFERENCES model_config(id) ON DELETE SET NULL,
+  template_subject TEXT,
+  template_body_md TEXT,
+  generation_paused_at INTEGER,
+  generation_pause_reason TEXT,
   schedule TEXT NOT NULL CHECK (schedule IN ('now', 'window')),
   window_dates TEXT,           -- JSON array of 'YYYY-MM-DD'
   window_start TEXT,
@@ -218,6 +222,9 @@ CREATE TABLE task (
   per_window INTEGER,
   state TEXT NOT NULL CHECK (state IN ('active', 'paused', 'stopped')),
   created_at INTEGER NOT NULL,
+  CHECK ((template_subject IS NULL) = (template_body_md IS NULL)),
+  CHECK (writer <> 'template' OR template_subject IS NOT NULL),
+  CHECK (generation_paused_at IS NOT NULL OR generation_pause_reason IS NULL),
   CHECK ((schedule = 'window') = (window_dates IS NOT NULL AND window_start IS NOT NULL
                                   AND window_end IS NOT NULL AND per_window IS NOT NULL))
 ) STRICT;
@@ -239,6 +246,8 @@ CREATE TABLE email (
   resend_of INTEGER UNIQUE REFERENCES email(id) ON DELETE SET NULL, -- the bounced email it sends again
   state TEXT NOT NULL CHECK (state IN ('generating', 'generation_failed', 'review', 'approved',
     'cloud', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed', 'canceled')),
+  generation_claim INTEGER NOT NULL DEFAULT 0,
+  generation_queued_at INTEGER,
   planned_at INTEGER,
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   from_address TEXT,
@@ -277,6 +286,8 @@ CREATE INDEX email_mentor ON email (mentor_id, state);
 CREATE INDEX email_mailbox_out ON email (mailbox_id, sent_at)
   WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced');
 CREATE INDEX email_task ON email (task_id, state);
+CREATE UNIQUE INDEX email_task_mentor ON email (mentor_id, task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX email_generation_queue ON email (generation_queued_at, id) WHERE state = 'generating';
 CREATE INDEX email_attention ON email (state) WHERE state IN ('generation_failed', 'failed', 'maybe_sent');
 CREATE UNIQUE INDEX email_first_draft ON email (mentor_id)
   WHERE kind = 'first' AND task_id IS NULL AND state = 'review';

@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT task_id AS \"task_id!\",state AS \"state: DraftState\",count(*) AS count FROM email WHERE task_id IN (SELECT value FROM json_each(?)) GROUP BY task_id,state",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "state: DraftState",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "count",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5ab7af22ecb036d1512328a5324e32895c2cb10dd514039c3dfe6a4d6e31da65"
+}

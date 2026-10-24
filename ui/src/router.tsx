@@ -1,6 +1,7 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { TasksPage, TaskReviewPage, tasksSearch, taskSearch } from "./pages/tasks";
 import { ConversationsPage, conversationSearch } from "./pages/conversations";
-import { Shell } from "./components/shell";
+import { Shell, MorePage } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
 import { MailboxesSection } from "./pages/mailboxes";
@@ -54,6 +55,21 @@ const conversationsRoute = createRoute({
   path: "conversations",
   validateSearch: conversationSearch,
   component: ConversationsPage,
+});
+
+const moreRoute = createRoute({ getParentRoute: () => rootRoute, path: "more", component: MorePage });
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "tasks",
+  validateSearch: tasksSearch,
+  component: TasksPage,
+});
+const taskRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "tasks/$id",
+  params: { parse: ({ id }) => ({ id: Number(id) }), stringify: ({ id }) => ({ id: String(id) }) },
+  validateSearch: taskSearch,
+  component: TaskReviewPage,
 });
 
 const settingsRoute = createRoute({
@@ -124,6 +140,9 @@ export const router = createRouter({
     trashRoute,
     mentorRoute,
     conversationsRoute,
+    moreRoute,
+    tasksRoute,
+    taskRoute,
     settingsRoute.addChildren([
       settingsHomeRoute,
       profileRoute,

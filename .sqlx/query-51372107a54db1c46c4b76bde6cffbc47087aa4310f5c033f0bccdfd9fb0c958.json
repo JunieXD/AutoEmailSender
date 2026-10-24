@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT contact_count,last_out_at FROM mentor_contact WHERE mentor_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "contact_count",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "contact_count"
+          }
+        }
+      },
+      {
+        "name": "last_out_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "51372107a54db1c46c4b76bde6cffbc47087aa4310f5c033f0bccdfd9fb0c958"
+}

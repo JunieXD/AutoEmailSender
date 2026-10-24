@@ -28,3 +28,4 @@ tracing.workspace = true
 ts-rs.workspace = true
 writing.workspace = true
 receive.workspace = true
+task.workspace = true

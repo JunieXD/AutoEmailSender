@@ -14,13 +14,26 @@ use ts_rs::TS;
 )]
 pub enum Problem {
     /// A placeholder left as written, as what fills it was missing.
-    Placeholder { name: &'static str },
+    Placeholder {
+        name: &'static str,
+    },
     /// The body never addresses the mentor; `salutation`, a Markdown paragraph, would.
-    NoSalutation { salutation: String },
+    NoSalutation {
+        salutation: String,
+    },
     /// The body speaks of an attachment, but there is none.
     NoAttachment,
+    OtherMentor {
+        name: String,
+    },
+    RecentlyContacted {
+        count: i64,
+        last_at: i64,
+    },
     /// The domain of the mentor's address names no server to take mail.
-    NoMailServer { domain: String },
+    NoMailServer {
+        domain: String,
+    },
 }
 
 /// What follows a surname when addressing a mentor, as in 雷老师.
@@ -60,6 +73,30 @@ pub fn letter(
         problems.push(Problem::NoAttachment);
     }
     problems
+}
+
+/// Other task mentors' full names, excluding names shared with this mentor or their aliases.
+pub fn other_mentors(
+    mentor: &str,
+    aliases: &[String],
+    others: &[String],
+    subject: &str,
+    body: &str,
+) -> Vec<Problem> {
+    let mut found = Vec::new();
+    for name in others {
+        if name != mentor
+            && !aliases.contains(name)
+            && !found.contains(name)
+            && (subject.contains(name) || body.contains(name))
+        {
+            found.push(name.clone());
+        }
+    }
+    found
+        .into_iter()
+        .map(|name| Problem::OtherMentor { name })
+        .collect()
 }
 
 /// Whether the body addresses the mentor: by full name, by surname and title, or by a word of the
@@ -135,6 +172,29 @@ pub async fn mail_domain(address: &str) -> Result<Option<Problem>, NetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn other_task_names_are_reported_once_and_own_aliases_are_excluded() {
+        let names = vec![
+            "王伟".into(),
+            "李明".into(),
+            "李明".into(),
+            "Wei Wang".into(),
+        ];
+        assert_eq!(
+            other_mentors(
+                "王伟",
+                &["Wei Wang".into()],
+                &names,
+                "给李明",
+                "李明老师：王伟 Wei Wang"
+            ),
+            vec![Problem::OtherMentor {
+                name: "李明".into()
+            }]
+        );
+        assert!(other_mentors("王伟", &[], &names, "申请", "王伟老师：您好").is_empty());
+    }
 
     #[test]
     fn each_placeholder_left_is_one_problem() {

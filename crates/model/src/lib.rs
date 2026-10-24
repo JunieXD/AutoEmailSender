@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::TS;
 
+pub mod background;
 mod client;
 mod error;
 pub mod providers;
@@ -250,11 +251,20 @@ pub struct Chosen {
 pub async fn chosen<'a>(
     db: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
 ) -> Result<Option<Chosen>, sqlx::Error> {
+    selected(db, None).await
+}
+
+/// A task's configuration, falling back to the default only when it has been deleted.
+pub async fn selected<'a>(
+    db: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    id: Option<i64>,
+) -> Result<Option<Chosen>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"SELECT id, provider, base_url, model, api_key, agreed AS "agreed: bool"
            FROM model_config
-           WHERE id = coalesce((SELECT default_model_config_id FROM profile),
-                               (SELECT min(id) FROM model_config))"#
+           WHERE id = coalesce((SELECT id FROM model_config WHERE id = ?1), (SELECT default_model_config_id FROM profile),
+                               (SELECT min(id) FROM model_config))"#,
+        id
     )
     .fetch_optional(db)
     .await?

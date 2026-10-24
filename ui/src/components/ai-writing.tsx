@@ -17,12 +17,13 @@ import { letterText } from "@/letter";
  * The model writing a mentor's letter. The request and its answer stay in the mutation cache
  * until forgotten, so that leaving the page neither stops it nor loses what comes back.
  */
-export function useWriting(mentorId: number) {
+export function useWriting(mentorId: number, task?: { taskId: number; id: number }) {
   const queryClient = useQueryClient();
-  const mutationKey = ["writeLetter", mentorId];
+  const mutationKey = task ? ["writeTaskDraft", task.id] : ["writeLetter", mentorId];
   const write = useMutation({
     mutationKey,
-    mutationFn: (letter: FirstDraftEdit) => call("writeLetter", letter),
+    mutationFn: (letter: FirstDraftEdit) =>
+      task ? call("writeTaskDraft", { ...letter, ...task }) : call("writeLetter", letter),
     gcTime: Infinity,
     onError: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
@@ -46,9 +47,19 @@ export function useWriting(mentorId: number) {
  * "AI 起草" for a blank letter and "AI 改写" otherwise. Before the first call to a model's provider,
  * says what goes there and waits for the user to agree.
  */
-export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disabled: boolean; onWrite: () => void }) {
+export function AiButton({
+  blank,
+  disabled,
+  onWrite,
+  modelId,
+}: {
+  blank: boolean;
+  disabled: boolean;
+  onWrite: () => void;
+  modelId?: number | null;
+}) {
   return (
-    <ModelAction disabled={disabled} onWrite={onWrite}>
+    <ModelAction modelId={modelId} disabled={disabled} onWrite={onWrite}>
       <AiIcon />
       {blank ? "AI 起草" : "AI 改写"}
     </ModelAction>
@@ -57,10 +68,12 @@ export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disable
 
 /** The same provider consent for every AI entry point. */
 export function ModelAction({
+  modelId,
   children,
   disabled,
   onWrite,
 }: {
+  modelId?: number | null;
   children: ReactNode;
   disabled: boolean;
   onWrite: () => void;
@@ -73,7 +86,9 @@ export function ModelAction({
     mutationFn: (m: ModelConfig) => call("agreeModel", { id: m.id, provider: m.provider, baseUrl: m.baseUrl }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
-  const chosen = models.data?.find((m) => m.isDefault);
+  const chosen =
+    models.data?.find((m) => (modelId != null ? m.id === modelId : m.isDefault)) ??
+    models.data?.find((m) => m.isDefault);
   const button = (onClick?: () => void) => (
     <Button
       variant="ai"

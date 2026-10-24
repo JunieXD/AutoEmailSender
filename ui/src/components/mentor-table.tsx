@@ -194,8 +194,18 @@ export function useLastPage(total: number | undefined, page: number, onPage: (pa
 }
 
 /** "第 2 页，共 9 页" with previous and next. */
-export function Pager({ page, total, onPage }: { page: number; total: number; onPage: (page: number) => void }) {
-  const pages = pageCount(total);
+export function Pager({
+  page,
+  total,
+  onPage,
+  pageSize = 50,
+}: {
+  page: number;
+  total: number;
+  pageSize?: number;
+  onPage: (page: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
   return (
     <div className="flex items-center gap-2">
       <span>

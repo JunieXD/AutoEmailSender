@@ -113,7 +113,7 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
     model(&db, &address, true).await;
     let net = Net::new(Vec::new()).unwrap();
 
-    let letter = writing::write(&db, &net, mentor, &blank(), &[resume], T)
+    let letter = current_write(&db, &net, mentor, &blank(), &[resume], T)
         .await
         .unwrap();
     assert_eq!(letter.subject, "申请攻读博士学位");
@@ -170,7 +170,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
         subject: "申请读研".into(),
         body_md: "老师您好，我是林晓。".into(),
     };
-    let write = async || writing::write(&db, &net, mentor, &current, &[], T).await;
+    let write = async || current_write(&db, &net, mentor, &current, &[], T).await;
 
     let letter = write().await.unwrap();
     assert_eq!(letter.subject, "申请攻读 博士学位");
@@ -212,12 +212,12 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
 async fn nothing_is_sent_until_the_user_agrees(db: SqlitePool) {
     let (mentor, _) = setup(&db).await;
     let net = Net::new(Vec::new()).unwrap();
-    let result = writing::write(&db, &net, mentor, &blank(), &[], T).await;
+    let result = current_write(&db, &net, mentor, &blank(), &[], T).await;
     assert!(matches!(result, Err(Error::NoModel)), "{result:?}");
 
     let (address, received) = provider(Vec::new()).await;
     model(&db, &address, false).await;
-    let result = writing::write(&db, &net, mentor, &blank(), &[], T).await;
+    let result = current_write(&db, &net, mentor, &blank(), &[], T).await;
     assert!(matches!(result, Err(Error::NotAgreed)), "{result:?}");
     assert!(received.lock().unwrap().is_empty());
 }
@@ -238,7 +238,7 @@ async fn writing_reads_only_the_first_ten_thousand_characters_of_a_material(db: 
     )])
     .await;
     model(&db, &address, true).await;
-    writing::write(
+    current_write(
         &db,
         &Net::new(Vec::new()).unwrap(),
         mentor,
@@ -255,4 +255,29 @@ async fn writing_reads_only_the_first_ten_thousand_characters_of_a_material(db: 
         10_000
     );
     assert!(!message.contains("尾部不发送"));
+}
+
+async fn current_write(
+    db: &sqlx::SqlitePool,
+    net: &net::Net,
+    mentor: i64,
+    current: &writing::Letter,
+    attachments: &[i64],
+    now: i64,
+) -> Result<writing::Letter, writing::Error> {
+    let chosen = model::chosen(db).await?.ok_or(writing::Error::NoModel)?;
+    let references = material::for_writing(db).await?;
+    writing::write(
+        db,
+        net,
+        mentor,
+        current,
+        attachments,
+        now,
+        writing::Basis {
+            chosen: &chosen,
+            references: &references,
+        },
+    )
+    .await
 }

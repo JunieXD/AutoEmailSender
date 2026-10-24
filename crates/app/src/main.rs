@@ -146,6 +146,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             }
         },
     ));
+    let model_limit = model::background::Limit::default();
     let matcher = matching::Matcher::default();
     let (ui, done_ui) = (app.clone(), app.clone());
     let matching_notifications_db = db.clone();
@@ -153,6 +154,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         db.clone(),
         net.clone(),
         matcher.clone(),
+        model_limit.clone(),
         move || {
             if let Err(e) = ui.emit("matching-changed", ()) {
                 tracing::warn!("refresh matching: {e}");
@@ -168,14 +170,59 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
+    let generator = task::generation::Generator::default();
+    let (ui, done_ui) = (app.clone(), app.clone());
+    let drafts_db = db.clone();
+    tauri::async_runtime::spawn(task::generation::run(
+        db.clone(),
+        net.clone(),
+        generator.clone(),
+        model_limit.clone(),
+        move || {
+            if let Err(e) = ui.emit("tasks-changed", ()) {
+                tracing::warn!("refresh tasks: {e}");
+            }
+        },
+        move |result| {
+            let (app, db) = (done_ui.clone(), drafts_db.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = finish_drafts(&app, &db, result).await {
+                    tracing::warn!("draft completion notification: {e}");
+                }
+            });
+        },
+    ));
     Ok(api::Context {
         db,
         net,
         sender,
         receiver,
         matcher,
+        generator,
+        model_limit,
         materials,
     })
+}
+
+async fn finish_drafts(
+    app: &AppHandle,
+    db: &sqlx::SqlitePool,
+    result: task::generation::DraftsFinished,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(window) = app.get_webview_window("main")
+        && window.is_focused()?
+    {
+        app.emit("drafts-finished", result)?;
+    } else if profile::background_notifications(db).await? {
+        app.notification()
+            .builder()
+            .title(format!(
+                "任务“{}”的草稿写好了：{} 封，失败 {} 封",
+                result.name, result.generated, result.failed
+            ))
+            .show()?;
+    }
+    Ok(())
 }
 
 async fn finish_matching(

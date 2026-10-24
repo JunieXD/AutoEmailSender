@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET generation_claim = generation_claim + 1, generation_queued_at = coalesce(generation_queued_at, created_at) WHERE state = 'generating'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9f5c68623decaa1f8180ac608282e9aaeb7308c96bcd942831ce939875bd2aac"
+}

@@ -15,4 +15,5 @@ fastrand = "2.5.0"
 mentor.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+task.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

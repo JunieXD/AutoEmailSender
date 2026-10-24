@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT model_config_id FROM task WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "model_config_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "model_config_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8685651306de13b1586e0d15e0c450ea70473f03ee4110e24aeb7679b50a5974"
+}

@@ -26,6 +26,8 @@ tauri-plugin-single-instance = "2.5.4"
 tracing.workspace = true
 tracing-appender = "0.2.5"
 tracing-subscriber = "0.3.23"
+model.workspace = true
+task.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
