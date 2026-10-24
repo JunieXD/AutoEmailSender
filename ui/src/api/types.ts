@@ -14,7 +14,15 @@ export type DefaultTemplate = { id: number | null, };
 
 export type Direction = "up" | "down";
 
-export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
+export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, 
+/**
+ * The bounced email this one sends again.
+ */
+resendOf: number | null, 
+/**
+ * Whether this bounced email has been sent again, as an email in any state.
+ */
+resent: boolean, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
 
 export type EmailId = { id: number, };
 
@@ -101,6 +109,8 @@ export type MaterialId = { id: number, };
 
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
 
+export type MentorAddress = { id: number, address: string, };
+
 export type MentorDetail = { id: number, name: string, aliases: Array<string>, 
 /**
  * The first is the one mail goes to.
@@ -122,6 +132,8 @@ export type MentorForm = { name: string, aliases: Array<string>, emails: Array<s
 export type MentorId = { id: number, };
 
 export type MentorIds = { ids: Array<number>, };
+
+export type MentorMerge = { keep: number, other: number, };
 
 export type MentorNote = { id: number, 
 /**
@@ -336,6 +348,8 @@ export interface Operations {
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  addMentorEmail: { input: MentorAddress; output: MentorDetail };
+  mergeMentors: { input: MentorMerge; output: null };
   listTrash: { input: TrashQuery; output: MentorPage };
   trashMentors: { input: MentorIds; output: null };
   restoreMentors: { input: MentorIds; output: null };
@@ -383,6 +397,7 @@ export interface Operations {
   markRead: { input: MentorId; output: null };
   withdrawEmail: { input: EmailId; output: null };
   retryEmail: { input: EmailId; output: null };
+  resendEmail: { input: EmailId; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mentor_email (address, mentor_id, position) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2de4f53c3f1d2dc458f4665e5ad3ae79ede826c0c374a2b32462bded972260d3"
+}

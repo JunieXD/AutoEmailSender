@@ -9,6 +9,7 @@ use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
+pub mod merge;
 pub mod tags;
 pub mod trash;
 
@@ -271,7 +272,10 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
 
 /// Everything the mentor's page shows. None when there is no such mentor.
 pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
-    let mut tx = db.begin().await?;
+    detail(&mut *db.begin().await?, id).await
+}
+
+async fn detail(conn: &mut SqliteConnection, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
     let Some(r) = sqlx::query!(
         r#"SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
@@ -288,7 +292,7 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
            WHERE m.id = ?"#,
         id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?
     else {
         return Ok(None);
@@ -333,13 +337,13 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
         "SELECT name FROM mentor_alias WHERE mentor_id = ? ORDER BY position",
         id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
     let emails = sqlx::query_scalar!(
         "SELECT address FROM mentor_email WHERE mentor_id = ? ORDER BY position",
         id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
     let affiliations = sqlx::query_as!(
         Affiliation,
@@ -347,13 +351,13 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
          WHERE mentor_id = ? ORDER BY position",
         id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
     let homepages = sqlx::query_scalar!(
         "SELECT url FROM mentor_homepage WHERE mentor_id = ? ORDER BY position",
         id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
     Ok(Some(MentorDetail {
         id: r.id,
@@ -375,7 +379,7 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
             r.last_reply_at,
             r.unread,
         )?,
-        tags: tags_of(&mut tx, [id])
+        tags: tags_of(&mut *conn, [id])
             .await?
             .remove(&id)
             .unwrap_or_default(),
@@ -584,7 +588,7 @@ impl MentorForm {
 /// A plain address as people write them: `local@domain`, where the local part is dot-separated
 /// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
 /// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
-fn is_email(s: &str) -> bool {
+pub fn is_email(s: &str) -> bool {
     let Some((local, domain)) = s.split_once('@') else {
         return false;
     };
@@ -799,6 +803,77 @@ async fn save_lists(
     .execute(&mut *tx)
     .await?;
     Ok(())
+}
+
+/// Whether an address is a school's, which goes before other addresses the app adds: one with a
+/// domain label `edu` or `ac`, as pku.edu.cn, ucas.ac.cn, mit.edu or ox.ac.uk.
+pub fn is_school(address: &str) -> bool {
+    address.rsplit_once('@').is_some_and(|(_, domain)| {
+        domain
+            .split('.')
+            .any(|label| label.eq_ignore_ascii_case("edu") || label.eq_ignore_ascii_case("ac"))
+    })
+}
+
+/// Where an address the app adds goes among the mentor's: a school's before the first that is not,
+/// else last (docs/data-model.md#导师).
+fn place(addresses: &[String], address: &str) -> usize {
+    addresses
+        .iter()
+        .position(|a| is_school(address) && !is_school(a))
+        .unwrap_or(addresses.len())
+}
+
+/// Adds an address, such as one the mentor wrote from, to the mentor's where [`place`] puts it.
+/// False when the mentor is gone.
+pub async fn add_email(
+    db: &SqlitePool,
+    id: i64,
+    address: &str,
+    now: i64,
+) -> Result<bool, SaveError> {
+    let mut tx = db.begin().await?;
+    let done = sqlx::query!("UPDATE mentor SET updated_at = ? WHERE id = ?", now, id)
+        .execute(&mut *tx)
+        .await?;
+    if done.rows_affected() == 0 {
+        return Ok(false);
+    }
+    let owner = sqlx::query_scalar!(
+        "SELECT mentor_id FROM mentor_email WHERE address = ?",
+        address
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    match owner {
+        Some(owner) if owner == id => return Ok(true),
+        Some(_) => return Err(taken(&mut tx, address).await),
+        None => {}
+    }
+    let addresses = sqlx::query_scalar!(
+        "SELECT address FROM mentor_email WHERE mentor_id = ? ORDER BY position",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let position = place(&addresses, address) as i64;
+    sqlx::query!(
+        "UPDATE mentor_email SET position = position + 1 WHERE mentor_id = ? AND position >= ?",
+        id,
+        position,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO mentor_email (address, mentor_id, position) VALUES (?, ?, ?)",
+        address,
+        id,
+        position,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Says which mentor has the address. Writing first and explaining afterwards keeps the

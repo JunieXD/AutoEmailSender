@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT material_id AS \"material_id?\" FROM email_attachment WHERE email_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "material_id?",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "material_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d9af8e38ca913ae92f7fe0e5b7f82d6381dcb5e3f6195b29bf99ff8a7e4cd619"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET updated_at = ? WHERE id IN (?, ?) AND trashed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "4c05397dc042855593fc1cce7a58e7fc1c46c3cc4c90bd0ce286d2533eebb157"
+}

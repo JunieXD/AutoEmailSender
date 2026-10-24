@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -33,6 +33,18 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     wasOut.current = out;
   }, [out, queryClient]);
   const fresh = useMarkRead(mentor.id, entries.data);
+  // A first letter begun stays to be finished when the mentor has mail by now, as after a merge or a
+  // look-up: a draft, or what the composer keeps of a save that failed.
+  const draft = useQuery({
+    queryKey: ["getFirstDraft", mentor.id],
+    queryFn: () => call("getFirstDraft", { id: mentor.id }),
+    enabled: !mentor.trashed,
+  });
+  const lastSave = useMutationState({
+    filters: { mutationKey: ["saveFirstDraft", mentor.id] },
+    select: (m) => m.state.status,
+  }).at(-1);
+  const begun = draft.data || (lastSave !== undefined && lastSave !== "success");
   if (entries.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
@@ -48,26 +60,35 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     );
   }
   return (
-    <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
-      {entries.data.map((e) =>
-        "email" in e ? (
-          <Sent
-            key={`email ${e.email.id}`}
-            email={e.email}
-            mentorId={mentor.id}
-            actions={!mentor.trashed}
-            several={mentor.emails.length > 1}
-          />
+    <>
+      <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
+        {entries.data.map((e) =>
+          "email" in e ? (
+            <Sent
+              key={`email ${e.email.id}`}
+              email={e.email}
+              mentorId={mentor.id}
+              actions={!mentor.trashed}
+              emails={mentor.emails}
+            />
+          ) : (
+            <Seen
+              key={`message ${e.message.id}`}
+              message={e.message}
+              mentor={mentor}
+              fresh={fresh.includes(e.message.id)}
+            />
+          ),
+        )}
+      </div>
+      {/* Shown here, as the composer would load the draft again each time it came up. */}
+      {!mentor.trashed &&
+        (begun ? (
+          <FirstLetter mentor={mentor} />
         ) : (
-          <Seen
-            key={`message ${e.message.id}`}
-            message={e.message}
-            mentor={mentor}
-            fresh={fresh.includes(e.message.id)}
-          />
-        ),
-      )}
-    </div>
+          draft.error && <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(draft.error)}</p>
+        ))}
+    </>
   );
 }
 
@@ -110,24 +131,26 @@ function Sent({
   email: e,
   mentorId,
   actions,
-  several,
+  emails,
 }: {
   email: Email;
   mentorId: number;
   actions: boolean;
-  /** Whether the mentor has several addresses, so which one it went to is worth saying. */
-  several: boolean;
+  /** The mentor's addresses, the first of which an email sent again goes to. */
+  emails: string[];
 }) {
   const queryClient = useQueryClient();
   const act = useMutation({
-    mutationFn: (op: "withdrawEmail" | "retryEmail") => call(op, { id: e.id }),
+    mutationFn: (op: "withdrawEmail" | "retryEmail" | "resendEmail") => call(op, { id: e.id }),
     onSuccess: (_, op) => {
       // Read again when the composer comes back, as the draft it shows is this email.
       if (op === "withdrawEmail") queryClient.removeQueries({ queryKey: ["getFirstDraft", mentorId] });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] }),
   });
-  const [text, tone] = status(e, several);
+  const sendTo = emails.at(0);
+  // Which address it went to is worth saying when the mentor has several.
+  const [text, tone] = status(e, emails.length > 1);
   return (
     <article className="flex flex-col items-end gap-1.5">
       <div className="max-w-[min(42rem,88%)] rounded-[18px] rounded-br-[6px] bg-mine px-4 py-3">
@@ -166,7 +189,24 @@ function Sent({
               onConfirm={() => act.mutate("retryEmail")}
             />
           )}
-          {(e.state === "approved" || e.state === "failed") && (
+          {e.state === "bounced" && !e.resent && sendTo && (
+            <Confirm
+              trigger={
+                <Button variant="ghost" disabled={act.isPending}>
+                  <Send strokeWidth={1.6} />
+                  重新发送
+                </Button>
+              }
+              message={
+                sendTo.toLowerCase() === e.toAddress.toLowerCase()
+                  ? `会再发到退回它的地址 ${sendTo}。地址有误时，先在资料里改正，或把能用的地址设为发信地址。`
+                  : `发一封内容和附件都相同的新邮件到 ${sendTo}。`
+              }
+              action="重新发送"
+              onConfirm={() => act.mutate("resendEmail")}
+            />
+          )}
+          {(e.state === "approved" || e.state === "failed") && e.resendOf === null && (
             <Button variant="ghost" disabled={act.isPending} onClick={() => act.mutate("withdrawEmail")}>
               <Undo2 strokeWidth={1.6} />
               改回草稿
@@ -204,6 +244,15 @@ function status(e: Email, several: boolean): [string, string] {
 function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorDetail; fresh: boolean }) {
   const [quoted, setQuoted] = useState(false);
   const [opened, setOpened] = useState(false);
+  const queryClient = useQueryClient();
+  const add = useMutation({
+    mutationFn: () => call("addMentorEmail", { id: mentor.id, address: m.fromAddress }),
+    onSuccess: async (detail) => {
+      // A load still under way may have read the mentor before the address was added.
+      await queryClient.cancelQueries({ queryKey: ["getMentor", mentor.id] });
+      queryClient.setQueryData(["getMentor", mentor.id], detail);
+    },
+  });
   const mine = m.kind === "sent";
   if (m.kind === "auto_reply" && !opened) {
     return (
@@ -255,7 +304,13 @@ function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorD
           {day(m.sentAt)} {time(m.sentAt)}
           {mine ? " 在别处发出" : from}
         </span>
+        {!mine && !known && !mentor.trashed && (
+          <Button variant="quiet" size="sm" disabled={add.isPending} onClick={() => add.mutate()}>
+            加为导师的邮箱
+          </Button>
+        )}
       </p>
+      {add.error && <p className="text-sm text-destructive">未能加为导师的邮箱：{errorMessage(add.error)}</p>}
       {m.kind === "sent" && m.bounce && <p className="text-sm text-warning">退信：{m.bounce}</p>}
     </article>
   );

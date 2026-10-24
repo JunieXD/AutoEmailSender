@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE OR IGNORE message_mentor SET mentor_id = ? WHERE mentor_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "18947cbaedb3090122cb90d45f11aaceaa1ded435b81b52fda73feacb94db1c8"
+}

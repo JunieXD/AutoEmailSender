@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE todo SET mentor_id = ? WHERE mentor_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f9d79538e0dd3112058e1bf59361a0474c6896d0931bfaa4b7ff18c4a1795991"
+}

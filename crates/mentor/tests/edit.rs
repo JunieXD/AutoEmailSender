@@ -246,3 +246,36 @@ async fn a_mailbox_deleted_while_it_sent_is_not_assigned(db: SqlitePool) {
         .unwrap();
     assert_eq!(own, None);
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_address_written_from_is_added_after_the_school_ones(db: SqlitePool) {
+    let fields = |name: &str, emails: &[&str]| MentorFields {
+        name: name.into(),
+        emails: emails.iter().map(|e| (*e).into()).collect(),
+        ..MentorFields::default()
+    };
+    let li = mentor::create(&db, &fields("李明", &["li@pku.edu.cn", "li@gmail.com"]), 0)
+        .await
+        .unwrap();
+    mentor::create(&db, &fields("张伟", &["zhang@thu.edu.cn"]), 0)
+        .await
+        .unwrap();
+    // One the mentor has already, in other case, stays where it is.
+    for address in ["LI@gmail.com", "ming@ucas.ac.cn", "ming@163.com"] {
+        assert!(mentor::add_email(&db, li, address, 1).await.unwrap());
+    }
+    assert_eq!(
+        mentor::get(&db, li).await.unwrap().unwrap().emails,
+        [
+            "li@pku.edu.cn",
+            "ming@ucas.ac.cn",
+            "li@gmail.com",
+            "ming@163.com"
+        ]
+    );
+    assert!(matches!(
+        mentor::add_email(&db, li, "Zhang@thu.edu.cn", 1).await,
+        Err(SaveError::EmailTaken { name, .. }) if name == "张伟"
+    ));
+    assert!(!mentor::add_email(&db, li + 10, "x@y.cn", 1).await.unwrap());
+}

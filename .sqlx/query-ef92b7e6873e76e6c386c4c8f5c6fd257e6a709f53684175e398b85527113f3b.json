@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id FROM mentor_email WHERE address = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ef92b7e6873e76e6c386c4c8f5c6fd257e6a709f53684175e398b85527113f3b"
+}

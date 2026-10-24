@@ -1,5 +1,5 @@
 node_modules/
-/target/
+target/
 /.dev-data/
 /ui/dist/
 /crates/app/gen/schemas/

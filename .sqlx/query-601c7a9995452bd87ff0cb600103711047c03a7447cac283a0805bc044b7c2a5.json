@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name, count(*) AS \"count!: i64\" FROM email e JOIN mentor m ON m.id = e.mentor_id\n           WHERE e.mentor_id IN (?1, ?2)\n             AND (e.state IN ('approved', 'cloud', 'sending', 'failed')\n                  OR e.task_id IS NOT NULL AND e.state IN ('generating', 'generation_failed', 'review'))\n           GROUP BY m.id ORDER BY m.id = ?1 DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "601c7a9995452bd87ff0cb600103711047c03a7447cac283a0805bc044b7c2a5"
+}

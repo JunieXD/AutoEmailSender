@@ -219,6 +219,10 @@ pub struct Email {
     pub subject: String,
     pub body_md: String,
     pub attachments: Vec<Attachment>,
+    /// The bounced email this one sends again.
+    pub resend_of: Option<i64>,
+    /// Whether this bounced email has been sent again, as an email in any state.
+    pub resent: bool,
     #[serde(flatten)]
     pub delivery: Delivery,
 }
@@ -293,6 +297,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     }
     sqlx::query!(
         r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
+             resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS "resent!: bool",
              from_address, to_address, sent_at, error
            FROM email
            WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
@@ -340,13 +345,16 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
             subject: r.subject,
             body_md: r.body_md,
             attachments: attachments.remove(&r.id).unwrap_or_default(),
+            resend_of: r.resend_of,
+            resent: r.resent,
             delivery,
         })
     })
     .collect()
 }
 
-/// Takes an email that has not gone out back to a draft. False when it is on its way out by now.
+/// Takes an email that has not gone out back to a draft. False when it is on its way out by now,
+/// or sends a bounced one again: that is the letter as it went, not a draft.
 /// Approved again, it is another letter, with a Message-ID of its own: mailboxes drop a second
 /// email under the same one (docs/design.md#桌面端), and a copy of an earlier try is no proof the
 /// new text went out.
@@ -355,7 +363,7 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
            to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
            html = NULL, text = NULL, updated_at = ?
-         WHERE id = ? AND state IN ('approved', 'failed')",
+         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL",
         now,
         id,
     )
@@ -378,6 +386,42 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
     .execute(db)
     .await?;
     Ok(done.rows_affected() == 1)
+}
+
+/// Sends a bounced email again, now, as another email with the same content and files, to the
+/// mentor's sending address by then; the bounced one keeps its bounce. Refused when it was sent
+/// again already, or the mentor is in the trash.
+pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let Some(again) = sqlx::query_scalar!(
+        "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,
+           created_at, updated_at, subject, body_md, html, text)
+         SELECT e.mentor_id, e.task_id, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,
+           e.subject, e.body_md, e.html, e.text
+         FROM email e JOIN mentor m ON m.id = e.mentor_id
+         WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
+         ON CONFLICT (resend_of) DO NOTHING
+         RETURNING id AS \"id!\"",
+        id,
+        now,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(Approved::Refused);
+    };
+    let materials = sqlx::query_scalar!(
+        r#"SELECT material_id AS "material_id?" FROM email_attachment WHERE email_id = ?"#,
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let Some(materials) = materials.into_iter().collect::<Option<Vec<i64>>>() else {
+        return Ok(Approved::MaterialGone);
+    };
+    attach(&mut tx, again, &materials).await?;
+    tx.commit().await?;
+    Ok(Approved::Yes)
 }
 
 /// Why an email the last run left being sent is only maybe sent.
