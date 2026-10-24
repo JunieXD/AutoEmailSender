@@ -215,6 +215,44 @@ async fn redirects_cannot_leave_the_site_or_reach_a_private_address() {
 }
 
 #[tokio::test]
+async fn linked_profiles_cannot_request_a_private_host_hidden_by_trailing_dots() {
+    let mut server = Server::start(false).await;
+    let start = PageUrl::parse("https://cs.pku.edu.cn/list").unwrap();
+    let material = crate::parse(
+        &start,
+        &format!(
+            "<a href='http://127.0.0.1..:{}/private'>导师个人页</a>",
+            server.port
+        ),
+    )
+    .unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let fetcher = Fetcher::new(&net).unwrap();
+    let scope = Scope::new(&start);
+    let visit = async {
+        for link in material.units.iter().flat_map(|unit| &unit.links) {
+            let target = scope.linked_profile(&material, &link.url).unwrap();
+            let page = fetcher.fetch(&target).await.unwrap();
+            assert_eq!(page.material.text(), "private API");
+        }
+    };
+    tokio::pin!(visit);
+    let mut requested = Vec::new();
+    loop {
+        tokio::select! {
+            () = &mut visit => break,
+            request = server.requests.recv() => {
+                let request = request.unwrap();
+                requested.push(request.path);
+                request.respond.send(reply(200, "", "<p>private API</p>")).unwrap();
+            }
+        }
+    }
+    assert!(requested.is_empty(), "private HTTP requests: {requested:?}");
+    assert!(material.units.iter().all(|unit| unit.links.is_empty()));
+}
+
+#[tokio::test]
 async fn bodies_are_limited_even_without_a_content_length() {
     for response in [
         format!(

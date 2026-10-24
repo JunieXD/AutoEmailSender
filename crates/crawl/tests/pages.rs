@@ -82,6 +82,151 @@ fn literal_private_and_local_urls_are_rejected_without_dns() {
 }
 
 #[test]
+fn host_normalization_cannot_hide_private_ip_literals() {
+    for host in [
+        "127.0.0.1",
+        "0177.0.0.1",
+        "10.0.0.1",
+        "169.254.169.254",
+        "0.0.0.0",
+    ] {
+        for suffix in ["..", "..."] {
+            let value = format!("http://{host}{suffix}/private");
+            assert!(PageUrl::parse(&value).is_err(), "{value}");
+            assert!(url().join(&value).is_err(), "{value}");
+        }
+    }
+    assert_eq!(
+        PageUrl::parse("https://CS.PKU.EDU.CN../a#part").unwrap(),
+        PageUrl::parse("https://cs.pku.edu.cn/a").unwrap()
+    );
+    assert_eq!(
+        PageUrl::parse("https://8.8.8.8../").unwrap(),
+        PageUrl::parse("https://8.8.8.8/").unwrap()
+    );
+}
+
+#[test]
+fn nested_contact_fields_stay_with_their_person() {
+    for html in [
+        r#"<ul>
+          <li><h2><a href="/a">Alice</a></h2><ul>
+            <li><a href="mailto:a@pku.edu.cn">Email</a></li>
+            <li><a href="/a/home">Homepage</a></li>
+          </ul></li>
+          <li><h2><a href="/b">Bob</a></h2><ul>
+            <li><a href="mailto:b@pku.edu.cn">Email</a></li>
+            <li><a href="/b/home">Homepage</a></li>
+          </ul></li>
+        </ul>"#,
+        r#"<section>
+          <div class="person"><h2><a href="/a">Alice</a></h2><div class="contacts">
+            <div><a href="mailto:a@pku.edu.cn">Email</a></div>
+            <div><a href="/a/home">Homepage</a></div>
+          </div></div>
+          <div class="person"><h2><a href="/b">Bob</a></h2><div class="contacts">
+            <div><a href="mailto:b@pku.edu.cn">Email</a></div>
+            <div><a href="/b/home">Homepage</a></div>
+          </div></div>
+        </section>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(page.units.len(), 2, "{:?}", page.units);
+        for (unit, (name, address, other)) in page.units.iter().zip([
+            ("Alice", "a@pku.edu.cn", "Bob"),
+            ("Bob", "b@pku.edu.cn", "Alice"),
+        ]) {
+            assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
+            assert!(!unit.text.contains(other), "{unit:?}");
+            assert_eq!(unit.emails.len(), 1, "{unit:?}");
+            assert_eq!(unit.emails[0].address, address);
+            assert_eq!(unit.links.len(), 2, "{unit:?}");
+        }
+    }
+}
+
+#[test]
+fn repeated_columns_still_split_into_individual_people() {
+    let page = parse(
+        &url(),
+        r#"<main>
+      <section class="column"><h1>教授</h1>
+        <article><h2>Alice</h2><p>a@pku.edu.cn</p></article>
+        <article><h2>Bob</h2><p>b@pku.edu.cn</p></article>
+      </section>
+      <section class="column"><h1>副教授</h1>
+        <article><h2>Carol</h2><p>c@pku.edu.cn</p></article>
+        <article><h2>David</h2><p>d@pku.edu.cn</p></article>
+      </section>
+    </main>"#,
+    )
+    .unwrap();
+    let cards: Vec<_> = page.units.iter().filter(|u| u.is_card).collect();
+    assert_eq!(cards.len(), 4, "{:?}", page.units);
+    for (unit, (name, address)) in cards.iter().zip([
+        ("Alice", "a@pku.edu.cn"),
+        ("Bob", "b@pku.edu.cn"),
+        ("Carol", "c@pku.edu.cn"),
+        ("David", "d@pku.edu.cn"),
+    ]) {
+        assert!(unit.text.contains(name), "{unit:?}");
+        assert_eq!(unit.emails.len(), 1);
+        assert_eq!(unit.emails[0].address, address);
+    }
+}
+
+#[test]
+fn repeated_email_labels_are_fields_inside_a_person() {
+    let page = parse(
+        &url(),
+        r#"<ul>
+      <li><h2>Alice</h2><ul><li>Email: a@pku.edu.cn</li><li>Email: alice@pku.edu.cn</li></ul></li>
+      <li><h2>Bob</h2><ul><li>Email: b@pku.edu.cn</li><li>Email: bob@pku.edu.cn</li></ul></li>
+    </ul>"#,
+    )
+    .unwrap();
+    assert_eq!(page.units.len(), 2, "{:?}", page.units);
+    for (unit, (name, addresses)) in page.units.iter().zip([
+        ("Alice", ["a@pku.edu.cn", "alice@pku.edu.cn"]),
+        ("Bob", ["b@pku.edu.cn", "bob@pku.edu.cn"]),
+    ]) {
+        assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
+        assert_eq!(
+            unit.emails
+                .iter()
+                .map(|e| e.address.as_str())
+                .collect::<Vec<_>>(),
+            addresses
+        );
+    }
+}
+
+#[test]
+fn repeated_obfuscated_contacts_define_separate_people() {
+    for (first, second) in [
+        ("a[at]pku.edu.cn", "b[at]pku.edu.cn"),
+        ("a at pku dot edu dot cn", "b at pku dot edu dot cn"),
+        ("a（at）pku．edu．cn", "b（at）pku．edu．cn"),
+    ] {
+        let page = parse(
+            &url(),
+            &format!("<ul><li>Alice {first}</li><li>Bob {second}</li></ul>"),
+        )
+        .unwrap();
+        assert_eq!(page.units.len(), 2, "{first}: {:?}", page.units);
+        for (unit, (name, address, other)) in page.units.iter().zip([
+            ("Alice", "a@pku.edu.cn", "Bob"),
+            ("Bob", "b@pku.edu.cn", "Alice"),
+        ]) {
+            assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
+            assert!(!unit.text.contains(other));
+            assert_eq!(unit.emails.len(), 1);
+            assert_eq!(unit.emails[0].address, address);
+        }
+    }
+}
+
+#[test]
 fn real_mcgill_cards_keep_each_name_and_email_together() {
     let base = PageUrl::parse("https://www.cs.mcgill.ca/people/faculty/").unwrap();
     let material = parse(&base, include_str!("pages/mcgill.html")).unwrap();
@@ -163,6 +308,41 @@ fn email_spellings_preserve_original_evidence_positions() {
     }
     let page = parse(&url(), "<p>article#school.edu.cn</p><script>fake@school.edu.cn</script><style>foo@school.edu.cn</style>").unwrap();
     assert!(page.units.iter().all(|u| u.emails.is_empty()));
+}
+
+#[test]
+fn email_evidence_never_joins_surrounding_sentence_punctuation() {
+    for (html, spelling, address) in [
+        (
+            "<p>Email: alice@pku.edu.cn. Research interests: AI.</p>",
+            "alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "<p>Prof. alice@pku.edu.cn</p>",
+            "alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "<p>Email: <a href='/alice'>alice@pku.edu.cn</a>. Research interests: AI.</p>",
+            "alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "<p>Prof. alice (at) pku (dot) edu [dot] cn. Research interests: AI.</p>",
+            "alice (at) pku (dot) edu [dot] cn",
+            "alice@pku.edu.cn",
+        ),
+    ] {
+        let page = parse(&url(), html).unwrap();
+        let evidence: Vec<_> = page.units.iter().flat_map(|u| &u.emails).collect();
+        assert_eq!(evidence.len(), 1, "{html}: {evidence:?}");
+        assert_eq!(evidence[0].address, address, "{html}");
+        let EmailLocation::Text { start, end } = evidence[0].location else {
+            panic!("expected text evidence");
+        };
+        assert_eq!(&page.units[0].text[start..end], spelling, "{html}");
+    }
 }
 
 #[test]
@@ -261,6 +441,199 @@ fn real_seu_directory_exposes_url_pagination() {
             .any(|u| u.as_str() == "https://cyber.seu.edu.cn/yjsds_22371/list4.htm")
     );
     assert!(!material.pagination.needs_browser);
+    assert_eq!(
+        material
+            .pagination
+            .urls
+            .iter()
+            .map(PageUrl::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "https://cyber.seu.edu.cn/yjsds_22371/list2.htm",
+            "https://cyber.seu.edu.cn/yjsds_22371/list4.htm",
+        ]
+    );
+    for navigation in [
+        "https://cyber.seu.edu.cn/",
+        "https://cyber.seu.edu.cn/main.htm",
+    ] {
+        assert!(
+            material
+                .units
+                .iter()
+                .flat_map(|u| &u.links)
+                .any(|l| l.url.as_str() == navigation)
+        );
+    }
+}
+
+#[test]
+fn ambiguous_home_links_need_pagination_context_or_a_matching_list_url() {
+    let base = PageUrl::parse("https://cs.pku.edu.cn/teachers/list2.htm").unwrap();
+    let page = parse(
+        &base,
+        r#"<nav><a href="/">首页</a><a href="/main.htm">首页</a></nav>
+      <a href="list.htm">首页</a><nav class="pagination"><a href="/directory">首页</a></nav>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        page.pagination
+            .urls
+            .iter()
+            .map(PageUrl::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "https://cs.pku.edu.cn/teachers/list.htm",
+            "https://cs.pku.edu.cn/directory"
+        ]
+    );
+    assert_eq!(page.units.iter().flat_map(|u| &u.links).count(), 4);
+    assert!(!page.pagination.needs_browser);
+}
+
+#[test]
+fn input_pagination_buttons_need_browser_but_inert_inputs_do_not() {
+    for kind in ["button", "submit", "image"] {
+        let page = parse(
+            &url(),
+            &format!(
+                r#"<input type="{kind}" value="下一页">
+          <script>document.querySelector('input').onclick=()=>loadPage(2)</script>"#
+            ),
+        )
+        .unwrap();
+        assert!(page.pagination.urls.is_empty());
+        assert!(page.pagination.needs_browser, "{kind}");
+        assert_eq!(
+            page.needs_browser,
+            Some(BrowserReason::Pagination),
+            "{kind}"
+        );
+    }
+    let page = parse(
+        &url(),
+        r#"<input type="image" alt="下一页" src="next.png">"#,
+    )
+    .unwrap();
+    assert!(page.pagination.needs_browser);
+    for input in [
+        r#"<input type="hidden" value="下一页" onclick="loadPage(2)">"#,
+        r#"<input type="text" value="下一页" onclick="loadPage(2)">"#,
+        r#"<input value="下一页">"#,
+        r#"<input type="button" value="下一页" disabled>"#,
+        r#"<input type="submit" value="下一页" aria-disabled="true">"#,
+        r#"<input type="button" value="下一页" hidden>"#,
+        r#"<div style="display:none"><input type="button" value="下一页"></div>"#,
+    ] {
+        let page = parse(&url(), input).unwrap();
+        assert!(page.pagination.urls.is_empty(), "{input}");
+        assert!(!page.pagination.needs_browser, "{input}");
+        assert_eq!(page.needs_browser, None, "{input}");
+    }
+}
+
+#[test]
+fn onclick_navigation_requires_a_complete_static_expression() {
+    for script in [
+        "window.location='/teacher/' + id",
+        "location.href='/teacher/'.concat(id)",
+        "window.open('/teacher/' + id)",
+        "opennews('/teacher/' + id)",
+        "window.location='/teacher/' || fallback",
+        "location='/teacher/'[index]",
+        "window.open('/teacher/', target)",
+    ] {
+        let page = parse(&url(), &format!(r#"<div onclick="{script}">Alice</div>"#)).unwrap();
+        assert!(
+            page.units.iter().all(|u| u.links.is_empty()),
+            "{script}: {:?}",
+            page.units
+        );
+        assert!(page.pagination.urls.is_empty());
+    }
+    for script in [
+        "window.location='/teacher/alice'",
+        "location.href = '/teacher/alice'; return false;",
+        "opennews('/teacher/alice')",
+        "window.open('/teacher/alice', '_blank');",
+    ] {
+        let page = parse(&url(), &format!(r#"<div onclick="{script}">Alice</div>"#)).unwrap();
+        let links: Vec<_> = page.units.iter().flat_map(|u| &u.links).collect();
+        assert_eq!(links.len(), 1, "{script}");
+        assert_eq!(links[0].url.as_str(), "https://cs.pku.edu.cn/teacher/alice");
+    }
+}
+
+#[test]
+fn a_single_application_bundle_needs_browser_while_short_static_pages_do_not() {
+    for html in [
+        r#"<div id="root"></div><noscript>You need to enable JavaScript to run this app.</noscript>
+           <script type="module" src="/assets/app.js"></script>"#,
+        r#"<div id="app"></div><script type="module" src="/assets/app.js"></script>"#,
+        r#"<div id="root"></div><noscript>请启用 JavaScript 后访问</noscript><script src="/app.js"></script>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert!(page.units.is_empty(), "{:?}", page.units);
+        assert_eq!(
+            page.needs_browser,
+            Some(BrowserReason::JavaScript),
+            "{html}"
+        );
+        assert!(!page.pagination.needs_browser);
+    }
+    for html in [
+        r#"<p>教师名单暂未公布</p><script type="module" src="/analytics.js"></script>"#,
+        r#"<div id="app"><p>Alice a@pku.edu.cn</p></div><script type="module" src="/app.js"></script>"#,
+        r#"<p>联系学院</p><script src="a.js"></script><script src="b.js"></script><script src="c.js"></script>"#,
+        "<div id='root'></div>",
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(page.needs_browser, None, "{html}");
+        assert!(!page.pagination.needs_browser);
+    }
+}
+
+#[test]
+fn last_page_placeholders_do_not_require_browser_pagination() {
+    let base = PageUrl::parse("https://cyber.seu.edu.cn/yjsds_22371/list4.htm").unwrap();
+    let html = include_str!("pages/seu.html")
+        .replace(
+            "href=\"/yjsds_22371/list2.htm\"",
+            "href=\"javascript:void(0);\"",
+        )
+        .replace(
+            "href=\"/yjsds_22371/list4.htm\"",
+            "href=\"javascript:void(0);\"",
+        )
+        .replace("class=\"curr_page\">1", "class=\"curr_page\">4");
+    let page = parse(&base, &html).unwrap();
+    assert!(!page.pagination.needs_browser);
+    assert_eq!(page.needs_browser, None);
+    assert!(
+        page.pagination.urls.is_empty(),
+        "{:?}",
+        page.pagination.urls
+    );
+
+    for html in [
+        r#"<nav class="pagination"><a href="javascript:void(0)" aria-disabled="true">下一页</a></nav>"#,
+        r#"<nav class="pagination"><a href="javascript:void(0)">下一页</a></nav>"#,
+        r#"<nav class="pagination"><span class="curr_page">4</span>/<span class="all_pages">4</span><button onclick="go(5)">下一页</button></nav>"#,
+    ] {
+        let page = parse(&base, html).unwrap();
+        assert!(page.pagination.urls.is_empty());
+        assert!(!page.pagination.needs_browser, "{html}");
+        assert_eq!(page.needs_browser, None);
+    }
+    for html in [
+        r#"<nav class="pagination"><span class="curr_page">1</span>/<span class="all_pages">4</span><a href="javascript:void(0)" onclick="go(2)">下一页</a></nav>"#,
+        r#"<nav class="pagination"><a href="javascript:void(0)">下一页</a></nav><script>document.querySelector('a').onclick=()=>go(2)</script>"#,
+    ] {
+        let page = parse(&base, html).unwrap();
+        assert!(page.pagination.urls.is_empty());
+        assert!(page.pagination.needs_browser, "{html}");
+        assert_eq!(page.needs_browser, Some(BrowserReason::Pagination));
+    }
 }
 
 #[test]

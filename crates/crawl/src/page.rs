@@ -138,7 +138,19 @@ fn shape(element: ElementRef<'_>) -> String {
     )
 }
 
-fn repeated_cards(document: &Html) -> Result<Vec<NodeId>, CrawlError> {
+fn contact_attribute(element: ElementRef<'_>, emails: &Emails) -> bool {
+    element
+        .value()
+        .attr("href")
+        .is_some_and(|href| !emails.mailto(href, 0).is_empty())
+        || element
+            .value()
+            .attr("data-cfemail")
+            .and_then(cloudflare)
+            .is_some()
+}
+
+fn repeated_cards(document: &Html, emails: &Emails) -> Result<Vec<NodeId>, CrawlError> {
     let candidates = selector("li, tr, div, article, dd, section")?;
     let links = selector("a[href], [onclick], [data-cfemail]")?;
     let mut repeated = Vec::new();
@@ -162,25 +174,77 @@ fn repeated_cards(document: &Html) -> Result<Vec<NodeId>, CrawlError> {
                 if !ignored(child)
                     && (child.select(&links).next().is_some()
                         || child.value().attr("onclick").is_some()
-                        || child
-                            .text()
-                            .any(|s| s.contains('@') || s.contains("(at)") || s.contains('＠')))
+                        || !emails.text(&visible_text(child)).is_empty())
                 {
                     repeated.push(child);
                 }
             }
         }
     }
-    // A repeated column/group may contain several cards. Keep the smaller evidence units.
+    let evidence: Vec<_> = repeated
+        .iter()
+        .map(|&element| {
+            let has_contact = !emails.text(&visible_text(element)).is_empty()
+                || element.descendants().filter_map(ElementRef::wrap).any(|e| {
+                    e.ancestors()
+                        .take_while(|n| n.id() != element.id())
+                        .filter_map(ElementRef::wrap)
+                        .all(|e| !ignored(e))
+                        && contact_attribute(e, emails)
+                });
+            let owned_text = element
+                .descendants()
+                .filter_map(|node| {
+                    let Node::Text(text) = node.value() else {
+                        return None;
+                    };
+                    node.ancestors()
+                        .take_while(|n| n.id() != element.id())
+                        .filter_map(ElementRef::wrap)
+                        .all(|e| {
+                            !ignored(e)
+                                && !repeated.iter().any(|r| r.id() == e.id())
+                                && !contact_attribute(e, emails)
+                        })
+                        .then_some(text.as_ref())
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut identity = owned_text.clone();
+            for evidence in emails.text(&owned_text).iter().rev() {
+                if let EmailLocation::Text { start, end } = evidence.location {
+                    identity.replace_range(start..end, "");
+                }
+            }
+            (element, identity.trim().to_owned(), has_contact)
+        })
+        .collect();
+    let records: Vec<_> = evidence
+        .iter()
+        .filter(|(element, identity, has_contact)| {
+            // Repeated contact labels do not establish separate identities.
+            *has_contact
+                && identity.chars().any(char::is_alphanumeric)
+                && evidence.iter().any(|(sibling, other_identity, _)| {
+                    sibling.parent().map(|n| n.id()) == element.parent().map(|n| n.id())
+                        && !other_identity.is_empty()
+                        && other_identity != identity
+                })
+        })
+        .map(|(element, _, _)| element.id())
+        .collect();
+    // Prefer a person's identity plus contacts over repeated fields inside that record.
+    // Columns containing multiple complete records still split at the person boundaries.
     let mut cards = Vec::new();
     for element in &repeated {
-        if element
+        let descendants: Vec<_> = element
             .descendants()
             .skip(1)
             .filter(|n| repeated.iter().any(|e| e.id() == n.id()))
-            .take(2)
-            .count()
-            < 2
+            .map(|n| n.id())
+            .collect();
+        if descendants.iter().filter(|id| records.contains(id)).count() < 2
+            && (records.contains(&element.id()) || descendants.len() < 2)
         {
             cards.push(element.id());
         }
@@ -190,12 +254,12 @@ fn repeated_cards(document: &Html) -> Result<Vec<NodeId>, CrawlError> {
 
 fn navigation(script: &str, pattern: &Regex, url: &PageUrl) -> Option<PageUrl> {
     let found = pattern.captures(script)?;
-    let target = found.get(1).or_else(|| found.get(2))?.as_str();
+    let target = found.iter().skip(1).flatten().next()?.as_str();
     let target = url.join(target).ok()?;
     (target.website() == url.website()).then_some(target)
 }
 
-fn label(element: ElementRef<'_>) -> String {
+fn visible_text(element: ElementRef<'_>) -> String {
     let text = element
         .descendants()
         .filter_map(|node| {
@@ -210,7 +274,11 @@ fn label(element: ElementRef<'_>) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn label(element: ElementRef<'_>) -> String {
+    let text = visible_text(element);
     if !text.is_empty() {
         return text;
     }
@@ -239,9 +307,73 @@ fn label(element: ElementRef<'_>) -> String {
     "无文字链接".into()
 }
 
-fn pagination_control(element: ElementRef<'_>, text: &str) -> bool {
+fn pagination_container(element: ElementRef<'_>) -> bool {
+    ["class", "id", "aria-label"]
+        .iter()
+        .filter_map(|a| element.value().attr(a))
+        .any(|s| {
+            let s = s.to_lowercase();
+            [
+                "pagination",
+                "paging",
+                "pager",
+                "pagenav",
+                "page-nav",
+                "page_nav",
+                "pagebar",
+                "翻页",
+                "分页",
+            ]
+            .iter()
+            .any(|cue| s.contains(cue))
+                || s.split_whitespace().any(|s| s == "pages")
+        })
+}
+
+fn pagination_context(element: ElementRef<'_>) -> Option<ElementRef<'_>> {
+    std::iter::once(element)
+        .chain(element.ancestors().filter_map(ElementRef::wrap))
+        .take(5)
+        .find(|e| pagination_container(*e))
+}
+
+fn query_page(url: &PageUrl) -> bool {
+    url.parsed().query_pairs().any(|(key, value)| {
+        matches!(
+            key.to_lowercase().as_str(),
+            "page" | "pageno" | "pagenum" | "pageindex" | "page_no"
+        ) && value.parse::<u32>().is_ok()
+    })
+}
+
+fn same_list_url(current: &PageUrl, target: &PageUrl) -> bool {
+    fn path_parts(url: &PageUrl) -> (&str, &str, &str) {
+        let (directory, file) = url.parsed().path().rsplit_once('/').unwrap_or_default();
+        let (stem, extension) = file.rsplit_once('.').unwrap_or((file, ""));
+        let stem = stem.trim_end_matches(|c: char| c.is_ascii_digit());
+        (directory, stem, extension)
+    }
+    current.parsed().origin() == target.parsed().origin()
+        && if current.parsed().path() == target.parsed().path() {
+            query_page(current) || query_page(target)
+        } else {
+            let current = path_parts(current);
+            !current.1.is_empty() && current == path_parts(target)
+        }
+}
+
+fn pagination_control(
+    element: ElementRef<'_>,
+    text: &str,
+    link: Option<&PageUrl>,
+    current: &PageUrl,
+) -> bool {
     let text = text.trim().to_lowercase();
     let label = text.trim_matches(['<', '>', '«', '»', '‹', '›', '→', '←', ' ']);
+    let context = pagination_context(element).is_some();
+    if matches!(label, "首页" | "first") {
+        return context || link.is_some_and(|link| same_list_url(current, link));
+    }
     let explicit = [
         "下一页",
         "下页",
@@ -251,12 +383,12 @@ fn pagination_control(element: ElementRef<'_>, text: &str) -> bool {
         "尾页",
         "上一页",
         "上页",
-        "首页",
+        "第一页",
         "next",
         "next page",
         "previous",
         "last",
-        "first",
+        "first page",
         "»",
         "›",
         ">",
@@ -272,20 +404,66 @@ fn pagination_control(element: ElementRef<'_>, text: &str) -> bool {
         return true;
     }
     let numeric = !text.is_empty() && text.chars().all(|c| c.is_ascii_digit());
-    numeric
-        && element
-            .ancestors()
-            .filter_map(ElementRef::wrap)
-            .take(4)
-            .any(|e| {
-                ["class", "id", "aria-label"]
-                    .iter()
-                    .filter_map(|a| e.value().attr(a))
-                    .any(|s| {
-                        let s = s.to_lowercase();
-                        s.contains("pag") || s.contains("翻页") || s.contains("分页")
-                    })
-            })
+    numeric && context
+}
+
+fn input_button(element: ElementRef<'_>) -> bool {
+    element.value().name() == "input"
+        && element.value().attr("type").is_some_and(|kind| {
+            matches!(
+                kind.to_ascii_lowercase().as_str(),
+                "button" | "submit" | "image"
+            )
+        })
+}
+
+fn disabled_control(element: ElementRef<'_>) -> bool {
+    std::iter::once(element)
+        .chain(element.ancestors().filter_map(ElementRef::wrap))
+        .any(|e| {
+            e.value().attr("disabled").is_some()
+                || e.value().attr("aria-disabled") == Some("true")
+                || e.value()
+                    .has_class("disabled", scraper::CaseSensitivity::AsciiCaseInsensitive)
+        })
+}
+
+fn last_page(element: ElementRef<'_>, current: &Selector, total: &Selector) -> bool {
+    std::iter::once(element)
+        .chain(element.ancestors().filter_map(ElementRef::wrap))
+        .take(5)
+        .filter(|e| pagination_container(*e))
+        .any(|e| {
+            let number = |pattern| {
+                e.select(pattern)
+                    .next()
+                    .and_then(|e| visible_text(e).parse::<u32>().ok())
+            };
+            matches!((number(current), number(total)), (Some(current), Some(total)) if total > 0 && current >= total)
+        })
+}
+
+fn javascript_control(href: &str, has_scripts: bool) -> bool {
+    let href: String = href
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ';')
+        .flat_map(char::to_lowercase)
+        .collect();
+    href.strip_prefix("javascript:").is_some_and(|script| {
+        has_scripts || !matches!(script, "" | "void(0)" | "void0" | "undefined")
+    })
+}
+
+fn forward_control(text: &str) -> bool {
+    let text = text.trim().to_lowercase();
+    if matches!(text.as_str(), ">" | "»" | "›" | "→") {
+        return true;
+    }
+    let text = text.trim_matches(['<', '>', '«', '»', '‹', '›', '→', '←', ' ']);
+    matches!(
+        text,
+        "下一页" | "下页" | "下翻" | "后页" | "末页" | "尾页" | "next" | "next page" | "last"
+    )
 }
 
 fn backward_control(text: &str) -> bool {
@@ -301,8 +479,25 @@ fn backward_control(text: &str) -> bool {
 pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
     let document = Html::parse_document(html);
     let emails = Emails::new()?;
-    let navigation_pattern = Regex::new(r#"(?i)(?:\b(?:opennews|(?:window\.)?open)\s*\(\s*|\b(?:(?:window|top)\.)?location(?:\.href)?\s*=\s*)(?:'([^'\\]*)'|"([^"\\]*)")"#)
-        .map_err(|e| CrawlError::Parse(e.to_string()))?;
+    let navigation_pattern = Regex::new(
+        r#"(?ix)
+        ^\s*(?:javascript:\s*)?(?:return\s+)?
+        (?:
+            (?:(?:window|top)\.)?location(?:\.href)?\s*=\s*
+            (?:'([^'\\]*)'|"([^"\\]*)")
+            |
+            (?:opennews|(?:window\.)?open)\s*\(\s*
+            (?:'([^'\\]*)'|"([^"\\]*)")
+            (?:\s*,\s*(?:'[^'\\]*'|"[^"\\]*")){0,2}\s*\)
+        )
+        \s*;?\s*(?:return\s+false\s*;?\s*)?$
+    "#,
+    )
+    .map_err(|e| CrawlError::Parse(e.to_string()))?;
+    let scripts = selector("script")?;
+    let has_scripts = document.select(&scripts).next().is_some();
+    let current_page = selector(".curr_page, .current_page, .current-page, [aria-current='page']")?;
+    let total_pages = selector(".all_pages, .total_pages, .total-pages")?;
     let title = document.select(&selector("title")?).next().map(|e| {
         e.text()
             .collect::<String>()
@@ -310,7 +505,7 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
             .collect::<Vec<_>>()
             .join(" ")
     });
-    let cards = repeated_cards(&document)?;
+    let cards = repeated_cards(&document, &emails)?;
     let mut units = Vec::new();
     let mut current = Unit::default();
     let mut active_card = None;
@@ -377,25 +572,32 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                         href.filter(|h| h.trim().to_lowercase().starts_with("javascript:"))
                             .and_then(|s| navigation(s, &navigation_pattern, url))
                     });
-                let control = href.is_some()
-                    || matches!(element.value().name(), "a" | "button" | "input")
-                    || element.value().attr("role") == Some("button")
-                    || element.value().attr("onclick").is_some();
+                let control = if element.value().name() == "input" {
+                    input_button(element)
+                } else {
+                    href.is_some()
+                        || matches!(element.value().name(), "a" | "button")
+                        || element.value().attr("role") == Some("button")
+                        || element.value().attr("onclick").is_some()
+                };
                 if control {
                     let text = if element.value().name() == "input" {
-                        element.value().attr("value").unwrap_or_default().into()
+                        element
+                            .value()
+                            .attr("value")
+                            .filter(|value| !value.trim().is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| label(element))
                     } else {
                         label(element)
                     };
-                    let query_page = link.as_ref().is_some_and(|u| {
-                        u.parsed().query_pairs().any(|(key, value)| {
-                            matches!(
-                                key.to_lowercase().as_str(),
-                                "page" | "pageno" | "pagenum" | "pageindex" | "page_no"
-                            ) && value.parse::<u32>().is_ok()
-                        })
-                    });
-                    if pagination_control(element, &text) || query_page {
+                    let ended =
+                        forward_control(&text) && last_page(element, &current_page, &total_pages);
+                    if !disabled_control(element)
+                        && !ended
+                        && (pagination_control(element, &text, link.as_ref(), url)
+                            || link.as_ref().is_some_and(query_page))
+                    {
                         if let Some(link) = &link {
                             if link.website() == url.website()
                                 && link != url
@@ -404,12 +606,10 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                                 pagination.urls.push(link.clone());
                             }
                         } else if !backward_control(&text)
-                            && element.value().attr("disabled").is_none()
-                            && element.value().attr("aria-disabled") != Some("true")
                             && (element.value().attr("onclick").is_some()
-                                || href
-                                    .is_some_and(|h| h.to_lowercase().starts_with("javascript:"))
+                                || href.is_some_and(|h| javascript_control(h, has_scripts))
                                 || element.value().name() == "button"
+                                || input_button(element)
                                 || element.value().attr("role") == Some("button"))
                         {
                             pagination.needs_browser = true;
@@ -446,11 +646,23 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
         }
     }
     finish(&mut current, &mut units, &emails);
-    let scripts = document.select(&selector("script")?).count();
-    let text_len: usize = units
-        .iter()
-        .map(|u| u.text.chars().filter(|c| !c.is_whitespace()).count())
-        .sum();
+    let script_entry = document.select(&scripts).any(|e| {
+        e.value().attr("type") == Some("module")
+            || e.value().attr("src").is_some_and(|s| !s.trim().is_empty())
+    });
+    let empty_mount = document
+        .select(&selector(
+            "#root, #app, #__next, #__nuxt, [data-reactroot], [ng-app]",
+        )?)
+        .any(|e| visible_text(e).is_empty());
+    let javascript_hint = document.select(&selector("noscript")?).any(|e| {
+        let text = e.text().collect::<String>().to_lowercase();
+        text.contains("javascript")
+            && ["enable", "need", "required", "启用", "开启", "需要"]
+                .iter()
+                .any(|cue| text.contains(cue))
+    });
+    let application_shell = units.is_empty() && script_entry && (empty_mount || javascript_hint);
     let dynamic_list = document.select(&selector("[id], [class]")?).any(|e| {
         ["id", "class"]
             .iter()
@@ -470,7 +682,7 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
     });
     let needs_browser = if encrypted {
         Some(BrowserReason::EncryptedContent)
-    } else if dynamic_list || (text_len < 100 && scripts >= 3) {
+    } else if dynamic_list || application_shell {
         Some(BrowserReason::JavaScript)
     } else if pagination.needs_browser {
         Some(BrowserReason::Pagination)

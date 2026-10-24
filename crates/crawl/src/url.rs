@@ -18,9 +18,16 @@ impl PageUrl {
         {
             return Err(CrawlError::Url);
         }
+        if let Some(host) = url
+            .host_str()
+            .filter(|h| h.ends_with('.'))
+            .map(str::to_owned)
+        {
+            url.set_host(Some(host.trim_end_matches('.')))
+                .map_err(|_| CrawlError::Url)?;
+        }
         match url.host().ok_or(CrawlError::Url)? {
             Host::Domain(host) => {
-                let host = host.trim_end_matches('.');
                 if !host.contains('.')
                     || host == "localhost"
                     || host.ends_with(".localhost")
@@ -33,14 +40,6 @@ impl PageUrl {
             Host::Ipv4(ip) if !public_v4(ip) => return Err(CrawlError::Url),
             Host::Ipv6(ip) if !public_v6(ip) => return Err(CrawlError::Url),
             _ => {}
-        }
-        if let Some(host) = url
-            .host_str()
-            .filter(|h| h.ends_with('.'))
-            .map(str::to_owned)
-        {
-            url.set_host(Some(host.trim_end_matches('.')))
-                .map_err(|_| CrawlError::Url)?;
         }
         url.set_fragment(None);
         Ok(Self(url))

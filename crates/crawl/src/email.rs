@@ -13,16 +13,16 @@ impl Emails {
     pub fn new() -> Result<Self, CrawlError> {
         let compile =
             |s| Regex::new(s).map_err(|e| CrawlError::Parse(format!("email pattern: {e}")));
+        let at = r"[ \t]*(?:\([ \t]*at[ \t]*\)|\[[ \t]*at[ \t]*\]|[ \t]+at[ \t]+|@)[ \t]*";
+        let dot = r"[ \t]*(?:\([ \t]*dot[ \t]*\)|\[[ \t]*dot[ \t]*\]|[ \t]+dot[ \t]+)[ \t]*";
+        let local = r"[a-z0-9.!#$%&'*+/=?^_`{|}~\-]+";
+        let domain = r"[a-z0-9\-]+";
         Ok(Self {
-            candidate: compile(
-                r"(?i)[a-z0-9.!#$%&'*+/=?^_`{|}~\-]+[@#][a-z0-9\-]+(?:\.[a-z0-9\-]+)+",
-            )?,
-            at: compile(
-                r"(?i)[ \t]*(?:\([ \t]*at[ \t]*\)|\[[ \t]*at[ \t]*\]|[ \t]+at[ \t]+|@)[ \t]*",
-            )?,
-            dot: compile(
-                r"(?i)[ \t]*(?:\([ \t]*dot[ \t]*\)|\[[ \t]*dot[ \t]*\]|[ \t]+dot[ \t]+|\.)[ \t]*",
-            )?,
+            candidate: compile(&format!(
+                r"(?i){local}(?:{dot}{local})*(?:{at}|[ \t]*#[ \t]*){domain}(?:(?:\.|{dot}){domain})+"
+            ))?,
+            at: compile(&format!("(?i){at}"))?,
+            dot: compile(&format!("(?i){dot}"))?,
             hash: compile(r"[ \t]*#[ \t]*")?,
         })
     }
@@ -43,13 +43,13 @@ impl Emails {
             normalized.push(c);
             positions.extend(std::iter::repeat_n((start, end), c.len_utf8()));
         }
-        let (normalized, positions) = replace(&normalized, &positions, &self.at, '@');
-        let (normalized, positions) = replace(&normalized, &positions, &self.dot, '.');
-        let (normalized, positions) = replace(&normalized, &positions, &self.hash, '#');
         self.candidate
             .find_iter(&normalized)
             .filter_map(|found| {
-                let raw = found.as_str();
+                // Normalize only a complete address fragment; prose punctuation keeps its spaces.
+                let raw = self.at.replace_all(found.as_str(), "@");
+                let raw = self.dot.replace_all(&raw, ".");
+                let raw = self.hash.replace_all(&raw, "#");
                 if raw.contains('#') && !raw.contains('@') {
                     let line_start = normalized[..found.start()].rfind('\n').map_or(0, |p| p + 1);
                     let line_end = normalized[found.end()..]
@@ -104,27 +104,6 @@ impl Emails {
             })
             .collect()
     }
-}
-
-fn replace(
-    text: &str,
-    positions: &[(usize, usize)],
-    pattern: &Regex,
-    replacement: char,
-) -> (String, Vec<(usize, usize)>) {
-    let mut output = String::new();
-    let mut mapped = Vec::new();
-    let mut cursor = 0;
-    for found in pattern.find_iter(text) {
-        output.push_str(&text[cursor..found.start()]);
-        mapped.extend_from_slice(&positions[cursor..found.start()]);
-        output.push(replacement);
-        mapped.push((positions[found.start()].0, positions[found.end() - 1].1));
-        cursor = found.end();
-    }
-    output.push_str(&text[cursor..]);
-    mapped.extend_from_slice(&positions[cursor..]);
-    (output, mapped)
 }
 
 pub(crate) fn cloudflare(encoded: &str) -> Option<String> {
