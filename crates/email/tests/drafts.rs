@@ -4,6 +4,16 @@
 use mentor::MentorFields;
 use sqlx::SqlitePool;
 
+fn approval(attachments: &[i64]) -> email::Approval<'_> {
+    email::Approval {
+        subject: "申请",
+        body_md: "王老师：",
+        html: "<p>王老师：</p>",
+        text: "王老师：",
+        attachments,
+    }
+}
+
 async fn add_mentor(db: &SqlitePool) -> i64 {
     let fields = MentorFields {
         name: "王伟".into(),
@@ -66,13 +76,7 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
     email::save_first_draft(&db, mentor, "申请", "王老师：", &[], 1)
         .await
         .unwrap();
-    let approval = email::Approval {
-        subject: "申请",
-        body_md: "王老师：",
-        html: "<p>王老师：</p>",
-        text: "王老师：",
-        attachments: &[],
-    };
+    let approval = approval(&[]);
     assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
@@ -126,13 +130,7 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
         .await
         .unwrap();
     let picked = [transcript, other_resume];
-    let mut approval = email::Approval {
-        subject: "申请",
-        body_md: "王老师：",
-        html: "<p>王老师：</p>",
-        text: "王老师：",
-        attachments: &picked,
-    };
+    let mut approval = approval(&picked);
     assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
@@ -160,13 +158,7 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_letter_never_saved_is_approved_once(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
-    let approval = email::Approval {
-        subject: "申请",
-        body_md: "王老师：",
-        html: "<p>王老师：</p>",
-        text: "王老师：",
-        attachments: &[],
-    };
+    let approval = approval(&[]);
     assert_eq!(
         email::approve_first(&db, mentor, &approval, 1)
             .await

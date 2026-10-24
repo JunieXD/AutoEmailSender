@@ -11,6 +11,7 @@ use mailbox::{Imap, MailError};
 use net::Net;
 use serde::Serialize;
 use sqlx::SqlitePool;
+use sqlx::types::Json;
 use tokio::sync::{Mutex, MutexGuard, Notify};
 use ts_rs::TS;
 
@@ -185,13 +186,12 @@ async fn receive(
         .into_iter()
         .chain([(Role::Inbox, "INBOX".to_owned())])
         .collect();
-    let names = serde_json::to_string(&folders.iter().map(|(_, n)| n).collect::<Vec<_>>())
-        .map_err(|e| sqlx::Error::Encode(e.into()))?;
+    let names: Vec<_> = folders.iter().map(|(_, n)| n).collect();
     // A sent folder that is no longer one.
     sqlx::query!(
         "DELETE FROM mailbox_folder WHERE mailbox_id = ? AND folder NOT IN (SELECT value FROM json_each(?))",
         mailbox_id,
-        names
+        Json(&names)
     )
     .execute(db)
     .await?;
@@ -483,11 +483,10 @@ impl Session<'_> {
     }
 
     async fn mentors_at(&self, addresses: &[String]) -> Result<Vec<i64>, Error> {
-        let addresses = json(addresses)?;
         Ok(sqlx::query_scalar!(
             r#"SELECT DISTINCT mentor_id FROM mentor_email
                WHERE address IN (SELECT value FROM json_each(?))"#,
-            addresses
+            Json(addresses)
         )
         .fetch_all(self.db)
         .await?)
@@ -495,7 +494,6 @@ impl Session<'_> {
 
     /// The mentors of the mail a message follows up on.
     async fn mentors_in_thread(&self, ids: &[String]) -> Result<Vec<i64>, Error> {
-        let ids = json(ids)?;
         Ok(sqlx::query_scalar!(
             r#"SELECT mentor_id AS "mentor_id!" FROM email
                WHERE message_id IN (SELECT value FROM json_each(?1))
@@ -503,7 +501,7 @@ impl Session<'_> {
                UNION
                SELECT mm.mentor_id FROM message m JOIN message_mentor mm ON mm.message_id = m.id
                WHERE m.message_id IN (SELECT value FROM json_each(?1))"#,
-            ids
+            Json(ids)
         )
         .fetch_all(self.db)
         .await?)
@@ -642,7 +640,6 @@ impl Session<'_> {
         for failure in &bounce.failures {
             // Mail sent elsewhere to several mentors bounces for those the bounce names, or for
             // all when it does not say who.
-            let recipients = json(&failure.recipients)?;
             marked |= sqlx::query!(
                 "UPDATE message_mentor SET bounce_reason = ?1
                  WHERE bounce_reason IS NULL
@@ -652,7 +649,7 @@ impl Session<'_> {
                      WHERE address IN (SELECT value FROM json_each(?3))))",
                 failure.reason,
                 bounce.original,
-                recipients
+                Json(&failure.recipients)
             )
             .execute(&mut *tx)
             .await?
@@ -699,10 +696,6 @@ struct Location<'a> {
     folder: &'a str,
     uidvalidity: u32,
     uid: u32,
-}
-
-fn json<T: Serialize>(values: &[T]) -> Result<String, sqlx::Error> {
-    serde_json::to_string(values).map_err(|e| sqlx::Error::Encode(e.into()))
 }
 
 /// A message in the correspondence with a mentor. Times are UTC milliseconds.

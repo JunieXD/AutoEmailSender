@@ -1,10 +1,12 @@
 // Marks the whole file as test code, so clippy's test allowances cover it.
 #![cfg(test)]
 
-use std::num::NonZeroU32;
+mod common;
 
-use mentor::{Affiliation, MentorFields, MentorForm, MentorQuery, SaveError};
+use common::names;
+use mentor::{Affiliation, MentorFields, MentorForm, SaveError};
 use sqlx::SqlitePool;
+use test_fixtures::mail::mailbox;
 
 fn form(name: &str, email: &str, homepage: &str) -> MentorForm {
     MentorForm {
@@ -112,16 +114,6 @@ fn lists_keep_their_order_without_blanks_or_repeats() {
     assert_eq!(fields.homepages, ["https://x.cn"]);
 }
 
-async fn names(db: &SqlitePool, keyword: &str) -> Vec<String> {
-    let query = MentorQuery {
-        status: None,
-        keyword: Some(keyword.into()),
-        page: NonZeroU32::MIN,
-    };
-    let page = mentor::list(db, &query).await.unwrap();
-    page.mentors.into_iter().map(|m| m.name).collect()
-}
-
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn editing_updates_the_keyword_index(db: SqlitePool) {
     let mut fields = form("张伟", "", "").check().unwrap();
@@ -130,8 +122,8 @@ async fn editing_updates_the_keyword_index(db: SqlitePool) {
     fields.research = Some("神经渲染".into());
     assert!(mentor::update(&db, id, &fields, 1).await.unwrap());
 
-    assert!(names(&db, "清华").await.is_empty());
-    assert_eq!(names(&db, "北京 渲染").await, ["张伟"]);
+    assert!(names(&db, Some("清华")).await.is_empty());
+    assert_eq!(names(&db, Some("北京 渲染")).await, ["张伟"]);
     assert!(!mentor::update(&db, id + 1, &fields, 1).await.unwrap());
 }
 
@@ -172,13 +164,7 @@ async fn an_email_belongs_to_one_mentor(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn addresses_kept_are_not_looked_up_again(db: SqlitePool) {
-    sqlx::query(
-        "INSERT INTO mailbox VALUES (1, 'me@qq.com', '林晓', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
-    )
-    .execute(&db)
-    .await
-    .unwrap();
+    mailbox(&mut db.acquire().await.unwrap()).await.unwrap();
     let mut fields = MentorFields {
         name: "张伟".into(),
         emails: vec!["zhang@gmail.com".into(), "zhangwei@pku.edu.cn".into()],

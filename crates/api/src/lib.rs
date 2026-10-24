@@ -77,6 +77,15 @@ impl From<sqlx::Error> for CallError {
     }
 }
 
+/// A change that found nothing to change, as when the thing is gone, as an error saying so.
+fn require_applied(applied: bool, message: &str) -> Result<(), CallError> {
+    if applied {
+        Ok(())
+    } else {
+        Err(CallError::not_found(message))
+    }
+}
+
 /// Declares each operation once: its name for callers, input and output types, and handler.
 macro_rules! operations {
     ($($op:literal => $handler:ident($input:ty) -> $output:ty;)*) => {
@@ -234,11 +243,7 @@ async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDeta
 
 async fn set_mentor_note(ctx: &Context, input: MentorNote) -> Result<(), CallError> {
     let note = Some(input.note.as_str()).filter(|n| !n.trim().is_empty());
-    if mentor::set_note(&ctx.db, input.id, note).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MENTOR))
-    }
+    require_applied(mentor::set_note(&ctx.db, input.id, note).await?, NO_MENTOR)
 }
 
 /// Adds the declarations of `T` and every named type it refers to, keyed by name.
@@ -282,9 +287,8 @@ async fn update_mentor(
     input: MentorEdit,
 ) -> Result<mentor::MentorDetail, CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    if !mentor::update(&ctx.db, input.id, &fields, now()).await? {
-        return Err(CallError::not_found(NO_MENTOR));
-    }
+    let applied = mentor::update(&ctx.db, input.id, &fields, now()).await?;
+    require_applied(applied, NO_MENTOR)?;
     look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
 }
@@ -297,9 +301,8 @@ async fn add_mentor_email(
     if !mentor::is_email(address) {
         return Err(CallError::invalid(format!("邮箱地址“{address}”格式不正确")));
     }
-    if !mentor::add_email(&ctx.db, input.id, address, now()).await? {
-        return Err(CallError::not_found(NO_MENTOR));
-    }
+    let applied = mentor::add_email(&ctx.db, input.id, address, now()).await?;
+    require_applied(applied, NO_MENTOR)?;
     look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
 }
@@ -395,20 +398,16 @@ async fn create_tag(ctx: &Context, input: NewTag) -> Result<mentor::tags::Tag, C
 
 async fn rename_tag(ctx: &Context, input: TagName) -> Result<(), CallError> {
     let name = mentor::tags::checked_name(&input.name).map_err(CallError::invalid)?;
-    match mentor::tags::rename(&ctx.db, input.id, &name).await {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(CallError::not_found(NO_TAG)),
-        Err(e) => Err(tag_error(e, &name)),
-    }
+    let applied = mentor::tags::rename(&ctx.db, input.id, &name)
+        .await
+        .map_err(|e| tag_error(e, &name))?;
+    require_applied(applied, NO_TAG)
 }
 
 async fn recolor_tag(ctx: &Context, input: TagColor) -> Result<(), CallError> {
     let color = mentor::tags::checked_color(&input.color).map_err(CallError::invalid)?;
-    if mentor::tags::recolor(&ctx.db, input.id, &color).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_TAG))
-    }
+    let applied = mentor::tags::recolor(&ctx.db, input.id, &color).await?;
+    require_applied(applied, NO_TAG)
 }
 
 async fn move_tag(ctx: &Context, input: TagMove) -> Result<(), CallError> {
@@ -521,15 +520,12 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
     let held = ctx.receiver.hold().await;
     let updated = mailbox::update(&ctx.db, input.id, &fields, &secret).await?;
     drop(held);
-    if updated {
-        // A higher limit or a shorter interval may let a waiting email go, and receiving that
-        // failed may work now.
-        ctx.sender.wake();
-        ctx.receiver.wake();
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MAILBOX))
-    }
+    require_applied(updated, NO_MAILBOX)?;
+    // A higher limit or a shorter interval may let a waiting email go, and receiving that
+    // failed may work now.
+    ctx.sender.wake();
+    ctx.receiver.wake();
+    Ok(())
 }
 
 async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
@@ -677,11 +673,8 @@ async fn add_model_config(
 async fn update_model_config(ctx: &Context, input: ModelConfigEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
     let api_key = entered_or_saved_key(ctx, &input.api_key, Some(input.id), &fields.source).await?;
-    if model::update(&ctx.db, input.id, &fields, &api_key).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MODEL_CONFIG))
-    }
+    let applied = model::update(&ctx.db, input.id, &fields, &api_key).await?;
+    require_applied(applied, NO_MODEL_CONFIG)
 }
 
 async fn delete_model_config(ctx: &Context, input: ModelConfigId) -> Result<(), CallError> {
@@ -689,11 +682,8 @@ async fn delete_model_config(ctx: &Context, input: ModelConfigId) -> Result<(), 
 }
 
 async fn set_default_model(ctx: &Context, input: ModelConfigId) -> Result<(), CallError> {
-    if profile::set_default_model(&ctx.db, input.id).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found("找不到这个模型，可能已被删除。"))
-    }
+    let applied = profile::set_default_model(&ctx.db, input.id).await?;
+    require_applied(applied, "找不到这个模型，可能已被删除。")
 }
 
 /// What the user was told AI features send to, and agreed to.
@@ -707,13 +697,11 @@ pub struct ModelAgreement {
 
 async fn agree_model(ctx: &Context, input: ModelAgreement) -> Result<(), CallError> {
     let (provider, base_url) = (&input.provider, input.base_url.as_deref());
-    if model::agree(&ctx.db, input.id, provider, base_url).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(
-            "这个模型配置刚被修改或删除了。请看过新的说明后再确认。",
-        ))
-    }
+    let applied = model::agree(&ctx.db, input.id, provider, base_url).await?;
+    require_applied(
+        applied,
+        "这个模型配置刚被修改或删除了。请看过新的说明后再确认。",
+    )
 }
 
 async fn list_provider_models(ctx: &Context, input: ModelSource) -> Result<Vec<String>, CallError> {
@@ -838,11 +826,8 @@ async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, C
 }
 
 async fn set_material_purpose(ctx: &Context, input: MaterialPurpose) -> Result<(), CallError> {
-    if material::set_purpose(&ctx.db, input.id, input.purpose, input.on).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MATERIAL))
-    }
+    let applied = material::set_purpose(&ctx.db, input.id, input.purpose, input.on).await?;
+    require_applied(applied, NO_MATERIAL)
 }
 
 async fn get_material_text(ctx: &Context, input: MaterialId) -> Result<Option<String>, CallError> {
@@ -852,11 +837,8 @@ async fn get_material_text(ctx: &Context, input: MaterialId) -> Result<Option<St
 }
 
 async fn delete_material(ctx: &Context, input: MaterialId) -> Result<(), CallError> {
-    if material::delete(&ctx.db, &ctx.materials, input.id).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_MATERIAL))
-    }
+    let applied = material::delete(&ctx.db, &ctx.materials, input.id).await?;
+    require_applied(applied, NO_MATERIAL)
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -901,11 +883,8 @@ async fn add_template(
 
 async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    if template::update(&ctx.db, input.id, &fields, now()).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_TEMPLATE))
-    }
+    let applied = template::update(&ctx.db, input.id, &fields, now()).await?;
+    require_applied(applied, NO_TEMPLATE)
 }
 
 async fn delete_template(ctx: &Context, input: TemplateId) -> Result<(), CallError> {
@@ -933,20 +912,16 @@ pub struct DefaultTemplate {
 }
 
 async fn set_default_template(ctx: &Context, input: DefaultTemplate) -> Result<(), CallError> {
-    if profile::set_default_template(&ctx.db, input.id).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(NO_TEMPLATE))
-    }
+    let applied = profile::set_default_template(&ctx.db, input.id).await?;
+    require_applied(applied, NO_TEMPLATE)
 }
 
 async fn apply_template(
     ctx: &Context,
     input: TemplateForMentor,
 ) -> Result<FilledTemplate, CallError> {
-    let t = template::get(&ctx.db, input.template_id)
-        .await?
-        .ok_or_else(|| CallError::not_found(NO_TEMPLATE))?;
+    let id = input.template_id;
+    let t = get_template(ctx, TemplateId { id }).await?;
     fill(ctx, &t, input.mentor_id).await
 }
 
@@ -968,9 +943,7 @@ async fn fill(
     t: &template::Template,
     mentor_id: i64,
 ) -> Result<FilledTemplate, CallError> {
-    let m = mentor::get(&ctx.db, mentor_id)
-        .await?
-        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    let m = get_mentor(ctx, MentorId { id: mentor_id }).await?;
     let me = profile::get(&ctx.db).await?;
     let main = m.affiliations.first().cloned().unwrap_or_default();
     let fill = template::Fill {
@@ -1025,9 +998,8 @@ async fn check_first_draft(
     ctx: &Context,
     input: FirstDraftEdit,
 ) -> Result<Vec<check::Problem>, CallError> {
-    let m = mentor::get(&ctx.db, input.mentor_id)
-        .await?
-        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    let id = input.mentor_id;
+    let m = get_mentor(ctx, MentorId { id }).await?;
     Ok(check::letter(
         &m.name,
         &m.aliases,
@@ -1121,9 +1093,8 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
     if subject.is_empty() || input.body_md.trim().is_empty() {
         return Err(CallError::invalid("主题和正文都要填写".into()));
     }
-    let m = mentor::get(&ctx.db, input.mentor_id)
-        .await?
-        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    let id = input.mentor_id;
+    let m = get_mentor(ctx, MentorId { id }).await?;
     if m.emails.is_empty() {
         return Err(CallError::invalid(
             "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
@@ -1196,21 +1167,13 @@ pub struct EmailId {
 }
 
 async fn withdraw_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
-    if email::withdraw(&ctx.db, input.id, now()).await? {
-        Ok(())
-    } else {
-        Err(CallError::not_found(
-            "这封邮件已在发送或已发出，无法改回草稿。",
-        ))
-    }
+    let applied = email::withdraw(&ctx.db, input.id, now()).await?;
+    require_applied(applied, "这封邮件已在发送或已发出，无法改回草稿。")
 }
 
 async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
-    if !email::retry(&ctx.db, input.id, now()).await? {
-        return Err(CallError::not_found(
-            "这封邮件已在发送或已发出，或导师已移入回收站。",
-        ));
-    }
+    let applied = email::retry(&ctx.db, input.id, now()).await?;
+    require_applied(applied, "这封邮件已在发送或已发出，或导师已移入回收站。")?;
     ctx.sender.wake();
     Ok(())
 }

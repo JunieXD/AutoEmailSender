@@ -1,11 +1,16 @@
 // Marks the whole file as test code, so clippy's test allowances cover the helpers too.
 #![cfg(test)]
 
-use std::num::NonZeroU32;
+mod common;
 
+use common::names;
 use mentor::merge::{self, MergeError};
-use mentor::{Affiliation, MentorFields, MentorQuery};
+use mentor::{Affiliation, MentorFields};
 use sqlx::SqlitePool;
+use test_fixtures::{
+    contact::reconciled,
+    mail::{first_email, mailbox},
+};
 
 async fn mentor(db: &SqlitePool, name: &str, emails: &[&str], university: &str) -> i64 {
     let fields = MentorFields {
@@ -18,25 +23,6 @@ async fn mentor(db: &SqlitePool, name: &str, emails: &[&str], university: &str) 
         ..MentorFields::default()
     };
     mentor::create(db, &fields, 0).await.unwrap()
-}
-
-async fn email(db: &SqlitePool, mentor: i64, state: &str, at: i64) -> i64 {
-    let out = state == "sent";
-    sqlx::query(
-        "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, to_address, message_id,
-           sent_at, created_at, updated_at, subject, body_md, html, text)
-         VALUES (?, 'first', ?, 1, ?, ?, ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
-    )
-    .bind(mentor)
-    .bind(state)
-    .bind(out.then_some("me@qq.com"))
-    .bind(out.then_some("li@pku.edu.cn"))
-    .bind(out.then(|| format!("<{mentor}-{at}@aes>")))
-    .bind(out.then_some(at))
-    .execute(db)
-    .await
-    .unwrap()
-    .last_insert_rowid()
 }
 
 /// A reply seen in the mailbox, about these mentors.
@@ -67,25 +53,9 @@ async fn exec(db: &SqlitePool, sql: &'static str, id: i64) {
     sqlx::query(sql).bind(id).execute(db).await.unwrap();
 }
 
-async fn found(db: &SqlitePool, keyword: &str) -> Vec<String> {
-    let query = MentorQuery {
-        status: None,
-        keyword: Some(keyword.into()),
-        page: NonZeroU32::MIN,
-    };
-    let page = mentor::list(db, &query).await.unwrap();
-    page.mentors.into_iter().map(|m| m.name).collect()
-}
-
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
-    sqlx::query(
-        "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
-    )
-    .execute(&db)
-    .await
-    .unwrap();
+    mailbox(&mut db.acquire().await.unwrap()).await.unwrap();
     let li = mentor(&db, "李明", &["liming@gmail.com"], "北京大学").await;
     let ming = mentor(&db, "Ming Li", &["ming@pku.edu.cn"], "北京大学").await;
     sqlx::query(
@@ -103,11 +73,11 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
         ming,
     )
     .await;
-    email(&db, li, "sent", 100).await;
-    email(&db, ming, "sent", 200).await;
+    first_email(&db, li, "sent", 100).await.unwrap();
+    first_email(&db, ming, "sent", 200).await.unwrap();
     let drafts = [
-        email(&db, li, "review", 0).await,
-        email(&db, ming, "review", 0).await,
+        first_email(&db, li, "review", 0).await.unwrap(),
+        first_email(&db, ming, "review", 0).await.unwrap(),
     ];
     reply(&db, &[li], 1).await;
     reply(&db, &[li, ming], 2).await;
@@ -164,22 +134,15 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
         .unwrap();
     assert_eq!(kept, [drafts[0]]);
     // Found under either name, once.
-    assert_eq!(found(&db, "Ming").await, ["李明"]);
-    let drift: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM (SELECT * FROM mentor_contact EXCEPT SELECT * FROM mentor_contact_live))
-              + (SELECT count(*) FROM (SELECT * FROM mentor_contact_live EXCEPT SELECT * FROM mentor_contact))",
-    )
-    .fetch_one(&db)
-    .await
-    .unwrap();
-    assert_eq!(drift, 0);
+    assert_eq!(names(&db, Some("Ming")).await, ["李明"]);
+    reconciled(&mut db.acquire().await.unwrap()).await.unwrap();
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn mentors_with_mail_to_go_or_in_the_trash_are_not_merged(db: SqlitePool) {
     let li = mentor(&db, "李明", &[], "北京大学").await;
     let ming = mentor(&db, "李明", &[], "北京大学").await;
-    let approved = email(&db, ming, "approved", 0).await;
+    let approved = first_email(&db, ming, "approved", 0).await.unwrap();
     assert!(matches!(
         merge::merge(&db, li, ming, 10).await,
         Err(MergeError::Busy { count: 1, .. })

@@ -12,4 +12,5 @@ workspace = true
 sqlx.workspace = true
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["macros", "rt"] }

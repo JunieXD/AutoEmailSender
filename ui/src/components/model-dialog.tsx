@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { ModelConfig, ModelProvider, ModelSource, ModelTest, NewModelConfig } from "@/api/types";
-import { Field, TestResult } from "@/components/form";
+import { formClose, Field, TestResult } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -78,15 +78,7 @@ export function ModelDialog({
 
   const pending = save.isPending || test.isPending;
   return (
-    <Dialog
-      open
-      onOpenChange={(open, details) => {
-        // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc,
-        // nor while it is being saved.
-        const stray = details.reason === "outside-press" || details.reason === "escape-key";
-        if (!open && !save.isPending && !(dirty && stray)) onClose();
-      }}
-    >
+    <Dialog open onOpenChange={formClose(dirty, save.isPending, onClose)}>
       <DialogContent initialFocus={providerRef}>
         <form
           className="flex min-h-0 flex-1 flex-col"

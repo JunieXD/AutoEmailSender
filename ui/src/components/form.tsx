@@ -1,8 +1,23 @@
 import { Check, LoaderCircle, X } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { errorMessage } from "@/api/call";
+import { Dialog } from "@/components/ui/dialog";
 
 // Pieces of the settings dialogs.
+
+/** Closes a form's dialog, but not while it saves, nor on a stray click or Esc with input in it. */
+export function formClose(
+  dirty: boolean,
+  pending: boolean,
+  close: () => void,
+): NonNullable<ComponentProps<typeof Dialog>["onOpenChange"]> {
+  return (open, details) => {
+    // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc,
+    // nor while it is being saved.
+    const stray = details.reason === "outside-press" || details.reason === "escape-key";
+    if (!open && !pending && !(dirty && stray)) close();
+  };
+}
 
 export function Field({ label, id, children }: { label: string; id: string; children: ReactNode }) {
   return (
