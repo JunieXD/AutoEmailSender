@@ -119,6 +119,12 @@ macro_rules! operations {
 }
 
 operations! {
+    "listConversations" => list_conversations(mentor::conversations::ConversationQuery) -> mentor::conversations::ConversationPage;
+    "unreadCount" => unread_count(Nothing) -> i64;
+    "receiveNow" => receive_now(Nothing) -> ReceiveStatus;
+    "receiveStatus" => receive_status(Nothing) -> ReceiveStatus;
+    "getReplyNotifications" => get_reply_notifications(Nothing) -> bool;
+    "setReplyNotifications" => set_reply_notifications(ReplyNotifications) -> ();
     "listMentors" => list_mentors(mentor::MentorQuery) -> mentor::MentorPage;
     "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
@@ -1198,4 +1204,51 @@ fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+async fn list_conversations(
+    ctx: &Context,
+    query: mentor::conversations::ConversationQuery,
+) -> Result<mentor::conversations::ConversationPage, CallError> {
+    Ok(mentor::conversations::list(&ctx.db, &query).await?)
+}
+
+async fn unread_count(ctx: &Context, _: Nothing) -> Result<i64, CallError> {
+    Ok(mentor::conversations::unread_count(&ctx.db).await?)
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiveStatus {
+    pub received_at: Option<i64>,
+}
+
+async fn receive_status(ctx: &Context, _: Nothing) -> Result<ReceiveStatus, CallError> {
+    Ok(ReceiveStatus {
+        received_at: ctx.receiver.received_at(),
+    })
+}
+
+async fn receive_now(ctx: &Context, input: Nothing) -> Result<ReceiveStatus, CallError> {
+    ctx.receiver
+        .receive_now()
+        .await
+        .map_err(|e| CallError::internal(format!("database: {e}")))?;
+    receive_status(ctx, input).await
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct ReplyNotifications {
+    pub on: bool,
+}
+
+async fn get_reply_notifications(ctx: &Context, _: Nothing) -> Result<bool, CallError> {
+    Ok(profile::reply_notifications(&ctx.db).await?)
+}
+
+async fn set_reply_notifications(
+    ctx: &Context,
+    input: ReplyNotifications,
+) -> Result<(), CallError> {
+    Ok(profile::set_reply_notifications(&ctx.db, input.on).await?)
 }

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT coalesce(sum(c.unread), 0) AS \"n!: i64\"\n           FROM mentor_contact c JOIN mentor m ON m.id = c.mentor_id\n           WHERE m.trashed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7ede1dd7c986a9e03b925acd264c5e0e9bd8df017443b09af6309246e5f1451d"
+}

@@ -1,14 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { Settings, Users } from "lucide-react";
+import { MessagesSquare, Settings, Users } from "lucide-react";
 import { useEffect } from "react";
+import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
+import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
 import { refreshMentors } from "@/components/mentor";
 import { StartupFailure } from "@/components/startup-failure";
 
-const NAV = [{ to: "/mentors", label: "导师", icon: Users }] as const;
+const NAV = [
+  { to: "/mentors", label: "导师", icon: Users },
+  { to: "/conversations", label: "往来", icon: MessagesSquare },
+] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
 // accounts, the row is settings itself.
@@ -26,7 +31,9 @@ export function Shell() {
   useEffect(() => {
     const stop = listen("received", () => {
       refreshMentors(queryClient);
-      void queryClient.invalidateQueries({ queryKey: ["listMailboxes"] });
+      for (const key of ["listMailboxes", "receiveStatus"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     });
     return () => void stop.then((unlisten) => unlisten());
   }, [queryClient]);
@@ -60,7 +67,10 @@ export function Shell() {
             inactiveProps={{ className: "text-muted-foreground" }}
           >
             <Icon className="size-[22px]" strokeWidth={1.6} />
-            {label}
+            <span className="flex items-center gap-1">
+              {label}
+              {to === "/conversations" && <UnreadBadge />}
+            </span>
           </Link>
         ))}
       </nav>
@@ -78,6 +88,21 @@ function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTIN
     >
       <Icon className="size-[18px]" strokeWidth={1.6} />
       {label}
+      {to === "/conversations" && <UnreadBadge className="ml-auto" />}
     </Link>
+  );
+}
+
+/** How many mentors have new replies; a count that could not be read says so instead. */
+function UnreadBadge({ className }: { className?: string }) {
+  const unread = useQuery({ queryKey: ["unreadCount"], queryFn: () => call("unreadCount", {}) });
+  if (!unread.isError && !unread.data) return null;
+  return (
+    <span
+      title={unread.isError ? `新回信数量读取失败：${errorMessage(unread.error)}` : undefined}
+      className={cn("min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white", className)}
+    >
+      {unread.isError ? "!" : unread.data > 99 ? "99+" : unread.data}
+    </span>
   );
 }

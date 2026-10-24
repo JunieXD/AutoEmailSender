@@ -12,7 +12,7 @@ use net::Net;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::types::Json;
-use tokio::sync::{Mutex, MutexGuard, Notify};
+use tokio::sync::{Mutex, MutexGuard, Notify, watch};
 use ts_rs::TS;
 
 mod mail;
@@ -45,12 +45,35 @@ pub struct Receiver(Arc<Shared>);
 #[derive(Default)]
 struct Shared {
     wake: Notify,
+    ended: watch::Sender<Ended>,
     stop: Notify,
     /// Held by a round, and by a mailbox changing.
     busy: Mutex<()>,
 }
 
+/// How the last round ended.
+#[derive(Default)]
+struct Ended {
+    /// When a round last received.
+    received_at: Option<i64>,
+    /// Why the last round failed, if it did.
+    error: Option<Arc<sqlx::Error>>,
+}
+
 impl Receiver {
+    pub fn received_at(&self) -> Option<i64> {
+        self.0.ended.borrow().received_at
+    }
+
+    /// Receives from every mailbox, returning once a round has ended.
+    pub async fn receive_now(&self) -> Result<(), Arc<sqlx::Error>> {
+        let mut ended = self.0.ended.subscribe();
+        self.wake();
+        // The sender stays in this Receiver, so the channel cannot close while waiting.
+        let _ = ended.changed().await;
+        ended.borrow().error.clone().map_or(Ok(()), Err)
+    }
+
     pub fn wake(&self) {
         self.0.wake.notify_one();
     }
@@ -65,7 +88,7 @@ impl Receiver {
 
 /// Receives from every mailbox now and then, for as long as the app runs; `changed` is called
 /// after a round changed what the UI shows.
-pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn()) {
+pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(Vec<NewReply>)) {
     let shared = &receiver.0;
     loop {
         // Before taking the lock, so that a hold asked for meanwhile still stops the round.
@@ -78,20 +101,28 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
         drop(busy);
         let wait = match done {
             Some(Ok(r)) => {
+                shared.ended.send_replace(Ended {
+                    received_at: Some(now()),
+                    error: None,
+                });
                 if r.changed {
-                    changed();
+                    changed(r.replies);
                 }
                 if r.more { SOON } else { ROUND }
             }
-            // Nobody to tell but the log; the database is likely to work again in a while.
+            // Only someone receiving now hears of it; the database is likely to work again in a
+            // while.
             Some(Err(e)) => {
                 tracing::error!("receive: {e}");
+                shared
+                    .ended
+                    .send_modify(|ended| ended.error = Some(Arc::new(e)));
                 ROUND
             }
             // Stopped for a mailbox to change, perhaps after storing mail. Every write is safe to
             // stop at, and the next round starts once the change is made.
             None => {
-                changed();
+                changed(Vec::new());
                 continue;
             }
         };
@@ -109,6 +140,13 @@ pub struct Round {
     pub changed: bool,
     /// Mentors are still to be looked up.
     pub more: bool,
+    pub replies: Vec<NewReply>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct NewReply {
+    pub mentors: Vec<String>,
+    pub subject: Option<String>,
 }
 
 /// Receives once from every mailbox the server has not lately refused. A mailbox that fails says
@@ -278,7 +316,8 @@ impl Session<'_> {
             .uids_between(known.last_uid, opened.last_uid)
             .await?;
         for chunk in uids.chunks(CHUNK) {
-            self.take(role, folder, opened.uidvalidity, chunk).await?;
+            self.take(role, folder, opened.uidvalidity, chunk, true)
+                .await?;
             if let Some(&last) = chunk.last() {
                 self.reached(folder, last).await?;
             }
@@ -329,7 +368,8 @@ impl Session<'_> {
                     Role::Inbox => self.imap.sent_by(batch, since).await?,
                 };
                 for chunk in uids.chunks(CHUNK) {
-                    self.take(*role, folder, opened.uidvalidity, chunk).await?;
+                    self.take(*role, folder, opened.uidvalidity, chunk, false)
+                        .await?;
                 }
             }
         }
@@ -355,6 +395,7 @@ impl Session<'_> {
         folder: &str,
         uidvalidity: u32,
         uids: &[u32],
+        new: bool,
     ) -> Result<(), Error> {
         let heads = self.imap.headers(uids, &mail::FIELDS).await?;
         let mut wanted = Vec::new();
@@ -415,7 +456,8 @@ impl Session<'_> {
                 text,
                 truncated,
             };
-            self.store(&place, &headers, &message, &mentors).await?;
+            self.store(&place, &headers, &message, &mentors, new)
+                .await?;
         }
         Ok(())
     }
@@ -561,6 +603,7 @@ impl Session<'_> {
         headers: &mail::Headers,
         message: &Stored,
         mentors: &[i64],
+        new: bool,
     ) -> Result<(), Error> {
         let mut tx = self.db.begin().await?;
         let inserted = sqlx::query_scalar!(
@@ -596,7 +639,25 @@ impl Session<'_> {
             },
         };
         self.link(&mut tx, id, mentors).await?;
+        let reply = if inserted.is_some() && new && message.kind == Kind::Reply {
+            let mentors = sqlx::query_scalar!(
+                "SELECT m.name FROM mentor m JOIN message_mentor mm ON mm.mentor_id = m.id
+                 WHERE mm.message_id = ? ORDER BY m.id",
+                id
+            )
+            .fetch_all(&mut *tx)
+            .await?;
+            Some(NewReply {
+                mentors,
+                subject: headers.subject.clone(),
+            })
+        } else {
+            None
+        };
         tx.commit().await?;
+        if let Some(reply) = reply {
+            self.round.replies.push(reply);
+        }
         Ok(())
     }
 

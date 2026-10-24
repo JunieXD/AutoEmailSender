@@ -69,7 +69,14 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
  * date, their correspondence too.
  */
 export function refreshMentors(queryClient: QueryClient) {
-  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"], ["listCorrespondence"]]) {
+  for (const queryKey of [
+    ["listMentors"],
+    ["listTrash"],
+    ["getMentor"],
+    ["listCorrespondence"],
+    ["listConversations"],
+    ["unreadCount"],
+  ]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }

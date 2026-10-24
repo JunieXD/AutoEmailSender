@@ -9,6 +9,7 @@ use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
+pub mod conversations;
 pub mod merge;
 pub mod tags;
 pub mod trash;

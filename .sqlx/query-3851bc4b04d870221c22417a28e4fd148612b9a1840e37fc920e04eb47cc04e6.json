@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"n!: i64\"\n           FROM mentor_contact c JOIN mentor m ON m.id = c.mentor_id\n           WHERE m.trashed_at IS NULL AND (NOT ?1 OR c.unread > 0)",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3851bc4b04d870221c22417a28e4fd148612b9a1840e37fc920e04eb47cc04e6"
+}
