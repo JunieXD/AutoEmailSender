@@ -148,7 +148,9 @@ operations! {
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
+    "setDefaultTemplate" => set_default_template(DefaultTemplate) -> ();
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
+    "applyDefaultTemplate" => apply_default_template(MentorId) -> Option<FilledTemplate>;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "checkFirstDraft" => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
@@ -162,6 +164,7 @@ operations! {
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
     "updateModelConfig" => update_model_config(ModelConfigEdit) -> ();
     "deleteModelConfig" => delete_model_config(ModelConfigId) -> ();
+    "setDefaultModel" => set_default_model(ModelConfigId) -> ();
     "listProviderModels" => list_provider_models(ModelSource) -> Vec<String>;
     "testModel" => test_model(ModelTest) -> ();
 }
@@ -611,6 +614,14 @@ async fn delete_model_config(ctx: &Context, input: ModelConfigId) -> Result<(), 
     Ok(model::delete(&ctx.db, input.id).await?)
 }
 
+async fn set_default_model(ctx: &Context, input: ModelConfigId) -> Result<(), CallError> {
+    if profile::set_default_model(&ctx.db, input.id).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found("找不到这个模型，可能已被删除。"))
+    }
+}
+
 async fn list_provider_models(ctx: &Context, input: ModelSource) -> Result<Vec<String>, CallError> {
     let source =
         model::Source::check(&input.provider, &input.base_url).map_err(CallError::invalid)?;
@@ -821,6 +832,20 @@ pub struct FilledTemplate {
     pub body_md: String,
 }
 
+/// A template to make the default, or none.
+#[derive(Debug, Deserialize, TS)]
+pub struct DefaultTemplate {
+    pub id: Option<i64>,
+}
+
+async fn set_default_template(ctx: &Context, input: DefaultTemplate) -> Result<(), CallError> {
+    if profile::set_default_template(&ctx.db, input.id).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_TEMPLATE))
+    }
+}
+
 async fn apply_template(
     ctx: &Context,
     input: TemplateForMentor,
@@ -828,7 +853,28 @@ async fn apply_template(
     let t = template::get(&ctx.db, input.template_id)
         .await?
         .ok_or_else(|| CallError::not_found(NO_TEMPLATE))?;
-    let m = mentor::get(&ctx.db, input.mentor_id)
+    fill(ctx, &t, input.mentor_id).await
+}
+
+/// The default template filled in for the mentor, which a first email starts from; none when no
+/// template is the default.
+async fn apply_default_template(
+    ctx: &Context,
+    input: MentorId,
+) -> Result<Option<FilledTemplate>, CallError> {
+    match template::default(&ctx.db).await? {
+        Some(t) => Ok(Some(fill(ctx, &t, input.id).await?)),
+        None => Ok(None),
+    }
+}
+
+/// The template with its placeholders filled in for the mentor.
+async fn fill(
+    ctx: &Context,
+    t: &template::Template,
+    mentor_id: i64,
+) -> Result<FilledTemplate, CallError> {
+    let m = mentor::get(&ctx.db, mentor_id)
         .await?
         .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
     let me = profile::get(&ctx.db).await?;
@@ -959,8 +1005,8 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
             ctx.sender.wake();
             Ok(())
         }
-        email::Approved::NoDraft => Err(CallError::not_found(
-            "草稿已不存在：可能已经发送，或导师已移入回收站。",
+        email::Approved::Refused => Err(CallError::not_found(
+            "这位导师已经有一封首封邮件，或已移入回收站。",
         )),
         email::Approved::MaterialGone => Err(CallError::invalid(
             "有附件的材料已被删除。重新选择附件后再发送。".into(),

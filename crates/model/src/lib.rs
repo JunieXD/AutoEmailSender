@@ -24,6 +24,8 @@ pub struct ModelConfig {
     /// Only for `providers::CUSTOM`.
     pub base_url: Option<String>,
     pub model: String,
+    /// The one AI features use: the user's choice, or else the earliest added.
+    pub is_default: bool,
 }
 
 /// A model configuration as the user entered it, without its API key; `check` validates it.
@@ -133,7 +135,10 @@ pub fn checked_key(api_key: &str) -> Option<String> {
 pub async fn list(db: &SqlitePool) -> Result<Vec<ModelConfig>, sqlx::Error> {
     sqlx::query_as!(
         ModelConfig,
-        "SELECT id, name, provider, base_url, model FROM model_config ORDER BY id"
+        r#"SELECT id, name, provider, base_url, model,
+             id = coalesce((SELECT default_model_config_id FROM profile),
+                           (SELECT min(id) FROM model_config)) AS "is_default!: bool"
+           FROM model_config ORDER BY id"#
     )
     .fetch_all(db)
     .await

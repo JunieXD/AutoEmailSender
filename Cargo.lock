@@ -3108,6 +3108,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "db",
  "net",
+ "profile",
  "reqwest",
  "serde",
  "serde_json",
@@ -5660,6 +5661,7 @@ name = "template"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "profile",
  "serde",
  "sqlx",
  "tokio",

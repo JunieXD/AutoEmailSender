@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, subject FROM template ORDER BY id",
+  "query": "SELECT id, name, subject, id IS (SELECT default_template_id FROM profile) AS \"is_default!: bool\"\n           FROM template ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,12 @@
             "name": "subject"
           }
         }
+      },
+      {
+        "name": "is_default!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -43,8 +49,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "647d65c5b2c3379bf5e0a043eff0b018d28589d033532acb4350f22457e170e4"
+  "hash": "5d2a46d8ae8ab7f759584f95b2971c4e93d8a8dac94d068e3b1f14b715ba3302"
 }

@@ -8,6 +8,8 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
+export type DefaultTemplate = { id: number | null, };
+
 export type Direction = "up" | "down";
 
 export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
@@ -139,7 +141,11 @@ provider: string,
 /**
  * Only for `providers::CUSTOM`.
  */
-baseUrl: string | null, model: string, };
+baseUrl: string | null, model: string, 
+/**
+ * The one AI features use: the user's choice, or else the earliest added.
+ */
+isDefault: boolean, };
 
 export type ModelConfigEdit = { id: number, 
 /**
@@ -270,7 +276,11 @@ export type TemplateForm = { name: string, subject: string, bodyMd: string, };
 
 export type TemplateId = { id: number, };
 
-export type TemplateSummary = { id: number, name: string, subject: string, };
+export type TemplateSummary = { id: number, name: string, subject: string, 
+/**
+ * The one a first email starts from.
+ */
+isDefault: boolean, };
 
 export type TrashQuery = { 
 /**
@@ -318,7 +328,9 @@ export interface Operations {
   addTemplate: { input: TemplateForm; output: TemplateId };
   updateTemplate: { input: TemplateEdit; output: null };
   deleteTemplate: { input: TemplateId; output: null };
+  setDefaultTemplate: { input: DefaultTemplate; output: null };
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
+  applyDefaultTemplate: { input: MentorId; output: FilledTemplate | null };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };
@@ -332,6 +344,7 @@ export interface Operations {
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };
   updateModelConfig: { input: ModelConfigEdit; output: null };
   deleteModelConfig: { input: ModelConfigId; output: null };
+  setDefaultModel: { input: ModelConfigId; output: null };
   listProviderModels: { input: ModelSource; output: Array<string> };
   testModel: { input: ModelTest; output: null };
 }

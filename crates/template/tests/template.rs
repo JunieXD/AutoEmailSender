@@ -21,6 +21,26 @@ async fn the_body_is_saved_as_written(db: SqlitePool) {
     assert_eq!(saved.body_md, body);
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_first_email_starts_from_the_default_template_until_it_is_deleted(db: SqlitePool) {
+    let form = TemplateForm {
+        name: "首封".into(),
+        subject: "硕士申请".into(),
+        body_md: "{导师姓名}老师：".into(),
+    };
+    let id = template::create(&db, &form.check().unwrap(), 0)
+        .await
+        .unwrap();
+    assert!(template::default(&db).await.unwrap().is_none());
+
+    assert!(profile::set_default_template(&db, Some(id)).await.unwrap());
+    assert_eq!(template::default(&db).await.unwrap().unwrap().id, id);
+    assert!(template::list(&db).await.unwrap()[0].is_default);
+    template::delete(&db, id).await.unwrap();
+    assert!(template::default(&db).await.unwrap().is_none());
+    assert!(!profile::set_default_template(&db, Some(id)).await.unwrap());
+}
+
 fn fill<'a>(mentor_name: &'a str, research: Option<&'a str>) -> Fill<'a> {
     Fill {
         mentor_name,

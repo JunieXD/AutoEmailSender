@@ -130,3 +130,27 @@ pub async fn rotation(db: &SqlitePool) -> Result<Rotation, sqlx::Error> {
         .fetch_one(db)
         .await
 }
+
+/// Makes the model configuration the default; false when there is no such configuration.
+pub async fn set_default_model(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query!(
+        "UPDATE profile SET default_model_config_id = ?1
+         WHERE EXISTS (SELECT 1 FROM model_config WHERE id = ?1)",
+        id
+    )
+    .execute(db)
+    .await?;
+    Ok(row.rows_affected() > 0)
+}
+
+/// Makes the template the default, or none; false when there is no such template.
+pub async fn set_default_template(db: &SqlitePool, id: Option<i64>) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query!(
+        "UPDATE profile SET default_template_id = ?1
+         WHERE ?1 IS NULL OR EXISTS (SELECT 1 FROM template WHERE id = ?1)",
+        id
+    )
+    .execute(db)
+    .await?;
+    Ok(row.rows_affected() > 0)
+}
