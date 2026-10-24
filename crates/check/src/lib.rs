@@ -67,15 +67,21 @@ fn addresses(body: &str, name: &str) -> bool {
 
 /// Lowercased, of two letters or more: a single letter is an initial.
 fn latin_words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|w| w.len() > 1)
-        .map(str::to_ascii_lowercase)
+    text.split(|c: char| !latin(c))
+        .filter(|w| w.chars().count() > 1)
+        .map(str::to_lowercase)
         .collect()
+}
+
+/// A letter of the Latin alphabet, accented ones too, as in Inès or Łukasz.
+fn latin(c: char) -> bool {
+    c.is_ascii_alphabetic()
+        || (c.is_alphabetic() && matches!(u32::from(c), 0xC0..=0x24F | 0x1E00..=0x1EFF))
 }
 
 fn salutation(name: &str) -> String {
     let written = template::markdown_text(name);
-    if name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+    if name.starts_with(latin) {
         format!("Dear {written},")
     } else {
         format!("{written}老师：")
@@ -149,6 +155,12 @@ mod tests {
             // A word that only starts with the name is not the name.
             ("Li Wei", "I would like to apply.", "Dear Li Wei,"),
             ("A*B", "Hello", r"Dear A\*B,"),
+            // Not "in", which only starts the name.
+            (
+                "Inès Martin",
+                "I am interested in your research.",
+                "Dear Inès Martin,",
+            ),
         ] {
             assert_eq!(
                 letter(name, "申请", body),

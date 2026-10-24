@@ -93,6 +93,7 @@ function Composer({
     queryKey: ["checkMailDomain", address],
     queryFn: address ? () => call("checkMailDomain", { address }) : skipToken,
     staleTime: Infinity,
+    refetchOnReconnect: true,
   });
   const problems = [...(checks.data ?? []), ...(domain.data ? [domain.data] : [])];
   const approveKey = ["approveFirstEmail", mentorId];
