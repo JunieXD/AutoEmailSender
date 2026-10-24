@@ -8,6 +8,7 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -37,6 +38,42 @@ async fn export_logs(app: AppHandle) -> Result<bool, String> {
         .map_err(|e| format!("日志未能导出：{e}"))?
         .join("logs");
     logs::export(&app, &dir).map_err(|e| format!("日志未能导出：{e}"))
+}
+
+/// Saves the exported table through the native file picker, away from the async executor.
+#[tauri::command]
+async fn export_mentors(
+    app: AppHandle,
+    ctx: tauri::State<'_, api::Context>,
+    input: api::ExportMentors,
+    file_name: String,
+) -> Result<bool, String> {
+    let extension = match input.format {
+        api::TableFormat::Xlsx => "xlsx",
+        api::TableFormat::Csv => "csv",
+    };
+    let data = api::export_mentors(&ctx, input)
+        .await
+        .map_err(|e| e.message)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(target) = app
+            .dialog()
+            .file()
+            .add_filter("导师表格", &[extension])
+            .set_file_name(format!("{file_name}.{extension}"))
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = target
+            .into_path()
+            .map_err(|e| format!("无法保存到这个位置：{e}，请选择其他位置"))?;
+        std::fs::write(path, data)
+            .map_err(|e| format!("表格未能保存：{e}，请检查保存位置是否可写后重试"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("表格未能导出：{e}，请重试"))?
 }
 
 /// Where the app keeps its data, for the about page.
@@ -77,6 +114,7 @@ fn main() -> tauri::Result<()> {
             call,
             startup_failure,
             export_logs,
+            export_mentors,
             data_location,
             open_data_location
         ])

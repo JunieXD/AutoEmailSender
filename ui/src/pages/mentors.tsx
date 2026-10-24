@@ -1,12 +1,15 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { Merge, Plus, Search, Trash2 } from "lucide-react";
+import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { ContactStatus } from "@/api/types";
+import type { ContactStatus, Imported, Scope } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { MergeDialog } from "@/components/merge-dialog";
+import { ImportDialog } from "@/components/import-dialog";
+import { ExportDialog } from "@/components/export-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { dropDrafts, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
@@ -42,6 +45,10 @@ export function MentorsPage() {
   const total = query.data?.total ?? 0;
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [addMenu, setAddMenu] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [imported, setImported] = useState<Imported | null>(null);
+  const [exporting, setExporting] = useState<{ scope: Scope; count: number } | null>(null);
   // Ticks belong to one filter: changing it, including by going back, starts over.
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [merging, setMerging] = useState<[number, number] | null>(null);
@@ -77,10 +84,34 @@ export function MentorsPage() {
           value={search.q ?? ""}
           onChange={(q) => navigate({ search: (s) => ({ ...s, q: q || undefined, page: undefined }) })}
         />
-        <Button aria-label="添加导师" className="phone:px-2.5" onClick={() => setAdding(true)}>
-          <Plus strokeWidth={1.6} />
-          <span className="phone:hidden">添加导师</span>
-        </Button>
+        <Popover open={addMenu} onOpenChange={setAddMenu}>
+          <PopoverTrigger render={<Button aria-label="添加导师" className="phone:px-2.5" />}>
+            <Plus strokeWidth={1.6} />
+            <span className="phone:hidden">添加导师</span>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-40 p-1.5">
+            <Button
+              variant="ghost"
+              className="w-full justify-start"
+              onClick={() => {
+                setAddMenu(false);
+                setImporting(true);
+              }}
+            >
+              导入表格
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full justify-start"
+              onClick={() => {
+                setAddMenu(false);
+                setAdding(true);
+              }}
+            >
+              手动添加
+            </Button>
+          </PopoverContent>
+        </Popover>
         {adding && (
           <MentorDialog
             title="添加导师"
@@ -96,6 +127,13 @@ export function MentorsPage() {
         )}
       </header>
 
+      {importing && <ImportDialog onClose={() => setImporting(false)} onImported={setImported} />}
+      {exporting && <ExportDialog {...exporting} onClose={() => setExporting(null)} />}
+      {imported && (
+        <p role="status" className="px-7 pb-3 text-sm text-muted-foreground phone:px-4">
+          已新增 {imported.created} 位导师，更新 {imported.updated} 位导师
+        </p>
+      )}
       <div className="px-7 pb-3 phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
         <div role="tablist" aria-label="联系状态" className="inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
           {STATUSES.map(([status, label]) => (
@@ -145,6 +183,13 @@ export function MentorsPage() {
           }}
         >
           <AddTagButton mentorIds={[...selected]} add={addTag} />
+          <Button
+            variant="ghost"
+            onClick={() => setExporting({ scope: { kind: "ids", value: [...selected] }, count: selected.size })}
+          >
+            <Download strokeWidth={1.6} />
+            导出
+          </Button>
           {selected.size === 2 && first !== undefined && second !== undefined && (
             <Button variant="ghost" onClick={() => setMerging([first, second])}>
               <Merge strokeWidth={1.6} />
@@ -167,10 +212,26 @@ export function MentorsPage() {
       </div>
 
       <footer className="flex items-center justify-between gap-2 px-7 py-3 text-sm text-muted-foreground phone:px-4">
-        <Link to="/mentors/trash" className={buttonVariants({ variant: "ghost", className: "-ml-3 px-3" })}>
-          <Trash2 strokeWidth={1.6} />
-          回收站
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link to="/mentors/trash" className={buttonVariants({ variant: "ghost", className: "-ml-3 px-3" })}>
+            <Trash2 strokeWidth={1.6} />
+            回收站
+          </Link>
+          <Button
+            variant="ghost"
+            className="px-2 phone:text-xs"
+            disabled={!query.data}
+            onClick={() =>
+              setExporting({
+                scope: { kind: "filter", value: { status: search.status, keyword: search.q } },
+                count: total,
+              })
+            }
+          >
+            <Download strokeWidth={1.6} />
+            导出表格
+          </Button>
+        </div>
         <Pager
           page={page}
           total={total}

@@ -7,7 +7,8 @@ import { Confirm } from "@/components/batch-bar";
 import { useModelProviders } from "@/components/model-dialog";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { type Change, changes } from "@/diff";
+import { changes } from "@/diff";
+import { Changes } from "@/components/changes";
 import { letterText } from "@/letter";
 
 // AI writing in a composer (docs/ui.md#交互).
@@ -121,26 +122,6 @@ export function Rewrite({ before, after }: { before: Letter; after: Letter }) {
         </p>
       )}
     </div>
-  );
-}
-
-function Changes({ parts, className }: { parts: Change[]; className?: string }) {
-  return (
-    <p className={`leading-relaxed break-words whitespace-pre-wrap ${className ?? ""}`}>
-      {parts.map((c, i) =>
-        c.kind === "kept" ? (
-          <span key={i}>{c.text}</span>
-        ) : c.kind === "removed" ? (
-          <del key={i} className={`rounded-sm text-muted-foreground ${c.fact ? "bg-highlight" : "bg-diff-delete"}`}>
-            {c.text}
-          </del>
-        ) : (
-          <ins key={i} className={`rounded-sm no-underline ${c.fact ? "bg-highlight" : "bg-diff-insert"}`}>
-            {c.text}
-          </ins>
-        ),
-      )}
-    </p>
   );
 }
 

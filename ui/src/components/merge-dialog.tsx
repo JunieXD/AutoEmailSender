@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
+import { mergedAffiliationCount } from "@/affiliation";
 import { ContactLabel, dropDrafts, placeOf, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -119,7 +120,7 @@ function Choice({
 /** What the kept mentor ends up with, in a sentence. */
 function outcome(kept: MentorDetail, gone: MentorDetail): string {
   const emails = kept.emails.length + gone.emails.length;
-  const places = new Set([...kept.affiliations, ...gone.affiliations].map((a) => JSON.stringify(a))).size;
+  const places = mergedAffiliationCount(kept.affiliations, gone.affiliations);
   const alias = gone.name !== kept.name ? `，${gone.name}记为别名` : "";
   return `保留${kept.name}：合并后有 ${emails} 个邮箱、${places} 个单位${alias}。`;
 }

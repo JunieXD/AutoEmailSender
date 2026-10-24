@@ -8,7 +8,8 @@
 |---|---|
 | `crates/db` | 迁移和打开数据库 |
 | `crates/net` | 网络：系统代理、TLS 设置 |
-| `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站 |
+| `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站、表格导入导出 |
+| `crates/sheet` | CSV、XLSX、XLS 表格的读写 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
 | `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
 | `crates/profile` | 个人资料和信件样式 |

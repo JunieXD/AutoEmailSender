@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogHeader } from "@/components/ui/dialog";
 import { fileSize } from "@/format";
+import { base64 } from "@/file";
 import { Section } from "./settings";
 
 /** Settings › 个人 › 材料 (docs/ui.md#交互). */
@@ -55,15 +56,6 @@ export function MaterialsSection() {
       </div>
     </Section>
   );
-}
-
-/** The file's bytes as base64, which JSON can carry. */
-async function base64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  // In slices, as a call takes only so many arguments.
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
 }
 
 const PURPOSES: [Purpose, string][] = [

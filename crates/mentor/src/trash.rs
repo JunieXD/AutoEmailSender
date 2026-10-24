@@ -3,8 +3,8 @@
 use std::num::NonZeroU32;
 
 use serde::Deserialize;
-use sqlx::SqlitePool;
 use sqlx::types::Json;
+use sqlx::{Executor, Sqlite, SqlitePool};
 use ts_rs::TS;
 
 use crate::{MentorPage, PAGE_SIZE, offset, rows};
@@ -67,14 +67,18 @@ pub async fn trash(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::E
 }
 
 /// Takes mentors out of the trash.
-pub async fn restore(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::Error> {
+pub async fn restore<'c>(
+    conn: impl Executor<'c, Database = Sqlite>,
+    ids: &[i64],
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "UPDATE mentor SET trashed_at = NULL, updated_at = ?
          WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL",
         now,
         Json(ids),
     )
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(())
 }

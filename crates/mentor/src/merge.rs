@@ -3,7 +3,7 @@
 use sqlx::SqlitePool;
 use sqlx::types::Json;
 
-use crate::{MatchResult, MentorFields, SaveError, detail, index, place, save_lists};
+use crate::{MatchResult, MentorFields, SaveError, detail, index, save_lists};
 
 #[derive(Debug)]
 pub enum MergeError {
@@ -79,31 +79,16 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
         homepages: a.homepages,
         research: a.research.or(b.research),
     };
-    for alias in std::iter::once(b.name).chain(b.aliases) {
-        if alias != fields.name && !fields.aliases.contains(&alias) {
-            fields.aliases.push(alias);
-        }
-    }
-    for address in b.emails {
-        let at = place(&fields.emails, &address);
-        fields.emails.insert(at, address);
-    }
-    for affiliation in b.affiliations {
-        if !fields.affiliations.contains(&affiliation) {
-            fields.affiliations.push(affiliation);
-        }
-    }
-    for url in b.homepages {
-        if !fields.homepages.contains(&url) {
-            fields.homepages.push(url);
-        }
-    }
+    let mut incoming = MentorFields {
+        aliases: b.aliases,
+        emails: b.emails,
+        affiliations: b.affiliations,
+        homepages: b.homepages,
+        ..MentorFields::default()
+    };
+    incoming.aliases.insert(0, b.name);
     let mut papers = a.papers;
-    for paper in b.papers {
-        if !papers.contains(&paper) {
-            papers.push(paper);
-        }
-    }
+    crate::supplement::add_missing(&mut fields, &mut papers, &incoming, &b.papers);
     let papers = Json(papers);
     let note = match (a.note, b.note) {
         (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),

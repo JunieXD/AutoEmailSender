@@ -164,3 +164,32 @@ async fn mentors_with_mail_to_go_or_in_the_trash_are_not_merged(db: SqlitePool) 
     ));
     assert!(mentor::get(&db, ming).await.unwrap().is_some());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn compatible_affiliations_fill_blanks_and_keep_local_title(db: SqlitePool) {
+    let a = mentor(&db, "王明", &[], "北京大学").await;
+    let b = mentor(&db, "Ming Wang", &[], "北京大学").await;
+    sqlx::query("UPDATE mentor_affiliation SET title = '副教授' WHERE mentor_id = ?")
+        .bind(a)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE mentor_affiliation SET school = '计算机学院', title = '教授' WHERE mentor_id = ?",
+    )
+    .bind(b)
+    .execute(&db)
+    .await
+    .unwrap();
+    merge::merge(&db, a, b, 1).await.unwrap();
+    let m = mentor::get(&db, a).await.unwrap().unwrap();
+    assert_eq!(
+        m.affiliations,
+        [Affiliation {
+            university: Some("北京大学".into()),
+            school: Some("计算机学院".into()),
+            title: Some("副教授".into()),
+            department: None
+        }]
+    );
+}

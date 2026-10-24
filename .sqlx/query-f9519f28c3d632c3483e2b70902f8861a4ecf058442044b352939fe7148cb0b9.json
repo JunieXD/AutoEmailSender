@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "rowid",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_search",
+            "name": "rowid"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f9519f28c3d632c3483e2b70902f8861a4ecf058442044b352939fe7148cb0b9"
+}

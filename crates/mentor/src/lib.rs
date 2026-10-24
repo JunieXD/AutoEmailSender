@@ -10,7 +10,10 @@ use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 pub mod conversations;
+pub mod export;
+pub mod import;
 pub mod merge;
+mod supplement;
 pub mod tags;
 pub mod trash;
 
@@ -174,21 +177,13 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
     let keyword = query.keyword.as_deref().and_then(keyword);
     // One snapshot for the page, the total and the rows; read only, so it simply ends when dropped.
     let mut tx = db.begin().await?;
-    let ids = sqlx::query_scalar!(
-        "SELECT m.id FROM mentor m
-         WHERE m.trashed_at IS NULL
-           AND (?1 IS NULL
-                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-         ORDER BY m.match_score DESC, m.id
-         LIMIT ?3 OFFSET ?4",
+    let ids = filtered_ids(
+        &mut tx,
         query.status,
-        keyword,
-        PAGE_SIZE,
+        keyword.as_deref(),
+        i64::from(PAGE_SIZE),
         offset(query.page),
     )
-    .fetch_all(&mut *tx)
     .await?;
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64"
@@ -207,6 +202,31 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
         mentors: rows(&mut tx, &ids).await?,
         total,
     })
+}
+
+async fn filtered_ids(
+    conn: &mut SqliteConnection,
+    status: Option<ContactStatus>,
+    keyword: Option<&str>,
+    limit: i64,
+    skip: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT m.id FROM mentor m
+         WHERE m.trashed_at IS NULL
+           AND (?1 IS NULL
+                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+         ORDER BY m.match_score DESC, m.id
+         LIMIT ?3 OFFSET ?4",
+        status,
+        keyword,
+        limit,
+        skip,
+    )
+    .fetch_all(conn)
+    .await
 }
 
 fn offset(page: NonZeroU32) -> i64 {
@@ -612,7 +632,7 @@ fn is_web_page(s: &str) -> bool {
 }
 
 /// A mentor's own fields, checked: blank ones are None or left out of their lists.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MentorFields {
     pub name: String,
     pub aliases: Vec<String>,
@@ -697,13 +717,13 @@ pub async fn assign_mailbox(
 }
 
 /// Replaces the mentor's own fields and reindexes it. False when there is no such mentor.
-pub async fn update(
-    db: &SqlitePool,
+pub async fn update<'c>(
+    conn: impl Acquire<'c, Database = Sqlite>,
     id: i64,
     mentor: &MentorFields,
     now: i64,
 ) -> Result<bool, SaveError> {
-    let mut tx = db.begin().await?;
+    let mut tx = conn.begin().await?;
     let done = sqlx::query!(
         "UPDATE mentor SET name = ?, updated_at = ? WHERE id = ?",
         mentor.name,

@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+sheet.workspace = true
+tokio.workspace = true
 base64 = "0.22"
 check.workspace = true
 email.workspace = true

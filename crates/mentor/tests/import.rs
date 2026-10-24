@@ -1,0 +1,510 @@
+#![cfg(test)]
+
+use mentor::export::{self, Scope};
+use mentor::import::{self, Decisions, Field, Setup};
+use mentor::{Affiliation, MentorFields};
+use sheet::Sheet;
+use sqlx::SqlitePool;
+
+fn table(rows: &[&[&str]]) -> Vec<Sheet> {
+    let sheet = Sheet {
+        name: "导师".into(),
+        rows: rows
+            .iter()
+            .map(|r| r.iter().map(|s| (*s).into()).collect())
+            .collect(),
+    };
+    sheet::read("导师.xlsx", &sheet::write_xlsx(&[sheet]).unwrap()).unwrap()
+}
+async fn add(db: &SqlitePool, name: &str, emails: &[&str], university: &str) -> i64 {
+    mentor::create(
+        db,
+        &MentorFields {
+            name: name.into(),
+            emails: emails.iter().map(|s| (*s).into()).collect(),
+            affiliations: vec![Affiliation {
+                university: Some(university.into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap()
+}
+async fn apply(db: &SqlitePool, sheets: &[Sheet], decisions: &Decisions) -> import::Imported {
+    import::import(db, sheets, &Setup::default(), decisions, 1)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn headers_mapping_validation_and_physical_rows(db: SqlitePool) {
+    let mut sheets = table(&[
+        &["", ""],
+        &["ＮＡＭＥ １", "Ｅ－ＭＡＩＬ", "个人主页", "额外资料"],
+        &[
+            "王明",
+            "ｗａｎｇ＠ｐｋｕ．ｅｄｕ．ｃｎ",
+            "https://example.edu.cn/wang",
+            "方向",
+        ],
+        &["", "", "", ""],
+        &["", "bad@pku", "", ""],
+        &["李明", "bad@pku", "", ""],
+        &["赵明", "", "bad-url", ""],
+    ]);
+    sheets.insert(
+        0,
+        Sheet {
+            name: "说明".into(),
+            rows: vec![vec!["如何填写".into()]],
+        },
+    );
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.sheet, 1);
+    assert_eq!(p.created, 1);
+    assert_eq!(p.columns[0].field, Some(Field::Name));
+    assert_eq!(p.columns[1].field, Some(Field::Email));
+    assert_eq!(
+        p.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
+        [5, 6, 7]
+    );
+    assert!(p.errors[0].reason.contains("姓名"));
+    assert!(p.errors[1].reason.contains("邮箱"));
+    assert!(p.errors[2].reason.contains("主页"));
+    let setup = Setup {
+        sheet: Some(1),
+        columns: Some(vec![
+            Some(Field::Name),
+            Some(Field::Email),
+            Some(Field::Homepage),
+            Some(Field::Research),
+        ]),
+    };
+    let p = import::preview(&db, &sheets, &setup).await.unwrap();
+    assert_eq!(p.columns[3].field, Some(Field::Research));
+    import::import(&db, &sheets, &setup, &Decisions::default(), 1)
+        .await
+        .unwrap();
+    let rows = export::export(&db, &Scope::Ids(vec![1]), true)
+        .await
+        .unwrap();
+    assert!(rows[1].contains(&"方向".to_owned()));
+    assert!(rows[1].contains(&"wang@pku.edu.cn".to_owned()));
+    let setup = Setup {
+        sheet: Some(1),
+        columns: Some(vec![Some(Field::Name), Some(Field::Name)]),
+    };
+    assert!(
+        import::preview(&db, &sheets, &setup)
+            .await
+            .unwrap()
+            .issue
+            .unwrap()
+            .contains("只能对应一列")
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn matching_groups_and_ambiguous_emails(db: SqlitePool) {
+    let wang = add(&db, "王明", &["wang@pku.edu.cn"], "北京大学").await;
+    let li = add(&db, "李明", &[], "北京大学").await;
+    let sheets = table(&[
+        &["姓名", "学校", "邮箱", "主页"],
+        &["表中姓名", "北京大学", "WANG@pku.edu.cn", ""],
+        &[
+            "表中姓名",
+            "北京大学",
+            "wang@pku.edu.cn;new@gmail.com",
+            "https://example.cn",
+        ],
+        &["李明", "北京大学", "", ""],
+        &["王明", "北京大学", "another@pku.edu.cn", ""],
+        &["新导师", "", "x@a.cn", ""],
+        &["新导师", "", "x@a.cn;y@a.cn", ""],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.created, 2);
+    assert_eq!(p.maybe_same.len(), 1);
+    assert_eq!(p.maybe_same[0].id, li);
+    let done = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((done.created, done.updated), (2, 1));
+    let p = mentor::get(&db, wang).await.unwrap().unwrap();
+    assert_eq!(p.emails, ["wang@pku.edu.cn", "new@gmail.com"]);
+    assert_eq!(p.homepages, ["https://example.cn"]);
+    let second = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((second.created, second.updated), (0, 0));
+    let bad = table(&[
+        &["姓名", "邮箱"],
+        &["错误", "wang@pku.edu.cn;another@pku.edu.cn"],
+    ]);
+    let p = import::preview(&db, &bad, &Setup::default()).await.unwrap();
+    assert!(p.errors[0].reason.contains("两位"));
+    let separate = table(&[&["姓名", "学校"], &["李明", "北京大学"]]);
+    assert_eq!(
+        apply(
+            &db,
+            &separate,
+            &Decisions {
+                separate: vec![2],
+                ..Default::default()
+            }
+        )
+        .await
+        .created,
+        1
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn additions_conflicts_and_stale_decisions(db: SqlitePool) {
+    let id = add(&db, "王明", &["wang@gmail.com"], "北京大学").await;
+    let mut fields = MentorFields {
+        name: "王明".into(),
+        emails: vec!["wang@gmail.com".into()],
+        research: Some("机器学习".into()),
+        affiliations: vec![Affiliation {
+            university: Some("北京大学".into()),
+            title: Some("副教授".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    mentor::update(&db, id, &fields, 0).await.unwrap();
+    let sheets = table(&[
+        &[
+            "姓名",
+            "邮箱",
+            "学校",
+            "学院",
+            "职称",
+            "研究方向",
+            "来源",
+            "备注",
+            "标签",
+            "论文",
+        ],
+        &[
+            "Ming Wang",
+            "wang@gmail.com;wang@pku.edu.cn",
+            "北京大学",
+            "计算机学院",
+            "教授",
+            "多模态学习",
+            "https://example.cn",
+            "请联系",
+            "优先;已收藏",
+            "论文一",
+        ],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.differences.len(), 3);
+    let done = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!(done.updated, 1);
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(m.name, "王明");
+    assert_eq!(m.research.as_deref(), Some("机器学习"));
+    assert_eq!(m.emails, ["wang@pku.edu.cn", "wang@gmail.com"]);
+    assert_eq!(m.affiliations.len(), 1);
+    assert_eq!(m.affiliations[0].school.as_deref(), Some("计算机学院"));
+    assert_eq!(m.tags.len(), 2);
+    // A changed local value invalidates only that decision, leaving the other choices usable.
+    fields.emails = m.emails;
+    fields.affiliations = m.affiliations;
+    fields.research = Some("刚修改的方向".into());
+    mentor::update(&db, id, &fields, 2).await.unwrap();
+    assert_eq!(
+        apply(
+            &db,
+            &sheets,
+            &Decisions {
+                take: p.differences,
+                ..Default::default()
+            }
+        )
+        .await
+        .updated,
+        1
+    );
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(m.name, "Ming Wang");
+    assert!(m.aliases.contains(&"王明".into()));
+    assert_eq!(m.research.as_deref(), Some("刚修改的方向"));
+    assert_eq!(m.affiliations[0].title.as_deref(), Some("教授"));
+    let done = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((done.created, done.updated), (0, 0));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn trash_and_round_trip(db: SqlitePool) {
+    let id = add(&db, "王明", &["w@a.cn"], "北京大学").await;
+    mentor::trash::trash(&db, &[id], 1).await.unwrap();
+    let sheets = table(&[
+        &[
+            "姓名",
+            "邮箱",
+            "学校",
+            "学院",
+            "学校 2",
+            "邮箱 2",
+            "别名",
+            "主页",
+            "研究方向",
+            "来源网址",
+            "代表论文",
+            "标签",
+            "备注",
+        ],
+        &[
+            "王明",
+            "w@a.cn",
+            "北京大学",
+            "计算机学院",
+            "清华大学",
+            "w@b.cn",
+            "Ming",
+            "https://example.cn",
+            "多模态",
+            "https://source.cn",
+            "论文一;论文二",
+            "优先",
+            "'=私人备注",
+        ],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.trashed.len(), 1);
+    assert_eq!(apply(&db, &sheets, &Decisions::default()).await.updated, 0);
+    assert_eq!(
+        apply(
+            &db,
+            &sheets,
+            &Decisions {
+                restore: vec![2],
+                ..Default::default()
+            }
+        )
+        .await
+        .updated,
+        1
+    );
+    let rows = export::export(&db, &Scope::Ids(vec![id]), true)
+        .await
+        .unwrap();
+    let bytes = sheet::write_csv(&rows);
+    let exported = sheet::read("a.csv", &bytes).unwrap();
+    assert_eq!(
+        apply(&db, &exported, &Decisions::default()).await.updated,
+        0
+    );
+    // Importing into an empty database also preserves all profile fields.
+    let other = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    db::MIGRATOR.run(&other).await.unwrap();
+    assert_eq!(
+        apply(&other, &exported, &Decisions::default())
+            .await
+            .created,
+        1
+    );
+    assert_eq!(
+        export::export(&other, &Scope::Ids(vec![1]), true)
+            .await
+            .unwrap(),
+        rows
+    );
+    other.close().await;
+    let no_note = export::export(&db, &Scope::Ids(vec![id]), false)
+        .await
+        .unwrap();
+    assert!(!no_note[0].contains(&"备注".into()));
+    mentor::trash::trash(&db, &[id], 4).await.unwrap();
+    assert_eq!(
+        export::export(&db, &Scope::Ids(vec![id]), true)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn failed_import_rolls_back_profiles_and_tags(db: SqlitePool) {
+    let id = add(&db, "王明", &["w@a.cn"], "北京大学").await;
+    sqlx::query("CREATE TRIGGER refuse_import BEFORE INSERT ON mentor WHEN new.name = '拒绝写入' BEGIN SELECT RAISE(ABORT, 'interrupted'); END").execute(&db).await.unwrap();
+    let sheets = table(&[
+        &["姓名", "邮箱", "备注", "标签"],
+        &["王明", "w@a.cn", "新增备注", "新标签"],
+        &["拒绝写入", "", "", ""],
+    ]);
+    assert!(
+        import::import(&db, &sheets, &Setup::default(), &Decisions::default(), 1)
+            .await
+            .is_err()
+    );
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(m.note, None);
+    assert!(m.tags.is_empty());
+    assert!(mentor::tags::list(&db).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn unrelated_edits_do_not_invalidate_a_choice_and_whitespace_is_ignored(db: SqlitePool) {
+    let id = add(&db, "Ming  Wang", &[], "北京大学").await;
+    let sheets = table(&[
+        &["姓名", "学校", "邮箱", "研究方向", "备注", "来源网址"],
+        &[
+            "Ming Wang",
+            "北京大学",
+            "",
+            "图神经网络",
+            "联系前阅读论文",
+            "https://example.cn",
+        ],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.maybe_same.len(), 1);
+    assert!(p.differences.is_empty());
+    apply(&db, &sheets, &Decisions::default()).await;
+    let fields = MentorFields {
+        name: "Ming  Wang".into(),
+        emails: vec!["w@a.cn".into()],
+        research: Some("另一方向".into()),
+        affiliations: vec![Affiliation {
+            university: Some("北京大学".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    mentor::update(&db, id, &fields, 1).await.unwrap();
+    let sheets = table(&[
+        &["姓名", "邮箱", "研究方向", "备注", "来源网址"],
+        &[
+            "Ming Wang",
+            "w@a.cn",
+            "图神经网络",
+            "修改的备注",
+            "https://new.cn",
+        ],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    let mut fields = fields;
+    fields.name = "王明".into();
+    mentor::update(&db, id, &fields, 2).await.unwrap();
+    apply(
+        &db,
+        &sheets,
+        &Decisions {
+            take: p.differences,
+            ..Default::default()
+        },
+    )
+    .await;
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(m.name, "王明");
+    assert_eq!(m.research.as_deref(), Some("图神经网络"));
+    assert_eq!(m.note.as_deref(), Some("修改的备注"));
+    assert_eq!(m.source_url.as_deref(), Some("https://new.cn"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn export_uses_all_filtered_pages_and_list_order(db: SqlitePool) {
+    let mut ids = Vec::new();
+    for i in 0..55 {
+        ids.push(add(&db, &format!("王明{i}"), &[], "北京大学").await);
+    }
+    let other = add(&db, "其他导师", &[], "清华大学").await;
+    sqlx::query("UPDATE mentor SET match_state = 'done', match_score = 95, matched_at = 1, match_model = 'm' WHERE id = ?").bind(ids[54]).execute(&db).await.unwrap();
+    mentor::trash::trash(&db, &[ids[0]], 1).await.unwrap();
+    let rows = export::export(
+        &db,
+        &Scope::Filter(export::Filter {
+            status: None,
+            keyword: Some("北京大学".into()),
+        }),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 55);
+    assert_eq!(rows[1][0], "王明54");
+    assert_eq!(rows[2][0], "王明1");
+    assert!(!rows.iter().any(|r| r[0] == "其他导师"));
+    let selected = export::export(
+        &db,
+        &Scope::Ids(vec![other, ids[0], ids[1], ids[54]]),
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        selected
+            .iter()
+            .skip(1)
+            .map(|r| r[0].as_str())
+            .collect::<Vec<_>>(),
+        ["王明54", "王明1", "其他导师"]
+    );
+    let template = export::export(&db, &Scope::Ids(vec![]), true)
+        .await
+        .unwrap();
+    assert_eq!(template.len(), 1);
+    assert!(template[0].contains(&"职称".into()));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn grouped_new_rows_keep_order_and_existing_units_round_trip(db: SqlitePool) {
+    let sheets = table(&[
+        &["姓名", "邮箱", "学校"],
+        &["王明", "w@gmail.com", "北京大学"],
+        &["Ming Wang", "w@gmail.com;w@pku.edu.cn", "清华大学"],
+    ]);
+    assert_eq!(apply(&db, &sheets, &Decisions::default()).await.created, 1);
+    let mut m = mentor::get(&db, 1).await.unwrap().unwrap();
+    assert_eq!(m.emails, ["w@gmail.com", "w@pku.edu.cn"]);
+    assert_eq!(m.aliases, ["Ming Wang"]);
+    m.affiliations.push(Affiliation {
+        university: Some("北京大学".into()),
+        school: Some("计算机学院".into()),
+        ..Default::default()
+    });
+    mentor::update(
+        &db,
+        1,
+        &MentorFields {
+            name: m.name,
+            emails: m.emails,
+            aliases: m.aliases,
+            affiliations: m.affiliations,
+            ..Default::default()
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    let rows = export::export(&db, &Scope::Ids(vec![1]), true)
+        .await
+        .unwrap();
+    let sheets = sheet::read(
+        "a.xlsx",
+        &sheet::write_xlsx(&[Sheet {
+            name: "导师".into(),
+            rows,
+        }])
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(apply(&db, &sheets, &Decisions::default()).await.updated, 0);
+}

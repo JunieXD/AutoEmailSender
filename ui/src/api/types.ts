@@ -6,6 +6,8 @@ export type Attachment = { fileName: string, size: number, };
 
 export type CallError = { code: ErrorCode, message: string, };
 
+export type Column = { header: string, field: Field | null, };
+
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
@@ -16,7 +18,11 @@ export type ConversationPage = { conversations: Array<Conversation>, total: numb
 
 export type ConversationQuery = { unread: boolean, page: number, };
 
+export type Decisions = { take: Array<Difference>, separate: Array<number>, restore: Array<number>, };
+
 export type DefaultTemplate = { id: number | null, };
+
+export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
 export type Direction = "up" | "down";
 
@@ -36,7 +42,13 @@ export type Entry = { "email": Email } | { "message": Message };
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
 
+export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
+
+export type Field = "name" | "email" | "university" | "school" | "department" | "title" | "homepage" | "alias" | "research" | "papers" | "sourceUrl" | "tags" | "note";
+
 export type FilledTemplate = { subject: string, bodyMd: string, };
+
+export type Filter = { status?: ContactStatus, keyword?: string, };
 
 export type FirstDraft = { subject: string | null, bodyMd: string | null, 
 /**
@@ -55,6 +67,12 @@ export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, ht
  * Materials, by id.
  */
 attachments: Array<number>, };
+
+export type ImportMentors = { decisions: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
+export type ImportSetup = { sheet: number | null, columns: Array<Field | null> | null, };
+
+export type Imported = { created: number, updated: number, };
 
 export type Letter = { subject: string, bodyMd: string, };
 
@@ -114,6 +132,8 @@ hasText: boolean, forMatching: boolean, forWriting: boolean, attachByDefault: bo
 export type MaterialId = { id: number, };
 
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
+
+export type MaybeSame = { row: number, name: string, university: string | null, id: number, localName: string, affiliation: Affiliation | null, emails: Array<string>, };
 
 export type MentorAddress = { id: number, address: string, };
 
@@ -273,6 +293,10 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
 
+export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Column>, issue: string | null, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
+
+export type PreviewImport = { decisions?: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
@@ -292,6 +316,10 @@ export type ReceiveStatus = { receivedAt: number | null, };
 
 export type ReplyNotifications = { on: boolean, };
 
+export type RowError = { row: number, reason: string, };
+
+export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
+
 export type Security = "tls" | "starttls";
 
 export type Server = { host: string, port: number, security: Security, };
@@ -309,6 +337,8 @@ steps: Array<string>,
  * Where the steps start.
  */
 url: string, } | { "kind": "unsupported", reason: string, };
+
+export type TableFormat = "xlsx" | "csv";
 
 export type Tag = { id: number, name: string, 
 /**
@@ -352,6 +382,10 @@ export type TrashQuery = {
  */
 page: number, };
 
+export type Trashed = { row: number, id: number, name: string, };
+
+export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
+
 export interface Operations {
   listConversations: { input: ConversationQuery; output: ConversationPage };
   unreadCount: { input: Nothing; output: number };
@@ -359,6 +393,8 @@ export interface Operations {
   receiveStatus: { input: Nothing; output: ReceiveStatus };
   getReplyNotifications: { input: Nothing; output: boolean };
   setReplyNotifications: { input: ReplyNotifications; output: null };
+  previewImport: { input: PreviewImport; output: Preview };
+  importMentors: { input: ImportMentors; output: Imported };
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };

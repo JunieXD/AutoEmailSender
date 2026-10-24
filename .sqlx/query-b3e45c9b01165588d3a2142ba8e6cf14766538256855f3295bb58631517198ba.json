@@ -1,0 +1,93 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n            d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note\n           FROM mentor m JOIN mentor_detail d ON d.mentor_id = m.id\n           WHERE m.id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "source_url"
+          }
+        }
+      },
+      {
+        "name": "trashed!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "research",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "research"
+          }
+        }
+      },
+      {
+        "name": "papers: Json<Vec<String>>",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "papers"
+          }
+        }
+      },
+      {
+        "name": "note",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "b3e45c9b01165588d3a2142ba8e6cf14766538256855f3295bb58631517198ba"
+}

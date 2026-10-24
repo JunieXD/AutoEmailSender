@@ -1,0 +1,15 @@
+[package]
+name = "sheet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+calamine.workspace = true
+csv.workspace = true
+encoding_rs.workspace = true
+rust_xlsxwriter.workspace = true

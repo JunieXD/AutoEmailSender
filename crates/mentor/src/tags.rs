@@ -1,8 +1,8 @@
 //! Tags: the user's own labels for mentors, each with a colour and a place in the user's order.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use sqlx::types::Json;
+use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -190,5 +190,38 @@ pub async fn tag_mentors(
         .execute(db)
         .await?;
     }
+    Ok(())
+}
+
+/// Presets used by both the tag picker and imported new tags.
+pub const COLORS: [&str; 8] = [
+    "#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762",
+];
+
+pub async fn add_by_name(
+    conn: &mut SqliteConnection,
+    mentor: i64,
+    name: &str,
+) -> Result<(), sqlx::Error> {
+    let id = match sqlx::query_scalar!("SELECT id FROM tag WHERE name = ?", name)
+        .fetch_optional(&mut *conn)
+        .await?
+    {
+        Some(id) => id,
+        None => {
+            let count = sqlx::query_scalar!(r#"SELECT count(*) AS "n!: i64" FROM tag"#)
+                .fetch_one(&mut *conn)
+                .await?;
+            let color = COLORS[count as usize % COLORS.len()];
+            sqlx::query_scalar!("INSERT INTO tag (name, color, position) VALUES (?, ?, (SELECT coalesce(max(position) + 1, 0) FROM tag)) RETURNING id", name, color).fetch_one(&mut *conn).await?
+        }
+    };
+    sqlx::query!(
+        "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id) VALUES (?, ?)",
+        mentor,
+        id
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }

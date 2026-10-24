@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM mentor WHERE name IN (SELECT value FROM json_each(?1)) OR id IN (SELECT mentor_id FROM mentor_alias WHERE name IN (SELECT value FROM json_each(?1)))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f7998e948ee790f137633e4f7dcdd50726fd770f7f6a9ec34e5f31e1a56deeb0"
+}

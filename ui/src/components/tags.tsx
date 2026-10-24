@@ -9,17 +9,7 @@ import { Dialog, DialogBody, DialogContent, DialogHeader } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-/** docs/ui.md#颜色: the colours a tag can have; new tags take them in turn. */
-export const TAG_COLORS = [
-  "#991b1b",
-  "#c2410c",
-  "#985a0c",
-  "#2c7a4f",
-  "#0e7490",
-  "#3f6aa8",
-  "#7e22ce",
-  "#6f6762",
-] as const;
+import { TAG_COLORS } from "@/api/types";
 
 /** The colour for the next new tag: the presets in turn. */
 function nextColor(count: number): string {
