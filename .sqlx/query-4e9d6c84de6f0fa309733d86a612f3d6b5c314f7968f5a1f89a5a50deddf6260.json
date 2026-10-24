@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE task SET writer=?,template_id=?,template_subject=?,template_body_md=?,model_config_id=? WHERE id=?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "4e9d6c84de6f0fa309733d86a612f3d6b5c314f7968f5a1f89a5a50deddf6260"
+}

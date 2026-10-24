@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'review', subject = ?, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "e7646e842943bccb83e87b0f8d95c1386ca31d110b1bcdc4c5ae09ee813df4b2"
+}

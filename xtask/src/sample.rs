@@ -375,6 +375,52 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .execute(&mut *tx)
             .await?;
     }
+    for (name, writer, state) in [
+        ("首封 10月25日", "template", "active"),
+        ("计算机方向", "ai", "paused"),
+        ("夏令营联系", "template", "stopped"),
+    ] {
+        let task = sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES (?,'first',?,'申请{导师姓名}','{导师姓名}老师：您好，我是林晓。','now',?,?)")
+            .bind(name).bind(writer).bind(state).bind(now).execute(&mut *tx).await?.last_insert_rowid();
+        sqlx::query("UPDATE email SET task_id = ?1 WHERE id IN (SELECT min(id) FROM email WHERE task_id IS NULL AND kind='first' GROUP BY mentor_id LIMIT 15)").bind(task).execute(&mut *tx).await?;
+        let states: &[&str] = match (writer, state) {
+            (_, "stopped") => &["canceled", "canceled", "canceled"],
+            ("ai", _) => &[
+                "generating",
+                "generation_failed",
+                "review",
+                "approved",
+                "failed",
+                "canceled",
+            ],
+            _ => &["review", "review", "approved", "failed", "canceled"],
+        };
+        let ids: Vec<i64> =
+            sqlx::query_scalar("SELECT id FROM email WHERE task_id=? ORDER BY id LIMIT ?")
+                .bind(task)
+                .bind(states.len() as i64)
+                .fetch_all(&mut *tx)
+                .await?;
+        for (id, state) in ids.into_iter().zip(states) {
+            let error = match *state {
+                "generation_failed" => Some("模型未能返回完整的草稿"),
+                "failed" => Some("收件地址不存在，请核对导师邮箱"),
+                "canceled" => Some(if name == "夏令营联系" {
+                    "任务停止"
+                } else {
+                    "移出任务"
+                }),
+                _ => None,
+            };
+            sqlx::query("UPDATE email SET state=?,error=?,generation_queued_at=?,planned_at=?,html=coalesce(html,'<p>老师您好，我是林晓。</p>'),text=coalesce(text,'老师您好，我是林晓。'),message_id=NULL,copy_message_id=NULL,sent_at=NULL,from_address=NULL,to_address=NULL WHERE id=?")
+                .bind(state).bind(error).bind((*state == "generating").then_some(now))
+                .bind(matches!(*state,"approved"|"failed").then_some(now+DAY)).bind(id).execute(&mut *tx).await?;
+        }
+        if state == "stopped" {
+            sqlx::query("UPDATE email SET state='canceled',error='任务停止',generation_queued_at=NULL WHERE task_id=? AND state IN ('generating','generation_failed','review','approved','failed')")
+                .bind(task).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(())
 }

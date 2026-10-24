@@ -1,0 +1,76 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id,mentor_id,coalesce(subject,'') AS \"subject!: String\",coalesce(body_md,'') AS \"body_md!: String\",state AS \"state: DraftState\",error FROM email WHERE id = ? AND task_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "subject!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "body_md!: String",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "state: DraftState",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "390bcfb267e545bda748b50d3d7780cca0a37b3d76fd0b571e7b042610f0d0ca"
+}

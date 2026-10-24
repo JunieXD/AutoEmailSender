@@ -297,7 +297,10 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
     detail(&mut *db.begin().await?, id).await
 }
 
-async fn detail(conn: &mut SqliteConnection, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
+pub async fn detail(
+    conn: &mut SqliteConnection,
+    id: i64,
+) -> Result<Option<MentorDetail>, sqlx::Error> {
     let Some(r) = sqlx::query!(
         r#"SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,

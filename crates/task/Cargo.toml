@@ -1,0 +1,34 @@
+[package]
+name = "task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+check.workspace = true
+email.workspace = true
+material.workspace = true
+mentor.workspace = true
+model.workspace = true
+net.workspace = true
+profile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+template.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time", "rt"] }
+tracing.workspace = true
+ts-rs.workspace = true
+writing.workspace = true
+
+[dev-dependencies]
+db.workspace = true
+fakemail.workspace = true
+mailbox.workspace = true
+matching.workspace = true
+send.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }

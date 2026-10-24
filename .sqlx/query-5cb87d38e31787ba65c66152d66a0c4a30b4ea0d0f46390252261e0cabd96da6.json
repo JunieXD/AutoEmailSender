@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_name, extracted_text AS \"text!\" FROM material WHERE id IN (SELECT value FROM json_each(?)) AND extracted_text IS NOT NULL ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "extracted_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "5cb87d38e31787ba65c66152d66a0c4a30b4ea0d0f46390252261e0cabd96da6"
+}

@@ -103,6 +103,39 @@ pub async fn run(path: &Path) -> Result {
         Duration::from_millis(1),
     );
 
+    // Every task/mentor pair is unique even when a mentor has several historical letters.
+    sqlx::query("UPDATE email SET task_id = NULL")
+        .execute(&db)
+        .await?;
+    sqlx::query("DELETE FROM task").execute(&db).await?;
+    for id in 1..=20 {
+        sqlx::query("INSERT INTO task(id,name,kind,writer,schedule,state,created_at) VALUES (?,'基准任务','first','ai','now','active',?)").bind(id).bind(NOW).execute(&db).await?;
+    }
+    sqlx::query("WITH ranked AS MATERIALIZED (SELECT id, row_number() OVER (PARTITION BY mentor_id ORDER BY id) AS n FROM email) UPDATE email SET task_id = ranked.n+1 FROM ranked WHERE ranked.id=email.id").execute(&db).await?;
+    sqlx::query("UPDATE email SET task_id=1 WHERE id IN (SELECT min(id) FROM email GROUP BY mentor_id LIMIT 500)").execute(&db).await?;
+    let query = task::TaskQuery {
+        page: NonZeroU32::MIN,
+    };
+    report(
+        "任务列表（20 个任务、6 万封邮件）",
+        median(async || task::list(&db, &query).await.map(drop)).await?,
+        home,
+    );
+    // Review text includes all rules, aliases, attachment counts and other task mentor names.
+    sqlx::query("UPDATE email SET state='review',error=NULL WHERE task_id=1")
+        .execute(&db)
+        .await?;
+    let query = task::DraftQuery {
+        task_id: 1,
+        filter: task::DraftFilter::All,
+        page: NonZeroU32::MIN,
+    };
+    report(
+        "审核页草稿列表一页（500 封的任务，含问题数）",
+        median(async || task::drafts(&db, &query, NOW).await.map(drop)).await?,
+        home,
+    );
+
     if over > 0 {
         return Err(format!("{over} 项超出预算").into());
     }

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject,body_md,state FROM email WHERE id = ? AND task_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "85f69cc463a642fc68617d888210e964c81f5c727ab2f7e2ad5af877151d125c"
+}

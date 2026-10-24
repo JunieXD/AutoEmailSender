@@ -133,6 +133,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "task",
  "template",
  "tracing",
  "ts-rs",
@@ -416,12 +417,14 @@ dependencies = [
  "api",
  "db",
  "matching",
+ "model",
  "net",
  "profile",
  "receive",
  "send",
  "serde_json",
  "sqlx",
+ "task",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -5553,6 +5556,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "task"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "check",
+ "db",
+ "email",
+ "fakemail",
+ "mailbox",
+ "matching",
+ "material",
+ "mentor",
+ "model",
+ "net",
+ "profile",
+ "send",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "template",
+ "tokio",
+ "tracing",
+ "ts-rs",
+ "writing",
+]
+
+[[package]]
 name = "tauri"
 version = "2.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7386,6 +7415,7 @@ dependencies = [
  "mentor",
  "serde_json",
  "sqlx",
+ "task",
  "tokio",
 ]
 
