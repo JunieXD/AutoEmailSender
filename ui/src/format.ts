@@ -9,6 +9,12 @@ export function day(ms: number): string {
   return date.getFullYear() === today.getFullYear() ? md : `${date.getFullYear()}年${md}`;
 }
 
+/** "320 KB", "1.2 MB". */
+export function fileSize(bytes: number): string {
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`;
+}
+
 /** "09:30", in the user's time zone. */
 export function time(ms: number): string {
   const date = new Date(ms);

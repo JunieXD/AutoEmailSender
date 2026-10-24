@@ -15,6 +15,7 @@ db = { path = "crates/db" }
 email = { path = "crates/email" }
 fakemail = { path = "crates/fakemail" }
 mailbox = { path = "crates/mailbox" }
+material = { path = "crates/material" }
 mentor = { path = "crates/mentor" }
 model = { path = "crates/model" }
 profile = { path = "crates/profile" }

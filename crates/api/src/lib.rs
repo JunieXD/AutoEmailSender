@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use base64::prelude::{BASE64_STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
@@ -11,6 +12,8 @@ pub struct Context {
     pub db: SqlitePool,
     pub net: net::Net,
     pub sender: send::Sender,
+    /// Where material files are kept.
+    pub materials: std::path::PathBuf,
 }
 
 /// What the UI shows when an operation fails.
@@ -134,6 +137,11 @@ operations! {
     "updateProfile" => update_profile(profile::ProfileForm) -> ();
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
+    "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
+    "addMaterial" => add_material(NewMaterial) -> MaterialId;
+    "setMaterialPurpose" => set_material_purpose(MaterialPurpose) -> ();
+    "getMaterialText" => get_material_text(MaterialId) -> Option<String>;
+    "deleteMaterial" => delete_material(MaterialId) -> ();
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
@@ -664,6 +672,79 @@ async fn get_letter_style(ctx: &Context, _: Nothing) -> Result<profile::LetterSt
 async fn update_letter_style(ctx: &Context, style: profile::LetterStyle) -> Result<(), CallError> {
     style.check().map_err(CallError::invalid)?;
     Ok(profile::update_letter_style(&ctx.db, &style).await?)
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
+pub struct MaterialId {
+    pub id: i64,
+}
+
+/// A file the user picked, as base64: JSON carries no bytes.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMaterial {
+    pub file_name: String,
+    pub data: String,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MaterialPurpose {
+    pub id: i64,
+    pub purpose: material::Purpose,
+    pub on: bool,
+}
+
+const NO_MATERIAL: &str = "找不到这份材料，可能已被删除。";
+
+impl From<material::Error> for CallError {
+    fn from(e: material::Error) -> Self {
+        match e {
+            material::Error::Type => CallError::invalid("只能添加 PDF、DOCX 或 DOC 文件。".into()),
+            material::Error::TooLarge => CallError::invalid("文件超过 20 MB，无法添加。".into()),
+            material::Error::Unreadable(detail) => {
+                tracing::warn!("reading a material: {detail}");
+                CallError::invalid(
+                    "未能读取文件：文件可能已损坏、设有密码，或格式与扩展名不符。".into(),
+                )
+            }
+            material::Error::Db(e) => e.into(),
+            material::Error::File(e) => CallError::internal(format!("material file: {e}")),
+        }
+    }
+}
+
+async fn list_materials(ctx: &Context, _: Nothing) -> Result<Vec<material::Material>, CallError> {
+    Ok(material::list(&ctx.db).await?)
+}
+
+async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, CallError> {
+    let data = BASE64_STANDARD
+        .decode(&input.data)
+        .map_err(CallError::bad_input)?;
+    let id = material::add(&ctx.db, &ctx.materials, input.file_name.trim(), data, now()).await?;
+    Ok(MaterialId { id })
+}
+
+async fn set_material_purpose(ctx: &Context, input: MaterialPurpose) -> Result<(), CallError> {
+    if material::set_purpose(&ctx.db, input.id, input.purpose, input.on).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_MATERIAL))
+    }
+}
+
+async fn get_material_text(ctx: &Context, input: MaterialId) -> Result<Option<String>, CallError> {
+    material::text(&ctx.db, input.id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MATERIAL))
+}
+
+async fn delete_material(ctx: &Context, input: MaterialId) -> Result<(), CallError> {
+    if material::delete(&ctx.db, &ctx.materials, input.id).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(NO_MATERIAL))
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]

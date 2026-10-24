@@ -65,6 +65,16 @@ export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | 
 
 export type MatchState = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, } | { "state": "failed" };
 
+export type Material = { id: number, fileName: string, size: number, 
+/**
+ * False for a scan, which can only be attached.
+ */
+hasText: boolean, forMatching: boolean, forWriting: boolean, attachByDefault: boolean, };
+
+export type MaterialId = { id: number, };
+
+export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
+
 export type MentorDetail = { id: number, name: string, email: string | null, title: string | null, university: string | null, school: string | null, department: string | null, homepageUrl: string | null, 
 /**
  * The page the mentor was found on.
@@ -167,6 +177,8 @@ baseUrl: string, model: string, };
 
 export type NewMailbox = { secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
+export type NewMaterial = { fileName: string, data: string, };
+
 export type NewModelConfig = { apiKey: string, 
 /**
  * May be blank.
@@ -193,6 +205,8 @@ export type Provider = { id: string, name: string,
  * which the user picks by name.
  */
 domains: Array<string>, setup: Setup, };
+
+export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type Security = "tls" | "starttls";
 
@@ -279,6 +293,11 @@ export interface Operations {
   updateProfile: { input: ProfileForm; output: null };
   getLetterStyle: { input: Nothing; output: LetterStyle };
   updateLetterStyle: { input: LetterStyle; output: null };
+  listMaterials: { input: Nothing; output: Array<Material> };
+  addMaterial: { input: NewMaterial; output: MaterialId };
+  setMaterialPurpose: { input: MaterialPurpose; output: null };
+  getMaterialText: { input: MaterialId; output: string | null };
+  deleteMaterial: { input: MaterialId; output: null };
   listPlaceholders: { input: Nothing; output: Array<string> };
   listTemplates: { input: Nothing; output: Array<TemplateSummary> };
   getTemplate: { input: TemplateId; output: Template };

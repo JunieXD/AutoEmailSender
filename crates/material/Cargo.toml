@@ -1,0 +1,22 @@
+[package]
+name = "material"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+office_oxide = "0.1"
+pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
+serde.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt"] }
+ts-rs.workspace = true
+
+[dev-dependencies]
+db.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt"] }

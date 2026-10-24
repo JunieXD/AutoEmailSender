@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT extracted_text FROM material WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "extracted_text",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "extracted_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8cad35407091591db9415e3b537ab29a14d93bd115ec282d60152e2583effde5"
+}

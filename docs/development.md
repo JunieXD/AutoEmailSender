@@ -12,6 +12,7 @@
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
 | `crates/model` | 模型：服务商表、调用和测试 |
 | `crates/profile` | 个人资料和信件样式 |
+| `crates/material` | 材料：存文件、提取文字 |
 | `crates/template` | 模板和占位符 |
 | `crates/email` | 邮件：草稿和状态 |
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE material SET attach_by_default = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f169912742f80a3d59bc5011d1fff2e5f7c96047f2ac5da21d8b222727b40d69"
+}

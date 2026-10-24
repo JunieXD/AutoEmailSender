@@ -4,6 +4,7 @@ import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
 import { MailboxesSection } from "./pages/mailboxes";
 import { ModelsSection } from "./pages/models";
+import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
@@ -65,6 +66,12 @@ const profileRoute = createRoute({
   component: ProfileSection,
 });
 
+const materialsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "materials",
+  component: MaterialsSection,
+});
+
 const templatesRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "templates",
@@ -105,6 +112,7 @@ export const router = createRouter({
     settingsRoute.addChildren([
       settingsHomeRoute,
       profileRoute,
+      materialsRoute,
       templatesRoute,
       letterStyleRoute,
       mailboxesRoute,
