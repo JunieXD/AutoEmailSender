@@ -1,0 +1,93 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, file_name, size, extracted_text IS NOT NULL AS \"has_text: bool\",\n             for_matching AS \"for_matching: bool\", for_writing AS \"for_writing: bool\",\n             attach_by_default AS \"attach_by_default: bool\"\n           FROM material ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "file_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "size",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "size"
+          }
+        }
+      },
+      {
+        "name": "has_text: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "for_matching: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "for_matching"
+          }
+        }
+      },
+      {
+        "name": "for_writing: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "for_writing"
+          }
+        }
+      },
+      {
+        "name": "attach_by_default: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "attach_by_default"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "071ea2e8fb448270476a8215e6bb1928c2988d56fda94c2fc250217a4e2ffe73"
+}

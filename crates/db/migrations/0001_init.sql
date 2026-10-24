@@ -72,16 +72,19 @@ INSERT INTO profile (id, font_size_pt, line_height, paragraph_spacing_em, first_
   ai_fact_check, ai_reply_outcome, ai_reply_todos, reply_notifications, open_tracking, cloud_backup)
 VALUES (1, 10.5, 1.6, 0.8, 0, 'failover', 1, 0, 0, 1, 0, 0);
 
+-- A file of the user's, stored as materials/<id> in the data directory. Large columns last.
 CREATE TABLE material (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  file_name TEXT NOT NULL,
+  file_name TEXT NOT NULL CHECK (file_name <> ''),
   size INTEGER NOT NULL,
   for_matching INTEGER NOT NULL CHECK (for_matching IN (0, 1)),
   for_writing INTEGER NOT NULL CHECK (for_writing IN (0, 1)),
   attach_by_default INTEGER NOT NULL CHECK (attach_by_default IN (0, 1)),
   backed_up_at INTEGER,
   created_at INTEGER NOT NULL,
-  extracted_text TEXT
+  extracted_text TEXT CHECK (extracted_text <> ''),
+  -- Matching and writing read the text, so a scan with none can only be attached.
+  CHECK (extracted_text IS NOT NULL OR (for_matching = 0 AND for_writing = 0))
 ) STRICT;
 
 CREATE TABLE mentor (

@@ -13,6 +13,7 @@ const GROUPS = [
     label: "个人",
     sections: [
       { to: "/settings/profile", label: "个人资料" },
+      { to: "/settings/materials", label: "材料" },
       { to: "/settings/templates", label: "模板" },
       { to: "/settings/letter-style", label: "信件样式" },
     ],

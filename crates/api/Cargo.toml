@@ -9,9 +9,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64 = "0.22"
 check.workspace = true
 email.workspace = true
 mailbox.workspace = true
+material.workspace = true
 model.workspace = true
 profile.workspace = true
 send.workspace = true
