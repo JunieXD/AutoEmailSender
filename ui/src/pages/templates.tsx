@@ -4,6 +4,7 @@ import { call, errorMessage } from "@/api/call";
 import type { TemplateSummary } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { TemplateDialog, usePlaceholders } from "@/components/template-dialog";
+import { DefaultMark } from "@/components/default-mark";
 import { Button } from "@/components/ui/button";
 import { Section } from "./settings";
 
@@ -44,18 +45,26 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
   // Each edit mounts its own loader, so it starts from the template as saved now.
   const [edit, setEdit] = useState(0);
   const queryClient = useQueryClient();
-  const remove = useMutation({
-    mutationFn: () => call("deleteTemplate", { id: t.id }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listTemplates"] }),
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["listTemplates"] });
+  const remove = useMutation({ mutationFn: () => call("deleteTemplate", { id: t.id }), onSuccess: refresh });
+  const makeDefault = useMutation({
+    mutationFn: () => call("setDefaultTemplate", { id: t.isDefault ? null : t.id }),
+    onSuccess: refresh,
   });
   return (
     <li className="flex flex-col gap-1.5 py-3">
       <div className="flex items-center gap-2 phone:flex-col phone:items-start">
         <div className="min-w-0 grow">
-          <p className="truncate font-medium">{t.name}</p>
+          <p className="flex items-center gap-2 font-medium">
+            <span className="truncate">{t.name}</span>
+            {t.isDefault && <DefaultMark />}
+          </p>
           <p className="truncate text-sm text-muted-foreground">{t.subject}</p>
         </div>
         <div className="flex gap-1">
+          <Button variant="ghost" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate()}>
+            {t.isDefault ? "取消默认" : "设为默认"}
+          </Button>
           <Button variant="ghost" onClick={() => setEdit((n) => n + 1)}>
             编辑
           </Button>
@@ -72,7 +81,9 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
           />
         </div>
       </div>
-      {remove.isError && <p className="text-sm text-destructive">{errorMessage(remove.error)}</p>}
+      {(remove.error ?? makeDefault.error) && (
+        <p className="text-sm text-destructive">{errorMessage(remove.error ?? makeDefault.error)}</p>
+      )}
       {edit > 0 && <EditTemplate key={edit} id={t.id} placeholders={placeholders} onClose={() => setEdit(0)} />}
     </li>
   );

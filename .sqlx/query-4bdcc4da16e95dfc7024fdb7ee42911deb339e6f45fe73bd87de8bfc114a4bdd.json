@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, provider, base_url, model FROM model_config ORDER BY id",
+  "query": "SELECT t.id, t.name, t.subject, t.body_md\n         FROM template t JOIN profile p ON p.default_template_id = t.id",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "model_config",
+            "table": "template",
             "name": "id"
           }
         }
@@ -20,41 +20,30 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "model_config",
+            "table": "template",
             "name": "name"
           }
         }
       },
       {
-        "name": "provider",
+        "name": "subject",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "model_config",
-            "name": "provider"
+            "table": "template",
+            "name": "subject"
           }
         }
       },
       {
-        "name": "base_url",
+        "name": "body_md",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "model_config",
-            "name": "base_url"
-          }
-        }
-      },
-      {
-        "name": "model",
-        "ordinal": 4,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "model_config",
-            "name": "model"
+            "table": "template",
+            "name": "body_md"
           }
         }
       }
@@ -64,11 +53,10 @@
     },
     "nullable": [
       false,
-      true,
       false,
-      true,
+      false,
       false
     ]
   },
-  "hash": "840f9baeea374bee658dcdf82dc8b18784f0ec63e3c8d3809d0a495284b670d8"
+  "hash": "4bdcc4da16e95dfc7024fdb7ee42911deb339e6f45fe73bd87de8bfc114a4bdd"
 }

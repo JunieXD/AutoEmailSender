@@ -28,6 +28,29 @@ async fn a_saved_key_is_only_for_where_it_was_saved(db: SqlitePool) {
     assert_eq!(key(elsewhere).await, None);
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn the_earliest_model_is_the_default_until_another_is_chosen(db: SqlitePool) {
+    let fields = form("deepseek", "").check().unwrap();
+    let first = model::create(&db, &fields, "k", 0).await.unwrap();
+    let second = model::create(&db, &fields, "k", 0).await.unwrap();
+    let default = async || {
+        let configs = model::list(&db).await.unwrap();
+        let ids: Vec<_> = configs
+            .iter()
+            .filter(|c| c.is_default)
+            .map(|c| c.id)
+            .collect();
+        ids
+    };
+    assert_eq!(default().await, [first]);
+
+    assert!(profile::set_default_model(&db, second).await.unwrap());
+    assert_eq!(default().await, [second]);
+    model::delete(&db, second).await.unwrap();
+    assert_eq!(default().await, [first]);
+    assert!(!profile::set_default_model(&db, second).await.unwrap());
+}
+
 #[test]
 fn a_custom_address_must_be_a_web_address() {
     let source = Source::check("custom", " https://api.example.com/v1/ ").unwrap();

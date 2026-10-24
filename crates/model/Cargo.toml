@@ -20,4 +20,5 @@ url = "2.5.8"
 
 [dev-dependencies]
 db.workspace = true
+profile.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

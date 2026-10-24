@@ -110,6 +110,8 @@ pub struct TemplateSummary {
     pub id: i64,
     pub name: String,
     pub subject: String,
+    /// The one a first email starts from.
+    pub is_default: bool,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -165,7 +167,8 @@ impl TemplateForm {
 pub async fn list(db: &SqlitePool) -> Result<Vec<TemplateSummary>, sqlx::Error> {
     sqlx::query_as!(
         TemplateSummary,
-        "SELECT id, name, subject FROM template ORDER BY id"
+        r#"SELECT id, name, subject, id IS (SELECT default_template_id FROM profile) AS "is_default!: bool"
+           FROM template ORDER BY id"#
     )
     .fetch_all(db)
     .await
@@ -176,6 +179,17 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<Template>, sqlx::Err
         Template,
         "SELECT id, name, subject, body_md FROM template WHERE id = ?",
         id
+    )
+    .fetch_optional(db)
+    .await
+}
+
+/// The template a first email starts from, if one is the default.
+pub async fn default(db: &SqlitePool) -> Result<Option<Template>, sqlx::Error> {
+    sqlx::query_as!(
+        Template,
+        "SELECT t.id, t.name, t.subject, t.body_md
+         FROM template t JOIN profile p ON p.default_template_id = t.id"
     )
     .fetch_optional(db)
     .await

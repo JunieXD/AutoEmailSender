@@ -15,4 +15,5 @@ ts-rs.workspace = true
 
 [dev-dependencies]
 db.workspace = true
+profile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -4,6 +4,7 @@ import { call, errorMessage } from "@/api/call";
 import type { ModelConfig, ModelProvider } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { ModelDialog, useModelProviders } from "@/components/model-dialog";
+import { DefaultMark } from "@/components/default-mark";
 import { Button } from "@/components/ui/button";
 import { Section } from "./settings";
 
@@ -44,23 +45,30 @@ function ModelRow({ config: c, providers }: { config: ModelConfig; providers: Mo
   const test = useMutation({
     mutationFn: () => call("testModel", { ...c, id: c.id, name: "", baseUrl: c.baseUrl ?? "", apiKey: "" }),
   });
-  const remove = useMutation({
-    mutationFn: () => call("deleteModelConfig", { id: c.id }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
-  });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] });
+  const remove = useMutation({ mutationFn: () => call("deleteModelConfig", { id: c.id }), onSuccess: refresh });
+  const makeDefault = useMutation({ mutationFn: () => call("setDefaultModel", { id: c.id }), onSuccess: refresh });
   // A custom configuration is known by its address.
   const source = providers.find((p) => p.id === c.provider)?.name ?? c.baseUrl;
   return (
     <li className="flex flex-col gap-1.5 py-3">
       <div className="flex items-center gap-2 phone:flex-col phone:items-start">
         <div className="min-w-0 grow">
-          <p className="truncate font-medium">{c.name ?? c.model}</p>
+          <p className="flex items-center gap-2 font-medium">
+            <span className="truncate">{c.name ?? c.model}</span>
+            {c.isDefault && <DefaultMark />}
+          </p>
           <p className="truncate text-sm text-muted-foreground">{c.name ? `${source}，${c.model}` : source}</p>
         </div>
         <div className="flex gap-1">
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>
             测试
           </Button>
+          {!c.isDefault && (
+            <Button variant="ghost" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate()}>
+              设为默认
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => setEditing(true)}>
             编辑
           </Button>
@@ -82,6 +90,7 @@ function ModelRow({ config: c, providers }: { config: ModelConfig; providers: Mo
         {test.isSuccess && <span className="text-muted-foreground">模型回复正常。</span>}
         {test.isError && <span className="text-destructive">{errorMessage(test.error)}</span>}
         {remove.isError && <span className="text-destructive">{errorMessage(remove.error)}</span>}
+        {makeDefault.isError && <span className="text-destructive">{errorMessage(makeDefault.error)}</span>}
       </p>
       {editing && (
         <ModelDialog

@@ -1,0 +1,81 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, name, provider, base_url, model,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\"\n           FROM model_config ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "provider",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "name": "base_url",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "base_url"
+          }
+        }
+      },
+      {
+        "name": "model",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "model"
+          }
+        }
+      },
+      {
+        "name": "is_default!: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9559b3059697e8cb371d9e17787cea735d00b2f36500fb8723a1725c31069234"
+}

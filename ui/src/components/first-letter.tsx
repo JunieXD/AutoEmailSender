@@ -12,6 +12,7 @@ import { FileText, Paperclip, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
+  FilledTemplate,
   FirstDraft,
   FirstDraftEdit,
   FirstEmail,
@@ -40,16 +41,25 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
   });
   const placeholders = usePlaceholders();
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
-  const error = draft.error ?? placeholders.error ?? materials.error;
+  // Without a draft, the letter starts from the default template, filled in as the template and the
+  // mentor are now.
+  const prefill = useQuery({
+    queryKey: ["applyDefaultTemplate", mentorId],
+    queryFn: draft.data === null ? () => call("applyDefaultTemplate", { id: mentorId }) : skipToken,
+    gcTime: 0,
+  });
+  const error = draft.error ?? placeholders.error ?? materials.error ?? prefill.error;
   if (error) return <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(error)}</p>;
   return (
     draft.isSuccess &&
+    (draft.data !== null || prefill.isSuccess) &&
     placeholders.data &&
     materials.data && (
       <Composer
         key={mentorId}
         mentor={mentor}
         draft={draft.data}
+        prefill={prefill.data ?? null}
         placeholders={placeholders.data}
         materials={materials.data}
       />
@@ -64,11 +74,13 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
 function Composer({
   mentor,
   draft,
+  prefill,
   placeholders,
   materials,
 }: {
   mentor: MentorDetail;
   draft: FirstDraft | null;
+  prefill: FilledTemplate | null;
   placeholders: string[];
   materials: Material[];
 }) {
@@ -94,12 +106,14 @@ function Composer({
   const [letterState, setLetter] = useState<FirstDraftEdit>(() =>
     last?.status !== "success" && last?.variables
       ? last.variables
-      : {
-          mentorId,
-          subject: draft?.subject ?? "",
-          bodyMd: draft?.bodyMd ?? "",
-          attachments: draft?.attachments ?? attachedByDefault(materials),
-        },
+      : draft
+        ? { mentorId, subject: draft.subject ?? "", bodyMd: draft.bodyMd ?? "", attachments: draft.attachments }
+        : {
+            mentorId,
+            subject: prefill?.subject ?? "",
+            bodyMd: prefill?.bodyMd ?? "",
+            attachments: attachedByDefault(materials),
+          },
   );
   // A material deleted since the draft was read is attached no more.
   const attached = materials.filter((m) => letterState.attachments.includes(m.id));
