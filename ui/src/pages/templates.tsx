@@ -53,15 +53,15 @@ function TemplateRow({ template: t, placeholders }: { template: TemplateSummary;
   });
   return (
     <li className="flex flex-col gap-1.5 py-3">
-      <div className="flex items-center gap-2 phone:flex-col phone:items-start">
-        <div className="min-w-0 grow">
+      <div className="flex flex-wrap items-center gap-2 phone:flex-col phone:items-start">
+        <div className="min-w-40 grow">
           <p className="flex items-center gap-2 font-medium">
             <span className="truncate">{t.name}</span>
             {t.isDefault && <DefaultMark />}
           </p>
           <p className="truncate text-sm text-muted-foreground">{t.subject}</p>
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           <Button variant="ghost" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate()}>
             {t.isDefault ? "取消默认" : "设为默认"}
           </Button>

@@ -52,15 +52,15 @@ function ModelRow({ config: c, providers }: { config: ModelConfig; providers: Mo
   const source = providers.find((p) => p.id === c.provider)?.name ?? c.baseUrl;
   return (
     <li className="flex flex-col gap-1.5 py-3">
-      <div className="flex items-center gap-2 phone:flex-col phone:items-start">
-        <div className="min-w-0 grow">
+      <div className="flex flex-wrap items-center gap-2 phone:flex-col phone:items-start">
+        <div className="min-w-40 grow">
           <p className="flex items-center gap-2 font-medium">
             <span className="truncate">{c.name ?? c.model}</span>
             {c.isDefault && <DefaultMark />}
           </p>
           <p className="truncate text-sm text-muted-foreground">{c.name ? `${source}，${c.model}` : source}</p>
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>
             测试
           </Button>

@@ -251,6 +251,11 @@ function Composer({
         </ul>
       )}
       {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
+      {!touched && prefill.error && (
+        <p className="text-sm text-destructive">
+          未能按修改后的导师资料重新填写，现在仍是修改前的内容：{errorMessage(prefill.error)}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <TemplateMenu
           mentorId={mentorId}
