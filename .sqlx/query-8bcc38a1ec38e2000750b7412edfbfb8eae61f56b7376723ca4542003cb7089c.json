@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO model_config (name, provider, base_url, model, api_key, agreed, created_at, input_price, output_price)\n         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "8bcc38a1ec38e2000750b7412edfbfb8eae61f56b7376723ca4542003cb7089c"
+}

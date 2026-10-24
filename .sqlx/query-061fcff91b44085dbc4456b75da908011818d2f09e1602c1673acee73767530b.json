@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET trashed_at = ?1, updated_at = ?1, match_state = NULL, match_error = NULL,\n           match_queued_at = NULL, match_priority = NULL, match_claim = match_claim + 1\n         WHERE id IN (SELECT value FROM json_each(?2)) AND trashed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "061fcff91b44085dbc4456b75da908011818d2f09e1602c1673acee73767530b"
+}

@@ -95,6 +95,14 @@ pub async fn run(path: &Path) -> Result {
     .await?;
     report("写一封邮件的状态", write, Duration::from_millis(1));
 
+    sqlx::query("UPDATE mentor SET match_state = NULL, match_error = NULL, match_queued_at = NULL, match_priority = NULL WHERE match_state IS NOT NULL").execute(&db).await?;
+    sqlx::query("UPDATE mentor SET match_state = 'queued', match_queued_at = ?, match_priority = 0 WHERE id IN (SELECT id FROM mentor WHERE trashed_at IS NULL LIMIT 10000)").bind(NOW).execute(&db).await?;
+    report(
+        "取下一位匹配分析（10 万位导师、1 万位排队）",
+        median(async || mentor::matching::next(&db).await.map(drop)).await?,
+        Duration::from_millis(1),
+    );
+
     if over > 0 {
         return Err(format!("{over} 项超出预算").into());
     }

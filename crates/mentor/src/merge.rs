@@ -3,7 +3,7 @@
 use sqlx::SqlitePool;
 use sqlx::types::Json;
 
-use crate::{MatchResult, MentorFields, SaveError, detail, index, place, save_lists};
+use crate::{MentorFields, SaveError, detail, index, place, save_lists};
 
 #[derive(Debug)]
 pub enum MergeError {
@@ -142,11 +142,10 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     )
     .execute(&mut *tx)
     .await?;
-    let analyzed = |m: &MatchResult| matches!(m, MatchResult::Done { .. });
-    if !analyzed(&a.analysis) && analyzed(&b.analysis) {
+    if a.analysis.result.is_none() && b.analysis.result.is_some() {
         sqlx::query!(
-            "UPDATE mentor SET (match_state, match_score, matched_at, match_model, match_error) =
-               (SELECT match_state, match_score, matched_at, match_model, match_error FROM mentor
+            "UPDATE mentor SET (match_score, matched_at, match_model) =
+               (SELECT match_score, matched_at, match_model FROM mentor
                 WHERE id = ?2)
              WHERE id = ?1",
             keep,

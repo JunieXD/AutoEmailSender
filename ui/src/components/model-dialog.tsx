@@ -20,10 +20,26 @@ export function useModelProviders() {
 
 const CUSTOM = "custom";
 
-const EMPTY: NewModelConfig = { name: "", provider: "", baseUrl: "", model: "", apiKey: "" };
+const EMPTY: NewModelConfig = {
+  name: "",
+  provider: "",
+  baseUrl: "",
+  model: "",
+  apiKey: "",
+  inputPrice: null,
+  outputPrice: null,
+};
 
 function formOf(c: ModelConfig): NewModelConfig {
-  return { name: c.name ?? "", provider: c.provider, baseUrl: c.baseUrl ?? "", model: c.model, apiKey: "" };
+  return {
+    name: c.name ?? "",
+    provider: c.provider,
+    baseUrl: c.baseUrl ?? "",
+    model: c.model,
+    apiKey: "",
+    inputPrice: c.inputPrice,
+    outputPrice: c.outputPrice,
+  };
 }
 
 /** Adding or editing a model configuration (docs/ui.md#交互). Mounted while open. */
@@ -176,6 +192,26 @@ export function ModelDialog({
                   {models.isError && <span className="text-destructive">{errorMessage(models.error)}</span>}
                 </p>
               </Field>
+              <div className="grid grid-cols-2 gap-3 phone:grid-cols-1">
+                {(
+                  [
+                    ["inputPrice", "输入单价"],
+                    ["outputPrice", "输出单价"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <Field key={key} label={`${label}（元／百万 Token）`} id={`model-${key}`}>
+                    <Input
+                      id={`model-${key}`}
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="选填"
+                      value={form[key] ?? ""}
+                      onChange={(e) => edit({ ...form, [key]: e.target.value === "" ? null : e.target.valueAsNumber })}
+                    />
+                  </Field>
+                ))}
+              </div>
               <Field label="名称" id="model-name">
                 <Input
                   id="model-name"

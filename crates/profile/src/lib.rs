@@ -35,17 +35,20 @@ pub async fn get(db: &SqlitePool) -> Result<Profile, sqlx::Error> {
     .await
 }
 
-pub async fn update(db: &SqlitePool, form: &ProfileForm) -> Result<(), sqlx::Error> {
+pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<(), sqlx::Error> {
     let (name, research_interests, rewrite_preference) = (
         filled(&form.name),
         filled(&form.research_interests),
         filled(&form.rewrite_preference),
     );
     sqlx::query!(
-        "UPDATE profile SET name = ?, research_interests = ?, rewrite_preference = ?",
+        "UPDATE profile SET name = ?1, research_interests = ?2, rewrite_preference = ?3,
+           match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(coalesce(match_basis_changed_at, ?4), ?4)
+                                        ELSE match_basis_changed_at END",
         name,
         research_interests,
         rewrite_preference,
+        now,
     )
     .execute(db)
     .await?;
@@ -163,6 +166,19 @@ pub async fn reply_notifications(db: &SqlitePool) -> Result<bool, sqlx::Error> {
 
 pub async fn set_reply_notifications(db: &SqlitePool, on: bool) -> Result<(), sqlx::Error> {
     sqlx::query!("UPDATE profile SET reply_notifications = ?", on)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Background completion notifications are independent of new-reply notifications.
+pub async fn background_notifications(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT background_notifications AS "on: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+pub async fn set_background_notifications(db: &SqlitePool, on: bool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET background_notifications = ?", on)
         .execute(db)
         .await?;
     Ok(())

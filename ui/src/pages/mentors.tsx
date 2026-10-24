@@ -10,6 +10,8 @@ import { MergeDialog } from "@/components/merge-dialog";
 import { dropDrafts, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
+import { MatchingDialog, MatchingProgress } from "@/components/matching";
+import { AiIcon } from "@/components/ai-writing";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 
@@ -41,6 +43,7 @@ export function MentorsPage() {
   });
   const total = query.data?.total ?? 0;
   const queryClient = useQueryClient();
+  const [matching, setMatching] = useState<number[] | null>(null);
   const [adding, setAdding] = useState(false);
   // Ticks belong to one filter: changing it, including by going back, starts over.
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
@@ -112,6 +115,7 @@ export function MentorsPage() {
         </div>
       </div>
 
+      <MatchingProgress />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           className={`@container min-h-0 flex-1 overflow-y-auto px-4 phone:px-0 ${selected.size > 0 ? "pb-20" : ""}`}
@@ -144,6 +148,10 @@ export function MentorsPage() {
             for (const action of [addTag, trash]) if (!action.isPending) action.reset();
           }}
         >
+          <Button variant="ghost" onClick={() => setMatching([...selected])}>
+            <AiIcon />
+            分析匹配度
+          </Button>
           <AddTagButton mentorIds={[...selected]} add={addTag} />
           {selected.size === 2 && first !== undefined && second !== undefined && (
             <Button variant="ghost" onClick={() => setMerging([first, second])}>
@@ -163,6 +171,7 @@ export function MentorsPage() {
             onConfirm={() => trash.mutate([...selected])}
           />
         </BatchBar>
+        {matching && <MatchingDialog ids={matching} onClose={() => setMatching(null)} />}
         {merging && <MergeDialog ids={merging} onClose={() => setMerging(null)} />}
       </div>
 

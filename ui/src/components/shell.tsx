@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { MessagesSquare, Settings, Users } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
 import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
+import type { MatchFinished } from "@/api/types";
 import { refreshMentors } from "@/components/mentor";
 import { StartupFailure } from "@/components/startup-failure";
 
@@ -26,6 +27,23 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
   const queryClient = useQueryClient();
+  const [completed, setCompleted] = useState<string | null>(null);
+  useEffect(() => {
+    const stop = listen("matching-changed", () => refreshMentors(queryClient));
+    const done = listen<MatchFinished>("matching-finished", ({ payload: p }) => {
+      refreshMentors(queryClient);
+      setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
+    });
+    return () => {
+      void stop.then((f) => f());
+      void done.then((f) => f());
+    };
+  }, [queryClient]);
+  useEffect(() => {
+    if (!completed) return undefined;
+    const timer = setTimeout(() => setCompleted(null), 6000);
+    return () => clearTimeout(timer);
+  }, [completed]);
   // New mail may change any mentor's correspondence and contact status, and a mailbox may have
   // failed to receive or recovered.
   useEffect(() => {
@@ -54,8 +72,19 @@ export function Shell() {
         <div className="grow" />
         <NavLink {...SETTINGS} />
       </aside>
-      <main className="my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
+      <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
+        {completed && (
+          <div
+            role="status"
+            className="absolute bottom-5 left-5 z-40 flex max-w-[calc(100%-40px)] items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 text-sm shadow-pop phone:bottom-3 phone:left-3"
+          >
+            <span>{completed}</span>
+            <button aria-label="关闭提醒" onClick={() => setCompleted(null)}>
+              ×
+            </button>
+          </div>
+        )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
         {[...NAV, SETTINGS].map(({ to, label, icon: Icon }) => (

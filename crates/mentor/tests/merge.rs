@@ -68,7 +68,7 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
     .unwrap();
     exec(
         &db,
-        "UPDATE mentor SET match_state = 'done', match_score = 80, matched_at = 1, match_model = 'm'
+        "UPDATE mentor SET match_state = NULL, match_score = 80, matched_at = 1, match_model = 'm'
          WHERE id = ?",
         ming,
     )
@@ -105,8 +105,8 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
         (Some("周三有空"), ["论文甲".to_owned()].as_slice())
     );
     assert!(matches!(
-        merged.analysis,
-        mentor::MatchResult::Done { score: 80, .. }
+        merged.analysis.result,
+        Some(mentor::MatchResult { score: 80, .. })
     ));
     assert!(matches!(
         merged.contact,

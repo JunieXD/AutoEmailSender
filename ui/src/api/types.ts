@@ -34,7 +34,7 @@ export type EmailId = { id: number, };
 
 export type Entry = { "email": Email } | { "message": Message };
 
-export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
+export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
@@ -101,15 +101,33 @@ export type MailboxTest = {
  */
 id?: number, secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
-export type MatchResult = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, } | { "state": "failed", error: string, };
+export type MatchAnalysis = { result: MatchResult | null, state: MatchState | null, };
 
-export type MatchState = { "state": "not_analyzed" } | { "state": "queued" } | { "state": "running" } | { "state": "done", score: number, } | { "state": "failed" };
+export type MatchBatch = { ids: Array<number>, redo: boolean, };
+
+export type MatchEstimate = { plan: MatchPlan, model: string | null, hasBasis: boolean, inputTokens: number, outputTokens: number, cost: number | null, };
+
+export type MatchFinished = { analyzed: number, failed: number, };
+
+export type MatchPause = { at: number, reason: string | null, };
+
+export type MatchPlan = { analyze: number, existing: number, changed: number, insufficient: number, queued: number, };
+
+export type MatchProgress = { remaining: number, failed: number, pause: MatchPause | null, };
+
+export type MatchResult = { score: number, matchedAt: number, model: string, reason: string, directions: Array<string>, highlights: Array<string>, risks: Array<string>, basisChanged: boolean, };
+
+export type MatchScore = { score: number, basisChanged: boolean, };
+
+export type MatchState = { "state": "queued" } | { "state": "running" } | { "state": "failed", error: string, };
+
+export type MatchSummary = { result: MatchScore | null, state: MatchState | null, };
 
 export type Material = { id: number, fileName: string, size: number, 
 /**
  * False for a scan, which can only be attached.
  */
-hasText: boolean, forMatching: boolean, forWriting: boolean, attachByDefault: boolean, };
+hasText: boolean, exceedsAiLimit: boolean, forMatching: boolean, forWriting: boolean, attachByDefault: boolean, };
 
 export type MaterialId = { id: number, };
 
@@ -129,7 +147,7 @@ affiliations: Array<Affiliation>, homepages: Array<string>,
 /**
  * The page the mentor was found on.
  */
-sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchResult, contact: Contact, tags: Array<Tag>, trashed: boolean, };
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchAnalysis, contact: Contact, tags: Array<Tag>, trashed: boolean, };
 
 export type MentorEdit = { id: number, name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
 
@@ -167,7 +185,7 @@ affiliation: Affiliation | null, affiliationCount: number,
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
-research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
+research: string | null, matchState: MatchSummary, contact: Contact, tags: Array<Tag>, };
 
 export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number, 
 /**
@@ -205,7 +223,7 @@ isDefault: boolean,
 /**
  * The user agreed to what AI features send to its provider.
  */
-agreed: boolean, };
+agreed: boolean, inputPrice: number | null, outputPrice: number | null, };
 
 export type ModelConfigEdit = { id: number, 
 /**
@@ -219,7 +237,7 @@ name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
-baseUrl: string, model: string, };
+baseUrl: string, model: string, inputPrice: number | null, outputPrice: number | null, };
 
 export type ModelConfigId = { id: number, };
 
@@ -253,7 +271,7 @@ name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
-baseUrl: string, model: string, };
+baseUrl: string, model: string, inputPrice: number | null, outputPrice: number | null, };
 
 export type NewMailbox = { secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
@@ -267,11 +285,13 @@ name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
-baseUrl: string, model: string, };
+baseUrl: string, model: string, inputPrice: number | null, outputPrice: number | null, };
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
+
+export type NotificationSetting = { on: boolean, };
 
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "no_mail_server", domain: string, };
 
@@ -289,8 +309,6 @@ domains: Array<string>, setup: Setup, };
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type ReceiveStatus = { receivedAt: number | null, };
-
-export type ReplyNotifications = { on: boolean, };
 
 export type Security = "tls" | "starttls";
 
@@ -357,8 +375,18 @@ export interface Operations {
   unreadCount: { input: Nothing; output: number };
   receiveNow: { input: Nothing; output: ReceiveStatus };
   receiveStatus: { input: Nothing; output: ReceiveStatus };
+  getBackgroundNotifications: { input: Nothing; output: boolean };
+  setBackgroundNotifications: { input: NotificationSetting; output: null };
   getReplyNotifications: { input: Nothing; output: boolean };
-  setReplyNotifications: { input: ReplyNotifications; output: null };
+  setReplyNotifications: { input: NotificationSetting; output: null };
+  planMatching: { input: MatchBatch; output: MatchEstimate };
+  startMatching: { input: MatchBatch; output: number };
+  matchMentor: { input: MentorId; output: number };
+  matchingProgress: { input: Nothing; output: MatchProgress };
+  pauseMatching: { input: Nothing; output: null };
+  resumeMatching: { input: Nothing; output: null };
+  cancelMatching: { input: Nothing; output: null };
+  retryMatching: { input: Nothing; output: number };
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };

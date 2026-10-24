@@ -16,6 +16,7 @@ email = { path = "crates/email" }
 fakemail = { path = "crates/fakemail" }
 mailbox = { path = "crates/mailbox" }
 material = { path = "crates/material" }
+matching = { path = "crates/matching" }
 mentor = { path = "crates/mentor" }
 model = { path = "crates/model" }
 profile = { path = "crates/profile" }

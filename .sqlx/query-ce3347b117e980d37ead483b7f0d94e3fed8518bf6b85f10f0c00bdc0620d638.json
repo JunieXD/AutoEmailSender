@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, a.university, a.school, a.department, a.title,\n                  (SELECT count(*) FROM mentor_affiliation WHERE mentor_id = m.id)\n                    AS \"affiliation_count!: i64\",\n                  substr(d.research, 1, 120) AS \"research?: String\",\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score,\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM json_each(?) page\n           JOIN mentor m ON m.id = page.value\n           LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id\n             AND a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = m.id)\n           LEFT JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           ORDER BY page.key",
+  "query": "SELECT m.id, m.name, a.university, a.school, a.department, a.title,\n                  (SELECT count(*) FROM mentor_affiliation WHERE mentor_id = m.id)\n                    AS \"affiliation_count!: i64\",\n                  substr(d.research, 1, 120) AS \"research?: String\",\n                  m.match_state AS \"match_state: MatchColumn\", m.match_score, m.match_error,\n                  coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS \"basis_changed!: bool\",\n                  c.status AS \"status?: ContactStatus\", c.contact_count AS \"contact_count?\",\n                  c.last_out_at, c.last_reply_at, c.unread AS \"unread?: bool\"\n           FROM json_each(?) page\n           JOIN mentor m ON m.id = page.value\n           LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id\n             AND a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = m.id)\n           LEFT JOIN mentor_detail d ON d.mentor_id = m.id\n           LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           ORDER BY page.key",
   "describe": {
     "columns": [
       {
@@ -104,8 +104,25 @@
         }
       },
       {
-        "name": "status?: ContactStatus",
+        "name": "match_error",
         "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_error"
+          }
+        }
+      },
+      {
+        "name": "basis_changed!: bool",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "status?: ContactStatus",
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -116,7 +133,7 @@
       },
       {
         "name": "contact_count?",
-        "ordinal": 11,
+        "ordinal": 13,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -127,7 +144,7 @@
       },
       {
         "name": "last_out_at",
-        "ordinal": 12,
+        "ordinal": 14,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -138,7 +155,7 @@
       },
       {
         "name": "last_reply_at",
-        "ordinal": 13,
+        "ordinal": 15,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -149,7 +166,7 @@
       },
       {
         "name": "unread?: bool",
-        "ordinal": 14,
+        "ordinal": 16,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -174,11 +191,13 @@
       true,
       true,
       true,
+      false,
+      true,
       true,
       true,
       true,
       true
     ]
   },
-  "hash": "9c17e305d7a4c499087efcb5aa84799d48304855e2abeb0e292b0c7d5cab863d"
+  "hash": "ce3347b117e980d37ead483b7f0d94e3fed8518bf6b85f10f0c00bdc0620d638"
 }

@@ -140,36 +140,63 @@ export function AboutSection() {
 }
 
 export function NotificationsSection() {
+  return (
+    <Section title="通知">
+      <NotificationToggle
+        get="getReplyNotifications"
+        set="setReplyNotifications"
+        label="新回信时发系统通知"
+        description="应用不在前台时，导师回信会弹出系统通知。"
+      />
+      <NotificationToggle
+        get="getBackgroundNotifications"
+        set="setBackgroundNotifications"
+        label="后台工作做完时通知"
+        description="应用不在前台时，匹配分析等后台工作完成后弹出系统通知；在前台时在内容页提醒。"
+      />
+    </Section>
+  );
+}
+
+function NotificationToggle({
+  get,
+  set,
+  label,
+  description,
+}: {
+  get: "getReplyNotifications" | "getBackgroundNotifications";
+  set: "setReplyNotifications" | "setBackgroundNotifications";
+  label: string;
+  description: string;
+}) {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ["getReplyNotifications"], queryFn: () => call("getReplyNotifications", {}) });
+  const query = useQuery({ queryKey: [get], queryFn: () => call(get, {}) });
   const save = useMutation({
-    mutationFn: (on: boolean) => call("setReplyNotifications", { on }),
+    mutationFn: (on: boolean) => call(set, { on }),
     onSuccess: async (_, on) => {
-      await queryClient.cancelQueries({ queryKey: ["getReplyNotifications"] });
-      queryClient.setQueryData(["getReplyNotifications"], on);
+      await queryClient.cancelQueries({ queryKey: [get] });
+      queryClient.setQueryData([get], on);
     },
   });
   return (
-    <Section title="通知">
-      <div>
-        <label className="flex items-center justify-between gap-4">
-          <span>新回信时发系统通知</span>
-          <button
-            type="button"
-            role="switch"
-            aria-label="新回信时发系统通知"
-            aria-checked={query.data ?? false}
-            disabled={query.data === undefined || save.isPending}
-            onClick={() => save.mutate(!query.data)}
-            className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
-          >
-            <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
-          </button>
-        </label>
-        <p className="mt-2 text-sm text-muted-foreground">应用不在前台时，导师回信会弹出系统通知。</p>
-      </div>
-      {query.error && <p className="text-sm text-destructive">通知设置未能加载：{errorMessage(query.error)}</p>}
-      {save.error && <p className="text-sm text-destructive">通知设置未能保存：{errorMessage(save.error)}</p>}
-    </Section>
+    <div>
+      <label className="flex items-center justify-between gap-4">
+        <span>{label}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-label={label}
+          aria-checked={query.data ?? false}
+          disabled={query.data === undefined || save.isPending}
+          onClick={() => save.mutate(!query.data)}
+          className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
+        >
+          <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
+        </button>
+      </label>
+      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+      {query.error && <p className="mt-2 text-sm text-destructive">通知设置未能加载：{errorMessage(query.error)}</p>}
+      {save.error && <p className="mt-2 text-sm text-destructive">通知设置未能保存：{errorMessage(save.error)}</p>}
+    </div>
   );
 }

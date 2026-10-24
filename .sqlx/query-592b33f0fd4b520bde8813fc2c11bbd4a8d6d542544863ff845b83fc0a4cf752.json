@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, file_name, size, extracted_text IS NOT NULL AS \"has_text: bool\",\n             for_matching AS \"for_matching: bool\", for_writing AS \"for_writing: bool\",\n             attach_by_default AS \"attach_by_default: bool\"\n           FROM material ORDER BY id",
+  "query": "SELECT id, file_name, size, extracted_text IS NOT NULL AS \"has_text: bool\",\n             coalesce(length(extracted_text) > ?, 0) AS \"exceeds_ai_limit!: bool\",\n             for_matching AS \"for_matching: bool\", for_writing AS \"for_writing: bool\",\n             attach_by_default AS \"attach_by_default: bool\"\n           FROM material ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -43,8 +43,14 @@
         "origin": "Expression"
       },
       {
-        "name": "for_matching: bool",
+        "name": "exceeds_ai_limit!: bool",
         "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "for_matching: bool",
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -55,7 +61,7 @@
       },
       {
         "name": "for_writing: bool",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -66,7 +72,7 @@
       },
       {
         "name": "attach_by_default: bool",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -77,9 +83,10 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -89,5 +96,5 @@
       false
     ]
   },
-  "hash": "071ea2e8fb448270476a8215e6bb1928c2988d56fda94c2fc250217a4e2ffe73"
+  "hash": "592b33f0fd4b520bde8813fc2c11bbd4a8d6d542544863ff845b83fc0a4cf752"
 }

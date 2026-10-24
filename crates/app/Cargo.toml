@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+matching.workspace = true
 api.workspace = true
 db.workspace = true
 net.workspace = true

@@ -10,6 +10,7 @@ use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 pub mod conversations;
+pub mod matching;
 pub mod merge;
 pub mod tags;
 pub mod trash;
@@ -58,7 +59,7 @@ pub struct MentorRow {
     pub affiliation_count: i64,
     /// The start of the research description, enough for the two lines the list shows.
     pub research: Option<String>,
-    pub match_state: MatchState,
+    pub match_state: MatchSummary,
     pub contact: Contact,
     pub tags: Vec<Tag>,
 }
@@ -66,11 +67,22 @@ pub struct MentorRow {
 #[derive(Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum MatchState {
-    NotAnalyzed,
     Queued,
     Running,
-    Done { score: i64 },
-    Failed,
+    Failed { error: String },
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchScore {
+    pub score: i64,
+    pub basis_changed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, TS)]
+pub struct MatchSummary {
+    pub result: Option<MatchScore>,
+    pub state: Option<MatchState>,
 }
 
 /// Times are UTC milliseconds.
@@ -125,35 +137,30 @@ pub struct MentorDetail {
     pub research: Option<String>,
     pub papers: Vec<String>,
     pub note: Option<String>,
-    pub analysis: MatchResult,
+    pub analysis: MatchAnalysis,
     pub contact: Contact,
     pub tags: Vec<Tag>,
     pub trashed: bool,
 }
 
-/// The latest match analysis in full; `MatchState` is its summary in the list.
+/// A completed result stays visible while another analysis runs or fails.
 #[derive(Debug, Serialize, TS)]
-#[serde(
-    tag = "state",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum MatchResult {
-    NotAnalyzed,
-    Queued,
-    Running,
-    Done {
-        score: i64,
-        matched_at: i64,
-        model: String,
-        reason: String,
-        directions: Vec<String>,
-        highlights: Vec<String>,
-        risks: Vec<String>,
-    },
-    Failed {
-        error: String,
-    },
+pub struct MatchAnalysis {
+    pub result: Option<MatchResult>,
+    pub state: Option<MatchState>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchResult {
+    pub score: i64,
+    pub matched_at: i64,
+    pub model: String,
+    pub reason: String,
+    pub directions: Vec<String>,
+    pub highlights: Vec<String>,
+    pub risks: Vec<String>,
+    pub basis_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy, sqlx::Type)]
@@ -161,8 +168,22 @@ pub enum MatchResult {
 enum MatchColumn {
     Queued,
     Running,
-    Done,
     Failed,
+}
+
+fn match_state(
+    id: i64,
+    state: Option<MatchColumn>,
+    error: Option<String>,
+) -> Result<Option<MatchState>, sqlx::Error> {
+    Ok(match state {
+        None => None,
+        Some(MatchColumn::Queued) => Some(MatchState::Queued),
+        Some(MatchColumn::Running) => Some(MatchState::Running),
+        Some(MatchColumn::Failed) => Some(MatchState::Failed {
+            error: error.ok_or_else(|| inconsistent(id))?,
+        }),
+    })
 }
 
 /// One page of the home list, best matches first.
@@ -220,7 +241,8 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
                   (SELECT count(*) FROM mentor_affiliation WHERE mentor_id = m.id)
                     AS "affiliation_count!: i64",
                   substr(d.research, 1, 120) AS "research?: String",
-                  m.match_state AS "match_state: MatchColumn", m.match_score,
+                  m.match_state AS "match_state: MatchColumn", m.match_score, m.match_error,
+                  coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
                   c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
                   c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
            FROM json_each(?) page
@@ -237,13 +259,12 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
     let mut tags = tags_of(conn, ids).await?;
     rows.into_iter()
         .map(|r| {
-            let match_state = match (r.match_state, r.match_score) {
-                (None, _) => MatchState::NotAnalyzed,
-                (Some(MatchColumn::Queued), _) => MatchState::Queued,
-                (Some(MatchColumn::Running), _) => MatchState::Running,
-                (Some(MatchColumn::Done), Some(score)) => MatchState::Done { score },
-                (Some(MatchColumn::Failed), _) => MatchState::Failed,
-                (Some(MatchColumn::Done), None) => return Err(inconsistent(r.id)),
+            let match_state = MatchSummary {
+                result: r.match_score.map(|score| MatchScore {
+                    score,
+                    basis_changed: r.basis_changed,
+                }),
+                state: match_state(r.id, r.match_state, r.match_error)?,
             };
             Ok(MentorRow {
                 id: r.id,
@@ -281,6 +302,7 @@ async fn detail(conn: &mut SqliteConnection, id: i64) -> Result<Option<MentorDet
         r#"SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
                   m.match_model, m.match_error,
+                  coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
                   d.research, d.papers AS "papers: Json<Vec<String>>", d.note, d.match_reason,
                   d.match_directions AS "match_directions: Json<Vec<String>>",
                   d.match_highlights AS "match_highlights: Json<Vec<String>>",
@@ -298,41 +320,39 @@ async fn detail(conn: &mut SqliteConnection, id: i64) -> Result<Option<MentorDet
     else {
         return Ok(None);
     };
-    let analysis = match r.match_state {
-        None => MatchResult::NotAnalyzed,
-        Some(MatchColumn::Queued) => MatchResult::Queued,
-        Some(MatchColumn::Running) => MatchResult::Running,
-        Some(MatchColumn::Done) => match (
-            r.match_score,
-            r.matched_at,
-            r.match_model,
-            r.match_reason,
-            r.match_directions,
-            r.match_highlights,
-            r.match_risks,
-        ) {
-            (
-                Some(score),
-                Some(matched_at),
-                Some(model),
-                Some(reason),
-                Some(Json(directions)),
-                Some(Json(highlights)),
-                Some(Json(risks)),
-            ) => MatchResult::Done {
-                score,
-                matched_at,
-                model,
-                reason,
-                directions,
-                highlights,
-                risks,
-            },
-            _ => return Err(inconsistent(id)),
-        },
-        Some(MatchColumn::Failed) => MatchResult::Failed {
-            error: r.match_error.ok_or_else(|| inconsistent(id))?,
-        },
+    let result = match (
+        r.match_score,
+        r.matched_at,
+        r.match_model,
+        r.match_reason,
+        r.match_directions,
+        r.match_highlights,
+        r.match_risks,
+    ) {
+        (None, None, None, ..) => None,
+        (
+            Some(score),
+            Some(matched_at),
+            Some(model),
+            Some(reason),
+            Some(Json(directions)),
+            Some(Json(highlights)),
+            Some(Json(risks)),
+        ) => Some(MatchResult {
+            score,
+            matched_at,
+            model,
+            reason,
+            directions,
+            highlights,
+            risks,
+            basis_changed: r.basis_changed,
+        }),
+        _ => return Err(inconsistent(id)),
+    };
+    let analysis = MatchAnalysis {
+        result,
+        state: match_state(id, r.match_state, r.match_error)?,
     };
     let aliases = sqlx::query_scalar!(
         "SELECT name FROM mentor_alias WHERE mentor_id = ? ORDER BY position",
