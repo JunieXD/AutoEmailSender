@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT text FROM crawl_page WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "text",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1d4701d2d4b8c62bbbd700628ab3102f3fb1a6620c9295c48be719c85d09155f"
+}
