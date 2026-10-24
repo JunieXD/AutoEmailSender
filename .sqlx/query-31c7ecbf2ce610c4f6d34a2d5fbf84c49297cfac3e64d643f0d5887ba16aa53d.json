@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email (mentor_id, kind, reply_to, state, body_md, created_at, updated_at)\n             SELECT t.id, 'reply', ?2, 'review', ?3, ?4, ?4 FROM mentor t\n             WHERE t.id = ?1 AND t.trashed_at IS NULL AND (\n               EXISTS (SELECT 1 FROM message_mentor mm JOIN message m ON m.id = mm.message_id\n                 WHERE mm.mentor_id = t.id AND m.kind = 'reply' AND m.message_id = ?2)\n               OR EXISTS (SELECT 1 FROM email e WHERE e.mentor_id = t.id AND e.kind = 'reply'\n                 AND e.state = 'review' AND e.reply_to = ?2))\n             ON CONFLICT (mentor_id) WHERE kind = 'reply' AND state = 'review'\n             DO UPDATE SET reply_to = ?2, body_md = ?3, updated_at = ?4\n             RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "31c7ecbf2ce610c4f6d34a2d5fbf84c49297cfac3e64d643f0d5887ba16aa53d"
+}

@@ -182,3 +182,90 @@ async fn a_letter_never_saved_is_approved_once(db: SqlitePool) {
         email::Approved::Refused
     );
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn uploading_a_material_only_changes_the_current_drafts_attachments(db: SqlitePool) {
+    let mentor = add_mentor(&db).await;
+    let old = add_material(&db, "简历.pdf").await;
+    let new = add_material(&db, "简历.pdf").await;
+    let transcript = add_material(&db, "成绩单.pdf").await;
+    for kind in [email::DraftKind::First, email::DraftKind::Reply] {
+        let kind_name = match kind {
+            email::DraftKind::First => "first",
+            email::DraftKind::Reply => "reply",
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO email (mentor_id, kind, state, subject, body_md, reply_to, created_at, updated_at)
+             VALUES (?, ?, 'review', '新主题', '上传前的正文', ?, 1, 1) RETURNING id",
+        ).bind(mentor).bind(kind_name).bind(match kind { email::DraftKind::First => None, email::DraftKind::Reply => Some("<current@example.edu>") }).fetch_one(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO email_attachment (email_id, material_id, file_name, size)
+          SELECT ?, id, file_name, size FROM material WHERE id IN (?, ?)",
+        )
+        .bind(id)
+        .bind(old)
+        .bind(transcript)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE email SET body_md = '返回后保存的新正文' WHERE id = ?")
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        assert!(
+            email::attach_draft_material(&db, mentor, kind, new)
+                .await
+                .unwrap()
+        );
+        // Retrying the completion cannot add the file twice or remove other files.
+        assert!(
+            email::attach_draft_material(&db, mentor, kind, new)
+                .await
+                .unwrap()
+        );
+        let letter: (String, String, Option<String>) =
+            sqlx::query_as("SELECT subject, body_md, reply_to FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            letter,
+            (
+                "新主题".into(),
+                "返回后保存的新正文".into(),
+                match kind {
+                    email::DraftKind::First => None,
+                    email::DraftKind::Reply => Some("<current@example.edu>".into()),
+                }
+            )
+        );
+        let files: Vec<i64> = sqlx::query_scalar(
+            "SELECT material_id FROM email_attachment WHERE email_id = ? ORDER BY file_name",
+        )
+        .bind(id)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(files, [transcript, new]);
+        sqlx::query("UPDATE email SET state = 'approved', html = '<p>已批准</p>', text = '已批准', planned_at = 2 WHERE id = ?")
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        assert!(
+            !email::attach_draft_material(&db, mentor, kind, old)
+                .await
+                .unwrap()
+        );
+        let files: Vec<i64> = sqlx::query_scalar(
+            "SELECT material_id FROM email_attachment WHERE email_id = ? ORDER BY file_name",
+        )
+        .bind(id)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(files, [transcript, new]);
+    }
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email (mentor_id, kind, state, created_at, updated_at)\n             SELECT m.id, 'first', 'review', ?2, ?2 FROM mentor m\n             WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (\n               SELECT 1 FROM email e WHERE e.mentor_id = m.id AND e.kind = 'first'\n                 AND e.task_id IS NULL AND e.state <> 'canceled')\n             RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "01c4cd00a5993dbc5f6d061fc985b5dcaa55a2a3f8c5b5de1b4b07de77e019e6"
+}

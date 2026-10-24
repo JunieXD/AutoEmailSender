@@ -6,6 +6,7 @@ import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogHeader } from "@/components/ui/dialog";
+import { uploadMaterial } from "@/material";
 import { fileSize } from "@/format";
 import { Section } from "./settings";
 
@@ -15,11 +16,7 @@ export function MaterialsSection() {
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
   const picker = useRef<HTMLInputElement>(null);
   const add = useMutation({
-    mutationFn: async (file: File) => {
-      // material::MAX_SIZE, checked before a large file is read and encoded in memory.
-      if (file.size > 20 * 1024 * 1024) throw new Error("文件超过 20 MB，无法添加。");
-      return call("addMaterial", { fileName: file.name, data: await base64(file) });
-    },
+    mutationFn: uploadMaterial,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listMaterials"] }),
   });
   return (
@@ -55,15 +52,6 @@ export function MaterialsSection() {
       </div>
     </Section>
   );
-}
-
-/** The file's bytes as base64, which JSON can carry. */
-async function base64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  // In slices, as a call takes only so many arguments.
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
 }
 
 const PURPOSES: [Purpose, string][] = [

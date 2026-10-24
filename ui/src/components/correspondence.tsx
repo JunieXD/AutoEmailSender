@@ -6,8 +6,9 @@ import { call, errorMessage } from "@/api/call";
 import type { Email, Entry, MentorDetail, Message } from "@/api/types";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
+import { ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
-import { contactDetail, refreshMentors } from "@/components/mentor";
+import { contactDetail, dropDrafts, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
@@ -16,6 +17,8 @@ import { toHtml } from "@/markdown";
 /** The middle of a mentor's page: the correspondence, or the first email being written (docs/ui.md#交互). */
 export function Correspondence({ mentor }: { mentor: MentorDetail }) {
   const queryClient = useQueryClient();
+  const [selected, setSelected] = useState<{ id: number; version: number } | null>(null);
+  const [replyVersion, setReplyVersion] = useState(0);
   const entries = useQuery({
     queryKey: ["listCorrespondence", mentor.id],
     queryFn: () => call("listCorrespondence", { id: mentor.id }),
@@ -40,6 +43,16 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     queryFn: () => call("getFirstDraft", { id: mentor.id }),
     enabled: !mentor.trashed,
   });
+  const replyDraft = useQuery({
+    queryKey: ["getReplyDraft", mentor.id],
+    queryFn: () => call("getReplyDraft", { id: mentor.id }),
+    enabled: !mentor.trashed,
+  });
+  const lastReplySave = useMutationState({
+    filters: { mutationKey: ["saveReplyDraft", mentor.id] },
+    select: (m) => m.state.status,
+  }).at(-1);
+  const replying = replyDraft.data || (lastReplySave !== undefined && lastReplySave !== "success");
   const lastSave = useMutationState({
     filters: { mutationKey: ["saveFirstDraft", mentor.id] },
     select: (m) => m.state.status,
@@ -55,13 +68,14 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
           {mentor.contact.status === "none" ? `尚未联系${mentor.name}老师。` : contactDetail(mentor.contact)}
         </div>
-        {!mentor.trashed && <FirstLetter mentor={mentor} />}
+        {!mentor.trashed && replyDraft.isSuccess && (!replying || begun) && <FirstLetter mentor={mentor} />}
+        {!mentor.trashed && replying && <ReplyLetter mentor={mentor} selected={selected} />}
       </>
     );
   }
   return (
     <>
-      <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-6 phone:px-3 [&>*]:shrink-0">
         {entries.data.map((e) =>
           "email" in e ? (
             <Sent
@@ -70,6 +84,10 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
               mentorId={mentor.id}
               actions={!mentor.trashed}
               emails={mentor.emails}
+              onWithdraw={() => {
+                setSelected(null);
+                setReplyVersion((v) => v + 1);
+              }}
             />
           ) : (
             <Seen
@@ -77,6 +95,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
               message={e.message}
               mentor={mentor}
               fresh={fresh.includes(e.message.id)}
+              onReply={() => setSelected((old) => ({ id: e.message.id, version: (old?.version ?? 0) + 1 }))}
             />
           ),
         )}
@@ -88,6 +107,9 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
         ) : (
           draft.error && <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(draft.error)}</p>
         ))}
+      {!mentor.trashed && (replying || entries.data.some((e) => "message" in e && e.message.kind === "reply")) && (
+        <ReplyLetter key={`${mentor.id} ${replyVersion}`} mentor={mentor} selected={selected} />
+      )}
     </>
   );
 }
@@ -138,19 +160,24 @@ function Sent({
   mentorId,
   actions,
   emails,
+  onWithdraw,
 }: {
   email: Email;
   mentorId: number;
   actions: boolean;
   /** The mentor's addresses, the first of which an email sent again goes to. */
   emails: string[];
+  onWithdraw: () => void;
 }) {
   const queryClient = useQueryClient();
   const act = useMutation({
     mutationFn: (op: "withdrawEmail" | "retryEmail" | "resendEmail") => call(op, { id: e.id }),
     onSuccess: (_, op) => {
       // Read again when the composer comes back, as the draft it shows is this email.
-      if (op === "withdrawEmail") queryClient.removeQueries({ queryKey: ["getFirstDraft", mentorId] });
+      if (op === "withdrawEmail") {
+        dropDrafts(queryClient, [mentorId]);
+        onWithdraw();
+      }
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] }),
   });
@@ -247,7 +274,17 @@ function status(e: Email, several: boolean): [string, string] {
 }
 
 /** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
-function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorDetail; fresh: boolean }) {
+function Seen({
+  message: m,
+  mentor,
+  fresh,
+  onReply,
+}: {
+  message: Message;
+  mentor: MentorDetail;
+  fresh: boolean;
+  onReply: () => void;
+}) {
   const [quoted, setQuoted] = useState(false);
   const [opened, setOpened] = useState(false);
   const queryClient = useQueryClient();
@@ -310,12 +347,20 @@ function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorD
           {day(m.sentAt)} {time(m.sentAt)}
           {mine ? " 在别处发出" : from}
         </span>
+        {m.kind === "reply" && !mentor.trashed && (
+          <Button variant="quiet" size="sm" disabled={!m.canReply} onClick={onReply}>
+            回复
+          </Button>
+        )}
         {!mine && !known && !mentor.trashed && (
           <Button variant="quiet" size="sm" disabled={add.isPending} onClick={() => add.mutate()}>
             加为导师的邮箱
           </Button>
         )}
       </p>
+      {m.kind === "reply" && !m.canReply && !mentor.trashed && (
+        <p className="text-sm text-muted-foreground">这封信缺少邮件编号，无法在原线程里回复，请到邮箱里回复</p>
+      )}
       {add.error && <p className="text-sm text-destructive">未能加为导师的邮箱：{errorMessage(add.error)}</p>}
       {m.kind === "sent" && m.bounce && <p className="text-sm text-warning">退信：{m.bounce}</p>}
     </article>

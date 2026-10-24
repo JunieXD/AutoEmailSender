@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET refs = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "678c304e1c645fd6f2e848f6e2391297964af22d0609752cba1ece95aaea23f9"
+}

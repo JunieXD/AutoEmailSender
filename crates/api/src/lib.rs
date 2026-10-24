@@ -182,6 +182,12 @@ operations! {
     "setDefaultTemplate" => set_default_template(DefaultTemplate) -> ();
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
     "applyDefaultTemplate" => apply_default_template(MentorId) -> Option<FilledTemplate>;
+    "getReplyDraft" => get_reply_draft(MentorId) -> Option<email::ReplyDraft>;
+    "getReplyTarget" => get_reply_target(ReplyTargetQuery) -> Option<email::ReplyTarget>;
+    "saveReplyDraft" => save_reply_draft(ReplyDraftEdit) -> Option<email::ReplyDraft>;
+    "checkReplyDraft" => check_reply_draft(ReplyDraftEdit) -> Vec<check::Problem>;
+    "approveReply" => approve_reply(ReplyEmail) -> ();
+    "attachDraftMaterial" => attach_draft_material(DraftMaterial) -> bool;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "checkFirstDraft" => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
@@ -1054,6 +1060,21 @@ async fn fill(
     })
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftMaterial {
+    pub mentor_id: i64,
+    pub kind: email::DraftKind,
+    pub material_id: i64,
+}
+
+async fn attach_draft_material(ctx: &Context, input: DraftMaterial) -> Result<bool, CallError> {
+    Ok(
+        email::attach_draft_material(&ctx.db, input.mentor_id, input.kind, input.material_id)
+            .await?,
+    )
+}
+
 async fn get_first_draft(
     ctx: &Context,
     input: MentorId,
@@ -1206,18 +1227,149 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
         text: &input.text,
         attachments: &input.attachments,
     };
-    match email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
+    approved(
+        ctx,
+        email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await?,
+        "这位导师已经有一封首封邮件，或已移入回收站。",
+        "有附件的材料已被删除。重新选择附件后再发送。",
+    )
+}
+
+fn approved(
+    ctx: &Context,
+    result: email::Approved,
+    refused: &str,
+    material_gone: &str,
+) -> Result<(), CallError> {
+    match result {
         email::Approved::Yes => {
             ctx.sender.wake();
             Ok(())
         }
-        email::Approved::Refused => Err(CallError::not_found(
-            "这位导师已经有一封首封邮件，或已移入回收站。",
+        email::Approved::Refused => Err(CallError::not_found(refused)),
+        email::Approved::MaterialGone => Err(CallError::invalid(material_gone.into())),
+        email::Approved::ReplyGone => Err(CallError::not_found(
+            "回的那封信已不在这位导师的往来里。请选择另一封回信后再发送。",
         )),
-        email::Approved::MaterialGone => Err(CallError::invalid(
-            "有附件的材料已被删除。重新选择附件后再发送。".into(),
+        email::Approved::ReplyChanged => {
+            Err(CallError::invalid("回复的信已更换，请再看一遍。".into()))
+        }
+        email::Approved::NoAddress => Err(CallError::invalid(
+            "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
         )),
     }
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyTargetQuery {
+    pub mentor_id: i64,
+    pub id: Option<i64>,
+}
+
+async fn get_reply_target(
+    ctx: &Context,
+    input: ReplyTargetQuery,
+) -> Result<Option<email::ReplyTarget>, CallError> {
+    Ok(email::reply_target(&ctx.db, input.mentor_id, input.id).await?)
+}
+
+async fn get_reply_draft(
+    ctx: &Context,
+    input: MentorId,
+) -> Result<Option<email::ReplyDraft>, CallError> {
+    Ok(email::reply_draft(&ctx.db, input.id).await?)
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyDraftEdit {
+    pub mentor_id: i64,
+    pub reply_to: String,
+    pub body_md: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn save_reply_draft(
+    ctx: &Context,
+    input: ReplyDraftEdit,
+) -> Result<Option<email::ReplyDraft>, CallError> {
+    let saved = email::save_reply_draft(
+        &ctx.db,
+        input.mentor_id,
+        &input.reply_to,
+        &input.body_md,
+        &input.attachments,
+        now(),
+    )
+    .await?;
+    if saved.is_none() && (!input.body_md.trim().is_empty() || !input.attachments.is_empty()) {
+        return Err(CallError::not_found(
+            "回的那封信已不在这位导师的往来里，或导师已移入回收站。请选择另一封回信后再试。",
+        ));
+    }
+    Ok(saved)
+}
+
+async fn check_reply_draft(
+    ctx: &Context,
+    input: ReplyDraftEdit,
+) -> Result<Vec<check::Problem>, CallError> {
+    let m = get_mentor(
+        ctx,
+        MentorId {
+            id: input.mentor_id,
+        },
+    )
+    .await?;
+    // The subject belongs to the received message, not to the user's writing. Its placeholders
+    // cannot be fixed here; checks apply only to the new body, never to the appended quote.
+    Ok(check::letter(
+        &m.name,
+        &m.aliases,
+        "",
+        &input.body_md,
+        !input.attachments.is_empty(),
+    ))
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyEmail {
+    pub mentor_id: i64,
+    pub draft_id: i64,
+    pub reply_to: String,
+    pub body_md: String,
+    pub html: String,
+    pub text: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn approve_reply(ctx: &Context, input: ReplyEmail) -> Result<(), CallError> {
+    if input.body_md.trim().is_empty() {
+        return Err(CallError::invalid("请先填写回复正文。".into()));
+    }
+    let approval = email::Approval {
+        subject: "",
+        body_md: &input.body_md,
+        html: &input.html,
+        text: &input.text,
+        attachments: &input.attachments,
+    };
+    approved(
+        ctx,
+        email::approve_reply(
+            &ctx.db,
+            input.mentor_id,
+            input.draft_id,
+            &input.reply_to,
+            &approval,
+            now(),
+        )
+        .await?,
+        "这封回复已被批准、已被清空，或导师已移入回收站。请刷新往来后查看。",
+        "有附件的材料已被删除。重新选择附件后再发送。",
+    )
 }
 
 /// An email the app sent, or mail seen in the mailbox, in the correspondence with a mentor.
@@ -1261,7 +1413,19 @@ pub struct EmailId {
 }
 
 async fn withdraw_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
-    let applied = email::withdraw(&ctx.db, input.id, now()).await?;
+    let applied = email::withdraw(&ctx.db, input.id, now())
+        .await
+        .map_err(|e| {
+            if e.as_database_error()
+                .is_some_and(|e| e.is_unique_violation())
+            {
+                CallError::invalid(
+                    "这位导师已有同类草稿。请先完成或清空那封草稿，再改回这封。".into(),
+                )
+            } else {
+                e.into()
+            }
+        })?;
     require_applied(applied, "这封邮件已在发送或已发出，无法改回草稿。")
 }
 
@@ -1273,18 +1437,12 @@ async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
 }
 
 async fn resend_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
-    match email::resend(&ctx.db, input.id, now()).await? {
-        email::Approved::Yes => {
-            ctx.sender.wake();
-            Ok(())
-        }
-        email::Approved::Refused => Err(CallError::not_found(
-            "这封邮件已经重新发送过，或导师已移入回收站。",
-        )),
-        email::Approved::MaterialGone => Err(CallError::invalid(
-            "有附件的材料已被删除，没法按原样重新发送。".into(),
-        )),
-    }
+    approved(
+        ctx,
+        email::resend(&ctx.db, input.id, now()).await?,
+        "这封邮件已经重新发送过，或导师已移入回收站。",
+        "有附件的材料已被删除，没法按原样重新发送。",
+    )
 }
 
 /// UTC milliseconds.
