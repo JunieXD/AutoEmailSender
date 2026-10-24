@@ -553,6 +553,9 @@ impl MentorForm {
         let name = text(&self.name).ok_or("请填写姓名")?;
         let mut aliases = Vec::new();
         for alias in self.aliases.iter().filter_map(|a| text(a)) {
+            if alias.contains([';', '；', '、']) {
+                return Err("别名不能含分号或顿号，请将不同别名分行填写".into());
+            }
             if alias != name && !aliases.contains(&alias) {
                 aliases.push(alias);
             }

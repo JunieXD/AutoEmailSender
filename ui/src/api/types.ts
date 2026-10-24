@@ -133,7 +133,7 @@ export type MaterialId = { id: number, };
 
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
 
-export type MaybeSame = { row: number, name: string, university: string | null, id: number, localName: string, affiliation: Affiliation | null, emails: Array<string>, };
+export type MaybeSame = { row: number, rows: Array<number>, name: string, university: string | null, id: number, localName: string, affiliation: Affiliation | null, emails: Array<string>, };
 
 export type MentorAddress = { id: number, address: string, };
 

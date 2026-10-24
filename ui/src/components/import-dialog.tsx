@@ -38,10 +38,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       selected,
       setup,
       choices,
+      remapping,
     }: {
       selected: File | ImportFile;
       setup: Setup;
       choices: Decisions;
+      remapping?: Preview;
     }) => {
       const version = ++revision.current;
       if (selected instanceof File && selected.size > 20 * 1024 * 1024)
@@ -50,14 +52,23 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         selected instanceof File
           ? { fileName: selected.name, data: await base64(selected), setup }
           : { ...selected, setup };
-      const result = await call("previewImport", { ...input, decisions: choices });
-      return { version, input, result, choices };
+      let basis = remapping;
+      if (remapping) {
+        basis = await call("previewImport", { ...input, decisions: EMPTY });
+        // Differences depend on the group choices, so validate them against the final preview.
+        choices = { ...reconcileChoices(basis, choices, remapping), take: choices.take };
+      }
+      const result =
+        basis && choices.take.length + choices.separate.length + choices.restore.length === 0
+          ? basis
+          : await call("previewImport", { ...input, decisions: choices });
+      return { version, input, result, choices, basis: basis ?? result };
     },
-    onSuccess: ({ version, input, result, choices }) => {
+    onSuccess: ({ version, input, result, choices, basis }) => {
       if (version !== revision.current) return;
       setFile({ ...input, setup: { sheet: result.sheet, columns: result.columns.map((c) => c.field) } });
       setPreview(result);
-      const next = reconcileChoices(result, choices);
+      const next = reconcileChoices(result, choices, basis);
       setDecisions(next);
       chosen.current = next;
     },
@@ -91,9 +102,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     read.mutate({ selected, setup: { sheet: null, columns: null }, choices: EMPTY });
   };
   function remap(setup: Setup) {
-    if (!file) return;
+    if (!file || !preview) return;
     save.reset();
-    read.mutate({ selected: file, setup, choices: chosen.current });
+    const choices = setup.sheet === preview.sheet ? chosen.current : { ...chosen.current, separate: [], restore: [] };
+    chosen.current = choices;
+    setDecisions(choices);
+    read.mutate({ selected: file, setup, choices, remapping: preview });
   }
   const error = read.error ?? save.error ?? template.error;
   const differenceIds = new Set(preview?.differences.map((d) => d.id));
@@ -245,7 +259,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                   {preview.maybeSame.length > 0 && (
                     <section>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h3 className="mr-auto font-medium">可能是同一位 · {preview.maybeSame.length} 行</h3>
+                        <h3 className="mr-auto font-medium">可能是同一位 · {preview.maybeSame.length} 组</h3>
                         <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, separate: [] }))}>
                           全部并入
                         </Button>
@@ -262,7 +276,9 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                           <div key={m.row} className="rounded-lg border border-border p-3 text-sm">
                             <div className="grid grid-cols-2 gap-3 phone:grid-cols-1">
                               <p>
-                                <span className="mb-1 block text-xs text-muted-foreground">表格 · 第 {m.row} 行</span>
+                                <span className="mb-1 block text-xs text-muted-foreground">
+                                  表格 · 第 {m.rows.join("、")} 行
+                                </span>
                                 {m.name}
                                 <span className="block text-muted-foreground">{m.university}</span>
                               </p>

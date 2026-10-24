@@ -2,9 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod logs;
+mod save;
 
 use std::error::Error;
 use std::fs::{File, TryLockError};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -68,7 +70,7 @@ async fn export_mentors(
         let path = target
             .into_path()
             .map_err(|e| format!("无法保存到这个位置：{e}，请选择其他位置"))?;
-        std::fs::write(path, data)
+        save::replace(&path, |file| file.write_all(&data))
             .map_err(|e| format!("表格未能保存：{e}，请检查保存位置是否可写后重试"))?;
         Ok(true)
     })

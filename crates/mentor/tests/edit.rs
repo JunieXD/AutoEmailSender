@@ -78,6 +78,18 @@ fn form_is_trimmed_and_checked() {
 }
 
 #[test]
+fn aliases_reject_import_separators() {
+    for alias in ["Ming;Wang", "Ming；Wang", "王明、明王"] {
+        let mut input = form("王明", "", "");
+        input.aliases = vec![alias.into()];
+        assert!(input.check().is_err(), "{alias}");
+    }
+    let mut input = form("王明", "", "");
+    input.aliases = vec![" Smith, John ".into()];
+    assert_eq!(input.check().unwrap().aliases, ["Smith, John"]);
+}
+
+#[test]
 fn lists_keep_their_order_without_blanks_or_repeats() {
     let blank = Affiliation {
         school: Some(" ".into()),

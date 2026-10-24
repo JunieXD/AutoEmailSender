@@ -40,9 +40,50 @@ it("retains a choice across new objects and row changes, and drops changed compa
     trashed: [{ id: 7, name: "王明", rows: [2, 3] }],
     errors: [],
   };
-  expect(reconcileChoices(preview, { take: [structuredClone(difference)], separate: [2], restore: [7, 8] })).toEqual({
+  expect(
+    reconcileChoices(preview, { take: [structuredClone(difference)], separate: [2], restore: [7, 8] }, preview),
+  ).toEqual({
     take: [current],
     separate: [],
     restore: [7],
   });
+});
+
+it("clears group choices on sheet changes and checks candidate identity after remapping columns", () => {
+  const candidate = {
+    row: 2,
+    rows: [2, 3],
+    name: "王明",
+    university: "北京大学",
+    id: 7,
+    localName: "王明",
+    affiliation: null,
+    emails: [],
+  };
+  const previous: Preview = {
+    sheets: ["第一张", "第二张"],
+    sheet: 0,
+    columns: [],
+    issue: null,
+    created: 0,
+    supplemented: 0,
+    updated: 1,
+    unchanged: 0,
+    differences: [difference],
+    maybeSame: [candidate],
+    trashed: [{ id: 7, name: "王明", rows: [2, 3] }],
+    errors: [],
+  };
+  const choices = { take: [difference], separate: [2], restore: [7] };
+  expect(reconcileChoices(structuredClone(previous), choices, previous)).toEqual(choices);
+  expect(reconcileChoices({ ...previous, sheet: 1 }, choices, previous)).toEqual({
+    take: [difference],
+    separate: [],
+    restore: [],
+  });
+  for (const changed of [{ id: 8, localName: "李明" }, { row: 4, rows: [4, 5] }, { rows: [2, 4] }, { rows: [2] }]) {
+    expect(
+      reconcileChoices({ ...previous, maybeSame: [{ ...candidate, ...changed }] }, choices, previous).separate,
+    ).toEqual([]);
+  }
 });

@@ -598,6 +598,98 @@ async fn restore_approval_does_not_follow_a_different_target(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn shared_new_email_and_trash_separate(db: SqlitePool) {
+    let id = add(&db, "王明", &[], "北京大学").await;
+    mentor::trash::trash(&db, &[id], 1).await.unwrap();
+    let sheets = table(&[
+        &["姓名", "邮箱", "备注"],
+        &["王明", "new@pku.edu.cn", "第一行备注"],
+        &["王明", "new@pku.edu.cn", "第二行备注"],
+    ]);
+    let initial = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(initial.maybe_same.len(), 1);
+    assert_eq!(initial.maybe_same[0].rows, [2, 3]);
+    assert_eq!(initial.trashed[0].rows, [2, 3]);
+    let skipped = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((skipped.created, skipped.updated), (0, 0));
+    let choices = Decisions {
+        separate: vec![2],
+        ..Default::default()
+    };
+    let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
+        .await
+        .unwrap();
+    assert_eq!(p.created, 1);
+    assert!(p.trashed.is_empty());
+    assert_eq!(p.maybe_same.len(), 1);
+    assert_eq!(p.maybe_same[0].rows, [2, 3]);
+    let result = apply(&db, &sheets, &choices).await;
+    assert_eq!((result.created, result.updated), (1, 0));
+    assert!(mentor::get(&db, id).await.unwrap().unwrap().trashed);
+    let rows = export::export(
+        &db,
+        &Scope::Filter(export::Filter {
+            status: None,
+            keyword: None,
+        }),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[1].contains(&"第一行备注".to_owned()));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn shared_email_must_precede_fuzzy_candidate(db: SqlitePool) {
+    let a = add(&db, "王明", &[], "北京大学").await;
+    let b = add(&db, "Ming Wang", &["wang@pku.edu.cn"], "北京大学").await;
+    mentor::trash::trash(&db, &[a], 1).await.unwrap();
+    let sheets = table(&[
+        &["姓名", "邮箱", "备注"],
+        &["王明", "new@pku.edu.cn", "补充资料"],
+        &["Ming Wang", "new@pku.edu.cn;wang@pku.edu.cn", ""],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert!(p.errors.is_empty(), "{:?}", p.errors);
+    assert!(p.maybe_same.is_empty());
+    assert!(p.trashed.is_empty());
+    let result = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((result.created, result.updated), (0, 1));
+    assert!(mentor::get(&db, a).await.unwrap().unwrap().trashed);
+    let m = mentor::get(&db, b).await.unwrap().unwrap();
+    assert_eq!(m.emails, ["wang@pku.edu.cn", "new@pku.edu.cn"]);
+    assert_eq!(m.note.as_deref(), Some("补充资料"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn shared_email_chain_rejects_only_real_owner_conflicts(db: SqlitePool) {
+    add(&db, "王明", &["w@a.cn"], "北京大学").await;
+    add(&db, "李明", &["l@a.cn"], "北京大学").await;
+    let sheets = table(&[
+        &["姓名", "邮箱"],
+        &["王明", "w@a.cn;new@a.cn"],
+        &["中间行", "NEW@a.cn;another@a.cn"],
+        &["李明", "another@a.cn;l@a.cn"],
+        &["独立新导师", "other@a.cn"],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        p.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
+        [2, 3, 4]
+    );
+    assert_eq!(p.created, 1);
+    let result = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((result.created, result.updated), (1, 0));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn splitting_rows_recalculates_the_full_preview(db: SqlitePool) {
     let sheets = table(&[
         &["姓名", "学校", "邮箱", "职称"],

@@ -135,6 +135,7 @@ pub struct Difference {
 #[serde(rename_all = "camelCase")]
 pub struct MaybeSame {
     pub row: u32,
+    pub rows: Vec<u32>,
     pub name: String,
     pub university: Option<String>,
     pub id: i64,
@@ -185,7 +186,6 @@ pub struct Imported {
 struct Row {
     number: u32,
     profile: Profile,
-    target: Option<i64>,
 }
 struct Change {
     before: Option<Profile>,
@@ -255,11 +255,7 @@ fn read_rows(sheets: &[Sheet], setup: &Setup, preview: &mut Preview) -> Vec<Row>
         }
         let number = (r + 1) as u32;
         match read_row(cells, &preview.columns) {
-            Ok(profile) => rows.push(Row {
-                number,
-                profile,
-                target: None,
-            }),
+            Ok(profile) => rows.push(Row { number, profile }),
             Err(reason) => preview.errors.push(RowError {
                 row: number,
                 reason,
@@ -450,48 +446,71 @@ async fn calculate(
             )
         })
         .collect();
-    let mut valid = Vec::new();
-    for mut row in rows {
-        let owners: BTreeSet<_> = row
-            .profile
-            .fields
-            .emails
+    let mut parents: Vec<_> = (0..rows.len()).collect();
+    let mut by_email = BTreeMap::new();
+    for (n, row) in rows.iter().enumerate() {
+        for email in &row.profile.fields.emails {
+            if let Some(other) = by_email.insert(email.to_lowercase(), n) {
+                let a = root(&parents, n);
+                let b = root(&parents, other);
+                parents[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut email_groups = BTreeMap::<usize, Vec<Row>>::new();
+    for (n, row) in rows.into_iter().enumerate() {
+        email_groups.entry(root(&parents, n)).or_default().push(row);
+    }
+    let mut groups = BTreeMap::<(Option<i64>, u32), Vec<Row>>::new();
+    for rows in email_groups.into_values() {
+        let owners: BTreeSet<_> = rows
             .iter()
+            .flat_map(|r| &r.profile.fields.emails)
             .filter_map(|e| emails.get(&e.to_lowercase()).copied())
             .collect();
         if owners.len() > 1 {
-            preview.errors.push(RowError {
-                row: row.number,
-                reason: "邮箱分属两位已有的导师，请先合并这两位导师，或修改表格中的邮箱".into(),
-            });
+            for row in rows {
+                preview.errors.push(RowError {
+                    row: row.number,
+                    reason: "这些行的邮箱对应两位已有的导师，请先合并导师或修改表格".into(),
+                });
+            }
             continue;
         }
-        row.target = owners.first().copied();
-        if row.target.is_none() {
-            let universities: Vec<_> = row
-                .profile
-                .fields
-                .affiliations
+        let first = &rows[0];
+        let mut target = owners.first().copied();
+        if target.is_none() {
+            let has_email = rows.iter().any(|r| !r.profile.fields.emails.is_empty());
+            let schools = &schools;
+            let possible = rows
                 .iter()
-                .filter_map(|a| a.university.as_deref())
-                .map(comparable)
-                .collect();
-            let possible = std::iter::once(&row.profile.fields.name)
-                .chain(&row.profile.fields.aliases)
-                .filter_map(|name| by_name.get(&comparable(name)))
-                .flatten()
-                .map(|id| &local[id])
-                .filter(|p| row.profile.fields.emails.is_empty() || p.fields.emails.is_empty())
-                .filter(|p| {
-                    universities.is_empty()
-                        || universities.iter().any(|u| schools[&p.id].contains(u))
+                .flat_map(|row| {
+                    let universities: Vec<_> = row
+                        .profile
+                        .fields
+                        .affiliations
+                        .iter()
+                        .filter_map(|a| a.university.as_deref())
+                        .map(comparable)
+                        .collect();
+                    std::iter::once(&row.profile.fields.name)
+                        .chain(&row.profile.fields.aliases)
+                        .filter_map(|name| by_name.get(&comparable(name)))
+                        .flatten()
+                        .map(|id| &local[id])
+                        .filter(move |p| !has_email || p.fields.emails.is_empty())
+                        .filter(move |p| {
+                            universities.is_empty()
+                                || universities.iter().any(|u| schools[&p.id].contains(u))
+                        })
                 })
                 .min_by_key(|p| p.id);
             if let Some(p) = possible {
                 preview.maybe_same.push(MaybeSame {
-                    row: row.number,
-                    name: row.profile.fields.name.clone(),
-                    university: row
+                    row: first.number,
+                    rows: rows.iter().map(|r| r.number).collect(),
+                    name: first.profile.fields.name.clone(),
+                    university: first
                         .profile
                         .fields
                         .affiliations
@@ -502,52 +521,19 @@ async fn calculate(
                     affiliation: p.fields.affiliations.first().cloned(),
                     emails: p.fields.emails.clone(),
                 });
-                if !decisions.separate.contains(&row.number) {
-                    row.target = Some(p.id);
+                if !decisions.separate.contains(&first.number) {
+                    target = Some(p.id);
                 }
             }
         }
-        valid.push(row);
-    }
-    let mut parents: Vec<_> = (0..valid.len()).collect();
-    let mut by_email = BTreeMap::new();
-    let mut by_target = BTreeMap::new();
-    for (n, row) in valid.iter().enumerate() {
-        let mut links = Vec::new();
-        for email in &row.profile.fields.emails {
-            if let Some(other) = by_email.insert(email.to_lowercase(), n) {
-                links.push(other);
-            }
-        }
-        if let Some(id) = row.target
-            && let Some(other) = by_target.insert(id, n)
-        {
-            links.push(other);
-        }
-        for other in links {
-            let a = root(&parents, n);
-            let b = root(&parents, other);
-            parents[a.max(b)] = a.min(b);
-        }
-    }
-    let mut groups = BTreeMap::<usize, Vec<Row>>::new();
-    for (n, row) in valid.into_iter().enumerate() {
-        groups.entry(root(&parents, n)).or_default().push(row);
+        let key = target.map_or((None, first.number), |id| (Some(id), 0));
+        groups.entry(key).or_default().extend(rows);
     }
     let mut changes = Vec::new();
-    for rows in groups.into_values() {
-        let targets: BTreeSet<_> = rows.iter().filter_map(|r| r.target).collect();
-        if targets.len() > 1 {
-            for row in rows {
-                preview.errors.push(RowError {
-                    row: row.number,
-                    reason: "这些行的邮箱对应两位已有的导师，请先合并导师或修改表格".into(),
-                });
-            }
-            continue;
-        }
+    for ((target, _), mut rows) in groups {
+        rows.sort_by_key(|r| r.number);
         let first = &rows[0];
-        let before = targets.first().and_then(|id| local.get(id)).cloned();
+        let before = target.and_then(|id| local.get(&id)).cloned();
         let restore = before.as_ref().is_some_and(|p| p.trashed);
         if let Some(p) = before.as_ref().filter(|p| p.trashed) {
             preview.trashed.push(Trashed {

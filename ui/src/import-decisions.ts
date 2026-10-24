@@ -16,10 +16,24 @@ export function sameDifference(a: Difference, b: Difference): boolean {
   );
 }
 
-export function reconcileChoices(preview: Preview, choices: Decisions): Decisions {
+export function reconcileChoices(preview: Preview, choices: Decisions, previous: Preview): Decisions {
+  const sameSheet = preview.sheet === previous.sheet;
   return {
     take: preview.differences.filter((d) => choices.take.some((choice) => sameDifference(d, choice))),
-    separate: choices.separate.filter((row) => preview.maybeSame.some((m) => m.row === row)),
-    restore: choices.restore.filter((id) => preview.trashed.some((m) => m.id === id)),
+    separate: sameSheet
+      ? choices.separate.filter((row) => {
+          const before = previous.maybeSame.find((m) => m.row === row);
+          return (
+            before !== undefined &&
+            preview.maybeSame.some(
+              (m) =>
+                m.id === before.id &&
+                m.rows.length === before.rows.length &&
+                m.rows.every((r, n) => r === before.rows[n]),
+            )
+          );
+        })
+      : [],
+    restore: sameSheet ? choices.restore.filter((id) => preview.trashed.some((m) => m.id === id)) : [],
   };
 }

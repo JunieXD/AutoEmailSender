@@ -42,6 +42,9 @@ pub fn checked_name(name: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("请填写标签名称".into());
     }
+    if name.contains([';', '；', '、']) {
+        return Err("标签名称不能含分号或顿号，请换一个名称".into());
+    }
     Ok(name.to_owned())
 }
 
