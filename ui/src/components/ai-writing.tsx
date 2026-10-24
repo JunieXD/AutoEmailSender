@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
@@ -24,6 +25,7 @@ export function useWriting(mentorId: number) {
     mutationKey,
     mutationFn: (letter: FirstDraftEdit) => call("writeLetter", letter),
     gcTime: Infinity,
+    onError: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
   const latest = useMutationState<MutationState<Letter, Error, FirstDraftEdit>>({
     filters: { mutationKey },
@@ -46,6 +48,24 @@ export function useWriting(mentorId: number) {
  * says what goes there and waits for the user to agree.
  */
 export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disabled: boolean; onWrite: () => void }) {
+  return (
+    <ModelAction disabled={disabled} onWrite={onWrite}>
+      <AiIcon />
+      {blank ? "AI 起草" : "AI 改写"}
+    </ModelAction>
+  );
+}
+
+/** The same provider consent for every AI entry point. */
+export function ModelAction({
+  children,
+  disabled,
+  onWrite,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  onWrite: () => void;
+}) {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["listModelConfigs"], queryFn: () => call("listModelConfigs", {}) });
   const providers = useModelProviders();
@@ -62,8 +82,7 @@ export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disable
       disabled={disabled || !models.data || !providers.data || agree.isPending}
       onClick={onClick}
     >
-      <AiIcon />
-      {blank ? "AI 起草" : "AI 改写"}
+      {children}
     </Button>
   );
   const error = models.error ?? providers.error ?? agree.error;

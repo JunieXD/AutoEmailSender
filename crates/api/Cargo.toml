@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+matching.workspace = true
 sheet.workspace = true
 tokio.workspace = true
 base64 = "0.22"

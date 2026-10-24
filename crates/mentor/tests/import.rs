@@ -426,7 +426,7 @@ async fn export_uses_all_filtered_pages_and_list_order(db: SqlitePool) {
         ids.push(add(&db, &format!("王明{i}"), &[], "北京大学").await);
     }
     let other = add(&db, "其他导师", &[], "清华大学").await;
-    sqlx::query("UPDATE mentor SET match_state = 'done', match_score = 95, matched_at = 1, match_model = 'm' WHERE id = ?").bind(ids[54]).execute(&db).await.unwrap();
+    sqlx::query("UPDATE mentor SET match_state = NULL, match_score = 95, matched_at = 1, match_model = 'm' WHERE id = ?").bind(ids[54]).execute(&db).await.unwrap();
     mentor::trash::trash(&db, &[ids[0]], 1).await.unwrap();
     let rows = export::export(
         &db,

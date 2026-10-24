@@ -8,8 +8,9 @@ import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Correspondence } from "@/components/correspondence";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, dropDrafts, MATCH_LABEL, Missing, placeOf, refreshMentors } from "@/components/mentor";
+import { Avatar, ContactLabel, dropDrafts, BASIS_CHANGED, Missing, placeOf, refreshMentors } from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
+import { MatchButton } from "@/components/matching";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -310,27 +311,40 @@ function webUrl(url: string): string | null {
 }
 
 function Analysis({ mentor: m }: { mentor: MentorDetail }) {
-  const a = m.analysis;
-  if (a.state !== "done") {
-    const [label, color] = MATCH_LABEL[a.state];
-    return (
-      <Section title="匹配度">
-        <p className={color}>{a.state === "failed" ? `${label}：${a.error}` : label}</p>
-      </Section>
-    );
-  }
+  const { result: a, state } = m.analysis;
   return (
     <>
       <Section title="匹配度">
-        <p className="text-[32px] leading-none font-semibold">
-          {a.score}
-          <span className="ml-1.5 text-sm font-normal text-muted-foreground">{day(a.matchedAt)}分析</span>
-        </p>
-        <p className="mt-2.5 text-muted-foreground">{a.reason}</p>
+        {a ? (
+          <>
+            <p className="text-[32px] leading-none font-semibold">{a.score}</p>
+            <p className="mt-2 text-xs text-muted-foreground wrap-anywhere">
+              {day(a.matchedAt)}分析 · {a.model}
+            </p>
+            {a.basisChanged && <p className="mt-2 text-muted-foreground">{BASIS_CHANGED}</p>}
+            <p className="mt-2.5 text-muted-foreground">{a.reason}</p>
+          </>
+        ) : (
+          <Missing>未分析</Missing>
+        )}
+        {state && (
+          <p className={`mt-2 wrap-anywhere ${state.state === "failed" ? "text-warning" : "text-muted-foreground"}`}>
+            {state.state === "failed" ? `分析失败：${state.error}` : state.state === "queued" ? "排队中" : "分析中"}
+          </p>
+        )}
+        {!m.trashed && (
+          <div className="mt-3">
+            <MatchButton mentor={m} />
+          </div>
+        )}
       </Section>
-      <Points title="契合方向" items={a.directions} />
-      <Points title="建议强调" items={a.highlights} />
-      <Points title="风险" items={a.risks} marker="marker:text-warning" />
+      {a && (
+        <>
+          <Points title="契合方向" items={a.directions} />
+          <Points title="建议强调" items={a.highlights} />
+          <Points title="风险" items={a.risks} marker="marker:text-warning" />
+        </>
+      )}
     </>
   );
 }

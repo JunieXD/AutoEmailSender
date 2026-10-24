@@ -111,7 +111,7 @@ async fn a_refusal_says_what_the_provider_said() {
     let net = Net::new(Vec::new()).unwrap();
     let result = model::test(&net, &access(address, None), "deepseek-chat").await;
     assert!(
-        matches!(result, Err(ModelError::Refused { status: 401, ref reply }) if reply == "Authentication Fails"),
+        matches!(result, Err(ModelError::Refused { status: 401, ref reply, .. }) if reply == "Authentication Fails"),
         "{result:?}"
     );
     assert!(result.unwrap_err().message().contains("API Key"));

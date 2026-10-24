@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET (match_score, matched_at, match_model) =\n               (SELECT match_score, matched_at, match_model FROM mentor\n                WHERE id = ?2)\n             WHERE id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8ccc2c952588063d6c0cfe02fefe2b9bf39ed7e14a47380b5fa9177f892ce86b"
+}

@@ -186,13 +186,62 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             }
         },
     ));
+    let matcher = matching::Matcher::default();
+    let (ui, done_ui) = (app.clone(), app.clone());
+    let matching_notifications_db = db.clone();
+    tauri::async_runtime::spawn(matching::run(
+        db.clone(),
+        net.clone(),
+        matcher.clone(),
+        move || {
+            if let Err(e) = ui.emit("matching-changed", ()) {
+                tracing::warn!("refresh matching: {e}");
+            }
+        },
+        move |result| {
+            let app = done_ui.clone();
+            let db = matching_notifications_db.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = finish_matching(&app, &db, result).await {
+                    tracing::warn!("match completion notification: {e}");
+                }
+            });
+        },
+    ));
     Ok(api::Context {
         db,
         net,
         sender,
         receiver,
+        matcher,
         materials,
     })
+}
+
+async fn finish_matching(
+    app: &AppHandle,
+    db: &sqlx::SqlitePool,
+    result: matching::MatchFinished,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(window) = app.get_webview_window("main")
+        && window.is_focused()?
+    {
+        app.emit("matching-finished", result)?;
+    } else if profile::background_notifications(db).await? {
+        let failed = if result.failed > 0 {
+            format!("，失败 {} 位", result.failed)
+        } else {
+            String::new()
+        };
+        app.notification()
+            .builder()
+            .title(format!(
+                "匹配度分析完成：分析了 {} 位{failed}",
+                result.analyzed
+            ))
+            .show()?;
+    }
+    Ok(())
 }
 
 async fn notify_replies(

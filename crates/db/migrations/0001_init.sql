@@ -69,7 +69,12 @@ CREATE TABLE profile (
   reply_notifications INTEGER NOT NULL CHECK (reply_notifications IN (0, 1)),
   open_tracking INTEGER NOT NULL CHECK (open_tracking IN (0, 1)),
   cloud_backup INTEGER NOT NULL CHECK (cloud_backup IN (0, 1)),
-  last_backup_at INTEGER
+  last_backup_at INTEGER,
+  match_basis_changed_at INTEGER,
+  match_paused_at INTEGER,
+  match_pause_reason TEXT,
+  background_notifications INTEGER NOT NULL DEFAULT 1 CHECK (background_notifications IN (0, 1)),
+  CHECK (match_paused_at IS NOT NULL OR match_pause_reason IS NULL)
 ) STRICT;
 
 -- The one profile, with defaults.
@@ -98,14 +103,20 @@ CREATE TABLE mentor (
   source_url TEXT,
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   trashed_at INTEGER,
-  match_state TEXT CHECK (match_state IN ('queued', 'running', 'done', 'failed')),
+  match_state TEXT CHECK (match_state IN ('queued', 'running', 'failed')),
+  match_claim INTEGER NOT NULL DEFAULT 0,
   match_score INTEGER CHECK (match_score BETWEEN 0 AND 100),
   matched_at INTEGER,
   match_model TEXT,
   match_error TEXT,
+  match_queued_at INTEGER,
+  match_priority INTEGER CHECK (match_priority IN (0, 1)),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  CHECK ((match_state IS 'done') = (match_score IS NOT NULL AND matched_at IS NOT NULL AND match_model IS NOT NULL)),
+  CHECK ((match_score IS NULL) = (matched_at IS NULL)),
+  CHECK ((match_score IS NULL) = (match_model IS NULL)),
+  CHECK (coalesce(match_state IN ('queued', 'running'), 0) = (match_queued_at IS NOT NULL)),
+  CHECK ((match_queued_at IS NULL) = (match_priority IS NULL)),
   CHECK ((match_state IS 'failed') = (match_error IS NOT NULL))
 ) STRICT;
 -- Long text lives apart so list scans and sorts stay on small rows.
@@ -124,6 +135,7 @@ CREATE TABLE mentor_detail (
 -- characters of the name and aliases, which a one-character word searches.
 CREATE VIRTUAL TABLE mentor_search USING fts5(body, name, content='', contentless_delete=1);
 CREATE INDEX mentor_by_score ON mentor (trashed_at, match_score DESC, id);
+CREATE INDEX mentor_match_queue ON mentor (match_state, trashed_at, match_priority DESC, match_queued_at, id) WHERE match_state IS NOT NULL;
 CREATE INDEX mentor_mailbox ON mentor (mailbox_id) WHERE mailbox_id IS NOT NULL;
 
 -- What a mentor may have several of, in the user's order (docs/data-model.md#导师). Saving rewrites

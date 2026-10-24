@@ -17,5 +17,6 @@ url = "2.5.8"
 
 [dev-dependencies]
 db.workspace = true
+profile = { path = "../profile" }
 test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -224,17 +224,33 @@ async fn send(
     if status.is_success() {
         return Ok(response);
     }
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| {
+            h.parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
+                httpdate::parse_http_date(h).ok().map(|at| {
+                    at.duration_since(std::time::SystemTime::now())
+                        .unwrap_or_default()
+                })
+            })
+        });
     let body = read(response, access).await?;
     // OpenAI-compatible APIs explain errors in `error.message`.
-    let words = serde_json::from_str::<Value>(&body).ok().and_then(|v| {
-        v["error"]["message"]
-            .as_str()
-            .or(v["message"].as_str())
-            .map(str::to_owned)
-    });
+    let parsed = serde_json::from_str::<Value>(&body).ok();
+    let words = parsed
+        .as_ref()
+        .and_then(|v| v["error"]["message"].as_str().or(v["message"].as_str()));
+    let code = parsed
+        .as_ref()
+        .and_then(|v| v["error"]["code"].as_str().or(v["error"]["type"].as_str()))
+        .map(str::to_owned);
     Err(ModelError::Refused {
         status: status.as_u16(),
-        reply: quote(words.as_deref().unwrap_or(&body), access),
+        retry_after,
+        code,
+        reply: quote(words.unwrap_or(&body), access),
     })
 }
 

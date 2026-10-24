@@ -1,0 +1,64 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.match_state, m.match_score,\n             coalesce(m.matched_at < p.match_basis_changed_at, 0) AS \"changed!: bool\",\n             (d.research IS NULL AND coalesce(json_array_length(d.papers), 0) = 0) AS \"insufficient!: bool\"\n           FROM mentor m JOIN mentor_detail d ON d.mentor_id = m.id CROSS JOIN profile p\n           WHERE m.id IN (SELECT value FROM json_each(?)) AND m.trashed_at IS NULL ORDER BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "match_state",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_state"
+          }
+        }
+      },
+      {
+        "name": "match_score",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_score"
+          }
+        }
+      },
+      {
+        "name": "changed!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "insufficient!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "e7a7cf3ea3e30b9c64f087fe788e4df94096172674af24d44e5ae41fa9727992"
+}

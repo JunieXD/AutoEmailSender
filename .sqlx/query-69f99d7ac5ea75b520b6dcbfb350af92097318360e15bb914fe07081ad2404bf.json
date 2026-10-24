@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "69f99d7ac5ea75b520b6dcbfb350af92097318360e15bb914fe07081ad2404bf"
+}

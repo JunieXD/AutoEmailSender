@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT background_notifications AS \"on: bool\" FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "on: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "background_notifications"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7a41bd587922cdd1ff796013022894ca3e3a7091e6e54c073bc488b7035fec93"
+}

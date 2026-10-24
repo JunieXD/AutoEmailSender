@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM material WHERE id = ?1 AND NOT EXISTS (\n           SELECT 1 FROM email_attachment a JOIN email e ON e.id = a.email_id\n           WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'failed')) RETURNING for_matching",
+  "describe": {
+    "columns": [
+      {
+        "name": "for_matching",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "for_matching"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9e1a1ffcaaf545138c38507f5efb5df2c24bd9f28534053de42b09c7b06abd1d"
+}

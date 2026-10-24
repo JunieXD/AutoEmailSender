@@ -86,6 +86,7 @@ function MaterialRow({ material: m }: { material: Material }) {
           <p className="truncate font-medium">{m.fileName}</p>
           <p className="text-sm text-muted-foreground">
             {fileSize(m.size)}
+            {m.exceedsAiLimit && <span>，AI 只读前 1 万字</span>}
             {!m.hasText && <span className="text-warning">，未提取到文字，只能作附件</span>}
           </p>
         </div>
