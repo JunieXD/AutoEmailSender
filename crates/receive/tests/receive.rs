@@ -1041,7 +1041,22 @@ async fn receive_now_waits_for_a_successful_round(db: SqlitePool) {
         receiver.clone(),
         |_| {},
     ));
-    receiver.receive_now().await;
+    receiver.receive_now().await.unwrap();
     assert!(receiver.received_at().is_some());
+    task.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn receive_now_reports_a_failed_round(db: SqlitePool) {
+    let receiver = receive::Receiver::default();
+    db.close().await;
+    let task = tokio::spawn(receive::run(
+        db,
+        Net::new(Vec::new()).unwrap(),
+        receiver.clone(),
+        |_| {},
+    ));
+    assert!(receiver.receive_now().await.is_err());
+    assert_eq!(receiver.received_at(), None);
     task.abort();
 }

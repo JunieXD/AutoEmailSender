@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronLeft, RefreshCw, UserRound } from "lucide-react";
@@ -55,6 +55,8 @@ export function ConversationsPage() {
       }
     },
   });
+  // From the cache, so that receiving still under way shows after leaving the page and coming back.
+  const receiving = useIsMutating({ mutationKey: ["receiveNow"] }) > 0;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -89,8 +91,8 @@ export function ConversationsPage() {
               ))}
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
-              <Button variant="ghost" className="px-2" disabled={receive.isPending} onClick={() => receive.mutate()}>
-                <RefreshCw strokeWidth={1.6} className={receive.isPending ? "animate-spin" : ""} />
+              <Button variant="ghost" className="px-2" disabled={receiving} onClick={() => receive.mutate()}>
+                <RefreshCw strokeWidth={1.6} className={receiving ? "animate-spin" : ""} />
                 立即收信
               </Button>
               {at != null && (

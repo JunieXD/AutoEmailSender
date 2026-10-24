@@ -3,8 +3,9 @@ import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { MessagesSquare, Settings, Users } from "lucide-react";
 import { useEffect } from "react";
+import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
-import { call } from "@/api/call";
+import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
 import { refreshMentors } from "@/components/mentor";
 import { StartupFailure } from "@/components/startup-failure";
@@ -25,12 +26,6 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
   const queryClient = useQueryClient();
-  const unread = useQuery({
-    queryKey: ["unreadCount"],
-    queryFn: () => call("unreadCount", {}),
-    enabled: failure.isSuccess && !failure.data,
-  });
-  const count = unread.data ?? 0;
   // New mail may change any mentor's correspondence and contact status, and a mailbox may have
   // failed to receive or recovered.
   useEffect(() => {
@@ -53,7 +48,7 @@ export function Shell() {
         </div>
         <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => (
-            <NavLink key={item.to} {...item} count={item.to === "/conversations" ? count : 0} />
+            <NavLink key={item.to} {...item} />
           ))}
         </nav>
         <div className="grow" />
@@ -74,11 +69,7 @@ export function Shell() {
             <Icon className="size-[22px]" strokeWidth={1.6} />
             <span className="flex items-center gap-1">
               {label}
-              {to === "/conversations" && count > 0 && (
-                <span className="min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white">
-                  {count > 99 ? "99+" : count}
-                </span>
-              )}
+              {to === "/conversations" && <UnreadBadge />}
             </span>
           </Link>
         ))}
@@ -87,7 +78,7 @@ export function Shell() {
   );
 }
 
-function NavLink({ to, label, icon: Icon, count = 0 }: ((typeof NAV)[number] | typeof SETTINGS) & { count?: number }) {
+function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTINGS) {
   return (
     <Link
       to={to}
@@ -97,11 +88,21 @@ function NavLink({ to, label, icon: Icon, count = 0 }: ((typeof NAV)[number] | t
     >
       <Icon className="size-[18px]" strokeWidth={1.6} />
       {label}
-      {count > 0 && (
-        <span className="ml-auto min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white">
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
+      {to === "/conversations" && <UnreadBadge className="ml-auto" />}
     </Link>
+  );
+}
+
+/** How many mentors have new replies; a count that could not be read says so instead. */
+function UnreadBadge({ className }: { className?: string }) {
+  const unread = useQuery({ queryKey: ["unreadCount"], queryFn: () => call("unreadCount", {}) });
+  if (!unread.isError && !unread.data) return null;
+  return (
+    <span
+      title={unread.isError ? `新回信数量读取失败：${errorMessage(unread.error)}` : undefined}
+      className={cn("min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white", className)}
+    >
+      {unread.isError ? "!" : unread.data > 99 ? "99+" : unread.data}
+    </span>
   );
 }

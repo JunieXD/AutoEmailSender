@@ -1230,7 +1230,10 @@ async fn receive_status(ctx: &Context, _: Nothing) -> Result<ReceiveStatus, Call
 }
 
 async fn receive_now(ctx: &Context, input: Nothing) -> Result<ReceiveStatus, CallError> {
-    ctx.receiver.receive_now().await;
+    ctx.receiver
+        .receive_now()
+        .await
+        .map_err(|e| CallError::internal(format!("database: {e}")))?;
     receive_status(ctx, input).await
 }
 

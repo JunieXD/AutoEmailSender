@@ -45,22 +45,33 @@ pub struct Receiver(Arc<Shared>);
 #[derive(Default)]
 struct Shared {
     wake: Notify,
-    received_at: watch::Sender<Option<i64>>,
+    ended: watch::Sender<Ended>,
     stop: Notify,
     /// Held by a round, and by a mailbox changing.
     busy: Mutex<()>,
 }
 
+/// How the last round ended.
+#[derive(Default)]
+struct Ended {
+    /// When a round last received.
+    received_at: Option<i64>,
+    /// Why the last round failed, if it did.
+    error: Option<Arc<sqlx::Error>>,
+}
+
 impl Receiver {
     pub fn received_at(&self) -> Option<i64> {
-        *self.0.received_at.borrow()
+        self.0.ended.borrow().received_at
     }
 
-    pub async fn receive_now(&self) {
-        let mut received = self.0.received_at.subscribe();
+    /// Receives from every mailbox, returning once a round has ended.
+    pub async fn receive_now(&self) -> Result<(), Arc<sqlx::Error>> {
+        let mut ended = self.0.ended.subscribe();
         self.wake();
         // The sender stays in this Receiver, so the channel cannot close while waiting.
-        let _ = received.changed().await;
+        let _ = ended.changed().await;
+        ended.borrow().error.clone().map_or(Ok(()), Err)
     }
 
     pub fn wake(&self) {
@@ -90,15 +101,22 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
         drop(busy);
         let wait = match done {
             Some(Ok(r)) => {
-                shared.received_at.send_replace(Some(now()));
+                shared.ended.send_replace(Ended {
+                    received_at: Some(now()),
+                    error: None,
+                });
                 if r.changed {
                     changed(r.replies);
                 }
                 if r.more { SOON } else { ROUND }
             }
-            // Nobody to tell but the log; the database is likely to work again in a while.
+            // Only someone receiving now hears of it; the database is likely to work again in a
+            // while.
             Some(Err(e)) => {
                 tracing::error!("receive: {e}");
+                shared
+                    .ended
+                    .send_modify(|ended| ended.error = Some(Arc::new(e)));
                 ROUND
             }
             // Stopped for a mailbox to change, perhaps after storing mail. Every write is safe to
