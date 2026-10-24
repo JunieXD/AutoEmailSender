@@ -193,7 +193,7 @@ pub struct MatchFinished {
 enum Outcome {
     Done(queue::MatchAnswer, String, i64),
     Failed(String),
-    Pause(String, Option<(i64, String)>),
+    Pause(String, Option<Chosen>),
     RateLimit(Duration),
     Gone,
 }
@@ -209,10 +209,7 @@ async fn analyze(
         return Ok(Outcome::Pause(NO_MODEL.into(), None));
     };
     if !chosen.agreed {
-        return Ok(Outcome::Pause(
-            NOT_AGREED.into(),
-            Some((chosen.id, chosen.model)),
-        ));
+        return Ok(Outcome::Pause(NOT_AGREED.into(), Some(chosen)));
     }
     let Some(mentor) = mentor::get(db, id).await? else {
         return Ok(Outcome::Gone);
@@ -235,7 +232,7 @@ async fn analyze(
     for attempt in 0..2 {
         let answer = match model::ask(net, &chosen.access, &chosen.model, &system, &message).await {
             Ok(a) => a,
-            Err(e) => return Ok(classify(e, &chosen)),
+            Err(e) => return Ok(classify(e, chosen)),
         };
         tracing::info!(mentor_id = id, model = chosen.model, usage = ?answer.usage, finish_reason = answer.finish_reason, "match model answered");
         if let Some(usage) = answer.usage {
@@ -246,7 +243,7 @@ async fn analyze(
                 ModelError::NoAnswer {
                     finish_reason: answer.finish_reason,
                 },
-                &chosen,
+                chosen,
             ));
         }
         if answer.finish_reason.as_deref() == Some("length") {
@@ -280,9 +277,9 @@ async fn record_usage(db: &SqlitePool, chosen: &Chosen, usage: model::usage::Usa
     }
 }
 
-fn classify(error: ModelError, chosen: &Chosen) -> Outcome {
+fn classify(error: ModelError, chosen: Chosen) -> Outcome {
     let message = error.message();
-    let config = Some((chosen.id, chosen.model.clone()));
+    let config = Some(chosen);
     let (status, reply, retry_after) = match error {
         ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
             return Outcome::Pause(message, config);
@@ -426,7 +423,7 @@ pub async fn run(
                             let saved = match &outcome {
                                 Outcome::Done(answer, model, started_at) => queue::complete(&db, claim, answer, model, *started_at).await,
                                 Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
-                                Outcome::Pause(reason, model) => queue::requeue(&db, claim, Some((completed_at, reason)), model.as_ref().map(|(id, name)| (*id, name.as_str()))).await,
+                                Outcome::Pause(reason, model) => queue::requeue(&db, claim, Some((completed_at, reason)), model.as_ref()).await,
                                 Outcome::RateLimit(_) => queue::requeue(&db, claim, None, None).await,
                                 Outcome::Gone => Ok(false),
                             };

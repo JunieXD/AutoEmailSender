@@ -182,7 +182,7 @@ pub async fn requeue(
     db: &SqlitePool,
     claim: Claim,
     pause: Option<(i64, &str)>,
-    model: Option<(i64, &str)>,
+    model: Option<&model::Chosen>,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin().await?;
     let row = sqlx::query!("UPDATE mentor SET match_state = 'queued' WHERE id = ? AND match_claim = ? AND match_state = 'running' AND trashed_at IS NULL", claim.id, claim.claim)
@@ -191,19 +191,25 @@ pub async fn requeue(
         return Ok(false);
     }
     if let Some((now, reason)) = pause {
-        let (config_id, name) = model.unzip();
-        sqlx::query!(
-            "UPDATE profile SET match_paused_at = ?1, match_pause_reason = ?2
-            WHERE match_paused_at IS NULL AND (?3 IS NULL OR EXISTS (
-                SELECT 1 FROM model_config WHERE id = coalesce(profile.default_model_config_id,
-                    (SELECT min(id) FROM model_config)) AND id = ?3 AND model = ?4))",
-            now,
-            reason,
-            config_id,
-            name
-        )
-        .execute(&mut *tx)
-        .await?;
+        let is_current = match model {
+            Some(expected) => model::chosen(&mut *tx).await?.is_some_and(|current| {
+                current.id == expected.id
+                    && current.model == expected.model
+                    && current.access.base_url == expected.access.base_url
+                    && current.access.api_key == expected.access.api_key
+            }),
+            None => true,
+        };
+        if is_current {
+            sqlx::query!(
+                "UPDATE profile SET match_paused_at = ?, match_pause_reason = ?
+                 WHERE match_paused_at IS NULL",
+                now,
+                reason,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
     }
     tx.commit().await?;
     Ok(true)

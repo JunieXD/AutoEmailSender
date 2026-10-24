@@ -247,7 +247,9 @@ pub struct Chosen {
 }
 
 /// The default configuration, as `list` marks it; None when there is none.
-pub async fn chosen(db: &SqlitePool) -> Result<Option<Chosen>, sqlx::Error> {
+pub async fn chosen<'a>(
+    db: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
+) -> Result<Option<Chosen>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"SELECT id, provider, base_url, model, api_key, agreed AS "agreed: bool"
            FROM model_config
