@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use sqlx::types::Json;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -102,7 +103,7 @@ pub async fn create(db: &SqlitePool, tag: &TagFields, mentor_ids: &[i64]) -> Res
     sqlx::query!(
         "INSERT INTO mentor_tag (mentor_id, tag_id) SELECT value, ? FROM json_each(?)",
         id,
-        crate::json_ids(mentor_ids.iter().copied()),
+        Json(mentor_ids),
     )
     .execute(&mut *tx)
     .await?;
@@ -171,7 +172,7 @@ pub async fn tag_mentors(
     mentor_ids: &[i64],
     on: bool,
 ) -> Result<(), sqlx::Error> {
-    let mentor_ids = crate::json_ids(mentor_ids.iter().copied());
+    let mentor_ids = Json(mentor_ids);
     if on {
         sqlx::query!(
             "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id) SELECT value, ? FROM json_each(?)",

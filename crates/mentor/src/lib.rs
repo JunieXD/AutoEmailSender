@@ -229,11 +229,11 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
            LEFT JOIN mentor_detail d ON d.mentor_id = m.id
            LEFT JOIN mentor_contact c ON c.mentor_id = m.id
            ORDER BY page.key"#,
-        json_ids(ids.iter().copied()),
+        Json(ids),
     )
     .fetch_all(&mut *conn)
     .await?;
-    let mut tags = tags_of(conn, rows.iter().map(|r| r.id)).await?;
+    let mut tags = tags_of(conn, ids).await?;
     rows.into_iter()
         .map(|r| {
             let match_state = match (r.match_state, r.match_score) {
@@ -379,7 +379,7 @@ async fn detail(conn: &mut SqliteConnection, id: i64) -> Result<Option<MentorDet
             r.last_reply_at,
             r.unread,
         )?,
-        tags: tags_of(&mut *conn, [id])
+        tags: tags_of(&mut *conn, &[id])
             .await?
             .remove(&id)
             .unwrap_or_default(),
@@ -402,14 +402,14 @@ pub async fn set_note(db: &SqlitePool, id: i64, note: Option<&str>) -> Result<bo
 /// The tags of each of `ids`, in the user's order.
 async fn tags_of(
     conn: &mut SqliteConnection,
-    ids: impl IntoIterator<Item = i64>,
+    ids: &[i64],
 ) -> Result<BTreeMap<i64, Vec<Tag>>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT mt.mentor_id, t.id, t.name, t.color
            FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id
            WHERE mt.mentor_id IN (SELECT value FROM json_each(?1))
            ORDER BY t.position"#,
-        json_ids(ids),
+        Json(ids),
     )
     .fetch_all(conn)
     .await?;
@@ -422,12 +422,6 @@ async fn tags_of(
         });
     }
     Ok(tags)
-}
-
-/// Ids as a JSON array, for passing a list to `json_each` in one parameter.
-fn json_ids(ids: impl IntoIterator<Item = i64>) -> String {
-    let ids: Vec<String> = ids.into_iter().map(|id| id.to_string()).collect();
-    format!("[{}]", ids.join(","))
 }
 
 /// The contact summary's columns as a `Contact`; they are absent for a mentor never contacted.

@@ -4,6 +4,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { errorMessage } from "@/api/call";
 import type { Affiliation, MentorDetail, MentorForm } from "@/api/types";
+import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -67,15 +68,7 @@ export function MentorDialog<T>({
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const nameRef = useRef<HTMLInputElement>(null);
   return (
-    <Dialog
-      open
-      onOpenChange={(open, details) => {
-        // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc,
-        // nor while it is being saved.
-        const stray = details.reason === "outside-press" || details.reason === "escape-key";
-        if (!open && !mutation.isPending && !(dirty && stray)) onClose();
-      }}
-    >
+    <Dialog open onOpenChange={formClose(dirty, mutation.isPending, onClose)}>
       <DialogContent initialFocus={nameRef}>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -87,17 +80,14 @@ export function MentorDialog<T>({
           <DialogHeader>{title}</DialogHeader>
           <DialogBody>
             <fieldset disabled={mutation.isPending} className="flex min-w-0 flex-col gap-3.5">
-              <div>
-                <label htmlFor="mentor-name" className="mb-1.5 block text-sm text-muted-foreground">
-                  姓名
-                </label>
+              <Field label="姓名" id="mentor-name">
                 <Input
                   ref={nameRef}
                   id="mentor-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
-              </div>
+              </Field>
               <Rows
                 label="别名"
                 add="添加别名"
@@ -148,17 +138,14 @@ export function MentorDialog<T>({
               >
                 {(url, update) => text("主页", url, update)}
               </Rows>
-              <div>
-                <label htmlFor="mentor-research" className="mb-1.5 block text-sm text-muted-foreground">
-                  研究方向
-                </label>
+              <Field label="研究方向" id="mentor-research">
                 <Textarea
                   id="mentor-research"
                   rows={3}
                   value={form.research}
                   onChange={(e) => setForm({ ...form, research: e.target.value })}
                 />
-              </div>
+              </Field>
             </fieldset>
           </DialogBody>
           <DialogFooter>

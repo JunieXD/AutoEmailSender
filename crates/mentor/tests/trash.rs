@@ -1,11 +1,17 @@
 // Marks the whole file as test code, so clippy's test allowances cover the helpers too.
 #![cfg(test)]
 
+mod common;
 use std::num::NonZeroU32;
 
+use common::names;
+use mentor::MentorFields;
 use mentor::trash::{self, TrashQuery};
-use mentor::{MentorFields, MentorQuery};
 use sqlx::SqlitePool;
+use test_fixtures::{
+    contact::reconciled,
+    mail::{first_email, mailbox},
+};
 
 async fn mentor(db: &SqlitePool, name: &str) -> i64 {
     let fields = MentorFields {
@@ -13,25 +19,6 @@ async fn mentor(db: &SqlitePool, name: &str) -> i64 {
         ..MentorFields::default()
     };
     mentor::create(db, &fields, 0).await.unwrap()
-}
-
-async fn email(db: &SqlitePool, mentor: i64, state: &str) -> i64 {
-    let out = state == "sent";
-    sqlx::query(
-        "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, to_address, message_id,
-           sent_at, created_at, updated_at, subject, body_md, html, text)
-         VALUES (?, 'first', ?, 1, ?, ?, ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
-    )
-    .bind(mentor)
-    .bind(state)
-    .bind(out.then_some("me@qq.com"))
-    .bind(out.then_some("li@pku.edu.cn"))
-    .bind(out.then(|| format!("<{mentor}-{state}@aes>")))
-    .bind(out.then_some(1))
-    .execute(db)
-    .await
-    .unwrap()
-    .last_insert_rowid()
 }
 
 async fn state_of(db: &SqlitePool, email: i64) -> String {
@@ -65,38 +52,31 @@ async fn reply(db: &SqlitePool, mentors: &[i64], uid: i64) -> i64 {
     id
 }
 
-async fn names(page: mentor::MentorPage) -> Vec<String> {
-    page.mentors.into_iter().map(|m| m.name).collect()
-}
-
-async fn home(db: &SqlitePool, keyword: Option<&str>) -> Vec<String> {
-    let query = MentorQuery {
-        status: None,
-        keyword: keyword.map(Into::into),
-        page: NonZeroU32::MIN,
-    };
-    names(mentor::list(db, &query).await.unwrap()).await
-}
-
 async fn in_trash(db: &SqlitePool) -> Vec<String> {
     let query = TrashQuery {
         page: NonZeroU32::MIN,
     };
-    names(trash::list(db, &query).await.unwrap()).await
+    trash::list(db, &query)
+        .await
+        .unwrap()
+        .mentors
+        .into_iter()
+        .map(|m| m.name)
+        .collect()
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn trashing_cancels_unsent_mail_and_restoring_keeps_it_canceled(db: SqlitePool) {
     let zhang = mentor(&db, "张伟").await;
     let li = mentor(&db, "李静").await;
-    let approved = email(&db, zhang, "approved").await;
-    let review = email(&db, zhang, "review").await;
-    let sent = email(&db, zhang, "sent").await;
-    let other = email(&db, li, "approved").await;
+    let approved = first_email(&db, zhang, "approved", 1).await.unwrap();
+    let review = first_email(&db, zhang, "review", 1).await.unwrap();
+    let sent = first_email(&db, zhang, "sent", 1).await.unwrap();
+    let other = first_email(&db, li, "approved", 1).await.unwrap();
 
     trash::trash(&db, &[zhang], 10).await.unwrap();
     trash::trash(&db, &[li], 20).await.unwrap();
-    assert!(home(&db, None).await.is_empty());
+    assert!(names(&db, None).await.is_empty());
     assert_eq!(in_trash(&db).await, ["李静", "张伟"]);
     assert!(mentor::get(&db, zhang).await.unwrap().unwrap().trashed);
     for id in [approved, review, other] {
@@ -105,29 +85,23 @@ async fn trashing_cancels_unsent_mail_and_restoring_keeps_it_canceled(db: Sqlite
     assert_eq!(state_of(&db, sent).await, "sent");
 
     trash::restore(&db, &[zhang, li], 30).await.unwrap();
-    assert_eq!(home(&db, None).await, ["张伟", "李静"]);
+    assert_eq!(names(&db, None).await, ["张伟", "李静"]);
     assert!(in_trash(&db).await.is_empty());
     assert_eq!(state_of(&db, approved).await, "canceled");
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn deleting_for_good_takes_only_what_is_the_mentors_alone(db: SqlitePool) {
-    sqlx::query(
-        "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
-    )
-    .execute(&db)
-    .await
-    .unwrap();
+    mailbox(&mut db.acquire().await.unwrap()).await.unwrap();
     let zhang = mentor(&db, "张伟").await;
     let li = mentor(&db, "李静").await;
-    email(&db, zhang, "sent").await;
+    first_email(&db, zhang, "sent", 1).await.unwrap();
     reply(&db, &[zhang], 1).await;
     let shared = reply(&db, &[zhang, li], 2).await;
 
     // Only mentors in the trash can be deleted.
     trash::delete(&db, &[zhang]).await.unwrap();
-    assert_eq!(home(&db, Some("张伟")).await, ["张伟"]);
+    assert_eq!(names(&db, Some("张伟")).await, ["张伟"]);
 
     trash::trash(&db, &[zhang], 10).await.unwrap();
     trash::delete(&db, &[zhang]).await.unwrap();
@@ -150,14 +124,7 @@ async fn deleting_for_good_takes_only_what_is_the_mentors_alone(db: SqlitePool) 
         .await
         .unwrap();
     assert_eq!(indexed, 0);
-    let drift: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM (SELECT * FROM mentor_contact EXCEPT SELECT * FROM mentor_contact_live))
-              + (SELECT count(*) FROM (SELECT * FROM mentor_contact_live EXCEPT SELECT * FROM mentor_contact))",
-    )
-    .fetch_one(&db)
-    .await
-    .unwrap();
-    assert_eq!(drift, 0);
+    reconciled(&mut db.acquire().await.unwrap()).await.unwrap();
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

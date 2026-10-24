@@ -7,6 +7,7 @@ use mentor::{
     Affiliation, Contact, ContactStatus, MatchState, MentorFields, MentorQuery, PAGE_SIZE,
 };
 use sqlx::SqlitePool;
+use test_fixtures::mail::first_email;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
     MentorQuery {
@@ -76,15 +77,7 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         .execute(&db)
         .await
         .unwrap();
-    sqlx::query(
-        "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, to_address, message_id,
-           sent_at, created_at, updated_at, subject, body_md, html, text)
-         VALUES (?, 'first', 'sent', 5, 'me@qq.com', 'li@pku.edu.cn', '<1@aes>', 5, 0, 0, '申请', '信', '<p>信</p>', '信')",
-    )
-    .bind(contacted)
-    .execute(&db)
-    .await
-    .unwrap();
+    first_email(&db, contacted, "sent", 5).await.unwrap();
     let tag = sqlx::query("INSERT INTO tag (name, color, position) VALUES ('梦导', '#991b1b', 1)")
         .execute(&db)
         .await

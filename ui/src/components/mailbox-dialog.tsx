@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Mailbox, MailboxTest, NewMailbox, Provider, Security, Server } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { Field, TestResult } from "@/components/form";
+import { formClose, Field, TestResult } from "@/components/form";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -153,15 +153,7 @@ export function MailboxDialog({
 
   const pending = save.isPending || sending.isPending || receiving.isPending;
   return (
-    <Dialog
-      open
-      onOpenChange={(open, details) => {
-        // docs/development.md#界面: what the user typed is not thrown away by a stray click or Esc,
-        // nor while it is being saved.
-        const stray = details.reason === "outside-press" || details.reason === "escape-key";
-        if (!open && !save.isPending && !(dirty && stray)) onClose();
-      }}
-    >
+    <Dialog open onOpenChange={formClose(dirty, save.isPending, onClose)}>
       <DialogContent initialFocus={addressRef}>
         <form
           className="flex min-h-0 flex-1 flex-col"
