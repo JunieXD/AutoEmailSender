@@ -11,7 +11,7 @@ async fn blank_fields_are_cleared(db: SqlitePool) {
         research_interests: "自然语言处理\n".into(),
         rewrite_preference: " ".into(),
     };
-    profile::update(&db, &form(" 林晓 ")).await.unwrap();
+    profile::update(&db, &form(" 林晓 "), 1).await.unwrap();
     let saved = profile::get(&db).await.unwrap();
     assert_eq!(saved.name.as_deref(), Some("林晓"));
     assert_eq!(saved.research_interests.as_deref(), Some("自然语言处理"));
@@ -32,4 +32,20 @@ async fn the_letter_style_is_saved(db: SqlitePool) {
     assert_eq!(saved.font, Some(LetterFont::Song));
     assert_eq!(saved.font_size_pt, 12.0);
     assert!(saved.first_line_indent);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn background_notifications_default_on_and_are_independent(db: SqlitePool) {
+    assert!(profile::background_notifications(&db).await.unwrap());
+    profile::set_background_notifications(&db, false)
+        .await
+        .unwrap();
+    assert!(!profile::background_notifications(&db).await.unwrap());
+    assert!(profile::reply_notifications(&db).await.unwrap());
+    profile::set_reply_notifications(&db, false).await.unwrap();
+    profile::set_background_notifications(&db, true)
+        .await
+        .unwrap();
+    assert!(profile::background_notifications(&db).await.unwrap());
+    assert!(!profile::reply_notifications(&db).await.unwrap());
 }

@@ -4,6 +4,17 @@
 use material::{Error, Purpose};
 use sqlx::SqlitePool;
 
+async fn add(
+    db: &SqlitePool,
+    dir: &std::path::Path,
+    name: &str,
+    data: Vec<u8>,
+    now: i64,
+) -> Result<i64, Error> {
+    let extracted = material::extract(name, data).await?;
+    material::add(db, dir, extracted, now).await
+}
+
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!(
         "{}/tests/fixtures/{name}",
@@ -27,7 +38,7 @@ fn files(dir: &std::path::Path) -> Vec<String> {
 async fn a_material_keeps_its_file_and_text_until_deleted(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     let pdf = fixture("resume.pdf");
-    let id = material::add(&db, dir.path(), "简历.pdf", pdf.clone(), 1)
+    let id = add(&db, dir.path(), "简历.pdf", pdf.clone(), 1)
         .await
         .unwrap();
 
@@ -46,17 +57,17 @@ async fn a_material_keeps_its_file_and_text_until_deleted(db: SqlitePool) {
     );
     assert_eq!(std::fs::read(dir.path().join(id.to_string())).unwrap(), pdf);
 
-    assert!(material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
     assert!(material::list(&db).await.unwrap().is_empty());
     assert!(files(dir.path()).is_empty());
-    assert!(!material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(!material::delete(&db, dir.path(), id, 2).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     // A DOCX named .doc, as happens when a file is renamed by hand.
-    let id = material::add(&db, dir.path(), "简历.DOC", fixture("resume.docx"), 1)
+    let id = add(&db, dir.path(), "简历.DOC", fixture("resume.docx"), 1)
         .await
         .unwrap();
     assert_eq!(
@@ -68,19 +79,19 @@ async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_scan_without_text_can_only_be_attached(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
-    let id = material::add(&db, dir.path(), "成绩单.pdf", fixture("scan.pdf"), 1)
+    let id = add(&db, dir.path(), "成绩单.pdf", fixture("scan.pdf"), 1)
         .await
         .unwrap();
     let m = &material::list(&db).await.unwrap()[0];
     assert!(!m.has_text && !m.for_matching && !m.for_writing);
     assert!(
-        material::set_purpose(&db, id, Purpose::AttachByDefault, true)
+        material::set_purpose(&db, id, Purpose::AttachByDefault, true, 2)
             .await
             .unwrap()
     );
     assert!(material::list(&db).await.unwrap()[0].attach_by_default);
     assert!(
-        material::set_purpose(&db, id, Purpose::Writing, true)
+        material::set_purpose(&db, id, Purpose::Writing, true, 2)
             .await
             .is_err()
     );
@@ -90,7 +101,7 @@ async fn a_scan_without_text_can_only_be_attached(db: SqlitePool) {
 async fn a_file_that_cannot_be_read_is_not_kept(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     let damaged = b"%PDF-1.7\nnot really a PDF".to_vec();
-    let add = |name: &'static str, data: Vec<u8>| material::add(&db, dir.path(), name, data, 1);
+    let add = |name: &'static str, data: Vec<u8>| add(&db, dir.path(), name, data, 1);
     assert!(matches!(
         add("简历.pdf", damaged).await,
         Err(Error::Unreadable(_))
@@ -114,7 +125,7 @@ async fn a_file_that_cannot_be_read_is_not_kept(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
-    let id = material::add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
+    let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
         .await
         .unwrap();
     let fields = mentor::MentorFields {
@@ -140,13 +151,159 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
     );
 
     assert!(matches!(
-        material::delete(&db, dir.path(), id).await,
+        material::delete(&db, dir.path(), id, 2).await,
         Err(Error::InUse)
     ));
     let email = email::list(&db, mentor).await.unwrap().remove(0);
     assert!(email::withdraw(&db, email.id, 3).await.unwrap());
     // Back to a draft, which loses the attachment along with the material.
-    assert!(material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
     let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
     assert!(draft.attachments.is_empty());
+}
+
+async fn basis(db: &SqlitePool) -> Option<i64> {
+    sqlx::query_scalar("SELECT match_basis_changed_at FROM profile")
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn only_changes_to_matching_material_advance_the_basis_time(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let scan = add(&db, dir.path(), "扫描.pdf", fixture("scan.pdf"), 10)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, None);
+    let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 20)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(20));
+    material::set_purpose(&db, id, Purpose::Writing, false, 30)
+        .await
+        .unwrap();
+    material::set_purpose(&db, id, Purpose::Matching, true, 40)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(20));
+    material::set_purpose(&db, id, Purpose::Matching, false, 50)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(50));
+    material::set_purpose(&db, id, Purpose::Matching, true, 60)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(60));
+    material::delete(&db, dir.path(), scan, 70).await.unwrap();
+    assert_eq!(basis(&db).await, Some(60));
+    material::delete(&db, dir.path(), id, 80).await.unwrap();
+    assert_eq!(basis(&db).await, Some(80));
+    let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 90)
+        .await
+        .unwrap();
+    material::set_purpose(&db, id, Purpose::Matching, false, 100)
+        .await
+        .unwrap();
+    material::delete(&db, dir.path(), id, 110).await.unwrap();
+    assert_eq!(basis(&db).await, Some(100));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn long_material_is_marked_and_truncated_by_unicode_character(db: SqlitePool) {
+    let text = "中😀".repeat(5001);
+    sqlx::query("INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at, extracted_text) VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)")
+        .bind(&text).execute(&db).await.unwrap();
+    assert!(material::list(&db).await.unwrap()[0].exceeds_ai_limit);
+    assert_eq!(material::for_ai(&text).chars().count(), 10_000);
+    assert_eq!(material::for_ai("短文"), "短文");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn older_material_writes_cannot_move_the_basis_time_back(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    sqlx::query("UPDATE profile SET match_basis_changed_at = 200")
+        .execute(&db)
+        .await
+        .unwrap();
+    let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 100)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(200));
+    material::set_purpose(&db, id, Purpose::Matching, false, 110)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(200));
+    material::set_purpose(&db, id, Purpose::Matching, true, 120)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(200));
+    material::delete(&db, dir.path(), id, 130).await.unwrap();
+    assert_eq!(basis(&db).await, Some(200));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn extracted_material_invalidates_results_only_when_stored(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let extracted = material::extract("简历.pdf", fixture("resume.pdf"))
+        .await
+        .unwrap();
+    assert!(material::for_matching(&db).await.unwrap().is_empty());
+    assert_eq!(basis(&db).await, None);
+    let id = mentor::create(
+        &db,
+        &mentor::MentorFields {
+            name: "老师".into(),
+            research: Some("视觉".into()),
+            ..Default::default()
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    mentor::matching::enqueue(&db, &[id], true, true, 2)
+        .await
+        .unwrap();
+    let claim = mentor::matching::next(&db).await.unwrap().unwrap();
+    let answer = mentor::matching::MatchAnswer {
+        score: 88,
+        reason: "方向相关".into(),
+        directions: vec![],
+        highlights: vec![],
+        risks: vec![],
+    };
+    mentor::matching::complete(&db, claim, &answer, "m", 150)
+        .await
+        .unwrap();
+    assert!(
+        !mentor::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .basis_changed
+    );
+    material::add(&db, dir.path(), extracted, 200)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(200));
+    assert!(
+        mentor::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .basis_changed
+    );
+    assert_eq!(
+        mentor::matching::plan(&db, &[id], false)
+            .await
+            .unwrap()
+            .analyze,
+        1
+    );
 }

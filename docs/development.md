@@ -18,6 +18,7 @@
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |
 | `crates/receive` | 收信：常驻的收信任务，把邮件归到导师，自动回复、退信和引用的原文 |
 | `crates/check` | 发送前检查：规则和收件域名 |
+| `crates/matching` | 匹配分析：持久队列、结构化结果校验、用量估算 |
 | `crates/writing` | AI 写信：给模型的资料和规则，解析写好的信 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |

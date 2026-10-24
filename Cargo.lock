@@ -122,6 +122,7 @@ dependencies = [
  "check",
  "email",
  "mailbox",
+ "matching",
  "material",
  "mentor",
  "model",
@@ -414,6 +415,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "api",
  "db",
+ "matching",
  "net",
  "profile",
  "receive",
@@ -3097,6 +3099,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "matching"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "db",
+ "material",
+ "mentor",
+ "model",
+ "net",
+ "profile",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "ts-rs",
+]
+
+[[package]]
 name = "material"
 version = "3.0.0-alpha.0"
 dependencies = [
@@ -3143,6 +3163,7 @@ name = "mentor"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "profile",
  "serde",
  "sqlx",
  "test-fixtures",
@@ -3199,6 +3220,7 @@ name = "model"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "httpdate",
  "net",
  "profile",
  "reqwest",

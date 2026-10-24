@@ -15,6 +15,8 @@ pub enum ModelError {
     Refused {
         status: u16,
         reply: String,
+        retry_after: Option<std::time::Duration>,
+        code: Option<String>,
     },
     /// The provider failed partway through its reply, in its words.
     Failed(String),
@@ -40,7 +42,9 @@ impl std::fmt::Display for ModelError {
                 Ok(())
             }
             ModelError::TimedOut { address } => write!(f, "{address} timed out"),
-            ModelError::Refused { status, reply } => write!(f, "refused with {status}: {reply}"),
+            ModelError::Refused { status, reply, .. } => {
+                write!(f, "refused with {status}: {reply}")
+            }
             ModelError::Failed(reply) => write!(f, "failed partway: {reply}"),
             ModelError::NoAnswer { finish_reason } => {
                 write!(f, "no answer, finish reason {finish_reason:?}")
@@ -65,7 +69,7 @@ impl ModelError {
             ModelError::TimedOut { address } => format!(
                 "{address} 迟迟没有响应。稍后再试；国内用 OpenAI、Gemini 这类国外服务要开代理。"
             ),
-            ModelError::Refused { status, reply } => match status {
+            ModelError::Refused { status, reply, .. } => match status {
                 401 | 403 => format!(
                     "API Key 不正确或没有权限（服务商回复：{reply}）。检查 API Key 有没有填错、是否已停用。"
                 ),

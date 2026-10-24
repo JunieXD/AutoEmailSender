@@ -4,7 +4,8 @@
 use std::num::NonZeroU32;
 
 use mentor::{
-    Affiliation, Contact, ContactStatus, MatchState, MentorFields, MentorQuery, PAGE_SIZE,
+    Affiliation, Contact, ContactStatus, MatchScore, MatchSummary, MentorFields, MentorQuery,
+    PAGE_SIZE,
 };
 use sqlx::SqlitePool;
 use test_fixtures::mail::first_email;
@@ -112,7 +113,7 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
     for i in 0..PAGE_SIZE + 5 {
         let id = add(&db, &format!("导师{i}"), "北京大学", "语言").await;
         sqlx::query(
-            "UPDATE mentor SET match_state = 'done', match_score = ?, matched_at = 0, match_model = 'm'
+            "UPDATE mentor SET match_state = NULL, match_score = ?, matched_at = 0, match_model = 'm'
              WHERE id = ?",
         )
         .bind(45 + i)
@@ -124,11 +125,23 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
     let first = mentor::list(&db, &query(None, None, 1)).await.unwrap();
     let second = mentor::list(&db, &query(None, None, 2)).await.unwrap();
     assert_eq!(first.total, i64::from(PAGE_SIZE) + 7);
-    assert_eq!(first.mentors[0].match_state, MatchState::Done { score: 99 });
+    assert_eq!(
+        first.mentors[0].match_state,
+        MatchSummary {
+            result: Some(MatchScore {
+                score: 99,
+                basis_changed: false
+            }),
+            state: None
+        }
+    );
     assert_eq!(second.mentors.len(), 7);
     assert_eq!(
         second.mentors.last().unwrap().match_state,
-        MatchState::NotAnalyzed
+        MatchSummary {
+            result: None,
+            state: None
+        }
     );
     let scores: Vec<_> = first
         .mentors
@@ -137,8 +150,23 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         .map(|m| &m.match_state)
         .collect();
     assert!(scores.windows(2).all(|w| match (w[0], w[1]) {
-        (MatchState::Done { score: a }, MatchState::Done { score: b }) => a >= b,
-        (_, MatchState::NotAnalyzed) => true,
+        (
+            MatchSummary {
+                result: Some(MatchScore { score: a, .. }),
+                ..
+            },
+            MatchSummary {
+                result: Some(MatchScore { score: b, .. }),
+                ..
+            },
+        ) => a >= b,
+        (
+            _,
+            MatchSummary {
+                result: None,
+                state: None,
+            },
+        ) => true,
         _ => false,
     }));
 }

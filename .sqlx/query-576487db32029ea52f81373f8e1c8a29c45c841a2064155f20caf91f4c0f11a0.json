@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET match_state = 'running', match_claim = match_claim + 1 WHERE id = (\n           SELECT id FROM mentor WHERE match_state = 'queued' AND trashed_at IS NULL\n           ORDER BY match_priority DESC, match_queued_at, id LIMIT 1)\n         AND (SELECT match_paused_at FROM profile) IS NULL RETURNING id AS \"id!\", match_claim AS \"claim!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "claim!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "match_claim"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null,
+      false
+    ]
+  },
+  "hash": "576487db32029ea52f81373f8e1c8a29c45c841a2064155f20caf91f4c0f11a0"
+}

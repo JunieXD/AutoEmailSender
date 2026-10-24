@@ -12,7 +12,7 @@ async fn mentor_page_reads_analysis_and_note(db: SqlitePool) {
     };
     let id = mentor::create(&db, &new, 0).await.unwrap();
     sqlx::query(
-        "UPDATE mentor SET match_state = 'done', match_score = 88, matched_at = 5, match_model = 'm'
+        "UPDATE mentor SET match_state = NULL, match_score = 88, matched_at = 5, match_model = 'm'
          WHERE id = ?",
     )
     .bind(id)
@@ -33,15 +33,12 @@ async fn mentor_page_reads_analysis_and_note(db: SqlitePool) {
     let m = mentor::get(&db, id).await.unwrap().unwrap();
     assert_eq!(m.note.as_deref(), Some("组会周三"));
     assert_eq!(m.papers, ["论文甲"]);
-    let MatchResult::Done {
+    let MatchResult {
         score,
         directions,
         risks,
         ..
-    } = m.analysis
-    else {
-        panic!("expected a finished analysis, got {:?}", m.analysis);
-    };
+    } = m.analysis.result.unwrap();
     assert_eq!(
         (score, directions, risks),
         (88, vec!["三维重建".into()], vec!["名额少".into()])

@@ -1,0 +1,27 @@
+[package]
+name = "matching"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+material.workspace = true
+mentor.workspace = true
+model.workspace = true
+net.workspace = true
+profile.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tracing.workspace = true
+ts-rs.workspace = true
+
+tokio = { workspace = true, features = ["macros", "sync", "time", "rt"] }
+
+[dev-dependencies]
+db.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }

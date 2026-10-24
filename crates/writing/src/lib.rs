@@ -1,7 +1,7 @@
 //! AI writing: a first email to a mentor drafted, or the one written rewritten, by the default
 //! model (docs/design.md#联系).
 
-use mentor::{MatchResult, MentorDetail};
+use mentor::MentorDetail;
 use model::ModelError;
 use model::usage::Purpose;
 use serde::Serialize;
@@ -138,7 +138,7 @@ fn message(
 ) -> String {
     let references: Vec<Value> = references
         .iter()
-        .map(|r| json!({"文件名": r.file_name, "文字": r.text}))
+        .map(|r| json!({"文件名": r.file_name, "文字": material::for_ai(&r.text)}))
         .collect();
     let current = current.map(|l| json!({"主题": l.subject, "正文": l.body_md}));
     // serde_json's own objects would sort the keys.
@@ -165,21 +165,19 @@ fn message(
 /// The mentor's details a letter may draw on; their addresses, homepages and the user's note stay
 /// out.
 fn about(m: &MentorDetail) -> Value {
-    let analysis = match &m.analysis {
-        MatchResult::Done {
-            reason,
-            directions,
-            highlights,
-            risks,
-            ..
-        } => fields([
-            ("理由", json!(reason)),
-            ("契合的方向", json!(directions)),
-            ("可强调的经历", json!(highlights)),
-            ("风险", json!(risks)),
-        ]),
-        _ => Value::Null,
-    };
+    let analysis = m
+        .analysis
+        .result
+        .as_ref()
+        .map(|r| {
+            fields([
+                ("理由", json!(r.reason)),
+                ("契合的方向", json!(r.directions)),
+                ("可强调的经历", json!(r.highlights)),
+                ("风险", json!(r.risks)),
+            ])
+        })
+        .unwrap_or(Value::Null);
     let affiliations: Vec<Value> = m
         .affiliations
         .iter()

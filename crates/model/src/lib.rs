@@ -29,6 +29,8 @@ pub struct ModelConfig {
     pub is_default: bool,
     /// The user agreed to what AI features send to its provider.
     pub agreed: bool,
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
 }
 
 /// A model configuration as the user entered it, without its API key; `check` validates it.
@@ -41,6 +43,10 @@ pub struct ModelForm {
     /// Only read for `providers::CUSTOM`.
     pub base_url: String,
     pub model: String,
+    #[serde(default)]
+    pub input_price: Option<f64>,
+    #[serde(default)]
+    pub output_price: Option<f64>,
 }
 
 /// A checked `ModelForm`.
@@ -49,6 +55,8 @@ pub struct ModelFields {
     pub name: Option<String>,
     pub source: Source,
     pub model: String,
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
 }
 
 /// Where a configuration calls.
@@ -117,12 +125,21 @@ impl ModelForm {
         if model.is_empty() {
             return Err("请填写模型名".into());
         }
+        if [self.input_price, self.output_price]
+            .into_iter()
+            .flatten()
+            .any(|p| !p.is_finite() || p < 0.0)
+        {
+            return Err("单价不能是负数，请按每百万 Token 的人民币价格填写。".into());
+        }
         Ok(ModelFields {
             name: Some(self.name.trim())
                 .filter(|n| !n.is_empty())
                 .map(str::to_owned),
             source,
             model: model.to_owned(),
+            input_price: self.input_price,
+            output_price: self.output_price,
         })
     }
 }
@@ -138,7 +155,7 @@ pub fn checked_key(api_key: &str) -> Option<String> {
 pub async fn list(db: &SqlitePool) -> Result<Vec<ModelConfig>, sqlx::Error> {
     sqlx::query_as!(
         ModelConfig,
-        r#"SELECT id, name, provider, base_url, model,
+        r#"SELECT id, name, provider, base_url, model, input_price, output_price,
              id = coalesce((SELECT default_model_config_id FROM profile),
                            (SELECT min(id) FROM model_config)) AS "is_default!: bool",
              agreed AS "agreed: bool"
@@ -156,14 +173,16 @@ pub async fn create(
 ) -> Result<i64, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "INSERT INTO model_config (name, provider, base_url, model, api_key, agreed, created_at)
-         VALUES (?, ?, ?, ?, ?, 0, ?)",
+        "INSERT INTO model_config (name, provider, base_url, model, api_key, agreed, created_at, input_price, output_price)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
         fields.name,
         provider,
         base_url,
         fields.model,
         api_key,
         now,
+        fields.input_price,
+        fields.output_price,
     )
     .execute(db)
     .await?;
@@ -181,7 +200,7 @@ pub async fn update(
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
         "UPDATE model_config SET agreed = agreed AND provider = ? AND base_url IS ?,
-           name = ?, provider = ?, base_url = ?, model = ?, api_key = ?
+           name = ?, provider = ?, base_url = ?, model = ?, api_key = ?, input_price = ?, output_price = ?
          WHERE id = ?",
         provider,
         base_url,
@@ -190,6 +209,8 @@ pub async fn update(
         base_url,
         fields.model,
         api_key,
+        fields.input_price,
+        fields.output_price,
         id,
     )
     .execute(db)
@@ -226,7 +247,9 @@ pub struct Chosen {
 }
 
 /// The default configuration, as `list` marks it; None when there is none.
-pub async fn chosen(db: &SqlitePool) -> Result<Option<Chosen>, sqlx::Error> {
+pub async fn chosen<'a>(
+    db: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
+) -> Result<Option<Chosen>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"SELECT id, provider, base_url, model, api_key, agreed AS "agreed: bool"
            FROM model_config

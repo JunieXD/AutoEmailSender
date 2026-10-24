@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE material SET for_matching = ?1 WHERE id = ?2 AND for_matching <> ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "56e5ec9e6c3bdc78f90c785bd6ad8a347ec2b972a3ae5630d084452edae722a9"
+}

@@ -6,6 +6,8 @@ use sqlx::SqlitePool;
 
 fn form(provider: &str, base_url: &str) -> ModelForm {
     ModelForm {
+        input_price: None,
+        output_price: None,
         name: String::new(),
         provider: provider.into(),
         base_url: base_url.into(),
