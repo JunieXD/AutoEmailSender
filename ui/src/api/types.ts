@@ -8,6 +8,10 @@ export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
 export type Direction = "up" | "down";
 
+export type Email = { id: number, subject: string, bodyMd: string, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
+
+export type EmailId = { id: number, };
+
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
@@ -15,6 +19,8 @@ export type FilledTemplate = { subject: string, bodyMd: string, };
 export type FirstDraft = { subject: string | null, bodyMd: string | null, };
 
 export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string, };
+
+export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, html: string, text: string, };
 
 export type LetterFont = "song" | "hei";
 
@@ -278,6 +284,10 @@ export interface Operations {
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
+  approveFirstEmail: { input: FirstEmail; output: null };
+  listEmails: { input: MentorId; output: Array<Email> };
+  withdrawEmail: { input: EmailId; output: null };
+  retryEmail: { input: EmailId; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };
   addModelConfig: { input: NewModelConfig; output: ModelConfigId };

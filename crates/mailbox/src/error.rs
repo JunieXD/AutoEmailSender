@@ -41,6 +41,8 @@ pub enum MailError {
     Refused(String),
     /// The connection broke off, or the server answered in a way that makes no sense.
     Broken(String),
+    /// An address mail cannot be sent to.
+    Recipient(String),
 }
 
 impl std::fmt::Display for MailError {
@@ -64,6 +66,7 @@ impl std::fmt::Display for MailError {
             MailError::Login(reply) => write!(f, "login refused: {reply}"),
             MailError::Refused(reply) => write!(f, "refused: {reply}"),
             MailError::Broken(e) => write!(f, "{e}"),
+            MailError::Recipient(address) => write!(f, "unusable recipient {address}"),
         }
     }
 }
@@ -106,6 +109,9 @@ impl MailError {
             MailError::Refused(reply) => format!("服务器拒绝了请求（{reply}）。"),
             MailError::Broken(e) => {
                 format!("和服务器通信出错（{e}）。稍后再试；一直出错时，导出日志发给开发者。")
+            }
+            MailError::Recipient(address) => {
+                format!("收件地址 {address} 无法使用。检查导师的邮箱有没有填错。")
             }
         }
     }

@@ -114,3 +114,19 @@ pub async fn update_letter_style(db: &SqlitePool, style: &LetterStyle) -> Result
     .await?;
     Ok(())
 }
+
+/// How emails are spread over the mailboxes (docs/design.md#多邮箱轮转).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum Rotation {
+    /// One mailbox until it is paused or at its limit, then the next.
+    Failover,
+    /// The mailbox that has gone longest without sending.
+    PerEmail,
+}
+
+pub async fn rotation(db: &SqlitePool) -> Result<Rotation, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT rotation AS "rotation: Rotation" FROM profile"#)
+        .fetch_one(db)
+        .await
+}

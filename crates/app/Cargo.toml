@@ -12,6 +12,7 @@ workspace = true
 api.workspace = true
 db.workspace = true
 net.workspace = true
+send.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.8.3"

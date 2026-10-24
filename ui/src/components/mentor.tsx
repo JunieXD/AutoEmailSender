@@ -59,16 +59,16 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
   not_analyzed: ["未分析", "text-faint"],
 };
 
-/** After mentors are trashed, restored or deleted, every view of them is out of date. */
+/** After mentors are trashed, restored or deleted, every view of them is out of date, their emails too. */
 export function refreshMentors(queryClient: QueryClient) {
-  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"]]) {
+  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"], ["listEmails"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }
 
 /**
- * Moving mentors to the trash canceled their drafts, which must not come back on restore from the
- * cache or a failed save.
+ * Drafts the trash canceled or the user approved are gone, and must not come back from the cache or
+ * a failed save when the mentor is restored or the email taken back to a draft.
  */
 export function dropDrafts(queryClient: QueryClient, ids: number[]) {
   const saves = queryClient.getMutationCache();

@@ -135,3 +135,20 @@ async fn concurrent_saves_wait_their_turn() {
         save.await.unwrap().unwrap();
     }
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_mailbox_deleted_while_it_sent_is_not_assigned(db: SqlitePool) {
+    let id = mentor::create(&db, &form("张伟", "", "").check().unwrap(), 0)
+        .await
+        .unwrap();
+    // No mailbox 1 any more; recording the email it sent must still succeed.
+    mentor::assign_mailbox(&mut db.acquire().await.unwrap(), id, 1)
+        .await
+        .unwrap();
+    let own: Option<i64> = sqlx::query_scalar("SELECT mailbox_id FROM mentor WHERE id = ?")
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(own, None);
+}

@@ -1,0 +1,78 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS \"min_interval_ms!: i64\", b.paused_until,\n             (SELECT count(*) FROM email e\n              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')\n                AND e.sent_at > ?1) AS \"recent!: i64\",\n             (SELECT min(e.sent_at) FROM email e\n              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')\n                AND e.sent_at > ?1) AS \"earliest_recent: i64\",\n             (SELECT max(e.sent_at) FROM email e\n              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced'))\n               AS \"last: i64\"\n           FROM mailbox b ORDER BY b.rotation_order, b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "daily_limit",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "daily_limit"
+          }
+        }
+      },
+      {
+        "name": "min_interval_ms!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "paused_until",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "paused_until"
+          }
+        }
+      },
+      {
+        "name": "recent!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "earliest_recent: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "last: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "c4cafbbb7c9b20b269b0138383abf5cfaec7dc322e7ec550863a14a7daec9ed6"
+}

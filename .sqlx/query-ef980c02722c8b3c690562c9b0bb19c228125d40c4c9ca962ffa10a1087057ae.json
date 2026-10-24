@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,\n             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4\n           WHERE id = ?5 AND state = 'approved'\n           RETURNING mentor_id, message_id AS \"message_id!\", subject AS \"subject!\", html AS \"html!\",\n             text AS \"text!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "message_id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "subject!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "html!",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "html"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ef980c02722c8b3c690562c9b0bb19c228125d40c4c9ca962ffa10a1087057ae"
+}

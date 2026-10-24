@@ -1,0 +1,17 @@
+[package]
+name = "fakemail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.22"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+time = "0.3"
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+uuid = { version = "1", features = ["v4"] }

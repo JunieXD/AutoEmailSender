@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'failed', error = ?, updated_at = ?\n         WHERE id = ? AND state IN ('approved', 'sending')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "a83356f2770abaa0d843b257be174210f1c152ad1e52f798117edd41ac5064db"
+}

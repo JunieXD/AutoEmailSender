@@ -13,6 +13,7 @@ email.workspace = true
 mailbox.workspace = true
 model.workspace = true
 profile.workspace = true
+send.workspace = true
 template.workspace = true
 mentor.workspace = true
 net.workspace = true
