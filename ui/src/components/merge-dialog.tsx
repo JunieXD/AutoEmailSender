@@ -26,8 +26,10 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
     mutationFn: (pair: { keep: number; other: number }) => call("mergeMentors", pair),
     onSuccess: async (_, pair) => {
       queryClient.removeQueries({ queryKey: ["getMentor", pair.other] });
-      // The kept mentor's composer must start from the draft it may have taken over.
-      dropDrafts(queryClient, [pair.keep, pair.other]);
+      dropDrafts(queryClient, [pair.other]);
+      // The kept mentor's composer must start from the draft it may have taken over; what it failed
+      // to save stays to be saved again.
+      queryClient.removeQueries({ queryKey: ["getFirstDraft", pair.keep] });
       refreshMentors(queryClient);
       onClose();
       await navigate({ to: "/mentors/$mentorId", params: { mentorId: pair.keep } });

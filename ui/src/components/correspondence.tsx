@@ -33,6 +33,12 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     wasOut.current = out;
   }, [out, queryClient]);
   const fresh = useMarkRead(mentor.id, entries.data);
+  // A first draft stays to be finished when the mentor has mail by now, as after a merge or a look-up.
+  const draft = useQuery({
+    queryKey: ["getFirstDraft", mentor.id],
+    queryFn: () => call("getFirstDraft", { id: mentor.id }),
+    enabled: !mentor.trashed,
+  });
   if (entries.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
@@ -48,26 +54,29 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     );
   }
   return (
-    <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
-      {entries.data.map((e) =>
-        "email" in e ? (
-          <Sent
-            key={`email ${e.email.id}`}
-            email={e.email}
-            mentorId={mentor.id}
-            actions={!mentor.trashed}
-            emails={mentor.emails}
-          />
-        ) : (
-          <Seen
-            key={`message ${e.message.id}`}
-            message={e.message}
-            mentor={mentor}
-            fresh={fresh.includes(e.message.id)}
-          />
-        ),
-      )}
-    </div>
+    <>
+      <div className="flex flex-col gap-6 px-5 py-6 phone:px-3">
+        {entries.data.map((e) =>
+          "email" in e ? (
+            <Sent
+              key={`email ${e.email.id}`}
+              email={e.email}
+              mentorId={mentor.id}
+              actions={!mentor.trashed}
+              emails={mentor.emails}
+            />
+          ) : (
+            <Seen
+              key={`message ${e.message.id}`}
+              message={e.message}
+              mentor={mentor}
+              fresh={fresh.includes(e.message.id)}
+            />
+          ),
+        )}
+      </div>
+      {!mentor.trashed && draft.data && <FirstLetter mentor={mentor} />}
+    </>
   );
 }
 

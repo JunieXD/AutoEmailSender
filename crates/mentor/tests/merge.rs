@@ -111,6 +111,17 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
     ];
     reply(&db, &[li], 1).await;
     reply(&db, &[li, ming], 2).await;
+    // Sent from elsewhere to both addresses, it came back from one.
+    let both = reply(&db, &[li, ming], 3).await;
+    exec(&db, "UPDATE message SET kind = 'sent' WHERE id = ?", both).await;
+    sqlx::query(
+        "UPDATE message_mentor SET bounce_reason = '收件地址不存在' WHERE message_id = ? AND mentor_id = ?",
+    )
+    .bind(both)
+    .bind(li)
+    .execute(&db)
+    .await
+    .unwrap();
 
     merge::merge(&db, li, ming, 10).await.unwrap();
     let merged = mentor::get(&db, li).await.unwrap().unwrap();
@@ -129,7 +140,7 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
     ));
     assert!(matches!(
         merged.contact,
-        mentor::Contact::Replied { count: 2, .. }
+        mentor::Contact::Replied { count: 3, .. }
     ));
     let mail: (i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM email WHERE mentor_id = ?1),
@@ -139,8 +150,14 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
     .fetch_one(&db)
     .await
     .unwrap();
+    let bounces: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM message_mentor WHERE bounce_reason IS NOT NULL")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(bounces, 0);
     // One draft each can be kept: the kept mentor's.
-    assert_eq!(mail, (3, 2));
+    assert_eq!(mail, (3, 3));
     let kept: Vec<i64> = sqlx::query_scalar("SELECT id FROM email WHERE state = 'review'")
         .fetch_all(&db)
         .await

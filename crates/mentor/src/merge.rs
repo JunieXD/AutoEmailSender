@@ -184,7 +184,17 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     )
     .execute(&mut *tx)
     .await?;
-    // Mail both had stays once, with the kept mentor; the other's link goes with it.
+    // Mail both had stays once, with the kept mentor; it reached the mentor unless it came back
+    // from both addresses.
+    sqlx::query!(
+        "UPDATE message_mentor SET bounce_reason = NULL
+         WHERE mentor_id = ? AND message_id IN
+           (SELECT message_id FROM message_mentor WHERE mentor_id = ? AND bounce_reason IS NULL)",
+        keep,
+        other,
+    )
+    .execute(&mut *tx)
+    .await?;
     sqlx::query!(
         "UPDATE OR IGNORE message_mentor SET mentor_id = ? WHERE mentor_id = ?",
         keep,

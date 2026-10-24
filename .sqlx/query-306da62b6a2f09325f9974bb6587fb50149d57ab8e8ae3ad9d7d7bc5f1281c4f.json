@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE message_mentor SET bounce_reason = NULL\n         WHERE mentor_id = ? AND message_id IN\n           (SELECT message_id FROM message_mentor WHERE mentor_id = ? AND bounce_reason IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "306da62b6a2f09325f9974bb6587fb50149d57ab8e8ae3ad9d7d7bc5f1281c4f"
+}
