@@ -30,7 +30,7 @@ export const letterParsing = { preserveWhitespace: true } as const;
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
  * staying plain.
  */
-function highlightPlaceholders(names: string[]) {
+function highlightPlaceholders(names: string[], className: string) {
   const pattern = new RegExp(`\\{(?:${names.join("|")})\\}`, "g");
   return Extension.create({
     name: "highlightPlaceholders",
@@ -44,7 +44,7 @@ function highlightPlaceholders(names: string[]) {
                 for (const m of node.text?.matchAll(pattern) ?? []) {
                   found.push(
                     Decoration.inline(pos + m.index, pos + m.index + m[0].length, {
-                      class: "rounded-sm bg-selected text-brand-text",
+                      class: className,
                     }),
                   );
                 }
@@ -67,18 +67,30 @@ export function LetterEditor({
   id,
   markdown,
   placeholders,
+  unfilled = false,
   disabled,
   onChange,
 }: {
   id: string;
   markdown: string;
   placeholders: string[];
+  /**
+   * In a letter to one mentor, placeholders are no longer filled in: those left are problems
+   * (docs/design.md#联系), and none can be inserted.
+   */
+  unfilled?: boolean;
   /** While the letter is being saved, so nothing typed meanwhile goes unsaved. */
   disabled: boolean;
   onChange: (markdown: string) => void;
 }) {
   const editor = useEditor({
-    extensions: [letterFormats, highlightPlaceholders(placeholders)],
+    extensions: [
+      letterFormats,
+      highlightPlaceholders(
+        placeholders,
+        unfilled ? "rounded-sm bg-warning-soft text-warning" : "rounded-sm bg-selected text-brand-text",
+      ),
+    ],
     content: toHtml(markdown),
     parseOptions: letterParsing,
     editorProps: {
@@ -92,13 +104,13 @@ export function LetterEditor({
   useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
   return (
     <div className="flex flex-col gap-1.5">
-      <Toolbar editor={editor} placeholders={placeholders} disabled={disabled} />
+      <Toolbar editor={editor} insertable={unfilled ? [] : placeholders} disabled={disabled} />
       <EditorContent editor={editor} />
     </div>
   );
 }
 
-function Toolbar({ editor, placeholders, disabled }: { editor: Editor; placeholders: string[]; disabled: boolean }) {
+function Toolbar({ editor, insertable, disabled }: { editor: Editor; insertable: string[]; disabled: boolean }) {
   const active = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -161,7 +173,7 @@ function Toolbar({ editor, placeholders, disabled }: { editor: Editor; placehold
       >
         <ListOrdered strokeWidth={1.8} />
       </Button>
-      <PlaceholderMenu editor={editor} placeholders={placeholders} disabled={disabled} />
+      {insertable.length > 0 && <PlaceholderMenu editor={editor} placeholders={insertable} disabled={disabled} />}
     </div>
   );
 }

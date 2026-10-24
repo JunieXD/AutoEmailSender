@@ -15,6 +15,7 @@
 | `crates/template` | 模板和占位符 |
 | `crates/email` | 邮件：草稿和状态 |
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |
+| `crates/check` | 发送前检查：规则和收件域名 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；界面用的 TypeScript 类型从这里生成 |
 | `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |

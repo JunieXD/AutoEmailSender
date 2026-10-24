@@ -1,0 +1,16 @@
+[package]
+name = "check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hickory-resolver = "0.26"
+serde.workspace = true
+template.workspace = true
+tracing.workspace = true
+ts-rs.workspace = true

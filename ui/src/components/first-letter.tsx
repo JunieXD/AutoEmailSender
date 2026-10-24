@@ -1,9 +1,18 @@
-import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  type MutationState,
+  skipToken,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FileText, Send } from "lucide-react";
+import { FileText, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { FirstDraft, FirstDraftEdit, FirstEmail, MentorDetail, TemplateSummary } from "@/api/types";
+import type { FirstDraft, FirstDraftEdit, FirstEmail, MentorDetail, Problem, TemplateSummary } from "@/api/types";
+import { Confirm } from "@/components/batch-bar";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { dropDrafts } from "@/components/mentor";
 import { usePlaceholders } from "@/components/template-dialog";
@@ -65,10 +74,24 @@ function Composer({
       ? last.variables
       : { mentorId, subject: draft?.subject ?? "", bodyMd: draft?.bodyMd ?? "" },
   );
-  // The editor reads its text when mounted, so a template applied mounts a new one.
+  // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const checks = useQuery({
+    queryKey: ["checkFirstDraft", letter],
+    queryFn: () => call("checkFirstDraft", letter),
+    placeholderData: keepPreviousData,
+    // Checked again as the user types; what an earlier text had is of no more use.
+    gcTime: 0,
+  });
+  const address = mentor.email;
+  const domain = useQuery({
+    queryKey: ["checkMailDomain", address],
+    queryFn: address ? () => call("checkMailDomain", { address }) : skipToken,
+    staleTime: Infinity,
+  });
+  const problems = [...(checks.data ?? []), ...(domain.data ? [domain.data] : [])];
   const approveKey = ["approveFirstEmail", mentorId];
   const approve = useMutation({
     mutationKey: approveKey,
@@ -88,6 +111,10 @@ function Composer({
     setLetter(next);
     save.mutate(next);
   }
+  function rewrite(next: FirstDraftEdit) {
+    edit(next);
+    setBody({ version: body.version + 1, markdown: next.bodyMd });
+  }
   const blocker = !mentor.email ? (
     "导师尚未填写邮箱，可在资料里填写。"
   ) : mailboxes.data?.length === 0 ? (
@@ -99,6 +126,27 @@ function Composer({
       里添加。
     </>
   ) : null;
+  function send() {
+    if (style.data) {
+      approve.mutate({ ...letter, html: letterHtml(letter.bodyMd, style.data), text: letterText(letter.bodyMd) });
+    }
+  }
+  const sendButton = (onClick?: () => void) => (
+    <Button
+      disabled={
+        sending ||
+        blocker !== null ||
+        !style.data ||
+        !mailboxes.data ||
+        letter.subject.trim() === "" ||
+        letter.bodyMd.trim() === ""
+      }
+      onClick={onClick}
+    >
+      <Send strokeWidth={1.8} />
+      发送
+    </Button>
+  );
   return (
     <div className="flex flex-col gap-2 border-t border-border px-5 py-4 phone:px-3">
       <Input
@@ -114,46 +162,56 @@ function Composer({
         id={`first-letter-${mentorId}`}
         markdown={body.markdown}
         placeholders={placeholders}
+        unfilled
         disabled={sending}
         onChange={(bodyMd) => edit({ ...letter, bodyMd })}
       />
+      {problems.length > 0 && (
+        <ul className="flex flex-col gap-2 text-sm text-warning">
+          {problems.map((p) => (
+            <li key={problemText(p)} className="flex items-start gap-2">
+              <TriangleAlert className="mt-0.5 size-4" strokeWidth={1.8} />
+              {problemText(p)}
+              {p.kind === "no_salutation" && (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  className="-my-1"
+                  disabled={sending}
+                  onClick={() => rewrite({ ...letter, bodyMd: `${p.salutation}\n\n${letter.bodyMd}` })}
+                >
+                  加上称呼
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(checks.error ?? domain.error) && (
+        <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error ?? domain.error)}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <TemplateMenu
           mentorId={mentorId}
           disabled={sending}
           written={letter.subject.trim() !== "" || letter.bodyMd.trim() !== ""}
-          onApply={(filled) => {
-            edit({ mentorId, ...filled });
-            setBody({ version: body.version + 1, markdown: filled.bodyMd });
-          }}
+          onApply={(filled) => rewrite({ mentorId, ...filled })}
         />
         {last?.status === "error" && (
           <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>
         )}
         <div className="ml-auto flex items-center gap-3">
           {blocker && <p className="text-sm text-muted-foreground">{blocker}</p>}
-          <Button
-            disabled={
-              sending ||
-              blocker !== null ||
-              !style.data ||
-              !mailboxes.data ||
-              letter.subject.trim() === "" ||
-              letter.bodyMd.trim() === ""
-            }
-            onClick={() => {
-              if (style.data) {
-                approve.mutate({
-                  ...letter,
-                  html: letterHtml(letter.bodyMd, style.data),
-                  text: letterText(letter.bodyMd),
-                });
-              }
-            }}
-          >
-            <Send strokeWidth={1.8} />
-            发送
-          </Button>
+          {problems.length > 0 ? (
+            <Confirm
+              trigger={sendButton()}
+              message={`还有 ${problems.length} 个问题，仍要发送？`}
+              action="仍要发送"
+              onConfirm={send}
+            />
+          ) : (
+            sendButton(send)
+          )}
         </div>
       </div>
       {(style.error ?? mailboxes.error ?? approve.error) && (
@@ -256,4 +314,11 @@ function TemplateMenu({
       </PopoverContent>
     </Popover>
   );
+}
+
+/** What a problem found before sending reads as. */
+function problemText(p: Problem): string {
+  if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
+  if (p.kind === "no_salutation") return "正文里没有称呼导师。";
+  return `导师邮箱的域名 ${p.domain} 收不了信，请核对邮箱地址。`;
 }
