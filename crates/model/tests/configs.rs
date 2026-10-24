@@ -58,7 +58,14 @@ async fn what_the_user_agreed_to_holds_only_for_the_same_provider(db: SqlitePool
     let agreed = async || model::chosen(&db).await.unwrap().unwrap().agreed;
     assert!(!agreed().await);
 
-    assert!(model::agree(&db, id).await.unwrap());
+    // Not to a provider the user was not told about.
+    assert!(
+        !model::agree(&db, id, "custom", Some("https://api.example.com/v1"))
+            .await
+            .unwrap()
+    );
+    assert!(!agreed().await);
+    assert!(model::agree(&db, id, "deepseek", None).await.unwrap());
     assert!(agreed().await);
     // Another model of the same provider was agreed to as well.
     let mut renamed = form("deepseek", "");

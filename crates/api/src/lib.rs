@@ -166,7 +166,7 @@ operations! {
     "updateModelConfig" => update_model_config(ModelConfigEdit) -> ();
     "deleteModelConfig" => delete_model_config(ModelConfigId) -> ();
     "setDefaultModel" => set_default_model(ModelConfigId) -> ();
-    "agreeModel" => agree_model(ModelConfigId) -> ();
+    "agreeModel" => agree_model(ModelAgreement) -> ();
     "listProviderModels" => list_provider_models(ModelSource) -> Vec<String>;
     "testModel" => test_model(ModelTest) -> ();
 }
@@ -624,11 +624,23 @@ async fn set_default_model(ctx: &Context, input: ModelConfigId) -> Result<(), Ca
     }
 }
 
-async fn agree_model(ctx: &Context, input: ModelConfigId) -> Result<(), CallError> {
-    if model::agree(&ctx.db, input.id).await? {
+/// What the user was told AI features send to, and agreed to.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelAgreement {
+    pub id: i64,
+    pub provider: String,
+    pub base_url: Option<String>,
+}
+
+async fn agree_model(ctx: &Context, input: ModelAgreement) -> Result<(), CallError> {
+    let (provider, base_url) = (&input.provider, input.base_url.as_deref());
+    if model::agree(&ctx.db, input.id, provider, base_url).await? {
         Ok(())
     } else {
-        Err(CallError::not_found(NO_MODEL_CONFIG))
+        Err(CallError::not_found(
+            "这个模型配置刚被修改或删除了。请看过新的说明后再确认。",
+        ))
     }
 }
 

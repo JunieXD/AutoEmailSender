@@ -133,15 +133,17 @@ function Composer({
   const busy = writing.latest?.status === "pending";
   const drafting = asked !== undefined && !isWritten(asked);
   const answer = writing.latest?.status === "success" ? writing.latest.data : undefined;
-  const review = answer && asked && !drafting ? { before: asked, after: answer } : undefined;
-  // A draft goes straight into the blank letter, even one that came back while the page was left.
+  // A draft goes straight into the letter, even one that came back while the page was left, unless
+  // the user has since written something; otherwise it is compared with what replacing would change.
+  const fills = drafting && (!touched || !isWritten(letter));
+  const review = answer && !fills ? { before: letter, after: answer } : undefined;
   const fill = useEffectEvent((drafted: Letter) => {
     writing.forget();
     rewrite({ ...letter, ...drafted });
   });
   useEffect(() => {
-    if (answer && drafting) fill(answer);
-  }, [answer, drafting]);
+    if (answer && fills) fill(answer);
+  }, [answer, fills]);
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
@@ -221,8 +223,9 @@ function Composer({
       发送
     </Button>
   );
-  // Only a first fill that failed holds the letter back; a later one keeps what was filled.
-  if (blank && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
+  // Only a first fill that failed holds the letter back; a later one keeps what was filled, and a
+  // letter written meanwhile, such as by AI, needs none.
+  if (!touched && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
   return (
     <div className="flex flex-col gap-2 border-t border-border px-5 py-4 phone:px-3">
       {review && <Rewrite {...review} />}

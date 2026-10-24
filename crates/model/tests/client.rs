@@ -221,6 +221,26 @@ async fn an_answer_says_what_it_cost_however_the_provider_counts() {
 }
 
 #[tokio::test]
+async fn what_the_model_wrote_stays_out_of_errors() {
+    // The log takes the errors, and what the model wrote may be the user's letter.
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"我的绩点是 3.8"}}]}"#,
+            "\n\ndata: {broken\n\n",
+        ),
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
+    assert!(!error.to_string().contains("3.8"), "{error}");
+    assert!(!error.message().contains("3.8"), "{error}");
+}
+
+#[tokio::test]
 async fn models_are_listed_by_name() {
     let (address, received) = provider(
         200,

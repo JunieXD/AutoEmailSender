@@ -131,6 +131,8 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
+export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
+
 export type ModelConfig = { id: number, 
 /**
  * None: known by the model's name.
@@ -352,7 +354,7 @@ export interface Operations {
   updateModelConfig: { input: ModelConfigEdit; output: null };
   deleteModelConfig: { input: ModelConfigId; output: null };
   setDefaultModel: { input: ModelConfigId; output: null };
-  agreeModel: { input: ModelConfigId; output: null };
+  agreeModel: { input: ModelAgreement; output: null };
   listProviderModels: { input: ModelSource; output: Array<string> };
   testModel: { input: ModelTest; output: null };
 }

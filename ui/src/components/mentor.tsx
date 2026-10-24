@@ -67,13 +67,14 @@ export function refreshMentors(queryClient: QueryClient) {
 }
 
 /**
- * Drafts the trash canceled or the user approved are gone, and must not come back from the cache or
- * a failed save when the mentor is restored or the email taken back to a draft.
+ * Drafts the trash canceled or the user approved are gone, and must not come back from the cache, a
+ * failed save or what AI wrote for them when the mentor is restored or the email taken back to a draft.
  */
 export function dropDrafts(queryClient: QueryClient, ids: number[]) {
-  const saves = queryClient.getMutationCache();
+  const mutations = queryClient.getMutationCache();
   for (const id of ids) {
     queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
-    for (const m of saves.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) saves.remove(m);
+    for (const m of mutations.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) mutations.remove(m);
+    for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);
   }
 }

@@ -197,12 +197,22 @@ pub async fn update(
     Ok(row.rows_affected() > 0)
 }
 
-/// Records that the user agreed to what AI features send to the configuration's provider; false
-/// when there is no such configuration.
-pub async fn agree(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query!("UPDATE model_config SET agreed = 1 WHERE id = ?", id)
-        .execute(db)
-        .await?;
+/// Records that the user agreed to what AI features send to this provider and address, as they
+/// were told; false when the configuration is gone or now calls somewhere else.
+pub async fn agree(
+    db: &SqlitePool,
+    id: i64,
+    provider: &str,
+    base_url: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query!(
+        "UPDATE model_config SET agreed = 1 WHERE id = ? AND provider = ? AND base_url IS ?",
+        id,
+        provider,
+        base_url,
+    )
+    .execute(db)
+    .await?;
     Ok(row.rows_affected() > 0)
 }
 

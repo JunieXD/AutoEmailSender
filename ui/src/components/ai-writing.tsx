@@ -49,8 +49,9 @@ export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disable
   const models = useQuery({ queryKey: ["listModelConfigs"], queryFn: () => call("listModelConfigs", {}) });
   const providers = useModelProviders();
   const agree = useMutation({
-    mutationFn: (id: number) => call("agreeModel", { id }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
+    // Only to the provider and address the user was told about, should the configuration have changed since.
+    mutationFn: (m: ModelConfig) => call("agreeModel", { id: m.id, provider: m.provider, baseUrl: m.baseUrl }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
   const chosen = models.data?.find((m) => m.isDefault);
   const button = (onClick?: () => void) => (
@@ -83,7 +84,7 @@ export function AiButton({ blank, disabled, onWrite }: { blank: boolean; disable
           trigger={button()}
           message={notice(chosen, providers.data ?? [])}
           action="同意并继续"
-          onConfirm={() => agree.mutate(chosen.id, { onSuccess: onWrite })}
+          onConfirm={() => agree.mutate(chosen, { onSuccess: onWrite })}
         />
       ) : (
         button(onWrite)
@@ -100,11 +101,11 @@ function notice(model: ModelConfig, providers: ModelProvider[]): string {
   return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料，以及要改写或回复的邮件。同意后，用这个模型时不再询问。`;
 }
 
-/** The rewritten letter against the one it came from. */
+/** What replacing the letter with the one AI wrote would change. */
 export function Rewrite({ before, after }: { before: Letter; after: Letter }) {
   const subject = changes(before.subject, after.subject);
   const body = changes(letterText(before.bodyMd), letterText(after.bodyMd));
-  const facts = [...subject, ...body].some((c) => c.kind === "fact");
+  const facts = [...subject, ...body].some((c) => c.fact);
   return (
     <div className="flex flex-col gap-3 rounded-lg bg-muted px-4 py-3">
       <p className="flex items-center gap-2 text-sm font-medium text-brand-text">
@@ -116,7 +117,7 @@ export function Rewrite({ before, after }: { before: Letter; after: Letter }) {
       {facts && (
         <p className="flex items-start gap-2 text-sm text-warning">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
-          新加的内容里有数字或链接，已标黄，请核对后再采用。
+          改动里有数字或链接，已标黄，请核对后再采用。
         </p>
       )}
     </div>
@@ -130,11 +131,11 @@ function Changes({ parts, className }: { parts: Change[]; className?: string }) 
         c.kind === "kept" ? (
           <span key={i}>{c.text}</span>
         ) : c.kind === "removed" ? (
-          <del key={i} className="rounded-sm bg-diff-delete text-muted-foreground">
+          <del key={i} className={`rounded-sm text-muted-foreground ${c.fact ? "bg-highlight" : "bg-diff-delete"}`}>
             {c.text}
           </del>
         ) : (
-          <ins key={i} className={`rounded-sm no-underline ${c.kind === "fact" ? "bg-highlight" : "bg-diff-insert"}`}>
+          <ins key={i} className={`rounded-sm no-underline ${c.fact ? "bg-highlight" : "bg-diff-insert"}`}>
             {c.text}
           </ins>
         ),

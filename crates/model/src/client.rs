@@ -50,6 +50,7 @@ const IDLE: Duration = Duration::from_secs(60);
 /// What a model answered.
 #[derive(Debug)]
 pub struct Answer {
+    /// May be empty, such as when the model spent all it may write on thinking.
     pub text: String,
     /// Why it stopped, such as "length" when it ran out of room.
     pub finish_reason: Option<String>,
@@ -67,7 +68,13 @@ pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelEr
     if let Some(no_thinking) = access.no_thinking {
         no_thinking.apply(&mut body);
     }
-    chat(net, access, body).await.map(drop)
+    let answer = chat(net, access, body).await?;
+    if answer.text.trim().is_empty() {
+        return Err(ModelError::NoAnswer {
+            finish_reason: answer.finish_reason,
+        });
+    }
+    Ok(())
 }
 
 /// Asks the model to do what `system` says with what `user` gives it.
@@ -92,7 +99,8 @@ pub async fn ask(
 }
 
 /// Sends a chat request and puts the answer together. Streamed, as some models only think that
-/// way and not all can stop thinking.
+/// way and not all can stop thinking. What the provider wrote stays out of the errors, which go to
+/// the log: it may be the user's letter.
 async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelError> {
     #[derive(Deserialize)]
     struct Chunk {
@@ -139,7 +147,6 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
         .bearer_auth(&access.api_key)
         .json(&body);
     let reply = send(request, access).await?;
-    let broken = || ModelError::Broken(format!("unexpected reply: {}", quote(&reply, access)));
     // Server-sent events, each a `data:` line, until `data: [DONE]`.
     let mut events = reply
         .lines()
@@ -148,11 +155,21 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
         .filter(|data| *data != "[DONE]")
         .peekable();
     if events.peek().is_none() {
-        return Err(broken());
+        let start: String = reply.chars().take(20).collect();
+        return Err(ModelError::Broken(format!(
+            "not an event stream: {} bytes starting {start:?}",
+            reply.len()
+        )));
     }
     let (mut text, mut finish_reason, mut tokens) = (String::new(), None, None);
-    for data in events {
-        let chunk: Chunk = serde_json::from_str(data).map_err(|_| broken())?;
+    for (i, data) in events.enumerate() {
+        let chunk: Chunk = serde_json::from_str(data).map_err(|e| {
+            ModelError::Broken(format!(
+                "event {i}: {:?} error at column {}",
+                e.classify(),
+                e.column()
+            ))
+        })?;
         if let Some(failure) = chunk.error {
             return Err(ModelError::Failed(quote(&failure.message, access)));
         }
@@ -163,9 +180,6 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
             finish_reason = choice.finish_reason.or(finish_reason);
             tokens = choice.usage.or(tokens);
         }
-    }
-    if text.trim().is_empty() {
-        return Err(ModelError::NoAnswer { finish_reason });
     }
     let usage = tokens.and_then(|t| {
         Some(Usage {
