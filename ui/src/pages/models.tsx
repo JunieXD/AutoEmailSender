@@ -53,7 +53,7 @@ function ModelRow({ config: c, providers }: { config: ModelConfig; providers: Mo
   return (
     <li className="flex flex-col gap-1.5 py-3">
       <div className="flex flex-wrap items-center gap-2 phone:flex-col phone:items-start">
-        <div className="min-w-40 grow">
+        <div className="max-w-full min-w-40 grow">
           <p className="flex items-center gap-2 font-medium">
             <span className="truncate">{c.name ?? c.model}</span>
             {c.isDefault && <DefaultMark />}
