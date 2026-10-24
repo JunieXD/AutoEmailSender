@@ -1,4 +1,5 @@
 import {
+  type MutationState,
   keepPreviousData,
   skipToken,
   useMutation,
@@ -89,8 +90,14 @@ function Composer({
   );
   const [target, setTarget] = useState(restored ? restored.target : draft ? draft.target : latest);
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
+  const [draftId, setDraftId] = useState(draft?.id ?? null);
+  if (draft && draft.id !== draftId) setDraftId(draft.id);
   const approveKey = ["approveReply", mentorId];
-  const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
+  const approvals = useMutationState<MutationState<number, Error, ReplyDraftEdit>>({
+    filters: { mutationKey: approveKey },
+    select: (m) => m.state,
+  });
+  const approving = approvals.some((m) => m.status === "pending");
   const [uploading, setUploading] = useState(false);
   const locked = approving || uploading;
   const chosen = useQuery({
@@ -98,10 +105,24 @@ function Composer({
     queryFn: selected ? () => call("getReplyTarget", { mentorId, id: selected.id }) : skipToken,
   });
   const [selection, setSelection] = useState(0);
+  const [explicit, setExplicit] = useState(false);
   if (!locked && selected && chosen.isSuccess && selection !== selected.version) {
     setTarget(chosen.data);
     setSelection(selected.version);
+    setExplicit(true);
     if (chosen.data?.messageId) setLetter({ ...letter, replyTo: chosen.data.messageId });
+  }
+  if (
+    !locked &&
+    !draft &&
+    !restored &&
+    !explicit &&
+    letter.bodyMd === "" &&
+    letter.attachments.length === 0 &&
+    (target?.id !== latest?.id || letter.replyTo !== (latest?.messageId ?? ""))
+  ) {
+    setTarget(latest);
+    setLetter({ ...letter, replyTo: latest?.messageId ?? "" });
   }
   const persistTarget = useEffectEvent(() => {
     if (target?.messageId) save.mutate({ letter, target });
@@ -110,7 +131,6 @@ function Composer({
     if (selection > 0) persistTarget();
   }, [selection]);
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
-  const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
     queryKey: ["checkReplyDraft", letter, mentor.name, mentor.aliases],
     queryFn: () => call("checkReplyDraft", letter),
@@ -137,21 +157,28 @@ function Composer({
       await call("approveReply", {
         mentorId,
         draftId: saved.id,
+        replyTo: current.replyTo,
         bodyMd: current.bodyMd,
         attachments: current.attachments,
         html: letterHtml(current.bodyMd, style.data),
         text: letterText(current.bodyMd),
       });
+      return saved.id;
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
       await queryClient.cancelQueries({ queryKey: ["getReplyDraft", mentorId] });
       queryClient.setQueryData(["getReplyDraft", mentorId], null);
-      setLetter({ mentorId, replyTo: latest?.messageId ?? "", bodyMd: "", attachments: [] });
-      setTarget(latest);
-      setBody((old) => ({ version: old.version + 1, markdown: "" }));
     },
   });
+  // Approval can finish in a composer that has already unmounted.
+  if (draftId !== null && approvals.some((m) => m.status === "success" && m.data === draftId)) {
+    setDraftId(null);
+    setLetter({ mentorId, replyTo: latest?.messageId ?? "", bodyMd: "", attachments: [] });
+    setTarget(latest);
+    setExplicit(false);
+    setBody({ version: body.version + 1, markdown: "" });
+  }
   function edit(next: ReplyDraftEdit) {
     setLetter(next);
     save.mutate({ letter: next, target: shownTarget });
@@ -160,16 +187,15 @@ function Composer({
     edit({ ...letter, bodyMd: markdown });
     setBody({ version: body.version + 1, markdown });
   }
-  const shownTarget = selection === 0 && draft?.replyTo === letter.replyTo ? draft.target : target;
+  const shownTarget = !explicit && draft?.replyTo === letter.replyTo ? draft.target : target;
   const blocker = !address
     ? "导师尚未填写邮箱，可在资料里填写。"
     : !shownTarget
       ? "回的那封信已不在往来里。请点另一封回信旁的“回复”。"
       : !shownTarget.messageId
         ? "这封来信没有 Message-ID，无法在原线程回复。请到邮箱里回复。"
-        : mailboxes.data && !mailboxes.data.some((m) => m.id === shownTarget.mailboxId)
-          ? "找不到这封回复的发信邮箱。请在邮箱设置里添加邮箱，并为导师指定负责邮箱。"
-          : null;
+        : null;
+  const approveError = approvals.at(-1)?.error;
   const sendButton = useRef<HTMLButtonElement>(null);
   return (
     <section
@@ -242,16 +268,16 @@ function Composer({
             buttonRef={sendButton}
             problems={problems}
             blocker={blocker}
-            disabled={locked || !style.data || !mailboxes.data || letter.bodyMd.trim() === "" || chosen.isFetching}
+            disabled={locked || !style.data || letter.bodyMd.trim() === "" || chosen.isFetching}
             onSend={() => approve.mutate({ ...letter, attachments: attached.map((m) => m.id) })}
           />
         </div>
       </div>
       {last?.status === "error" && <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>}
       {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
-      {(chosen.error ?? style.error ?? mailboxes.error ?? approve.error) && (
+      {(chosen.error ?? style.error ?? approveError) && (
         <p className="text-sm text-destructive">
-          未能发送：{errorMessage(chosen.error ?? style.error ?? mailboxes.error ?? approve.error)}
+          未能发送：{errorMessage(chosen.error ?? style.error ?? approveError)}
         </p>
       )}
     </section>

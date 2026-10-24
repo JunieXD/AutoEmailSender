@@ -82,8 +82,8 @@ async fn approval_freezes_the_quote_and_thread_and_consumes_the_draft_once(db: S
     let d = draft(&db, mentor).await;
     let approval = approval(&[]);
     let (first, repeated) = tokio::join!(
-        email::approve_reply(&db, mentor, d.id, &approval, 2),
-        email::approve_reply(&db, mentor, d.id, &approval, 2),
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval, 2),
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval, 2),
     );
     let results = [first.unwrap(), repeated.unwrap()];
     assert_eq!(results.iter().filter(|r| **r == Approved::Yes).count(), 1);
@@ -95,7 +95,7 @@ async fn approval_freezes_the_quote_and_thread_and_consumes_the_draft_once(db: S
         .execute(&db)
         .await
         .unwrap();
-    let row: (String, String, String, String, i64) =
+    let row: (String, String, String, String, Option<i64>) =
         sqlx::query_as("SELECT subject, html, text, refs, mailbox_id FROM email WHERE id = ?")
             .bind(d.id)
             .fetch_one(&db)
@@ -108,36 +108,13 @@ async fn approval_freezes_the_quote_and_thread_and_consumes_the_draft_once(db: S
             .ends_with("王伟 <secretary@pku.edu.cn> 写道：\n> 欢迎报考。")
     );
     assert_eq!(row.3, "<root@example.com> <parent@pku>");
-    assert_eq!(row.4, 1);
+    assert_eq!(row.4, None);
     assert_eq!(email::list(&db, mentor).await.unwrap().len(), 1);
     assert!(email::reply_draft(&db, mentor).await.unwrap().is_none());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn approval_uses_the_responsible_mailbox_before_the_receiving_mailbox(db: SqlitePool) {
-    let mentor = setup(&db).await;
-    sqlx::query("UPDATE mentor SET mailbox_id = 2 WHERE id = ?")
-        .bind(mentor)
-        .execute(&db)
-        .await
-        .unwrap();
-    let d = draft(&db, mentor).await;
-    assert_eq!(
-        email::approve_reply(&db, mentor, d.id, &approval(&[]), 2)
-            .await
-            .unwrap(),
-        Approved::Yes
-    );
-    let chosen: i64 = sqlx::query_scalar("SELECT mailbox_id FROM email WHERE id = ?")
-        .bind(d.id)
-        .fetch_one(&db)
-        .await
-        .unwrap();
-    assert_eq!(chosen, 2);
-}
-
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn missing_target_mailbox_and_address_leave_the_reply_as_a_draft(db: SqlitePool) {
+async fn missing_target_and_address_leave_the_reply_as_a_draft(db: SqlitePool) {
     let mentor = setup(&db).await;
     let d = draft(&db, mentor).await;
     sqlx::query("DELETE FROM mentor_email WHERE mentor_id = ?")
@@ -146,7 +123,7 @@ async fn missing_target_mailbox_and_address_leave_the_reply_as_a_draft(db: Sqlit
         .await
         .unwrap();
     assert_eq!(
-        email::approve_reply(&db, mentor, d.id, &approval(&[]), 2)
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval(&[]), 2)
             .await
             .unwrap(),
         Approved::NoAddress
@@ -157,7 +134,7 @@ async fn missing_target_mailbox_and_address_leave_the_reply_as_a_draft(db: Sqlit
         .await
         .unwrap();
     assert_eq!(
-        email::approve_reply(&db, mentor, d.id, &approval(&[]), 2)
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval(&[]), 2)
             .await
             .unwrap(),
         Approved::ReplyGone
@@ -167,10 +144,10 @@ async fn missing_target_mailbox_and_address_leave_the_reply_as_a_draft(db: Sqlit
         .await
         .unwrap();
     assert_eq!(
-        email::approve_reply(&db, mentor, d.id, &approval(&[]), 2)
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval(&[]), 2)
             .await
             .unwrap(),
-        Approved::NoMailbox
+        Approved::ReplyGone
     );
     assert!(email::reply_draft(&db, mentor).await.unwrap().is_some());
 }
@@ -180,7 +157,7 @@ async fn replies_can_be_taken_back_without_overwriting_another_draft(db: SqliteP
     let mentor = setup(&db).await;
     let d = draft(&db, mentor).await;
     assert_eq!(
-        email::approve_reply(&db, mentor, d.id, &approval(&[]), 2)
+        email::approve_reply(&db, mentor, d.id, "<parent@pku>", &approval(&[]), 2)
             .await
             .unwrap(),
         Approved::Yes
@@ -237,4 +214,36 @@ async fn only_this_mentors_nonautomatic_reply_can_be_selected(db: SqlitePool) {
             .unwrap()
             .is_none()
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn approval_rejects_a_target_changed_after_the_user_reviewed_it(db: SqlitePool) {
+    let mentor = setup(&db).await;
+    let original = draft(&db, mentor).await;
+    sqlx::query(
+        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at,
+      from_address, subject, body_text, truncated)
+      VALUES (1, 'INBOX', 1, 2, 'reply', '<other@pku>', 1792821700000,
+        'wang@pku.edu.cn', '另一件事', '另一封信', 0)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 2)")
+        .bind(mentor)
+        .execute(&db)
+        .await
+        .unwrap();
+    let changed = email::save_reply_draft(&db, mentor, "<other@pku>", "回复另一件事", &[], 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.id, changed.id);
+    let result = email::approve_reply(&db, mentor, original.id, "<parent@pku>", &approval(&[]), 3)
+        .await
+        .unwrap();
+    assert_eq!(result, Approved::ReplyChanged);
+    let remaining = email::reply_draft(&db, mentor).await.unwrap().unwrap();
+    assert_eq!(remaining.reply_to, "<other@pku>");
+    assert_eq!(remaining.body_md.as_deref(), Some("回复另一件事"));
 }

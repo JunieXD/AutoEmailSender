@@ -294,11 +294,11 @@ export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, a
 
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
-export type ReplyEmail = { mentorId: number, draftId: number, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
 
 export type ReplyNotifications = { on: boolean, };
 
-export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, mailboxId: number, };
+export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, };
 
 export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 

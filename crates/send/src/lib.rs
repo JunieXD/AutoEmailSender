@@ -87,7 +87,10 @@ pub async fn step(
 ) -> Result<Next, sqlx::Error> {
     let at = now();
     let due = sqlx::query!(
-        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN e.mailbox_id ELSE m.mailbox_id END AS own,
+        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,
+             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id
+              WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))
+           ELSE m.mailbox_id END AS own,
            e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.state = 'approved' AND e.planned_at <= ?
          ORDER BY e.planned_at, e.id"#,
@@ -108,7 +111,7 @@ pub async fn step(
             email::failed(
                 &mut *db.acquire().await?,
                 e.id,
-                "发信邮箱已被删除。改回草稿，选择能用的邮箱后再发送。",
+                "没有能发信的邮箱，去设置里添加或在导师资料里指定负责邮箱后重试。",
                 at,
             )
             .await?;

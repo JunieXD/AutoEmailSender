@@ -1147,10 +1147,9 @@ fn approved(
         email::Approved::ReplyGone => Err(CallError::not_found(
             "回的那封信已不在这位导师的往来里。请选择另一封回信后再发送。",
         )),
-        email::Approved::NoMailbox => Err(CallError::invalid(
-            "找不到能发送这封回复的邮箱。请在邮箱设置里添加邮箱，并为导师指定负责邮箱后再发送。"
-                .into(),
-        )),
+        email::Approved::ReplyChanged => {
+            Err(CallError::invalid("回复的信已更换，请再看一遍。".into()))
+        }
         email::Approved::NoAddress => Err(CallError::invalid(
             "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
         )),
@@ -1235,6 +1234,7 @@ async fn check_reply_draft(
 pub struct ReplyEmail {
     pub mentor_id: i64,
     pub draft_id: i64,
+    pub reply_to: String,
     pub body_md: String,
     pub html: String,
     pub text: String,
@@ -1254,7 +1254,15 @@ async fn approve_reply(ctx: &Context, input: ReplyEmail) -> Result<(), CallError
     };
     approved(
         ctx,
-        email::approve_reply(&ctx.db, input.mentor_id, input.draft_id, &approval, now()).await?,
+        email::approve_reply(
+            &ctx.db,
+            input.mentor_id,
+            input.draft_id,
+            &input.reply_to,
+            &approval,
+            now(),
+        )
+        .await?,
         "这封回复已被批准、已被清空，或导师已移入回收站。请刷新往来后查看。",
         "有附件的材料已被删除。重新选择附件后再发送。",
     )

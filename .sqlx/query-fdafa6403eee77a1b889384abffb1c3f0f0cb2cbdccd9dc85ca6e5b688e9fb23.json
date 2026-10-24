@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,\n             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id\n               ORDER BY position LIMIT 1),\n             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4\n           WHERE id = ?5 AND state = 'approved'\n             AND (kind <> 'reply' OR mailbox_id = ?1)\n           RETURNING mentor_id, to_address, message_id AS \"message_id!\", reply_to, refs, subject AS \"subject!\",\n             html AS \"html!\", text AS \"text!\"",
+  "query": "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,\n             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id\n               ORDER BY position LIMIT 1),\n             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4\n           WHERE id = ?5 AND state = 'approved'\n           RETURNING mentor_id, to_address, message_id AS \"message_id!\", reply_to, refs, subject AS \"subject!\",\n             html AS \"html!\", text AS \"text!\"",
   "describe": {
     "columns": [
       {
@@ -106,5 +106,5 @@
       true
     ]
   },
-  "hash": "dd0d90f07170052bbb4c77f0cc2d7f99c7469ee795390811fd6495433a3bbe2c"
+  "hash": "fdafa6403eee77a1b889384abffb1c3f0f0cb2cbdccd9dc85ca6e5b688e9fb23"
 }

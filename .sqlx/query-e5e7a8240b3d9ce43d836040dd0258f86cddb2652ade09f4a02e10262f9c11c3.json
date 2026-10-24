@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, CASE WHEN e.kind = 'reply' THEN e.mailbox_id ELSE m.mailbox_id END AS own,\n           e.kind = 'reply' AS \"reply!: bool\" FROM email e JOIN mentor m ON m.id = e.mentor_id\n         WHERE e.state = 'approved' AND e.planned_at <= ?\n         ORDER BY e.planned_at, e.id",
+  "query": "SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,\n             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id\n              WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))\n           ELSE m.mailbox_id END AS own,\n           e.kind = 'reply' AS \"reply!: bool\" FROM email e JOIN mentor m ON m.id = e.mentor_id\n         WHERE e.state = 'approved' AND e.planned_at <= ?\n         ORDER BY e.planned_at, e.id",
   "describe": {
     "columns": [
       {
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "68ee7061399b9fc32ebd02fcd093d1d5a9655b64633f2bf56faa1fd32e1b225b"
+  "hash": "e5e7a8240b3d9ce43d836040dd0258f86cddb2652ade09f4a02e10262f9c11c3"
 }

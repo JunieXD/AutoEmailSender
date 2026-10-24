@@ -14,8 +14,6 @@ pub struct ReplyTarget {
     pub from_name: Option<String>,
     pub subject: Option<String>,
     pub sent_at: i64,
-    // Without a responsible mailbox, replies stay with the mailbox that received the message.
-    pub mailbox_id: i64,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -37,10 +35,8 @@ async fn target(
 ) -> Result<Option<ReplyTarget>, sqlx::Error> {
     sqlx::query_as!(
         ReplyTarget,
-        r#"SELECT m.id, m.message_id, m.from_address, m.from_name, m.subject, m.sent_at,
-             coalesce(t.mailbox_id, m.mailbox_id) AS "mailbox_id!: i64"
+        r#"SELECT m.id, m.message_id, m.from_address, m.from_name, m.subject, m.sent_at
            FROM message_mentor mm JOIN message m ON m.id = mm.message_id
-           JOIN mentor t ON t.id = mm.mentor_id
            WHERE mm.mentor_id = ?1 AND m.kind = 'reply'
              AND (?2 IS NULL OR m.id = ?2) AND (?3 IS NULL OR m.message_id = ?3)
            ORDER BY m.sent_at DESC, m.id DESC LIMIT 1"#,
@@ -137,27 +133,43 @@ pub async fn approve_reply(
     db: &SqlitePool,
     mentor_id: i64,
     draft_id: i64,
+    reply_to: &str,
     approval: &Approval<'_>,
     now: i64,
 ) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(reply_to) = sqlx::query_scalar!(
-        r#"UPDATE email SET updated_at = ?1
+    let updated = sqlx::query!(
+        "UPDATE email SET updated_at = ?1
            WHERE id = ?2 AND mentor_id = ?3 AND kind = 'reply' AND state = 'review'
-             AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)
-           RETURNING reply_to AS "reply_to!""#,
+             AND reply_to = ?4
+             AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
         now,
         draft_id,
         mentor_id,
+        reply_to,
     )
-    .fetch_optional(&mut *tx)
-    .await?
-    else {
-        return Ok(Approved::Refused);
-    };
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() == 0 {
+        let changed = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM email
+               WHERE id = ?1 AND mentor_id = ?2 AND kind = 'reply' AND state = 'review'
+                 AND reply_to <> ?3
+                 AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)) AS "changed!: bool""#,
+            draft_id,
+            mentor_id,
+            reply_to,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        return Ok(if changed {
+            Approved::ReplyChanged
+        } else {
+            Approved::Refused
+        });
+    }
     let row = sqlx::query!(
-        r#"SELECT coalesce(t.mailbox_id, m.mailbox_id) AS "mailbox_id!: i64",
-             m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,
+        r#"SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,
              (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address
            FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id
            JOIN message m ON m.id = mm.message_id
@@ -168,16 +180,7 @@ pub async fn approve_reply(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(row) = row else {
-        // Deleting the last mailbox also deletes the received messages in it.
-        let has_mailbox =
-            sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM mailbox) AS "exists!: bool""#)
-                .fetch_one(&mut *tx)
-                .await?;
-        return Ok(if has_mailbox {
-            Approved::ReplyGone
-        } else {
-            Approved::NoMailbox
-        });
+        return Ok(Approved::ReplyGone);
     };
     if row.address.is_none() {
         return Ok(Approved::NoAddress);
@@ -202,15 +205,10 @@ pub async fn approve_reply(
     if !snapshot(&mut tx, draft_id, &frozen, now).await? {
         return Ok(Approved::MaterialGone);
     }
-    let refs = references(row.refs.as_deref(), &reply_to);
-    sqlx::query!(
-        "UPDATE email SET mailbox_id = ?, refs = ? WHERE id = ?",
-        row.mailbox_id,
-        refs,
-        draft_id,
-    )
-    .execute(&mut *tx)
-    .await?;
+    let refs = references(row.refs.as_deref(), reply_to);
+    sqlx::query!("UPDATE email SET refs = ? WHERE id = ?", refs, draft_id,)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Approved::Yes)
 }

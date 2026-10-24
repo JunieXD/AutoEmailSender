@@ -148,7 +148,7 @@ pub enum Approved {
     /// A material attached has been deleted since, so the email would not go as approved.
     MaterialGone,
     ReplyGone,
-    NoMailbox,
+    ReplyChanged,
     NoAddress,
 }
 
@@ -415,9 +415,9 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
     let mut tx = db.begin().await?;
     let Some(again) = sqlx::query_scalar!(
         "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,
-           created_at, updated_at, subject, body_md, html, text, refs, mailbox_id)
+           created_at, updated_at, subject, body_md, html, text, refs)
          SELECT e.mentor_id, e.task_id, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,
-           e.subject, e.body_md, e.html, e.text, e.refs, e.mailbox_id
+           e.subject, e.body_md, e.html, e.text, e.refs
          FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
          ON CONFLICT (resend_of) DO NOTHING
@@ -521,7 +521,6 @@ pub async fn start_sending(
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
-             AND (kind <> 'reply' OR mailbox_id = ?1)
            RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject AS "subject!",
              html AS "html!", text AS "text!""#,
         mailbox_id,

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.message_id, m.from_address, m.from_name, m.subject, m.sent_at,\n             coalesce(t.mailbox_id, m.mailbox_id) AS \"mailbox_id!: i64\"\n           FROM message_mentor mm JOIN message m ON m.id = mm.message_id\n           JOIN mentor t ON t.id = mm.mentor_id\n           WHERE mm.mentor_id = ?1 AND m.kind = 'reply'\n             AND (?2 IS NULL OR m.id = ?2) AND (?3 IS NULL OR m.message_id = ?3)\n           ORDER BY m.sent_at DESC, m.id DESC LIMIT 1",
+  "query": "SELECT m.id, m.message_id, m.from_address, m.from_name, m.subject, m.sent_at\n           FROM message_mentor mm JOIN message m ON m.id = mm.message_id\n           WHERE mm.mentor_id = ?1 AND m.kind = 'reply'\n             AND (?2 IS NULL OR m.id = ?2) AND (?3 IS NULL OR m.message_id = ?3)\n           ORDER BY m.sent_at DESC, m.id DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -68,12 +68,6 @@
             "name": "sent_at"
           }
         }
-      },
-      {
-        "name": "mailbox_id!: i64",
-        "ordinal": 6,
-        "type_info": "Integer",
-        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -85,9 +79,8 @@
       false,
       true,
       true,
-      false,
       false
     ]
   },
-  "hash": "21cfda854c70536995d3a387f5b1d106ed30bdbd675441e3af4dbf4767f52ef3"
+  "hash": "5b5f199bc93d6e776ac44e03cec8aa341a4ccac5ca6a7ee62b1f16ae08da9d7b"
 }

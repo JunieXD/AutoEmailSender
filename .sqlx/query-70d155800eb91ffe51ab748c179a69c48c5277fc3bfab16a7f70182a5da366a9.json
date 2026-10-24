@@ -1,17 +1,11 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT coalesce(t.mailbox_id, m.mailbox_id) AS \"mailbox_id!: i64\",\n             m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,\n             (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address\n           FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id\n           JOIN message m ON m.id = mm.message_id\n           WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'",
+  "query": "SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,\n             (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address\n           FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id\n           JOIN message m ON m.id = mm.message_id\n           WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'",
   "describe": {
     "columns": [
       {
-        "name": "mailbox_id!: i64",
-        "ordinal": 0,
-        "type_info": "Integer",
-        "origin": "Expression"
-      },
-      {
         "name": "from_name",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -22,7 +16,7 @@
       },
       {
         "name": "from_address",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -33,7 +27,7 @@
       },
       {
         "name": "subject",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -44,7 +38,7 @@
       },
       {
         "name": "sent_at",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -55,7 +49,7 @@
       },
       {
         "name": "body_text",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -66,7 +60,7 @@
       },
       {
         "name": "refs",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -77,7 +71,7 @@
       },
       {
         "name": "address",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -91,7 +85,6 @@
       "Right": 2
     },
     "nullable": [
-      false,
       true,
       false,
       true,
@@ -101,5 +94,5 @@
       true
     ]
   },
-  "hash": "b9de6224bf107d01319aadfd85a011531af5bf5f11500bab399103b0aa0a176e"
+  "hash": "70d155800eb91ffe51ab748c179a69c48c5277fc3bfab16a7f70182a5da366a9"
 }
