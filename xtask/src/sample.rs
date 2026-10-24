@@ -292,8 +292,9 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         let at = now - rng.i64(0..180) * DAY - rng.i64(0..DAY);
         sqlx::query(
             "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, mailbox_id, from_address,
-               model, message_id, sent_at, error, created_at, updated_at, subject, body_md, html, text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
+               to_address, model, message_id, sent_at, error, created_at, updated_at, subject, body_md,
+               html, text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
         )
         .bind(mentor)
         .bind(kind)
@@ -303,6 +304,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         .bind(rendered.then(|| if state == "approved" { now + rng.i64(1..30) * DAY } else { at }))
         .bind(out.then_some(1))
         .bind(out.then_some("linxiao@example.com"))
+        .bind(out.then(|| format!("m{mentor}@example.edu.cn")))
         .bind(out.then(|| format!("<e{i}@aes>")))
         .bind(out.then_some(at))
         .bind(matches!(state, "maybe_sent" | "failed" | "bounced" | "canceled").then_some("示例错误"))

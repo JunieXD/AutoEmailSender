@@ -408,11 +408,7 @@ impl Session<'_> {
             let text = mail::text(raw);
             // Only the start was fetched.
             let truncated = raw.len() >= START as usize;
-            if kind == Kind::Sent
-                && self
-                    .renamed_copy(&place, &headers, sent_at, text.as_deref(), truncated)
-                    .await?
-            {
+            if kind == Kind::Sent && self.renamed_copy(&headers, sent_at, raw, truncated).await? {
                 continue;
             }
             let message = Stored {
@@ -515,13 +511,14 @@ impl Session<'_> {
     }
 
     /// Whether a copy in the sent folder under a Message-ID of the provider's own is of an email the
-    /// app sent: one with the same text in full, as a letter that only starts the same is another.
+    /// app sent: one with the same text in full and the same attachments. `raw` is the start of it,
+    /// which holds the text unless pictures or files come first; a letter whose text runs on past
+    /// it is not taken for the app's, as one that only starts the same is another.
     async fn renamed_copy(
         &mut self,
-        place: &Location<'_>,
         headers: &mail::Headers,
         sent_at: i64,
-        text: Option<&str>,
+        raw: &[u8],
         truncated: bool,
     ) -> Result<bool, Error> {
         let ([recipient], Some(message_id), Some(subject)) = (
@@ -541,14 +538,11 @@ impl Session<'_> {
         if candidates.is_empty() {
             return Ok(false);
         }
-        let text = if truncated {
-            let whole = self.imap.whole(place.uid).await?;
-            whole.as_deref().and_then(mail::text)
-        } else {
-            text.map(str::to_owned)
-        };
-        let Some(c) = text.and_then(|t| candidates.into_iter().find(|c| c.text.trim() == t.trim()))
-        else {
+        let Some(c) = mail::letter(raw, truncated).and_then(|letter| {
+            candidates
+                .into_iter()
+                .find(|c| letter.is_copy_of(&c.text, &c.attachments))
+        }) else {
             return Ok(false);
         };
         let mut conn = self.db.acquire().await?;

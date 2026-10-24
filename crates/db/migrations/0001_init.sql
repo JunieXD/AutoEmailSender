@@ -195,6 +195,7 @@ CREATE TABLE email (
   planned_at INTEGER,
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   from_address TEXT,
+  to_address TEXT COLLATE NOCASE, -- the mentor's address it was last handed over for
   model TEXT,
   message_id TEXT UNIQUE,
   copy_message_id TEXT UNIQUE, -- of its copy found in the sent folder, which the provider may change
@@ -217,6 +218,8 @@ CREATE TABLE email (
              AND planned_at IS NOT NULL)),
   CHECK (state NOT IN ('sending', 'maybe_sent', 'sent', 'bounced')
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
+  -- A mentor with no address fails before going out.
+  CHECK (state NOT IN ('sent', 'bounced') OR to_address IS NOT NULL),
   CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)

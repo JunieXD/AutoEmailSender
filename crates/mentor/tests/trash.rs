@@ -18,13 +18,14 @@ async fn mentor(db: &SqlitePool, name: &str) -> i64 {
 async fn email(db: &SqlitePool, mentor: i64, state: &str) -> i64 {
     let out = state == "sent";
     sqlx::query(
-        "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, message_id, sent_at,
-           created_at, updated_at, subject, body_md, html, text)
-         VALUES (?, 'first', ?, 1, ?, ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
+        "INSERT INTO email (mentor_id, kind, state, planned_at, from_address, to_address, message_id,
+           sent_at, created_at, updated_at, subject, body_md, html, text)
+         VALUES (?, 'first', ?, 1, ?, ?, ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
     )
     .bind(mentor)
     .bind(state)
     .bind(out.then_some("me@qq.com"))
+    .bind(out.then_some("li@pku.edu.cn"))
     .bind(out.then(|| format!("<{mentor}-{state}@aes>")))
     .bind(out.then_some(1))
     .execute(db)

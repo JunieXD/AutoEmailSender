@@ -340,7 +340,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
 pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
-           sent_at = NULL, error = NULL, html = NULL, text = NULL, updated_at = ?
+           to_address = NULL, sent_at = NULL, error = NULL, html = NULL, text = NULL, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'failed')",
         now,
         id,
@@ -395,6 +395,8 @@ pub async fn interrupted(
 /// What was approved, as an email is marked as being handed over.
 pub struct Handover {
     pub mentor_id: i64,
+    /// The mentor's address; None when they have none.
+    pub to_address: Option<String>,
     pub message_id: String,
     pub subject: String,
     pub html: String,
@@ -423,10 +425,11 @@ pub async fn start_sending(
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
+             to_address = (SELECT email FROM mentor WHERE id = email.mentor_id),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
-           RETURNING mentor_id, message_id AS "message_id!", subject AS "subject!", html AS "html!",
-             text AS "text!""#,
+           RETURNING mentor_id, to_address, message_id AS "message_id!", subject AS "subject!",
+             html AS "html!", text AS "text!""#,
         mailbox_id,
         from_address,
         message_id,
@@ -448,6 +451,7 @@ pub async fn start_sending(
     .await?;
     Ok(Some(Handover {
         mentor_id: row.mentor_id,
+        to_address: row.to_address,
         message_id: row.message_id,
         subject: row.subject,
         html: row.html,
@@ -549,6 +553,8 @@ pub struct Copy<'a> {
 pub struct Candidate {
     pub id: i64,
     pub text: String,
+    /// The file names it was approved with.
+    pub attachments: Vec<String>,
 }
 
 /// How far apart an email and a copy with another Message-ID may have gone out.
@@ -556,21 +562,22 @@ const COPY_WINDOW: i64 = 60 * 60 * 1000;
 
 /// Some providers (QQ) keep the copy of an email under a Message-ID of their own. The emails it may
 /// be a copy of, nearest in time first: sent, or tried, from the same mailbox about the same time
-/// to the mentor it went to, with the same subject, and no copy turned up yet. Which one it is, if
-/// any, the text tells.
+/// to the same address, with the same subject, and no copy turned up yet. Which one it is, if any,
+/// the text and attachments tell.
 pub async fn copy_candidates(
     conn: &mut SqliteConnection,
     copy: &Copy<'_>,
 ) -> Result<Vec<Candidate>, sqlx::Error> {
-    sqlx::query_as!(
-        Candidate,
-        r#"SELECT e.id AS "id!", e.text AS "text!"
-           FROM email e JOIN mentor m ON m.id = e.mentor_id
-           WHERE e.mailbox_id = ?1
-             AND e.state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
-             AND e.sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND e.copy_message_id IS NULL
-             AND e.subject = ?4 AND m.email = ?5
-           ORDER BY abs(e.sent_at - ?2)"#,
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!", text AS "text!",
+             (SELECT json_group_array(file_name) FROM email_attachment WHERE email_id = email.id)
+               AS "attachments!: Json<Vec<String>>"
+           FROM email
+           WHERE mailbox_id = ?1
+             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
+             AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
+             AND subject = ?4 AND to_address = ?5
+           ORDER BY abs(sent_at - ?2)"#,
         copy.mailbox_id,
         copy.at,
         COPY_WINDOW,
@@ -578,12 +585,21 @@ pub async fn copy_candidates(
         copy.recipient,
     )
     .fetch_all(conn)
-    .await
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| Candidate {
+            id: r.id,
+            text: r.text,
+            attachments: r.attachments.0,
+        })
+        .collect())
 }
 
-/// Records the copy found of an email, and that the email went out if that was not known: maybe
-/// sent, still being sent, or waiting to be sent again to the address the copy went to. SMTP
-/// answering later changes nothing then, as it only writes to an email still being sent.
+/// Records the copy found of an email, and that the email went out if that was not known and the
+/// copy is of its last try: maybe sent, still being sent, or waiting to be sent again to the same
+/// address. SMTP answering later changes nothing then, as it only writes to an email still being
+/// sent. A copy of an earlier try, to an address since changed, settles nothing.
 pub async fn copied(
     conn: &mut SqliteConnection,
     id: i64,
@@ -601,11 +617,10 @@ pub async fn copied(
     .await?;
     let confirmed = sqlx::query!(
         "UPDATE email SET state = 'sent', error = NULL, updated_at = ?1
-         WHERE id = ?2
+         WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
            AND (state IN ('sending', 'maybe_sent')
              OR (state = 'approved' AND sent_at IS NOT NULL
-               AND (SELECT email FROM mentor WHERE id = email.mentor_id)
-                 IN (SELECT value FROM json_each(?3))))",
+               AND to_address = (SELECT email FROM mentor WHERE id = email.mentor_id)))",
         now,
         id,
         Json(recipients),

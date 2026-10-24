@@ -284,9 +284,6 @@ fn fetched(seq: usize, m: &Mail, items: &str) -> Vec<u8> {
         let start = &m.raw[..m.raw.len().min(limit.parse().unwrap())];
         reply.extend(format!(" BODY[]<0> {{{}}}\r\n", start.len()).bytes());
         reply.extend(start);
-    } else if items.contains("BODY.PEEK[]") {
-        reply.extend(format!(" BODY[] {{{}}}\r\n", m.raw.len()).bytes());
-        reply.extend(&m.raw);
     }
     reply.extend(b")\r\n");
     reply

@@ -220,7 +220,7 @@ async fn send(
         return Ok(());
     };
     let outgoing = async {
-        let to = m.to.as_deref().ok_or(NO_ADDRESS)?;
+        let to = m.handover.to_address.as_deref().ok_or(NO_ADDRESS)?;
         let attachments = files(materials, &m.handover.attachments).await?;
         let letter = Letter {
             message_id: &m.handover.message_id,
@@ -285,7 +285,6 @@ async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbo
 struct Marked {
     handover: email::Handover,
     to_name: String,
-    to: Option<String>,
 }
 
 /// Marks the email as being handed over in a transaction synced to the disk itself: were the mark
@@ -311,19 +310,12 @@ async fn mark_sending(
     else {
         return Ok(None);
     };
-    let mentor = sqlx::query!(
-        "SELECT name, email FROM mentor WHERE id = ?",
-        handover.mentor_id
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let to_name = sqlx::query_scalar!("SELECT name FROM mentor WHERE id = ?", handover.mentor_id)
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
     conn.close().await?;
-    Ok(Some(Marked {
-        handover,
-        to_name: mentor.name,
-        to: mentor.email,
-    }))
+    Ok(Some(Marked { handover, to_name }))
 }
 
 /// How SMTP answered.

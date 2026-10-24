@@ -4,7 +4,9 @@
 use std::borrow::Cow;
 
 use html2text::render::RichAnnotation;
-use mail_parser::{AddressList, Message, MessageParser, MessagePart, PartKind};
+use mail_parser::{
+    AddressList, Message, MessageParser, MessagePart, MessageRef, PartKind, PartRole,
+};
 
 /// The header fields `headers` reads, fetched instead of whole messages.
 pub(crate) const FIELDS: [&str; 13] = [
@@ -147,7 +149,10 @@ fn bracketed(id: &str) -> String {
 /// The message's text: its plain-text parts, or else its HTML parts as text, in order, as when an
 /// image is put between two paragraphs.
 pub(crate) fn text(raw: &[u8]) -> Option<String> {
-    let message = MessageParser::new().parse(raw)?;
+    text_of(&MessageParser::new().parse(raw)?.root())
+}
+
+fn text_of(message: &MessageRef) -> Option<String> {
     let parts: Vec<String> = message
         .text_body()
         .filter_map(|part| match part.kind() {
@@ -157,6 +162,56 @@ pub(crate) fn text(raw: &[u8]) -> Option<String> {
         })
         .collect();
     (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+/// What a letter holds, as far as the start of it that was read shows.
+pub(crate) struct Letter {
+    text: String,
+    /// The names of its attachments, unnamed ones as empty; only the first few when `truncated`.
+    attachments: Vec<String>,
+    truncated: bool,
+}
+
+impl Letter {
+    /// Whether this is a copy of a letter with this text and these attachments.
+    pub fn is_copy_of(&self, text: &str, attachments: &[String]) -> bool {
+        let mut left: Vec<&String> = attachments.iter().collect();
+        let shown =
+            self.attachments
+                .iter()
+                .all(|name| match left.iter().position(|l| *l == name) {
+                    Some(i) => {
+                        left.swap_remove(i);
+                        true
+                    }
+                    None => false,
+                });
+        self.text.trim() == text.trim() && shown && (self.truncated || left.is_empty())
+    }
+}
+
+/// What the letter of which `raw` is the start, or the whole unless `truncated`, holds. None when
+/// the reading stopped in anything but an attachment: text may follow a picture, so the text is
+/// only known in full when it comes before the files, as in the app's own letters.
+pub(crate) fn letter(raw: &[u8], truncated: bool) -> Option<Letter> {
+    let message = MessageParser::new().parse(raw)?;
+    let root = message.root();
+    // A part the reading stopped in runs to the end of what was read.
+    let cut_short = root.parts().any(|p| {
+        p.offset_end() as usize >= raw.len()
+            && !matches!(p.role(), PartRole::Container | PartRole::Attachment)
+    });
+    if truncated && cut_short {
+        return None;
+    }
+    Some(Letter {
+        text: text_of(&root)?,
+        attachments: root
+            .attachments()
+            .map(|p| p.attachment_name().unwrap_or_default().to_owned())
+            .collect(),
+        truncated,
+    })
 }
 
 /// HTML as text: paragraphs and line breaks kept, quotes marked with `>`, and the address of a link
@@ -284,6 +339,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     let message = MessageParser::new().parse(raw)?;
     // Only the report's own parts: the mail it returns may carry or quote other reports.
     let statuses: Vec<Status> = message
+        .root()
         .parts()
         .filter(|p| content_type_is(p, "message", "delivery-status"))
         .flat_map(|p| statuses(&String::from_utf8_lossy(&p.decoded())))
@@ -328,7 +384,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
 /// The Message-ID of the mail a bounce returns: of the mail it attaches, or of the headers it
 /// quotes, else of the mail it answers. Not of mail the returned one carries, which did not bounce.
 fn returned(bounce: &Message) -> Option<String> {
-    for part in bounce.parts() {
+    for part in bounce.root().parts() {
         if let PartKind::Message(original) = part.kind() {
             return original.message_id().map(bracketed);
         }

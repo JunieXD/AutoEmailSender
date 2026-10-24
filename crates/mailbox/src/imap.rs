@@ -201,12 +201,6 @@ impl Imap {
 
     /// Some servers leave messages out of the answer for many that they give for each alone; one
     /// left out of that too is taken to be deleted meanwhile.
-    /// The whole message with this UID in the open folder; None when it is gone.
-    pub async fn whole(&mut self, uid: u32) -> Result<Option<Vec<u8>>, MailError> {
-        let fetches = self.fetch(&[uid], "(UID BODY.PEEK[])").await?;
-        Ok(fetches.into_iter().find_map(|f| f.data))
-    }
-
     async fn fetch(&mut self, uids: &[u32], query: &str) -> Result<Vec<Fetched>, MailError> {
         let mut fetches = self.fetch_set(uids, query).await?;
         if uids.len() > 1 {
