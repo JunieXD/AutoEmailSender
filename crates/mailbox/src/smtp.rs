@@ -60,6 +60,8 @@ pub fn message_id(account: &Account) -> String {
 /// What an email to a mentor is made of.
 pub struct Letter<'a> {
     pub message_id: &'a str,
+    pub in_reply_to: Option<&'a str>,
+    pub references: Option<&'a str>,
     pub to_name: &'a str,
     pub to: &'a str,
     pub subject: &'a str,
@@ -96,7 +98,14 @@ pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError
         }
         body = mixed;
     }
-    Message::builder()
+    let mut builder = Message::builder();
+    if let Some(id) = letter.in_reply_to {
+        builder = builder.in_reply_to(id.to_owned());
+    }
+    if let Some(refs) = letter.references {
+        builder = builder.references(refs.to_owned());
+    }
+    builder
         .message_id(Some(letter.message_id.to_owned()))
         .from(lettre::message::Mailbox::new(
             Some(account.sender_name.clone()),

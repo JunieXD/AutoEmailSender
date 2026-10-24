@@ -34,6 +34,7 @@ pub(crate) struct Headers {
     /// References, separated by spaces.
     pub references: Option<String>,
     pub from: Option<String>,
+    pub from_name: Option<String>,
     /// To, Cc and Bcc.
     pub recipients: Vec<String>,
     pub subject: Option<String>,
@@ -123,6 +124,13 @@ pub(crate) fn headers(raw: &[u8]) -> Headers {
             .map(bracketed),
         references: (!references.is_empty()).then(|| references.join(" ")),
         from,
+        from_name: message
+            .from()
+            .and_then(|list| list.first())
+            .and_then(|m| m.name())
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned),
         recipients: [message.to(), message.cc(), message.bcc()]
             .iter()
             .flatten()

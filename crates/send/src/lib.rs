@@ -87,9 +87,10 @@ pub async fn step(
 ) -> Result<Next, sqlx::Error> {
     let at = now();
     let due = sqlx::query!(
-        "SELECT e.id, m.mailbox_id AS own FROM email e JOIN mentor m ON m.id = e.mentor_id
+        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN e.mailbox_id ELSE m.mailbox_id END AS own,
+           e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.state = 'approved' AND e.planned_at <= ?
-         ORDER BY e.planned_at, e.id",
+         ORDER BY e.planned_at, e.id"#,
         at
     )
     .fetch_all(db)
@@ -103,6 +104,16 @@ pub async fn step(
     let rotation = profile::rotation(db).await?;
     let mailboxes = usage(db, at).await?;
     for e in due {
+        if e.reply && e.own.is_none() {
+            email::failed(
+                &mut *db.acquire().await?,
+                e.id,
+                "发信邮箱已被删除。改回草稿，选择能用的邮箱后再发送。",
+                at,
+            )
+            .await?;
+            return Ok(Next::Now);
+        }
         match choose(rotation, e.own, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
                 send(db, net, materials, e.id, mailbox, &now).await?;
@@ -221,6 +232,8 @@ async fn send(
         let attachments = files(materials, &m.handover.attachments).await?;
         let letter = Letter {
             message_id: &m.handover.message_id,
+            in_reply_to: m.handover.reply_to.as_deref(),
+            references: m.handover.refs.as_deref(),
             to_name: &m.to_name,
             to,
             subject: &m.handover.subject,

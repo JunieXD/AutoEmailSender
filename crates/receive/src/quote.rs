@@ -161,4 +161,13 @@ mod tests {
             assert_eq!(split(text), (text, ""), "{text}");
         }
     }
+
+    #[test]
+    fn a_reply_to_our_direct_reply_folds_its_attribution_and_quote() {
+        let text = "好的，下周见。\n\n在 2026年10月24日 14:00，林晓 <lin@example.com> 写道：\n> 王老师：谢谢。\n> \n> 在 2026年10月23日 09:00，王伟 <wang@pku.edu.cn> 写道：\n> > 欢迎报考。";
+        let (fresh, quote) = split(text);
+        assert_eq!(fresh, "好的，下周见。");
+        assert!(quote.starts_with("在 2026年10月24日 14:00，林晓"));
+        assert!(quote.ends_with("> > 欢迎报考。"));
+    }
 }

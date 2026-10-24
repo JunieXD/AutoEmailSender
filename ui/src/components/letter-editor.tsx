@@ -69,6 +69,8 @@ export function LetterEditor({
   placeholders,
   unfilled = false,
   disabled,
+  compact = false,
+  focus = 0,
   onChange,
 }: {
   id: string;
@@ -79,6 +81,8 @@ export function LetterEditor({
    * (docs/design.md#联系), and none can be inserted.
    */
   unfilled?: boolean;
+  compact?: boolean;
+  focus?: number;
   /** While the letter is being saved, so nothing typed meanwhile goes unsaved. */
   disabled: boolean;
   onChange: (markdown: string) => void;
@@ -96,15 +100,33 @@ export function LetterEditor({
     editorProps: {
       attributes: {
         id,
-        class: `${FIELD} min-h-48 py-2.5 ${LETTER_BODY}`,
+        class: `${FIELD} ${compact ? "min-h-24 max-h-[30dvh] overflow-y-auto" : "min-h-48"} py-2.5 ${LETTER_BODY}`,
       },
     },
     onUpdate: ({ editor: e }) => onChange(toMarkdown(e.state.doc)),
   });
   useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
+  const [tools, setTools] = useState(false);
+  useEffect(() => {
+    if (focus > 0) editor.commands.focus("end");
+  }, [editor, focus]);
   return (
     <div className="flex flex-col gap-1.5">
-      <Toolbar editor={editor} insertable={unfilled ? [] : placeholders} disabled={disabled} />
+      {compact && (
+        <Button
+          type="button"
+          variant="quiet"
+          size="sm"
+          className="hidden self-start phone:inline-flex"
+          aria-expanded={tools}
+          onClick={() => setTools(!tools)}
+        >
+          格式
+        </Button>
+      )}
+      <div className={compact && !tools ? "phone:hidden" : ""}>
+        <Toolbar editor={editor} insertable={unfilled ? [] : placeholders} disabled={disabled} />
+      </div>
       <EditorContent editor={editor} />
     </div>
   );

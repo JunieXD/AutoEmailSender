@@ -74,6 +74,8 @@ export function refreshMentors(queryClient: QueryClient) {
     ["listTrash"],
     ["getMentor"],
     ["listCorrespondence"],
+    ["getReplyTarget"],
+    ["getReplyDraft"],
     ["listConversations"],
     ["unreadCount"],
   ]) {
@@ -85,9 +87,13 @@ export function refreshMentors(queryClient: QueryClient) {
  * Drafts the trash canceled or the user approved are gone, and must not come back from the cache, a
  * failed save or what AI wrote for them when the mentor is restored or the email taken back to a draft.
  */
-export function dropDrafts(queryClient: QueryClient, ids: number[]) {
+export function dropDrafts(queryClient: QueryClient, ids: number[], kind: "first" | "all" = "all") {
   const mutations = queryClient.getMutationCache();
   for (const id of ids) {
+    if (kind === "all") {
+      queryClient.removeQueries({ queryKey: ["getReplyDraft", id] });
+      for (const m of mutations.findAll({ mutationKey: ["saveReplyDraft", id], status: "error" })) mutations.remove(m);
+    }
     queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
     for (const m of mutations.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) mutations.remove(m);
     for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);

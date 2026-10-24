@@ -608,8 +608,8 @@ impl Session<'_> {
         let mut tx = self.db.begin().await?;
         let inserted = sqlx::query_scalar!(
             "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, from_address, subject, refs, body_text, truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               sent_at, from_address, from_name, subject, refs, body_text, truncated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT DO NOTHING RETURNING id AS \"id!\"",
             self.mailbox_id,
             at.folder,
@@ -620,6 +620,7 @@ impl Session<'_> {
             headers.in_reply_to,
             message.sent_at,
             headers.from,
+            headers.from_name,
             headers.subject,
             headers.references,
             message.text,

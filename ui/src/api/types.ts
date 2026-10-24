@@ -290,7 +290,17 @@ export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type ReceiveStatus = { receivedAt: number | null, };
 
+export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
+
+export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
+
+export type ReplyEmail = { mentorId: number, draftId: number, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+
 export type ReplyNotifications = { on: boolean, };
+
+export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, mailboxId: number, };
+
+export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
 export type Security = "tls" | "starttls";
 
@@ -403,6 +413,11 @@ export interface Operations {
   setDefaultTemplate: { input: DefaultTemplate; output: null };
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   applyDefaultTemplate: { input: MentorId; output: FilledTemplate | null };
+  getReplyDraft: { input: MentorId; output: ReplyDraft | null };
+  getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
+  saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
+  checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
+  approveReply: { input: ReplyEmail; output: null };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };

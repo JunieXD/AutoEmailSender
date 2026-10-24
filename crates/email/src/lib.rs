@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 
+mod reply;
+pub use reply::*;
+
 use serde::Serialize;
 use sqlx::types::Json;
 use sqlx::{Connection, SqliteConnection, SqlitePool};
@@ -144,6 +147,9 @@ pub enum Approved {
     Refused,
     /// A material attached has been deleted since, so the email would not go as approved.
     MaterialGone,
+    ReplyGone,
+    NoMailbox,
+    NoAddress,
 }
 
 /// Approves the mentor's first email with this content, to be sent now: the draft, or else a new
@@ -156,14 +162,9 @@ pub async fn approve_first(
 ) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
     let drafted = sqlx::query_scalar!(
-        "UPDATE email SET state = 'approved', subject = ?1, body_md = ?2, html = ?3, text = ?4,
-           planned_at = ?5, updated_at = ?5
-         WHERE mentor_id = ?6 AND kind = 'first' AND task_id IS NULL AND state = 'review'
+        "UPDATE email SET updated_at = ?1
+         WHERE mentor_id = ?2 AND kind = 'first' AND task_id IS NULL AND state = 'review'
          RETURNING id AS \"id!\"",
-        approval.subject,
-        approval.body_md,
-        approval.html,
-        approval.text,
         now,
         mentor_id,
     )
@@ -171,22 +172,15 @@ pub async fn approve_first(
     .await?;
     let id = match drafted {
         Some(id) => id,
-        // Only while the mentor has no first email: the one approved by a click repeated stops a
-        // second.
         None => match sqlx::query_scalar!(
-            "INSERT INTO email (mentor_id, kind, state, planned_at, created_at, updated_at,
-               subject, body_md, html, text)
-             SELECT m.id, 'first', 'approved', ?2, ?2, ?2, ?3, ?4, ?5, ?6 FROM mentor m
+            "INSERT INTO email (mentor_id, kind, state, created_at, updated_at)
+             SELECT m.id, 'first', 'review', ?2, ?2 FROM mentor m
              WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (
                SELECT 1 FROM email e WHERE e.mentor_id = m.id AND e.kind = 'first'
                  AND e.task_id IS NULL AND e.state <> 'canceled')
              RETURNING id AS \"id!\"",
             mentor_id,
             now,
-            approval.subject,
-            approval.body_md,
-            approval.html,
-            approval.text,
         )
         .fetch_optional(&mut *tx)
         .await?
@@ -195,20 +189,46 @@ pub async fn approve_first(
             None => return Ok(Approved::Refused),
         },
     };
+    if !snapshot(&mut tx, id, approval, now).await? {
+        return Ok(Approved::MaterialGone);
+    }
+    tx.commit().await?;
+    Ok(Approved::Yes)
+}
+
+/// Freezes exactly the approved content and files for both first letters and replies.
+async fn snapshot(
+    conn: &mut SqliteConnection,
+    id: i64,
+    approval: &Approval<'_>,
+    now: i64,
+) -> Result<bool, sqlx::Error> {
     let materials = Json(approval.attachments);
     let gone = sqlx::query_scalar!(
         r#"SELECT count(*) AS "gone!: i64" FROM json_each(?) j
            WHERE NOT EXISTS (SELECT 1 FROM material m WHERE m.id = j.value)"#,
         materials
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     if gone > 0 {
-        return Ok(Approved::MaterialGone);
+        return Ok(false);
     }
-    attach(&mut tx, id, approval.attachments).await?;
-    tx.commit().await?;
-    Ok(Approved::Yes)
+    sqlx::query!(
+        "UPDATE email SET state = 'approved', subject = ?, body_md = ?, html = ?, text = ?,
+           planned_at = ?, updated_at = ? WHERE id = ?",
+        approval.subject,
+        approval.body_md,
+        approval.html,
+        approval.text,
+        now,
+        now,
+        id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    attach(conn, id, approval.attachments).await?;
+    Ok(true)
 }
 
 /// An email in the correspondence with a mentor, from approval on.
@@ -362,7 +382,7 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
     let done = sqlx::query!(
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
            to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
-           html = NULL, text = NULL, updated_at = ?
+           html = NULL, text = NULL, refs = NULL, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL",
         now,
         id,
@@ -395,9 +415,9 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
     let mut tx = db.begin().await?;
     let Some(again) = sqlx::query_scalar!(
         "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,
-           created_at, updated_at, subject, body_md, html, text)
+           created_at, updated_at, subject, body_md, html, text, refs, mailbox_id)
          SELECT e.mentor_id, e.task_id, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,
-           e.subject, e.body_md, e.html, e.text
+           e.subject, e.body_md, e.html, e.text, e.refs, e.mailbox_id
          FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
          ON CONFLICT (resend_of) DO NOTHING
@@ -468,6 +488,8 @@ pub struct Handover {
     /// The mentor's first address, which it goes to; None when they have none.
     pub to_address: Option<String>,
     pub message_id: String,
+    pub reply_to: Option<String>,
+    pub refs: Option<String>,
     pub subject: String,
     pub html: String,
     pub text: String,
@@ -499,7 +521,8 @@ pub async fn start_sending(
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
-           RETURNING mentor_id, to_address, message_id AS "message_id!", subject AS "subject!",
+             AND (kind <> 'reply' OR mailbox_id = ?1)
+           RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject AS "subject!",
              html AS "html!", text AS "text!""#,
         mailbox_id,
         from_address,
@@ -524,6 +547,8 @@ pub async fn start_sending(
         mentor_id: row.mentor_id,
         to_address: row.to_address,
         message_id: row.message_id,
+        reply_to: row.reply_to,
+        refs: row.refs,
         subject: row.subject,
         html: row.html,
         text: row.text,

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,\n           created_at, updated_at, subject, body_md, html, text, refs, mailbox_id)\n         SELECT e.mentor_id, e.task_id, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,\n           e.subject, e.body_md, e.html, e.text, e.refs, e.mailbox_id\n         FROM email e JOIN mentor m ON m.id = e.mentor_id\n         WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL\n         ON CONFLICT (resend_of) DO NOTHING\n         RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4297a23f31a2157ba92fcba0ba9c5813185cc77b0c84654f329a0aa18010396f"
+}

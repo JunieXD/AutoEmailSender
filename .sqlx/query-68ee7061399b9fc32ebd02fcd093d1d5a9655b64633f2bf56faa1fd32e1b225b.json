@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, CASE WHEN e.kind = 'reply' THEN e.mailbox_id ELSE m.mailbox_id END AS own,\n           e.kind = 'reply' AS \"reply!: bool\" FROM email e JOIN mentor m ON m.id = e.mentor_id\n         WHERE e.state = 'approved' AND e.planned_at <= ?\n         ORDER BY e.planned_at, e.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "own",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "reply!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "68ee7061399b9fc32ebd02fcd093d1d5a9655b64633f2bf56faa1fd32e1b225b"
+}

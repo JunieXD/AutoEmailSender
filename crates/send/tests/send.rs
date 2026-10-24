@@ -478,3 +478,91 @@ async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
     );
     assert_eq!(email::list(&db, wang).await.unwrap().len(), 2);
 }
+
+async fn approve_reply(db: &SqlitePool) -> i64 {
+    let mentor = mentor::create(
+        db,
+        &MentorFields {
+            name: "王伟".into(),
+            emails: vec!["wang@example.edu.cn".into()],
+            ..Default::default()
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at,
+      from_address, subject, refs, body_text, truncated)
+      VALUES (1, 'INBOX', 1, 1, 'reply', '<parent@example.edu>', 1, 'wang@example.edu.cn', 'RE: 申请',
+        '<root@example.edu> <previous@example.edu>', '欢迎', 0)").execute(db).await.unwrap();
+    sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 1)")
+        .bind(mentor)
+        .execute(db)
+        .await
+        .unwrap();
+    let draft =
+        email::save_reply_draft(db, mentor, "<parent@example.edu>", "王老师：谢谢。", &[], T)
+            .await
+            .unwrap()
+            .unwrap();
+    let approval = Approval {
+        subject: "",
+        body_md: "王老师：谢谢。",
+        html: "<p>王老师：谢谢。</p>",
+        text: "王老师：谢谢。",
+        attachments: &[],
+    };
+    assert_eq!(
+        email::approve_reply(db, mentor, draft.id, &approval, T)
+            .await
+            .unwrap(),
+        email::Approved::Yes
+    );
+    mentor
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_reply_goes_out_in_its_parent_thread_and_assigns_the_receiving_mailbox(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve_reply(&db).await;
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::Now
+    );
+    assert_eq!(own_mailbox(&db, mentor).await, Some(1));
+    let mail = inbox.lock().unwrap().clone();
+    assert_eq!(mail.len(), 1);
+    assert_eq!(header(&mail[0], "In-Reply-To: "), "<parent@example.edu>");
+    let headers = mail[0]
+        .split("\r\n\r\n")
+        .next()
+        .unwrap()
+        .replace("\r\n ", " ");
+    assert!(
+        headers
+            .contains("References: <root@example.edu> <previous@example.edu> <parent@example.edu>")
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + DAY).await.unwrap(),
+        Next::Idle
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_reply_never_rotates_to_an_unrelated_mailbox_after_its_sender_is_deleted(db: SqlitePool) {
+    let (net, original_inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve_reply(&db).await;
+    sqlx::query("DELETE FROM mailbox")
+        .execute(&db)
+        .await
+        .unwrap();
+    let (_, other_inbox) = mailbox(&db, SECRET).await;
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::Now
+    );
+    assert!(matches!(first_email(&db, mentor).await.delivery,
+        Delivery::Failed { error } if error.contains("发信邮箱已被删除")));
+    assert!(original_inbox.lock().unwrap().is_empty());
+    assert!(other_inbox.lock().unwrap().is_empty());
+}

@@ -1370,6 +1370,7 @@ dependencies = [
 name = "email"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "chrono",
  "db",
  "mentor",
  "serde",
