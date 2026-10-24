@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT lower(address) AS \"address!: String\" FROM mailbox",
+  "describe": {
+    "columns": [
+      {
+        "name": "address!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7a1944a3feac9648be355a9090129b36431ee97db8f658dc919f9833163c8c17"
+}

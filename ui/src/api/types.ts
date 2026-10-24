@@ -16,6 +16,8 @@ export type Email = { id: number, subject: string, bodyMd: string, attachments: 
 
 export type EmailId = { id: number, };
 
+export type Entry = { "email": Email } | { "message": Message };
+
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "internal";
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
@@ -62,7 +64,11 @@ provider: string, smtp: Server, imap: Server, dailyLimit: number,
 /**
  * The shortest wait between two emails, in seconds.
  */
-minIntervalS: number, };
+minIntervalS: number, 
+/**
+ * Why the last round of receiving failed.
+ */
+receiveError: string | null, };
 
 export type MailboxEdit = { id: number, 
 /**
@@ -130,6 +136,16 @@ export type MentorRow = { id: number, name: string, title: string | null, univer
  * The start of the research description, enough for the two lines the list shows.
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
+
+export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number, 
+/**
+ * What the message says, without the earlier mail it quotes.
+ */
+text: string, 
+/**
+ * The earlier mail it quotes, shown folded.
+ */
+quote: string | null, } & ({ "kind": "reply", unread: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -345,7 +361,8 @@ export interface Operations {
   writeLetter: { input: FirstDraftEdit; output: Letter };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
-  listEmails: { input: MentorId; output: Array<Email> };
+  listCorrespondence: { input: MentorId; output: Array<Entry> };
+  markRead: { input: MentorId; output: null };
   withdrawEmail: { input: EmailId; output: null };
   retryEmail: { input: EmailId; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };

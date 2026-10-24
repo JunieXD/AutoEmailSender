@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor_scan WHERE mailbox_id = ? AND mentor_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d3e349ff0c83c25604317591901f1fbaa61ec6c24b2b16d6fa987e581accc288"
+}

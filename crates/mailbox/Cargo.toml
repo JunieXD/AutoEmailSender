@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 futures-util = "0.3"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-platform-verifier"] }
 net.workspace = true

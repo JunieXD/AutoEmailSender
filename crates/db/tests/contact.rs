@@ -63,8 +63,8 @@ async fn seen(
 ) -> i64 {
     let id = sqlx::query(
         "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, in_reply_to, sent_at,
-           from_address, recipients)
-         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn', '{}')",
+           from_address)
+         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn')",
     )
     .bind(at)
     .bind(kind)
@@ -94,7 +94,7 @@ async fn summary_follows_mail(pool: SqlitePool) {
     let conn = &mut pool.acquire().await.unwrap();
     sqlx::query(
         "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, 0)",
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
     )
     .execute(&mut **conn)
     .await

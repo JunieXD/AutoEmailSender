@@ -171,7 +171,7 @@ function Composer({
     mutationFn: (e: FirstEmail) => call("approveFirstEmail", e),
     onSuccess: async () => {
       // The correspondence takes this composer's place first, so that it does not show the draft emptied.
-      await queryClient.invalidateQueries({ queryKey: ["listEmails", mentorId] });
+      await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
       dropDrafts(queryClient, [mentorId]);
     },
   });

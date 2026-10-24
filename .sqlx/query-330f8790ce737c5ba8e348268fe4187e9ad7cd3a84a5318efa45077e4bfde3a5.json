@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mailbox_folder (mailbox_id, folder, role, uidvalidity, last_uid)\n                 VALUES (?1, ?2, ?3, ?4, ?5)\n                 ON CONFLICT DO UPDATE SET role = ?3, uidvalidity = ?4, last_uid = ?5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "330f8790ce737c5ba8e348268fe4187e9ad7cd3a84a5318efa45077e4bfde3a5"
+}

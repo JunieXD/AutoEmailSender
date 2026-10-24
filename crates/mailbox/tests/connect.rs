@@ -13,7 +13,7 @@ use net::Net;
 async fn mailbox(pki: &Pki, security: Security, secret: &str) -> (Account, Inbox) {
     let starttls = matches!(security, Security::Starttls);
     let (smtp, inbox) = fakemail::smtp(pki, starttls).await;
-    let imap = fakemail::imap(pki, starttls).await;
+    let (imap, _) = fakemail::imap(pki, starttls).await;
     let server = |port| Server {
         host: Cow::Borrowed("localhost"),
         port,

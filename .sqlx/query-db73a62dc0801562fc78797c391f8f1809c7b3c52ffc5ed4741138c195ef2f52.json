@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM mentor_scan WHERE mentor_id = ?) AS \"queued: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "queued: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "db73a62dc0801562fc78797c391f8f1809c7b3c52ffc5ed4741138c195ef2f52"
+}

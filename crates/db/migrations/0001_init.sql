@@ -43,8 +43,11 @@ CREATE TABLE mailbox (
   rotation_order INTEGER NOT NULL,
   paused_until INTEGER,
   pause_reason TEXT,
+  receive_error TEXT,           -- why the last round of receiving failed
+  receive_retry_at INTEGER,     -- when to try again after the server refused
   created_at INTEGER NOT NULL,
-  CHECK ((paused_until IS NULL) = (pause_reason IS NULL))
+  CHECK ((paused_until IS NULL) = (pause_reason IS NULL)),
+  CHECK (receive_error IS NOT NULL OR receive_retry_at IS NULL)
 ) STRICT;
 
 CREATE TABLE profile (
@@ -251,15 +254,14 @@ CREATE TABLE message (
   bounce_reason TEXT,
   from_address TEXT NOT NULL,
   subject TEXT,
-  recipients TEXT NOT NULL,    -- JSON {to, cc}, display only
-  refs TEXT,
+  refs TEXT,                   -- References: Message-IDs separated by spaces
   body_text TEXT,
-  body_html TEXT,
   UNIQUE (mailbox_id, folder, uidvalidity, uid),
   CHECK (kind = 'reply' OR (read_at IS NULL AND outcome IS NULL)),
   CHECK (kind = 'sent' OR bounce_reason IS NULL)
 ) STRICT;
-CREATE INDEX message_message_id ON message (message_id);
+-- One row per message, wherever it is seen again (docs/data-model.md#联系).
+CREATE UNIQUE INDEX message_message_id ON message (message_id);
 
 CREATE TABLE message_mentor (
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
@@ -352,22 +354,38 @@ CREATE TABLE candidate (
 ) STRICT;
 CREATE INDEX candidate_crawl ON candidate (crawl_id, review);
 
+-- How far receiving has got in a folder: mail after last_uid is new.
 CREATE TABLE mailbox_folder (
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
-  folder TEXT NOT NULL,
+  folder TEXT NOT NULL,        -- the server's name, in modified UTF-7
   role TEXT NOT NULL CHECK (role IN ('inbox', 'sent')),
   uidvalidity INTEGER NOT NULL,
   last_uid INTEGER NOT NULL,
-  history_before_uid INTEGER,  -- NULL once the history scan is done
   PRIMARY KEY (mailbox_id, folder)
 ) STRICT, WITHOUT ROWID;
 
+-- Mentors whose earlier mail is still to be looked up in a mailbox.
 CREATE TABLE mentor_scan (
-  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY (mentor_id, mailbox_id)
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  PRIMARY KEY (mailbox_id, mentor_id)
 ) STRICT, WITHOUT ROWID;
+
+-- A mentor with a new address is looked up in every mailbox; a mailbox moved to another account
+-- starts receiving afresh (docs/data-model.md#个人资料和配置).
+CREATE TRIGGER mentor_scan_ai AFTER INSERT ON mentor WHEN NEW.email IS NOT NULL BEGIN
+  INSERT INTO mentor_scan (mailbox_id, mentor_id) SELECT id, NEW.id FROM mailbox;
+END;
+
+CREATE TRIGGER mentor_scan_au AFTER UPDATE OF email ON mentor
+WHEN NEW.email IS NOT NULL AND NEW.email IS NOT OLD.email BEGIN
+  INSERT OR IGNORE INTO mentor_scan (mailbox_id, mentor_id) SELECT id, NEW.id FROM mailbox;
+END;
+
+CREATE TRIGGER mailbox_folder_reset AFTER UPDATE OF address, imap_host ON mailbox
+WHEN NEW.address IS NOT OLD.address OR NEW.imap_host IS NOT OLD.imap_host BEGIN
+  DELETE FROM mailbox_folder WHERE mailbox_id = NEW.id;
+END;
 
 CREATE TABLE device (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,8 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
+import { listen } from "@tauri-apps/api/event";
 import { Settings, Users } from "lucide-react";
+import { useEffect } from "react";
 import appIcon from "../../../docs/icon.svg";
 import { startupFailure } from "@/api/app";
+import { refreshMentors } from "@/components/mentor";
 import { StartupFailure } from "@/components/startup-failure";
 
 const NAV = [{ to: "/mentors", label: "导师", icon: Users }] as const;
@@ -17,6 +20,12 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
  */
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
+  const queryClient = useQueryClient();
+  // New mail may change any mentor's correspondence and contact status.
+  useEffect(() => {
+    const stop = listen("received", () => refreshMentors(queryClient));
+    return () => void stop.then((unlisten) => unlisten());
+  }, [queryClient]);
   if (failure.isPending) return null;
   if (failure.data) return <StartupFailure reason={failure.data} />;
   return (

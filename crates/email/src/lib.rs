@@ -504,3 +504,63 @@ pub async fn failed(
     .await?;
     Ok(())
 }
+
+/// What a copy of mail in a mailbox's sent folder tells about the app's emails.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SentCopy {
+    /// Not an email the app sent.
+    Foreign,
+    Own,
+    /// An email only maybe sent, which the copy proves went out.
+    Confirmed,
+}
+
+/// Looks up the email the app sent with this Message-ID, and marks it sent if it was only maybe
+/// sent.
+pub async fn sent_copy(
+    conn: &mut SqliteConnection,
+    message_id: &str,
+    now: i64,
+) -> Result<SentCopy, sqlx::Error> {
+    let maybe_sent = sqlx::query_scalar!(
+        r#"SELECT state = 'maybe_sent' AS "maybe_sent!: bool" FROM email WHERE message_id = ?"#,
+        message_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    match maybe_sent {
+        None => Ok(SentCopy::Foreign),
+        Some(false) => Ok(SentCopy::Own),
+        Some(true) => {
+            sqlx::query!(
+                "UPDATE email SET state = 'sent', error = NULL, updated_at = ?
+                 WHERE message_id = ? AND state = 'maybe_sent'",
+                now,
+                message_id,
+            )
+            .execute(conn)
+            .await?;
+            Ok(SentCopy::Confirmed)
+        }
+    }
+}
+
+/// Marks the email that went out with this Message-ID as bounced, for this reason. False when the
+/// app sent no such email.
+pub async fn bounced(
+    conn: &mut SqliteConnection,
+    message_id: &str,
+    reason: &str,
+    now: i64,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE email SET state = 'bounced', error = ?, updated_at = ?
+         WHERE message_id = ? AND state IN ('maybe_sent', 'sent')",
+        reason,
+        now,
+        message_id,
+    )
+    .execute(conn)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}

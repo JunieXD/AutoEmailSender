@@ -2,7 +2,11 @@
 //! `Net` the test builds is told to trust (docs/development.md#测试).
 
 // A test server has nobody to report errors to but the test, which fails on them.
-#![expect(clippy::unwrap_used, reason = "fails the test using the server")]
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "fails the test using the server"
+)]
 
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +16,10 @@ use rcgen::{
     KeyPair, KeyUsagePurpose,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+
+mod imap;
+
+pub use imap::{Store, imap};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -169,55 +177,6 @@ async fn smtp_session(
             // Never answered, as by some servers behind proxies: the mail counts as sent anyway.
             Some("QUIT") => std::future::pending().await,
             _ => "502 unknown\r\n",
-        };
-        io.write_all(reply.as_bytes()).await?;
-    }
-}
-
-/// Like 163's, the fake IMAP server opens no folder before the client sends ID.
-pub async fn imap(pki: &Pki, starttls: bool) -> u16 {
-    let tls = &pki.tls;
-    let acceptor = tls.clone();
-    listen(tls, starttls, move |io| imap_session(io, acceptor.clone())).await
-}
-
-async fn imap_session(mut io: BufReader<Box<dyn Stream>>, tls: TlsAcceptor) -> std::io::Result<()> {
-    let login = format!("\"{ADDRESS}\" \"{SECRET}\"");
-    let mut identified = false;
-    io.write_all(b"* OK fake IMAP ready\r\n").await?;
-    loop {
-        let mut line = String::new();
-        if io.read_line(&mut line).await? == 0 {
-            return Ok(());
-        }
-        let line = line.trim_end();
-        let mut words = line.splitn(3, ' ');
-        let (tag, command, rest) = (
-            words.next().unwrap_or_default(),
-            words.next().unwrap_or_default().to_ascii_uppercase(),
-            words.next().unwrap_or_default(),
-        );
-        let reply = match command.as_str() {
-            "CAPABILITY" => format!("* CAPABILITY IMAP4rev1 ID STARTTLS\r\n{tag} OK done\r\n"),
-            "STARTTLS" => {
-                io.write_all(format!("{tag} OK go ahead\r\n").as_bytes())
-                    .await?;
-                io = BufReader::new(Box::new(tls.accept(io.into_inner()).await?));
-                continue;
-            }
-            "LOGIN" if rest == login => format!("{tag} OK logged in\r\n"),
-            "LOGIN" => format!("{tag} NO [AUTHENTICATIONFAILED] invalid credentials\r\n"),
-            "ID" => {
-                identified = true;
-                format!("* ID NIL\r\n{tag} OK done\r\n")
-            }
-            "SELECT" if identified => {
-                format!("* 0 EXISTS\r\n* OK [UIDVALIDITY 1] ok\r\n{tag} OK [READ-WRITE] done\r\n")
-            }
-            "SELECT" => format!("{tag} NO Unsafe Login\r\n"),
-            // Never answered: the check has passed by then.
-            "LOGOUT" => std::future::pending().await,
-            _ => format!("{tag} BAD unknown\r\n"),
         };
         io.write_all(reply.as_bytes()).await?;
     }

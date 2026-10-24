@@ -44,8 +44,8 @@ async fn state_of(db: &SqlitePool, email: i64) -> String {
 /// A reply seen in the mailbox, about these mentors.
 async fn reply(db: &SqlitePool, mentors: &[i64], uid: i64) -> i64 {
     let id = sqlx::query(
-        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address, recipients)
-         VALUES (1, 'INBOX', 1, ?, 'reply', 2, 'x@edu.cn', '{}')",
+        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address)
+         VALUES (1, 'INBOX', 1, ?, 'reply', 2, 'x@edu.cn')",
     )
     .bind(uid)
     .execute(db)
@@ -112,7 +112,7 @@ async fn trashing_cancels_unsent_mail_and_restoring_keeps_it_canceled(db: Sqlite
 async fn deleting_for_good_takes_only_what_is_the_mentors_alone(db: SqlitePool) {
     sqlx::query(
         "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, 0)",
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
     )
     .execute(&db)
     .await

@@ -157,7 +157,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     sqlx::query(
         // A domain with no mail servers, so testing this mailbox reaches no one.
         "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
-           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, ?)",
+           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, NULL, NULL, ?)",
     )
     .bind(now)
     .execute(&mut *tx)
@@ -333,8 +333,8 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .filter(|t| *t < now);
         let id = sqlx::query(
             "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, read_at, from_address, subject, recipients, body_text)
-             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', '{}', ?)",
+               sent_at, read_at, from_address, subject, body_text)
+             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', ?)",
         )
         .bind(if kind == "sent" { "Sent" } else { "INBOX" })
         .bind(i as i64)

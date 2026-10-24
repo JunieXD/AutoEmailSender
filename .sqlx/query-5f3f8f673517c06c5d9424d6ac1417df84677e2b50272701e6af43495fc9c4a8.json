@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             m.bounce_reason, m.body_text\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "kind: Kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "read_at",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "read_at"
+          }
+        }
+      },
+      {
+        "name": "bounce_reason",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "bounce_reason"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "5f3f8f673517c06c5d9424d6ac1417df84677e2b50272701e6af43495fc9c4a8"
+}
