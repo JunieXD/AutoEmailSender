@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.address FROM mentor_scan s JOIN mentor_email e ON e.address = s.address\n             WHERE s.mailbox_id = ? ORDER BY e.mentor_id DESC LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_scan",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7a102d44c5a480d14669be8dc721874c58cd0ab58c01c9b1758bd82bd17be960"
+}

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use email::Delivery;
 use fakemail::{ADDRESS, SECRET, Store};
 use mailbox::{MailboxForm, Security, Server};
-use mentor::{Contact, MentorForm};
+use mentor::{Contact, MentorFields};
 use net::Net;
 use receive::{Message, MessageKind, Round};
 use sqlx::SqlitePool;
@@ -48,17 +48,12 @@ fn form(port: u16) -> MailboxForm {
 }
 
 async fn mentor(db: &SqlitePool, name: &str, address: &str) -> i64 {
-    let form = MentorForm {
+    let fields = MentorFields {
         name: name.into(),
-        title: String::new(),
-        email: address.into(),
-        university: String::new(),
-        school: String::new(),
-        department: String::new(),
-        homepage_url: String::new(),
-        research: String::new(),
+        emails: vec![address.into()],
+        ..MentorFields::default()
     };
-    mentor::create(db, &form.check().unwrap(), 0).await.unwrap()
+    mentor::create(db, &fields, 0).await.unwrap()
 }
 
 /// An email the app sent to the mentor, in this state, with this Message-ID.
@@ -66,7 +61,7 @@ async fn sent_email(db: &SqlitePool, mentor: i64, state: &str, message_id: &str)
     sqlx::query_scalar(
         "INSERT INTO email (mentor_id, kind, state, planned_at, mailbox_id, from_address, to_address,
            message_id, sent_at, error, created_at, updated_at, subject, body_md, html, text)
-         VALUES (?1, 'first', ?2, ?3, 1, ?4, (SELECT email FROM mentor WHERE id = ?1), ?5, ?3,
+         VALUES (?1, 'first', ?2, ?3, 1, ?4, (SELECT address FROM mentor_email WHERE mentor_id = ?1), ?5, ?3,
            '发送途中应用退出。', 0, 0, '申请读博', '老师您好', '<p>老师您好</p>', '老师您好')
          RETURNING id",
     )
@@ -295,7 +290,7 @@ async fn the_apps_own_mail_is_confirmed_or_bounced(db: SqlitePool) {
         (zhao, resent, "zhaolei@nju.edu.cn"),
         (sun, resent_sun, "sunli@zju.edu.cn"),
     ] {
-        sqlx::query("UPDATE mentor SET email = ? WHERE id = ?")
+        sqlx::query("UPDATE mentor_email SET address = ? WHERE mentor_id = ?")
             .bind(corrected)
             .bind(mentor)
             .execute(&db)
@@ -456,6 +451,7 @@ Message-ID: <w1@example.com>
         email::list(&db, wang).await.unwrap()[0].delivery,
         Delivery::Bounced {
             from_address: ADDRESS.into(),
+            to_address: "wang@thu.edu.cn".into(),
             sent_at: T - DAY,
             error: "收件地址不存在（550 5.1.1 <wang@thu.edu.cn>: Recipient address rejected: User unknown）"
                 .into()
@@ -484,7 +480,7 @@ Message-ID: <w1@example.com>
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn earlier_mail_is_looked_up_once_per_mentor(db: SqlitePool) {
+async fn earlier_mail_is_looked_up_once_per_address(db: SqlitePool) {
     let pki = fakemail::pki();
     let (port, store) = fakemail::imap(&pki, false).await;
     let net = Net::new(vec![pki.root.clone()]).unwrap();
@@ -530,10 +526,31 @@ async fn earlier_mail_is_looked_up_once_per_mentor(db: SqlitePool) {
         T + MINUTE,
         "From: wang@thu.edu.cn\nSubject: 招生通知\nMessage-ID: <w1@thu.edu.cn>\n\n欢迎报名夏令营。",
     );
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: liming@gmail.com\nSubject: 补充材料\nMessage-ID: <g1@gmail.com>\n\n请再发一份成绩单。",
+    );
     round(&db, &net, T + 5 * MINUTE).await;
     let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
     round(&db, &net, T + 10 * MINUTE).await;
     assert_eq!(messages(&db, wang).await.len(), 1);
+    // So is mail at an address added to a mentor, which alone is looked up.
+    let fields = MentorFields {
+        name: "李明".into(),
+        emails: vec!["li@pku.edu.cn".into(), "liming@gmail.com".into()],
+        ..MentorFields::default()
+    };
+    assert!(mentor::update(&db, li, &fields, T).await.unwrap());
+    store.commands();
+    round(&db, &net, T + 11 * MINUTE).await;
+    assert_eq!(messages(&db, li).await.len(), 3);
+    let searched: Vec<String> = store
+        .commands()
+        .into_iter()
+        .filter(|c| c.contains("SEARCH"))
+        .collect();
+    assert!(!searched.is_empty() && searched.iter().all(|c| !c.contains("li@pku.edu.cn")));
 
     // A renumbered folder is started afresh without taking anything twice.
     store.renumber("INBOX");
@@ -545,7 +562,7 @@ async fn earlier_mail_is_looked_up_once_per_mentor(db: SqlitePool) {
         "From: li@pku.edu.cn\nSubject: 面谈时间\nMessage-ID: <r2@pku.edu.cn>\n\n周五下午三点。",
     );
     round(&db, &net, T + 20 * MINUTE).await;
-    assert_eq!(messages(&db, li).await.len(), 3);
+    assert_eq!(messages(&db, li).await.len(), 4);
     assert_eq!(messages(&db, wang).await.len(), 1);
 }
 

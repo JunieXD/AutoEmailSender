@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT EXISTS (SELECT 1 FROM mentor_scan WHERE mentor_id = ?) AS \"queued: bool\"",
+  "query": "SELECT EXISTS (SELECT 1 FROM mentor_scan s JOIN mentor_email e ON e.address = s.address\n                          WHERE e.mentor_id = ?) AS \"queued: bool\"",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "db73a62dc0801562fc78797c391f8f1809c7b3c52ffc5ed4741138c195ef2f52"
+  "hash": "7b12572b7c8afada0419815e6c9fe3e9eb692a8f8ab02b2dfbf99e467f6bd2ab"
 }

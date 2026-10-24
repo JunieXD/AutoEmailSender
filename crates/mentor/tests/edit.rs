@@ -3,19 +3,29 @@
 
 use std::num::NonZeroU32;
 
-use mentor::{MentorFields, MentorForm, MentorQuery, SaveError};
+use mentor::{Affiliation, MentorFields, MentorForm, MentorQuery, SaveError};
 use sqlx::SqlitePool;
 
 fn form(name: &str, email: &str, homepage: &str) -> MentorForm {
     MentorForm {
         name: name.into(),
-        title: " ".into(),
-        email: email.into(),
-        university: "清华大学".into(),
-        school: String::new(),
-        department: String::new(),
-        homepage_url: homepage.into(),
+        aliases: Vec::new(),
+        emails: vec![email.into()],
+        affiliations: vec![Affiliation {
+            university: Some("清华大学".into()),
+            school: Some(String::new()),
+            title: Some(" ".into()),
+            ..Affiliation::default()
+        }],
+        homepages: vec![homepage.into()],
         research: String::new(),
+    }
+}
+
+fn place(university: &str) -> Affiliation {
+    Affiliation {
+        university: Some(university.into()),
+        ..Affiliation::default()
     }
 }
 
@@ -25,9 +35,9 @@ fn form_is_trimmed_and_checked() {
         .check()
         .unwrap();
     assert_eq!(fields.name, "张伟");
-    assert_eq!(fields.email.as_deref(), Some("zhang@tsinghua.edu.cn"));
-    assert_eq!(fields.title, None);
-    assert_eq!(fields.school, None);
+    assert_eq!(fields.emails, ["zhang@tsinghua.edu.cn"]);
+    assert_eq!(fields.affiliations, [place("清华大学")]);
+    assert!(form("张伟", "", "").check().unwrap().emails.is_empty());
 
     assert_eq!(form("  ", "", "").check().unwrap_err(), "请填写姓名");
     for email in [
@@ -44,8 +54,7 @@ fn form_is_trimmed_and_checked() {
     ] {
         assert_eq!(
             form("张伟", email, "").check().unwrap_err(),
-            "邮箱地址格式不正确",
-            "{email}"
+            format!("邮箱地址“{email}”格式不正确"),
         );
     }
     for email in ["o'brien+phd@x.edu.cn", "Zhang.Wei@mail.x-y.cn"] {
@@ -66,6 +75,43 @@ fn form_is_trimmed_and_checked() {
     );
 }
 
+#[test]
+fn lists_keep_their_order_without_blanks_or_repeats() {
+    let blank = Affiliation {
+        school: Some(" ".into()),
+        ..Affiliation::default()
+    };
+    let fields = MentorForm {
+        name: "张伟".into(),
+        aliases: vec![
+            "Wei Zhang".into(),
+            " 张伟 ".into(),
+            "Wei Zhang".into(),
+            " ".into(),
+        ],
+        emails: vec![
+            "zhang@gmail.com".into(),
+            " ".into(),
+            "zhangwei@pku.edu.cn".into(),
+            "Zhang@Gmail.com".into(),
+        ],
+        affiliations: vec![
+            place("北京大学"),
+            blank,
+            place(" 北京大学 "),
+            place("清华大学"),
+        ],
+        homepages: vec!["https://x.cn".into(), "https://x.cn".into()],
+        research: String::new(),
+    }
+    .check()
+    .unwrap();
+    assert_eq!(fields.aliases, ["Wei Zhang"]);
+    assert_eq!(fields.emails, ["zhang@gmail.com", "zhangwei@pku.edu.cn"]);
+    assert_eq!(fields.affiliations, [place("北京大学"), place("清华大学")]);
+    assert_eq!(fields.homepages, ["https://x.cn"]);
+}
+
 async fn names(db: &SqlitePool, keyword: &str) -> Vec<String> {
     let query = MentorQuery {
         status: None,
@@ -80,7 +126,7 @@ async fn names(db: &SqlitePool, keyword: &str) -> Vec<String> {
 async fn editing_updates_the_keyword_index(db: SqlitePool) {
     let mut fields = form("张伟", "", "").check().unwrap();
     let id = mentor::create(&db, &fields, 0).await.unwrap();
-    fields.university = Some("北京大学".into());
+    fields.affiliations = vec![place("北京大学")];
     fields.research = Some("神经渲染".into());
     assert!(mentor::update(&db, id, &fields, 1).await.unwrap());
 
@@ -93,21 +139,69 @@ async fn editing_updates_the_keyword_index(db: SqlitePool) {
 async fn an_email_belongs_to_one_mentor(db: SqlitePool) {
     let zhang = MentorFields {
         name: "张伟".into(),
-        email: Some("Zhang@X.cn".into()),
+        emails: vec!["Zhang@X.cn".into()],
         ..MentorFields::default()
     };
     let id = mentor::create(&db, &zhang, 0).await.unwrap();
     let li = MentorFields {
         name: "李静".into(),
-        email: Some("zhang@x.cn".into()),
+        emails: vec!["li@x.cn".into(), "zhang@x.cn".into()],
         ..MentorFields::default()
     };
-    let Err(SaveError::EmailTaken { name, trashed }) = mentor::create(&db, &li, 0).await else {
+    let Err(SaveError::EmailTaken {
+        address,
+        name,
+        trashed,
+    }) = mentor::create(&db, &li, 0).await
+    else {
         panic!("expected the email to be taken");
     };
-    assert_eq!((name.as_str(), trashed), ("张伟", false));
+    assert_eq!(
+        (address.as_str(), name.as_str(), trashed),
+        ("zhang@x.cn", "张伟", false)
+    );
+    // Nothing of the failed save stays.
+    let mentors: i64 = sqlx::query_scalar("SELECT count(*) FROM mentor")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(mentors, 1);
     // Saving a mentor with its own email is fine.
     assert!(mentor::update(&db, id, &zhang, 1).await.unwrap());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn addresses_kept_are_not_looked_up_again(db: SqlitePool) {
+    sqlx::query(
+        "INSERT INTO mailbox VALUES (1, 'me@qq.com', '林晓', 'qq', 'smtp.qq.com', 465, 'tls',
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let mut fields = MentorFields {
+        name: "张伟".into(),
+        emails: vec!["zhang@gmail.com".into(), "zhangwei@pku.edu.cn".into()],
+        ..MentorFields::default()
+    };
+    let id = mentor::create(&db, &fields, 0).await.unwrap();
+    let queued = || async {
+        sqlx::query_scalar::<_, String>("SELECT address FROM mentor_scan ORDER BY address")
+            .fetch_all(&db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(queued().await, ["zhang@gmail.com", "zhangwei@pku.edu.cn"]);
+    sqlx::query("DELETE FROM mentor_scan")
+        .execute(&db)
+        .await
+        .unwrap();
+
+    fields.emails = vec!["ZhangWei@pku.edu.cn".into(), "zw@lab.pku.edu.cn".into()];
+    assert!(mentor::update(&db, id, &fields, 1).await.unwrap());
+    assert_eq!(queued().await, ["zw@lab.pku.edu.cn"]);
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(m.emails, ["ZhangWei@pku.edu.cn", "zw@lab.pku.edu.cn"]);
 }
 
 #[tokio::test]
@@ -124,7 +218,7 @@ async fn concurrent_saves_wait_their_turn() {
             tokio::spawn(async move {
                 let fields = MentorFields {
                     name: format!("导师{i}"),
-                    email: Some(format!("m{i}@x.cn")),
+                    emails: vec![format!("m{i}@x.cn")],
                     ..MentorFields::default()
                 };
                 mentor::create(&db, &fields, 0).await

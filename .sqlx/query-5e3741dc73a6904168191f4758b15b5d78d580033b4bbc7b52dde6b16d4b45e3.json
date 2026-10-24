@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO mentor_scan (mailbox_id, address)\n                 SELECT ?, address FROM mentor_email",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "5e3741dc73a6904168191f4758b15b5d78d580033b4bbc7b52dde6b16d4b45e3"
+}

@@ -243,15 +243,18 @@ pub enum Delivery {
     Sending,
     MaybeSent {
         from_address: String,
+        to_address: String,
         sent_at: i64,
         error: String,
     },
     Sent {
         from_address: String,
+        to_address: String,
         sent_at: i64,
     },
     Bounced {
         from_address: String,
+        to_address: String,
         sent_at: i64,
         error: String,
     },
@@ -290,7 +293,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     }
     sqlx::query!(
         r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
-             from_address, sent_at, error
+             from_address, to_address, sent_at, error
            FROM email
            WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
            ORDER BY id"#,
@@ -301,24 +304,31 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     .into_iter()
     .map(|r| {
         use DeliveryColumn as C;
-        let delivery = match (r.state, r.from_address, r.sent_at, r.error) {
+        let delivery = match (r.state, r.from_address, r.to_address, r.sent_at, r.error) {
             (C::Approved, ..) => Delivery::Approved,
             (C::Sending, ..) => Delivery::Sending,
-            (C::MaybeSent, Some(from_address), Some(sent_at), Some(error)) => Delivery::MaybeSent {
+            (C::MaybeSent, Some(from_address), Some(to_address), Some(sent_at), Some(error)) => {
+                Delivery::MaybeSent {
+                    from_address,
+                    to_address,
+                    sent_at,
+                    error,
+                }
+            }
+            (C::Sent, Some(from_address), Some(to_address), Some(sent_at), _) => Delivery::Sent {
                 from_address,
-                sent_at,
-                error,
-            },
-            (C::Sent, Some(from_address), Some(sent_at), _) => Delivery::Sent {
-                from_address,
+                to_address,
                 sent_at,
             },
-            (C::Bounced, Some(from_address), Some(sent_at), Some(error)) => Delivery::Bounced {
-                from_address,
-                sent_at,
-                error,
-            },
-            (C::Failed, _, _, Some(error)) => Delivery::Failed { error },
+            (C::Bounced, Some(from_address), Some(to_address), Some(sent_at), Some(error)) => {
+                Delivery::Bounced {
+                    from_address,
+                    to_address,
+                    sent_at,
+                    error,
+                }
+            }
+            (C::Failed, .., Some(error)) => Delivery::Failed { error },
             _ => {
                 return Err(sqlx::Error::Decode(
                     format!("email {} has inconsistent delivery columns", r.id).into(),
@@ -411,7 +421,7 @@ pub async fn interrupted(
 /// What was approved, as an email is marked as being handed over.
 pub struct Handover {
     pub mentor_id: i64,
-    /// The mentor's address; None when they have none.
+    /// The mentor's first address, which it goes to; None when they have none.
     pub to_address: Option<String>,
     pub message_id: String,
     pub subject: String,
@@ -441,7 +451,8 @@ pub async fn start_sending(
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
-             to_address = (SELECT email FROM mentor WHERE id = email.mentor_id),
+             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
+               ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
            RETURNING mentor_id, to_address, message_id AS "message_id!", subject AS "subject!",
@@ -636,7 +647,8 @@ pub async fn copied(
          WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
            AND (state IN ('sending', 'maybe_sent')
              OR (state = 'approved' AND sent_at IS NOT NULL
-               AND to_address = (SELECT email FROM mentor WHERE id = email.mentor_id)))",
+               AND to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
+                 ORDER BY position LIMIT 1)))",
         now,
         id,
         Json(recipients),

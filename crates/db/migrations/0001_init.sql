@@ -95,15 +95,8 @@ CREATE TABLE material (
 CREATE TABLE mentor (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL CHECK (name <> ''),
-  email TEXT UNIQUE COLLATE NOCASE CHECK (email <> ''),
-  title TEXT CHECK (title <> ''),
-  university TEXT CHECK (university <> ''),
-  school TEXT CHECK (school <> ''),
-  department TEXT CHECK (department <> ''),
-  homepage_url TEXT,
   source_url TEXT,
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
-  library_id TEXT UNIQUE,
   trashed_at INTEGER,
   match_state TEXT CHECK (match_state IN ('queued', 'running', 'done', 'failed')),
   match_score INTEGER CHECK (match_score BETWEEN 0 AND 100),
@@ -126,13 +119,54 @@ CREATE TABLE mentor_detail (
   match_highlights TEXT,
   match_risks TEXT
 ) STRICT;
--- Keyword search: the app writes name/school/department/research into body as space-separated
--- character bigrams, and searches with a phrase of the query's bigrams. name holds the name's
--- single characters, which a one-character word searches.
+-- Keyword search: the app writes names, affiliations and research into body as space-separated
+-- character bigrams, and searches with a phrase of the query's bigrams. name holds the single
+-- characters of the name and aliases, which a one-character word searches.
 CREATE VIRTUAL TABLE mentor_search USING fts5(body, name, content='', contentless_delete=1);
-CREATE INDEX mentor_list ON mentor (trashed_at, university, school, department);
 CREATE INDEX mentor_by_score ON mentor (trashed_at, match_score DESC, id);
 CREATE INDEX mentor_mailbox ON mentor (mailbox_id) WHERE mailbox_id IS NOT NULL;
+
+-- What a mentor may have several of, in the user's order (docs/data-model.md#导师). Saving rewrites
+-- them in positions from 0; addresses are kept where they stay, as looking them up is costly.
+CREATE TABLE mentor_email (
+  address TEXT PRIMARY KEY COLLATE NOCASE CHECK (address <> ''),
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE INDEX mentor_email_mentor ON mentor_email (mentor_id, position);
+
+CREATE TABLE mentor_affiliation (
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  university TEXT CHECK (university <> ''),
+  school TEXT CHECK (school <> ''),
+  department TEXT CHECK (department <> ''),
+  title TEXT CHECK (title <> ''),
+  PRIMARY KEY (mentor_id, position),
+  CHECK (coalesce(university, school, department, title) IS NOT NULL)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX mentor_affiliation_place ON mentor_affiliation (university, school, department);
+
+CREATE TABLE mentor_homepage (
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  url TEXT NOT NULL,
+  PRIMARY KEY (mentor_id, position)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE mentor_alias (
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  name TEXT NOT NULL CHECK (name <> ''),
+  PRIMARY KEY (mentor_id, position)
+) STRICT, WITHOUT ROWID;
+
+-- A merged mentor may stand for several records of the mentor library.
+CREATE TABLE mentor_library (
+  library_id TEXT PRIMARY KEY,
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX mentor_library_mentor ON mentor_library (mentor_id);
 
 CREATE TABLE tag (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,12 +381,10 @@ CREATE TABLE candidate (
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
   enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done', 'failed')),
   name TEXT NOT NULL,
-  email TEXT,
-  title TEXT,
-  university TEXT,
-  school TEXT,
-  department TEXT,
-  homepage_url TEXT,
+  aliases TEXT,                -- JSON arrays, in the order found
+  emails TEXT,
+  affiliations TEXT,           -- of {university, school, department, title}
+  homepages TEXT,
   source_url TEXT,
   research TEXT,
   papers TEXT
@@ -369,24 +401,19 @@ CREATE TABLE mailbox_folder (
   PRIMARY KEY (mailbox_id, folder)
 ) STRICT, WITHOUT ROWID;
 
--- Mentors whose earlier mail is still to be looked up in a mailbox, at their address.
+-- Mentor addresses whose earlier mail is still to be looked up in a mailbox.
 CREATE TABLE mentor_scan (
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
-  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  PRIMARY KEY (mailbox_id, mentor_id)
+  address TEXT NOT NULL COLLATE NOCASE
+    REFERENCES mentor_email(address) ON DELETE CASCADE ON UPDATE CASCADE,
+  PRIMARY KEY (mailbox_id, address)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX mentor_scan_address ON mentor_scan (address);
 
--- A mentor with a new address is looked up in every mailbox; a mailbox moved to another account
--- starts receiving afresh (docs/data-model.md#个人资料和配置).
-CREATE TRIGGER mentor_scan_ai AFTER INSERT ON mentor WHEN NEW.email IS NOT NULL BEGIN
-  INSERT INTO mentor_scan (mailbox_id, mentor_id, email) SELECT id, NEW.id, NEW.email FROM mailbox;
-END;
-
-CREATE TRIGGER mentor_scan_au AFTER UPDATE OF email ON mentor WHEN NEW.email IS NOT OLD.email BEGIN
-  DELETE FROM mentor_scan WHERE mentor_id = NEW.id;
-  INSERT INTO mentor_scan (mailbox_id, mentor_id, email)
-  SELECT id, NEW.id, NEW.email FROM mailbox WHERE NEW.email IS NOT NULL;
+-- A new mentor address is looked up in every mailbox; a mailbox moved to another account starts
+-- receiving afresh (docs/data-model.md#个人资料和配置).
+CREATE TRIGGER mentor_scan_ai AFTER INSERT ON mentor_email BEGIN
+  INSERT INTO mentor_scan (mailbox_id, address) SELECT id, NEW.address FROM mailbox;
 END;
 
 CREATE TRIGGER mailbox_folder_reset AFTER UPDATE OF address, imap_host ON mailbox

@@ -104,15 +104,22 @@ export function MentorTable({
               >
                 {m.name}
               </Link>
-              {m.title && <span className="ml-1.5 text-sm text-muted-foreground">{m.title}</span>}
+              {m.affiliation?.title && (
+                <span className="ml-1.5 text-sm text-muted-foreground">{m.affiliation.title}</span>
+              )}
             </span>
           </div>
           <div role="cell" className="min-w-0 text-sm cards:flex cards:gap-1.5 cards:[grid-area:place]">
             <div className="truncate cards:max-w-full cards:shrink-0">
-              {m.university ?? <Missing>未填写学校</Missing>}
+              {m.affiliation?.university ?? <Missing>未填写学校</Missing>}
+              {m.affiliationCount > 1 && (
+                <span className="ml-1.5 text-muted-foreground">等 {m.affiliationCount} 个单位</span>
+              )}
             </div>
             <div className="truncate text-muted-foreground">
-              {[m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学院</Missing>}
+              {[m.affiliation?.school, m.affiliation?.department].filter(Boolean).join(" ") || (
+                <Missing>未填写学院</Missing>
+              )}
             </div>
           </div>
           <div

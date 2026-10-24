@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mentor_email\n         WHERE mentor_id = ? AND address NOT IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f11b6ba9738e6c098ea6772211c5071f23e200f73c1d4b9cace2bca7a1cd3648"
+}

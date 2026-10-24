@@ -3,7 +3,9 @@
 
 use std::num::NonZeroU32;
 
-use mentor::{Contact, ContactStatus, MatchState, MentorFields, MentorQuery, PAGE_SIZE};
+use mentor::{
+    Affiliation, Contact, ContactStatus, MatchState, MentorFields, MentorQuery, PAGE_SIZE,
+};
 use sqlx::SqlitePool;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
@@ -27,11 +29,19 @@ async fn names(
 async fn add(db: &SqlitePool, name: &str, university: &str, research: &str) -> i64 {
     let mentor = MentorFields {
         name: name.into(),
-        university: Some(university.into()),
+        affiliations: vec![at(university, None)],
         research: Some(research.into()),
         ..MentorFields::default()
     };
     mentor::create(db, &mentor, 0).await.unwrap()
+}
+
+fn at(university: &str, school: Option<&str>) -> Affiliation {
+    Affiliation {
+        university: Some(university.into()),
+        school: school.map(Into::into),
+        ..Affiliation::default()
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -145,4 +155,29 @@ async fn keyword_does_not_span_fields(db: SqlitePool) {
     add(&db, "李华", "华东师范大学", "视觉").await;
     add(&db, "李华东", "清华大学", "视觉").await;
     assert_eq!(names(&db, None, Some("李华东")).await, ["李华东"]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_mentor_is_found_by_any_name_and_affiliation(db: SqlitePool) {
+    let mentor = MentorFields {
+        name: "李静".into(),
+        aliases: vec!["Jing Li".into()],
+        affiliations: vec![
+            at("北京大学", Some("计算机学院")),
+            at("北京智源人工智能研究院", None),
+        ],
+        ..MentorFields::default()
+    };
+    mentor::create(&db, &mentor, 0).await.unwrap();
+    add(&db, "张伟", "清华大学", "三维重建").await;
+
+    assert_eq!(names(&db, None, Some("jing")).await, ["李静"]);
+    assert_eq!(names(&db, None, Some("智源")).await, ["李静"]);
+    assert_eq!(names(&db, None, Some("计算机")).await, ["李静"]);
+    let page = mentor::list(&db, &query(None, Some("李静"), 1))
+        .await
+        .unwrap();
+    let row = &page.mentors[0];
+    assert_eq!(row.affiliation, Some(at("北京大学", Some("计算机学院"))));
+    assert_eq!(row.affiliation_count, 2);
 }

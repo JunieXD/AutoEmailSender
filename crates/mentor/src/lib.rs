@@ -51,10 +51,9 @@ pub struct MentorPage {
 pub struct MentorRow {
     pub id: i64,
     pub name: String,
-    pub title: Option<String>,
-    pub university: Option<String>,
-    pub school: Option<String>,
-    pub department: Option<String>,
+    /// The first of the mentor's affiliations, the main one.
+    pub affiliation: Option<Affiliation>,
+    pub affiliation_count: i64,
     /// The start of the research description, enough for the two lines the list shows.
     pub research: Option<String>,
     pub match_state: MatchState,
@@ -98,17 +97,27 @@ pub enum Contact {
     },
 }
 
+/// Where a mentor works, and as what there (docs/data-model.md#导师). At least one is filled in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Affiliation {
+    pub university: Option<String>,
+    pub school: Option<String>,
+    pub department: Option<String>,
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MentorDetail {
     pub id: i64,
     pub name: String,
-    pub email: Option<String>,
-    pub title: Option<String>,
-    pub university: Option<String>,
-    pub school: Option<String>,
-    pub department: Option<String>,
-    pub homepage_url: Option<String>,
+    pub aliases: Vec<String>,
+    /// The first is the one mail goes to.
+    pub emails: Vec<String>,
+    /// The first is the main one.
+    pub affiliations: Vec<Affiliation>,
+    pub homepages: Vec<String>,
     /// The page the mentor was found on.
     pub source_url: Option<String>,
     pub research: Option<String>,
@@ -205,13 +214,17 @@ fn offset(page: NonZeroU32) -> i64 {
 /// The list rows for these mentors, in the given order.
 async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT m.id, m.name, m.title, m.university, m.school, m.department,
+        r#"SELECT m.id, m.name, a.university, a.school, a.department, a.title,
+                  (SELECT count(*) FROM mentor_affiliation WHERE mentor_id = m.id)
+                    AS "affiliation_count!: i64",
                   substr(d.research, 1, 120) AS "research?: String",
                   m.match_state AS "match_state: MatchColumn", m.match_score,
                   c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
                   c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
            FROM json_each(?) page
            JOIN mentor m ON m.id = page.value
+           LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id
+             AND a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = m.id)
            LEFT JOIN mentor_detail d ON d.mentor_id = m.id
            LEFT JOIN mentor_contact c ON c.mentor_id = m.id
            ORDER BY page.key"#,
@@ -233,10 +246,13 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
             Ok(MentorRow {
                 id: r.id,
                 name: r.name,
-                title: r.title,
-                university: r.university,
-                school: r.school,
-                department: r.department,
+                affiliation: (r.affiliation_count > 0).then_some(Affiliation {
+                    university: r.university,
+                    school: r.school,
+                    department: r.department,
+                    title: r.title,
+                }),
+                affiliation_count: r.affiliation_count,
                 research: r.research,
                 match_state,
                 contact: contact(
@@ -257,8 +273,7 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
 pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(r) = sqlx::query!(
-        r#"SELECT m.id, m.name, m.email, m.title, m.university, m.school, m.department,
-                  m.homepage_url, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
+        r#"SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
                   m.match_model, m.match_error,
                   d.research, d.papers AS "papers: Json<Vec<String>>", d.note, d.match_reason,
@@ -314,15 +329,39 @@ pub async fn get(db: &SqlitePool, id: i64) -> Result<Option<MentorDetail>, sqlx:
             error: r.match_error.ok_or_else(|| inconsistent(id))?,
         },
     };
+    let aliases = sqlx::query_scalar!(
+        "SELECT name FROM mentor_alias WHERE mentor_id = ? ORDER BY position",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let emails = sqlx::query_scalar!(
+        "SELECT address FROM mentor_email WHERE mentor_id = ? ORDER BY position",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let affiliations = sqlx::query_as!(
+        Affiliation,
+        "SELECT university, school, department, title FROM mentor_affiliation
+         WHERE mentor_id = ? ORDER BY position",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let homepages = sqlx::query_scalar!(
+        "SELECT url FROM mentor_homepage WHERE mentor_id = ? ORDER BY position",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     Ok(Some(MentorDetail {
         id: r.id,
         name: r.name,
-        email: r.email,
-        title: r.title,
-        university: r.university,
-        school: r.school,
-        department: r.department,
-        homepage_url: r.homepage_url,
+        aliases,
+        emails,
+        affiliations,
+        homepages,
         source_url: r.source_url,
         research: r.research,
         papers: r.papers.map(|Json(p)| p).unwrap_or_default(),
@@ -452,19 +491,20 @@ fn bigrams_of(word: &[char]) -> Vec<String> {
 /// query's tokens finds any field containing the query (docs/data-model.md#导师). Words are kept
 /// apart by a one-character token, which no query phrase contains, so a phrase never runs from the
 /// end of one word into the next.
-fn search_text(fields: &[Option<&str>]) -> String {
+fn search_text(fields: &[&str]) -> String {
     fields
         .iter()
-        .flatten()
         .flat_map(|f| words(f))
         .map(|w| bigrams_of(&w).join(" "))
         .collect::<Vec<_>>()
         .join(" 0 ")
 }
 
-/// The name's letters and digits as one-character tokens.
-fn name_chars(name: &str) -> String {
-    words(name)
+/// The letters and digits of the names as one-character tokens.
+fn name_chars(names: &[&str]) -> String {
+    names
+        .iter()
+        .flat_map(|n| words(n))
         .flatten()
         .map(String::from)
         .collect::<Vec<_>>()
@@ -476,41 +516,67 @@ fn name_chars(name: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct MentorForm {
     pub name: String,
-    pub title: String,
-    pub email: String,
-    pub university: String,
-    pub school: String,
-    pub department: String,
-    pub homepage_url: String,
+    pub aliases: Vec<String>,
+    pub emails: Vec<String>,
+    pub affiliations: Vec<Affiliation>,
+    pub homepages: Vec<String>,
     pub research: String,
 }
 
 impl MentorForm {
-    /// Trims every field, leaving blank ones empty, and checks those with a format. The error says
-    /// what to fix.
+    /// Trims every field and leaves out blank and repeated entries, keeping the order, and checks
+    /// those with a format. The error says what to fix.
     pub fn check(self) -> Result<MentorFields, String> {
-        fn text(s: String) -> Option<String> {
+        fn text(s: &str) -> Option<String> {
             let t = s.trim();
             (!t.is_empty()).then(|| t.to_owned())
         }
-        let name = text(self.name).ok_or("请填写姓名")?;
-        let email = text(self.email);
-        if email.as_deref().is_some_and(|e| !is_email(e)) {
-            return Err("邮箱地址格式不正确".into());
+        let name = text(&self.name).ok_or("请填写姓名")?;
+        let mut aliases = Vec::new();
+        for alias in self.aliases.iter().filter_map(|a| text(a)) {
+            if alias != name && !aliases.contains(&alias) {
+                aliases.push(alias);
+            }
         }
-        let homepage_url = text(self.homepage_url);
-        if homepage_url.as_deref().is_some_and(|u| !is_web_page(u)) {
-            return Err("主页地址不正确，需以 http:// 或 https:// 开头".into());
+        let mut emails: Vec<String> = Vec::new();
+        for email in self.emails.iter().filter_map(|e| text(e)) {
+            if !is_email(&email) {
+                return Err(format!("邮箱地址“{email}”格式不正确"));
+            }
+            // As the database compares them.
+            if !emails.iter().any(|e| e.eq_ignore_ascii_case(&email)) {
+                emails.push(email);
+            }
+        }
+        let field = |f: &Option<String>| f.as_deref().and_then(text);
+        let mut affiliations = Vec::new();
+        for a in &self.affiliations {
+            let a = Affiliation {
+                university: field(&a.university),
+                school: field(&a.school),
+                department: field(&a.department),
+                title: field(&a.title),
+            };
+            if a != Affiliation::default() && !affiliations.contains(&a) {
+                affiliations.push(a);
+            }
+        }
+        let mut homepages = Vec::new();
+        for url in self.homepages.iter().filter_map(|u| text(u)) {
+            if !is_web_page(&url) {
+                return Err(format!("主页“{url}”不正确，需以 http:// 或 https:// 开头"));
+            }
+            if !homepages.contains(&url) {
+                homepages.push(url);
+            }
         }
         Ok(MentorFields {
             name,
-            email,
-            title: text(self.title),
-            university: text(self.university),
-            school: text(self.school),
-            department: text(self.department),
-            homepage_url,
-            research: text(self.research),
+            aliases,
+            emails,
+            affiliations,
+            homepages,
+            research: text(&self.research),
         })
     }
 }
@@ -546,23 +612,22 @@ fn is_web_page(s: &str) -> bool {
     })
 }
 
-/// A mentor's own fields, checked; blank ones are None.
+/// A mentor's own fields, checked: blank ones are None or left out of their lists.
 #[derive(Debug, Default)]
 pub struct MentorFields {
     pub name: String,
-    pub email: Option<String>,
-    pub title: Option<String>,
-    pub university: Option<String>,
-    pub school: Option<String>,
-    pub department: Option<String>,
-    pub homepage_url: Option<String>,
+    pub aliases: Vec<String>,
+    pub emails: Vec<String>,
+    pub affiliations: Vec<Affiliation>,
+    pub homepages: Vec<String>,
     pub research: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum SaveError {
-    /// Another mentor, perhaps one in the trash, already has the email.
+    /// Another mentor, perhaps one in the trash, already has the address.
     EmailTaken {
+        address: String,
         name: String,
         trashed: bool,
     },
@@ -593,25 +658,14 @@ pub async fn create<'c>(
     now: i64,
 ) -> Result<i64, SaveError> {
     let mut tx = conn.begin().await?;
-    let inserted = sqlx::query_scalar!(
-        "INSERT INTO mentor (name, email, title, university, school, department, homepage_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    let id = sqlx::query_scalar!(
+        "INSERT INTO mentor (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id",
         mentor.name,
-        mentor.email,
-        mentor.title,
-        mentor.university,
-        mentor.school,
-        mentor.department,
-        mentor.homepage_url,
         now,
         now,
     )
     .fetch_one(&mut *tx)
-    .await;
-    let id = match inserted {
-        Ok(id) => id,
-        Err(e) => return Err(save_error(&mut tx, e, mentor, None).await),
-    };
+    .await?;
     sqlx::query!(
         "INSERT INTO mentor_detail (mentor_id, research) VALUES (?, ?)",
         id,
@@ -619,6 +673,7 @@ pub async fn create<'c>(
     )
     .execute(&mut *tx)
     .await?;
+    save_lists(&mut tx, id, mentor).await?;
     index(&mut tx, id, mentor).await?;
     tx.commit().await?;
     Ok(id)
@@ -650,26 +705,14 @@ pub async fn update(
     now: i64,
 ) -> Result<bool, SaveError> {
     let mut tx = db.begin().await?;
-    let updated = sqlx::query!(
-        "UPDATE mentor SET name = ?, email = ?, title = ?, university = ?, school = ?, department = ?,
-           homepage_url = ?, updated_at = ?
-         WHERE id = ?",
+    let done = sqlx::query!(
+        "UPDATE mentor SET name = ?, updated_at = ? WHERE id = ?",
         mentor.name,
-        mentor.email,
-        mentor.title,
-        mentor.university,
-        mentor.school,
-        mentor.department,
-        mentor.homepage_url,
         now,
         id,
     )
     .execute(&mut *tx)
-    .await;
-    let done = match updated {
-        Ok(done) => done,
-        Err(e) => return Err(save_error(&mut tx, e, mentor, Some(id)).await),
-    };
+    .await?;
     if done.rows_affected() == 0 {
         return Ok(false);
     }
@@ -680,42 +723,102 @@ pub async fn update(
     )
     .execute(&mut *tx)
     .await?;
+    save_lists(&mut tx, id, mentor).await?;
     index(&mut tx, id, mentor).await?;
     tx.commit().await?;
     Ok(true)
 }
 
-/// Explains a failed insert or update. The unique index on email is the only one these statements
-/// can break, so the user learns which mentor has the address. Writing first and explaining
-/// afterwards keeps the transaction a plain write: reading before writing would make it fail at
-/// once instead of waiting whenever another save commits in between.
-async fn save_error(
+/// Writes the mentor's lists in the given order. An address the mentor keeps keeps its row, so
+/// that it is not looked up in the mailboxes again; one another mentor has fails the save.
+async fn save_lists(
     tx: &mut SqliteConnection,
-    error: sqlx::Error,
+    id: i64,
     mentor: &MentorFields,
-    id: Option<i64>,
-) -> SaveError {
-    let unique = error
-        .as_database_error()
-        .is_some_and(|e| e.is_unique_violation());
-    let Some(email) = mentor.email.as_deref().filter(|_| unique) else {
-        return error.into();
-    };
-    // The column's NOCASE collation applies, as it does for the unique index.
-    let owner = sqlx::query!(
-        r#"SELECT name, trashed_at IS NOT NULL AS "trashed!: bool"
-           FROM mentor WHERE email = ? AND id IS NOT ?"#,
-        email,
-        id
+) -> Result<(), SaveError> {
+    let emails = Json(&mentor.emails);
+    sqlx::query!(
+        "DELETE FROM mentor_email
+         WHERE mentor_id = ? AND address NOT IN (SELECT value FROM json_each(?))",
+        id,
+        emails,
     )
-    .fetch_optional(&mut *tx)
+    .execute(&mut *tx)
+    .await?;
+    for (position, address) in (0_i64..).zip(&mentor.emails) {
+        let saved = sqlx::query!(
+            "INSERT INTO mentor_email (address, mentor_id, position) VALUES (?, ?, ?)
+             ON CONFLICT (address) DO UPDATE SET address = excluded.address, position = excluded.position
+             WHERE mentor_id = excluded.mentor_id",
+            address,
+            id,
+            position,
+        )
+        .execute(&mut *tx)
+        .await?;
+        if saved.rows_affected() == 0 {
+            return Err(taken(tx, address).await);
+        }
+    }
+    sqlx::query!("DELETE FROM mentor_affiliation WHERE mentor_id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    let affiliations = Json(&mentor.affiliations);
+    sqlx::query!(
+        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title)
+         SELECT ?1, j.key, j.value ->> 'university', j.value ->> 'school',
+           j.value ->> 'department', j.value ->> 'title'
+         FROM json_each(?2) j",
+        id,
+        affiliations,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!("DELETE FROM mentor_homepage WHERE mentor_id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    let homepages = Json(&mentor.homepages);
+    sqlx::query!(
+        "INSERT INTO mentor_homepage (mentor_id, position, url)
+         SELECT ?1, j.key, j.value FROM json_each(?2) j",
+        id,
+        homepages,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!("DELETE FROM mentor_alias WHERE mentor_id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    let aliases = Json(&mentor.aliases);
+    sqlx::query!(
+        "INSERT INTO mentor_alias (mentor_id, position, name)
+         SELECT ?1, j.key, j.value FROM json_each(?2) j",
+        id,
+        aliases,
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// Says which mentor has the address. Writing first and explaining afterwards keeps the
+/// transaction a plain write: reading before writing would make it fail at once instead of waiting
+/// whenever another save commits in between.
+async fn taken(tx: &mut SqliteConnection, address: &str) -> SaveError {
+    // The column's NOCASE collation applies, as it does for the key.
+    let owner = sqlx::query!(
+        r#"SELECT m.name, m.trashed_at IS NOT NULL AS "trashed!: bool"
+           FROM mentor_email e JOIN mentor m ON m.id = e.mentor_id WHERE e.address = ?"#,
+        address
+    )
+    .fetch_one(tx)
     .await;
     match owner {
-        Ok(Some(o)) => SaveError::EmailTaken {
+        Ok(o) => SaveError::EmailTaken {
+            address: address.to_owned(),
             name: o.name,
             trashed: o.trashed,
         },
-        Ok(None) => error.into(),
         Err(e) => e.into(),
     }
 }
@@ -726,21 +829,30 @@ async fn index(
     id: i64,
     mentor: &MentorFields,
 ) -> Result<(), sqlx::Error> {
-    let text = search_text(&[
-        Some(&mentor.name),
-        mentor.university.as_deref(),
-        mentor.school.as_deref(),
-        mentor.department.as_deref(),
-        mentor.research.as_deref(),
-    ]);
+    let names: Vec<&str> = std::iter::once(&mentor.name)
+        .chain(&mentor.aliases)
+        .map(String::as_str)
+        .collect();
+    let places = mentor.affiliations.iter().flat_map(|a| {
+        [&a.university, &a.school, &a.department]
+            .into_iter()
+            .filter_map(Option::as_deref)
+    });
+    let fields: Vec<&str> = names
+        .iter()
+        .copied()
+        .chain(places)
+        .chain(mentor.research.as_deref())
+        .collect();
+    let (body, name) = (search_text(&fields), name_chars(&names));
     sqlx::query!("DELETE FROM mentor_search WHERE rowid = ?", id)
         .execute(&mut *tx)
         .await?;
     sqlx::query!(
         "INSERT INTO mentor_search (rowid, body, name) VALUES (?, ?, ?)",
         id,
-        text,
-        name_chars(&mentor.name),
+        body,
+        name,
     )
     .execute(&mut *tx)
     .await?;

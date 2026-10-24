@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT address FROM mentor_email WHERE mentor_id = ? ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b79acdaea1333ff11c37a8942b9f0582e8c1a949d97826dc24cdbe942e4fee26"
+}

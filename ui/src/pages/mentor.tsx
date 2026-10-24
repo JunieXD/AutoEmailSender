@@ -8,7 +8,7 @@ import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Correspondence } from "@/components/correspondence";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, dropDrafts, MATCH_LABEL, Missing, refreshMentors } from "@/components/mentor";
+import { Avatar, ContactLabel, dropDrafts, MATCH_LABEL, Missing, placeOf, refreshMentors } from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -141,6 +141,7 @@ function Header({
 }) {
   const router = useRouter();
   const canGoBack = useCanGoBack();
+  const main = m.affiliations.at(0);
   return (
     <header className="flex items-center gap-3 border-b border-border px-5 py-3.5 phone:px-3">
       <Button
@@ -156,10 +157,10 @@ function Header({
       <div className="min-w-0 grow">
         <h1 className="truncate text-lg font-semibold">
           {m.name}
-          {m.title && <span className="ml-1.5 text-sm font-normal text-muted-foreground">{m.title}</span>}
+          {main?.title && <span className="ml-1.5 text-sm font-normal text-muted-foreground">{main.title}</span>}
         </h1>
         <p className="truncate text-sm text-muted-foreground">
-          {[m.university, m.school, m.department].filter(Boolean).join(" ") || <Missing>未填写学校</Missing>}
+          {(main && placeOf(main)) || <Missing>未填写学校</Missing>}
         </p>
       </div>
       <ContactLabel contact={m.contact} className="text-sm phone:hidden" />
@@ -228,10 +229,42 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
         />
       )}
       <dl className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3 gap-y-2 [&_dd]:wrap-anywhere [&_dt]:text-muted-foreground">
+        {m.aliases.length > 0 && (
+          <>
+            <dt>别名</dt>
+            <dd>{m.aliases.join("、")}</dd>
+          </>
+        )}
         <dt>邮箱</dt>
-        <dd>{m.email ?? <Missing>未填写</Missing>}</dd>
+        <dd>
+          {m.emails.length === 0 && <Missing>未填写</Missing>}
+          {m.emails.map((email, i) => (
+            <div key={email}>
+              {email}
+              {i === 0 && m.emails.length > 1 && <span className="ml-1.5 text-sm text-muted-foreground">发信</span>}
+            </div>
+          ))}
+        </dd>
+        {/* The main one heads the page. */}
+        {m.affiliations.length > 1 && (
+          <>
+            <dt>单位</dt>
+            <dd>
+              {m.affiliations.map((a) => (
+                <div key={JSON.stringify(a)}>{[placeOf(a), a.title].filter(Boolean).join("，")}</div>
+              ))}
+            </dd>
+          </>
+        )}
         <dt>主页</dt>
-        <dd>{m.homepageUrl ? <ExternalLink url={m.homepageUrl} /> : <Missing>未填写</Missing>}</dd>
+        <dd>
+          {m.homepages.length === 0 && <Missing>未填写</Missing>}
+          {m.homepages.map((url) => (
+            <div key={url}>
+              <ExternalLink url={url} />
+            </div>
+          ))}
+        </dd>
         <dt>研究方向</dt>
         <dd>{m.research ?? <Missing>未填写</Missing>}</dd>
         {m.sourceUrl && (

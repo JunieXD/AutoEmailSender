@@ -32,8 +32,14 @@ const COMPOUND_SURNAMES: [&str; 20] = [
     "夏侯", "轩辕", "令狐", "钟离", "端木", "南宫", "独孤", "呼延",
 ];
 
-/// What is wrong with a letter to the mentor named `mentor`.
-pub fn letter(mentor: &str, subject: &str, body_md: &str, attached: bool) -> Vec<Problem> {
+/// What is wrong with a letter to the mentor named `mentor`, who also goes by `aliases`.
+pub fn letter(
+    mentor: &str,
+    aliases: &[String],
+    subject: &str,
+    body_md: &str,
+    attached: bool,
+) -> Vec<Problem> {
     let mut problems: Vec<Problem> = template::PLACEHOLDERS
         .into_iter()
         .filter(|name| {
@@ -42,7 +48,10 @@ pub fn letter(mentor: &str, subject: &str, body_md: &str, attached: bool) -> Vec
         })
         .map(|name| Problem::Placeholder { name })
         .collect();
-    if !body_md.trim().is_empty() && !addresses(body_md, mentor) {
+    let addressed = std::iter::once(mentor)
+        .chain(aliases.iter().map(String::as_str))
+        .any(|name| addresses(body_md, name));
+    if !body_md.trim().is_empty() && !addressed {
         problems.push(Problem::NoSalutation {
             salutation: salutation(mentor),
         });
@@ -132,6 +141,7 @@ mod tests {
         assert_eq!(
             letter(
                 "雷娜",
+                &[],
                 "{学院}申请",
                 "雷老师：\n\n我在{学院}，{我的姓名}。",
                 false
@@ -157,8 +167,13 @@ mod tests {
             // Nothing to send yet, so nothing to address.
             ("雷娜", " \n"),
         ] {
-            assert_eq!(letter(name, "申请", body, false), [], "{body}");
+            assert_eq!(letter(name, &[], "申请", body, false), [], "{body}");
         }
+        let aliases = ["Na Lei".to_owned()];
+        assert_eq!(
+            letter("雷娜", &aliases, "申请", "Dear Prof. Lei,", false),
+            []
+        );
     }
 
     #[test]
@@ -178,7 +193,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                letter(name, "申请", body, false),
+                letter(name, &[], "申请", body, false),
                 [Problem::NoSalutation {
                     salutation: salutation.into()
                 }],
@@ -190,11 +205,15 @@ mod tests {
     #[test]
     fn a_letter_that_speaks_of_an_attachment_has_one() {
         let body = "雷老师：\n\n随信附上我的简历。";
-        assert_eq!(letter("雷娜", "申请", body, false), [Problem::NoAttachment]);
-        assert_eq!(letter("雷娜", "申请", body, true), []);
+        assert_eq!(
+            letter("雷娜", &[], "申请", body, false),
+            [Problem::NoAttachment]
+        );
+        assert_eq!(letter("雷娜", &[], "申请", body, true), []);
         assert_eq!(
             letter(
                 "John Smith",
+                &[],
                 "Application",
                 "Dear Prof. Smith, my CV is Attached.",
                 false
