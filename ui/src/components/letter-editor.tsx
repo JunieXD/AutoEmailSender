@@ -92,13 +92,13 @@ export function LetterEditor({
   useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
   return (
     <div className="flex flex-col gap-1.5">
-      <Toolbar editor={editor} placeholders={placeholders} />
+      <Toolbar editor={editor} placeholders={placeholders} disabled={disabled} />
       <EditorContent editor={editor} />
     </div>
   );
 }
 
-function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: string[] }) {
+function Toolbar({ editor, placeholders, disabled }: { editor: Editor; placeholders: string[]; disabled: boolean }) {
   const active = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -117,6 +117,7 @@ function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: strin
         variant="ghost"
         size="icon"
         className={mark}
+        disabled={disabled}
         aria-label="加粗"
         aria-pressed={active.bold}
         onClick={() => editor.chain().focus().toggleBold().run()}
@@ -128,18 +129,20 @@ function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: strin
         variant="ghost"
         size="icon"
         className={mark}
+        disabled={disabled}
         aria-label="斜体"
         aria-pressed={active.italic}
         onClick={() => editor.chain().focus().toggleItalic().run()}
       >
         <Italic strokeWidth={1.8} />
       </Button>
-      <LinkButton editor={editor} active={active.link} className={mark} />
+      <LinkButton editor={editor} active={active.link} className={mark} disabled={disabled} />
       <Button
         type="button"
         variant="ghost"
         size="icon"
         className={mark}
+        disabled={disabled}
         aria-label="无序列表"
         aria-pressed={active.bulletList}
         onClick={() => editor.chain().focus().toggleBulletList().run()}
@@ -151,13 +154,14 @@ function Toolbar({ editor, placeholders }: { editor: Editor; placeholders: strin
         variant="ghost"
         size="icon"
         className={mark}
+        disabled={disabled}
         aria-label="有序列表"
         aria-pressed={active.orderedList}
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
       >
         <ListOrdered strokeWidth={1.8} />
       </Button>
-      <PlaceholderMenu editor={editor} placeholders={placeholders} />
+      <PlaceholderMenu editor={editor} placeholders={placeholders} disabled={disabled} />
     </div>
   );
 }
@@ -170,7 +174,17 @@ function linkAddress(typed: string): string {
 }
 
 /** Asks for the address; with nothing selected, the address as typed becomes the linked text. */
-function LinkButton({ editor, active, className }: { editor: Editor; active: boolean; className: string }) {
+function LinkButton({
+  editor,
+  active,
+  className,
+  disabled,
+}: {
+  editor: Editor;
+  active: boolean;
+  className: string;
+  disabled: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [href, setHref] = useState("");
   const [refused, setRefused] = useState(false);
@@ -200,6 +214,7 @@ function LinkButton({ editor, active, className }: { editor: Editor; active: boo
             variant="ghost"
             size="icon"
             className={className}
+            disabled={disabled}
             aria-label="链接"
             aria-pressed={active}
           />
@@ -244,11 +259,19 @@ function LinkButton({ editor, active, className }: { editor: Editor; active: boo
   );
 }
 
-function PlaceholderMenu({ editor, placeholders }: { editor: Editor; placeholders: string[] }) {
+function PlaceholderMenu({
+  editor,
+  placeholders,
+  disabled,
+}: {
+  editor: Editor;
+  placeholders: string[];
+  disabled: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" />}>
+      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled} />}>
         <Braces strokeWidth={1.8} />
         插入占位符
       </PopoverTrigger>
