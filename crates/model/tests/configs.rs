@@ -51,6 +51,29 @@ async fn the_earliest_model_is_the_default_until_another_is_chosen(db: SqlitePoo
     assert!(!profile::set_default_model(&db, second).await.unwrap());
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn what_the_user_agreed_to_holds_only_for_the_same_provider(db: SqlitePool) {
+    let deepseek = form("deepseek", "").check().unwrap();
+    let id = model::create(&db, &deepseek, "k", 0).await.unwrap();
+    let agreed = async || model::chosen(&db).await.unwrap().unwrap().agreed;
+    assert!(!agreed().await);
+
+    assert!(model::agree(&db, id).await.unwrap());
+    assert!(agreed().await);
+    // Another model of the same provider was agreed to as well.
+    let mut renamed = form("deepseek", "");
+    renamed.model = "deepseek-reasoner".into();
+    model::update(&db, id, &renamed.check().unwrap(), "k")
+        .await
+        .unwrap();
+    assert!(agreed().await);
+    let elsewhere = form("custom", "https://api.example.com/v1")
+        .check()
+        .unwrap();
+    model::update(&db, id, &elsewhere, "k").await.unwrap();
+    assert!(!agreed().await);
+}
+
 #[test]
 fn a_custom_address_must_be_a_web_address() {
     let source = Source::check("custom", " https://api.example.com/v1/ ").unwrap();

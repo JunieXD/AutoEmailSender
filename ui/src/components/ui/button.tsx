@@ -11,6 +11,8 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary-hover",
         quiet: "bg-muted hover:bg-press",
         ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
+        // docs/ui.md#颜色: what AI does stands out in the brand's colours.
+        ai: "bg-selected text-brand-text hover:bg-[color-mix(in_srgb,var(--selected)_88%,var(--primary))]",
       },
       size: {
         default: "h-[38px] px-4",

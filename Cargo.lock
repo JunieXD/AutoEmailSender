@@ -134,6 +134,7 @@ dependencies = [
  "template",
  "tracing",
  "ts-rs",
+ "writing",
 ]
 
 [[package]]
@@ -6999,6 +7000,24 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "writing"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "db",
+ "material",
+ "mentor",
+ "model",
+ "net",
+ "profile",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "ts-rs",
+]
 
 [[package]]
 name = "wry"

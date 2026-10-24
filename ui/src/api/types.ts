@@ -38,6 +38,8 @@ export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, ht
  */
 attachments: Array<number>, };
 
+export type Letter = { subject: string, bodyMd: string, };
+
 export type LetterFont = "song" | "hei";
 
 export type LetterStyle = { 
@@ -145,7 +147,11 @@ baseUrl: string | null, model: string,
 /**
  * The one AI features use: the user's choice, or else the earliest added.
  */
-isDefault: boolean, };
+isDefault: boolean, 
+/**
+ * The user agreed to what AI features send to its provider.
+ */
+agreed: boolean, };
 
 export type ModelConfigEdit = { id: number, 
 /**
@@ -334,6 +340,7 @@ export interface Operations {
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };
+  writeLetter: { input: FirstDraftEdit; output: Letter };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
   listEmails: { input: MentorId; output: Array<Email> };
@@ -345,6 +352,7 @@ export interface Operations {
   updateModelConfig: { input: ModelConfigEdit; output: null };
   deleteModelConfig: { input: ModelConfigId; output: null };
   setDefaultModel: { input: ModelConfigId; output: null };
+  agreeModel: { input: ModelConfigId; output: null };
   listProviderModels: { input: ModelSource; output: Array<string> };
   testModel: { input: ModelTest; output: null };
 }

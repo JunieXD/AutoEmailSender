@@ -79,6 +79,24 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<Material>, sqlx::Error> {
     .await
 }
 
+/// A material's text, as writing draws on it.
+#[derive(Debug)]
+pub struct Reference {
+    pub file_name: String,
+    pub text: String,
+}
+
+/// The materials the user writes letters from, oldest first.
+pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error> {
+    // The table lets only a material with text be used for writing.
+    sqlx::query_as!(
+        Reference,
+        r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE for_writing = 1 ORDER BY id"#
+    )
+    .fetch_all(db)
+    .await
+}
+
 /// The text of a material: None when there is no such material, Some(None) when it has none.
 pub async fn text(db: &SqlitePool, id: i64) -> Result<Option<Option<String>>, sqlx::Error> {
     sqlx::query_scalar!("SELECT extracted_text FROM material WHERE id = ?", id)

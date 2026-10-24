@@ -8,8 +8,9 @@ use ts_rs::TS;
 mod client;
 mod error;
 pub mod providers;
+pub mod usage;
 
-pub use client::{Access, list_models, test};
+pub use client::{Access, Answer, ask, list_models, test};
 pub use error::ModelError;
 
 /// A model configuration as the settings show it. Its API key never leaves the core.
@@ -26,6 +27,8 @@ pub struct ModelConfig {
     pub model: String,
     /// The one AI features use: the user's choice, or else the earliest added.
     pub is_default: bool,
+    /// The user agreed to what AI features send to its provider.
+    pub agreed: bool,
 }
 
 /// A model configuration as the user entered it, without its API key; `check` validates it.
@@ -137,7 +140,8 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<ModelConfig>, sqlx::Error> {
         ModelConfig,
         r#"SELECT id, name, provider, base_url, model,
              id = coalesce((SELECT default_model_config_id FROM profile),
-                           (SELECT min(id) FROM model_config)) AS "is_default!: bool"
+                           (SELECT min(id) FROM model_config)) AS "is_default!: bool",
+             agreed AS "agreed: bool"
            FROM model_config ORDER BY id"#
     )
     .fetch_all(db)
@@ -152,8 +156,8 @@ pub async fn create(
 ) -> Result<i64, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "INSERT INTO model_config (name, provider, base_url, model, api_key, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO model_config (name, provider, base_url, model, api_key, agreed, created_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?)",
         fields.name,
         provider,
         base_url,
@@ -166,7 +170,8 @@ pub async fn create(
     Ok(row.last_insert_rowid())
 }
 
-/// False when there is no such configuration.
+/// False when there is no such configuration. What the user agreed to stays agreed only while the
+/// provider and address stay the same.
 pub async fn update(
     db: &SqlitePool,
     id: i64,
@@ -175,8 +180,11 @@ pub async fn update(
 ) -> Result<bool, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "UPDATE model_config SET name = ?, provider = ?, base_url = ?, model = ?, api_key = ?
+        "UPDATE model_config SET agreed = agreed AND provider = ? AND base_url IS ?,
+           name = ?, provider = ?, base_url = ?, model = ?, api_key = ?
          WHERE id = ?",
+        provider,
+        base_url,
         fields.name,
         provider,
         base_url,
@@ -187,6 +195,48 @@ pub async fn update(
     .execute(db)
     .await?;
     Ok(row.rows_affected() > 0)
+}
+
+/// Records that the user agreed to what AI features send to the configuration's provider; false
+/// when there is no such configuration.
+pub async fn agree(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query!("UPDATE model_config SET agreed = 1 WHERE id = ?", id)
+        .execute(db)
+        .await?;
+    Ok(row.rows_affected() > 0)
+}
+
+/// The configuration AI features call, with its API key.
+#[derive(Debug)]
+pub struct Chosen {
+    pub id: i64,
+    pub model: String,
+    pub agreed: bool,
+    pub access: Access,
+}
+
+/// The default configuration, as `list` marks it; None when there is none.
+pub async fn chosen(db: &SqlitePool) -> Result<Option<Chosen>, sqlx::Error> {
+    let Some(row) = sqlx::query!(
+        r#"SELECT id, provider, base_url, model, api_key, agreed AS "agreed: bool"
+           FROM model_config
+           WHERE id = coalesce((SELECT default_model_config_id FROM profile),
+                               (SELECT min(id) FROM model_config))"#
+    )
+    .fetch_optional(db)
+    .await?
+    else {
+        return Ok(None);
+    };
+    // Only a provider this version no longer knows fails.
+    let source = Source::check(&row.provider, row.base_url.as_deref().unwrap_or_default())
+        .map_err(|e| sqlx::Error::Decode(e.into()))?;
+    Ok(Some(Chosen {
+        id: row.id,
+        model: row.model,
+        agreed: row.agreed,
+        access: source.access(row.api_key),
+    }))
 }
 
 /// Deletes a configuration; what used it keeps the model's name (docs/data-model.md#删除).

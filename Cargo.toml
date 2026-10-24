@@ -21,6 +21,7 @@ model = { path = "crates/model" }
 profile = { path = "crates/profile" }
 send = { path = "crates/send" }
 template = { path = "crates/template" }
+writing = { path = "crates/writing" }
 net = { path = "crates/net" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT purpose, input_tokens, cached_tokens, output_tokens FROM usage ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "purpose",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "usage",
+            "name": "purpose"
+          }
+        }
+      },
+      {
+        "name": "input_tokens",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "usage",
+            "name": "input_tokens"
+          }
+        }
+      },
+      {
+        "name": "cached_tokens",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "usage",
+            "name": "cached_tokens"
+          }
+        }
+      },
+      {
+        "name": "output_tokens",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "usage",
+            "name": "output_tokens"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "48cab29762a4bb32d3db15d05451f169ce0f015366cd59d126e6d9cbe5917e24"
+}

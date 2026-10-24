@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default,\n                 created_at, extracted_text)\n               VALUES (?, 1, 0, ?, 0, 0, ?) RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e0e925c4faceba266d498e58c2e7294b9a81a549bef965db8c43b8ecc9f2ce2f"
+}
