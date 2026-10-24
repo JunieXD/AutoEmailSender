@@ -46,10 +46,10 @@ async fn a_material_keeps_its_file_and_text_until_deleted(db: SqlitePool) {
     );
     assert_eq!(std::fs::read(dir.path().join(id.to_string())).unwrap(), pdf);
 
-    assert!(material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
     assert!(material::list(&db).await.unwrap().is_empty());
     assert!(files(dir.path()).is_empty());
-    assert!(!material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(!material::delete(&db, dir.path(), id, 2).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -74,13 +74,13 @@ async fn a_scan_without_text_can_only_be_attached(db: SqlitePool) {
     let m = &material::list(&db).await.unwrap()[0];
     assert!(!m.has_text && !m.for_matching && !m.for_writing);
     assert!(
-        material::set_purpose(&db, id, Purpose::AttachByDefault, true)
+        material::set_purpose(&db, id, Purpose::AttachByDefault, true, 2)
             .await
             .unwrap()
     );
     assert!(material::list(&db).await.unwrap()[0].attach_by_default);
     assert!(
-        material::set_purpose(&db, id, Purpose::Writing, true)
+        material::set_purpose(&db, id, Purpose::Writing, true, 2)
             .await
             .is_err()
     );
@@ -140,13 +140,70 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
     );
 
     assert!(matches!(
-        material::delete(&db, dir.path(), id).await,
+        material::delete(&db, dir.path(), id, 2).await,
         Err(Error::InUse)
     ));
     let email = email::list(&db, mentor).await.unwrap().remove(0);
     assert!(email::withdraw(&db, email.id, 3).await.unwrap());
     // Back to a draft, which loses the attachment along with the material.
-    assert!(material::delete(&db, dir.path(), id).await.unwrap());
+    assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
     let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
     assert!(draft.attachments.is_empty());
+}
+
+async fn basis(db: &SqlitePool) -> Option<i64> {
+    sqlx::query_scalar("SELECT match_basis_changed_at FROM profile")
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn only_changes_to_matching_material_advance_the_basis_time(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let scan = material::add(&db, dir.path(), "扫描.pdf", fixture("scan.pdf"), 10)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, None);
+    let id = material::add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 20)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(20));
+    material::set_purpose(&db, id, Purpose::Writing, false, 30)
+        .await
+        .unwrap();
+    material::set_purpose(&db, id, Purpose::Matching, true, 40)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(20));
+    material::set_purpose(&db, id, Purpose::Matching, false, 50)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(50));
+    material::set_purpose(&db, id, Purpose::Matching, true, 60)
+        .await
+        .unwrap();
+    assert_eq!(basis(&db).await, Some(60));
+    material::delete(&db, dir.path(), scan, 70).await.unwrap();
+    assert_eq!(basis(&db).await, Some(60));
+    material::delete(&db, dir.path(), id, 80).await.unwrap();
+    assert_eq!(basis(&db).await, Some(80));
+    let id = material::add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 90)
+        .await
+        .unwrap();
+    material::set_purpose(&db, id, Purpose::Matching, false, 100)
+        .await
+        .unwrap();
+    material::delete(&db, dir.path(), id, 110).await.unwrap();
+    assert_eq!(basis(&db).await, Some(100));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn long_material_is_marked_and_truncated_by_unicode_character(db: SqlitePool) {
+    let text = "中😀".repeat(5001);
+    sqlx::query("INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at, extracted_text) VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)")
+        .bind(&text).execute(&db).await.unwrap();
+    assert!(material::list(&db).await.unwrap()[0].exceeds_ai_limit);
+    assert_eq!(material::for_ai(&text).chars().count(), 10_000);
+    assert_eq!(material::for_ai("短文"), "短文");
 }

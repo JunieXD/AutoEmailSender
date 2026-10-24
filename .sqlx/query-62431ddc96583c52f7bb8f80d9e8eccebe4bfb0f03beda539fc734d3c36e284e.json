@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET name = ?1, research_interests = ?2, rewrite_preference = ?3,\n           match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN ?4\n                                        ELSE match_basis_changed_at END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "62431ddc96583c52f7bb8f80d9e8eccebe4bfb0f03beda539fc734d3c36e284e"
+}

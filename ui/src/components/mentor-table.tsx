@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useEffectEvent } from "react";
-import type { MatchState, MentorRow } from "@/api/types";
-import { Avatar, ContactLabel, contactDetail, MATCH_LABEL, Missing } from "@/components/mentor";
+import type { MatchSummary, MentorRow } from "@/api/types";
+import { Avatar, ContactLabel, contactDetail, BASIS_CHANGED, Missing } from "@/components/mentor";
 import { TagChip } from "@/components/tags";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -148,19 +148,34 @@ export function MentorTable({
   );
 }
 
-function Match({ state }: { state: MatchState }) {
-  if (state.state === "done") {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="w-6 font-medium">{state.score}</span>
-        <span className="h-1 w-14 overflow-hidden rounded-full bg-muted cards:w-10">
-          <span className="block h-full rounded-full bg-muted-foreground" style={{ width: `${state.score}%` }} />
+function Match({ state: { result, state } }: { state: MatchSummary }) {
+  return (
+    <div className="relative z-10 flex flex-col gap-0.5 text-sm">
+      {result && (
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium tabular-nums">{result.score}</span>
+          {result.basisChanged && (
+            <span className="size-1.5 rounded-full bg-faint" title={BASIS_CHANGED} aria-label={BASIS_CHANGED} />
+          )}
+          {!state && (
+            <span className="h-1 w-12 overflow-hidden rounded-full bg-muted cards:hidden">
+              <span className="block h-full rounded-full bg-muted-foreground" style={{ width: `${result.score}%` }} />
+            </span>
+          )}
+        </div>
+      )}
+      {state ? (
+        <span
+          title={state.state === "failed" ? state.error : undefined}
+          className={state.state === "failed" ? "text-warning" : "text-muted-foreground"}
+        >
+          {state.state === "queued" ? "排队中" : state.state === "running" ? "分析中" : "失败"}
         </span>
-      </div>
-    );
-  }
-  const [label, color] = MATCH_LABEL[state.state];
-  return <span className={`text-sm ${color}`}>{label}</span>;
+      ) : (
+        !result && <Missing>未分析</Missing>
+      )}
+    </div>
+  );
 }
 
 const pageCount = (total: number) => Math.max(1, Math.ceil(total / PAGE_SIZE));

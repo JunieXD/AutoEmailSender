@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET match_paused_at = ?1, match_pause_reason = ?2 WHERE match_paused_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e76352b2331b707245f285a6a9e7a59c26bbef5bef7466cc7b635d2f5c5a5c60"
+}

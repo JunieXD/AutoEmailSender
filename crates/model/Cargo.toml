@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+httpdate = "1.0.3"
 net.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde.workspace = true

@@ -10,6 +10,17 @@ use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
 
+/// The most Unicode characters AI reads from each material.
+pub const AI_TEXT_LIMIT: usize = 10_000;
+
+/// Unicode characters, without cutting a character in the middle.
+pub fn for_ai(text: &str) -> &str {
+    &text[..text
+        .char_indices()
+        .nth(AI_TEXT_LIMIT)
+        .map_or(text.len(), |(i, _)| i)]
+}
+
 /// The largest file a material may be, in bytes.
 pub const MAX_SIZE: usize = 20 * 1024 * 1024;
 
@@ -22,6 +33,7 @@ pub struct Material {
     pub size: i64,
     /// False for a scan, which can only be attached.
     pub has_text: bool,
+    pub exceeds_ai_limit: bool,
     pub for_matching: bool,
     pub for_writing: bool,
     pub attach_by_default: bool,
@@ -71,9 +83,11 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<Material>, sqlx::Error> {
     sqlx::query_as!(
         Material,
         r#"SELECT id, file_name, size, extracted_text IS NOT NULL AS "has_text: bool",
+             coalesce(length(extracted_text) > ?, 0) AS "exceeds_ai_limit!: bool",
              for_matching AS "for_matching: bool", for_writing AS "for_writing: bool",
              attach_by_default AS "attach_by_default: bool"
-           FROM material ORDER BY id"#
+           FROM material ORDER BY id"#,
+        AI_TEXT_LIMIT as i64
     )
     .fetch_all(db)
     .await
@@ -95,6 +109,13 @@ pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error>
     )
     .fetch_all(db)
     .await
+}
+
+/// The materials used for matching, oldest first.
+pub async fn for_matching(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error> {
+    sqlx::query_as!(Reference,
+        r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE for_matching = 1 ORDER BY id"#)
+        .fetch_all(db).await
 }
 
 /// The text of a material: None when there is no such material, Some(None) when it has none.
@@ -154,6 +175,11 @@ pub async fn add(
     out.write_all(&data).await?;
     out.sync_all().await?;
     tokio::fs::rename(&temp, file(dir, id)).await?;
+    if has_text {
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(id)
 }
@@ -204,16 +230,22 @@ pub async fn set_purpose(
     id: i64,
     purpose: Purpose,
     on: bool,
+    now: i64,
 ) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let row = match purpose {
         Purpose::Matching => {
-            sqlx::query!("UPDATE material SET for_matching = ? WHERE id = ?", on, id)
-                .execute(db)
-                .await?
+            sqlx::query!(
+                "UPDATE material SET for_matching = ?1 WHERE id = ?2 AND for_matching <> ?1",
+                on,
+                id
+            )
+            .execute(&mut *tx)
+            .await?
         }
         Purpose::Writing => {
             sqlx::query!("UPDATE material SET for_writing = ? WHERE id = ?", on, id)
-                .execute(db)
+                .execute(&mut *tx)
                 .await?
         }
         Purpose::AttachByDefault => {
@@ -222,29 +254,40 @@ pub async fn set_purpose(
                 on,
                 id
             )
-            .execute(db)
+            .execute(&mut *tx)
             .await?
         }
     };
-    Ok(row.rows_affected() > 0)
+    if matches!(purpose, Purpose::Matching) && row.rows_affected() > 0 {
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let exists = sqlx::query_scalar!("SELECT id FROM material WHERE id = ?", id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+    tx.commit().await?;
+    Ok(exists)
 }
 
 /// Deletes the material, then its file in `dir`; false when there is no such material. Drafts
 /// lose it as an attachment; emails that went out keep its name. Stopped or failing in between,
 /// the file is left behind, which only takes up space: a material without its file would fail the
 /// emails it is attached to.
-pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, Error> {
+pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bool, Error> {
+    let mut tx = db.begin().await?;
     let row = sqlx::query!(
         "DELETE FROM material WHERE id = ?1 AND NOT EXISTS (
            SELECT 1 FROM email_attachment a JOIN email e ON e.id = a.email_id
-           WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'failed'))",
+           WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'failed')) RETURNING for_matching",
         id
     )
-    .execute(db)
+    .fetch_optional(&mut *tx)
     .await?;
-    if row.rows_affected() == 0 {
+    if row.is_none() {
         let exists = sqlx::query_scalar!("SELECT 1 AS found FROM material WHERE id = ?", id)
-            .fetch_optional(db)
+            .fetch_optional(&mut *tx)
             .await?;
         return if exists.is_some() {
             Err(Error::InUse)
@@ -252,6 +295,12 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, Error>
             Ok(false)
         };
     }
+    if row.is_some_and(|r| r.for_matching != 0) {
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     if let Err(e) = tokio::fs::remove_file(file(dir, id)).await {
         tracing::warn!("removing the file of deleted material {id}: {e}");
     }

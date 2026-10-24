@@ -15,6 +15,7 @@ pub struct Usage {
 #[derive(Debug, Clone, Copy, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
 pub enum Purpose {
+    Match,
     Draft,
     Rewrite,
 }

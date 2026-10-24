@@ -3,66 +3,16 @@
 
 //! Writing letters with a small HTTP server that runs in the test and answers like a provider.
 
-use std::sync::{Arc, Mutex};
-
 use mentor::{Affiliation, MentorForm};
 use model::{ModelError, ModelForm};
 use net::Net;
 use serde_json::Value;
 use sqlx::SqlitePool;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
 use writing::{Error, Letter};
-
+#[path = "../../model/tests/common/provider.rs"]
+mod provider;
+use provider::scripted as provider;
 const T: i64 = 1_800_000_000_000;
-
-/// What the fake provider was asked: the system and user messages of each request.
-type Received = Arc<Mutex<Vec<(String, String)>>>;
-
-/// Starts a fake provider that streams these answers and why each stopped, one for each request in
-/// turn, and returns its address.
-async fn provider(answers: Vec<(&'static str, &'static str)>) -> (String, Received) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = format!(
-        "http://127.0.0.1:{}/v1",
-        listener.local_addr().unwrap().port()
-    );
-    let received = Received::default();
-    let log = received.clone();
-    tokio::spawn(async move {
-        for (answer, finish_reason) in answers {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut io = BufReader::new(stream);
-            let mut length = 0;
-            loop {
-                let mut header = String::new();
-                io.read_line(&mut header).await.unwrap();
-                if header == "\r\n" {
-                    break;
-                }
-                if let Some((name, value)) = header.trim_end().split_once(": ")
-                    && name.eq_ignore_ascii_case("content-length")
-                {
-                    length = value.parse().unwrap();
-                }
-            }
-            let mut body = vec![0; length];
-            io.read_exact(&mut body).await.unwrap();
-            let body: Value = serde_json::from_slice(&body).unwrap();
-            let content = |i: usize| body["messages"][i]["content"].as_str().unwrap().to_owned();
-            log.lock().unwrap().push((content(0), content(1)));
-            let chunk = serde_json::json!({"choices": [{"delta": {"content": answer}, "finish_reason": finish_reason}]});
-            let usage = r#"{"choices":[],"usage":{"prompt_tokens":2000,"completion_tokens":400,"prompt_tokens_details":{"cached_tokens":1500}}}"#;
-            let reply = format!("data: {chunk}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
-            let head = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                reply.len()
-            );
-            io.write_all((head + &reply).as_bytes()).await.unwrap();
-        }
-    });
-    (address, received)
-}
 
 /// A user with a profile and two materials, one of them for writing, and a mentor with a note;
 /// returns the mentor and the material for writing.
@@ -72,7 +22,7 @@ async fn setup(db: &SqlitePool) -> (i64, i64) {
         research_interests: "多模态学习".into(),
         rewrite_preference: "语气再正式一些".into(),
     };
-    profile::update(db, &me).await.unwrap();
+    profile::update(db, &me, T).await.unwrap();
     let material = async |name: &str, for_writing: bool, text: &str| {
         sqlx::query_scalar!(
             r#"INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default,
@@ -117,6 +67,8 @@ async fn setup(db: &SqlitePool) -> (i64, i64) {
 /// A model at this address, which the user has agreed to or not.
 async fn model(db: &SqlitePool, address: &str, agreed: bool) {
     let form = ModelForm {
+        input_price: None,
+        output_price: None,
         name: String::new(),
         provider: model::providers::CUSTOM.into(),
         base_url: address.into(),
@@ -268,4 +220,39 @@ async fn nothing_is_sent_until_the_user_agrees(db: SqlitePool) {
     let result = writing::write(&db, &net, mentor, &blank(), &[], T).await;
     assert!(matches!(result, Err(Error::NotAgreed)), "{result:?}");
     assert!(received.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn writing_reads_only_the_first_ten_thousand_characters_of_a_material(db: SqlitePool) {
+    let (mentor, resume) = setup(&db).await;
+    let text = "字".repeat(10_000) + "尾部不发送";
+    sqlx::query("UPDATE material SET extracted_text = ? WHERE id = ?")
+        .bind(text)
+        .bind(resume)
+        .execute(&db)
+        .await
+        .unwrap();
+    let (address, received) = provider(vec![(
+        "<subject>申请</subject><body>王老师您好</body>",
+        "stop",
+    )])
+    .await;
+    model(&db, &address, true).await;
+    writing::write(
+        &db,
+        &Net::new(Vec::new()).unwrap(),
+        mentor,
+        &blank(),
+        &[],
+        T,
+    )
+    .await
+    .unwrap();
+    let message = &received.lock().unwrap()[0].1;
+    let data: Value = serde_json::from_str(message).unwrap();
+    assert_eq!(
+        data["材料"][0]["文字"].as_str().unwrap().chars().count(),
+        10_000
+    );
+    assert!(!message.contains("尾部不发送"));
 }

@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { Affiliation, Contact, ContactStatus, MatchState } from "@/api/types";
+import type { Affiliation, Contact, ContactStatus } from "@/api/types";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -56,13 +56,7 @@ export function contactDetail(contact: Contact): string | null {
     : `${times}${day(contact.lastOutAt)}发出`;
 }
 
-/** Labels and colours for a match analysis that has no score. */
-export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, string]> = {
-  running: ["分析中", "text-muted-foreground"],
-  queued: ["排队中", "text-muted-foreground"],
-  failed: ["分析失败", "text-warning"],
-  not_analyzed: ["未分析", "text-faint"],
-};
+export const BASIS_CHANGED = "材料或意向研究方向改过，可以重新分析";
 
 /**
  * After mentors are trashed, restored or deleted, or new mail came, every view of them is out of
@@ -70,6 +64,8 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
  */
 export function refreshMentors(queryClient: QueryClient) {
   for (const queryKey of [
+    ["matchingProgress"],
+    ["planMatching"],
     ["listMentors"],
     ["listTrash"],
     ["getMentor"],

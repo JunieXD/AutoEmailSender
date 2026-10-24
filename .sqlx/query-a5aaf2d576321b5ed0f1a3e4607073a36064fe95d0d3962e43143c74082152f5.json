@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET match_state = 'running' WHERE id = (\n           SELECT id FROM mentor WHERE match_state = 'queued' AND trashed_at IS NULL\n           ORDER BY match_priority DESC, match_queued_at, id LIMIT 1)\n         AND (SELECT match_paused_at FROM profile) IS NULL RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a5aaf2d576321b5ed0f1a3e4607073a36064fe95d0d3962e43143c74082152f5"
+}

@@ -204,13 +204,15 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             let done = state == "done";
             sqlx::query(
                 "UPDATE mentor SET match_state = ?, match_score = ?, matched_at = ?, match_model = ?,
-                   match_error = ? WHERE id = ?",
+                   match_error = ?, match_queued_at = ?, match_priority = ? WHERE id = ?",
             )
-            .bind(state)
+            .bind((!done).then_some(state))
             .bind(done.then(|| rng.i64(30..100)))
             .bind(done.then_some(now))
             .bind(done.then_some("deepseek-chat"))
             .bind((state == "failed").then_some("模型返回的结果不完整"))
+            .bind(matches!(state, "queued" | "running").then_some(now))
+            .bind(matches!(state, "queued" | "running").then_some(0))
             .bind(id)
             .execute(&mut *tx)
             .await?;

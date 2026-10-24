@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, provider, base_url, model,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\",\n             agreed AS \"agreed: bool\"\n           FROM model_config ORDER BY id",
+  "query": "SELECT id, name, provider, base_url, model, input_price, output_price,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\",\n             agreed AS \"agreed: bool\"\n           FROM model_config ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -59,14 +59,36 @@
         }
       },
       {
-        "name": "is_default!: bool",
+        "name": "input_price",
         "ordinal": 5,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "input_price"
+          }
+        }
+      },
+      {
+        "name": "output_price",
+        "ordinal": 6,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "output_price"
+          }
+        }
+      },
+      {
+        "name": "is_default!: bool",
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": "Expression"
       },
       {
         "name": "agreed: bool",
-        "ordinal": 6,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -85,9 +107,11 @@
       false,
       true,
       false,
+      true,
+      true,
       false,
       false
     ]
   },
-  "hash": "5491da7c4b70c414a4ffd2087aad1f232b845f632d7ca5856cb2bf3e766ad0a7"
+  "hash": "a98544eb93b59b91f842d3a40fc556033291bafcb379cb2b45aa614084584cd5"
 }
