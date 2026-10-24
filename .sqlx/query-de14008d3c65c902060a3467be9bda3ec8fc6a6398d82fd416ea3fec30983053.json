@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id AS \"id!\", e.text AS \"text!\"\n           FROM email e JOIN mentor m ON m.id = e.mentor_id\n           WHERE e.mailbox_id = ?1\n             AND e.state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')\n             AND e.sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND e.copy_message_id IS NULL\n             AND e.subject = ?4 AND m.email = ?5\n           ORDER BY abs(e.sent_at - ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "de14008d3c65c902060a3467be9bda3ec8fc6a6398d82fd416ea3fec30983053"
+}

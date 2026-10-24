@@ -198,7 +198,8 @@ CREATE TABLE email (
   model TEXT,
   message_id TEXT UNIQUE,
   copy_message_id TEXT UNIQUE, -- of its copy found in the sent folder, which the provider may change
-  sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent) or accepted (sent/bounced)
+  sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent, kept while waiting to be sent
+                               -- again) or accepted (sent/bounced)
   error TEXT,
   tracking_id TEXT UNIQUE,
   open_count INTEGER,

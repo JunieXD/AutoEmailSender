@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use sqlx::types::Json;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{Connection, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 /// A first email being written on the mentor's page, outside any task.
@@ -351,11 +351,11 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
 }
 
 /// Sends a failed or maybe-sent email again, now, unless its mentor is in the trash. It keeps its
-/// Message-ID, so that mailboxes that drop duplicates drop a second copy (docs/design.md#桌面端).
+/// Message-ID, so that mailboxes that drop duplicates drop a second copy (docs/design.md#桌面端),
+/// and where and when it went before, so that a copy of that turning up still settles it.
 pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE email SET state = 'approved', planned_at = ?1, mailbox_id = NULL, from_address = NULL,
-           sent_at = NULL, error = NULL, updated_at = ?1
+        "UPDATE email SET state = 'approved', planned_at = ?1, error = NULL, updated_at = ?1
          WHERE id = ?2 AND state IN ('failed', 'maybe_sent')
            AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
         now,
@@ -515,106 +515,109 @@ pub enum SentCopy {
     Confirmed,
 }
 
-/// Looks up the email the app sent with this Message-ID, or whose copy had it, and marks it sent
-/// if it was not known to be.
+/// Looks up the email the app sent with this Message-ID, or whose copy had it, and marks it sent if
+/// it was not known to be. `recipients` are the copy's, in lowercase.
 pub async fn sent_copy(
     conn: &mut SqliteConnection,
     message_id: &str,
+    recipients: &[String],
     now: i64,
 ) -> Result<SentCopy, sqlx::Error> {
-    let found = sqlx::query!(
-        r#"SELECT id AS "id!", state IN ('sending', 'maybe_sent') AS "unconfirmed!: bool"
-           FROM email WHERE message_id = ?1 OR copy_message_id = ?1"#,
+    let found = sqlx::query_scalar!(
+        r#"SELECT id AS "id!" FROM email WHERE message_id = ?1 OR copy_message_id = ?1"#,
         message_id
     )
     .fetch_optional(&mut *conn)
     .await?;
-    let Some(e) = found else {
-        return Ok(SentCopy::Foreign);
-    };
-    copied(conn, e.id, message_id, now).await?;
-    Ok(if e.unconfirmed {
-        SentCopy::Confirmed
-    } else {
-        SentCopy::Own
-    })
+    match found {
+        Some(id) => copied(conn, id, message_id, recipients, now).await,
+        None => Ok(SentCopy::Foreign),
+    }
 }
 
 /// A copy, in a mailbox's sent folder, under a Message-ID the app did not give.
 pub struct Copy<'a> {
     pub mailbox_id: i64,
-    pub message_id: &'a str,
-    /// In lowercase.
-    pub recipients: &'a [String],
+    /// Its one recipient, in lowercase: the app sends each email to one mentor.
+    pub recipient: &'a str,
     pub subject: &'a str,
-    pub text: &'a str,
     /// When the server got it, in UTC milliseconds.
     pub at: i64,
+}
+
+/// An email the copy may be of.
+pub struct Candidate {
+    pub id: i64,
+    pub text: String,
 }
 
 /// How far apart an email and a copy with another Message-ID may have gone out.
 const COPY_WINDOW: i64 = 60 * 60 * 1000;
 
-/// Some providers (QQ) keep the copy of an email under a Message-ID of their own. Looks up the
-/// email this is a copy of: one sent from the same mailbox about the same time to a mentor among
-/// its recipients, with the same subject and text, whose copy has not turned up yet; and marks it
-/// sent if it was not known to be.
-pub async fn renamed_copy(
+/// Some providers (QQ) keep the copy of an email under a Message-ID of their own. The emails it may
+/// be a copy of, nearest in time first: sent, or tried, from the same mailbox about the same time
+/// to the mentor it went to, with the same subject, and no copy turned up yet. Which one it is, if
+/// any, the text tells.
+pub async fn copy_candidates(
     conn: &mut SqliteConnection,
     copy: &Copy<'_>,
-    now: i64,
-) -> Result<SentCopy, sqlx::Error> {
-    let candidates = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.text AS "text!",
-             e.state IN ('sending', 'maybe_sent') AS "unconfirmed!: bool"
+) -> Result<Vec<Candidate>, sqlx::Error> {
+    sqlx::query_as!(
+        Candidate,
+        r#"SELECT e.id AS "id!", e.text AS "text!"
            FROM email e JOIN mentor m ON m.id = e.mentor_id
-           WHERE e.mailbox_id = ?1 AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
+           WHERE e.mailbox_id = ?1
+             AND e.state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
              AND e.sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND e.copy_message_id IS NULL
-             AND e.subject = ?4 AND m.email IN (SELECT value FROM json_each(?5))
+             AND e.subject = ?4 AND m.email = ?5
            ORDER BY abs(e.sent_at - ?2)"#,
         copy.mailbox_id,
         copy.at,
         COPY_WINDOW,
         copy.subject,
-        Json(copy.recipients),
+        copy.recipient,
     )
-    .fetch_all(&mut *conn)
+    .fetch_all(conn)
+    .await
+}
+
+/// Records the copy found of an email, and that the email went out if that was not known: maybe
+/// sent, still being sent, or waiting to be sent again to the address the copy went to. SMTP
+/// answering later changes nothing then, as it only writes to an email still being sent.
+pub async fn copied(
+    conn: &mut SqliteConnection,
+    id: i64,
+    copy_message_id: &str,
+    recipients: &[String],
+    now: i64,
+) -> Result<SentCopy, sqlx::Error> {
+    let mut tx = conn.begin().await?;
+    sqlx::query!(
+        "UPDATE email SET copy_message_id = coalesce(copy_message_id, ?) WHERE id = ?",
+        copy_message_id,
+        id,
+    )
+    .execute(&mut *tx)
     .await?;
-    let Some(e) = candidates
-        .into_iter()
-        .find(|e| e.text.trim() == copy.text.trim())
-    else {
-        return Ok(SentCopy::Foreign);
-    };
-    copied(conn, e.id, copy.message_id, now).await?;
-    Ok(if e.unconfirmed {
+    let confirmed = sqlx::query!(
+        "UPDATE email SET state = 'sent', error = NULL, updated_at = ?1
+         WHERE id = ?2
+           AND (state IN ('sending', 'maybe_sent')
+             OR (state = 'approved' AND sent_at IS NOT NULL
+               AND (SELECT email FROM mentor WHERE id = email.mentor_id)
+                 IN (SELECT value FROM json_each(?3))))",
+        now,
+        id,
+        Json(recipients),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(if confirmed.rows_affected() == 1 {
         SentCopy::Confirmed
     } else {
         SentCopy::Own
     })
-}
-
-/// Records the copy of an email, and that the email went out, in one write. SMTP answering later
-/// changes nothing then, as it only writes to an email still being sent.
-async fn copied(
-    conn: &mut SqliteConnection,
-    id: i64,
-    copy_message_id: &str,
-    now: i64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE email SET copy_message_id = coalesce(copy_message_id, ?1),
-           error = CASE WHEN state = 'maybe_sent' THEN NULL ELSE error END,
-           updated_at = CASE WHEN state IN ('sending', 'maybe_sent') THEN ?2 ELSE updated_at END,
-           state = CASE WHEN state IN ('sending', 'maybe_sent') THEN 'sent' ELSE state END
-         WHERE id = ?3",
-        copy_message_id,
-        now,
-        id,
-    )
-    .execute(conn)
-    .await?;
-    Ok(())
 }
 
 /// Marks the email that went out with this Message-ID, or whose copy had it, as bounced for this

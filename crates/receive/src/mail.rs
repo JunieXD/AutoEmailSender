@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use html2text::render::RichAnnotation;
-use mail_parser::{AddressList, MessageParser, PartKind};
+use mail_parser::{AddressList, Message, MessageParser, MessagePart, PartKind};
 
 /// The header fields `headers` reads, fetched instead of whole messages.
 pub(crate) const FIELDS: [&str; 13] = [
@@ -226,9 +226,8 @@ struct Status {
     diagnostic: Option<String>,
 }
 
-/// The delivery status fields, recipient by recipient. They are plain text, wherever the report
-/// puts them, and may go on over several lines; a recipient's start at its Original-Recipient or
-/// Final-Recipient.
+/// The delivery status fields of a report, recipient by recipient. They may go on over several
+/// lines; a recipient's start at its Original-Recipient or Final-Recipient.
 fn statuses(text: &str) -> Vec<Status> {
     let mut lines: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -280,12 +279,16 @@ fn statuses(text: &str) -> Vec<Status> {
 }
 
 /// What the start of a possible bounce says: None when it only reports a delay or delivery, or
-/// names no mail it returns.
+/// does not say what mail it returns.
 pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     let message = MessageParser::new().parse(raw)?;
-    let whole = String::from_utf8_lossy(raw);
-    let statuses = statuses(&whole);
-    // A report without actions, as some providers write, is taken to say the mail failed.
+    // Only the report's own parts: the mail it returns may carry or quote other reports.
+    let statuses: Vec<Status> = message
+        .parts()
+        .filter(|p| content_type_is(p, "message", "delivery-status"))
+        .flat_map(|p| statuses(&String::from_utf8_lossy(&p.decoded())))
+        .collect();
+    // A bounce without a report, as some providers write, is taken to say the mail failed.
     let reported = statuses.iter().any(|s| s.action.is_some());
     let failed: Vec<&Status> = statuses
         .iter()
@@ -299,27 +302,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     if reported && failed.is_empty() {
         return None;
     }
-    // The mail returned comes first: attached, or its headers quoted, else the one the bounce
-    // answers. Mail that one carries or refers to comes after, and is not what bounced.
-    let own = message.message_id().map(bracketed);
-    let nested = message
-        .messages()
-        .skip(1)
-        .filter_map(|m| m.message_id().map(bracketed));
-    let quoted = whole.lines().filter_map(|line| {
-        let (name, value) = line.trim_start().split_once(':')?;
-        let id = value.split_whitespace().next()?;
-        name.eq_ignore_ascii_case("message-id")
-            .then(|| bracketed(id))
-    });
-    let answered = message
-        .in_reply_to()
-        .and_then(|list| list.first())
-        .map(bracketed);
-    let original = nested
-        .chain(quoted)
-        .chain(answered)
-        .find(|id| Some(id) != own.as_ref())?;
+    let original = returned(&message)?;
     let told = format!(
         "{} {}",
         message.subject().unwrap_or_default(),
@@ -340,6 +323,32 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
             .collect()
     };
     Some(Bounce { original, failures })
+}
+
+/// The Message-ID of the mail a bounce returns: of the mail it attaches, or of the headers it
+/// quotes, else of the mail it answers. Not of mail the returned one carries, which did not bounce.
+fn returned(bounce: &Message) -> Option<String> {
+    for part in bounce.parts() {
+        if let PartKind::Message(original) = part.kind() {
+            return original.message_id().map(bracketed);
+        }
+        if content_type_is(&part, "text", "rfc822-headers") {
+            let text = part.text()?;
+            let headers = MessageParser::new().parse_headers(text.as_bytes())?;
+            return headers.message_id().map(bracketed);
+        }
+    }
+    bounce
+        .in_reply_to()
+        .and_then(|list| list.first())
+        .map(bracketed)
+}
+
+fn content_type_is(part: &MessagePart, ctype: &str, subtype: &str) -> bool {
+    part.content_type().is_some_and(|t| {
+        t.ctype().eq_ignore_ascii_case(ctype)
+            && t.subtype().is_some_and(|s| s.eq_ignore_ascii_case(subtype))
+    })
 }
 
 /// Why mail did not reach a recipient: the cause the server's words fit, else what the bounce

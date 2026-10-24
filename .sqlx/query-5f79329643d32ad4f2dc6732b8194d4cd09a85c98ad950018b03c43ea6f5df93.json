@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'sent', error = NULL, updated_at = ?1\n         WHERE id = ?2\n           AND (state IN ('sending', 'maybe_sent')\n             OR (state = 'approved' AND sent_at IS NOT NULL\n               AND (SELECT email FROM mentor WHERE id = email.mentor_id)\n                 IN (SELECT value FROM json_each(?3))))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "5f79329643d32ad4f2dc6732b8194d4cd09a85c98ad950018b03c43ea6f5df93"
+}

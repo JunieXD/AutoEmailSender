@@ -406,15 +406,15 @@ impl Session<'_> {
                 continue;
             };
             let text = mail::text(raw);
+            // Only the start was fetched.
+            let truncated = raw.len() >= START as usize;
             if kind == Kind::Sent
                 && self
-                    .renamed_copy(&headers, sent_at, text.as_deref())
+                    .renamed_copy(&place, &headers, sent_at, text.as_deref(), truncated)
                     .await?
             {
                 continue;
             }
-            // Only the start was fetched.
-            let truncated = raw.len() >= START as usize;
             let message = Stored {
                 kind,
                 sent_at,
@@ -442,7 +442,7 @@ impl Session<'_> {
         if role == Role::Sent {
             if let Some(id) = &headers.message_id {
                 let mut conn = self.db.acquire().await?;
-                match email::sent_copy(&mut conn, id, self.now).await? {
+                match email::sent_copy(&mut conn, id, &headers.recipients, self.now).await? {
                     SentCopy::Foreign => {}
                     SentCopy::Own => return Ok(Plan::Skip),
                     SentCopy::Confirmed => {
@@ -515,29 +515,45 @@ impl Session<'_> {
     }
 
     /// Whether a copy in the sent folder under a Message-ID of the provider's own is of an email the
-    /// app sent.
+    /// app sent: one with the same text in full, as a letter that only starts the same is another.
     async fn renamed_copy(
         &mut self,
+        place: &Location<'_>,
         headers: &mail::Headers,
         sent_at: i64,
         text: Option<&str>,
+        truncated: bool,
     ) -> Result<bool, Error> {
-        let (Some(message_id), Some(subject), Some(text)) =
-            (&headers.message_id, &headers.subject, text)
-        else {
+        let ([recipient], Some(message_id), Some(subject)) = (
+            headers.recipients.as_slice(),
+            &headers.message_id,
+            &headers.subject,
+        ) else {
             return Ok(false);
         };
         let copy = email::Copy {
             mailbox_id: self.mailbox_id,
-            message_id,
-            recipients: &headers.recipients,
+            recipient,
             subject,
-            text,
             at: sent_at,
+        };
+        let candidates = email::copy_candidates(&mut *self.db.acquire().await?, &copy).await?;
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+        let text = if truncated {
+            let whole = self.imap.whole(place.uid).await?;
+            whole.as_deref().and_then(mail::text)
+        } else {
+            text.map(str::to_owned)
+        };
+        let Some(c) = text.and_then(|t| candidates.into_iter().find(|c| c.text.trim() == t.trim()))
+        else {
+            return Ok(false);
         };
         let mut conn = self.db.acquire().await?;
         Ok(
-            match email::renamed_copy(&mut conn, &copy, self.now).await? {
+            match email::copied(&mut conn, c.id, message_id, &headers.recipients, self.now).await? {
                 SentCopy::Foreign => false,
                 SentCopy::Own => true,
                 SentCopy::Confirmed => {

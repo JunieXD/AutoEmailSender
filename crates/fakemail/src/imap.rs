@@ -1,6 +1,6 @@
 //! A fake IMAP server with folders of mail that tests fill and inspect. It speaks as much IMAP as
 //! the app uses: folders with special-use flags, read-only opening, UID searches and fetches of
-//! header fields and the start of a message.
+//! header fields and of a message or its start.
 
 use std::sync::{Arc, Mutex};
 
@@ -284,6 +284,9 @@ fn fetched(seq: usize, m: &Mail, items: &str) -> Vec<u8> {
         let start = &m.raw[..m.raw.len().min(limit.parse().unwrap())];
         reply.extend(format!(" BODY[]<0> {{{}}}\r\n", start.len()).bytes());
         reply.extend(start);
+    } else if items.contains("BODY.PEEK[]") {
+        reply.extend(format!(" BODY[] {{{}}}\r\n", m.raw.len()).bytes());
+        reply.extend(&m.raw);
     }
     reply.extend(b")\r\n");
     reply

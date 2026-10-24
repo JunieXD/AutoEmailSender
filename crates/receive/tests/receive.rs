@@ -335,7 +335,11 @@ Content-Type: message/rfc822
 From: me@example.com
 Message-ID: <e1@example.com>
 
-老师您好
+老师您好，上次的信被退回了：
+
+Final-Recipient: rfc822; li@pku.edu.cn
+Action: failed
+Status: 5.2.2
 --r--
 ",
     );
@@ -481,10 +485,24 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
     let li = mentor(&db, "李明", "li@pku.edu.cn").await;
     let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    let zhang = mentor(&db, "张华", "zhang@fudan.edu.cn").await;
     sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
     sent_email(&db, wang, "sending", "<e2@example.com>").await;
+    sent_email(&db, zhang, "maybe_sent", "<e3@example.com>").await;
+    let resent: i64 = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id = ?")
+        .bind(zhang)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    // Sent again by the user, and still waiting to go.
+    assert!(email::retry(&db, resent, T).await.unwrap());
     round(&db, &net, T).await;
 
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        "From: me@example.com\nTo: zhang@fudan.edu.cn\nSubject: 申请读博\nMessage-ID: <e3@example.com>\n\n老师您好",
+    );
     // Another letter with the same subject, sent from the website.
     store.deliver(
         SENT,
@@ -540,6 +558,11 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
         ]
     );
     assert_eq!(li_mail[0].text, "老师您好，补充一份成绩单。");
+    // The copy settles it: the letter is not sent twice.
+    assert!(matches!(
+        email::list(&db, zhang).await.unwrap()[0].delivery,
+        Delivery::Sent { .. }
+    ));
 
     let id: i64 = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id = ?")
         .bind(wang)
@@ -606,7 +629,8 @@ Diagnostic-Code: smtp; 552 5.2.2 Mailbox full
 --r
 Content-Type: text/rfc822-headers
 
-Message-ID: <s2@example.com>
+Message-ID:
+ <s2@example.com>
 --r--
 ",
     );
@@ -632,7 +656,7 @@ Message-ID: <s3@example.com>
 --r--
 ",
     );
-    // A letter the app does not know of came back, carrying one it sent.
+    // A letter without a Message-ID came back, carrying one the app sent.
     store.deliver(
         "INBOX",
         T + 2 * MINUTE,
@@ -650,7 +674,6 @@ Action: failed
 Content-Type: message/rfc822
 
 From: me@example.com
-Message-ID: <untracked@example.com>
 Content-Type: multipart/mixed; boundary=f
 
 --f
@@ -789,4 +812,53 @@ async fn a_refused_search_is_tried_again(db: SqlitePool) {
     round(&db, &net, T + 61 * MINUTE).await;
     assert_eq!(messages(&db, li).await.len(), 1);
     assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_copy_under_another_message_id_has_the_whole_text_to_one_mentor(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    let zhang = mentor(&db, "张华", "zhang@fudan.edu.cn").await;
+    sent_email(&db, li, "sent", "<e1@example.com>").await;
+    sent_email(&db, wang, "sent", "<e2@example.com>").await;
+    sent_email(&db, zhang, "sent", "<e3@example.com>").await;
+    round(&db, &net, T).await;
+
+    let picture = "iVBORw0KGgo".repeat(30_000);
+    // From the website: the same start, then more after a large picture.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        &format!(
+            "From: me@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <web1@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: image/png\nContent-Disposition: inline\nContent-Transfer-Encoding: base64\n\n{picture}\n--m\nContent-Type: text/plain; charset=utf-8\n\n补充：成绩单周五前寄出。\n--m--\n"
+        ),
+    );
+    // From the website, the same letter to two mentors at once.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        "From: me@example.com\nTo: wang@thu.edu.cn\nCc: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <web2@qq.com>\n\n老师您好",
+    );
+    // The app's letter with a large attachment, as QQ keeps it.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        &format!(
+            "From: me@example.com\nTo: zhang@fudan.edu.cn\nSubject: 申请读博\nMessage-ID: <tencent_3@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf; name=cv.pdf\nContent-Disposition: attachment; filename=cv.pdf\nContent-Transfer-Encoding: base64\n\n{picture}\n--m--\n"
+        ),
+    );
+    round(&db, &net, T + 10 * MINUTE).await;
+
+    let li_mail = messages(&db, li).await;
+    assert_eq!(li_mail.len(), 2);
+    assert!(li_mail[0].truncated && li_mail[0].text == "老师您好");
+    assert_eq!(messages(&db, wang).await.len(), 1);
+    assert!(messages(&db, zhang).await.is_empty());
+    let copies: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT copy_message_id FROM email ORDER BY mentor_id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(copies, [None, None, Some("<tencent_3@qq.com>".into())]);
 }
