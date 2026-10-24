@@ -4,6 +4,7 @@ import { Changes } from "@/components/changes";
 import { placeOf } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { changes } from "@/diff";
+import { sameDifference } from "@/import-decisions";
 
 export const FIELD_NAMES: Record<Field, string> = {
   name: "姓名",
@@ -56,7 +57,7 @@ export function Differences({
           }}
           onOne={(d, incoming) => {
             setIndividual((s) => new Set(s).add(field));
-            onChange([...take.filter((v) => v !== d), ...(incoming ? [d] : [])]);
+            onChange([...take.filter((v) => !sameDifference(v, d)), ...(incoming ? [d] : [])]);
           }}
         />
       ))}
@@ -81,7 +82,7 @@ function DifferenceGroup({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [limit, setLimit] = useState(30);
-  const all = items.every((d) => take.includes(d));
+  const all = items.every((d) => take.some((choice) => sameDifference(choice, d)));
   return (
     <section className="rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -130,7 +131,7 @@ function DifferenceGroup({
                   <button
                     key={String(incoming)}
                     type="button"
-                    aria-pressed={take.includes(d) === incoming}
+                    aria-pressed={take.some((choice) => sameDifference(choice, d)) === incoming}
                     onClick={() => onOne(d, incoming)}
                     className="min-w-0 rounded-md border border-border p-3 text-left break-words whitespace-pre-wrap aria-pressed:border-brand aria-pressed:bg-selected"
                   >

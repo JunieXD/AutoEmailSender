@@ -1,9 +1,8 @@
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { MentorDetail } from "@/api/types";
-import { mergedAffiliationCount } from "@/affiliation";
+import type { MentorDetail, MergePreview } from "@/api/types";
 import { ContactLabel, dropDrafts, placeOf, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -23,6 +22,10 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
   const drafts = useQueries({
     queries: ids.map((id) => ({ queryKey: ["getFirstDraft", id], queryFn: () => call("getFirstDraft", { id }) })),
   });
+  const preview = useQuery({
+    queryKey: ["previewMerge", keep, other],
+    queryFn: () => call("previewMerge", { keep, other }),
+  });
   const merge = useMutation({
     mutationFn: (pair: { keep: number; other: number }) => call("mergeMentors", pair),
     onSuccess: async (_, pair) => {
@@ -37,9 +40,9 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
     },
   });
   const [a, b] = mentors.map((q) => q.data);
-  const failed = [...mentors, ...drafts].find((q) => q.error)?.error;
+  const failed = [...mentors, ...drafts, preview].find((q) => q.error)?.error;
   // Which draft goes must be known before anything is merged.
-  const ready = a && b && drafts.every((q) => q.isSuccess);
+  const ready = a && b && drafts.every((q) => q.isSuccess) && preview.data;
   const byId = (id: number) => (a?.id === id ? a : b);
   const kept = byId(keep);
   const gone = byId(other);
@@ -64,7 +67,7 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
                 ))}
               </div>
               <ul className="list-disc pl-5 text-sm leading-relaxed">
-                <li>{outcome(kept, gone)}</li>
+                <li>{outcome(kept, gone, ready)}</li>
                 {drafts.every((q) => q.data) && <li>两位都有没写完的首封，删掉{gone.name}的那封。</li>}
                 <li>合并后{gone.name}从导师列表里删除，不进回收站。</li>
               </ul>
@@ -118,9 +121,7 @@ function Choice({
 }
 
 /** What the kept mentor ends up with, in a sentence. */
-function outcome(kept: MentorDetail, gone: MentorDetail): string {
-  const emails = kept.emails.length + gone.emails.length;
-  const places = mergedAffiliationCount(kept.affiliations, gone.affiliations);
+function outcome(kept: MentorDetail, gone: MentorDetail, preview: MergePreview): string {
   const alias = gone.name !== kept.name ? `，${gone.name}记为别名` : "";
-  return `保留${kept.name}：合并后有 ${emails} 个邮箱、${places} 个单位${alias}。`;
+  return `保留${kept.name}：合并后有 ${preview.emails} 个邮箱、${preview.affiliations} 个单位${alias}。`;
 }

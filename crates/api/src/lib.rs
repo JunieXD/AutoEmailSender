@@ -135,6 +135,7 @@ operations! {
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
     "addMentorEmail" => add_mentor_email(MentorAddress) -> mentor::MentorDetail;
+    "previewMerge" => preview_merge(MentorMerge) -> mentor::merge::Preview;
     "mergeMentors" => merge_mentors(MentorMerge) -> ();
     "listTrash" => list_trash(mentor::trash::TrashQuery) -> mentor::MentorPage;
     "trashMentors" => trash_mentors(MentorIds) -> ();
@@ -315,6 +316,13 @@ async fn add_mentor_email(
     require_applied(applied, NO_MENTOR)?;
     look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+async fn preview_merge(
+    ctx: &Context,
+    input: MentorMerge,
+) -> Result<mentor::merge::Preview, CallError> {
+    Ok(mentor::merge::preview(&ctx.db, input.keep, input.other).await?)
 }
 
 async fn merge_mentors(ctx: &Context, input: MentorMerge) -> Result<(), CallError> {
@@ -1350,9 +1358,30 @@ pub struct ExportMentors {
 
 pub async fn export_mentors(ctx: &Context, input: ExportMentors) -> Result<Vec<u8>, CallError> {
     let rows = mentor::export::export(&ctx.db, &input.scope, input.note).await?;
-    tokio::task::spawn_blocking(move || match input.format {
+    tokio::task::spawn_blocking(move || write_table(rows, input.format))
+        .await
+        .map_err(CallError::internal)?
+}
+
+fn write_table(rows: Vec<Vec<String>>, format: TableFormat) -> Result<Vec<u8>, CallError> {
+    match format {
         TableFormat::Csv => Ok(sheet::write_csv(&rows)),
         TableFormat::Xlsx => {
+            for row in rows.iter().skip(1) {
+                for (field, value) in rows[0].iter().zip(row) {
+                    if value.chars().count() > 32767 {
+                        let advice = if field == "备注" {
+                            "改导出 CSV，或取消“包含备注”后重试"
+                        } else {
+                            "改导出 CSV 后重试"
+                        };
+                        return Err(CallError::invalid(format!(
+                            "{}的“{field}”超过 XLSX 每格 32767 个字的上限，请{advice}",
+                            row[0]
+                        )));
+                    }
+                }
+            }
             let instructions = mentor::export::instructions(&rows[0]);
             sheet::write_xlsx(&[
                 sheet::Sheet {
@@ -1363,7 +1392,33 @@ pub async fn export_mentors(ctx: &Context, input: ExportMentors) -> Result<Vec<u
             ])
             .map_err(CallError::internal)
         }
-    })
-    .await
-    .map_err(CallError::internal)?
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    #[test]
+    fn long_cells_identify_the_mentor_and_field_and_allow_csv() {
+        for field in ["备注", "研究方向"] {
+            let rows = vec![
+                vec!["姓名".into(), field.into()],
+                vec!["王明".into(), "长".repeat(32768)],
+            ];
+            let error = write_table(rows.clone(), TableFormat::Xlsx).unwrap_err();
+            assert!(matches!(error.code, ErrorCode::Invalid));
+            assert!(error.message.contains("王明") && error.message.contains(field));
+            assert!(error.message.contains("CSV"));
+            if field == "备注" {
+                assert!(error.message.contains("包含备注"));
+            }
+            assert!(write_table(rows, TableFormat::Csv).is_ok());
+        }
+        let rows = vec![
+            vec!["姓名".into(), "备注".into()],
+            vec!["王明".into(), "长".repeat(32767)],
+        ];
+        assert!(write_table(rows, TableFormat::Xlsx).is_ok());
+    }
 }

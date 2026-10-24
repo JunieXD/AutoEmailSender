@@ -1,12 +1,12 @@
 //! Table preview and transactional import, with decisions tied to the values the user saw.
 
 use crate::export::{Profile, profiles};
-use crate::supplement::{add_missing, append, same};
+use crate::supplement::{add_missing, append, comparable, same};
 use crate::{Affiliation, MentorForm, SaveError, create, trash, update};
 use serde::{Deserialize, Serialize};
 use sheet::Sheet;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, TS)]
@@ -82,12 +82,12 @@ impl Field {
             Self::School => "单位的学院；第几次出现的学院属于第几个单位",
             Self::Department => "单位的系或研究所；第几次出现的系所属于第几个单位",
             Self::Title => "在这个单位的职称；第几次出现的职称属于第几个单位",
-            Self::Homepage => "以 http:// 或 https:// 开头，多个主页用换行或分号隔开",
-            Self::Alias => "英文名、曾用名等，多个别名用换行或分号隔开",
+            Self::Homepage => "以 http:// 或 https:// 开头，多个主页用换行、空格或全角分号隔开",
+            Self::Alias => "英文名、曾用名等，多个别名用换行、分号或顿号隔开",
             Self::Research => "研究方向文字",
-            Self::Papers => "多个代表论文用换行或分号隔开",
+            Self::Papers => "多个代表论文只用换行隔开",
             Self::SourceUrl => "发现这位导师的来源网址",
-            Self::Tags => "多个标签用换行或分号隔开，没有的标签按名称新建",
+            Self::Tags => "多个标签用换行、分号或顿号隔开，没有的标签按名称新建",
             Self::Note => "写给自己的备注，分享表格前请检查",
         }
     }
@@ -95,10 +95,6 @@ impl Field {
 
 fn tidy(value: &str) -> String {
     let value = value.trim();
-    let value = value
-        .strip_prefix('\'')
-        .filter(|s| s.starts_with(['=', '+', '-', '@']))
-        .unwrap_or(value);
     value
         .chars()
         .map(|c| match c {
@@ -148,7 +144,7 @@ pub struct MaybeSame {
 }
 #[derive(Debug, Serialize, TS)]
 pub struct Trashed {
-    pub row: u32,
+    pub rows: Vec<u32>,
     pub id: i64,
     pub name: String,
 }
@@ -178,7 +174,7 @@ pub struct Preview {
 pub struct Decisions {
     pub take: Vec<Difference>,
     pub separate: Vec<u32>,
-    pub restore: Vec<u32>,
+    pub restore: Vec<i64>,
 }
 #[derive(Debug, Default, Serialize, TS)]
 pub struct Imported {
@@ -297,9 +293,15 @@ fn read_row(cells: &[String], columns: &[Column]) -> Result<Profile, String> {
             .flatten()
             .flat_map(|v| {
                 v.split(|c: char| {
-                    matches!(c, '\n' | '\r' | ';' | '；')
-                        || f == Field::Email
-                            && (matches!(c, ',' | '，' | '、') || c.is_whitespace())
+                    matches!(c, '\n' | '\r')
+                        || match f {
+                            Field::Email => {
+                                matches!(c, ';' | '；' | ',' | '，' | '、') || c.is_whitespace()
+                            }
+                            Field::Homepage => c == '；' || c.is_whitespace(),
+                            Field::Alias | Field::Tags => matches!(c, ';' | '；' | '、'),
+                            _ => false,
+                        }
                 })
             })
             .map(tidy)
@@ -355,10 +357,12 @@ fn read_row(cells: &[String], columns: &[Column]) -> Result<Profile, String> {
     })
 }
 
-async fn candidates(
-    conn: &mut SqliteConnection,
-    rows: &[Row],
-) -> Result<BTreeMap<i64, Profile>, sqlx::Error> {
+struct Candidates {
+    profiles: BTreeMap<i64, Profile>,
+    by_name: HashMap<String, Vec<i64>>,
+}
+
+async fn candidates(conn: &mut SqliteConnection, rows: &[Row]) -> Result<Candidates, sqlx::Error> {
     let emails = Json(
         rows.iter()
             .flat_map(|r| &r.profile.fields.emails)
@@ -377,49 +381,28 @@ async fn candidates(
                 .any(|e| addresses.contains(&e.to_lowercase()))
         })
         .flat_map(|r| std::iter::once(&r.profile.fields.name).chain(&r.profile.fields.aliases))
-        .filter_map(|name| crate::keyword(name).map(|q| format!("({q})")))
+        .map(|name| comparable(name))
         .collect();
-    // The index only narrows candidates; exact name and school comparisons happen below.
+    let mut by_name = HashMap::<String, Vec<i64>>::new();
     if !names.is_empty() {
-        let query = names.into_iter().collect::<Vec<_>>().join(" OR ");
-        ids.extend(
-            sqlx::query_scalar!(
-                "SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?",
-                query
-            )
-            .fetch_all(&mut *conn)
-            .await?,
-        );
+        // Reading just names avoids large FTS OR queries and loading unrelated profile details.
+        for record in sqlx::query!(
+            "SELECT id, name FROM mentor UNION ALL SELECT mentor_id, name FROM mentor_alias"
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        {
+            let name = comparable(&record.name);
+            if names.contains(&name) {
+                by_name.entry(name).or_default().push(record.id);
+                ids.insert(record.id);
+            }
+        }
     }
-    let unindexed: Vec<_> = rows
-        .iter()
-        .flat_map(|r| std::iter::once(&r.profile.fields.name).chain(&r.profile.fields.aliases))
-        .filter(|name| crate::keyword(name).is_none())
-        .collect();
-    if !unindexed.is_empty() {
-        ids.extend(sqlx::query_scalar!("SELECT id FROM mentor WHERE name IN (SELECT value FROM json_each(?1)) OR id IN (SELECT mentor_id FROM mentor_alias WHERE name IN (SELECT value FROM json_each(?1)))", Json(unindexed)).fetch_all(&mut *conn).await?);
-    }
-    profiles(conn, &ids.into_iter().collect::<Vec<_>>()).await
-}
-
-fn maybe(a: &Profile, b: &Profile) -> bool {
-    (a.fields.emails.is_empty() || b.fields.emails.is_empty())
-        && std::iter::once(&a.fields.name)
-            .chain(&a.fields.aliases)
-            .any(|a| {
-                std::iter::once(&b.fields.name)
-                    .chain(&b.fields.aliases)
-                    .any(|b| same(a, b))
-            })
-        && a.fields.affiliations.iter().any(|a| {
-            b.fields
-                .affiliations
-                .iter()
-                .any(|b| match (&a.university, &b.university) {
-                    (Some(a), Some(b)) => same(a, b),
-                    _ => false,
-                })
-        })
+    Ok(Candidates {
+        profiles: profiles(conn, &ids.into_iter().collect::<Vec<_>>()).await?,
+        by_name,
+    })
 }
 
 fn root(parents: &[usize], mut n: usize) -> usize {
@@ -440,7 +423,10 @@ async fn calculate(
     if rows.is_empty() {
         return Ok((preview, Vec::new()));
     }
-    let local = candidates(conn, &rows).await?;
+    let Candidates {
+        profiles: local,
+        by_name,
+    } = candidates(conn, &rows).await?;
     let emails: BTreeMap<_, _> = local
         .values()
         .flat_map(|p| {
@@ -448,6 +434,20 @@ async fn calculate(
                 .emails
                 .iter()
                 .map(move |e| (e.to_lowercase(), p.id))
+        })
+        .collect();
+    let schools: BTreeMap<_, Vec<_>> = local
+        .values()
+        .map(|p| {
+            (
+                p.id,
+                p.fields
+                    .affiliations
+                    .iter()
+                    .filter_map(|a| a.university.as_deref())
+                    .map(comparable)
+                    .collect(),
+            )
         })
         .collect();
     let mut valid = Vec::new();
@@ -467,37 +467,45 @@ async fn calculate(
             continue;
         }
         row.target = owners.first().copied();
-        if row.target.is_none()
-            && let Some(p) = local.values().find(|p| maybe(&row.profile, p))
-        {
-            preview.maybe_same.push(MaybeSame {
-                row: row.number,
-                name: row.profile.fields.name.clone(),
-                university: row
-                    .profile
-                    .fields
-                    .affiliations
-                    .first()
-                    .and_then(|a| a.university.clone()),
-                id: p.id,
-                local_name: p.fields.name.clone(),
-                affiliation: p.fields.affiliations.first().cloned(),
-                emails: p.fields.emails.clone(),
-            });
-            if !decisions.separate.contains(&row.number) {
-                row.target = Some(p.id);
+        if row.target.is_none() {
+            let universities: Vec<_> = row
+                .profile
+                .fields
+                .affiliations
+                .iter()
+                .filter_map(|a| a.university.as_deref())
+                .map(comparable)
+                .collect();
+            let possible = std::iter::once(&row.profile.fields.name)
+                .chain(&row.profile.fields.aliases)
+                .filter_map(|name| by_name.get(&comparable(name)))
+                .flatten()
+                .map(|id| &local[id])
+                .filter(|p| row.profile.fields.emails.is_empty() || p.fields.emails.is_empty())
+                .filter(|p| {
+                    universities.is_empty()
+                        || universities.iter().any(|u| schools[&p.id].contains(u))
+                })
+                .min_by_key(|p| p.id);
+            if let Some(p) = possible {
+                preview.maybe_same.push(MaybeSame {
+                    row: row.number,
+                    name: row.profile.fields.name.clone(),
+                    university: row
+                        .profile
+                        .fields
+                        .affiliations
+                        .first()
+                        .and_then(|a| a.university.clone()),
+                    id: p.id,
+                    local_name: p.fields.name.clone(),
+                    affiliation: p.fields.affiliations.first().cloned(),
+                    emails: p.fields.emails.clone(),
+                });
+                if !decisions.separate.contains(&row.number) {
+                    row.target = Some(p.id);
+                }
             }
-        }
-        if let Some(p) = row
-            .target
-            .and_then(|id| local.get(&id))
-            .filter(|p| p.trashed)
-        {
-            preview.trashed.push(Trashed {
-                row: row.number,
-                id: p.id,
-                name: p.fields.name.clone(),
-            });
         }
         valid.push(row);
     }
@@ -541,7 +549,16 @@ async fn calculate(
         let first = &rows[0];
         let before = targets.first().and_then(|id| local.get(id)).cloned();
         let restore = before.as_ref().is_some_and(|p| p.trashed);
-        let active = !restore || rows.iter().any(|r| decisions.restore.contains(&r.number));
+        if let Some(p) = before.as_ref().filter(|p| p.trashed) {
+            preview.trashed.push(Trashed {
+                rows: rows.iter().map(|r| r.number).collect(),
+                id: p.id,
+                name: p.fields.name.clone(),
+            });
+            if !decisions.restore.contains(&p.id) {
+                continue;
+            }
+        }
         let mut incoming = first.profile.clone();
         for row in rows.iter().skip(1) {
             let mut emails = incoming.fields.emails.clone();
@@ -684,15 +701,13 @@ async fn calculate(
                 _ => unreachable!("only scalar conflicts have decisions"),
             }
         }
-        if active {
-            if supplemented {
-                preview.supplemented += 1;
-            } else if differences.is_empty() {
-                preview.unchanged += 1;
-            }
+        if supplemented {
+            preview.supplemented += 1;
+        } else if differences.is_empty() {
+            preview.unchanged += 1;
         }
         preview.differences.extend(differences);
-        if active && (&after != original || restore) {
+        if &after != original || restore {
             changes.push(Change {
                 before,
                 after,

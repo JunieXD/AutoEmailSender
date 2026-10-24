@@ -35,6 +35,30 @@ impl std::fmt::Display for MergeError {
 
 impl std::error::Error for MergeError {}
 
+#[derive(Debug, serde::Serialize, ts_rs::TS)]
+#[ts(rename = "MergePreview")]
+pub struct Preview {
+    pub emails: usize,
+    pub affiliations: usize,
+}
+
+pub async fn preview(db: &SqlitePool, keep: i64, other: i64) -> Result<Preview, MergeError> {
+    let mut tx = db.begin().await?;
+    let data = crate::export::profiles(&mut tx, &[keep, other]).await?;
+    let (Some(a), Some(b)) = (data.get(&keep), data.get(&other)) else {
+        return Err(MergeError::Gone);
+    };
+    if keep == other || a.trashed || b.trashed {
+        return Err(MergeError::Gone);
+    }
+    let mut fields = a.fields.clone();
+    crate::supplement::add_missing(&mut fields, &mut Vec::new(), &b.fields, &[]);
+    Ok(Preview {
+        emails: fields.emails.len(),
+        affiliations: fields.affiliations.len(),
+    })
+}
+
 /// Merges `other` into `keep`, which takes its profile, mail and the rest, and deletes it. `now` is
 /// UTC milliseconds.
 pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(), MergeError> {

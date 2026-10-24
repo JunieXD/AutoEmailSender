@@ -16,6 +16,7 @@ import { placeOf, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { base64 } from "@/file";
+import { reconcileChoices } from "@/import-decisions";
 
 type ImportFile = Omit<PreviewImport, "decisions">;
 
@@ -28,13 +29,20 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const picker = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<ImportFile | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [counts, setCounts] = useState({ created: 0, updated: 0 });
   const [decisions, setDecisions] = useState<Decisions>(EMPTY);
   const chosen = useRef(EMPTY);
   // A late answer must not replace the preview for a newer file or column mapping.
   const revision = useRef(0);
   const read = useMutation({
-    mutationFn: async ({ selected, setup }: { selected: File | ImportFile; setup: Setup }) => {
+    mutationFn: async ({
+      selected,
+      setup,
+      choices,
+    }: {
+      selected: File | ImportFile;
+      setup: Setup;
+      choices: Decisions;
+    }) => {
       const version = ++revision.current;
       if (selected instanceof File && selected.size > 20 * 1024 * 1024)
         throw new Error("文件超过 20 MB，请缩小文件后重试");
@@ -42,33 +50,23 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         selected instanceof File
           ? { fileName: selected.name, data: await base64(selected), setup }
           : { ...selected, setup };
-      const result = await call("previewImport", input);
-      return { version, input, result };
+      const result = await call("previewImport", { ...input, decisions: choices });
+      return { version, input, result, choices };
     },
-    onSuccess: ({ version, input, result }) => {
+    onSuccess: ({ version, input, result, choices }) => {
       if (version !== revision.current) return;
       setFile({ ...input, setup: { sheet: result.sheet, columns: result.columns.map((c) => c.field) } });
       setPreview(result);
-      setDecisions(EMPTY);
-      chosen.current = EMPTY;
-      setCounts({ created: result.created, updated: result.updated });
-    },
-  });
-  const countVersion = useRef(0);
-  const summarize = useMutation({
-    mutationFn: async ({ input, choices, version }: { input: ImportFile; choices: Decisions; version: number }) => {
-      const result = await call("previewImport", { ...input, decisions: choices });
-      return { version, created: result.created, updated: result.updated };
-    },
-    onSuccess: ({ version, created, updated }) => {
-      if (version === countVersion.current) setCounts({ created, updated });
+      const next = reconcileChoices(result, choices);
+      setDecisions(next);
+      chosen.current = next;
     },
   });
   function choose(next: Decisions | ((previous: Decisions) => Decisions)) {
     const choices = typeof next === "function" ? next(chosen.current) : next;
     chosen.current = choices;
     setDecisions(choices);
-    if (file) summarize.mutate({ input: file, choices, version: ++countVersion.current });
+    if (file) read.mutate({ selected: file, setup: file.setup, choices });
   }
   const template = useMutation({
     mutationFn: (format: TableFormat) =>
@@ -85,27 +83,21 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   });
   const busy = read.isPending || save.isPending;
   const takeFile = (selected: File) => {
-    countVersion.current++;
     setPreview(null);
     setFile(null);
     setDecisions(EMPTY);
     chosen.current = EMPTY;
     save.reset();
-    summarize.reset();
-    read.mutate({ selected, setup: { sheet: null, columns: null } });
+    read.mutate({ selected, setup: { sheet: null, columns: null }, choices: EMPTY });
   };
   function remap(setup: Setup) {
     if (!file) return;
-    countVersion.current++;
-    summarize.reset();
     save.reset();
-    setDecisions(EMPTY);
-    chosen.current = EMPTY;
-    read.mutate({ selected: file, setup });
+    read.mutate({ selected: file, setup, choices: chosen.current });
   }
-  const error = read.error ?? save.error ?? summarize.error ?? template.error;
+  const error = read.error ?? save.error ?? template.error;
   const differenceIds = new Set(preview?.differences.map((d) => d.id));
-  const possible = counts.created + counts.updated > 0;
+  const possible = preview !== null && preview.created + preview.updated > 0;
   return (
     <Dialog
       open
@@ -313,11 +305,11 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                   {preview.trashed.length > 0 && (
                     <section>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h3 className="mr-auto font-medium">在回收站里 · {preview.trashed.length} 行</h3>
+                        <h3 className="mr-auto font-medium">在回收站里 · {preview.trashed.length} 位</h3>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => choose((d) => ({ ...d, restore: preview.trashed.map((m) => m.row) }))}
+                          onClick={() => choose((d) => ({ ...d, restore: preview.trashed.map((m) => m.id) }))}
                         >
                           全部恢复并更新
                         </Button>
@@ -328,22 +320,22 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                       <div className="space-y-2">
                         {preview.trashed.map((m) => (
                           <div
-                            key={m.row}
+                            key={m.id}
                             className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm"
                           >
                             <p className="mr-auto">
-                              {m.name} · 第 {m.row} 行
+                              {m.name} · 第 {m.rows.join("、")} 行
                             </p>
                             {[false, true].map((restore) => (
                               <label key={String(restore)} className="flex items-center gap-2">
                                 <input
                                   type="radio"
-                                  name={`restore-${m.row}`}
-                                  checked={decisions.restore.includes(m.row) === restore}
+                                  name={`restore-${m.id}`}
+                                  checked={decisions.restore.includes(m.id) === restore}
                                   onChange={() =>
                                     choose((d) => ({
                                       ...d,
-                                      restore: [...d.restore.filter((r) => r !== m.row), ...(restore ? [m.row] : [])],
+                                      restore: [...d.restore.filter((id) => id !== m.id), ...(restore ? [m.id] : [])],
                                     }))
                                   }
                                 />
@@ -379,14 +371,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
           </p>
           <DialogClose render={<Button variant="ghost" disabled={busy} />}>取消</DialogClose>
           <Button
-            disabled={
-              busy || read.isError || summarize.isPending || summarize.isError || !file || !!preview?.issue || !possible
-            }
+            disabled={busy || read.isError || !file || !!preview?.issue || !possible}
             onClick={() => file && save.mutate(file)}
           >
             {save.isPending
               ? "正在导入…"
-              : `导入${preview && possible ? `（新增 ${counts.created} 位，更新 ${counts.updated} 位）` : ""}`}
+              : `导入${preview && possible ? `（新增 ${preview.created} 位，更新 ${preview.updated} 位）` : ""}`}
           </Button>
         </DialogFooter>
       </DialogContent>

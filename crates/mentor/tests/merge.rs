@@ -93,6 +93,8 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
     .await
     .unwrap();
 
+    let preview = merge::preview(&db, li, ming).await.unwrap();
+    assert_eq!((preview.emails, preview.affiliations), (2, 1));
     merge::merge(&db, li, ming, 10).await.unwrap();
     let merged = mentor::get(&db, li).await.unwrap().unwrap();
     assert!(mentor::get(&db, ming).await.unwrap().is_none());
@@ -181,6 +183,9 @@ async fn compatible_affiliations_fill_blanks_and_keep_local_title(db: SqlitePool
     .execute(&db)
     .await
     .unwrap();
+    let preview = merge::preview(&db, a, b).await.unwrap();
+    assert_eq!((preview.emails, preview.affiliations), (0, 1));
+    assert!(mentor::get(&db, b).await.unwrap().is_some());
     merge::merge(&db, a, b, 1).await.unwrap();
     let m = mentor::get(&db, a).await.unwrap().unwrap();
     assert_eq!(

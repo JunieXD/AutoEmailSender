@@ -189,6 +189,8 @@ affiliation: Affiliation | null, affiliationCount: number,
  */
 research: string | null, matchState: MatchState, contact: Contact, tags: Array<Tag>, };
 
+export type MergePreview = { emails: number, affiliations: number, };
+
 export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number, 
 /**
  * What the message says, without the earlier mail it quotes.
@@ -382,7 +384,7 @@ export type TrashQuery = {
  */
 page: number, };
 
-export type Trashed = { row: number, id: number, name: string, };
+export type Trashed = { rows: Array<number>, id: number, name: string, };
 
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
@@ -401,6 +403,7 @@ export interface Operations {
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
   addMentorEmail: { input: MentorAddress; output: MentorDetail };
+  previewMerge: { input: MentorMerge; output: MergePreview };
   mergeMentors: { input: MentorMerge; output: null };
   listTrash: { input: TrashQuery; output: MentorPage };
   trashMentors: { input: MentorIds; output: null };

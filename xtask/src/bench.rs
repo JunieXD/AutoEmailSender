@@ -157,6 +157,34 @@ pub async fn run(path: &Path) -> Result {
         Duration::from_secs(3),
     );
 
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM mentor WHERE trashed_at IS NULL ORDER BY id LIMIT 5000",
+    )
+    .fetch_all(&db)
+    .await?;
+    let mut rows = vec![vec!["姓名".into(), "学校".into()]];
+    rows.extend(
+        names
+            .into_iter()
+            .map(|name| vec![name, "本地不存在的学校".into()]),
+    );
+    let sheets = vec![sheet::Sheet {
+        name: "导师".into(),
+        rows,
+    }];
+    report(
+        "导入 5000 行，预览（无邮箱、姓名有候选但学校不符）",
+        median(async || {
+            let preview = mentor::import::preview(&db, &sheets, &setup).await?;
+            if preview.created != 5000 || !preview.maybe_same.is_empty() {
+                return Err(sqlx::Error::Protocol("无邮箱基准应新增 5000 位".into()));
+            }
+            Ok(())
+        })
+        .await?,
+        Duration::from_secs(2),
+    );
+
     if over > 0 {
         return Err(format!("{over} 项超出预算").into());
     }

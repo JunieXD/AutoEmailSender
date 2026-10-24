@@ -62,7 +62,18 @@ pub fn read(file_name: &str, data: &[u8]) -> Result<Vec<Sheet>, ReadError> {
                     rows.push(Vec::new());
                     prefix = rest;
                 }
-                rows.push(record.iter().map(|s| s.trim().to_owned()).collect());
+                rows.push(
+                    record
+                        .iter()
+                        .map(|s| {
+                            let s = s.trim();
+                            s.strip_prefix('\'')
+                                .filter(|rest| rest.starts_with(['=', '+', '-', '@', '\'']))
+                                .unwrap_or(s)
+                                .to_owned()
+                        })
+                        .collect(),
+                );
             }
             Ok(vec![Sheet {
                 name: "CSV".into(),
@@ -151,7 +162,7 @@ pub fn write_csv(rows: &[Vec<String>]) -> Vec<u8> {
         .from_writer(vec![0xef, 0xbb, 0xbf]);
     for row in rows {
         let cells = row.iter().map(|s| {
-            if s.starts_with(['=', '+', '-', '@']) {
+            if s.starts_with(['=', '+', '-', '@', '\'']) {
                 format!("'{s}")
             } else {
                 s.clone()
@@ -221,10 +232,14 @@ mod tests {
             "-1".into(),
             "@a".into(),
             "普通".into(),
+            "'=备注".into(),
+            "'原文".into(),
+            "''原文".into(),
         ]];
-        assert_eq!(
-            read("a.csv", &write_csv(&rows)).unwrap()[0].rows[0],
-            ["'=1", "'+1", "'-1", "'@a", "普通"]
-        );
+        let csv = write_csv(&rows);
+        let text = std::str::from_utf8(&csv).unwrap();
+        assert!(text.starts_with("\u{feff}'=1,'+1,'-1,'@a,"));
+        assert!(text.contains("''=备注"));
+        assert_eq!(read("a.csv", &csv).unwrap()[0].rows[0], rows[0]);
     }
 }

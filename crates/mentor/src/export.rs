@@ -147,7 +147,7 @@ pub async fn export(
                     .iter()
                     .map(|(f, n)| match f {
                         Field::Name => p.fields.name.clone(),
-                        Field::Email => p.fields.emails.join("\n"),
+                        Field::Email => list_cell(&p.fields.emails),
                         Field::University | Field::School | Field::Department | Field::Title => p
                             .fields
                             .affiliations
@@ -159,12 +159,12 @@ pub async fn export(
                                 _ => a.title.clone(),
                             })
                             .unwrap_or_default(),
-                        Field::Homepage => p.fields.homepages.join("\n"),
-                        Field::Alias => p.fields.aliases.join("\n"),
+                        Field::Homepage => list_cell(&p.fields.homepages),
+                        Field::Alias => list_cell(&p.fields.aliases),
                         Field::Research => p.fields.research.clone().unwrap_or_default(),
-                        Field::Papers => p.papers.join("\n"),
+                        Field::Papers => list_cell(&p.papers),
                         Field::SourceUrl => p.source_url.clone().unwrap_or_default(),
-                        Field::Tags => p.tags.join("\n"),
+                        Field::Tags => list_cell(&p.tags),
                         Field::Note => p.note.clone().unwrap_or_default(),
                     })
                     .collect(),
@@ -189,4 +189,12 @@ pub fn instructions(headers: &[String]) -> sheet::Sheet {
         name: "填写说明".into(),
         rows,
     }
+}
+
+fn list_cell(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| value.replace("\r\n", " ").replace(['\r', '\n'], " "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
