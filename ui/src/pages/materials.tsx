@@ -15,7 +15,11 @@ export function MaterialsSection() {
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
   const picker = useRef<HTMLInputElement>(null);
   const add = useMutation({
-    mutationFn: async (file: File) => call("addMaterial", { fileName: file.name, data: await base64(file) }),
+    mutationFn: async (file: File) => {
+      // material::MAX_SIZE, checked before a large file is read and encoded in memory.
+      if (file.size > 20 * 1024 * 1024) throw new Error("文件超过 20 MB，无法添加。");
+      return call("addMaterial", { fileName: file.name, data: await base64(file) });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listMaterials"] }),
   });
   return (

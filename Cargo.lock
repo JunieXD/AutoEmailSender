@@ -3016,6 +3016,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tracing",
  "ts-rs",
 ]
 

@@ -204,21 +204,19 @@ pub async fn set_purpose(
     Ok(row.rows_affected() > 0)
 }
 
-/// Deletes the material and its file in `dir`; false when there is no such material.
-pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, Error> {
-    let mut tx = db.begin().await?;
+/// Deletes the material, then its file in `dir`; false when there is no such material. Stopped or
+/// failing in between, the file is left behind, which only takes up space: a material without
+/// its file would fail the emails it is attached to.
+pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, sqlx::Error> {
     let row = sqlx::query!("DELETE FROM material WHERE id = ?", id)
-        .execute(&mut *tx)
+        .execute(db)
         .await?;
     if row.rows_affected() == 0 {
         return Ok(false);
     }
-    match tokio::fs::remove_file(dir.join(id.to_string())).await {
-        // Removed already, when the app stopped before the commit last time.
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        other => other?,
+    if let Err(e) = tokio::fs::remove_file(dir.join(id.to_string())).await {
+        tracing::warn!("removing the file of deleted material {id}: {e}");
     }
-    tx.commit().await?;
     Ok(true)
 }
 

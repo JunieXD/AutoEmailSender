@@ -718,6 +718,10 @@ async fn list_materials(ctx: &Context, _: Nothing) -> Result<Vec<material::Mater
 }
 
 async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, CallError> {
+    // Refused before decoding: base64 takes 4 characters for every 3 bytes.
+    if input.data.len() / 4 * 3 > material::MAX_SIZE + 2 {
+        return Err(material::Error::TooLarge.into());
+    }
     let data = BASE64_STANDARD
         .decode(&input.data)
         .map_err(CallError::bad_input)?;
