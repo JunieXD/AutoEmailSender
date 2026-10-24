@@ -877,6 +877,136 @@ async fn repeated_name_only_import_must_not_duplicate(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn full_width_name_exports_round_trip_without_duplicates(db: SqlitePool) {
+    let fields = mentor::MentorForm {
+        name: "Ｗａｎｇ Ｗｅｉ".into(),
+        aliases: vec![],
+        emails: vec![],
+        affiliations: vec![Affiliation {
+            university: Some("北京大学".into()),
+            school: Some("计算机学院".into()),
+            ..Default::default()
+        }],
+        homepages: vec![],
+        research: "图学习".into(),
+    }
+    .check()
+    .unwrap();
+    let id = mentor::create(&db, &fields, 0).await.unwrap();
+    let scope = Scope::Filter(export::Filter {
+        status: None,
+        keyword: None,
+    });
+    let rows = export::export(&db, &scope, true).await.unwrap();
+    for name in ["导师.csv", "导师.xlsx"] {
+        let bytes = if name.ends_with("csv") {
+            sheet::write_csv(&rows)
+        } else {
+            sheet::write_xlsx(&[Sheet {
+                name: "导师".into(),
+                rows: rows.clone(),
+            }])
+            .unwrap()
+        };
+        let sheets = sheet::read(name, &bytes).unwrap();
+        let preview = import::preview(&db, &sheets, &Setup::default())
+            .await
+            .unwrap();
+        assert!(preview.errors.is_empty(), "{name}");
+        assert_eq!(preview.maybe_same.len(), 1, "{name}");
+        assert_eq!(preview.maybe_same[0].selected, Some(id), "{name}");
+        assert_eq!(
+            (preview.created, preview.updated, preview.unchanged),
+            (0, 0, 1),
+            "{name}"
+        );
+        assert!(preview.differences.is_empty(), "{name}");
+        let result = apply(&db, &sheets, &Decisions::default()).await;
+        assert_eq!((result.created, result.updated), (0, 0), "{name}");
+        assert_eq!(
+            export::export(&db, &scope, true).await.unwrap(),
+            rows,
+            "{name}"
+        );
+
+        let other = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        db::MIGRATOR.run(&other).await.unwrap();
+        assert_eq!(
+            apply(&other, &sheets, &Decisions::default()).await.created,
+            1
+        );
+        assert_eq!(
+            export::export(&other, &scope, true).await.unwrap(),
+            rows,
+            "{name}"
+        );
+        other.close().await;
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn half_width_names_and_aliases_match_without_changing_full_width_values(db: SqlitePool) {
+    let fields = mentor::MentorForm {
+        name: "Ｗａｎｇ Ｗｅｉ".into(),
+        aliases: vec!["Ｗｅｉ Ｗａｎｇ".into()],
+        emails: vec![],
+        affiliations: vec![Affiliation {
+            university: Some("ＰＫＵ １".into()),
+            title: Some("教授Ａ１".into()),
+            ..Default::default()
+        }],
+        homepages: vec!["https://example.cn/ｗ１".into()],
+        research: "方向Ａ１".into(),
+    }
+    .check()
+    .unwrap();
+    let id = mentor::create(&db, &fields, 0).await.unwrap();
+    for name in ["Wang Wei", "Wei Wang"] {
+        let sheets = table(&[
+            &["姓名", "别名", "学校", "职称", "主页", "研究方向"],
+            &[
+                name,
+                "Wei Wang",
+                "PKU 1",
+                "教授A1",
+                "https://example.cn/w1",
+                "方向A1",
+            ],
+        ]);
+        let preview = import::preview(&db, &sheets, &Setup::default())
+            .await
+            .unwrap();
+        assert!(preview.errors.is_empty(), "{name}");
+        assert_eq!(preview.maybe_same.len(), 1, "{name}");
+        assert_eq!(preview.maybe_same[0].selected, Some(id), "{name}");
+        assert_eq!(preview.maybe_same[0].candidates[0].id, id, "{name}");
+        let same_name = name == "Wang Wei";
+        assert_eq!(
+            (preview.created, preview.updated, preview.unchanged),
+            (0, 0, u32::from(same_name)),
+            "{name}"
+        );
+        assert_eq!(
+            preview
+                .differences
+                .iter()
+                .map(|d| d.field)
+                .collect::<Vec<_>>(),
+            if same_name { vec![] } else { vec![Field::Name] },
+            "{name}"
+        );
+        let result = apply(&db, &sheets, &Decisions::default()).await;
+        assert_eq!((result.created, result.updated), (0, 0), "{name}");
+    }
+    let saved = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(saved.name, fields.name);
+    assert_eq!(saved.aliases, fields.aliases);
+    assert_eq!(saved.affiliations, fields.affiliations);
+    assert_eq!(saved.homepages, fields.homepages);
+    assert_eq!(saved.research, fields.research);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn namesake_exports_round_trip_without_crossing_profiles(db: SqlitePool) {
     let mut ids = Vec::new();
     for (school, research, homepage) in [

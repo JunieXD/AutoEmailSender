@@ -46,7 +46,8 @@ impl Field {
         }
     }
     pub fn recognize(header: &str) -> Option<Self> {
-        let header: String = tidy(header)
+        let header: String = header
+            .trim()
             .chars()
             .map(|c| match c {
                 '！'..='～' => (c as u32 - 0xfee0) as u8 as char,
@@ -93,8 +94,7 @@ impl Field {
     }
 }
 
-fn tidy(value: &str) -> String {
-    let value = value.trim();
+fn tidy_email(value: &str) -> String {
     value
         .chars()
         .map(|c| match c {
@@ -299,10 +299,15 @@ fn read_row(cells: &[String], columns: &[Column]) -> Result<Profile, String> {
     let mut values = BTreeMap::<Field, Vec<String>>::new();
     for (c, column) in columns.iter().enumerate() {
         if let Some(field) = column.field {
+            let value = cells.get(c).map(String::as_str).unwrap_or_default().trim();
             values
                 .entry(field)
                 .or_default()
-                .push(tidy(cells.get(c).map(String::as_str).unwrap_or_default()));
+                .push(if field == Field::Email {
+                    tidy_email(value)
+                } else {
+                    value.to_owned()
+                });
         }
     }
     let single = |f| {
@@ -330,7 +335,7 @@ fn read_row(cells: &[String], columns: &[Column]) -> Result<Profile, String> {
                         }
                 })
             })
-            .map(tidy)
+            .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
     };

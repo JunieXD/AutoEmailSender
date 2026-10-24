@@ -17,7 +17,7 @@ import { placeOf, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { base64 } from "@/file";
-import { reconcileChoices } from "@/import-decisions";
+import { reconcileChoices, reconcileMatches } from "@/import-decisions";
 
 type ImportFile = Omit<PreviewImport, "decisions">;
 
@@ -56,8 +56,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       let basis = remapping;
       if (remapping) {
         basis = await call("previewImport", { ...input, decisions: EMPTY });
-        // Differences depend on the group choices, so validate them against the final preview.
-        choices = { ...reconcileChoices(basis, choices, remapping), take: choices.take };
+        // Restore approvals and differences depend on the selected targets, not the defaults.
+        choices = { ...choices, matches: reconcileMatches(basis, choices, remapping) };
       }
       const result =
         basis && choices.take.length + choices.matches.length + choices.restore.length === 0

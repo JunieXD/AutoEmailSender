@@ -16,27 +16,31 @@ export function sameDifference(a: Difference, b: Difference): boolean {
   );
 }
 
+export function reconcileMatches(preview: Preview, choices: Decisions, previous: Preview): Decisions["matches"] {
+  return preview.sheet === previous.sheet
+    ? choices.matches.filter((choice) => {
+        const before = previous.maybeSame.find((m) => m.row === choice.row);
+        return (
+          before !== undefined &&
+          preview.maybeSame.some(
+            (m) =>
+              m.row === choice.row &&
+              m.candidates.length === before.candidates.length &&
+              m.candidates.every((c) => before.candidates.some((b) => b.id === c.id)) &&
+              (choice.id === null || m.candidates.some((c) => c.id === choice.id)) &&
+              m.rows.length === before.rows.length &&
+              m.rows.every((r, n) => r === before.rows[n]),
+          )
+        );
+      })
+    : [];
+}
+
 export function reconcileChoices(preview: Preview, choices: Decisions, previous: Preview): Decisions {
-  const sameSheet = preview.sheet === previous.sheet;
   return {
     take: preview.differences.filter((d) => choices.take.some((choice) => sameDifference(d, choice))),
-    matches: sameSheet
-      ? choices.matches.filter((choice) => {
-          const before = previous.maybeSame.find((m) => m.row === choice.row);
-          return (
-            before !== undefined &&
-            preview.maybeSame.some(
-              (m) =>
-                m.row === choice.row &&
-                m.candidates.length === before.candidates.length &&
-                m.candidates.every((c) => before.candidates.some((b) => b.id === c.id)) &&
-                (choice.id === null || m.candidates.some((c) => c.id === choice.id)) &&
-                m.rows.length === before.rows.length &&
-                m.rows.every((r, n) => r === before.rows[n]),
-            )
-          );
-        })
-      : [],
-    restore: sameSheet ? choices.restore.filter((id) => preview.trashed.some((m) => m.id === id)) : [],
+    matches: reconcileMatches(preview, choices, previous),
+    restore:
+      preview.sheet === previous.sheet ? choices.restore.filter((id) => preview.trashed.some((m) => m.id === id)) : [],
   };
 }

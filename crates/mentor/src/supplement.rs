@@ -3,7 +3,16 @@
 use crate::{Affiliation, MentorFields, place};
 
 pub(crate) fn comparable(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .map(|c| match c {
+            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' => (c as u32 - 0xfee0) as u8 as char,
+            _ => c,
+        })
+        .collect()
 }
 
 pub(crate) fn same(a: &str, b: &str) -> bool {
