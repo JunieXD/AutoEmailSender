@@ -352,6 +352,35 @@ fn classify(error: ModelError, chosen: Chosen) -> Outcome {
     }
 }
 
+/// Requeue and configuration checks share a write transaction so old errors cannot pause new work.
+async fn requeue(
+    db: &SqlitePool,
+    claim: queue::Claim,
+    pause: Option<(i64, &str)>,
+    model: Option<&Chosen>,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    if !queue::requeue(&mut tx, claim).await? {
+        return Ok(false);
+    }
+    if let Some((now, reason)) = pause {
+        let is_current = match model {
+            Some(expected) => model::chosen(&mut *tx).await?.is_some_and(|current| {
+                current.id == expected.id
+                    && current.model == expected.model
+                    && current.access.base_url == expected.access.base_url
+                    && current.access.api_key == expected.access.api_key
+            }),
+            None => true,
+        };
+        if is_current {
+            queue::pause_if_unpaused(&mut tx, now, reason).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Restores interrupted claims and runs at most three calls at once. The queue, not the view,
 /// owns the work, so leaving a page does not interrupt it.
 pub async fn run(
@@ -423,8 +452,8 @@ pub async fn run(
                             let saved = match &outcome {
                                 Outcome::Done(answer, model, started_at) => queue::complete(&db, claim, answer, model, *started_at).await,
                                 Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
-                                Outcome::Pause(reason, model) => queue::requeue(&db, claim, Some((completed_at, reason)), model.as_ref()).await,
-                                Outcome::RateLimit(_) => queue::requeue(&db, claim, None, None).await,
+                                Outcome::Pause(reason, model) => requeue(&db, claim, Some((completed_at, reason)), model.as_ref()).await,
+                                Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
                                 Outcome::Gone => Ok(false),
                             };
                             match saved {
@@ -444,7 +473,7 @@ pub async fn run(
                     Err(e) => {
                         tracing::error!("match worker: {e}");
                         if let Some(claim) = claims.remove(&e.id()) {
-                            while let Err(e) = queue::requeue(&db, claim, Some((now(), "匹配分析意外中断，请继续或重启应用；仍然出错时，导出日志发给开发者。")), None).await {
+                            while let Err(e) = requeue(&db, claim, Some((now(), "匹配分析意外中断，请继续或重启应用；仍然出错时，导出日志发给开发者。")), None).await {
                                 tracing::error!(mentor_id = claim.id, "recover worker: {e}");
                                 tokio::time::sleep(RETRY).await;
                             }
@@ -468,6 +497,10 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mentor::{
+        MatchState, MentorFields,
+        matching::{MatchAnswer, cancel, complete, enqueue, fail, next, progress, recover},
+    };
     #[test]
     fn validates_external_fields_and_limits_each_list() {
         let valid =
@@ -490,5 +523,109 @@ mod tests {
         let mut a = valid;
         a["directions"] = json!(["1", "2", "3", "4", "5", "6"]);
         assert_eq!(parse(&a.to_string()).unwrap().directions.len(), 5);
+    }
+
+    async fn add(db: &SqlitePool, research: Option<&str>) -> i64 {
+        mentor::create(
+            db,
+            &MentorFields {
+                name: "老师".into(),
+                research: research.map(Into::into),
+                ..Default::default()
+            },
+            1,
+        )
+        .await
+        .unwrap()
+    }
+    fn answer() -> MatchAnswer {
+        MatchAnswer {
+            score: 88,
+            reason: "方向相关".into(),
+            directions: vec!["视觉".into()],
+            highlights: vec![],
+            risks: vec![],
+        }
+    }
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn stale_claim_cannot_complete_fail_requeue_or_pause_new_work(db: SqlitePool) {
+        let id = add(&db, Some("视觉")).await;
+        enqueue(&db, &[id], true, true, 1).await.unwrap();
+        let old = next(&db).await.unwrap().unwrap();
+        mentor::trash::trash(&db, &[id], 2).await.unwrap();
+        mentor::trash::restore(&db, &[id], 3).await.unwrap();
+        enqueue(&db, &[id], true, true, 4).await.unwrap();
+        let new = next(&db).await.unwrap().unwrap();
+        assert_ne!(old, new);
+        assert!(!fail(&db, old, "旧错误").await.unwrap());
+        assert!(!requeue(&db, old, Some((5, "旧暂停")), None).await.unwrap());
+        assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+        assert!(progress(&db).await.unwrap().pause.is_none());
+        assert_eq!(
+            mentor::get(&db, id).await.unwrap().unwrap().analysis.state,
+            Some(MatchState::Running)
+        );
+        assert!(complete(&db, new, &answer(), "new", 6).await.unwrap());
+    }
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn cancelling_and_restarting_invalidates_the_original_claim_even_before_claiming_again(
+        db: SqlitePool,
+    ) {
+        let id = add(&db, Some("视觉")).await;
+        enqueue(&db, &[id], true, true, 1).await.unwrap();
+        let old = next(&db).await.unwrap().unwrap();
+        cancel(&db).await.unwrap();
+        recover(&db).await.unwrap();
+        assert_eq!(progress(&db).await.unwrap().remaining, 0);
+        assert!(!fail(&db, old, "旧错误").await.unwrap());
+        assert!(!requeue(&db, old, Some((2, "旧暂停")), None).await.unwrap());
+        enqueue(&db, &[id], true, true, 3).await.unwrap();
+        assert!(!complete(&db, old, &answer(), "old", 4).await.unwrap());
+        cancel(&db).await.unwrap();
+        assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+        assert!(
+            mentor::get(&db, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .analysis
+                .result
+                .is_none()
+        );
+    }
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn deleted_and_merged_away_claims_cannot_affect_the_surviving_mentor(db: SqlitePool) {
+        let keep = add(&db, Some("视觉")).await;
+        for merged in [false, true] {
+            let id = add(&db, Some("视觉")).await;
+            enqueue(&db, &[id], true, true, 1).await.unwrap();
+            let claim = next(&db).await.unwrap().unwrap();
+            if merged {
+                mentor::merge::merge(&db, keep, id, 2).await.unwrap();
+            } else {
+                mentor::trash::trash(&db, &[id], 2).await.unwrap();
+                mentor::trash::delete(&db, &[id]).await.unwrap();
+            }
+            assert!(!complete(&db, claim, &answer(), "old", 3).await.unwrap());
+            assert!(!fail(&db, claim, "旧错误").await.unwrap());
+            assert!(
+                !requeue(&db, claim, Some((3, "旧暂停")), None)
+                    .await
+                    .unwrap()
+            );
+            assert!(progress(&db).await.unwrap().pause.is_none());
+            assert!(
+                mentor::get(&db, keep)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .analysis
+                    .result
+                    .is_none()
+            );
+        }
     }
 }

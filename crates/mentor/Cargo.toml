@@ -9,7 +9,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-model.workspace = true
 serde.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true

@@ -1,7 +1,7 @@
 //! The persisted match queue and results (docs/data-model.md#导师).
 
 use serde::Serialize;
-use sqlx::{SqlitePool, types::Json};
+use sqlx::{SqliteConnection, SqlitePool, types::Json};
 use ts_rs::TS;
 
 #[derive(Debug, Default, Serialize, TS)]
@@ -177,42 +177,27 @@ pub async fn running(db: &SqlitePool, claim: Claim) -> Result<bool, sqlx::Error>
         .fetch_one(db).await
 }
 
-/// Requeues a provider-wide failure without making it a failure of this mentor.
-pub async fn requeue(
-    db: &SqlitePool,
-    claim: Claim,
-    pause: Option<(i64, &str)>,
-    model: Option<&model::Chosen>,
-) -> Result<bool, sqlx::Error> {
-    let mut tx = db.begin().await?;
+/// Only the current claim can requeue work that is still running.
+pub async fn requeue(db: &mut SqliteConnection, claim: Claim) -> Result<bool, sqlx::Error> {
     let row = sqlx::query!("UPDATE mentor SET match_state = 'queued' WHERE id = ? AND match_claim = ? AND match_state = 'running' AND trashed_at IS NULL", claim.id, claim.claim)
-        .execute(&mut *tx).await?;
-    if row.rows_affected() == 0 {
-        return Ok(false);
-    }
-    if let Some((now, reason)) = pause {
-        let is_current = match model {
-            Some(expected) => model::chosen(&mut *tx).await?.is_some_and(|current| {
-                current.id == expected.id
-                    && current.model == expected.model
-                    && current.access.base_url == expected.access.base_url
-                    && current.access.api_key == expected.access.api_key
-            }),
-            None => true,
-        };
-        if is_current {
-            sqlx::query!(
-                "UPDATE profile SET match_paused_at = ?, match_pause_reason = ?
-                 WHERE match_paused_at IS NULL",
-                now,
-                reason,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
-    tx.commit().await?;
-    Ok(true)
+        .execute(db).await?;
+    Ok(row.rows_affected() > 0)
+}
+
+pub async fn pause_if_unpaused(
+    db: &mut SqliteConnection,
+    now: i64,
+    reason: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE profile SET match_paused_at = ?, match_pause_reason = ?
+         WHERE match_paused_at IS NULL",
+        now,
+        reason,
+    )
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// The validated model output, before it is stored with its time and model.
