@@ -10,6 +10,8 @@ CREATE TABLE model_config (
   api_key TEXT NOT NULL,        -- never sent to the UI
   input_price REAL,
   output_price REAL,
+  -- The user was told what AI features send to this provider and agreed.
+  agreed INTEGER NOT NULL CHECK (agreed IN (0, 1)),
   created_at INTEGER NOT NULL,
   CHECK ((provider = 'custom') = (base_url IS NOT NULL))
 ) STRICT;

@@ -9,18 +9,20 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FileText, Paperclip, Send, TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
   FilledTemplate,
   FirstDraft,
   FirstDraftEdit,
   FirstEmail,
+  Letter,
   Material,
   MentorDetail,
   Problem,
   TemplateSummary,
 } from "@/api/types";
+import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
@@ -126,6 +128,22 @@ function Composer({
   // A material deleted since the draft was read is attached no more.
   const attached = materials.filter((m) => letterState.attachments.includes(m.id));
   const letter = { ...letterState, attachments: attached.map((m) => m.id) };
+  const writing = useWriting(mentorId);
+  const asked = writing.latest?.variables;
+  const busy = writing.latest?.status === "pending";
+  const drafting = asked !== undefined && !isWritten(asked);
+  const answer = writing.latest?.status === "success" ? writing.latest.data : undefined;
+  // A draft goes straight into the letter, even one that came back while the page was left, unless
+  // the user has since written something; otherwise it is compared with what replacing would change.
+  const fills = drafting && (!touched || !isWritten(letter));
+  const review = answer && !fills ? { before: letter, after: answer } : undefined;
+  const fill = useEffectEvent((drafted: Letter) => {
+    writing.forget();
+    rewrite({ ...letter, ...drafted });
+  });
+  useEffect(() => {
+    if (answer && fills) fill(answer);
+  }, [answer, fills]);
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
@@ -161,7 +179,10 @@ function Composer({
   // back, so that no second email can be written and approved meanwhile.
   const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
   const sending = approving || approve.isSuccess;
+  const locked = sending || busy || review !== undefined;
   function edit(next: FirstDraftEdit) {
+    // What went wrong the last time is of no more use.
+    if (writing.latest?.status === "error") writing.forget();
     setTouched(true);
     setLetter(next);
     save.mutate(next);
@@ -189,7 +210,7 @@ function Composer({
   const sendButton = (onClick?: () => void) => (
     <Button
       disabled={
-        sending ||
+        locked ||
         blocker !== null ||
         !style.data ||
         !mailboxes.data ||
@@ -202,34 +223,39 @@ function Composer({
       发送
     </Button>
   );
-  // Only a first fill that failed holds the letter back; a later one keeps what was filled.
-  if (blank && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
+  // Only a first fill that failed holds the letter back; a later one keeps what was filled, and a
+  // letter written meanwhile, such as by AI, needs none.
+  if (!touched && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
   return (
     <div className="flex flex-col gap-2 border-t border-border px-5 py-4 phone:px-3">
-      <Input
-        aria-label="主题"
-        placeholder="主题"
-        autoComplete="off"
-        value={letter.subject}
-        disabled={sending}
-        onChange={(e) => edit({ ...letter, subject: e.target.value })}
-      />
-      <LazyLetterEditor
-        key={body.version}
-        id={`first-letter-${mentorId}`}
-        markdown={body.markdown}
-        placeholders={placeholders}
-        unfilled
-        disabled={sending}
-        onChange={(bodyMd) => edit({ ...letter, bodyMd })}
-      />
+      {review && <Rewrite {...review} />}
+      {/* Hidden rather than gone while a rewrite is compared: the editor holds the text typed. */}
+      <div className={review ? "hidden" : "flex flex-col gap-2"}>
+        <Input
+          aria-label="主题"
+          placeholder="主题"
+          autoComplete="off"
+          value={letter.subject}
+          disabled={locked}
+          onChange={(e) => edit({ ...letter, subject: e.target.value })}
+        />
+        <LazyLetterEditor
+          key={body.version}
+          id={`first-letter-${mentorId}`}
+          markdown={body.markdown}
+          placeholders={placeholders}
+          unfilled
+          disabled={locked}
+          onChange={(bodyMd) => edit({ ...letter, bodyMd })}
+        />
+      </div>
       <Attachments
         files={attached}
         onRemove={
-          sending ? undefined : (m) => edit({ ...letter, attachments: letter.attachments.filter((id) => id !== m.id) })
+          locked ? undefined : (m) => edit({ ...letter, attachments: letter.attachments.filter((id) => id !== m.id) })
         }
       />
-      {problems.length > 0 && (
+      {!review && problems.length > 0 && (
         <ul className="flex flex-col gap-2 text-sm text-warning">
           {problems.map((p) => (
             <li key={problemText(p)} className="flex items-start gap-2">
@@ -240,7 +266,7 @@ function Composer({
                   variant="quiet"
                   size="sm"
                   className="-my-1"
-                  disabled={sending}
+                  disabled={locked}
                   onClick={() => rewrite({ ...letter, bodyMd: `${p.salutation}\n\n${letter.bodyMd}` })}
                 >
                   加上称呼
@@ -256,33 +282,66 @@ function Composer({
           未能按修改后的导师资料重新填写，现在仍是修改前的内容：{errorMessage(prefill.error)}
         </p>
       )}
+      {writing.latest?.status === "error" && (
+        <p className="text-sm text-destructive">
+          {drafting ? "AI 起草" : "AI 改写"}未能完成：{errorMessage(writing.latest.error)}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
+        {busy ? (
+          <>
+            <Button variant="quiet" onClick={writing.forget}>
+              取消
+            </Button>
+            <p className="text-sm text-muted-foreground">{drafting ? "AI 正在起草…" : "AI 正在改写…"}</p>
+          </>
+        ) : (
+          <AiButton blank={!isWritten(letter)} disabled={locked} onWrite={() => writing.start(letter)} />
+        )}
         <TemplateMenu
           mentorId={mentorId}
-          disabled={sending}
-          written={letter.subject.trim() !== "" || letter.bodyMd.trim() !== ""}
+          disabled={locked}
+          written={isWritten(letter)}
           onApply={(filled) => rewrite({ ...letter, ...filled })}
         />
         <AttachMenu
           materials={materials}
           attached={attached}
-          disabled={sending}
+          disabled={locked}
           onAttach={(m) => edit({ ...letter, attachments: [...letter.attachments, m.id] })}
         />
         {last?.status === "error" && (
           <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>
         )}
         <div className="ml-auto flex items-center gap-3">
-          {blocker && <p className="text-sm text-muted-foreground">{blocker}</p>}
-          {problems.length > 0 ? (
-            <Confirm
-              trigger={sendButton()}
-              message={`还有 ${problems.length} 个问题，仍要发送？`}
-              action="仍要发送"
-              onConfirm={send}
-            />
+          {review ? (
+            <>
+              <Button variant="quiet" onClick={writing.forget}>
+                保留原文
+              </Button>
+              <Button
+                onClick={() => {
+                  writing.forget();
+                  rewrite({ ...letter, ...review.after });
+                }}
+              >
+                采用修改
+              </Button>
+            </>
           ) : (
-            sendButton(send)
+            <>
+              {blocker && <p className="text-sm text-muted-foreground">{blocker}</p>}
+              {problems.length > 0 ? (
+                <Confirm
+                  trigger={sendButton()}
+                  message={`还有 ${problems.length} 个问题，仍要发送？`}
+                  action="仍要发送"
+                  onConfirm={send}
+                />
+              ) : (
+                sendButton(send)
+              )}
+            </>
           )}
         </div>
       </div>
@@ -293,6 +352,11 @@ function Composer({
       )}
     </div>
   );
+}
+
+/** Whether there is anything in the subject or body; a blank letter is drafted rather than rewritten. */
+function isWritten(letter: { subject: string; bodyMd: string }): boolean {
+  return letter.subject.trim() !== "" || letter.bodyMd.trim() !== "";
 }
 
 /** The materials the user attaches by default, one of each name as an email takes. */

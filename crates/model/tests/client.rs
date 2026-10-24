@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use model::providers::NoThinking;
+use model::usage::Usage;
 use model::{Access, ModelError};
 use net::Net;
 use serde_json::{Value, json};
@@ -167,6 +168,111 @@ async fn a_reply_without_a_whole_answer_is_not_a_pass() {
         matches!(result, Err(ModelError::Failed(ref reply)) if reply == "Provider disconnected"),
         "{result:?}"
     );
+}
+
+#[tokio::test]
+async fn an_answer_says_what_it_cost_however_the_provider_counts() {
+    let net = Net::new(Vec::new()).unwrap();
+    let ask = async |reply: &'static str| {
+        let (address, received) = provider(200, reply).await;
+        let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_str(&received.lock().unwrap()[0].body).unwrap();
+        assert_eq!(
+            body["messages"],
+            json!([{"role": "system", "content": "规则"}, {"role": "user", "content": "资料"}])
+        );
+        assert_eq!(body["stream_options"], json!({"include_usage": true}));
+        assert_eq!(answer.text, "好的");
+        answer.usage
+    };
+    let usage = |input, cached, output| {
+        Some(Usage {
+            input,
+            cached,
+            output,
+        })
+    };
+    // As OpenAI, Qwen and most others count, in a last chunk of its own.
+    let openai = concat!(
+        r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}],"usage":null}"#,
+        "\n\n",
+        r#"data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":100}}}"#,
+        "\n\ndata: [DONE]\n\n",
+    );
+    assert_eq!(ask(openai).await, usage(120, 100, 30));
+    let deepseek = concat!(
+        r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":30,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":56}}"#,
+        "\n\ndata: [DONE]\n\n",
+    );
+    assert_eq!(ask(deepseek).await, usage(120, 64, 30));
+    // Kimi counts in the choice that finishes.
+    let kimi = concat!(
+        r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop","usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"cached_tokens":96}}]}"#,
+        "\n\ndata: [DONE]\n\n",
+    );
+    assert_eq!(ask(kimi).await, usage(120, 96, 30));
+    let silent = concat!(
+        r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}]}"#,
+        "\n\ndata: [DONE]\n\n",
+    );
+    assert_eq!(ask(silent).await, None);
+}
+
+#[tokio::test]
+async fn what_the_model_wrote_stays_out_of_errors() {
+    // The log takes the errors, and what the model wrote may be the user's letter.
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"我的绩点是 3.8"}}]}"#,
+            "\n\ndata: {broken\n\n",
+        ),
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
+    assert!(!error.to_string().contains("3.8"), "{error}");
+    assert!(!error.message().contains("3.8"), "{error}");
+    // As a gateway that answers in plain text.
+    let (address, _) = provider(200, "我的绩点是 3.8").await;
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap_err();
+    assert!(!error.to_string().contains("3.8"), "{error}");
+}
+
+#[tokio::test]
+async fn an_answer_ends_where_the_stream_says_it_is_done() {
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}]}"#,
+            "\n\ndata: [DONE]\n\ndata: heartbeat\n\n",
+        ),
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "好的");
+    // Without it, the stream ends with the connection, however its last line ends.
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}]}"#,
+            "\n\n",
+            r#"data: {"error":{"message":"Provider disconnected"#,
+        ),
+    )
+    .await;
+    let result = model::ask(&net, &access(address, None), "m", "规则", "资料").await;
+    assert!(matches!(result, Err(ModelError::Broken(_))), "{result:?}");
 }
 
 #[tokio::test]

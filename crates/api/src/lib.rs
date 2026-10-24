@@ -154,6 +154,7 @@ operations! {
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "checkFirstDraft" => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
+    "writeLetter" => write_letter(FirstDraftEdit) -> writing::Letter;
     "checkMailDomain" => check_mail_domain(MailAddress) -> Option<check::Problem>;
     "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
     "listEmails" => list_emails(MentorId) -> Vec<email::Email>;
@@ -165,6 +166,7 @@ operations! {
     "updateModelConfig" => update_model_config(ModelConfigEdit) -> ();
     "deleteModelConfig" => delete_model_config(ModelConfigId) -> ();
     "setDefaultModel" => set_default_model(ModelConfigId) -> ();
+    "agreeModel" => agree_model(ModelAgreement) -> ();
     "listProviderModels" => list_provider_models(ModelSource) -> Vec<String>;
     "testModel" => test_model(ModelTest) -> ();
 }
@@ -622,6 +624,26 @@ async fn set_default_model(ctx: &Context, input: ModelConfigId) -> Result<(), Ca
     }
 }
 
+/// What the user was told AI features send to, and agreed to.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelAgreement {
+    pub id: i64,
+    pub provider: String,
+    pub base_url: Option<String>,
+}
+
+async fn agree_model(ctx: &Context, input: ModelAgreement) -> Result<(), CallError> {
+    let (provider, base_url) = (&input.provider, input.base_url.as_deref());
+    if model::agree(&ctx.db, input.id, provider, base_url).await? {
+        Ok(())
+    } else {
+        Err(CallError::not_found(
+            "这个模型配置刚被修改或删除了。请看过新的说明后再确认。",
+        ))
+    }
+}
+
 async fn list_provider_models(ctx: &Context, input: ModelSource) -> Result<Vec<String>, CallError> {
     let source =
         model::Source::check(&input.provider, &input.base_url).map_err(CallError::invalid)?;
@@ -939,6 +961,51 @@ async fn check_first_draft(
         &input.body_md,
         !input.attachments.is_empty(),
     ))
+}
+
+/// Drafts the letter when it is blank and rewrites it otherwise.
+async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::Letter, CallError> {
+    let current = writing::Letter {
+        subject: input.subject,
+        body_md: input.body_md,
+    };
+    let at = now();
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        input.mentor_id,
+        &current,
+        &input.attachments,
+        at,
+    )
+    .await?)
+}
+
+impl From<writing::Error> for CallError {
+    fn from(e: writing::Error) -> Self {
+        match e {
+            writing::Error::NoModel => {
+                CallError::invalid("尚未添加模型。在“设置 › AI › 模型”里添加后再试。".into())
+            }
+            writing::Error::NotAgreed => {
+                CallError::invalid("使用 AI 前，请先确认发给模型服务商的内容。".into())
+            }
+            writing::Error::NoMentor => CallError::not_found(NO_MENTOR),
+            writing::Error::Model(e) => e.into(),
+            writing::Error::NotALetter { finish_reason } => {
+                tracing::warn!(?finish_reason, "the model's answer is not a letter");
+                let message = match finish_reason.as_deref() {
+                    Some("length") => "模型的回答太长，被截断了。再试一次，或者换个模型。",
+                    _ => "模型没有按要求的格式回答。再试一次，或者换个模型。",
+                };
+                CallError {
+                    code: ErrorCode::External,
+                    message: message.into(),
+                }
+            }
+            writing::Error::Db(e) => e.into(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, TS)]

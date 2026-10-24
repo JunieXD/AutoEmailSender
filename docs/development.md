@@ -10,13 +10,14 @@
 | `crates/net` | 网络：系统代理、TLS 设置 |
 | `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
-| `crates/model` | 模型：服务商表、调用和测试 |
+| `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
 | `crates/template` | 模板和占位符 |
 | `crates/email` | 邮件：草稿和状态 |
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |
 | `crates/check` | 发送前检查：规则和收件域名 |
+| `crates/writing` | AI 写信：给模型的资料和规则，解析写好的信 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；界面用的 TypeScript 类型从这里生成 |
 | `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |

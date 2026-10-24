@@ -105,6 +105,8 @@
   --color-warning-soft: var(--warning-soft);
   --color-destructive: var(--destructive);
   --color-highlight: var(--highlight);
+  --color-diff-insert: var(--diff-insert);
+  --color-diff-delete: var(--diff-delete);
   --color-avatar-1: var(--avatar-1);
   --color-avatar-2: var(--avatar-2);
   --color-avatar-3: var(--avatar-3);

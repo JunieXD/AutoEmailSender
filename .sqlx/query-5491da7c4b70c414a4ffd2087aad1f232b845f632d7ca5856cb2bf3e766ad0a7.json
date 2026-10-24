@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, provider, base_url, model,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\"\n           FROM model_config ORDER BY id",
+  "query": "SELECT id, name, provider, base_url, model,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\",\n             agreed AS \"agreed: bool\"\n           FROM model_config ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -63,6 +63,17 @@
         "ordinal": 5,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "agreed: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "agreed"
+          }
+        }
       }
     ],
     "parameters": {
@@ -74,8 +85,9 @@
       false,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "9559b3059697e8cb371d9e17787cea735d00b2f36500fb8723a1725c31069234"
+  "hash": "5491da7c4b70c414a4ffd2087aad1f232b845f632d7ca5856cb2bf3e766ad0a7"
 }
