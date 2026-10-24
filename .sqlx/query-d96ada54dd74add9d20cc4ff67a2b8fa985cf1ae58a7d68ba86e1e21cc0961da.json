@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id, address FROM mentor_email WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "address",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d96ada54dd74add9d20cc4ff67a2b8fa985cf1ae58a7d68ba86e1e21cc0961da"
+}

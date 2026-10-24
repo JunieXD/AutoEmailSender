@@ -10,8 +10,11 @@ use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 pub mod conversations;
+pub mod export;
+pub mod import;
 pub mod matching;
 pub mod merge;
+mod supplement;
 pub mod tags;
 pub mod trash;
 
@@ -195,21 +198,13 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
     let keyword = query.keyword.as_deref().and_then(keyword);
     // One snapshot for the page, the total and the rows; read only, so it simply ends when dropped.
     let mut tx = db.begin().await?;
-    let ids = sqlx::query_scalar!(
-        "SELECT m.id FROM mentor m
-         WHERE m.trashed_at IS NULL
-           AND (?1 IS NULL
-                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-         ORDER BY m.match_score DESC, m.id
-         LIMIT ?3 OFFSET ?4",
+    let ids = filtered_ids(
+        &mut tx,
         query.status,
-        keyword,
-        PAGE_SIZE,
+        keyword.as_deref(),
+        i64::from(PAGE_SIZE),
         offset(query.page),
     )
-    .fetch_all(&mut *tx)
     .await?;
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64"
@@ -228,6 +223,31 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
         mentors: rows(&mut tx, &ids).await?,
         total,
     })
+}
+
+async fn filtered_ids(
+    conn: &mut SqliteConnection,
+    status: Option<ContactStatus>,
+    keyword: Option<&str>,
+    limit: i64,
+    skip: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT m.id FROM mentor m
+         WHERE m.trashed_at IS NULL
+           AND (?1 IS NULL
+                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+         ORDER BY m.match_score DESC, m.id
+         LIMIT ?3 OFFSET ?4",
+        status,
+        keyword,
+        limit,
+        skip,
+    )
+    .fetch_all(conn)
+    .await
 }
 
 fn offset(page: NonZeroU32) -> i64 {
@@ -543,8 +563,8 @@ pub struct MentorForm {
 }
 
 impl MentorForm {
-    /// Trims every field and leaves out blank and repeated entries, keeping the order, and checks
-    /// those with a format. The error says what to fix.
+    /// Trims every field, folds full-width email characters, leaves out blank and repeated entries
+    /// in order, and checks those with a format. The error says what to fix.
     pub fn check(self) -> Result<MentorFields, String> {
         fn text(s: &str) -> Option<String> {
             let t = s.trim();
@@ -553,12 +573,16 @@ impl MentorForm {
         let name = text(&self.name).ok_or("请填写姓名")?;
         let mut aliases = Vec::new();
         for alias in self.aliases.iter().filter_map(|a| text(a)) {
+            if alias.contains([';', '；', '、']) {
+                return Err("别名不能含分号或顿号，请将不同别名分行填写".into());
+            }
             if alias != name && !aliases.contains(&alias) {
                 aliases.push(alias);
             }
         }
         let mut emails: Vec<String> = Vec::new();
         for email in self.emails.iter().filter_map(|e| text(e)) {
+            let email = tidy_email(&email);
             if !is_email(&email) {
                 return Err(format!("邮箱地址“{email}”格式不正确"));
             }
@@ -600,6 +624,18 @@ impl MentorForm {
     }
 }
 
+fn tidy_email(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
+                (c as u32 - 0xfee0) as u8 as char
+            }
+            _ => c,
+        })
+        .collect()
+}
+
 /// A plain address as people write them: `local@domain`, where the local part is dot-separated
 /// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
 /// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
@@ -632,7 +668,7 @@ fn is_web_page(s: &str) -> bool {
 }
 
 /// A mentor's own fields, checked: blank ones are None or left out of their lists.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MentorFields {
     pub name: String,
     pub aliases: Vec<String>,
@@ -717,13 +753,13 @@ pub async fn assign_mailbox(
 }
 
 /// Replaces the mentor's own fields and reindexes it. False when there is no such mentor.
-pub async fn update(
-    db: &SqlitePool,
+pub async fn update<'c>(
+    conn: impl Acquire<'c, Database = Sqlite>,
     id: i64,
     mentor: &MentorFields,
     now: i64,
 ) -> Result<bool, SaveError> {
-    let mut tx = db.begin().await?;
+    let mut tx = conn.begin().await?;
     let done = sqlx::query!(
         "UPDATE mentor SET name = ?, updated_at = ? WHERE id = ?",
         mentor.name,

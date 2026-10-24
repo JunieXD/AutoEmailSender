@@ -2,6 +2,7 @@
 //! passwords or keys.
 
 use std::error::Error;
+use std::io::Write;
 use std::path::Path;
 
 use tauri::AppHandle;
@@ -74,6 +75,6 @@ pub fn export(app: &AppHandle, dir: &Path) -> Result<bool, Box<dyn Error>> {
         out.push_str(&format!("\n== {name} ==\n"));
         out.push_str(&std::fs::read_to_string(dir.join(name))?);
     }
-    std::fs::write(target.into_path()?, out)?;
+    crate::save::replace(&target.into_path()?, |file| file.write_all(out.as_bytes()))?;
     Ok(true)
 }

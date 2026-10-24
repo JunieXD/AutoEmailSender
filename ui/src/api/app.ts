@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ExportMentors } from "@/api/types";
 
 // Commands of the desktop app itself (crates/app), beside the core's operations in call.ts.
 
@@ -20,4 +21,9 @@ export function dataLocation(): Promise<string> {
 /** Opens the data directory in Finder or Explorer. */
 export function openDataLocation(): Promise<void> {
   return invoke<void>("open_data_location");
+}
+
+/** Saves a mentor table where the user chooses; false when canceled. */
+export function exportMentors(input: ExportMentors, fileName: string): Promise<boolean> {
+  return invoke<boolean>("export_mentors", { input, fileName });
 }

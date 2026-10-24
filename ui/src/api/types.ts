@@ -6,6 +6,8 @@ export type Attachment = { fileName: string, size: number, };
 
 export type CallError = { code: ErrorCode, message: string, };
 
+export type Column = { header: string, field: Field | null, };
+
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
@@ -16,7 +18,11 @@ export type ConversationPage = { conversations: Array<Conversation>, total: numb
 
 export type ConversationQuery = { unread: boolean, page: number, };
 
+export type Decisions = { take: Array<Difference>, matches: Array<GroupChoice>, restore: Array<number>, };
+
 export type DefaultTemplate = { id: number | null, };
+
+export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
 export type Direction = "up" | "down";
 
@@ -40,7 +46,13 @@ export type Entry = { "email": Email } | { "message": Message };
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
 
+export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
+
+export type Field = "name" | "email" | "university" | "school" | "department" | "title" | "homepage" | "alias" | "research" | "papers" | "sourceUrl" | "tags" | "note";
+
 export type FilledTemplate = { subject: string, bodyMd: string, };
+
+export type Filter = { status?: ContactStatus, keyword?: string, };
 
 export type FirstDraft = { subject: string | null, bodyMd: string | null, 
 /**
@@ -59,6 +71,18 @@ export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, ht
  * Materials, by id.
  */
 attachments: Array<number>, };
+
+export type GroupChoice = { row: number, id: number | null, };
+
+export type ImportCandidate = { id: number, profile: ImportProfile, };
+
+export type ImportMentors = { decisions: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
+export type ImportProfile = { name: string, affiliations: Array<Affiliation>, emails: Array<string>, research: string | null, homepages: Array<string>, };
+
+export type ImportSetup = { sheet: number | null, columns: Array<Field | null> | null, };
+
+export type Imported = { created: number, updated: number, };
 
 export type Letter = { subject: string, bodyMd: string, };
 
@@ -137,6 +161,8 @@ export type MaterialId = { id: number, };
 
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
 
+export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProfile, candidates: Array<ImportCandidate>, selected: number | null, };
+
 export type MentorAddress = { id: number, address: string, };
 
 export type MentorDetail = { id: number, name: string, aliases: Array<string>, 
@@ -190,6 +216,8 @@ affiliation: Affiliation | null, affiliationCount: number,
  * The start of the research description, enough for the two lines the list shows.
  */
 research: string | null, matchState: MatchSummary, contact: Contact, tags: Array<Tag>, };
+
+export type MergePreview = { emails: number, affiliations: number, };
 
 export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number, 
 /**
@@ -297,6 +325,10 @@ export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
 
+export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Column>, issue: string | null, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
+
+export type PreviewImport = { decisions?: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
@@ -324,6 +356,10 @@ export type ReplyTarget = { id: number, messageId: string | null, fromAddress: s
 
 export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
+export type RowError = { row: number, reason: string, };
+
+export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
+
 export type Security = "tls" | "starttls";
 
 export type Server = { host: string, port: number, security: Security, };
@@ -341,6 +377,8 @@ steps: Array<string>,
  * Where the steps start.
  */
 url: string, } | { "kind": "unsupported", reason: string, };
+
+export type TableFormat = "xlsx" | "csv";
 
 export type Tag = { id: number, name: string, 
 /**
@@ -384,6 +422,10 @@ export type TrashQuery = {
  */
 page: number, };
 
+export type Trashed = { rows: Array<number>, id: number, name: string, };
+
+export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
+
 export interface Operations {
   listConversations: { input: ConversationQuery; output: ConversationPage };
   unreadCount: { input: Nothing; output: number };
@@ -401,12 +443,15 @@ export interface Operations {
   resumeMatching: { input: Nothing; output: null };
   cancelMatching: { input: Nothing; output: null };
   retryMatching: { input: Nothing; output: number };
+  previewImport: { input: PreviewImport; output: Preview };
+  importMentors: { input: ImportMentors; output: Imported };
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
   addMentorEmail: { input: MentorAddress; output: MentorDetail };
+  previewMerge: { input: MentorMerge; output: MergePreview };
   mergeMentors: { input: MentorMerge; output: null };
   listTrash: { input: TrashQuery; output: MentorPage };
   trashMentors: { input: MentorIds; output: null };
