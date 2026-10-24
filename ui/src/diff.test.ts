@@ -32,6 +32,12 @@ test("a date in Chinese is a fact, and a sentence after an address is not part o
     ["removed", "三日周二"],
     ["added", "五日周四"],
   ]);
+  expect(facts("上星期三和明天下午有空", "下星期三和后天下午有空")).toEqual([
+    ["removed", "上"],
+    ["added", "下"],
+    ["removed", "明天"],
+    ["added", "后天"],
+  ]);
   expect(
     facts("主页https://example.org。我的方向是人工智能。", "主页https://example.org。我的方向是计算机视觉。"),
   ).toEqual([]);

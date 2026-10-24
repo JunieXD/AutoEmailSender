@@ -151,7 +151,12 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
     let (mut pending, mut events) = (Vec::new(), 0);
     // Server-sent events, each a `data:` line, until `data: [DONE]`: what may follow it, or a
     // connection kept open after it, is not part of the answer.
-    'read: while more(&mut response, &mut pending, access).await? {
+    'read: loop {
+        let open = more(&mut response, &mut pending, access).await?;
+        if !open {
+            // The last line may end without a line break; it is read like the others.
+            pending.push(b'\n');
+        }
         while let Some(end) = pending.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = pending.drain(..=end).collect();
             let line = String::from_utf8_lossy(&line);
@@ -179,6 +184,9 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
                 finish_reason = choice.finish_reason.or(finish_reason);
                 tokens = choice.usage.or(tokens);
             }
+        }
+        if !open {
+            break;
         }
     }
     if events == 0 {

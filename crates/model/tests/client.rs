@@ -261,6 +261,18 @@ async fn an_answer_ends_where_the_stream_says_it_is_done() {
         .await
         .unwrap();
     assert_eq!(answer.text, "好的");
+    // Without it, the stream ends with the connection, however its last line ends.
+    let (address, _) = provider(
+        200,
+        concat!(
+            r#"data: {"choices":[{"delta":{"content":"好的"},"finish_reason":"stop"}]}"#,
+            "\n\n",
+            r#"data: {"error":{"message":"Provider disconnected"#,
+        ),
+    )
+    .await;
+    let result = model::ask(&net, &access(address, None), "m", "规则", "资料").await;
+    assert!(matches!(result, Err(ModelError::Broken(_))), "{result:?}");
 }
 
 #[tokio::test]

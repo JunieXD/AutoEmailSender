@@ -187,7 +187,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     let (address, received) = provider(vec![
         // As a model that thinks aloud before answering, about a letter that mentions the tags.
         (
-            "<think>按格式：<subject>主题</subject><body>正文</body>。</think>\n<subject>\n申请攻读\n博士学位\n</subject>\n<body>\n王伟老师：我写过解析 <body> 和 <subject> 标签的程序。\n</body>",
+            "<think>按格式：<subject>主题</subject><body>正文</body>。</think>\n<subject>\n申请攻读\n博士学位\n</subject>\n<body>\n王伟老师：我写过解析 <body>、<subject> 和 </think> 标签的程序。\n</body>",
             "stop",
         ),
         ("王伟老师：您好！", "stop"),
@@ -213,7 +213,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     assert_eq!(letter.subject, "申请攻读 博士学位");
     assert_eq!(
         letter.body_md,
-        "王伟老师：我写过解析 <body> 和 <subject> 标签的程序。"
+        "王伟老师：我写过解析 <body>、<subject> 和 </think> 标签的程序。"
     );
     let (_, message) = received.lock().unwrap().pop().unwrap();
     let data: Value = serde_json::from_str(&message).unwrap();

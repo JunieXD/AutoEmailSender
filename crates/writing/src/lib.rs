@@ -212,12 +212,14 @@ fn filled(value: &Value) -> bool {
     }
 }
 
-/// The subject and body the model wrote, when it answered as told: after any thinking it wrote out,
-/// the subject first, then the body, which may itself mention the tags.
+/// The subject and body the model wrote, when it answered as told: after any thinking it wrote out
+/// first, the subject, then the body, which may itself mention the tags.
 fn letter(answer: &str) -> Option<Letter> {
-    let answer = answer
-        .rsplit_once("</think>")
-        .map_or(answer, |(_, after)| after);
+    let answer = answer.trim_start();
+    let answer = match answer.strip_prefix("<think>") {
+        Some(thinking) => thinking.split_once("</think>")?.1,
+        None => answer,
+    };
     let (_, rest) = answer.split_once("<subject>")?;
     let (subject, rest) = rest.split_once("</subject>")?;
     let (_, rest) = rest.split_once("<body>")?;
