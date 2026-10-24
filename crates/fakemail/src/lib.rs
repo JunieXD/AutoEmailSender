@@ -139,6 +139,7 @@ async fn smtp_session(
     let mut encrypted = false;
     let mut hangup = false;
     io.write_all(b"220 fake ESMTP\r\n").await?;
+    io.flush().await?;
     loop {
         let mut line = String::new();
         if io.read_line(&mut line).await? == 0 {
@@ -179,5 +180,6 @@ async fn smtp_session(
             _ => "502 unknown\r\n",
         };
         io.write_all(reply.as_bytes()).await?;
+        io.flush().await?;
     }
 }

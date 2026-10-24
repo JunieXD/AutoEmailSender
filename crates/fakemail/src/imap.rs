@@ -121,6 +121,7 @@ async fn session(
     let mut identified = false;
     let mut open: Option<String> = None;
     io.write_all(b"* OK fake IMAP ready\r\n").await?;
+    io.flush().await?;
     loop {
         let mut line = String::new();
         if io.read_line(&mut line).await? == 0 {
@@ -237,6 +238,7 @@ async fn session(
             _ => format!("{tag} BAD unknown\r\n").into(),
         };
         io.write_all(&reply).await?;
+        io.flush().await?;
     }
 }
 
