@@ -34,7 +34,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
   }, [out, queryClient]);
   const fresh = useMarkRead(mentor.id, entries.data);
   // A first letter begun stays to be finished when the mentor has mail by now, as after a merge or a
-  // look-up: a draft, one that failed to load, or what the composer keeps of a save that failed.
+  // look-up: a draft, or what the composer keeps of a save that failed.
   const draft = useQuery({
     queryKey: ["getFirstDraft", mentor.id],
     queryFn: () => call("getFirstDraft", { id: mentor.id }),
@@ -44,7 +44,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     filters: { mutationKey: ["saveFirstDraft", mentor.id] },
     select: (m) => m.state.status,
   }).at(-1);
-  const begun = draft.data || draft.isError || (lastSave !== undefined && lastSave !== "success");
+  const begun = draft.data || (lastSave !== undefined && lastSave !== "success");
   if (entries.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
@@ -81,7 +81,13 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
           ),
         )}
       </div>
-      {!mentor.trashed && begun && <FirstLetter mentor={mentor} />}
+      {/* Shown here, as the composer would load the draft again each time it came up. */}
+      {!mentor.trashed &&
+        (begun ? (
+          <FirstLetter mentor={mentor} />
+        ) : (
+          draft.error && <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(draft.error)}</p>
+        ))}
     </>
   );
 }
