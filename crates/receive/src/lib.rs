@@ -370,7 +370,7 @@ impl Session<'_> {
                 uid: head.uid,
             };
             let sent_at = head.received_at.or(headers.date).unwrap_or(self.now);
-            let plan = self.plan(role, &headers, sent_at, &threads).await?;
+            let plan = self.plan(role, &headers, &threads).await?;
             if let (Plan::Keep { mentors, .. }, Some(id)) = (&plan, &headers.message_id) {
                 threads.insert(id.clone(), mentors.clone());
             }
@@ -401,13 +401,27 @@ impl Session<'_> {
             let Some(raw) = starts.get(&place.uid) else {
                 continue;
             };
-            match keep {
-                None => self.bounced(raw).await?,
-                Some((kind, mentors)) => {
-                    self.store(&place, kind, &headers, sent_at, raw, &mentors)
-                        .await?;
-                }
+            let Some((kind, mentors)) = keep else {
+                self.bounced(raw).await?;
+                continue;
+            };
+            let text = mail::text(raw);
+            if kind == Kind::Sent
+                && self
+                    .renamed_copy(&headers, sent_at, text.as_deref())
+                    .await?
+            {
+                continue;
             }
+            // Only the start was fetched.
+            let truncated = raw.len() >= START as usize;
+            let message = Stored {
+                kind,
+                sent_at,
+                text,
+                truncated,
+            };
+            self.store(&place, &headers, &message, &mentors).await?;
         }
         Ok(())
     }
@@ -416,7 +430,6 @@ impl Session<'_> {
         &mut self,
         role: Role,
         headers: &mail::Headers,
-        sent_at: i64,
         threads: &HashMap<String, Vec<i64>>,
     ) -> Result<Plan, Error> {
         let Some(from) = &headers.from else {
@@ -427,20 +440,15 @@ impl Session<'_> {
             return Ok(Plan::Skip);
         }
         if role == Role::Sent {
-            let copy = email::Copy {
-                mailbox_id: self.mailbox_id,
-                message_id: headers.message_id.as_deref(),
-                recipients: &headers.recipients,
-                subject: headers.subject.as_deref(),
-                at: sent_at,
-            };
-            let mut conn = self.db.acquire().await?;
-            match email::sent_copy(&mut conn, &copy, self.now).await? {
-                SentCopy::Foreign => {}
-                SentCopy::Own => return Ok(Plan::Skip),
-                SentCopy::Confirmed => {
-                    self.round.changed = true;
-                    return Ok(Plan::Skip);
+            if let Some(id) = &headers.message_id {
+                let mut conn = self.db.acquire().await?;
+                match email::sent_copy(&mut conn, id, self.now).await? {
+                    SentCopy::Foreign => {}
+                    SentCopy::Own => return Ok(Plan::Skip),
+                    SentCopy::Confirmed => {
+                        self.round.changed = true;
+                        return Ok(Plan::Skip);
+                    }
                 }
             }
             let mentors = self.mentors_at(&headers.recipients).await?;
@@ -494,7 +502,9 @@ impl Session<'_> {
     async fn mentors_in_thread(&self, ids: &[String]) -> Result<Vec<i64>, Error> {
         let ids = json(ids)?;
         Ok(sqlx::query_scalar!(
-            r#"SELECT mentor_id AS "mentor_id!" FROM email WHERE message_id IN (SELECT value FROM json_each(?1))
+            r#"SELECT mentor_id AS "mentor_id!" FROM email
+               WHERE message_id IN (SELECT value FROM json_each(?1))
+                 OR copy_message_id IN (SELECT value FROM json_each(?1))
                UNION
                SELECT mm.mentor_id FROM message m JOIN message_mentor mm ON mm.message_id = m.id
                WHERE m.message_id IN (SELECT value FROM json_each(?1))"#,
@@ -504,34 +514,66 @@ impl Session<'_> {
         .await?)
     }
 
+    /// Whether a copy in the sent folder under a Message-ID of the provider's own is of an email the
+    /// app sent.
+    async fn renamed_copy(
+        &mut self,
+        headers: &mail::Headers,
+        sent_at: i64,
+        text: Option<&str>,
+    ) -> Result<bool, Error> {
+        let (Some(message_id), Some(subject), Some(text)) =
+            (&headers.message_id, &headers.subject, text)
+        else {
+            return Ok(false);
+        };
+        let copy = email::Copy {
+            mailbox_id: self.mailbox_id,
+            message_id,
+            recipients: &headers.recipients,
+            subject,
+            text,
+            at: sent_at,
+        };
+        let mut conn = self.db.acquire().await?;
+        Ok(
+            match email::renamed_copy(&mut conn, &copy, self.now).await? {
+                SentCopy::Foreign => false,
+                SentCopy::Own => true,
+                SentCopy::Confirmed => {
+                    self.round.changed = true;
+                    true
+                }
+            },
+        )
+    }
+
     async fn store(
         &mut self,
         at: &Location<'_>,
-        kind: Kind,
         headers: &mail::Headers,
-        sent_at: i64,
-        raw: &[u8],
+        message: &Stored,
         mentors: &[i64],
     ) -> Result<(), Error> {
-        let text = mail::text(raw);
         let mut tx = self.db.begin().await?;
         let inserted = sqlx::query_scalar!(
             "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, from_address, subject, refs, body_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               sent_at, from_address, subject, refs, body_text, truncated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT DO NOTHING RETURNING id AS \"id!\"",
             self.mailbox_id,
             at.folder,
             at.uidvalidity,
             at.uid,
-            kind,
+            message.kind,
             headers.message_id,
             headers.in_reply_to,
-            sent_at,
+            message.sent_at,
             headers.from,
             headers.subject,
             headers.references,
-            text,
+            message.text,
+            message.truncated,
         )
         .fetch_optional(&mut *tx)
         .await?;
@@ -575,52 +617,38 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Marks the mail a bounce is about, whether the app sent it or it was sent elsewhere: the first
-    /// it names that the user sent, as the others are mail that one quotes or carries.
+    /// Marks the mail a bounce returns, whether the app sent it or it was sent elsewhere.
     async fn bounced(&mut self, raw: &[u8]) -> Result<(), Error> {
         let Some(bounce) = mail::bounce(raw) else {
             return Ok(());
         };
-        let mut original = None;
-        for id in &bounce.originals {
-            let sent = sqlx::query_scalar!(
-                r#"SELECT EXISTS (SELECT 1 FROM email WHERE message_id = ?1)
-                     OR EXISTS (SELECT 1 FROM message WHERE message_id = ?1 AND kind = 'sent')
-                   AS "sent!: bool""#,
-                id
-            )
-            .fetch_one(self.db)
-            .await?;
-            if sent {
-                original = Some(id);
-                break;
-            }
-        }
-        let Some(original) = original else {
-            return Ok(());
-        };
-        let recipients = json(&bounce.recipients)?;
         let mut tx = self.db.begin().await?;
-        let own = email::bounced(&mut tx, original, &bounce.reason, self.now).await?;
-        // Mail to several mentors bounces for those the bounce names, or for all when it names none
-        // of them.
-        let elsewhere = sqlx::query!(
-            "UPDATE message_mentor SET bounce_reason = ?1
-             WHERE bounce_reason IS NULL
-               AND message_id = (SELECT id FROM message WHERE message_id = ?2 AND kind = 'sent')
-               AND (mentor_id IN (SELECT id FROM mentor WHERE email IN (SELECT value FROM json_each(?3)))
-                 OR NOT EXISTS (
-                   SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
-                   WHERE mm.message_id = message_mentor.message_id
-                     AND m.email IN (SELECT value FROM json_each(?3))))",
-            bounce.reason,
-            original,
-            recipients
-        )
-        .execute(&mut *tx)
-        .await?;
+        let mut marked = false;
+        // The app sends each email to one mentor, so the first reason is its.
+        if let Some(first) = bounce.failures.first() {
+            marked |= email::bounced(&mut tx, &bounce.original, &first.reason, self.now).await?;
+        }
+        for failure in &bounce.failures {
+            // Mail sent elsewhere to several mentors bounces for those the bounce names, or for
+            // all when it does not say who.
+            let recipients = json(&failure.recipients)?;
+            marked |= sqlx::query!(
+                "UPDATE message_mentor SET bounce_reason = ?1
+                 WHERE bounce_reason IS NULL
+                   AND message_id = (SELECT id FROM message WHERE message_id = ?2 AND kind = 'sent')
+                   AND (json_array_length(?3) = 0 OR mentor_id IN (
+                     SELECT id FROM mentor WHERE email IN (SELECT value FROM json_each(?3))))",
+                failure.reason,
+                bounce.original,
+                recipients
+            )
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                > 0;
+        }
         tx.commit().await?;
-        self.round.changed |= own || elsewhere.rows_affected() > 0;
+        self.round.changed |= marked;
         Ok(())
     }
 }
@@ -646,6 +674,14 @@ async fn existing(
     .await
 }
 
+/// What is stored of a message besides its headers.
+struct Stored {
+    kind: Kind,
+    sent_at: i64,
+    text: Option<String>,
+    truncated: bool,
+}
+
 /// Where a message is in the mailbox.
 struct Location<'a> {
     folder: &'a str,
@@ -669,6 +705,8 @@ pub struct Message {
     pub text: String,
     /// The earlier mail it quotes, shown folded.
     pub quote: Option<String>,
+    /// Only its start was read, which may leave out some of the text.
+    pub truncated: bool,
     #[serde(flatten)]
     pub kind: MessageKind,
 }
@@ -695,7 +733,7 @@ pub enum MessageKind {
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
-             mm.bounce_reason, m.body_text
+             mm.bounce_reason, m.body_text, m.truncated AS "truncated: bool"
            FROM message m JOIN message_mentor mm ON mm.message_id = m.id
            WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
         mentor_id
@@ -714,6 +752,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx:
                 sent_at: r.sent_at,
                 text: text.to_owned(),
                 quote: (!quote.is_empty()).then(|| quote.to_owned()),
+                truncated: r.truncated,
                 kind: match r.kind {
                     Kind::Reply => MessageKind::Reply {
                         unread: r.read_at.is_none(),

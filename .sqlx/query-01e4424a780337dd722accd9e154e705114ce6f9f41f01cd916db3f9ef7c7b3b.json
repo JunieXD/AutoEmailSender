@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!\", state IN ('sending', 'maybe_sent') AS \"unconfirmed!: bool\"\n           FROM email WHERE message_id = ?",
+  "query": "SELECT id AS \"id!\", state IN ('sending', 'maybe_sent') AS \"unconfirmed!: bool\"\n           FROM email WHERE message_id = ?1 OR copy_message_id = ?1",
   "describe": {
     "columns": [
       {
@@ -29,5 +29,5 @@
       false
     ]
   },
-  "hash": "3fefdb82c66e8ebac821b23c87a16e073cf1ebf86f041829609bd61a675cbf2b"
+  "hash": "01e4424a780337dd722accd9e154e705114ce6f9f41f01cd916db3f9ef7c7b3b"
 }

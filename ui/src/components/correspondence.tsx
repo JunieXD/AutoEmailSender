@@ -203,6 +203,11 @@ function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorD
       >
         {m.subject && <h3 className="mb-2 font-semibold">{m.subject}</h3>}
         <Text text={m.text} />
+        {m.truncated && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            邮件较大，只读了开头，可能没有显示全；完整内容请到邮箱里查看。
+          </p>
+        )}
         {m.quote && (
           <>
             <button

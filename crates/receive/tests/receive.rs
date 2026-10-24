@@ -247,6 +247,20 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
     // Nothing is taken twice.
     assert_eq!(round(&db, &net, T + 30 * MINUTE).await, Round::default());
     assert_eq!(messages(&db, li).await.len(), 2);
+    assert!(!li_mail[0].truncated);
+
+    // Only the start of a large message is read.
+    store.deliver(
+        "INBOX",
+        T + 31 * MINUTE,
+        &format!(
+            "From: li@pku.edu.cn\nSubject: 材料\nMessage-ID: <r3@pku.edu.cn>\n\n请看下面的说明。\n{}",
+            "说明".repeat(100_000)
+        ),
+    );
+    round(&db, &net, T + 35 * MINUTE).await;
+    let large = &messages(&db, li).await[2];
+    assert!(large.truncated && large.text.starts_with("请看下面的说明。"));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -471,6 +485,12 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
     sent_email(&db, wang, "sending", "<e2@example.com>").await;
     round(&db, &net, T).await;
 
+    // Another letter with the same subject, sent from the website.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE / 2,
+        "From: me@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <web@qq.com>\n\n老师您好，补充一份成绩单。",
+    );
     // As QQ keeps it, under a Message-ID of its own.
     store.deliver(
         SENT,
@@ -494,6 +514,12 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
         T,
         "From: secretary@pku.edu.cn\nSubject: Re: 申请读博\nMessage-ID: <r1@pku.edu.cn>\nIn-Reply-To: <tencent_1@qq.com>\n\n李老师请你周五来面谈。",
     );
+    // Answering the Message-ID the app gave.
+    store.deliver(
+        "INBOX",
+        T + MINUTE,
+        "From: secretary@pku.edu.cn\nSubject: Re: 申请读博\nMessage-ID: <r2@pku.edu.cn>\nIn-Reply-To: <e1@example.com>\n\n地点在理科楼。",
+    );
     round(&db, &net, T + 10 * MINUTE).await;
 
     assert!(matches!(
@@ -508,9 +534,12 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
             .collect::<Vec<_>>(),
         [
             ("me@example.com", &MessageKind::Sent { bounce: None }),
+            ("me@example.com", &MessageKind::Sent { bounce: None }),
+            ("secretary@pku.edu.cn", &MessageKind::Reply { unread: true }),
             ("secretary@pku.edu.cn", &MessageKind::Reply { unread: true }),
         ]
     );
+    assert_eq!(li_mail[0].text, "老师您好，补充一份成绩单。");
 
     let id: i64 = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id = ?")
         .bind(wang)
@@ -541,6 +570,103 @@ async fn a_bounce_marks_only_the_mail_and_mentors_it_names(db: SqlitePool) {
         SENT,
         T + MINUTE,
         "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nSubject: 申请读博\nMessage-ID: <s1@example.com>\n\n两位老师好！",
+    );
+    store.deliver(
+        SENT,
+        T + MINUTE,
+        "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nSubject: 夏令营\nMessage-ID: <s2@example.com>\n\n两位老师好！",
+    );
+    store.deliver(
+        SENT,
+        T + 2 * MINUTE,
+        "From: me@example.com\nTo: wang@thu.edu.cn\nCc: peer@example.org\nSubject: 推荐信\nMessage-ID: <s3@example.com>\n\n王老师好！",
+    );
+    // Neither reached, for different reasons, one going on over two lines.
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b4@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; li@pku.edu.cn
+Action: failed
+Status: 5.1.1
+Diagnostic-Code: smtp;
+ 550 5.1.1 User unknown
+
+Final-Recipient: rfc822; wang@thu.edu.cn
+Action: failed
+Status: 5.2.2
+Diagnostic-Code: smtp; 552 5.2.2 Mailbox full
+--r
+Content-Type: text/rfc822-headers
+
+Message-ID: <s2@example.com>
+--r--
+",
+    );
+    // Only someone else's address failed.
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b5@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; peer@example.org
+Action: failed
+Status: 5.1.1
+--r
+Content-Type: text/rfc822-headers
+
+Message-ID: <s3@example.com>
+--r--
+",
+    );
+    // A letter the app does not know of came back, carrying one it sent.
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b6@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; peer@example.org
+Action: failed
+--r
+Content-Type: message/rfc822
+
+From: me@example.com
+Message-ID: <untracked@example.com>
+Content-Type: multipart/mixed; boundary=f
+
+--f
+Content-Type: text/plain
+
+请看附件。
+--f
+Content-Type: message/rfc822
+
+From: me@example.com
+Message-ID: <e1@example.com>
+
+张老师您好
+--f--
+--r--
+",
     );
     // Delivered to one of the two.
     store.deliver(
@@ -609,16 +735,29 @@ Message-ID: <e1@example.com>
     store.deliver("INBOX", T + 4 * MINUTE, bounce);
     round(&db, &net, T + 10 * MINUTE).await;
 
+    let bounces = |mail: Vec<Message>| {
+        mail.into_iter()
+            .map(|m| match m.kind {
+                MessageKind::Sent { bounce } => bounce,
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        messages(&db, li).await[0].kind,
-        MessageKind::Sent {
-            bounce: Some("对方邮箱已满（552 5.2.2 Mailbox full）".into())
-        }
+        bounces(messages(&db, li).await),
+        [
+            Some("对方邮箱已满（552 5.2.2 Mailbox full）".into()),
+            Some("收件地址不存在（550 5.1.1 User unknown）".into()),
+        ]
     );
     assert!(matches!(contact(&db, li).await, Contact::Bounced { .. }));
     assert_eq!(
-        messages(&db, wang).await[0].kind,
-        MessageKind::Sent { bounce: None }
+        bounces(messages(&db, wang).await),
+        [
+            None,
+            Some("对方邮箱已满（552 5.2.2 Mailbox full）".into()),
+            None
+        ]
     );
     assert!(matches!(
         contact(&db, wang).await,

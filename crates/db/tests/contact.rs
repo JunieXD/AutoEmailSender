@@ -63,8 +63,8 @@ async fn seen(
 ) -> i64 {
     let id = sqlx::query(
         "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, in_reply_to, sent_at,
-           from_address)
-         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn')",
+           from_address, truncated)
+         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn', 0)",
     )
     .bind(at)
     .bind(kind)

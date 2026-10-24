@@ -201,32 +201,49 @@ fn end_link(text: &mut String, link: Option<String>) {
     }
 }
 
-/// Mail that came back: the Message-IDs it mentions, the bounced one among them, who it did not
-/// reach and why.
+/// Mail that came back: the Message-ID of the mail the bounce returns, and who it did not reach
+/// and why.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Bounce {
-    pub originals: Vec<String>,
-    /// In lowercase; empty when the bounce does not say.
+    pub original: String,
+    pub failures: Vec<Failure>,
+}
+
+/// Recipients mail did not reach, in lowercase, and why; no recipients when the bounce does not say
+/// who.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Failure {
     pub recipients: Vec<String>,
     pub reason: String,
 }
 
 /// What a delivery status report says about a recipient.
 #[derive(Default)]
-struct Status<'a> {
+struct Status {
     recipients: Vec<String>,
-    action: Option<&'a str>,
-    status: Option<&'a str>,
-    diagnostic: Option<&'a str>,
+    action: Option<String>,
+    status: Option<String>,
+    diagnostic: Option<String>,
 }
 
 /// The delivery status fields, recipient by recipient. They are plain text, wherever the report
-/// puts them; a recipient's start at its Original-Recipient or Final-Recipient.
-fn statuses(text: &str) -> Vec<Status<'_>> {
+/// puts them, and may go on over several lines; a recipient's start at its Original-Recipient or
+/// Final-Recipient.
+fn statuses(text: &str) -> Vec<Status> {
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        match lines.last_mut() {
+            Some(last) if line.starts_with([' ', '\t']) => {
+                last.push(' ');
+                last.push_str(line.trim());
+            }
+            _ => lines.push(line.trim_start().to_owned()),
+        }
+    }
     let mut statuses: Vec<Status> = Vec::new();
     let mut original = None;
-    for line in text.lines() {
-        let Some((name, value)) = line.trim_start().split_once(':') else {
+    for line in &lines {
+        let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let value = value.trim();
@@ -242,7 +259,7 @@ fn statuses(text: &str) -> Vec<Status<'_>> {
                 recipients: original.take().into_iter().chain([address()]).collect(),
                 ..Status::default()
             }),
-            "action" | "status" | "diagnostic-code" => {
+            "action" | "status" | "diagnostic-code" if !value.is_empty() => {
                 if statuses.is_empty() {
                     statuses.push(Status::default());
                 }
@@ -254,7 +271,7 @@ fn statuses(text: &str) -> Vec<Status<'_>> {
                     "status" => &mut last.status,
                     _ => &mut last.diagnostic,
                 };
-                field.get_or_insert(value);
+                field.get_or_insert_with(|| value.to_owned());
             }
             _ => {}
         }
@@ -262,7 +279,8 @@ fn statuses(text: &str) -> Vec<Status<'_>> {
     statuses
 }
 
-/// What the start of a possible bounce says: None when it only reports a delay, or delivery.
+/// What the start of a possible bounce says: None when it only reports a delay or delivery, or
+/// names no mail it returns.
 pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     let message = MessageParser::new().parse(raw)?;
     let whole = String::from_utf8_lossy(raw);
@@ -271,11 +289,18 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     let reported = statuses.iter().any(|s| s.action.is_some());
     let failed: Vec<&Status> = statuses
         .iter()
-        .filter(|s| !reported || s.action.is_some_and(|a| a.eq_ignore_ascii_case("failed")))
+        .filter(|s| {
+            !reported
+                || s.action
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case("failed"))
+        })
         .collect();
     if reported && failed.is_empty() {
         return None;
     }
+    // The mail returned comes first: attached, or its headers quoted, else the one the bounce
+    // answers. Mail that one carries or refers to comes after, and is not what bounced.
     let own = message.message_id().map(bracketed);
     let nested = message
         .messages()
@@ -287,53 +312,62 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
         name.eq_ignore_ascii_case("message-id")
             .then(|| bracketed(id))
     });
-    let thread = message
+    let answered = message
         .in_reply_to()
-        .iter()
-        .chain(message.references().iter())
-        .flat_map(|list| list.iter().map(bracketed).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let mut originals: Vec<String> = Vec::new();
-    for id in nested.chain(quoted).chain(thread) {
-        if Some(&id) != own.as_ref() && !originals.contains(&id) {
-            originals.push(id);
-        }
-    }
-    let first = failed.first();
-    let diagnostic = first.and_then(|s| s.diagnostic).map(|d| {
-        let d = d.split_once(';').map_or(d, |(kind, rest)| {
-            if kind.trim().eq_ignore_ascii_case("smtp") {
-                rest
-            } else {
-                d
-            }
-        });
-        d.trim()
-    });
-    let status = first.and_then(|s| s.status);
-    let body = message.body_text(0).unwrap_or(Cow::Borrowed(""));
-    let said = format!(
-        "{} {} {} {body}",
-        diagnostic.unwrap_or_default(),
-        status.unwrap_or_default(),
+        .and_then(|list| list.first())
+        .map(bracketed);
+    let original = nested
+        .chain(quoted)
+        .chain(answered)
+        .find(|id| Some(id) != own.as_ref())?;
+    let told = format!(
+        "{} {}",
         message.subject().unwrap_or_default(),
-    )
-    .to_lowercase();
-    let category = CAUSES
-        .iter()
-        .find(|(_, words)| words.iter().any(|w| said.contains(w)))
-        .map_or("邮件被退回", |(cause, _)| cause);
-    let detail = diagnostic
-        .or(status)
-        .map(|d| d.chars().take(150).collect::<String>());
-    Some(Bounce {
-        originals,
-        recipients: failed.iter().flat_map(|s| s.recipients.clone()).collect(),
-        reason: match detail {
-            Some(d) => format!("{category}（{d}）"),
-            None => category.to_owned(),
-        },
-    })
+        message.body_text(0).unwrap_or(Cow::Borrowed(""))
+    );
+    let failures = if failed.is_empty() {
+        vec![Failure {
+            recipients: Vec::new(),
+            reason: reason(None, None, &told),
+        }]
+    } else {
+        failed
+            .iter()
+            .map(|s| Failure {
+                recipients: s.recipients.clone(),
+                reason: reason(s.diagnostic.as_deref(), s.status.as_deref(), &told),
+            })
+            .collect()
+    };
+    Some(Bounce { original, failures })
+}
+
+/// Why mail did not reach a recipient: the cause the server's words fit, else what the bounce
+/// tells, and the words.
+fn reason(diagnostic: Option<&str>, status: Option<&str>, told: &str) -> String {
+    // smtp; 550 5.1.1 User unknown
+    let diagnostic = diagnostic.map(|d| match d.split_once(';') {
+        Some((kind, rest)) if kind.trim().eq_ignore_ascii_case("smtp") => rest.trim(),
+        _ => d,
+    });
+    let fits = |text: &str| {
+        let text = text.to_lowercase();
+        CAUSES
+            .iter()
+            .find(|(_, words)| words.iter().any(|w| text.contains(w)))
+            .map(|(cause, _)| *cause)
+    };
+    let category = fits(&format!(
+        "{} {}",
+        diagnostic.unwrap_or_default(),
+        status.unwrap_or_default()
+    ))
+    .or_else(|| fits(told))
+    .unwrap_or("邮件被退回");
+    match diagnostic.filter(|d| !d.is_empty()).or(status) {
+        Some(d) => format!("{category}（{}）", d.chars().take(150).collect::<String>()),
+        None => category.to_owned(),
+    }
 }
 
 /// Why mail bounces, by what the report says, in lowercase; the first that matches wins.

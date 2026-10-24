@@ -333,8 +333,8 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .filter(|t| *t < now);
         let id = sqlx::query(
             "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, read_at, from_address, subject, body_text)
-             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', ?)",
+               sent_at, read_at, from_address, subject, body_text, truncated)
+             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', ?, 0)",
         )
         .bind(if kind == "sent" { "Sent" } else { "INBOX" })
         .bind(i as i64)

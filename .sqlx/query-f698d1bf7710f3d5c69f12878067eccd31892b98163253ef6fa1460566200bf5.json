@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id AS \"id!\", e.text AS \"text!\",\n             e.state IN ('sending', 'maybe_sent') AS \"unconfirmed!: bool\"\n           FROM email e JOIN mentor m ON m.id = e.mentor_id\n           WHERE e.mailbox_id = ?1 AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')\n             AND e.sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND e.copy_message_id IS NULL\n             AND e.subject = ?4 AND m.email IN (SELECT value FROM json_each(?5))\n           ORDER BY abs(e.sent_at - ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "unconfirmed!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "f698d1bf7710f3d5c69f12878067eccd31892b98163253ef6fa1460566200bf5"
+}

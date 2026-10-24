@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET copy_message_id = coalesce(copy_message_id, ?1),\n           error = CASE WHEN state = 'maybe_sent' THEN NULL ELSE error END,\n           updated_at = CASE WHEN state IN ('sending', 'maybe_sent') THEN ?2 ELSE updated_at END,\n           state = CASE WHEN state IN ('sending', 'maybe_sent') THEN 'sent' ELSE state END\n         WHERE id = ?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "6b612485065655bee6a6d69d786cb27e10cd21873366af105925180e6c1ed86d"
+}

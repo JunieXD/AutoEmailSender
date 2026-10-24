@@ -32,12 +32,26 @@ fn quote_start(lines: &[(usize, &str)], i: usize) -> Option<usize> {
     };
     // Lines that all quote, with no answers written between them.
     let quoted_to_end = || following().next().is_some() && following().all(|l| l.starts_with('>'));
+    // Answers written below quoted lines, which are then no quote to fold.
+    let answered = || {
+        let mut quoting = false;
+        following().any(|l| {
+            quoting |= l.starts_with('>');
+            quoting && !l.starts_with('>')
+        })
+    };
     // ------------------ 原始邮件 ------------------, -----Original Message-----
-    if line.starts_with('-') && SEPARATORS.iter().any(|s| line.to_lowercase().contains(s)) {
+    if line.starts_with('-')
+        && SEPARATORS.iter().any(|s| line.to_lowercase().contains(s))
+        && !answered()
+    {
         return Some(i);
     }
     // 发件人: …  发送时间: …, or From: …  Sent: …, often after a line of underscores.
-    if starts_with_any(line, &FROM) && following().take(4).any(|l| starts_with_any(l, &DETAILS)) {
+    if starts_with_any(line, &FROM)
+        && following().take(4).any(|l| starts_with_any(l, &DETAILS))
+        && !answered()
+    {
         let rule = i > 0 && lines[i - 1].1.trim().starts_with("____");
         return Some(if rule { i - 1 } else { i });
     }
@@ -135,6 +149,7 @@ mod tests {
             // Answers between quoted lines.
             "> 能否参加夏令营？\n可以。\n> 需要推荐信吗？\n需要两封。",
             "我的答复如下：\nOn Mon, Oct 20, 2026, Zhang wrote:\n> 可以报考吗？\n欢迎报考。\n> 需要提交成绩单吗？\n请寄给秘书。",
+            "答复如下。\n-----Original Message-----\nFrom: Zhang <me@example.com>\nSent: Monday, October 20, 2026\n> 可以报考吗？\n欢迎报考。",
             // Saying what someone wrote, with nothing quoted after it.
             "你在信中写道：\n希望读博。我们组今年有名额。",
             // A header-like line on its own.

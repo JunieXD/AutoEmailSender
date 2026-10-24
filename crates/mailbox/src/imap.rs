@@ -106,8 +106,9 @@ impl Imap {
         let mut last_uid = 0;
         if mailbox.exists > 0 {
             self.command("FETCH * UID", |response| {
+                // Changed flags of other messages may come too, with their UIDs.
                 if let Response::Fetch(_, attributes) = response {
-                    last_uid = uid(attributes).unwrap_or(last_uid);
+                    last_uid = last_uid.max(uid(attributes).unwrap_or(0));
                 }
             })
             .await?;

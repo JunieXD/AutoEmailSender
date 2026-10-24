@@ -196,9 +196,9 @@ CREATE TABLE email (
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   from_address TEXT,
   model TEXT,
-  message_id TEXT UNIQUE,      -- the provider's own when it gave the copy in the sent folder another
+  message_id TEXT UNIQUE,
+  copy_message_id TEXT UNIQUE, -- of its copy found in the sent folder, which the provider may change
   sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent) or accepted (sent/bounced)
-  copied_at INTEGER,           -- when its copy turned up in the mailbox's sent folder
   error TEXT,
   tracking_id TEXT UNIQUE,
   open_count INTEGER,
@@ -256,6 +256,7 @@ CREATE TABLE message (
   subject TEXT,
   refs TEXT,                   -- References: Message-IDs separated by spaces
   body_text TEXT,
+  truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)), -- only its start was read
   UNIQUE (mailbox_id, folder, uidvalidity, uid),
   CHECK (kind = 'reply' OR (read_at IS NULL AND outcome IS NULL))
 ) STRICT;

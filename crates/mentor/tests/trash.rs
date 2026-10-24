@@ -44,8 +44,9 @@ async fn state_of(db: &SqlitePool, email: i64) -> String {
 /// A reply seen in the mailbox, about these mentors.
 async fn reply(db: &SqlitePool, mentors: &[i64], uid: i64) -> i64 {
     let id = sqlx::query(
-        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address)
-         VALUES (1, 'INBOX', 1, ?, 'reply', 2, 'x@edu.cn')",
+        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address,
+           truncated)
+         VALUES (1, 'INBOX', 1, ?, 'reply', 2, 'x@edu.cn', 0)",
     )
     .bind(uid)
     .execute(db)

@@ -145,7 +145,11 @@ text: string,
 /**
  * The earlier mail it quotes, shown folded.
  */
-quote: string | null, } & ({ "kind": "reply", unread: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+quote: string | null, 
+/**
+ * Only its start was read, which may leave out some of the text.
+ */
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
