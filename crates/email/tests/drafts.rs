@@ -79,16 +79,18 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
         text: "王老师：",
         attachments: &[],
     };
-    assert!(
+    assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::Yes
     );
     // Clicking again finds no draft, so the email is not sent twice.
-    assert!(
-        !email::approve_first(&db, mentor, &approval, 3)
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 3)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::NoDraft
     );
     assert!(email::first_draft(&db, mentor).await.unwrap().is_none());
     let emails = email::list(&db, mentor).await.unwrap();
@@ -123,17 +125,34 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
     let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
     assert_eq!(draft.attachments, [transcript, resume]);
 
-    let approval = email::Approval {
+    // Deleted after the user picked it: the email does not go without it.
+    sqlx::query("DELETE FROM material WHERE id = ?")
+        .bind(transcript)
+        .execute(&db)
+        .await
+        .unwrap();
+    let picked = [transcript, other_resume];
+    let mut approval = email::Approval {
         subject: "申请",
         body_md: "王老师：",
         html: "<p>王老师：</p>",
         text: "王老师：",
-        attachments: &[other_resume],
+        attachments: &picked,
     };
-    assert!(
+    assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::MaterialGone
+    );
+    assert!(email::first_draft(&db, mentor).await.unwrap().is_some());
+
+    approval.attachments = &picked[1..];
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 2)
+            .await
+            .unwrap(),
+        email::Approved::Yes
     );
     let emails = email::list(&db, mentor).await.unwrap();
     let attached: Vec<_> = emails[0]

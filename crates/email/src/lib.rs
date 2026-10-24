@@ -135,14 +135,23 @@ pub struct Approval<'a> {
     pub attachments: &'a [i64],
 }
 
-/// Approves the mentor's first draft with this content, to be sent now. False when there is no
-/// draft, as when it has been approved already.
+/// What came of approving a draft.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Approved {
+    Yes,
+    /// There is no draft, as when it has been approved already.
+    NoDraft,
+    /// A material attached has been deleted since, so the email would not go as approved.
+    MaterialGone,
+}
+
+/// Approves the mentor's first draft with this content, to be sent now.
 pub async fn approve_first(
     db: &SqlitePool,
     mentor_id: i64,
     approval: &Approval<'_>,
     now: i64,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(id) = sqlx::query_scalar!(
         "UPDATE email SET state = 'approved', subject = ?1, body_md = ?2, html = ?3, text = ?4,
@@ -159,11 +168,22 @@ pub async fn approve_first(
     .fetch_optional(&mut *tx)
     .await?
     else {
-        return Ok(false);
+        return Ok(Approved::NoDraft);
     };
+    let materials = Json(approval.attachments);
+    let gone = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "gone!: i64" FROM json_each(?) j
+           WHERE NOT EXISTS (SELECT 1 FROM material m WHERE m.id = j.value)"#,
+        materials
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if gone > 0 {
+        return Ok(Approved::MaterialGone);
+    }
     attach(&mut tx, id, approval.attachments).await?;
     tx.commit().await?;
-    Ok(true)
+    Ok(Approved::Yes)
 }
 
 /// An email in the correspondence with a mentor, from approval on.

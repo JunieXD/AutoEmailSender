@@ -207,8 +207,9 @@ impl Smtp {
             return Err(SendError::NotSent(e));
         }
         // From here on, a server that got the whole email may have taken it, whatever happens next.
-        let sent = connect::within(&server, async {
-            conn.message(&email.0.formatted()).await.map_err(refused)
+        let message = email.0.formatted();
+        let sent = connect::uploading(&server, message.len(), async {
+            conn.message(&message).await.map_err(refused)
         })
         .await;
         match sent {

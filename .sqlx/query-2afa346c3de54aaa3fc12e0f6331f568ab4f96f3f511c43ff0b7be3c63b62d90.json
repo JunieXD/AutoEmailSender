@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"gone!: i64\" FROM json_each(?) j\n           WHERE NOT EXISTS (SELECT 1 FROM material m WHERE m.id = j.value)",
+  "describe": {
+    "columns": [
+      {
+        "name": "gone!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2afa346c3de54aaa3fc12e0f6331f568ab4f96f3f511c43ff0b7be3c63b62d90"
+}

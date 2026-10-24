@@ -91,7 +91,7 @@ function Composer({
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  const [letter, setLetter] = useState<FirstDraftEdit>(() =>
+  const [letterState, setLetter] = useState<FirstDraftEdit>(() =>
     last?.status !== "success" && last?.variables
       ? last.variables
       : {
@@ -101,7 +101,9 @@ function Composer({
           attachments: draft?.attachments ?? attachedByDefault(materials),
         },
   );
-  const attached = materials.filter((m) => letter.attachments.includes(m.id));
+  // A material deleted since the draft was read is attached no more.
+  const attached = materials.filter((m) => letterState.attachments.includes(m.id));
+  const letter = { ...letterState, attachments: attached.map((m) => m.id) };
   // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });

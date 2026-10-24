@@ -70,10 +70,11 @@ async fn approve(db: &SqlitePool, address: &str, attachments: &[i64], now: i64) 
         text: "王老师：您好！",
         attachments,
     };
-    assert!(
+    assert_eq!(
         email::approve_first(db, mentor, &approval, now)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::Yes
     );
     mentor
 }

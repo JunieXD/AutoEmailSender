@@ -25,6 +25,10 @@ use crate::{MailError, Server};
 /// How long one check or send may take, from connecting to the server's last answer that matters.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The slowest an email may upload, in bytes a second, before it is given up on as cut off. A large
+/// attachment takes minutes on a slow line.
+const MIN_UPLOAD_RATE: u64 = 32 * 1024;
+
 /// How long to wait for one address before also trying the next (RFC 8305).
 const STAGGER: Duration = Duration::from_millis(250);
 
@@ -71,14 +75,31 @@ pub(crate) async fn within<T>(
     server: &Server,
     work: impl Future<Output = Result<T, MailError>>,
 ) -> Result<T, MailError> {
-    tokio::time::timeout(TIMEOUT, work)
-        .await
-        .unwrap_or_else(|_| {
-            Err(MailError::TimedOut {
-                host: server.host.to_string(),
-                port: server.port,
-            })
+    limit(TIMEOUT, server, work).await
+}
+
+/// Uploads an email of `size` bytes to `server`, giving up after `TIMEOUT` and the time the upload
+/// may take.
+pub(crate) async fn uploading<T>(
+    server: &Server,
+    size: usize,
+    work: impl Future<Output = Result<T, MailError>>,
+) -> Result<T, MailError> {
+    let upload = Duration::from_secs(size as u64 / MIN_UPLOAD_RATE);
+    limit(TIMEOUT + upload, server, work).await
+}
+
+async fn limit<T>(
+    time: Duration,
+    server: &Server,
+    work: impl Future<Output = Result<T, MailError>>,
+) -> Result<T, MailError> {
+    tokio::time::timeout(time, work).await.unwrap_or_else(|_| {
+        Err(MailError::TimedOut {
+            host: server.host.to_string(),
+            port: server.port,
         })
+    })
 }
 
 /// Says goodbye to a server in the background once its work is done. Its answer changes nothing, and

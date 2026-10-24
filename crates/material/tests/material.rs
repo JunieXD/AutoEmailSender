@@ -140,10 +140,11 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
         text: "王老师：",
         attachments: &[id],
     };
-    assert!(
+    assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::Yes
     );
 
     assert!(matches!(

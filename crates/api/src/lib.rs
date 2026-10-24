@@ -954,13 +954,18 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
         text: &input.text,
         attachments: &input.attachments,
     };
-    if !email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
-        return Err(CallError::not_found(
+    match email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
+        email::Approved::Yes => {
+            ctx.sender.wake();
+            Ok(())
+        }
+        email::Approved::NoDraft => Err(CallError::not_found(
             "草稿已不存在：可能已经发送，或导师已移入回收站。",
-        ));
+        )),
+        email::Approved::MaterialGone => Err(CallError::invalid(
+            "有附件的材料已被删除。重新选择附件后再发送。".into(),
+        )),
     }
-    ctx.sender.wake();
-    Ok(())
 }
 
 async fn list_emails(ctx: &Context, input: MentorId) -> Result<Vec<email::Email>, CallError> {
