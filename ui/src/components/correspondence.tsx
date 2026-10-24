@@ -193,7 +193,7 @@ function status(e: Email, several: boolean): [string, string] {
     return [`${day(e.sentAt)} ${time(e.sentAt)} 由 ${e.fromAddress} 发出${to}`, "text-muted-foreground"];
   }
   if (e.state === "maybe_sent") {
-    const to = several && e.toAddress ? `（发到 ${e.toAddress}）` : "";
+    const to = several ? `（发到 ${e.toAddress}）` : "";
     return [`可能已发出${to}：${e.error}确认导师未收到时，可重新发送。`, "text-warning"];
   }
   if (e.state === "failed") return [`发送失败：${e.error}`, "text-destructive"];

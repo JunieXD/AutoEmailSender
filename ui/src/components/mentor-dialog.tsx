@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { errorMessage } from "@/api/call";
 import type { Affiliation, MentorDetail, MentorForm } from "@/api/types";
 import { Button } from "@/components/ui/button";
@@ -200,10 +201,17 @@ function Rows<T>({
   // An empty list shows one blank row to type in.
   const rows = items.length > 0 ? items : [blank];
   const several = rows.length > 1;
+  const list = useRef<HTMLDivElement>(null);
+  // Keyboard and screen reader users stay with the row they moved, the one after the row they took
+  // out, or the row they added.
+  const change = (next: T[], focus: number) => {
+    flushSync(() => onChange(next));
+    list.current?.children[focus]?.querySelector("input")?.focus();
+  };
   return (
     <div role="group" aria-label={label}>
       <div className="mb-1.5 text-sm text-muted-foreground">{label}</div>
-      <div className="flex flex-col gap-2">
+      <div ref={list} className="flex flex-col gap-2">
         {rows.map((item, i) => (
           // Rows have nothing steadier than their place to tell them apart.
           <div key={i} className="flex items-center gap-2">
@@ -217,7 +225,7 @@ function Rows<T>({
                 variant="quiet"
                 size="sm"
                 className="w-[86px]"
-                onClick={() => onChange([item, ...rows.toSpliced(i, 1)])}
+                onClick={() => change([item, ...rows.toSpliced(i, 1)], 0)}
               >
                 {first[1]}
               </Button>
@@ -228,7 +236,7 @@ function Rows<T>({
                 variant="ghost"
                 size="icon"
                 aria-label="去掉"
-                onClick={() => onChange(rows.toSpliced(i, 1))}
+                onClick={() => change(rows.toSpliced(i, 1), Math.min(i, rows.length - 2))}
               >
                 <X strokeWidth={1.6} />
               </Button>
@@ -241,7 +249,7 @@ function Rows<T>({
         variant="ghost"
         size="sm"
         className="mt-1.5 -ml-2.5"
-        onClick={() => onChange([...rows, blank])}
+        onClick={() => change([...rows, blank], rows.length)}
       >
         <Plus strokeWidth={1.6} />
         {add}
