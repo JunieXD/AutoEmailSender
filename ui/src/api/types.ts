@@ -34,6 +34,8 @@ font: LetterFont | null, fontSizePt: number, lineHeight: number, paragraphSpacin
  */
 firstLineIndent: boolean, };
 
+export type MailAddress = { address: string, };
+
 export type Mailbox = { id: number, address: string, senderName: string, 
 /**
  * A provider's id, or `providers::CUSTOM`.
@@ -179,6 +181,8 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type Nothing = Record<symbol, never>;
 
+export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_mail_server", domain: string, };
+
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
 
 export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
@@ -284,6 +288,8 @@ export interface Operations {
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
+  checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };
+  checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
   listEmails: { input: MentorId; output: Array<Email> };
   withdrawEmail: { input: EmailId; output: null };

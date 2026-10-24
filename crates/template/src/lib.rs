@@ -89,7 +89,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// Text as Markdown that reads back as the same text, wherever it goes on a line.
-fn markdown_text(text: &str) -> String {
+pub fn markdown_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for (i, c) in text.char_indices() {
         // A list marker would start a list when the text starts a line.

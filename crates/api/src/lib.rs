@@ -143,6 +143,8 @@ operations! {
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
+    "checkFirstDraft" => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
+    "checkMailDomain" => check_mail_domain(MailAddress) -> Option<check::Problem>;
     "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
     "listEmails" => list_emails(MentorId) -> Vec<email::Email>;
     "withdrawEmail" => withdraw_email(EmailId) -> ();
@@ -784,6 +786,37 @@ async fn save_first_draft(
         now(),
     )
     .await?)
+}
+
+/// The draft as it is in the composer, which may be ahead of the one saved.
+async fn check_first_draft(
+    ctx: &Context,
+    input: FirstDraftEdit,
+) -> Result<Vec<check::Problem>, CallError> {
+    let m = mentor::get(&ctx.db, input.mentor_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
+    Ok(check::letter(&m.name, &input.subject, &input.body_md))
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MailAddress {
+    pub address: String,
+}
+
+/// A lookup that fails, such as when offline, tells nothing: the interface shows no error and
+/// asks again later (docs/design.md#联系).
+async fn check_mail_domain(
+    _: &Context,
+    input: MailAddress,
+) -> Result<Option<check::Problem>, CallError> {
+    check::mail_domain(&input.address).await.map_err(|e| {
+        tracing::warn!("looking up a mail domain: {e}");
+        CallError {
+            code: ErrorCode::External,
+            message: "未能查询导师邮箱的域名。".into(),
+        }
+    })
 }
 
 /// The mentor's first draft as the user approved it, with the HTML and plain text the interface
