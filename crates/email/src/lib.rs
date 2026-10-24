@@ -1,6 +1,9 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+use std::collections::HashMap;
+
 use serde::Serialize;
+use sqlx::types::Json;
 use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
@@ -10,29 +13,41 @@ use ts_rs::TS;
 pub struct FirstDraft {
     pub subject: Option<String>,
     pub body_md: Option<String>,
+    /// The materials attached, by id.
+    pub attachments: Vec<i64>,
 }
 
 pub async fn first_draft(
     db: &SqlitePool,
     mentor_id: i64,
 ) -> Result<Option<FirstDraft>, sqlx::Error> {
-    sqlx::query_as!(
-        FirstDraft,
-        "SELECT subject, body_md FROM email
+    let mut tx = db.begin().await?;
+    let Some(row) = sqlx::query!(
+        "SELECT id, subject, body_md FROM email
          WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'",
         mentor_id
     )
-    .fetch_optional(db)
-    .await
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(FirstDraft {
+        subject: row.subject,
+        body_md: row.body_md,
+        attachments: attached(&mut tx, row.id).await?,
+    }))
 }
 
 /// Saves the mentor's first draft and returns it as saved: none when both parts are blank, or when
-/// the mentor has been moved to the trash, which canceled the draft.
+/// the mentor has been moved to the trash, which canceled the draft. Attachments alone make no
+/// draft.
 pub async fn save_first_draft(
     db: &SqlitePool,
     mentor_id: i64,
     subject: &str,
     body_md: &str,
+    attachments: &[i64],
     now: i64,
 ) -> Result<Option<FirstDraft>, sqlx::Error> {
     let subject = Some(subject.trim()).filter(|s| !s.is_empty());
@@ -47,19 +62,66 @@ pub async fn save_first_draft(
         .await?;
         return Ok(None);
     }
-    sqlx::query_as!(
-        FirstDraft,
+    let mut tx = db.begin().await?;
+    let Some(row) = sqlx::query!(
         "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)
          SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor WHERE id = ?1 AND trashed_at IS NULL
          ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'
          DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
-         RETURNING subject, body_md",
+         RETURNING id AS \"id!\", subject, body_md",
         mentor_id,
         now,
         subject,
         body_md,
     )
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    attach(&mut tx, row.id, attachments).await?;
+    let attachments = attached(&mut tx, row.id).await?;
+    tx.commit().await?;
+    Ok(Some(FirstDraft {
+        subject: row.subject,
+        body_md: row.body_md,
+        attachments,
+    }))
+}
+
+/// Attaches these materials, named as their files are now, in place of what the email had. A
+/// material deleted meanwhile is left out, and of two files with one name, the first.
+async fn attach(
+    conn: &mut SqliteConnection,
+    email_id: i64,
+    materials: &[i64],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!("DELETE FROM email_attachment WHERE email_id = ?", email_id)
+        .execute(&mut *conn)
+        .await?;
+    let materials = Json(materials);
+    // "WHERE true" tells SQLite that ON CONFLICT is not part of the join.
+    sqlx::query!(
+        "INSERT INTO email_attachment (email_id, material_id, file_name, size)
+         SELECT ?1, m.id, m.file_name, m.size FROM json_each(?2) j JOIN material m ON m.id = j.value
+         WHERE true ORDER BY j.key
+         ON CONFLICT DO NOTHING",
+        email_id,
+        materials,
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// The materials attached to an email, leaving out any deleted since.
+async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT material_id AS "material_id!" FROM email_attachment
+           WHERE email_id = ? AND material_id IS NOT NULL ORDER BY file_name"#,
+        email_id
+    )
+    .fetch_all(conn)
     .await
 }
 
@@ -69,6 +131,8 @@ pub struct Approval<'a> {
     pub body_md: &'a str,
     pub html: &'a str,
     pub text: &'a str,
+    /// Materials, by id.
+    pub attachments: &'a [i64],
 }
 
 /// Approves the mentor's first draft with this content, to be sent now. False when there is no
@@ -79,10 +143,12 @@ pub async fn approve_first(
     approval: &Approval<'_>,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
+    let mut tx = db.begin().await?;
+    let Some(id) = sqlx::query_scalar!(
         "UPDATE email SET state = 'approved', subject = ?1, body_md = ?2, html = ?3, text = ?4,
            planned_at = ?5, updated_at = ?5
-         WHERE mentor_id = ?6 AND kind = 'first' AND task_id IS NULL AND state = 'review'",
+         WHERE mentor_id = ?6 AND kind = 'first' AND task_id IS NULL AND state = 'review'
+         RETURNING id AS \"id!\"",
         approval.subject,
         approval.body_md,
         approval.html,
@@ -90,9 +156,14 @@ pub async fn approve_first(
         now,
         mentor_id,
     )
-    .execute(db)
-    .await?;
-    Ok(done.rows_affected() == 1)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(false);
+    };
+    attach(&mut tx, id, approval.attachments).await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// An email in the correspondence with a mentor, from approval on.
@@ -102,8 +173,17 @@ pub struct Email {
     pub id: i64,
     pub subject: String,
     pub body_md: String,
+    pub attachments: Vec<Attachment>,
     #[serde(flatten)]
     pub delivery: Delivery,
+}
+
+/// A file an email went out with, as it was named then.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub file_name: String,
+    pub size: i64,
 }
 
 /// Where an email is on its way out (docs/data-model.md#邮件状态). Times are UTC milliseconds.
@@ -148,6 +228,21 @@ enum DeliveryColumn {
 
 /// The mentor's emails that have been approved, oldest first.
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let mut attachments: HashMap<i64, Vec<Attachment>> = HashMap::new();
+    for a in sqlx::query!(
+        r#"SELECT a.email_id, a.file_name AS "file_name!", a.size FROM email_attachment a
+           JOIN email e ON e.id = a.email_id WHERE e.mentor_id = ? ORDER BY a.file_name"#,
+        mentor_id
+    )
+    .fetch_all(&mut *tx)
+    .await?
+    {
+        attachments.entry(a.email_id).or_default().push(Attachment {
+            file_name: a.file_name,
+            size: a.size,
+        });
+    }
     sqlx::query!(
         r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
              from_address, sent_at, error
@@ -156,7 +251,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
            ORDER BY id"#,
         mentor_id
     )
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?
     .into_iter()
     .map(|r| {
@@ -189,6 +284,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
             id: r.id,
             subject: r.subject,
             body_md: r.body_md,
+            attachments: attachments.remove(&r.id).unwrap_or_default(),
             delivery,
         })
     })
@@ -258,6 +354,14 @@ pub struct Handover {
     pub subject: String,
     pub html: String,
     pub text: String,
+    pub attachments: Vec<Attached>,
+}
+
+/// A material to attach, named as the user approved it.
+pub struct Attached {
+    pub file_name: String,
+    /// Never null here: material::delete keeps a material that an email still to go out uses.
+    pub material_id: i64,
 }
 
 /// Marks an approved email as being handed to SMTP from this mailbox, and returns what was
@@ -272,8 +376,7 @@ pub async fn start_sending(
     message_id: &str,
     now: i64,
 ) -> Result<Option<Handover>, sqlx::Error> {
-    sqlx::query_as!(
-        Handover,
+    let Some(row) = sqlx::query!(
         r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
@@ -285,8 +388,27 @@ pub async fn start_sending(
         now,
         id,
     )
-    .fetch_optional(conn)
-    .await
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let attachments = sqlx::query_as!(
+        Attached,
+        r#"SELECT file_name AS "file_name!", material_id AS "material_id!"
+           FROM email_attachment WHERE email_id = ?"#,
+        id
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(Some(Handover {
+        mentor_id: row.mentor_id,
+        message_id: row.message_id,
+        subject: row.subject,
+        html: row.html,
+        text: row.text,
+        attachments,
+    }))
 }
 
 pub async fn sent(conn: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {

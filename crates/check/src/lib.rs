@@ -17,6 +17,8 @@ pub enum Problem {
     Placeholder { name: &'static str },
     /// The body never addresses the mentor; `salutation`, a Markdown paragraph, would.
     NoSalutation { salutation: String },
+    /// The body speaks of an attachment, but there is none.
+    NoAttachment,
     /// The domain of the mentor's address names no server to take mail.
     NoMailServer { domain: String },
 }
@@ -31,7 +33,7 @@ const COMPOUND_SURNAMES: [&str; 20] = [
 ];
 
 /// What is wrong with a letter to the mentor named `mentor`.
-pub fn letter(mentor: &str, subject: &str, body_md: &str) -> Vec<Problem> {
+pub fn letter(mentor: &str, subject: &str, body_md: &str, attached: bool) -> Vec<Problem> {
     let mut problems: Vec<Problem> = template::PLACEHOLDERS
         .into_iter()
         .filter(|name| {
@@ -44,6 +46,9 @@ pub fn letter(mentor: &str, subject: &str, body_md: &str) -> Vec<Problem> {
         problems.push(Problem::NoSalutation {
             salutation: salutation(mentor),
         });
+    }
+    if !attached && mentions_attachment(body_md) {
+        problems.push(Problem::NoAttachment);
     }
     problems
 }
@@ -63,6 +68,11 @@ fn addresses(body: &str, name: &str) -> bool {
             .iter()
             .any(|title| body.contains(&format!("{surname}{title}")))
         || latin_words(name).iter().any(|w| said.contains(w))
+}
+
+/// As in "附件是我的简历" or "I have attached my CV".
+fn mentions_attachment(body: &str) -> bool {
+    body.contains("附件") || body.contains("附上") || body.to_lowercase().contains("attach")
 }
 
 /// Lowercased, of two letters or more: a single letter is an initial.
@@ -120,7 +130,12 @@ mod tests {
     #[test]
     fn each_placeholder_left_is_one_problem() {
         assert_eq!(
-            letter("雷娜", "{学院}申请", "雷老师：\n\n我在{学院}，{我的姓名}。"),
+            letter(
+                "雷娜",
+                "{学院}申请",
+                "雷老师：\n\n我在{学院}，{我的姓名}。",
+                false
+            ),
             [
                 Problem::Placeholder { name: "学院" },
                 Problem::Placeholder {
@@ -142,7 +157,7 @@ mod tests {
             // Nothing to send yet, so nothing to address.
             ("雷娜", " \n"),
         ] {
-            assert_eq!(letter(name, "申请", body), [], "{body}");
+            assert_eq!(letter(name, "申请", body, false), [], "{body}");
         }
     }
 
@@ -163,12 +178,28 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                letter(name, "申请", body),
+                letter(name, "申请", body, false),
                 [Problem::NoSalutation {
                     salutation: salutation.into()
                 }],
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn a_letter_that_speaks_of_an_attachment_has_one() {
+        let body = "雷老师：\n\n随信附上我的简历。";
+        assert_eq!(letter("雷娜", "申请", body, false), [Problem::NoAttachment]);
+        assert_eq!(letter("雷娜", "申请", body, true), []);
+        assert_eq!(
+            letter(
+                "John Smith",
+                "Application",
+                "Dear Prof. Smith, my CV is Attached.",
+                false
+            ),
+            [Problem::NoAttachment]
+        );
     }
 }

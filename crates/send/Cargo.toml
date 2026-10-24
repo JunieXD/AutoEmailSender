@@ -11,14 +11,17 @@ workspace = true
 [dependencies]
 email.workspace = true
 mailbox.workspace = true
+material.workspace = true
 mentor.workspace = true
 net.workspace = true
 profile.workspace = true
 sqlx.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+base64 = "0.22"
 db.workspace = true
 fakemail.workspace = true
+tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt"] }

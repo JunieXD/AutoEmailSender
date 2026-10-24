@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT a.email_id, a.file_name AS \"file_name!\", a.size FROM email_attachment a\n           JOIN email e ON e.id = a.email_id WHERE e.mentor_id = ? ORDER BY a.file_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "email_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "email_id"
+          }
+        }
+      },
+      {
+        "name": "file_name!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "size",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "size"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "d8e3db1e2da2a22b9c06cb1f1443c2fc1ba3bbecd362382df7290da794b9e0a2"
+}

@@ -19,5 +19,7 @@ ts-rs.workspace = true
 
 [dev-dependencies]
 db.workspace = true
+email.workspace = true
+mentor.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt"] }

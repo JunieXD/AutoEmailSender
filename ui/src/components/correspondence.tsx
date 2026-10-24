@@ -4,6 +4,7 @@ import { RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Email, MentorDetail } from "@/api/types";
+import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
 import { FirstLetter } from "@/components/first-letter";
 import { contactDetail, refreshMentors } from "@/components/mentor";
@@ -86,6 +87,11 @@ function Sent({ email: e, mentorId, actions }: { email: Email; mentorId: number;
             void openUrl(link.href);
           }}
         />
+        {e.attachments.length > 0 && (
+          <div className="mt-3">
+            <Attachments files={e.attachments} />
+          </div>
+        )}
       </div>
       <p className={`max-w-[min(42rem,88%)] text-right text-sm ${tone}`}>{text}</p>
       {actions && (

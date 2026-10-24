@@ -2,7 +2,7 @@
 //! (docs/data-model.md#实体).
 
 use std::io::{self, Cursor};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use office_oxide::format::DocumentFormat;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,8 @@ pub enum Error {
     /// Not readable as what its name says, such as when damaged or locked by a password; the
     /// detail is for the log.
     Unreadable(String),
+    /// Attached to an email that may still go out.
+    InUse,
     Db(sqlx::Error),
     File(io::Error),
 }
@@ -57,6 +59,11 @@ impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::File(e)
     }
+}
+
+/// Where a material's file is kept in `dir`.
+pub fn file(dir: &Path, id: i64) -> PathBuf {
+    dir.join(id.to_string())
 }
 
 /// Every material, oldest first.
@@ -125,10 +132,10 @@ pub async fn add(
     // Stopped in between, the id is not taken and the next material writes over the file.
     tokio::fs::create_dir_all(dir).await?;
     let temp = dir.join(format!("{id}.tmp"));
-    let mut file = tokio::fs::File::create(&temp).await?;
-    file.write_all(&data).await?;
-    file.sync_all().await?;
-    tokio::fs::rename(&temp, dir.join(id.to_string())).await?;
+    let mut out = tokio::fs::File::create(&temp).await?;
+    out.write_all(&data).await?;
+    out.sync_all().await?;
+    tokio::fs::rename(&temp, file(dir, id)).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -204,17 +211,30 @@ pub async fn set_purpose(
     Ok(row.rows_affected() > 0)
 }
 
-/// Deletes the material, then its file in `dir`; false when there is no such material. Stopped or
-/// failing in between, the file is left behind, which only takes up space: a material without
-/// its file would fail the emails it is attached to.
-pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query!("DELETE FROM material WHERE id = ?", id)
-        .execute(db)
-        .await?;
+/// Deletes the material, then its file in `dir`; false when there is no such material. Drafts
+/// lose it as an attachment; emails that went out keep its name. Stopped or failing in between,
+/// the file is left behind, which only takes up space: a material without its file would fail the
+/// emails it is attached to.
+pub async fn delete(db: &SqlitePool, dir: &Path, id: i64) -> Result<bool, Error> {
+    let row = sqlx::query!(
+        "DELETE FROM material WHERE id = ?1 AND NOT EXISTS (
+           SELECT 1 FROM email_attachment a JOIN email e ON e.id = a.email_id
+           WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'failed'))",
+        id
+    )
+    .execute(db)
+    .await?;
     if row.rows_affected() == 0 {
-        return Ok(false);
+        let exists = sqlx::query_scalar!("SELECT 1 AS found FROM material WHERE id = ?", id)
+            .fetch_optional(db)
+            .await?;
+        return if exists.is_some() {
+            Err(Error::InUse)
+        } else {
+            Ok(false)
+        };
     }
-    if let Err(e) = tokio::fs::remove_file(dir.join(id.to_string())).await {
+    if let Err(e) = tokio::fs::remove_file(file(dir, id)).await {
         tracing::warn!("removing the file of deleted material {id}: {e}");
     }
     Ok(true)

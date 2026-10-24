@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS found FROM material WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "found",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "196ab09a622883f3cca1aa2a066025c7f309470d92a6f5e8e80b2d391c3faecb"
+}
