@@ -877,6 +877,63 @@ async fn repeated_name_only_import_must_not_duplicate(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn full_width_email_exports_round_trip_without_duplicates(db: SqlitePool) {
+    let fields = mentor::MentorForm {
+        name: "王伟".into(),
+        aliases: vec![],
+        emails: vec!["ｗａｎｇ@pku.edu.cn".into()],
+        affiliations: vec![Affiliation {
+            university: Some("北京大学".into()),
+            school: Some("计算机学院".into()),
+            ..Default::default()
+        }],
+        homepages: vec![],
+        research: "图学习".into(),
+    }
+    .check()
+    .unwrap();
+    let id = mentor::create(&db, &fields, 0).await.unwrap();
+    assert_eq!(
+        mentor::get(&db, id).await.unwrap().unwrap().emails,
+        ["wang@pku.edu.cn"]
+    );
+    let scope = Scope::Filter(export::Filter {
+        status: None,
+        keyword: None,
+    });
+    let rows = export::export(&db, &scope, true).await.unwrap();
+    for name in ["导师.csv", "导师.xlsx"] {
+        let bytes = if name.ends_with("csv") {
+            sheet::write_csv(&rows)
+        } else {
+            sheet::write_xlsx(&[Sheet {
+                name: "导师".into(),
+                rows: rows.clone(),
+            }])
+            .unwrap()
+        };
+        let sheets = sheet::read(name, &bytes).unwrap();
+        let preview = import::preview(&db, &sheets, &Setup::default())
+            .await
+            .unwrap();
+        assert!(preview.errors.is_empty(), "{name}");
+        assert_eq!(
+            (preview.created, preview.updated, preview.unchanged),
+            (0, 0, 1),
+            "{name}"
+        );
+        assert!(preview.differences.is_empty(), "{name}");
+        let result = apply(&db, &sheets, &Decisions::default()).await;
+        assert_eq!((result.created, result.updated), (0, 0), "{name}");
+        assert_eq!(
+            export::export(&db, &scope, true).await.unwrap(),
+            rows,
+            "{name}"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn full_width_name_exports_round_trip_without_duplicates(db: SqlitePool) {
     let fields = mentor::MentorForm {
         name: "Ｗａｎｇ Ｗｅｉ".into(),

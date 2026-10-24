@@ -2,7 +2,7 @@
 
 use crate::export::{Profile, profiles};
 use crate::supplement::{add_missing, append, comparable, same};
-use crate::{Affiliation, MentorForm, SaveError, create, trash, update};
+use crate::{Affiliation, MentorForm, SaveError, create, tidy_email, trash, update};
 use serde::{Deserialize, Serialize};
 use sheet::Sheet;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -92,18 +92,6 @@ impl Field {
             Self::Note => "写给自己的备注，分享表格前请检查",
         }
     }
-}
-
-fn tidy_email(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| match c {
-            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
-                (c as u32 - 0xfee0) as u8 as char
-            }
-            _ => c,
-        })
-        .collect()
 }
 
 #[derive(Debug, Default, Clone, Deserialize, TS)]

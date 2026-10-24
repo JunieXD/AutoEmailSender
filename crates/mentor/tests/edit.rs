@@ -78,6 +78,20 @@ fn form_is_trimmed_and_checked() {
 }
 
 #[test]
+fn form_folds_full_width_emails_before_validation_and_deduplication() {
+    let mut input = form("王伟", "", "");
+    input.emails = vec![
+        "  Ｗａｎｇ１２＠ＰＫＵ．ｅｄｕ．ｃｎ  ".into(),
+        "wang12@pku.edu.cn".into(),
+        "o'brien+phd@x.edu.cn".into(),
+    ];
+    assert_eq!(
+        input.check().unwrap().emails,
+        ["Wang12@PKU.edu.cn", "o'brien+phd@x.edu.cn"]
+    );
+}
+
+#[test]
 fn aliases_reject_import_separators() {
     for alias in ["Ming;Wang", "Ming；Wang", "王明、明王"] {
         let mut input = form("王明", "", "");

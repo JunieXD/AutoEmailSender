@@ -563,8 +563,8 @@ pub struct MentorForm {
 }
 
 impl MentorForm {
-    /// Trims every field and leaves out blank and repeated entries, keeping the order, and checks
-    /// those with a format. The error says what to fix.
+    /// Trims every field, folds full-width email characters, leaves out blank and repeated entries
+    /// in order, and checks those with a format. The error says what to fix.
     pub fn check(self) -> Result<MentorFields, String> {
         fn text(s: &str) -> Option<String> {
             let t = s.trim();
@@ -582,6 +582,7 @@ impl MentorForm {
         }
         let mut emails: Vec<String> = Vec::new();
         for email in self.emails.iter().filter_map(|e| text(e)) {
+            let email = tidy_email(&email);
             if !is_email(&email) {
                 return Err(format!("邮箱地址“{email}”格式不正确"));
             }
@@ -621,6 +622,18 @@ impl MentorForm {
             research: text(&self.research),
         })
     }
+}
+
+fn tidy_email(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
+                (c as u32 - 0xfee0) as u8 as char
+            }
+            _ => c,
+        })
+        .collect()
 }
 
 /// A plain address as people write them: `local@domain`, where the local part is dot-separated
