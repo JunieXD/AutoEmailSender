@@ -18,13 +18,15 @@ export function Attachments<T extends { fileName: string; size: number }>({
           className={`flex min-w-0 items-center gap-1.5 rounded-md border border-border py-1 pl-2 ${onRemove ? "pr-1" : "pr-2.5"}`}
         >
           <Paperclip className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
-          <span className="truncate">{f.fileName}</span>
+          <span className="truncate" title={f.fileName}>
+            {f.fileName}
+          </span>
           <span className="shrink-0 text-muted-foreground">{fileSize(f.size)}</span>
           {onRemove && (
             <button
               type="button"
               aria-label={`去掉附件“${f.fileName}”`}
-              className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="relative grid size-5 shrink-0 place-items-center rounded text-muted-foreground after:absolute after:-inset-2.5 hover:bg-muted hover:text-foreground"
               onClick={() => onRemove(f)}
             >
               <X className="size-3.5" strokeWidth={1.8} />

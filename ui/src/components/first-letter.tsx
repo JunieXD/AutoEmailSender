@@ -312,7 +312,9 @@ function AttachMenu({
                 className="flex flex-col rounded-md px-3 py-2 text-left enabled:hover:bg-muted disabled:opacity-40"
                 onClick={() => onAttach(m)}
               >
-                <span className="truncate">{m.fileName}</span>
+                <span className="truncate" title={m.fileName}>
+                  {m.fileName}
+                </span>
                 <span className="text-sm text-muted-foreground">
                   {taken === m ? "已附上" : taken ? "已附上同名文件" : fileSize(m.size)}
                 </span>
