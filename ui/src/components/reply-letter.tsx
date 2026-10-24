@@ -11,7 +11,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Material, MentorDetail, ReplyDraft, ReplyDraftEdit, ReplyTarget } from "@/api/types";
 import { Attachments } from "@/components/attachments";
-import { AttachMenu, LetterProblems, LetterSend, useDraftSave } from "@/components/letter-composer";
+import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { usePlaceholders } from "@/components/template-dialog";
 import { day, time } from "@/format";
@@ -79,53 +79,45 @@ function Composer({
     ({ letter }) => call("saveReplyDraft", letter),
   );
   const restored = last?.status !== "success" ? last?.variables : undefined;
-  const [letter, setLetter] = useState<ReplyDraftEdit>(
-    () =>
-      restored?.letter ?? {
-        mentorId,
-        replyTo: draft?.replyTo ?? latest?.messageId ?? "",
-        bodyMd: draft?.bodyMd ?? "",
-        attachments: draft?.attachments ?? [],
-      },
-  );
-  const [target, setTarget] = useState(restored ? restored.target : draft ? draft.target : latest);
+  // Saved content comes from the query; only an unfinished save overrides it.
+  const [editing, setEditing] = useState(restored);
+  const [choice, setChoice] = useState<ReplyTarget | null>(null);
+  if (editing && last?.status === "success" && last.variables === editing) {
+    setEditing(undefined);
+    if (last.data) setChoice(null);
+  }
+  const shownTarget = editing ? editing.target : (choice ?? (draft ? draft.target : latest));
+  const letter: ReplyDraftEdit = editing?.letter ?? {
+    mentorId,
+    replyTo: shownTarget?.messageId ?? draft?.replyTo ?? "",
+    bodyMd: draft?.bodyMd ?? "",
+    attachments: draft?.attachments ?? [],
+  };
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
-  const [draftId, setDraftId] = useState(draft?.id ?? null);
-  if (draft && draft.id !== draftId) setDraftId(draft.id);
+  // A server change (approval, withdrawal or reload) replaces the editor, while typing keeps it.
+  if (body.markdown !== letter.bodyMd) setBody({ version: body.version + 1, markdown: letter.bodyMd });
   const approveKey = ["approveReply", mentorId];
-  const approvals = useMutationState<MutationState<number, Error, ReplyDraftEdit>>({
+  const approvals = useMutationState<MutationState<void, Error, ReplyDraftEdit>>({
     filters: { mutationKey: approveKey },
     select: (m) => m.state,
   });
   const approving = approvals.some((m) => m.status === "pending");
-  const [uploading, setUploading] = useState(false);
+  const uploading = useUploading(mentorId);
   const locked = approving || uploading;
   const chosen = useQuery({
     queryKey: ["getReplyTarget", mentorId, selected?.id],
     queryFn: selected ? () => call("getReplyTarget", { mentorId, id: selected.id }) : skipToken,
   });
   const [selection, setSelection] = useState(0);
-  const [explicit, setExplicit] = useState(false);
   if (!locked && selected && chosen.isSuccess && selection !== selected.version) {
-    setTarget(chosen.data);
     setSelection(selected.version);
-    setExplicit(true);
-    if (chosen.data?.messageId) setLetter({ ...letter, replyTo: chosen.data.messageId });
-  }
-  if (
-    !locked &&
-    !draft &&
-    !restored &&
-    !explicit &&
-    letter.bodyMd === "" &&
-    letter.attachments.length === 0 &&
-    (target?.id !== latest?.id || letter.replyTo !== (latest?.messageId ?? ""))
-  ) {
-    setTarget(latest);
-    setLetter({ ...letter, replyTo: latest?.messageId ?? "" });
+    if (chosen.data?.messageId) {
+      setChoice(chosen.data);
+      setEditing({ letter: { ...letter, replyTo: chosen.data.messageId }, target: chosen.data });
+    }
   }
   const persistTarget = useEffectEvent(() => {
-    if (target?.messageId) save.mutate({ letter, target });
+    if (editing?.target?.messageId) save.mutate(editing);
   });
   useEffect(() => {
     if (selection > 0) persistTarget();
@@ -163,31 +155,22 @@ function Composer({
         html: letterHtml(current.bodyMd, style.data),
         text: letterText(current.bodyMd),
       });
-      return saved.id;
     },
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["getReplyDraft", mentorId] });
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
-      await queryClient.cancelQueries({ queryKey: ["getReplyDraft", mentorId] });
-      queryClient.setQueryData(["getReplyDraft", mentorId], null);
     },
   });
-  // Approval can finish in a composer that has already unmounted.
-  if (draftId !== null && approvals.some((m) => m.status === "success" && m.data === draftId)) {
-    setDraftId(null);
-    setLetter({ mentorId, replyTo: latest?.messageId ?? "", bodyMd: "", attachments: [] });
-    setTarget(latest);
-    setExplicit(false);
-    setBody({ version: body.version + 1, markdown: "" });
-  }
   function edit(next: ReplyDraftEdit) {
-    setLetter(next);
-    save.mutate({ letter: next, target: shownTarget });
+    const edited = { letter: next, target: shownTarget };
+    setEditing(edited);
+    setBody({ ...body, markdown: next.bodyMd });
+    save.mutate(edited);
   }
   function rewrite(markdown: string) {
     edit({ ...letter, bodyMd: markdown });
     setBody({ version: body.version + 1, markdown });
   }
-  const shownTarget = !explicit && draft?.replyTo === letter.replyTo ? draft.target : target;
   const blocker = !address
     ? "导师尚未填写邮箱，可在资料里填写。"
     : !shownTarget
@@ -252,7 +235,13 @@ function Composer({
           materials={materials}
           attached={attached}
           disabled={locked}
-          onUploading={setUploading}
+          mentorId={mentorId}
+          kind="reply"
+          onPrepare={() => {
+            const edited = { letter, target: shownTarget };
+            setEditing(edited);
+            return save.mutateAsync(edited);
+          }}
           onAttach={(m) =>
             edit({
               ...letter,

@@ -21,7 +21,7 @@ import type {
   TemplateSummary,
 } from "@/api/types";
 import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
-import { AttachMenu, LetterProblems, LetterSend, useDraftSave } from "@/components/letter-composer";
+import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
 import { Attachments } from "@/components/attachments";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { dropDrafts } from "@/components/mentor";
@@ -166,7 +166,7 @@ function Composer({
   // back, so that no second email can be written and approved meanwhile.
   const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
   const sending = approving || approve.isSuccess;
-  const [uploading, setUploading] = useState(false);
+  const uploading = useUploading(mentorId);
   const locked = sending || busy || uploading || review !== undefined;
   function edit(next: FirstDraftEdit) {
     // What went wrong the last time is of no more use.
@@ -266,7 +266,25 @@ function Composer({
           materials={materials}
           attached={attached}
           disabled={locked}
-          onUploading={setUploading}
+          mentorId={mentorId}
+          kind="first"
+          onPrepare={() => {
+            setTouched(true);
+            return save.mutateAsync(letter);
+          }}
+          onUploaded={() => {
+            const current = queryClient.getQueryData<FirstDraft | null>(["getFirstDraft", mentorId]);
+            if (current) {
+              setLetter({
+                mentorId,
+                subject: current.subject ?? "",
+                bodyMd: current.bodyMd ?? "",
+                attachments: current.attachments,
+              });
+              if (current.bodyMd !== letter.bodyMd)
+                setBody({ version: body.version + 1, markdown: current.bodyMd ?? "" });
+            }
+          }}
           onAttach={(m) =>
             edit({
               ...letter,

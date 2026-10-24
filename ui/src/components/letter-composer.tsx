@@ -1,9 +1,9 @@
 import { type MutationState, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Paperclip, Send, TriangleAlert } from "lucide-react";
-import { type ReactNode, type Ref, useEffect, useRef } from "react";
-import { errorMessage } from "@/api/call";
-import type { Material, Problem } from "@/api/types";
+import { type ReactNode, type Ref, useEffect, useEffectEvent, useRef } from "react";
+import { call, errorMessage } from "@/api/call";
+import type { DraftKind, FirstDraft, Material, Problem, ReplyDraft } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -34,6 +34,15 @@ export function useDraftSave<Edit, Saved>(
     select: (m) => m.state,
   }).at(-1);
   return { save, last, scope };
+}
+
+/** Uploads belong to the mentor, so a remounted editor stays locked until attachment is saved. */
+export function useUploading(mentorId: number) {
+  return (
+    useMutationState({
+      filters: { mutationKey: ["uploadLetterMaterial", mentorId], status: "pending" },
+    }).length > 0
+  );
 }
 
 export function LetterProblems({
@@ -120,34 +129,62 @@ export function AttachMenu({
   attached,
   disabled,
   onAttach,
-  onUploading,
+  mentorId,
+  kind,
+  onPrepare,
+  onUploaded,
 }: {
   materials: Material[];
   attached: Material[];
   disabled: boolean;
   onAttach: (material: Material) => void;
-  onUploading: (uploading: boolean) => void;
+  mentorId: number;
+  kind: DraftKind;
+  onPrepare: () => Promise<FirstDraft | ReplyDraft | null>;
+  onUploaded?: () => void;
 }) {
   const queryClient = useQueryClient();
   const picker = useRef<HTMLInputElement>(null);
+  const mutationKey = ["uploadLetterMaterial", mentorId, kind];
   const add = useMutation({
-    mutationFn: uploadMaterial,
-    onSuccess: async ({ id }) => {
-      await queryClient.invalidateQueries({ queryKey: ["listMaterials"] });
+    mutationKey,
+    mutationFn: async (file: File) => {
+      // Save an untouched template before uploading; completion never closes over its body.
+      const prepared = await onPrepare();
+      const { id } = await uploadMaterial(file);
+      await queryClient.invalidateQueries({ queryKey: ["listMaterials"], refetchType: "all" });
       const updated = queryClient.getQueryData<Material[]>(["listMaterials"]);
       const material = updated?.find((m) => m.id === id);
       if (!material) throw new Error("材料已添加，但列表未能刷新。请重新打开附件菜单后选择它。");
-      onAttach(material);
+      const applied = await call("attachDraftMaterial", { mentorId, kind, materialId: id });
+      await queryClient.invalidateQueries({
+        queryKey: [kind === "first" ? "getFirstDraft" : "getReplyDraft", mentorId],
+        refetchType: "all",
+      });
+      if (!applied && prepared) throw new Error("草稿或材料已发生变化。请重新打开草稿，从附件菜单选择材料。");
+      return { material, applied };
     },
   });
-  useEffect(() => onUploading(add.isPending), [add.isPending, onUploading]);
+  const last = useMutationState<MutationState<{ material: Material; applied: boolean }, Error, File>>({
+    filters: { mutationKey },
+    select: (m) => m.state,
+  }).at(-1);
+  // An empty letter has no saved draft. Only the active picker attaches to that local input.
+  const complete = useEffectEvent(() => {
+    if (last?.status !== "success" || !last.data) return;
+    if (last.data.applied) onUploaded?.();
+    else onAttach(last.data.material);
+    const cache = queryClient.getMutationCache();
+    for (const mutation of cache.findAll({ mutationKey, status: "success" })) cache.remove(mutation);
+  });
+  useEffect(() => {
+    if (last?.status === "success") complete();
+  }, [last]);
   return (
     <Popover>
-      <PopoverTrigger
-        render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled || add.isPending} />}
-      >
+      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled} />}>
         <Paperclip strokeWidth={1.8} />
-        添加附件
+        {last?.status === "pending" ? "正在添加附件…" : "添加附件"}
       </PopoverTrigger>
       <PopoverContent align="start" className="flex max-h-[70dvh] w-72 flex-col overflow-y-auto p-1.5">
         {materials.length === 0 ? (
@@ -190,10 +227,10 @@ export function AttachMenu({
             if (file) add.mutate(file);
           }}
         />
-        <Button variant="ghost" disabled={disabled || add.isPending} onClick={() => picker.current?.click()}>
-          {add.isPending ? "正在提取文字…" : "添加新材料"}
+        <Button variant="ghost" disabled={disabled} onClick={() => picker.current?.click()}>
+          {last?.status === "pending" ? "正在提取文字…" : "添加新材料"}
         </Button>
-        {add.error && <p className="p-1.5 text-sm text-destructive">{errorMessage(add.error)}</p>}
+        {last?.error && <p className="p-1.5 text-sm text-destructive">{errorMessage(last.error)}</p>}
       </PopoverContent>
     </Popover>
   );

@@ -788,6 +788,7 @@ pub enum MessageKind {
     /// From the mentor, or someone writing for them.
     Reply {
         unread: bool,
+        can_reply: bool,
     },
     AutoReply,
     /// Sent to the mentor by the user from elsewhere, such as the mailbox's website.
@@ -800,7 +801,7 @@ pub enum MessageKind {
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
-             mm.bounce_reason, m.body_text, m.truncated AS "truncated: bool"
+             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS "truncated: bool"
            FROM message m JOIN message_mentor mm ON mm.message_id = m.id
            WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
         mentor_id
@@ -823,6 +824,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx:
                 kind: match r.kind {
                     Kind::Reply => MessageKind::Reply {
                         unread: r.read_at.is_none(),
+                        can_reply: r.message_id.is_some(),
                     },
                     Kind::AutoReply => MessageKind::AutoReply,
                     Kind::Sent => MessageKind::Sent {

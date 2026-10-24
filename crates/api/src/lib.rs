@@ -174,6 +174,7 @@ operations! {
     "saveReplyDraft" => save_reply_draft(ReplyDraftEdit) -> Option<email::ReplyDraft>;
     "checkReplyDraft" => check_reply_draft(ReplyDraftEdit) -> Vec<check::Problem>;
     "approveReply" => approve_reply(ReplyEmail) -> ();
+    "attachDraftMaterial" => attach_draft_material(DraftMaterial) -> bool;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
     "checkFirstDraft" => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
@@ -970,6 +971,21 @@ async fn fill(
         subject: fill.subject(&t.subject),
         body_md: fill.body(&t.body_md),
     })
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftMaterial {
+    pub mentor_id: i64,
+    pub kind: email::DraftKind,
+    pub material_id: i64,
+}
+
+async fn attach_draft_material(ctx: &Context, input: DraftMaterial) -> Result<bool, CallError> {
+    Ok(
+        email::attach_draft_material(&ctx.db, input.mentor_id, input.kind, input.material_id)
+            .await?,
+    )
 }
 
 async fn get_first_draft(

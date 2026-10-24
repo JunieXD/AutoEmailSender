@@ -20,6 +20,10 @@ export type DefaultTemplate = { id: number | null, };
 
 export type Direction = "up" | "down";
 
+export type DraftKind = "first" | "reply";
+
+export type DraftMaterial = { mentorId: number, kind: DraftKind, materialId: number, };
+
 export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, 
 /**
  * The bounced email this one sends again.
@@ -181,7 +185,7 @@ quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
-truncated: boolean, } & ({ "kind": "reply", unread: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -418,6 +422,7 @@ export interface Operations {
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
+  attachDraftMaterial: { input: DraftMaterial; output: boolean };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };

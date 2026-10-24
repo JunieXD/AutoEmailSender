@@ -5,7 +5,7 @@ use std::collections::HashMap;
 mod reply;
 pub use reply::*;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{Connection, SqliteConnection, SqlitePool};
 use ts_rs::TS;
@@ -126,6 +126,42 @@ async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<i64>
     )
     .fetch_all(conn)
     .await
+}
+
+/// The standalone draft an attachment picker belongs to.
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftKind {
+    First,
+    Reply,
+}
+
+/// Adds only this file to the current draft, replacing a same-named attachment. False when the
+/// draft or material no longer exists.
+pub async fn attach_draft_material(
+    db: &SqlitePool,
+    mentor_id: i64,
+    kind: DraftKind,
+    material_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let kind = match kind {
+        DraftKind::First => "first",
+        DraftKind::Reply => "reply",
+    };
+    let done = sqlx::query!(
+        "INSERT INTO email_attachment (email_id, material_id, file_name, size)
+         SELECT e.id, m.id, m.file_name, m.size FROM email e CROSS JOIN material m
+         WHERE e.mentor_id = ? AND e.kind = ? AND e.task_id IS NULL AND e.state = 'review'
+           AND m.id = ?
+         ON CONFLICT (email_id, file_name) DO UPDATE SET material_id = excluded.material_id,
+           size = excluded.size",
+        mentor_id,
+        kind,
+        material_id,
+    )
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 /// A letter the user approved, with the HTML and plain text the interface rendered from it.

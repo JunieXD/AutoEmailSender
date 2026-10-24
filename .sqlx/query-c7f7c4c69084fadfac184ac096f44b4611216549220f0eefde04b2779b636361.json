@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             mm.bounce_reason, m.body_text, m.truncated AS \"truncated: bool\"\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
+  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS \"truncated: bool\"\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
   "describe": {
     "columns": [
       {
@@ -92,8 +92,19 @@
         }
       },
       {
-        "name": "truncated: bool",
+        "name": "message_id",
         "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "truncated: bool",
+        "ordinal": 9,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -115,8 +126,9 @@
       true,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "104bee4385779df28400ab382a555bb2ea67c500963a12b5aa2b0be3945a8e34"
+  "hash": "c7f7c4c69084fadfac184ac096f44b4611216549220f0eefde04b2779b636361"
 }

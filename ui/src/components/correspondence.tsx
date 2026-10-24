@@ -348,7 +348,7 @@ function Seen({
           {mine ? " 在别处发出" : from}
         </span>
         {m.kind === "reply" && !mentor.trashed && (
-          <Button variant="quiet" size="sm" onClick={onReply}>
+          <Button variant="quiet" size="sm" disabled={!m.canReply} onClick={onReply}>
             回复
           </Button>
         )}
@@ -358,6 +358,9 @@ function Seen({
           </Button>
         )}
       </p>
+      {m.kind === "reply" && !m.canReply && !mentor.trashed && (
+        <p className="text-sm text-muted-foreground">这封信缺少邮件编号，无法在原线程里回复，请到邮箱里回复</p>
+      )}
       {add.error && <p className="text-sm text-destructive">未能加为导师的邮箱：{errorMessage(add.error)}</p>}
       {m.kind === "sent" && m.bounce && <p className="text-sm text-warning">退信：{m.bounce}</p>}
     </article>
