@@ -41,30 +41,25 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
   });
   const placeholders = usePlaceholders();
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
-  // Without a draft, the letter starts from the default template, filled in as the template and the
-  // mentor are now.
-  const prefill = useQuery({
-    queryKey: ["applyDefaultTemplate", mentorId],
-    queryFn: draft.data === null ? () => call("applyDefaultTemplate", { id: mentorId }) : skipToken,
-    gcTime: 0,
-  });
-  const error = draft.error ?? placeholders.error ?? materials.error ?? prefill.error;
-  if (error) return <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(error)}</p>;
+  const error = draft.error ?? placeholders.error ?? materials.error;
+  if (error) return <LoadFailed error={error} />;
   return (
     draft.isSuccess &&
-    (draft.data !== null || prefill.isSuccess) &&
     placeholders.data &&
     materials.data && (
       <Composer
         key={mentorId}
         mentor={mentor}
         draft={draft.data}
-        prefill={prefill.data ?? null}
         placeholders={placeholders.data}
         materials={materials.data}
       />
     )
   );
+}
+
+function LoadFailed({ error }: { error: Error }) {
+  return <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(error)}</p>;
 }
 
 /**
@@ -74,13 +69,11 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
 function Composer({
   mentor,
   draft,
-  prefill,
   placeholders,
   materials,
 }: {
   mentor: MentorDetail;
   draft: FirstDraft | null;
-  prefill: FilledTemplate | null;
   placeholders: string[];
   materials: Material[];
 }) {
@@ -103,23 +96,36 @@ function Composer({
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  const [letterState, setLetter] = useState<FirstDraftEdit>(() =>
-    last?.status !== "success" && last?.variables
-      ? last.variables
-      : draft
+  const restored = last?.status !== "success" ? last?.variables : undefined;
+  // Started without a draft, the letter is the default template filled in for the mentor, and
+  // follows their details as they are edited until the user changes the letter.
+  const [blank] = useState(!restored && draft === null);
+  const [touched, setTouched] = useState(!blank);
+  const { name, title, university, school, department, research } = mentor;
+  const prefill = useQuery({
+    queryKey: ["applyDefaultTemplate", mentorId, name, title, university, school, department, research],
+    queryFn: blank ? () => call("applyDefaultTemplate", { id: mentorId }) : skipToken,
+    placeholderData: keepPreviousData,
+    gcTime: 0,
+  });
+  const [letterState, setLetter] = useState<FirstDraftEdit>(
+    () =>
+      restored ??
+      (draft
         ? { mentorId, subject: draft.subject ?? "", bodyMd: draft.bodyMd ?? "", attachments: draft.attachments }
-        : {
-            mentorId,
-            subject: prefill?.subject ?? "",
-            bodyMd: prefill?.bodyMd ?? "",
-            attachments: attachedByDefault(materials),
-          },
+        : { mentorId, subject: "", bodyMd: "", attachments: attachedByDefault(materials) }),
   );
+  // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
+  const [body, setBody] = useState({ version: 0, markdown: letterState.bodyMd });
+  const [shown, setShown] = useState<FilledTemplate | null>();
+  if (!touched && prefill.data !== undefined && prefill.data !== shown) {
+    setShown(prefill.data);
+    setLetter({ ...letterState, subject: prefill.data?.subject ?? "", bodyMd: prefill.data?.bodyMd ?? "" });
+    setBody({ version: body.version + 1, markdown: prefill.data?.bodyMd ?? "" });
+  }
   // A material deleted since the draft was read is attached no more.
   const attached = materials.filter((m) => letterState.attachments.includes(m.id));
   const letter = { ...letterState, attachments: attached.map((m) => m.id) };
-  // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
-  const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
@@ -156,6 +162,7 @@ function Composer({
   const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
   const sending = approving || approve.isSuccess;
   function edit(next: FirstDraftEdit) {
+    setTouched(true);
     setLetter(next);
     save.mutate(next);
   }
@@ -195,6 +202,8 @@ function Composer({
       发送
     </Button>
   );
+  // Only a first fill that failed holds the letter back; a later one keeps what was filled.
+  if (blank && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
   return (
     <div className="flex flex-col gap-2 border-t border-border px-5 py-4 phone:px-3">
       <Input

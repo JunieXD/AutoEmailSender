@@ -139,13 +139,15 @@ pub struct Approval<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Approved {
     Yes,
-    /// There is no draft, as when it has been approved already.
-    NoDraft,
+    /// The mentor has a first email already, as when this one was approved a moment ago, or is in
+    /// the trash.
+    Refused,
     /// A material attached has been deleted since, so the email would not go as approved.
     MaterialGone,
 }
 
-/// Approves the mentor's first draft with this content, to be sent now.
+/// Approves the mentor's first email with this content, to be sent now: the draft, or else a new
+/// email, as when the letter is the default template unchanged.
 pub async fn approve_first(
     db: &SqlitePool,
     mentor_id: i64,
@@ -153,7 +155,7 @@ pub async fn approve_first(
     now: i64,
 ) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(id) = sqlx::query_scalar!(
+    let drafted = sqlx::query_scalar!(
         "UPDATE email SET state = 'approved', subject = ?1, body_md = ?2, html = ?3, text = ?4,
            planned_at = ?5, updated_at = ?5
          WHERE mentor_id = ?6 AND kind = 'first' AND task_id IS NULL AND state = 'review'
@@ -166,9 +168,32 @@ pub async fn approve_first(
         mentor_id,
     )
     .fetch_optional(&mut *tx)
-    .await?
-    else {
-        return Ok(Approved::NoDraft);
+    .await?;
+    let id = match drafted {
+        Some(id) => id,
+        // Only while the mentor has no first email: the one approved by a click repeated stops a
+        // second.
+        None => match sqlx::query_scalar!(
+            "INSERT INTO email (mentor_id, kind, state, planned_at, created_at, updated_at,
+               subject, body_md, html, text)
+             SELECT m.id, 'first', 'approved', ?2, ?2, ?2, ?3, ?4, ?5, ?6 FROM mentor m
+             WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (
+               SELECT 1 FROM email e WHERE e.mentor_id = m.id AND e.kind = 'first'
+                 AND e.task_id IS NULL AND e.state <> 'canceled')
+             RETURNING id AS \"id!\"",
+            mentor_id,
+            now,
+            approval.subject,
+            approval.body_md,
+            approval.html,
+            approval.text,
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            Some(id) => id,
+            None => return Ok(Approved::Refused),
+        },
     };
     let materials = Json(approval.attachments);
     let gone = sqlx::query_scalar!(

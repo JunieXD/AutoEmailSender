@@ -85,12 +85,12 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
             .unwrap(),
         email::Approved::Yes
     );
-    // Clicking again finds no draft, so the email is not sent twice.
+    // Clicking again finds the email approved, so it is not sent twice.
     assert_eq!(
         email::approve_first(&db, mentor, &approval, 3)
             .await
             .unwrap(),
-        email::Approved::NoDraft
+        email::Approved::Refused
     );
     assert!(email::first_draft(&db, mentor).await.unwrap().is_none());
     let emails = email::list(&db, mentor).await.unwrap();
@@ -161,4 +161,38 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
         .map(|a| (a.file_name.as_str(), a.size))
         .collect();
     assert_eq!(attached, [("简历.pdf", 1000)]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_letter_never_saved_is_approved_once(db: SqlitePool) {
+    let mentor = add_mentor(&db).await;
+    let approval = email::Approval {
+        subject: "申请",
+        body_md: "王老师：",
+        html: "<p>王老师：</p>",
+        text: "王老师：",
+        attachments: &[],
+    };
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 1)
+            .await
+            .unwrap(),
+        email::Approved::Yes
+    );
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 2)
+            .await
+            .unwrap(),
+        email::Approved::Refused
+    );
+    assert_eq!(email::list(&db, mentor).await.unwrap().len(), 1);
+
+    let trashed = add_mentor(&db).await;
+    mentor::trash::trash(&db, &[trashed], 3).await.unwrap();
+    assert_eq!(
+        email::approve_first(&db, trashed, &approval, 4)
+            .await
+            .unwrap(),
+        email::Approved::Refused
+    );
 }

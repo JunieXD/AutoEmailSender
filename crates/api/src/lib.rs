@@ -1005,8 +1005,8 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
             ctx.sender.wake();
             Ok(())
         }
-        email::Approved::NoDraft => Err(CallError::not_found(
-            "草稿已不存在：可能已经发送，或导师已移入回收站。",
+        email::Approved::Refused => Err(CallError::not_found(
+            "这位导师已经有一封首封邮件，或已移入回收站。",
         )),
         email::Approved::MaterialGone => Err(CallError::invalid(
             "有附件的材料已被删除。重新选择附件后再发送。".into(),
