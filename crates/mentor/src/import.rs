@@ -132,16 +132,46 @@ pub struct Difference {
 }
 
 #[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[ts(rename = "ImportProfile")]
+pub struct ProfileSummary {
+    pub name: String,
+    pub affiliations: Vec<Affiliation>,
+    pub emails: Vec<String>,
+    pub research: Option<String>,
+    pub homepages: Vec<String>,
+}
+
+impl From<&Profile> for ProfileSummary {
+    fn from(profile: &Profile) -> Self {
+        Self {
+            name: profile.fields.name.clone(),
+            affiliations: profile.fields.affiliations.clone(),
+            emails: profile.fields.emails.clone(),
+            research: profile.fields.research.clone(),
+            homepages: profile.fields.homepages.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct ImportCandidate {
+    pub id: i64,
+    pub profile: ProfileSummary,
+}
+
+#[derive(Debug, Serialize, TS)]
 pub struct MaybeSame {
     pub row: u32,
     pub rows: Vec<u32>,
-    pub name: String,
-    pub university: Option<String>,
-    pub id: i64,
-    pub local_name: String,
-    pub affiliation: Option<Affiliation>,
-    pub emails: Vec<String>,
+    pub incoming: ProfileSummary,
+    pub candidates: Vec<ImportCandidate>,
+    pub selected: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct GroupChoice {
+    pub row: u32,
+    pub id: Option<i64>,
 }
 #[derive(Debug, Serialize, TS)]
 pub struct Trashed {
@@ -174,7 +204,7 @@ pub struct Preview {
 #[derive(Debug, Default, Deserialize, TS)]
 pub struct Decisions {
     pub take: Vec<Difference>,
-    pub separate: Vec<u32>,
+    pub matches: Vec<GroupChoice>,
     pub restore: Vec<i64>,
 }
 #[derive(Debug, Default, Serialize, TS)]
@@ -408,6 +438,112 @@ fn root(parents: &[usize], mut n: usize) -> usize {
     n
 }
 
+fn combine_rows(rows: &[Row]) -> Profile {
+    let mut incoming = rows[0].profile.clone();
+    for row in rows.iter().skip(1) {
+        let mut emails = incoming.fields.emails.clone();
+        for email in &row.profile.fields.emails {
+            if !emails.iter().any(|e| e.eq_ignore_ascii_case(email)) {
+                emails.push(email.clone());
+            }
+        }
+        add_missing(
+            &mut incoming.fields,
+            &mut incoming.papers,
+            &row.profile.fields,
+            &row.profile.papers,
+        );
+        incoming.fields.emails = emails;
+        if !same(&incoming.fields.name, &row.profile.fields.name) {
+            append(
+                &mut incoming.fields.aliases,
+                std::slice::from_ref(&row.profile.fields.name),
+            );
+        }
+        append(&mut incoming.tags, &row.profile.tags);
+        if incoming.fields.research.is_none() {
+            incoming
+                .fields
+                .research
+                .clone_from(&row.profile.fields.research);
+        }
+        if incoming.source_url.is_none() {
+            incoming.source_url.clone_from(&row.profile.source_url);
+        }
+        if incoming.note.is_none() {
+            incoming.note.clone_from(&row.profile.note);
+        }
+    }
+    incoming
+}
+
+fn supplement(original: &Profile, incoming: &Profile, row: u32) -> (Profile, Vec<Difference>) {
+    let mut after = original.clone();
+    let titles = add_missing(
+        &mut after.fields,
+        &mut after.papers,
+        &incoming.fields,
+        &incoming.papers,
+    );
+    append(&mut after.tags, &incoming.tags);
+    let mut differences = Vec::new();
+    for (field, a, b) in [
+        (
+            Field::Name,
+            Some(&original.fields.name),
+            Some(&incoming.fields.name),
+        ),
+        (
+            Field::Research,
+            original.fields.research.as_ref(),
+            incoming.fields.research.as_ref(),
+        ),
+        (
+            Field::SourceUrl,
+            original.source_url.as_ref(),
+            incoming.source_url.as_ref(),
+        ),
+        (Field::Note, original.note.as_ref(), incoming.note.as_ref()),
+    ] {
+        if let (Some(a), Some(b)) = (a, b)
+            && !same(a, b)
+        {
+            differences.push(Difference {
+                row,
+                id: original.id,
+                name: original.fields.name.clone(),
+                field,
+                affiliation: None,
+                local: a.clone(),
+                incoming: b.clone(),
+            });
+        }
+    }
+    for title in titles {
+        let mut affiliation = after.fields.affiliations[title.position].clone();
+        affiliation.title = None;
+        differences.push(Difference {
+            row,
+            id: original.id,
+            name: original.fields.name.clone(),
+            field: Field::Title,
+            affiliation: Some(affiliation),
+            local: title.local,
+            incoming: title.incoming,
+        });
+    }
+    if after.fields.research.is_none() {
+        after.fields.research = incoming.fields.research.clone();
+    }
+    if after.source_url.is_none() {
+        after.source_url = incoming.source_url.clone();
+    }
+    if after.note.is_none() {
+        after.note = incoming.note.clone();
+    }
+    (after, differences)
+}
+
 async fn calculate(
     conn: &mut SqliteConnection,
     sheets: &[Sheet],
@@ -482,7 +618,7 @@ async fn calculate(
         if target.is_none() {
             let has_email = rows.iter().any(|r| !r.profile.fields.emails.is_empty());
             let schools = &schools;
-            let possible = rows
+            let possible: BTreeSet<_> = rows
                 .iter()
                 .flat_map(|row| {
                     let universities: Vec<_> = row
@@ -504,26 +640,42 @@ async fn calculate(
                                 || universities.iter().any(|u| schools[&p.id].contains(u))
                         })
                 })
-                .min_by_key(|p| p.id);
-            if let Some(p) = possible {
+                .map(|p| p.id)
+                .collect();
+            if !possible.is_empty() {
+                // Choose each email group before combining groups that target the same mentor.
+                let incoming = combine_rows(&rows);
+                let exact: Vec<_> = possible
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        let (after, differences) = supplement(&local[id], &incoming, first.number);
+                        after == local[id] && differences.is_empty()
+                    })
+                    .collect();
+                target = match exact.as_slice() {
+                    [id] => Some(*id),
+                    _ if possible.len() == 1 => possible.first().copied(),
+                    _ => None,
+                };
+                if let Some(choice) = decisions.matches.iter().find(|choice| {
+                    choice.row == first.number && choice.id.is_none_or(|id| possible.contains(&id))
+                }) {
+                    target = choice.id;
+                }
                 preview.maybe_same.push(MaybeSame {
                     row: first.number,
                     rows: rows.iter().map(|r| r.number).collect(),
-                    name: first.profile.fields.name.clone(),
-                    university: first
-                        .profile
-                        .fields
-                        .affiliations
-                        .first()
-                        .and_then(|a| a.university.clone()),
-                    id: p.id,
-                    local_name: p.fields.name.clone(),
-                    affiliation: p.fields.affiliations.first().cloned(),
-                    emails: p.fields.emails.clone(),
+                    incoming: (&incoming).into(),
+                    candidates: possible
+                        .iter()
+                        .map(|id| ImportCandidate {
+                            id: *id,
+                            profile: (&local[id]).into(),
+                        })
+                        .collect(),
+                    selected: target,
                 });
-                if !decisions.separate.contains(&first.number) {
-                    target = Some(p.id);
-                }
             }
         }
         let key = target.map_or((None, first.number), |id| (Some(id), 0));
@@ -545,41 +697,7 @@ async fn calculate(
                 continue;
             }
         }
-        let mut incoming = first.profile.clone();
-        for row in rows.iter().skip(1) {
-            let mut emails = incoming.fields.emails.clone();
-            for email in &row.profile.fields.emails {
-                if !emails.iter().any(|e| e.eq_ignore_ascii_case(email)) {
-                    emails.push(email.clone());
-                }
-            }
-            add_missing(
-                &mut incoming.fields,
-                &mut incoming.papers,
-                &row.profile.fields,
-                &row.profile.papers,
-            );
-            incoming.fields.emails = emails;
-            if !same(&incoming.fields.name, &row.profile.fields.name) {
-                append(
-                    &mut incoming.fields.aliases,
-                    std::slice::from_ref(&row.profile.fields.name),
-                );
-            }
-            append(&mut incoming.tags, &row.profile.tags);
-            if incoming.fields.research.is_none() {
-                incoming
-                    .fields
-                    .research
-                    .clone_from(&row.profile.fields.research);
-            }
-            if incoming.source_url.is_none() {
-                incoming.source_url.clone_from(&row.profile.source_url);
-            }
-            if incoming.note.is_none() {
-                incoming.note.clone_from(&row.profile.note);
-            }
-        }
+        let incoming = combine_rows(&rows);
         let Some(original) = &before else {
             preview.created += 1;
             changes.push(Change {
@@ -589,69 +707,7 @@ async fn calculate(
             });
             continue;
         };
-        let mut after = original.clone();
-        let titles = add_missing(
-            &mut after.fields,
-            &mut after.papers,
-            &incoming.fields,
-            &incoming.papers,
-        );
-        append(&mut after.tags, &incoming.tags);
-        let mut differences = Vec::new();
-        for (field, a, b) in [
-            (
-                Field::Name,
-                Some(&original.fields.name),
-                Some(&incoming.fields.name),
-            ),
-            (
-                Field::Research,
-                original.fields.research.as_ref(),
-                incoming.fields.research.as_ref(),
-            ),
-            (
-                Field::SourceUrl,
-                original.source_url.as_ref(),
-                incoming.source_url.as_ref(),
-            ),
-            (Field::Note, original.note.as_ref(), incoming.note.as_ref()),
-        ] {
-            if let (Some(a), Some(b)) = (a, b)
-                && !same(a, b)
-            {
-                differences.push(Difference {
-                    row: first.number,
-                    id: original.id,
-                    name: original.fields.name.clone(),
-                    field,
-                    affiliation: None,
-                    local: a.clone(),
-                    incoming: b.clone(),
-                });
-            }
-        }
-        for title in titles {
-            let mut affiliation = after.fields.affiliations[title.position].clone();
-            affiliation.title = None;
-            differences.push(Difference {
-                row: first.number,
-                id: original.id,
-                name: original.fields.name.clone(),
-                field: Field::Title,
-                affiliation: Some(affiliation),
-                local: title.local,
-                incoming: title.incoming,
-            });
-        }
-        if after.fields.research.is_none() {
-            after.fields.research = incoming.fields.research;
-        }
-        if after.source_url.is_none() {
-            after.source_url = incoming.source_url;
-        }
-        if after.note.is_none() {
-            after.note = incoming.note;
-        }
+        let (mut after, differences) = supplement(original, &incoming, first.number);
         let supplemented = &after != original;
         for d in &differences {
             if !decisions.take.iter().any(|choice| {

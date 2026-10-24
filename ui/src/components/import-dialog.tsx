@@ -6,6 +6,7 @@ import type {
   Decisions,
   Field,
   Imported,
+  ImportProfile,
   PreviewImport,
   Preview,
   ImportSetup as Setup,
@@ -20,7 +21,7 @@ import { reconcileChoices } from "@/import-decisions";
 
 type ImportFile = Omit<PreviewImport, "decisions">;
 
-const EMPTY: Decisions = { take: [], separate: [], restore: [] };
+const EMPTY: Decisions = { take: [], matches: [], restore: [] };
 const fields = Object.keys(FIELD_NAMES).filter((value): value is Field => value in FIELD_NAMES);
 const SELECT = "h-9 max-w-full rounded-md border border-border bg-background px-2 text-sm";
 
@@ -59,7 +60,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         choices = { ...reconcileChoices(basis, choices, remapping), take: choices.take };
       }
       const result =
-        basis && choices.take.length + choices.separate.length + choices.restore.length === 0
+        basis && choices.take.length + choices.matches.length + choices.restore.length === 0
           ? basis
           : await call("previewImport", { ...input, decisions: choices });
       return { version, input, result, choices, basis: basis ?? result };
@@ -104,7 +105,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   function remap(setup: Setup) {
     if (!file || !preview) return;
     save.reset();
-    const choices = setup.sheet === preview.sheet ? chosen.current : { ...chosen.current, separate: [], restore: [] };
+    const choices = setup.sheet === preview.sheet ? chosen.current : { ...chosen.current, matches: [], restore: [] };
     chosen.current = choices;
     setDecisions(choices);
     read.mutate({ selected: file, setup, choices, remapping: preview });
@@ -260,13 +261,15 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                     <section>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
                         <h3 className="mr-auto font-medium">可能是同一位 · {preview.maybeSame.length} 组</h3>
-                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, separate: [] }))}>
-                          全部并入
+                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, matches: [] }))}>
+                          全部按默认
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => choose((d) => ({ ...d, separate: preview.maybeSame.map((m) => m.row) }))}
+                          onClick={() =>
+                            choose((d) => ({ ...d, matches: preview.maybeSame.map((m) => ({ row: m.row, id: null })) }))
+                          }
                         >
                           全部新建
                         </Button>
@@ -274,44 +277,58 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                       <div className="space-y-2">
                         {preview.maybeSame.map((m) => (
                           <div key={m.row} className="rounded-lg border border-border p-3 text-sm">
-                            <div className="grid grid-cols-2 gap-3 phone:grid-cols-1">
-                              <p>
+                            <div className="grid grid-cols-2 gap-4 phone:grid-cols-1">
+                              <div>
                                 <span className="mb-1 block text-xs text-muted-foreground">
                                   表格 · 第 {m.rows.join("、")} 行
                                 </span>
-                                {m.name}
-                                <span className="block text-muted-foreground">{m.university}</span>
-                              </p>
-                              <p>
-                                <span className="mb-1 block text-xs text-muted-foreground">本地</span>
-                                {m.localName}
-                                <span className="block break-words text-muted-foreground">
-                                  {m.affiliation && placeOf(m.affiliation)}
-                                  <br />
-                                  {m.emails.join("、") || "未填写邮箱"}
-                                </span>
-                              </p>
-                            </div>
-                            <div className="mt-2 flex gap-4">
-                              {[false, true].map((separate) => (
-                                <label key={String(separate)} className="flex items-center gap-2">
+                                <ProfileDetails profile={m.incoming} />
+                              </div>
+                              <fieldset className="min-w-0 space-y-3">
+                                <legend className="mb-1 text-xs text-muted-foreground">选择并入哪一位，或新建</legend>
+                                {m.candidates.map((candidate) => (
+                                  <label key={candidate.id} className="flex items-start gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`same-${m.row}`}
+                                      className="mt-1"
+                                      checked={m.selected === candidate.id}
+                                      onChange={() =>
+                                        choose((d) => ({
+                                          ...d,
+                                          matches: [
+                                            ...d.matches.filter((c) => c.row !== m.row),
+                                            { row: m.row, id: candidate.id },
+                                          ],
+                                        }))
+                                      }
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="mb-1 block text-xs text-muted-foreground">
+                                        并入 · 编号 {candidate.id}
+                                      </span>
+                                      <ProfileDetails profile={candidate.profile} />
+                                    </span>
+                                  </label>
+                                ))}
+                                <label className="flex items-center gap-2">
                                   <input
                                     type="radio"
                                     name={`same-${m.row}`}
-                                    checked={decisions.separate.includes(m.row) === separate}
+                                    checked={m.selected === null}
                                     onChange={() =>
                                       choose((d) => ({
                                         ...d,
-                                        separate: [
-                                          ...d.separate.filter((r) => r !== m.row),
-                                          ...(separate ? [m.row] : []),
+                                        matches: [
+                                          ...d.matches.filter((c) => c.row !== m.row),
+                                          { row: m.row, id: null },
                                         ],
                                       }))
                                     }
                                   />
-                                  {separate ? "新建" : "并入"}
+                                  新建
                                 </label>
-                              ))}
+                              </fieldset>
                             </div>
                           </div>
                         ))}
@@ -397,5 +414,27 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProfileDetails({ profile }: { profile: ImportProfile }) {
+  return (
+    <span className="block break-words">
+      {profile.name}
+      <span className="block text-muted-foreground">
+        {profile.affiliations.map((a, n) => (
+          <span key={n} className="block">
+            {placeOf(a)}
+          </span>
+        ))}
+        <span className="block">{profile.emails.join("、") || "未填写邮箱"}</span>
+        {profile.research && <span className="block whitespace-pre-wrap">{profile.research}</span>}
+        {profile.homepages.map((url) => (
+          <span key={url} className="block">
+            {url}
+          </span>
+        ))}
+      </span>
+    </span>
   );
 }

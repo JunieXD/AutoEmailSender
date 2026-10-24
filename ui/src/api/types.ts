@@ -18,7 +18,7 @@ export type ConversationPage = { conversations: Array<Conversation>, total: numb
 
 export type ConversationQuery = { unread: boolean, page: number, };
 
-export type Decisions = { take: Array<Difference>, separate: Array<number>, restore: Array<number>, };
+export type Decisions = { take: Array<Difference>, matches: Array<GroupChoice>, restore: Array<number>, };
 
 export type DefaultTemplate = { id: number | null, };
 
@@ -68,7 +68,13 @@ export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, ht
  */
 attachments: Array<number>, };
 
+export type GroupChoice = { row: number, id: number | null, };
+
+export type ImportCandidate = { id: number, profile: ImportProfile, };
+
 export type ImportMentors = { decisions: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
+export type ImportProfile = { name: string, affiliations: Array<Affiliation>, emails: Array<string>, research: string | null, homepages: Array<string>, };
 
 export type ImportSetup = { sheet: number | null, columns: Array<Field | null> | null, };
 
@@ -151,7 +157,7 @@ export type MaterialId = { id: number, };
 
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
 
-export type MaybeSame = { row: number, rows: Array<number>, name: string, university: string | null, id: number, localName: string, affiliation: Affiliation | null, emails: Array<string>, };
+export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProfile, candidates: Array<ImportCandidate>, selected: number | null, };
 
 export type MentorAddress = { id: number, address: string, };
 

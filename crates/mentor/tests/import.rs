@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use mentor::export::{self, Scope};
-use mentor::import::{self, Decisions, Field, Setup};
+use mentor::import::{self, Decisions, Field, GroupChoice, Setup};
 use mentor::{Affiliation, MentorFields};
 use sheet::Sheet;
 use sqlx::SqlitePool;
@@ -132,7 +132,7 @@ async fn matching_groups_and_ambiguous_emails(db: SqlitePool) {
         .unwrap();
     assert_eq!(p.created, 2);
     assert_eq!(p.maybe_same.len(), 1);
-    assert_eq!(p.maybe_same[0].id, li);
+    assert_eq!(p.maybe_same[0].selected, Some(li));
     let done = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((done.created, done.updated), (2, 1));
     let p = mentor::get(&db, wang).await.unwrap().unwrap();
@@ -152,7 +152,7 @@ async fn matching_groups_and_ambiguous_emails(db: SqlitePool) {
             &db,
             &separate,
             &Decisions {
-                separate: vec![2],
+                matches: vec![GroupChoice { row: 2, id: None }],
                 ..Default::default()
             }
         )
@@ -615,7 +615,7 @@ async fn shared_new_email_and_trash_separate(db: SqlitePool) {
     let skipped = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((skipped.created, skipped.updated), (0, 0));
     let choices = Decisions {
-        separate: vec![2],
+        matches: vec![GroupChoice { row: 2, id: None }],
         ..Default::default()
     };
     let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
@@ -723,7 +723,7 @@ async fn splitting_rows_recalculates_the_full_preview(db: SqlitePool) {
         (0, 2, "教授")
     );
     let mut choices = Decisions {
-        separate: vec![2],
+        matches: vec![GroupChoice { row: 2, id: None }],
         ..Default::default()
     };
     let next = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
@@ -877,6 +877,238 @@ async fn repeated_name_only_import_must_not_duplicate(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn namesake_exports_round_trip_without_crossing_profiles(db: SqlitePool) {
+    let mut ids = Vec::new();
+    for (school, research, homepage) in [
+        ("计算机学院", "图学习", "https://cs.example.cn"),
+        ("数学学院", "代数学", "https://math.example.cn"),
+    ] {
+        ids.push(
+            mentor::create(
+                &db,
+                &MentorFields {
+                    name: "王伟".into(),
+                    affiliations: vec![Affiliation {
+                        university: Some("北京大学".into()),
+                        school: Some(school.into()),
+                        ..Default::default()
+                    }],
+                    research: Some(research.into()),
+                    homepages: vec![homepage.into()],
+                    ..Default::default()
+                },
+                0,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    let rows = export::export(&db, &Scope::Ids(ids.clone()), true)
+        .await
+        .unwrap();
+    for name in ["导师.csv", "导师.xlsx"] {
+        let bytes = if name.ends_with("csv") {
+            sheet::write_csv(&rows)
+        } else {
+            sheet::write_xlsx(&[Sheet {
+                name: "导师".into(),
+                rows: rows.clone(),
+            }])
+            .unwrap()
+        };
+        let sheets = sheet::read(name, &bytes).unwrap();
+        let preview = import::preview(&db, &sheets, &Setup::default())
+            .await
+            .unwrap();
+        assert!(preview.errors.is_empty(), "{name}");
+        assert_eq!(preview.maybe_same.len(), 2, "{name}");
+        for (group, id) in preview.maybe_same.iter().zip(&ids) {
+            assert_eq!(group.selected, Some(*id), "{name}");
+            assert_eq!(
+                group.candidates.iter().map(|c| c.id).collect::<Vec<_>>(),
+                ids,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            (preview.created, preview.updated, preview.unchanged),
+            (0, 0, 2),
+            "{name}"
+        );
+        assert!(preview.differences.is_empty(), "{name}");
+        let result = apply(&db, &sheets, &Decisions::default()).await;
+        assert_eq!((result.created, result.updated), (0, 0), "{name}");
+        assert_eq!(
+            export::export(&db, &Scope::Ids(ids.clone()), true)
+                .await
+                .unwrap(),
+            rows,
+            "{name}"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn mixed_missing_email_import_is_unchanged_when_repeated(db: SqlitePool) {
+    let sheets = table(&[
+        &["姓名", "邮箱", "研究方向"],
+        &["王明", "a@a.cn", ""],
+        &["王明", "", "图学习"],
+    ]);
+    assert_eq!(apply(&db, &sheets, &Decisions::default()).await.created, 2);
+    let rows = export::export(&db, &Scope::Ids(vec![1, 2]), true)
+        .await
+        .unwrap();
+    let preview = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        (preview.created, preview.updated, preview.unchanged),
+        (0, 0, 2)
+    );
+    let result = apply(&db, &sheets, &Decisions::default()).await;
+    assert_eq!((result.created, result.updated), (0, 0));
+    assert_eq!(
+        export::export(&db, &Scope::Ids(vec![1, 2]), true)
+            .await
+            .unwrap(),
+        rows
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn namesake_defaults_and_explicit_targets_keep_differences(db: SqlitePool) {
+    let mut ids = Vec::new();
+    for research in ["图学习", "代数学"] {
+        ids.push(
+            mentor::create(
+                &db,
+                &MentorFields {
+                    name: "王伟".into(),
+                    aliases: vec!["Wei Wang".into()],
+                    research: Some(research.into()),
+                    ..Default::default()
+                },
+                0,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    let sheets = table(&[
+        &["姓名", "研究方向", "备注"],
+        &["王伟", "图学习", ""],
+        &["王伟", "数论", "第二位的备注"],
+        &["王伟", "", ""],
+    ]);
+    let p = import::preview(&db, &sheets, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        p.maybe_same.iter().map(|m| m.selected).collect::<Vec<_>>(),
+        [Some(ids[0]), None, None]
+    );
+    assert_eq!((p.created, p.updated, p.unchanged), (2, 0, 1));
+    let mut choices = Decisions {
+        matches: vec![
+            GroupChoice {
+                row: 3,
+                id: Some(ids[1]),
+            },
+            GroupChoice {
+                row: 4,
+                id: Some(ids[0]),
+            },
+        ],
+        ..Default::default()
+    };
+    let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
+        .await
+        .unwrap();
+    assert_eq!((p.created, p.updated, p.unchanged), (0, 1, 1));
+    assert_eq!(p.differences.len(), 1);
+    assert_eq!(
+        (
+            p.differences[0].id,
+            p.differences[0].row,
+            p.differences[0].field
+        ),
+        (ids[1], 3, Field::Research)
+    );
+    assert_eq!(p.differences[0].incoming, "数论");
+    choices.take = p.differences;
+    let result = apply(&db, &sheets, &choices).await;
+    assert_eq!((result.created, result.updated), (0, 1));
+    assert_eq!(
+        mentor::get(&db, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .research
+            .as_deref(),
+        Some("图学习")
+    );
+    let b = mentor::get(&db, ids[1]).await.unwrap().unwrap();
+    assert_eq!(b.research.as_deref(), Some("数论"));
+    assert_eq!(b.note.as_deref(), Some("第二位的备注"));
+    let alias = table(&[&["姓名"], &["Wei Wang"]]);
+    let p = import::preview(&db, &alias, &Setup::default())
+        .await
+        .unwrap();
+    assert_eq!(p.maybe_same[0].candidates.len(), 2);
+    assert_eq!(p.maybe_same[0].selected, None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn stale_namesake_target_recalculates_default_before_import(db: SqlitePool) {
+    let a = add(&db, "王明", &[], "北京大学").await;
+    let b = add(&db, "王明", &[], "北京大学").await;
+    let sheets = table(&[
+        &["姓名", "学校", "邮箱", "备注", "研究方向"],
+        &["王明", "北京大学", "new@pku.edu.cn", "补充", ""],
+        &["王明", "北京大学", "new@pku.edu.cn", "", "图学习"],
+    ]);
+    let choices = Decisions {
+        matches: vec![GroupChoice {
+            row: 2,
+            id: Some(b),
+        }],
+        ..Default::default()
+    };
+    let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
+        .await
+        .unwrap();
+    assert_eq!(p.maybe_same.len(), 1);
+    assert_eq!(p.maybe_same[0].rows, [2, 3]);
+    assert_eq!(p.maybe_same[0].selected, Some(b));
+    assert_eq!((p.created, p.updated), (0, 1));
+    mentor::update(
+        &db,
+        b,
+        &MentorFields {
+            name: "李明".into(),
+            ..Default::default()
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
+        .await
+        .unwrap();
+    assert_eq!(p.maybe_same[0].selected, Some(a));
+    let result = apply(&db, &sheets, &choices).await;
+    assert_eq!((result.created, result.updated), (0, 1));
+    let m = mentor::get(&db, a).await.unwrap().unwrap();
+    assert_eq!(m.emails, ["new@pku.edu.cn"]);
+    assert_eq!(m.research.as_deref(), Some("图学习"));
+    assert_eq!(m.note.as_deref(), Some("补充"));
+    let m = mentor::get(&db, b).await.unwrap().unwrap();
+    assert!(m.emails.is_empty());
+    assert!(m.note.is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn list_fields_use_their_own_separators(db: SqlitePool) {
     let sheets = table(&[
         &["姓名", "邮箱", "主页", "别名", "标签", "代表论文"],
@@ -948,6 +1180,9 @@ async fn candidate_index_matches_aliases_and_checks_school_and_email(db: SqliteP
         .await
         .unwrap();
     assert_eq!(p.maybe_same.len(), 1);
-    assert_eq!((p.maybe_same[0].row, p.maybe_same[0].id), (2, id));
+    assert_eq!(
+        (p.maybe_same[0].row, p.maybe_same[0].selected.unwrap()),
+        (2, id)
+    );
     assert_eq!(p.created, 3);
 }

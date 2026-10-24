@@ -41,10 +41,14 @@ it("retains a choice across new objects and row changes, and drops changed compa
     errors: [],
   };
   expect(
-    reconcileChoices(preview, { take: [structuredClone(difference)], separate: [2], restore: [7, 8] }, preview),
+    reconcileChoices(
+      preview,
+      { take: [structuredClone(difference)], matches: [{ row: 2, id: null }], restore: [7, 8] },
+      preview,
+    ),
   ).toEqual({
     take: [current],
-    separate: [],
+    matches: [],
     restore: [7],
   });
 });
@@ -53,12 +57,12 @@ it("clears group choices on sheet changes and checks candidate identity after re
   const candidate = {
     row: 2,
     rows: [2, 3],
-    name: "王明",
-    university: "北京大学",
-    id: 7,
-    localName: "王明",
-    affiliation: null,
-    emails: [],
+    incoming: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] },
+    candidates: [
+      { id: 7, profile: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] } },
+      { id: 8, profile: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] } },
+    ],
+    selected: 7,
   };
   const previous: Preview = {
     sheets: ["第一张", "第二张"],
@@ -74,16 +78,24 @@ it("clears group choices on sheet changes and checks candidate identity after re
     trashed: [{ id: 7, name: "王明", rows: [2, 3] }],
     errors: [],
   };
-  const choices = { take: [difference], separate: [2], restore: [7] };
+  const choices = { take: [difference], matches: [{ row: 2, id: null }], restore: [7] };
+  const merging = { ...choices, matches: [{ row: 2, id: 8 }] };
+  expect(reconcileChoices(structuredClone(previous), merging, previous)).toEqual(merging);
+  expect(reconcileChoices(previous, { ...choices, matches: [{ row: 2, id: 9 }] }, previous).matches).toEqual([]);
   expect(reconcileChoices(structuredClone(previous), choices, previous)).toEqual(choices);
   expect(reconcileChoices({ ...previous, sheet: 1 }, choices, previous)).toEqual({
     take: [difference],
-    separate: [],
+    matches: [],
     restore: [],
   });
-  for (const changed of [{ id: 8, localName: "李明" }, { row: 4, rows: [4, 5] }, { rows: [2, 4] }, { rows: [2] }]) {
+  for (const changed of [
+    { candidates: candidate.candidates.slice(1) },
+    { row: 4, rows: [4, 5] },
+    { rows: [2, 4] },
+    { rows: [2] },
+  ]) {
     expect(
-      reconcileChoices({ ...previous, maybeSame: [{ ...candidate, ...changed }] }, choices, previous).separate,
+      reconcileChoices({ ...previous, maybeSame: [{ ...candidate, ...changed }] }, choices, previous).matches,
     ).toEqual([]);
   }
 });
