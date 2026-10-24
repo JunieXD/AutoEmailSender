@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 serde.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,\n             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id\n               ORDER BY position LIMIT 1),\n             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4\n           WHERE id = ?5 AND state = 'approved'\n           RETURNING mentor_id, to_address, message_id AS \"message_id!\", subject AS \"subject!\",\n             html AS \"html!\", text AS \"text!\"",
+  "query": "UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,\n             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id\n               ORDER BY position LIMIT 1),\n             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4\n           WHERE id = ?5 AND state = 'approved'\n           RETURNING mentor_id, to_address, message_id AS \"message_id!\", reply_to, refs, subject AS \"subject!\",\n             html AS \"html!\", text AS \"text!\"",
   "describe": {
     "columns": [
       {
@@ -37,8 +37,30 @@
         }
       },
       {
-        "name": "subject!",
+        "name": "reply_to",
         "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "reply_to"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "refs"
+          }
+        }
+      },
+      {
+        "name": "subject!",
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,7 +71,7 @@
       },
       {
         "name": "html!",
-        "ordinal": 4,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +82,7 @@
       },
       {
         "name": "text!",
-        "ordinal": 5,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -79,8 +101,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "78657f81c991bd0ae3858a02ae06b7cbc6052e2de15e55f4ae915a6d639ffa08"
+  "hash": "fdafa6403eee77a1b889384abffb1c3f0f0cb2cbdccd9dc85ca6e5b688e9fb23"
 }

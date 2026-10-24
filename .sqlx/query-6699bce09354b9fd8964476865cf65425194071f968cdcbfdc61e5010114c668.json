@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.message_id, m.from_address, m.from_name, m.subject, m.sent_at\n           FROM message_mentor mm JOIN message m ON m.id = mm.message_id\n           WHERE mm.mentor_id = ?1 AND m.kind = 'reply'\n             AND (?2 IS NULL OR m.id = ?2) AND (?3 IS NULL OR m.message_id = ?3)\n             AND (?2 IS NOT NULL OR m.message_id IS NOT NULL)\n           ORDER BY m.sent_at DESC, m.id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "message_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "from_name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "6699bce09354b9fd8964476865cf65425194071f968cdcbfdc61e5010114c668"
+}

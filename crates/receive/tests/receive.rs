@@ -214,12 +214,18 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
             (
                 "li@pku.edu.cn",
                 Some("回复：申请读博"),
-                &MessageKind::Reply { unread: true }
+                &MessageKind::Reply {
+                    unread: true,
+                    can_reply: true
+                }
             ),
             (
                 "secretary@pku.edu.cn",
                 Some("Re: 申请读博"),
-                &MessageKind::Reply { unread: true }
+                &MessageKind::Reply {
+                    unread: true,
+                    can_reply: true
+                }
             ),
         ]
     );
@@ -665,8 +671,20 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
         [
             ("me@example.com", &MessageKind::Sent { bounce: None }),
             ("me@example.com", &MessageKind::Sent { bounce: None }),
-            ("secretary@pku.edu.cn", &MessageKind::Reply { unread: true }),
-            ("secretary@pku.edu.cn", &MessageKind::Reply { unread: true }),
+            (
+                "secretary@pku.edu.cn",
+                &MessageKind::Reply {
+                    unread: true,
+                    can_reply: true
+                }
+            ),
+            (
+                "secretary@pku.edu.cn",
+                &MessageKind::Reply {
+                    unread: true,
+                    can_reply: true
+                }
+            ),
         ]
     );
     assert_eq!(li_mail[0].text, "老师您好，补充一份成绩单。");
@@ -1059,4 +1077,38 @@ async fn receive_now_reports_a_failed_round(db: SqlitePool) {
     assert!(receiver.receive_now().await.is_err());
     assert_eq!(receiver.received_at(), None);
     task.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn replies_without_a_message_id_are_readable_but_cannot_be_replied_to(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let id = mentor(&db, "王伟", "wang@pku.edu.cn").await;
+    store.deliver(
+        "INBOX",
+        T,
+        "From: wang@pku.edu.cn\nSubject: 无编号的来信\n\n请到邮箱回复。",
+    );
+    store.deliver(
+        "INBOX",
+        T + MINUTE,
+        "From: wang@pku.edu.cn\nSubject: 正常来信\nMessage-ID: <normal@pku.edu.cn>\n\n收到。",
+    );
+    round(&db, &net, T + 2 * MINUTE).await;
+    let mail = messages(&db, id).await;
+    assert_eq!(mail.len(), 2);
+    assert_eq!(mail[0].text, "请到邮箱回复。");
+    assert_eq!(
+        mail[0].kind,
+        MessageKind::Reply {
+            unread: true,
+            can_reply: false
+        }
+    );
+    assert_eq!(
+        mail[1].kind,
+        MessageKind::Reply {
+            unread: true,
+            can_reply: true
+        }
+    );
 }

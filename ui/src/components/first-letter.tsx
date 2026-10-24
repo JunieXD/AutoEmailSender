@@ -1,6 +1,5 @@
 import {
   keepPreviousData,
-  type MutationState,
   skipToken,
   useMutation,
   useMutationState,
@@ -8,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FileText, Paperclip, Send, TriangleAlert } from "lucide-react";
+import { FileText } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
@@ -19,19 +18,17 @@ import type {
   Letter,
   Material,
   MentorDetail,
-  Problem,
   TemplateSummary,
 } from "@/api/types";
 import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
+import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
 import { Attachments } from "@/components/attachments";
-import { Confirm } from "@/components/batch-bar";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { dropDrafts } from "@/components/mentor";
 import { usePlaceholders } from "@/components/template-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { fileSize } from "@/format";
 import { letterHtml, letterText } from "@/letter";
 
 /** Writing the first email to a mentor on their page (docs/ui.md#交互). */
@@ -81,23 +78,12 @@ function Composer({
 }) {
   const mentorId = mentor.id;
   const queryClient = useQueryClient();
-  const mutationKey = ["saveFirstDraft", mentorId];
-  // Approving waits for the saves before it, which share this scope.
-  const scope = { id: `saveFirstDraft ${mentorId}` };
-  const save = useMutation({
-    mutationKey,
-    scope,
-    mutationFn: (d: FirstDraftEdit) => call("saveFirstDraft", d),
-    // A load still under way may have read the draft before this save, so it must not land afterwards.
-    onSuccess: async (saved) => {
-      await queryClient.cancelQueries({ queryKey: ["getFirstDraft", mentorId] });
-      queryClient.setQueryData(["getFirstDraft", mentorId], saved);
-    },
-  });
-  const last = useMutationState<MutationState<null, Error, FirstDraftEdit>>({
-    filters: { mutationKey },
-    select: (m) => m.state,
-  }).at(-1);
+  const { save, last, scope } = useDraftSave<FirstDraftEdit, FirstDraft | null>(
+    "saveFirstDraft",
+    "getFirstDraft",
+    mentorId,
+    (d) => call("saveFirstDraft", d),
+  );
   const restored = last?.status !== "success" ? last?.variables : undefined;
   // Started without a draft, the letter is the default template filled in for the mentor, and
   // follows their details as they are edited until the user changes the letter.
@@ -173,14 +159,15 @@ function Composer({
     onSuccess: async () => {
       // The correspondence takes this composer's place first, so that it does not show the draft emptied.
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
-      dropDrafts(queryClient, [mentorId]);
+      dropDrafts(queryClient, [mentorId], "first");
     },
   });
   // An approval still waiting for the saves before it holds the letter even after leaving and coming
   // back, so that no second email can be written and approved meanwhile.
   const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
   const sending = approving || approve.isSuccess;
-  const locked = sending || busy || review !== undefined;
+  const uploading = useUploading(mentorId);
+  const locked = sending || busy || uploading || review !== undefined;
   function edit(next: FirstDraftEdit) {
     // What went wrong the last time is of no more use.
     if (writing.latest?.status === "error") writing.forget();
@@ -208,22 +195,6 @@ function Composer({
       approve.mutate({ ...letter, html: letterHtml(letter.bodyMd, style.data), text: letterText(letter.bodyMd) });
     }
   }
-  const sendButton = (onClick?: () => void) => (
-    <Button
-      disabled={
-        locked ||
-        blocker !== null ||
-        !style.data ||
-        !mailboxes.data ||
-        letter.subject.trim() === "" ||
-        letter.bodyMd.trim() === ""
-      }
-      onClick={onClick}
-    >
-      <Send strokeWidth={1.8} />
-      发送
-    </Button>
-  );
   // Only a first fill that failed holds the letter back; a later one keeps what was filled, and a
   // letter written meanwhile, such as by AI, needs none.
   if (!touched && shown === undefined) return prefill.error && <LoadFailed error={prefill.error} />;
@@ -256,26 +227,12 @@ function Composer({
           locked ? undefined : (m) => edit({ ...letter, attachments: letter.attachments.filter((id) => id !== m.id) })
         }
       />
-      {!review && problems.length > 0 && (
-        <ul className="flex flex-col gap-2 text-sm text-warning">
-          {problems.map((p) => (
-            <li key={problemText(p)} className="flex items-start gap-2">
-              <TriangleAlert className="mt-0.5 size-4" strokeWidth={1.8} />
-              {problemText(p)}
-              {p.kind === "no_salutation" && (
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  className="-my-1"
-                  disabled={locked}
-                  onClick={() => rewrite({ ...letter, bodyMd: `${p.salutation}\n\n${letter.bodyMd}` })}
-                >
-                  加上称呼
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
+      {!review && (
+        <LetterProblems
+          problems={problems}
+          locked={locked}
+          onSalutation={(salutation) => rewrite({ ...letter, bodyMd: `${salutation}\n\n${letter.bodyMd}` })}
+        />
       )}
       {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
       {!touched && prefill.error && (
@@ -309,7 +266,34 @@ function Composer({
           materials={materials}
           attached={attached}
           disabled={locked}
-          onAttach={(m) => edit({ ...letter, attachments: [...letter.attachments, m.id] })}
+          mentorId={mentorId}
+          kind="first"
+          onPrepare={() => {
+            setTouched(true);
+            return save.mutateAsync(letter);
+          }}
+          onUploaded={() => {
+            const current = queryClient.getQueryData<FirstDraft | null>(["getFirstDraft", mentorId]);
+            if (current) {
+              setLetter({
+                mentorId,
+                subject: current.subject ?? "",
+                bodyMd: current.bodyMd ?? "",
+                attachments: current.attachments,
+              });
+              if (current.bodyMd !== letter.bodyMd)
+                setBody({ version: body.version + 1, markdown: current.bodyMd ?? "" });
+            }
+          }}
+          onAttach={(m) =>
+            edit({
+              ...letter,
+              attachments: [
+                ...letter.attachments.filter((id) => !attached.some((a) => a.id === id && a.fileName === m.fileName)),
+                m.id,
+              ],
+            })
+          }
         />
         {last?.status === "error" && (
           <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>
@@ -331,17 +315,18 @@ function Composer({
             </>
           ) : (
             <>
-              {blocker && <p className="text-sm text-muted-foreground">{blocker}</p>}
-              {problems.length > 0 ? (
-                <Confirm
-                  trigger={sendButton()}
-                  message={`还有 ${problems.length} 个问题，仍要发送？`}
-                  action="仍要发送"
-                  onConfirm={send}
-                />
-              ) : (
-                sendButton(send)
-              )}
+              <LetterSend
+                blocker={blocker}
+                problems={problems}
+                onSend={send}
+                disabled={
+                  locked ||
+                  !style.data ||
+                  !mailboxes.data ||
+                  letter.subject.trim() === "" ||
+                  letter.bodyMd.trim() === ""
+                }
+              />
             </>
           )}
         </div>
@@ -364,60 +349,6 @@ function isWritten(letter: { subject: string; bodyMd: string }): boolean {
 function attachedByDefault(materials: Material[]): number[] {
   const chosen = materials.filter((m) => m.attachByDefault);
   return chosen.filter((m, i) => chosen.findIndex((c) => c.fileName === m.fileName) === i).map((m) => m.id);
-}
-
-/** Lists the materials to attach; it stays open, so that several can be attached in turn. */
-function AttachMenu({
-  materials,
-  attached,
-  disabled,
-  onAttach,
-}: {
-  materials: Material[];
-  attached: Material[];
-  disabled: boolean;
-  onAttach: (m: Material) => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled} />}>
-        <Paperclip strokeWidth={1.8} />
-        添加附件
-      </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-72 flex-col p-1.5">
-        {materials.length === 0 ? (
-          <p className="p-1.5 text-sm text-muted-foreground">
-            尚未添加材料，可在
-            <Link to="/settings/materials" className="text-brand-text">
-              设置 › 个人 › 材料
-            </Link>
-            里添加。
-          </p>
-        ) : (
-          materials.map((m) => {
-            // Two files of one name would reach the mentor as one.
-            const taken = attached.find((a) => a.fileName === m.fileName);
-            return (
-              <button
-                key={m.id}
-                type="button"
-                disabled={taken !== undefined}
-                className="flex flex-col rounded-md px-3 py-2 text-left enabled:hover:bg-muted disabled:opacity-40"
-                onClick={() => onAttach(m)}
-              >
-                <span className="truncate" title={m.fileName}>
-                  {m.fileName}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  {taken === m ? "已附上" : taken ? "已附上同名文件" : fileSize(m.size)}
-                </span>
-              </button>
-            );
-          })
-        )}
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 /** Lists the templates; a letter already written is replaced only once confirmed. */
@@ -511,12 +442,4 @@ function TemplateMenu({
       </PopoverContent>
     </Popover>
   );
-}
-
-/** What a problem found before sending reads as. */
-function problemText(p: Problem): string {
-  if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
-  if (p.kind === "no_salutation") return "正文里没有称呼导师。";
-  if (p.kind === "no_attachment") return "正文提到了附件，但还没有添加附件。";
-  return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }

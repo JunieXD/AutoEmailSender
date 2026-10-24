@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET updated_at = ?1\n         WHERE mentor_id = ?2 AND kind = 'first' AND task_id IS NULL AND state = 'review'\n         RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "35eaa33f539ece83b0306f40dadfde415ed58a70413b30bdc4dd90517da64b46"
+}

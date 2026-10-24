@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM email WHERE mentor_id = ? AND kind = 'reply' AND state = 'review'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "90d3c4486950bad69dcf12e2f1cf4804d9df34f187dfb60cd153d0e9f97d44c7"
+}
