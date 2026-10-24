@@ -6,8 +6,8 @@ import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogHeader } from "@/components/ui/dialog";
+import { uploadMaterial } from "@/material";
 import { fileSize } from "@/format";
-import { base64 } from "@/file";
 import { Section } from "./settings";
 
 /** Settings › 个人 › 材料 (docs/ui.md#交互). */
@@ -16,11 +16,7 @@ export function MaterialsSection() {
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
   const picker = useRef<HTMLInputElement>(null);
   const add = useMutation({
-    mutationFn: async (file: File) => {
-      // material::MAX_SIZE, checked before a large file is read and encoded in memory.
-      if (file.size > 20 * 1024 * 1024) throw new Error("文件超过 20 MB，无法添加。");
-      return call("addMaterial", { fileName: file.name, data: await base64(file) });
-    },
+    mutationFn: uploadMaterial,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listMaterials"] }),
   });
   return (

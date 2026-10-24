@@ -26,6 +26,10 @@ export type Difference = { row: number, id: number, name: string, field: Field, 
 
 export type Direction = "up" | "down";
 
+export type DraftKind = "first" | "reply";
+
+export type DraftMaterial = { mentorId: number, kind: DraftKind, materialId: number, };
+
 export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, 
 /**
  * The bounced email this one sends again.
@@ -227,7 +231,7 @@ quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
-truncated: boolean, } & ({ "kind": "reply", unread: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -341,6 +345,16 @@ domains: Array<string>, setup: Setup, };
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type ReceiveStatus = { receivedAt: number | null, };
+
+export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
+
+export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
+
+export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+
+export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, };
+
+export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
 export type RowError = { row: number, reason: string, };
 
@@ -476,6 +490,12 @@ export interface Operations {
   setDefaultTemplate: { input: DefaultTemplate; output: null };
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   applyDefaultTemplate: { input: MentorId; output: FilledTemplate | null };
+  getReplyDraft: { input: MentorId; output: ReplyDraft | null };
+  getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
+  saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
+  checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
+  approveReply: { input: ReplyEmail; output: null };
+  attachDraftMaterial: { input: DraftMaterial; output: boolean };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };

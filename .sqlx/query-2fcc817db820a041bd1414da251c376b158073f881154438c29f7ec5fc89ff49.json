@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email_attachment (email_id, material_id, file_name, size)\n         SELECT e.id, m.id, m.file_name, m.size FROM email e CROSS JOIN material m\n         WHERE e.mentor_id = ? AND e.kind = ? AND e.task_id IS NULL AND e.state = 'review'\n           AND m.id = ?\n         ON CONFLICT (email_id, file_name) DO UPDATE SET material_id = excluded.material_id,\n           size = excluded.size",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2fcc817db820a041bd1414da251c376b158073f881154438c29f7ec5fc89ff49"
+}

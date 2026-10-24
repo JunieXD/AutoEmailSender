@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'approved', subject = ?, body_md = ?, html = ?, text = ?,\n           planned_at = ?, updated_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "2fcc048719bd5d78a1d985fa395c0273a1edb3afcfe94e7460ea68067becba53"
+}

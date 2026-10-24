@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,\n             (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address\n           FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id\n           JOIN message m ON m.id = mm.message_id\n           WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'",
+  "describe": {
+    "columns": [
+      {
+        "name": "from_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "refs"
+          }
+        }
+      },
+      {
+        "name": "address",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "70d155800eb91ffe51ab748c179a69c48c5277fc3bfab16a7f70182a5da366a9"
+}
