@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -33,12 +33,18 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     wasOut.current = out;
   }, [out, queryClient]);
   const fresh = useMarkRead(mentor.id, entries.data);
-  // A first draft stays to be finished when the mentor has mail by now, as after a merge or a look-up.
+  // A first letter begun stays to be finished when the mentor has mail by now, as after a merge or a
+  // look-up: a draft, one that failed to load, or what the composer keeps of a save that failed.
   const draft = useQuery({
     queryKey: ["getFirstDraft", mentor.id],
     queryFn: () => call("getFirstDraft", { id: mentor.id }),
     enabled: !mentor.trashed,
   });
+  const lastSave = useMutationState({
+    filters: { mutationKey: ["saveFirstDraft", mentor.id] },
+    select: (m) => m.state.status,
+  }).at(-1);
+  const begun = draft.data || draft.isError || (lastSave !== undefined && lastSave !== "success");
   if (entries.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
@@ -75,7 +81,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
           ),
         )}
       </div>
-      {!mentor.trashed && draft.data && <FirstLetter mentor={mentor} />}
+      {!mentor.trashed && begun && <FirstLetter mentor={mentor} />}
     </>
   );
 }
