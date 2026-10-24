@@ -154,3 +154,16 @@ pub async fn set_default_template(db: &SqlitePool, id: Option<i64>) -> Result<bo
     .await?;
     Ok(row.rows_affected() > 0)
 }
+
+pub async fn reply_notifications(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT reply_notifications AS "reply_notifications: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+
+pub async fn set_reply_notifications(db: &SqlitePool, on: bool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET reply_notifications = ?", on)
+        .execute(db)
+        .await?;
+    Ok(())
+}

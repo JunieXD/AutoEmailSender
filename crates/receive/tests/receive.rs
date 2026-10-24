@@ -10,7 +10,7 @@ use fakemail::{ADDRESS, SECRET, Store};
 use mailbox::{MailboxForm, Security, Server};
 use mentor::{Contact, MentorFields};
 use net::Net;
-use receive::{Message, MessageKind, Round};
+use receive::{Message, MessageKind, NewReply, Round};
 use sqlx::SqlitePool;
 
 const T: i64 = 1_800_000_000_000;
@@ -189,7 +189,17 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
         round(&db, &net, T + 10 * MINUTE).await,
         Round {
             changed: true,
-            more: false
+            more: false,
+            replies: vec![
+                NewReply {
+                    mentors: vec!["李明".into()],
+                    subject: Some("回复：申请读博".into())
+                },
+                NewReply {
+                    mentors: vec!["李明".into()],
+                    subject: Some("Re: 申请读博".into())
+                },
+            ],
         }
     );
     assert!(!opened(&store.commands()).contains(&newsletter));
@@ -506,7 +516,7 @@ async fn earlier_mail_is_looked_up_once_per_address(db: SqlitePool) {
     mailbox::create(&db, &form(port).check().unwrap(), SECRET, 0)
         .await
         .unwrap();
-    round(&db, &net, T).await;
+    assert!(round(&db, &net, T).await.replies.is_empty());
     let found = messages(&db, li).await;
     assert_eq!(
         found.iter().map(|m| m.sent_at).collect::<Vec<_>>(),
@@ -997,4 +1007,41 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
         copies,
         [None, None, Some("<tencent_3@qq.com>".into()), None, None]
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_new_reply_names_its_mentors_once_in_id_order(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    mentor(&db, "李明", "li@pku.edu.cn").await;
+    round(&db, &net, T).await;
+    store.deliver(SENT, T + MINUTE,
+        "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nMessage-ID: <shared@example.com>\nSubject: 申请\n\n两位老师好");
+    let reply = "From: secretary@example.com\nIn-Reply-To: <shared@example.com>\nMessage-ID: <answer@example.com>\n\n欢迎报考";
+    store.deliver("INBOX", T + 2 * MINUTE, reply);
+    assert_eq!(
+        round(&db, &net, T + 3 * MINUTE).await.replies,
+        [NewReply {
+            mentors: vec!["王伟".into(), "李明".into()],
+            subject: None
+        }]
+    );
+    // The same message found at a new UID does not notify again.
+    store.deliver("INBOX", T + 4 * MINUTE, reply);
+    assert!(round(&db, &net, T + 5 * MINUTE).await.replies.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn receive_now_waits_for_a_successful_round(db: SqlitePool) {
+    let receiver = receive::Receiver::default();
+    assert_eq!(receiver.received_at(), None);
+    let task = tokio::spawn(receive::run(
+        db,
+        Net::new(Vec::new()).unwrap(),
+        receiver.clone(),
+        |_| {},
+    ));
+    receiver.receive_now().await;
+    assert!(receiver.received_at().is_some());
+    task.abort();
 }

@@ -110,7 +110,13 @@ function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
   const markRead = useMutation({
     mutationFn: () => call("markRead", { id: mentorId }),
     onSuccess: () => {
-      for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor", mentorId]]) {
+      for (const queryKey of [
+        ["listMentors"],
+        ["listTrash"],
+        ["getMentor", mentorId],
+        ["listConversations"],
+        ["unreadCount"],
+      ]) {
         void queryClient.invalidateQueries({ queryKey });
       }
     },

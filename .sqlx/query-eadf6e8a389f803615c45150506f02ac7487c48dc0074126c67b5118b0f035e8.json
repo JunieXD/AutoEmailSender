@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name FROM mentor m JOIN message_mentor mm ON mm.mentor_id = m.id\n                 WHERE mm.message_id = ? ORDER BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eadf6e8a389f803615c45150506f02ac7487c48dc0074126c67b5118b0f035e8"
+}

@@ -1,14 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { Settings, Users } from "lucide-react";
+import { MessagesSquare, Settings, Users } from "lucide-react";
 import { useEffect } from "react";
 import appIcon from "../../../docs/icon.svg";
+import { call } from "@/api/call";
 import { startupFailure } from "@/api/app";
 import { refreshMentors } from "@/components/mentor";
 import { StartupFailure } from "@/components/startup-failure";
 
-const NAV = [{ to: "/mentors", label: "导师", icon: Users }] as const;
+const NAV = [
+  { to: "/mentors", label: "导师", icon: Users },
+  { to: "/conversations", label: "往来", icon: MessagesSquare },
+] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
 // accounts, the row is settings itself.
@@ -21,12 +25,20 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
   const queryClient = useQueryClient();
+  const unread = useQuery({
+    queryKey: ["unreadCount"],
+    queryFn: () => call("unreadCount", {}),
+    enabled: failure.isSuccess && !failure.data,
+  });
+  const count = unread.data ?? 0;
   // New mail may change any mentor's correspondence and contact status, and a mailbox may have
   // failed to receive or recovered.
   useEffect(() => {
     const stop = listen("received", () => {
       refreshMentors(queryClient);
-      void queryClient.invalidateQueries({ queryKey: ["listMailboxes"] });
+      for (const key of ["listMailboxes", "receiveStatus"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     });
     return () => void stop.then((unlisten) => unlisten());
   }, [queryClient]);
@@ -41,7 +53,7 @@ export function Shell() {
         </div>
         <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => (
-            <NavLink key={item.to} {...item} />
+            <NavLink key={item.to} {...item} count={item.to === "/conversations" ? count : 0} />
           ))}
         </nav>
         <div className="grow" />
@@ -60,7 +72,14 @@ export function Shell() {
             inactiveProps={{ className: "text-muted-foreground" }}
           >
             <Icon className="size-[22px]" strokeWidth={1.6} />
-            {label}
+            <span className="flex items-center gap-1">
+              {label}
+              {to === "/conversations" && count > 0 && (
+                <span className="min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white">
+                  {count > 99 ? "99+" : count}
+                </span>
+              )}
+            </span>
           </Link>
         ))}
       </nav>
@@ -68,7 +87,7 @@ export function Shell() {
   );
 }
 
-function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTINGS) {
+function NavLink({ to, label, icon: Icon, count = 0 }: ((typeof NAV)[number] | typeof SETTINGS) & { count?: number }) {
   return (
     <Link
       to={to}
@@ -78,6 +97,11 @@ function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTIN
     >
       <Icon className="size-[18px]" strokeWidth={1.6} />
       {label}
+      {count > 0 && (
+        <span className="ml-auto min-w-5 rounded-full bg-unread px-1.5 text-center text-xs leading-5 text-white">
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
     </Link>
   );
 }

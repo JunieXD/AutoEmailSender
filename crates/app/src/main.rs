@@ -8,6 +8,7 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 /// The UI's one entry point into the core; see `api::call`.
@@ -61,6 +62,7 @@ fn main() -> tauri::Result<()> {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok(ctx) => app.manage(ctx),
@@ -123,14 +125,24 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
     ));
     let receiver = receive::Receiver::default();
     let ui = app.clone();
+    let notifications_db = db.clone();
     tauri::async_runtime::spawn(receive::run(
         db.clone(),
         net.clone(),
         receiver.clone(),
         // The UI reads again what new mail may have changed.
-        move || {
+        move |replies| {
             if let Err(e) = ui.emit("received", ()) {
                 tracing::warn!("tell the window about new mail: {e}");
+            }
+            if !replies.is_empty() {
+                let db = notifications_db.clone();
+                let app = ui.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = notify_replies(&app, &db, replies).await {
+                        tracing::warn!("reply notification: {e}");
+                    }
+                });
             }
         },
     ));
@@ -141,6 +153,44 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         receiver,
         materials,
     })
+}
+
+async fn notify_replies(
+    app: &AppHandle,
+    db: &sqlx::SqlitePool,
+    replies: Vec<receive::NewReply>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if !profile::reply_notifications(db).await? {
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window("main")
+        && window.is_focused()?
+    {
+        return Ok(());
+    }
+    let (title, body) = if replies.len() == 1 && replies[0].mentors.len() == 1 {
+        (
+            format!("{}回信了", replies[0].mentors[0]),
+            replies[0]
+                .subject
+                .clone()
+                .unwrap_or_else(|| "（无主题）".into()),
+        )
+    } else {
+        let mut names = Vec::new();
+        for name in replies.iter().flat_map(|r| &r.mentors) {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        (format!("{} 封新回信", replies.len()), names.join("、"))
+    };
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()?;
+    Ok(())
 }
 
 #[derive(Debug)]

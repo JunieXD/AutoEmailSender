@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.mentor_id AS \"mentor_id!\", c.name AS \"name!\", c.at AS \"at!: i64\", c.unread AS \"unread!\",\n             (SELECT subject FROM (\n                SELECT subject, sent_at FROM email\n                WHERE mentor_id = c.mentor_id AND state IN ('maybe_sent', 'sent', 'bounced')\n                UNION ALL\n                SELECT m.subject, m.sent_at FROM message m\n                JOIN message_mentor mm ON mm.message_id = m.id\n                WHERE mm.mentor_id = c.mentor_id AND m.kind <> 'auto_reply'\n              ) ORDER BY sent_at DESC LIMIT 1) AS \"subject?: String\"\n           FROM (\n             SELECT mc.mentor_id, m.name, mc.unread,\n               max(coalesce(mc.last_out_at, 0), coalesce(mc.last_reply_at, 0)) AS at\n             FROM mentor_contact mc JOIN mentor m ON m.id = mc.mentor_id\n             WHERE m.trashed_at IS NULL AND (NOT ?1 OR mc.unread > 0)\n             ORDER BY at DESC, mc.mentor_id DESC LIMIT ?2 OFFSET ?3\n           ) c ORDER BY c.at DESC, c.mentor_id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "at!: i64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "unread!",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "unread"
+          }
+        }
+      },
+      {
+        "name": "subject?: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "ac967e00579e99277b9877c103dd7e5c42aa54e844d5e724c6267e47c2d37568"
+}

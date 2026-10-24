@@ -1,10 +1,10 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { dataLocation, exportLogs, openDataLocation } from "@/api/app";
-import { errorMessage } from "@/api/call";
+import { call, errorMessage } from "@/api/call";
 import { Button } from "@/components/ui/button";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
@@ -20,7 +20,13 @@ const GROUPS = [
   },
   { label: "邮件", sections: [{ to: "/settings/mailboxes", label: "邮箱" }] },
   { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },
-  { label: "应用", sections: [{ to: "/settings/about", label: "关于和日志" }] },
+  {
+    label: "应用",
+    sections: [
+      { to: "/settings/notifications", label: "通知" },
+      { to: "/settings/about", label: "关于和日志" },
+    ],
+  },
 ] as const;
 
 /** The `phone` breakpoint in index.css. */
@@ -129,6 +135,41 @@ export function AboutSection() {
           {exported.isError && <span className="text-sm text-destructive">{errorMessage(exported.error)}</span>}
         </div>
       </Row>
+    </Section>
+  );
+}
+
+export function NotificationsSection() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["getReplyNotifications"], queryFn: () => call("getReplyNotifications", {}) });
+  const save = useMutation({
+    mutationFn: (on: boolean) => call("setReplyNotifications", { on }),
+    onSuccess: async (_, on) => {
+      await queryClient.cancelQueries({ queryKey: ["getReplyNotifications"] });
+      queryClient.setQueryData(["getReplyNotifications"], on);
+    },
+  });
+  return (
+    <Section title="通知">
+      <div>
+        <label className="flex items-center justify-between gap-4">
+          <span>新回信时发系统通知</span>
+          <button
+            type="button"
+            role="switch"
+            aria-label="新回信时发系统通知"
+            aria-checked={query.data ?? false}
+            disabled={query.data === undefined || save.isPending}
+            onClick={() => save.mutate(!query.data)}
+            className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
+          >
+            <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
+          </button>
+        </label>
+        <p className="mt-2 text-sm text-muted-foreground">应用不在前台时，导师回信会弹出系统通知。</p>
+      </div>
+      {query.error && <p className="text-sm text-destructive">通知设置未能加载：{errorMessage(query.error)}</p>}
+      {save.error && <p className="text-sm text-destructive">通知设置未能保存：{errorMessage(save.error)}</p>}
     </Section>
   );
 }

@@ -10,6 +10,12 @@ export type Contact = { "status": "none" } | { "status": "contacted", count: num
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
+export type Conversation = { mentorId: number, name: string, subject: string | null, at: number, unread: number, };
+
+export type ConversationPage = { conversations: Array<Conversation>, total: number, };
+
+export type ConversationQuery = { unread: boolean, page: number, };
+
 export type DefaultTemplate = { id: number | null, };
 
 export type Direction = "up" | "down";
@@ -282,6 +288,10 @@ domains: Array<string>, setup: Setup, };
 
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
+export type ReceiveStatus = { receivedAt: number | null, };
+
+export type ReplyNotifications = { on: boolean, };
+
 export type Security = "tls" | "starttls";
 
 export type Server = { host: string, port: number, security: Security, };
@@ -343,6 +353,12 @@ export type TrashQuery = {
 page: number, };
 
 export interface Operations {
+  listConversations: { input: ConversationQuery; output: ConversationPage };
+  unreadCount: { input: Nothing; output: number };
+  receiveNow: { input: Nothing; output: ReceiveStatus };
+  receiveStatus: { input: Nothing; output: ReceiveStatus };
+  getReplyNotifications: { input: Nothing; output: boolean };
+  setReplyNotifications: { input: ReplyNotifications; output: null };
   listMentors: { input: MentorQuery; output: MentorPage };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };

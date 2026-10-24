@@ -1,4 +1,5 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { ConversationsPage, conversationSearch } from "./pages/conversations";
 import { Shell } from "./components/shell";
 import { MentorPage } from "./pages/mentor";
 import { MentorsPage, mentorSearch } from "./pages/mentors";
@@ -8,7 +9,7 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, SettingsPage } from "./pages/settings";
+import { AboutSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -46,6 +47,13 @@ const mentorRoute = createRoute({
     stringify: ({ mentorId }) => ({ mentorId: String(mentorId) }),
   },
   component: MentorPage,
+});
+
+const conversationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "conversations",
+  validateSearch: conversationSearch,
+  component: ConversationsPage,
 });
 
 const settingsRoute = createRoute({
@@ -96,6 +104,12 @@ const modelsRoute = createRoute({
   component: ModelsSection,
 });
 
+const notificationsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "notifications",
+  component: NotificationsSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -109,6 +123,7 @@ export const router = createRouter({
     mentorsRoute,
     trashRoute,
     mentorRoute,
+    conversationsRoute,
     settingsRoute.addChildren([
       settingsHomeRoute,
       profileRoute,
@@ -117,6 +132,7 @@ export const router = createRouter({
       letterStyleRoute,
       mailboxesRoute,
       modelsRoute,
+      notificationsRoute,
       aboutRoute,
     ]),
   ]),

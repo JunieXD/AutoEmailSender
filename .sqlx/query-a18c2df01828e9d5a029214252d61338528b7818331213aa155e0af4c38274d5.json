@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT reply_notifications AS \"reply_notifications: bool\" FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "reply_notifications: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "reply_notifications"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a18c2df01828e9d5a029214252d61338528b7818331213aa155e0af4c38274d5"
+}

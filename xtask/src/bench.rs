@@ -66,6 +66,18 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    for (label, unread) in [("往来列表，第 1 页", false), ("往来，新回信", true)] {
+        let query = mentor::conversations::ConversationQuery {
+            unread,
+            page: NonZeroU32::MIN,
+        };
+        report(
+            label,
+            median(async || mentor::conversations::list(&db, &query).await.map(drop)).await?,
+            home,
+        );
+    }
+
     // Each write runs the contact-summary triggers for the mentor.
     let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE state = 'sent' LIMIT 1")
         .fetch_one(&db)
