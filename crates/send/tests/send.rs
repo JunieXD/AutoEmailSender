@@ -220,6 +220,38 @@ async fn a_refused_email_fails_and_a_cut_off_one_may_have_gone_out(db: SqlitePoo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_email_taken_back_and_changed_is_another_letter(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let hangup = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    let id = first_email(&db, hangup).await.id;
+    assert!(email::retry(&db, id, T + 1).await.unwrap());
+    assert!(email::withdraw(&db, id, T + 2).await.unwrap());
+    let changed = Approval {
+        subject: "申请硕士",
+        body_md: "王老师：您好！补充一句。",
+        html: "<p>王老师：您好！补充一句。</p>",
+        text: "王老师：您好！补充一句。",
+        attachments: &[],
+    };
+    assert_eq!(
+        email::approve_first(&db, hangup, &changed, T + 3)
+            .await
+            .unwrap(),
+        email::Approved::Yes
+    );
+
+    send::step(&db, &net, nowhere(), || T + 3).await.unwrap();
+    let inbox = inbox.lock().unwrap();
+    assert_eq!(inbox.len(), 2);
+    // Not dropped as a duplicate of the first by the mentor's mailbox.
+    assert_ne!(
+        header(&inbox[0], "Message-ID: "),
+        header(&inbox[1], "Message-ID: ")
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_refused_login_fails_the_email(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, "wrong").await;
     let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
@@ -258,6 +290,33 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
         }
     );
     assert_eq!(own_mailbox(&db, wang).await, Some(1));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
+    let (_, _) = mailbox(&db, SECRET).await;
+    let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
+    sqlx::query("UPDATE mentor SET email = NULL WHERE id = ?")
+        .bind(wang)
+        .execute(&db)
+        .await
+        .unwrap();
+    let id = first_email(&db, wang).await.id;
+    let mut conn = db.acquire().await.unwrap();
+    email::start_sending(&mut conn, id, 1, ADDRESS, "<x@example.com>", T)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(conn);
+
+    send::recover(&db, T + 1).await.unwrap();
+    assert_eq!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Failed {
+            error: email::NO_ADDRESS.into()
+        }
+    );
+    assert_eq!(own_mailbox(&db, wang).await, None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

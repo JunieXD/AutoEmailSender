@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'bounced', error = ?1, updated_at = ?2\n         WHERE (message_id = ?3 OR copy_message_id = ?3)\n           AND state IN ('sending', 'maybe_sent', 'sent')\n           AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "b0649b4eff2119a19418f7879ea3289e7e5efaa838b2b4cc850b0d9cafa01ad7"
+}

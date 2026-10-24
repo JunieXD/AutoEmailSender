@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,\n           to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,\n           html = NULL, text = NULL, updated_at = ?\n         WHERE id = ? AND state IN ('approved', 'failed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2631c9ed4d1ef503fb45fca53eadf7d0c078b5b92a1035c281d48c858c082f5b"
+}

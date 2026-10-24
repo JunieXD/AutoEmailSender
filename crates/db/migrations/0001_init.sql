@@ -218,8 +218,8 @@ CREATE TABLE email (
              AND planned_at IS NOT NULL)),
   CHECK (state NOT IN ('sending', 'maybe_sent', 'sent', 'bounced')
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
-  -- A mentor with no address fails before going out.
-  CHECK (state NOT IN ('sent', 'bounced') OR to_address IS NOT NULL),
+  -- An email to a mentor with no address fails before going out.
+  CHECK (state NOT IN ('maybe_sent', 'sent', 'bounced') OR to_address IS NOT NULL),
   CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)

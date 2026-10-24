@@ -634,9 +634,11 @@ impl Session<'_> {
         };
         let mut tx = self.db.begin().await?;
         let mut marked = false;
-        // The app sends each email to one mentor, so the first reason is its.
-        if let Some(first) = bounce.failures.first() {
-            marked |= email::bounced(&mut tx, &bounce.original, &first.reason, self.now).await?;
+        // The app sends each email to one address: the first failure naming it, or naming no one,
+        // says why it came back.
+        for failure in &bounce.failures {
+            let (to, reason) = (&failure.recipients, &failure.reason);
+            marked |= email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
         }
         for failure in &bounce.failures {
             // Mail sent elsewhere to several mentors bounces for those the bounce names, or for

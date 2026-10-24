@@ -167,48 +167,55 @@ fn text_of(message: &MessageRef) -> Option<String> {
 /// What a letter holds, as far as the start of it that was read shows.
 pub(crate) struct Letter {
     text: String,
-    /// The names of its attachments, unnamed ones as empty; only the first few when `truncated`.
-    attachments: Vec<String>,
+    /// Its attachments' names, unnamed ones as empty, and sizes, unless the reading stopped in
+    /// them; only the first few when `truncated`.
+    attachments: Vec<(String, Option<i64>)>,
     truncated: bool,
 }
 
 impl Letter {
-    /// Whether this is a copy of a letter with this text and these attachments.
-    pub fn is_copy_of(&self, text: &str, attachments: &[String]) -> bool {
-        let mut left: Vec<&String> = attachments.iter().collect();
-        let shown =
-            self.attachments
-                .iter()
-                .all(|name| match left.iter().position(|l| *l == name) {
-                    Some(i) => {
-                        left.swap_remove(i);
-                        true
-                    }
-                    None => false,
-                });
+    /// Whether this is a copy of a letter with this text and these attachments, named and sized.
+    pub fn is_copy_of(&self, text: &str, attachments: &[(String, i64)]) -> bool {
+        let mut left: Vec<&(String, i64)> = attachments.iter().collect();
+        let shown = self.attachments.iter().all(|(name, size)| {
+            let same = |(n, s): &&(String, i64)| n == name && size.is_none_or(|size| size == *s);
+            match left.iter().position(same) {
+                Some(i) => {
+                    left.swap_remove(i);
+                    true
+                }
+                None => false,
+            }
+        });
         self.text.trim() == text.trim() && shown && (self.truncated || left.is_empty())
     }
 }
 
 /// What the letter of which `raw` is the start, or the whole unless `truncated`, holds. None when
-/// the reading stopped in anything but an attachment: text may follow a picture, so the text is
-/// only known in full when it comes before the files, as in the app's own letters.
+/// the reading did not stop inside an attachment, as text may follow; inside one, more may follow
+/// too, but the app's own letters put their text first, and are taken by their start
+/// (docs/design.md#桌面端).
 pub(crate) fn letter(raw: &[u8], truncated: bool) -> Option<Letter> {
     let message = MessageParser::new().parse(raw)?;
     let root = message.root();
     // A part the reading stopped in runs to the end of what was read.
-    let cut_short = root.parts().any(|p| {
-        p.offset_end() as usize >= raw.len()
-            && !matches!(p.role(), PartRole::Container | PartRole::Attachment)
-    });
-    if truncated && cut_short {
+    let cut = |p: &MessagePart| {
+        truncated && p.role() != PartRole::Container && p.offset_end() as usize >= raw.len()
+    };
+    let stopped_in: Vec<PartRole> = root.parts().filter(|p| cut(p)).map(|p| p.role()).collect();
+    // None of them, when it stopped right before the next part, which may hold anything.
+    if truncated && (stopped_in.is_empty() || stopped_in.iter().any(|r| *r != PartRole::Attachment))
+    {
         return None;
     }
     Some(Letter {
         text: text_of(&root)?,
         attachments: root
             .attachments()
-            .map(|p| p.attachment_name().unwrap_or_default().to_owned())
+            .map(|p| {
+                let name = p.attachment_name().unwrap_or_default().to_owned();
+                (name, (!cut(&p)).then(|| p.decoded_len() as i64))
+            })
             .collect(),
         truncated,
     })

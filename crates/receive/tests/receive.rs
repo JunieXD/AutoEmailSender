@@ -81,10 +81,11 @@ async fn sent_email(db: &SqlitePool, mentor: i64, state: &str, message_id: &str)
 }
 
 /// Approved with this attachment.
-async fn attach(db: &SqlitePool, email: i64, file_name: &str) {
-    sqlx::query("INSERT INTO email_attachment (email_id, file_name, size) VALUES (?, ?, 300000)")
+async fn attach(db: &SqlitePool, email: i64, file_name: &str, size: usize) {
+    sqlx::query("INSERT INTO email_attachment (email_id, file_name, size) VALUES (?, ?, ?)")
         .bind(email)
         .bind(file_name)
+        .bind(size as i64)
         .execute(db)
         .await
         .unwrap();
@@ -281,23 +282,33 @@ async fn the_apps_own_mail_is_confirmed_or_bounced(db: SqlitePool) {
     let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
     let zhang = mentor(&db, "张华", "zhang@fudan.edu.cn").await;
     let zhao = mentor(&db, "赵磊", "zhao@nju.edu.cn").await;
+    let sun = mentor(&db, "孙丽", "sun@zju.edu.cn").await;
     sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
     sent_email(&db, wang, "sent", "<e2@example.com>").await;
     let resent = sent_email(&db, zhao, "maybe_sent", "<e4@example.com>").await;
+    let resent_sun = sent_email(&db, sun, "maybe_sent", "<e5@example.com>").await;
     round(&db, &net, T).await;
-    // Sent again to the address the user corrected, and being handed over as the copy of the first
-    // try turns up.
-    sqlx::query("UPDATE mentor SET email = 'zhaolei@nju.edu.cn' WHERE id = ?")
-        .bind(zhao)
-        .execute(&db)
-        .await
-        .unwrap();
-    assert!(email::retry(&db, resent, T).await.unwrap());
+    // Sent again to the addresses the user corrected: one being handed over as the copy of the
+    // first try turns up, the other gone out before the first try bounces.
     let mut conn = db.acquire().await.unwrap();
-    email::start_sending(&mut conn, resent, 1, ADDRESS, "<e4@example.com>", T)
-        .await
-        .unwrap()
-        .unwrap();
+    for (mentor, email, corrected) in [
+        (zhao, resent, "zhaolei@nju.edu.cn"),
+        (sun, resent_sun, "sunli@zju.edu.cn"),
+    ] {
+        sqlx::query("UPDATE mentor SET email = ? WHERE id = ?")
+            .bind(corrected)
+            .bind(mentor)
+            .execute(&db)
+            .await
+            .unwrap();
+        assert!(email::retry(&db, email, T).await.unwrap());
+        let handover = email::start_sending(&mut conn, email, 1, ADDRESS, "<new@example.com>", T)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(handover.to_address.as_deref(), Some(corrected));
+    }
+    email::sent(&mut conn, resent_sun, T).await.unwrap();
     store.deliver(
         SENT,
         T - DAY + MINUTE,
@@ -389,6 +400,27 @@ Status: 5.2.2
 --r--
 ",
     );
+    store.deliver(
+        "INBOX",
+        T + 3 * MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b5@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; sun@zju.edu.cn
+Action: failed
+Status: 5.1.1
+--r
+Content-Type: text/rfc822-headers
+
+Message-ID: <e5@example.com>
+--r--
+",
+    );
     // As some Chinese providers write them: no report, only a letter with the mail attached.
     store.deliver(
         "INBOX",
@@ -437,6 +469,10 @@ Message-ID: <w1@example.com>
         }
     );
     assert!(matches!(contact(&db, zhang).await, Contact::Bounced { .. }));
+    assert!(matches!(
+        email::list(&db, sun).await.unwrap()[0].delivery,
+        Delivery::Sent { .. }
+    ));
     // The new try is still SMTP's to settle.
     email::failed(&mut conn, resent, "收件地址不存在", T + 11 * MINUTE)
         .await
@@ -873,9 +909,11 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
     sent_email(&db, li, "sent", "<e1@example.com>").await;
     sent_email(&db, wang, "sent", "<e2@example.com>").await;
     let e3 = sent_email(&db, zhang, "sent", "<e3@example.com>").await;
-    attach(&db, e3, "简历.pdf").await;
+    attach(&db, e3, "简历.pdf", 300_000).await;
     let e4 = sent_email(&db, zhao, "maybe_sent", "<e4@example.com>").await;
-    attach(&db, e4, "cv-v1.pdf").await;
+    attach(&db, e4, "cv.pdf", 300_000).await;
+    let sun = mentor(&db, "孙丽", "sun@zju.edu.cn").await;
+    let e5 = sent_email(&db, sun, "sent", "<e5@example.com>").await;
     round(&db, &net, T).await;
 
     let picture = "iVBORw0KGgo".repeat(30_000);
@@ -901,11 +939,24 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
             "From: me@example.com\nTo: zhang@fudan.edu.cn\nSubject: 申请读博\nMessage-ID: <tencent_3@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: multipart/alternative; boundary=a\n\n--a\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--a\nContent-Type: text/html; charset=utf-8\n\n<p>老师您好</p>\n--a--\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename*=utf-8''%E7%AE%80%E5%8E%86.pdf\nContent-Transfer-Encoding: base64\n\n{picture}\n--m--\n"
         ),
     );
-    // From the website, the same letter with another CV.
+    // From the website, the same letter with another CV under the same name.
     store.deliver(
         SENT,
         T - DAY + MINUTE,
-        "From: me@example.com\nTo: zhao@nju.edu.cn\nSubject: 申请读博\nMessage-ID: <web3@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=cv-v2.pdf\nContent-Transfer-Encoding: base64\n\nJVBERi0xLjQK\n--m--\n",
+        "From: me@example.com\nTo: zhao@nju.edu.cn\nSubject: 申请读博\nMessage-ID: <web3@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=cv.pdf\nContent-Transfer-Encoding: base64\n\nJVBERi0xLjQK\n--m--\n",
+    );
+    // From the website, read up to the start of a part after the CV, which may hold more text.
+    let head = "From: me@example.com\nTo: sun@zju.edu.cn\nSubject: 申请读博\nMessage-ID: <web4@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=cv.pdf\n\n";
+    let next = "\n--m\n";
+    // Lines end in CRLF in the mailbox.
+    let crlf = |s: &str| s.replace('\n', "\r\n").len();
+    let cv = "A".repeat(256 * 1024 - crlf(head) - crlf(next));
+    // As large as the app's, so only where the reading stopped tells them apart.
+    attach(&db, e5, "cv.pdf", cv.len()).await;
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        &format!("{head}{cv}{next}Content-Type: text/plain; charset=utf-8\n\n补充：成绩单周五前寄出。\n--m--\n"),
     );
     round(&db, &net, T + 10 * MINUTE).await;
 
@@ -919,6 +970,7 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
         email::list(&db, zhao).await.unwrap()[0].delivery,
         Delivery::MaybeSent { .. }
     ));
+    assert_eq!(messages(&db, sun).await.len(), 1);
     let copies: Vec<Option<String>> =
         sqlx::query_scalar("SELECT copy_message_id FROM email ORDER BY mentor_id")
             .fetch_all(&db)
@@ -926,6 +978,6 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
             .unwrap();
     assert_eq!(
         copies,
-        [None, None, Some("<tencent_3@qq.com>".into()), None]
+        [None, None, Some("<tencent_3@qq.com>".into()), None, None]
     );
 }
