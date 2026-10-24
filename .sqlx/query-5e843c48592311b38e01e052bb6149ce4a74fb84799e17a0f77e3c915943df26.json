@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO candidate (crawl_id, list_page_id, review, enrich, name)\n        VALUES (?, ?, 'pending', 'none', '待审核')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "5e843c48592311b38e01e052bb6149ce4a74fb84799e17a0f77e3c915943df26"
+}

@@ -364,7 +364,10 @@ CREATE TABLE crawl (
   error TEXT,
   created_at INTEGER NOT NULL,
   finished_at INTEGER,
-  CHECK ((kind = 'site') = (start_urls IS NOT NULL))
+  CHECK ((kind = 'site') = (start_urls IS NOT NULL)),
+  CHECK (start_urls IS NULL OR (json_valid(start_urls) AND json_type(start_urls) = 'array')),
+  CHECK ((state IN ('done', 'failed', 'canceled')) = (finished_at IS NOT NULL)),
+  CHECK (state != 'failed' OR error IS NOT NULL)
 ) STRICT;
 
 CREATE TABLE crawl_run (
@@ -380,19 +383,29 @@ CREATE TABLE crawl_page (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('entry', 'list', 'profile')),
+  steps TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(steps) AND json_type(steps) = 'array'),
   mode TEXT NOT NULL CHECK (mode IN ('http', 'webview')),
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('success', 'failed', 'needs_browser')),
+  error TEXT,
   fetched_at INTEGER NOT NULL,
   text TEXT,
-  UNIQUE (crawl_id, url)
+  CHECK ((status = 'success') = (error IS NULL)),
+  CHECK (status != 'success' OR text IS NOT NULL),
+  UNIQUE (crawl_id, url, steps)
 ) STRICT;
 
 CREATE TABLE candidate (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
+  crawl_id INTEGER REFERENCES crawl(id) ON DELETE SET NULL,
+  list_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
+  profile_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
+  profile_url TEXT,
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
   enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done', 'failed')),
+  enrich_changes TEXT CHECK (enrich_changes IS NULL OR (json_valid(enrich_changes) AND json_type(enrich_changes) = 'array')),
+  enrich_error TEXT,
   name TEXT NOT NULL,
   aliases TEXT,                -- JSON arrays, in the order found
   emails TEXT,
@@ -400,9 +413,24 @@ CREATE TABLE candidate (
   homepages TEXT,
   source_url TEXT,
   research TEXT,
-  papers TEXT
+  papers TEXT,
+  note TEXT,
+  CHECK (aliases IS NULL OR (json_valid(aliases) AND json_type(aliases) = 'array')),
+  CHECK (emails IS NULL OR (json_valid(emails) AND json_type(emails) = 'array')),
+  CHECK (affiliations IS NULL OR (json_valid(affiliations) AND json_type(affiliations) = 'array')),
+  CHECK (homepages IS NULL OR (json_valid(homepages) AND json_type(homepages) = 'array')),
+  CHECK (papers IS NULL OR (json_valid(papers) AND json_type(papers) = 'array')),
+  CHECK (enrich != 'failed' OR enrich_error IS NOT NULL),
+  UNIQUE (crawl_id, profile_url)
 ) STRICT;
 CREATE INDEX candidate_crawl ON candidate (crawl_id, review);
+CREATE INDEX candidate_list_page ON candidate (list_page_id) WHERE list_page_id IS NOT NULL;
+CREATE INDEX candidate_profile_page ON candidate (profile_page_id) WHERE profile_page_id IS NOT NULL;
+CREATE INDEX candidate_mentor ON candidate (mentor_id) WHERE mentor_id IS NOT NULL;
+
+CREATE TRIGGER crawl_delete_candidates BEFORE DELETE ON crawl BEGIN
+  DELETE FROM candidate WHERE crawl_id = old.id AND review = 'pending';
+END;
 
 -- How far receiving has got in a folder: mail after last_uid is new.
 CREATE TABLE mailbox_folder (
