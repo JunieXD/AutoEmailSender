@@ -37,9 +37,9 @@ async fn mentor(conn: &mut SqliteConnection, name: &str) -> i64 {
 async fn sent(conn: &mut SqliteConnection, mentor: i64, kind: &str, at: i64) -> i64 {
     let reply_to = (kind != "first").then_some("<earlier@aes>");
     sqlx::query(
-        "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, from_address, message_id,
-           sent_at, created_at, updated_at, subject, body_md, html, text)
-         VALUES (?, ?, ?, 'sent', ?, 'me@qq.com', ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
+        "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, from_address, to_address,
+           message_id, sent_at, created_at, updated_at, subject, body_md, html, text)
+         VALUES (?, ?, ?, 'sent', ?, 'me@qq.com', 'li@pku.edu.cn', ?, ?, 0, 0, '申请', '信', '<p>信</p>', '信')",
     )
     .bind(mentor)
     .bind(kind)
@@ -63,8 +63,8 @@ async fn seen(
 ) -> i64 {
     let id = sqlx::query(
         "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, in_reply_to, sent_at,
-           from_address, recipients)
-         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn', '{}')",
+           from_address, truncated)
+         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'x@edu.cn', 0)",
     )
     .bind(at)
     .bind(kind)
@@ -94,7 +94,7 @@ async fn summary_follows_mail(pool: SqlitePool) {
     let conn = &mut pool.acquire().await.unwrap();
     sqlx::query(
         "INSERT INTO mailbox VALUES (1, 'me@qq.com', '我', 'qq', 'smtp.qq.com', 465, 'tls',
-           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, 0)",
+           'imap.qq.com', 993, 'tls', 'password', 'secret', 50, 60, 1, NULL, NULL, NULL, NULL, 0)",
     )
     .execute(&mut **conn)
     .await

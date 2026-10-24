@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, address, sender_name, provider,\n             smtp_host, smtp_port AS \"smtp_port: u16\", smtp_security AS \"smtp_security: Security\",\n             imap_host, imap_port AS \"imap_port: u16\", imap_security AS \"imap_security: Security\",\n             daily_limit AS \"daily_limit: u32\", min_interval_s AS \"min_interval_s: u32\"\n           FROM mailbox ORDER BY rotation_order, id",
+  "query": "SELECT id, address, sender_name, provider,\n             smtp_host, smtp_port AS \"smtp_port: u16\", smtp_security AS \"smtp_security: Security\",\n             imap_host, imap_port AS \"imap_port: u16\", imap_security AS \"imap_security: Security\",\n             daily_limit AS \"daily_limit: u32\", min_interval_s AS \"min_interval_s: u32\", receive_error\n           FROM mailbox ORDER BY rotation_order, id",
   "describe": {
     "columns": [
       {
@@ -134,6 +134,17 @@
             "name": "min_interval_s"
           }
         }
+      },
+      {
+        "name": "receive_error",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "receive_error"
+          }
+        }
       }
     ],
     "parameters": {
@@ -151,8 +162,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "9cc69a82a5276083eebac55b0df4f08e8e69721bf9f3f22e382fcd6966243e8b"
+  "hash": "0048495c25b1fe782e6a9e9876ca231837147d64f5eafa3da9a96a2f0b6b4953"
 }

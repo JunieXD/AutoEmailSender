@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE message SET read_at = ?\n         WHERE kind = 'reply' AND read_at IS NULL\n           AND id IN (SELECT message_id FROM message_mentor WHERE mentor_id = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2188d9800cb1d342419aca0653551c8e85cdea57be2e1b31196706a5b7d81385"
+}

@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 /// The UI's one entry point into the core; see `api::call`.
@@ -121,10 +121,24 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         materials.clone(),
         sender.clone(),
     ));
+    let receiver = receive::Receiver::default();
+    let ui = app.clone();
+    tauri::async_runtime::spawn(receive::run(
+        db.clone(),
+        net.clone(),
+        receiver.clone(),
+        // The UI reads again what new mail may have changed.
+        move || {
+            if let Err(e) = ui.emit("received", ()) {
+                tracing::warn!("tell the window about new mail: {e}");
+            }
+        },
+    ));
     Ok(api::Context {
         db,
         net,
         sender,
+        receiver,
         materials,
     })
 }

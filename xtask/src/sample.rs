@@ -157,7 +157,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     sqlx::query(
         // A domain with no mail servers, so testing this mailbox reaches no one.
         "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
-           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, ?)",
+           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, NULL, NULL, ?)",
     )
     .bind(now)
     .execute(&mut *tx)
@@ -292,8 +292,9 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         let at = now - rng.i64(0..180) * DAY - rng.i64(0..DAY);
         sqlx::query(
             "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, mailbox_id, from_address,
-               model, message_id, sent_at, error, created_at, updated_at, subject, body_md, html, text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
+               to_address, model, message_id, sent_at, error, created_at, updated_at, subject, body_md,
+               html, text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
         )
         .bind(mentor)
         .bind(kind)
@@ -303,6 +304,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         .bind(rendered.then(|| if state == "approved" { now + rng.i64(1..30) * DAY } else { at }))
         .bind(out.then_some(1))
         .bind(out.then_some("linxiao@example.com"))
+        .bind(out.then(|| format!("m{mentor}@example.edu.cn")))
         .bind(out.then(|| format!("<e{i}@aes>")))
         .bind(out.then_some(at))
         .bind(matches!(state, "maybe_sent" | "failed" | "bounced" | "canceled").then_some("示例错误"))
@@ -333,8 +335,8 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .filter(|t| *t < now);
         let id = sqlx::query(
             "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, read_at, from_address, subject, recipients, body_text)
-             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', '{}', ?)",
+               sent_at, read_at, from_address, subject, body_text, truncated)
+             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', ?, 0)",
         )
         .bind(if kind == "sent" { "Sent" } else { "INBOX" })
         .bind(i as i64)

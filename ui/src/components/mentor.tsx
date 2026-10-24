@@ -59,9 +59,12 @@ export const MATCH_LABEL: Record<Exclude<MatchState["state"], "done">, [string, 
   not_analyzed: ["未分析", "text-faint"],
 };
 
-/** After mentors are trashed, restored or deleted, every view of them is out of date, their emails too. */
+/**
+ * After mentors are trashed, restored or deleted, or new mail came, every view of them is out of
+ * date, their correspondence too.
+ */
 export function refreshMentors(queryClient: QueryClient) {
-  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"], ["listEmails"]]) {
+  for (const queryKey of [["listMentors"], ["listTrash"], ["getMentor"], ["listCorrespondence"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }

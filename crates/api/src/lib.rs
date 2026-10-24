@@ -12,6 +12,7 @@ pub struct Context {
     pub db: SqlitePool,
     pub net: net::Net,
     pub sender: send::Sender,
+    pub receiver: receive::Receiver,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
 }
@@ -157,7 +158,8 @@ operations! {
     "writeLetter" => write_letter(FirstDraftEdit) -> writing::Letter;
     "checkMailDomain" => check_mail_domain(MailAddress) -> Option<check::Problem>;
     "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
-    "listEmails" => list_emails(MentorId) -> Vec<email::Email>;
+    "listCorrespondence" => list_correspondence(MentorId) -> Vec<Entry>;
+    "markRead" => mark_read(MentorId) -> ();
     "withdrawEmail" => withdraw_email(EmailId) -> ();
     "retryEmail" => retry_email(EmailId) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
@@ -254,6 +256,7 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
 async fn add_mentor(ctx: &Context, form: mentor::MentorForm) -> Result<MentorId, CallError> {
     let fields = form.check().map_err(CallError::invalid)?;
     let id = mentor::create(&ctx.db, &fields, now()).await?;
+    look_up(ctx, id).await?;
     Ok(MentorId { id })
 }
 
@@ -266,7 +269,16 @@ async fn update_mentor(
     if !mentor::update(&ctx.db, input.id, &fields, now()).await? {
         return Err(CallError::not_found(NO_MENTOR));
     }
+    look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+/// Looks up the earlier mail with a mentor with a new address without waiting for the next round.
+async fn look_up(ctx: &Context, mentor_id: i64) -> Result<(), CallError> {
+    if receive::queued(&ctx.db, mentor_id).await? {
+        ctx.receiver.wake();
+    }
+    Ok(())
 }
 
 async fn list_trash(
@@ -446,15 +458,21 @@ async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, Call
     let id = mailbox::create(&ctx.db, &fields, &secret, now()).await?;
     // Emails may be waiting for a mailbox.
     ctx.sender.wake();
+    ctx.receiver.wake();
     Ok(MailboxId { id })
 }
 
 async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
     let secret = entered_or_saved_secret(ctx, &input.secret, Some(input.id), &fields).await?;
-    if mailbox::update(&ctx.db, input.id, &fields, &secret).await? {
-        // A higher limit or a shorter interval may let a waiting email go.
+    let held = ctx.receiver.hold().await;
+    let updated = mailbox::update(&ctx.db, input.id, &fields, &secret).await?;
+    drop(held);
+    if updated {
+        // A higher limit or a shorter interval may let a waiting email go, and receiving that
+        // failed may work now.
         ctx.sender.wake();
+        ctx.receiver.wake();
         Ok(())
     } else {
         Err(CallError::not_found(NO_MAILBOX))
@@ -462,6 +480,7 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
 }
 
 async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    let _held = ctx.receiver.hold().await;
     Ok(mailbox::delete(&ctx.db, input.id).await?)
 }
 
@@ -1081,8 +1100,39 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
     }
 }
 
-async fn list_emails(ctx: &Context, input: MentorId) -> Result<Vec<email::Email>, CallError> {
-    Ok(email::list(&ctx.db, input.id).await?)
+/// An email the app sent, or mail seen in the mailbox, in the correspondence with a mentor.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum Entry {
+    Email(email::Email),
+    Message(receive::Message),
+}
+
+/// The correspondence with a mentor, oldest first; emails still to go out come last.
+async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry>, CallError> {
+    let emails = email::list(&ctx.db, input.id).await?;
+    let messages = receive::list(&ctx.db, input.id).await?;
+    let mut entries: Vec<(i64, Entry)> = emails
+        .into_iter()
+        .map(|e| {
+            let at = match e.delivery {
+                email::Delivery::MaybeSent { sent_at, .. }
+                | email::Delivery::Sent { sent_at, .. }
+                | email::Delivery::Bounced { sent_at, .. } => sent_at,
+                email::Delivery::Approved
+                | email::Delivery::Sending
+                | email::Delivery::Failed { .. } => i64::MAX,
+            };
+            (at, Entry::Email(e))
+        })
+        .chain(messages.into_iter().map(|m| (m.sent_at, Entry::Message(m))))
+        .collect();
+    entries.sort_by_key(|(at, _)| *at);
+    Ok(entries.into_iter().map(|(_, e)| e).collect())
+}
+
+async fn mark_read(ctx: &Context, input: MentorId) -> Result<(), CallError> {
+    Ok(receive::mark_read(&ctx.db, input.id, now()).await?)
 }
 
 #[derive(Debug, Deserialize, TS)]

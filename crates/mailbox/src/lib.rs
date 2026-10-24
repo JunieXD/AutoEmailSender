@@ -14,7 +14,7 @@ pub mod providers;
 mod smtp;
 
 pub use error::MailError;
-pub use imap::check_receiving;
+pub use imap::{Head, Imap, Opened, check_receiving};
 pub use smtp::{
     File, Letter, Outgoing, SendError, Smtp, check_sending, compose, login, message_id, send_test,
 };
@@ -33,6 +33,8 @@ pub struct Mailbox {
     pub daily_limit: u32,
     /// The shortest wait between two emails, in seconds.
     pub min_interval_s: u32,
+    /// Why the last round of receiving failed.
+    pub receive_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -177,7 +179,7 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<Mailbox>, sqlx::Error> {
         r#"SELECT id, address, sender_name, provider,
              smtp_host, smtp_port AS "smtp_port: u16", smtp_security AS "smtp_security: Security",
              imap_host, imap_port AS "imap_port: u16", imap_security AS "imap_security: Security",
-             daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32"
+             daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32", receive_error
            FROM mailbox ORDER BY rotation_order, id"#
     )
     .fetch_all(db)
@@ -201,6 +203,7 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<Mailbox>, sqlx::Error> {
             },
             daily_limit: r.daily_limit,
             min_interval_s: r.min_interval_s,
+            receive_error: r.receive_error,
         })
         .collect())
 }
@@ -238,7 +241,8 @@ pub async fn create(
     Ok(row.last_insert_rowid())
 }
 
-/// False when there is no such mailbox.
+/// False when there is no such mailbox. Receiving is tried again at once, as the change may have
+/// fixed what failed.
 pub async fn update(
     db: &SqlitePool,
     id: i64,
@@ -249,7 +253,7 @@ pub async fn update(
     let row = sqlx::query!(
         "UPDATE mailbox SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,
            smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,
-           secret = ?, daily_limit = ?, min_interval_s = ?
+           secret = ?, daily_limit = ?, min_interval_s = ?, receive_error = NULL, receive_retry_at = NULL
          WHERE id = ?",
         address,
         fields.sender_name,
@@ -329,4 +333,46 @@ pub async fn account(db: &SqlitePool, id: i64) -> Result<Option<Account>, sqlx::
         },
         secret: r.secret,
     }))
+}
+
+/// The mailboxes to receive from at `now`, in rotation order: all but those whose server lately
+/// refused.
+pub async fn receivable(db: &SqlitePool, now: i64) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "SELECT id FROM mailbox WHERE receive_retry_at IS NULL OR receive_retry_at <= ?
+         ORDER BY rotation_order, id",
+        now
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// Records a round of receiving that went through; true when it failed before.
+pub async fn received(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let cleared = sqlx::query!(
+        "UPDATE mailbox SET receive_error = NULL, receive_retry_at = NULL
+         WHERE id = ? AND receive_error IS NOT NULL",
+        id
+    )
+    .execute(db)
+    .await?;
+    Ok(cleared.rows_affected() == 1)
+}
+
+/// Records why a round of receiving failed, and when to try again if not at the next round.
+pub async fn receive_failed(
+    db: &SqlitePool,
+    id: i64,
+    error: &str,
+    retry_at: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE mailbox SET receive_error = ?, receive_retry_at = ? WHERE id = ?",
+        error,
+        retry_at,
+        id
+    )
+    .execute(db)
+    .await?;
+    Ok(())
 }

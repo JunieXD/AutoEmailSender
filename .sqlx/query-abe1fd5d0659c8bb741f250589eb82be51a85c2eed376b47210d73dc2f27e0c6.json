@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT name, email FROM mentor WHERE id = ?",
+  "query": "SELECT mentor_id, email FROM mentor_scan WHERE mailbox_id = ?\n             ORDER BY mentor_id DESC LIMIT ?",
   "describe": {
     "columns": [
       {
-        "name": "name",
+        "name": "mentor_id",
         "ordinal": 0,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "mentor",
-            "name": "name"
+            "table": "mentor_scan",
+            "name": "mentor_id"
           }
         }
       },
@@ -20,19 +20,19 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "mentor",
+            "table": "mentor_scan",
             "name": "email"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       false,
-      true
+      false
     ]
   },
-  "hash": "212dbd1a88f6c245dda789acefc529b4302bd8cd5dcca4facbe238366092727a"
+  "hash": "abe1fd5d0659c8bb741f250589eb82be51a85c2eed376b47210d73dc2f27e0c6"
 }

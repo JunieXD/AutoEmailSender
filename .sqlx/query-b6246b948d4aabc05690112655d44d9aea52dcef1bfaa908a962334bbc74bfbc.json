@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO message_mentor (mentor_id, message_id) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b6246b948d4aabc05690112655d44d9aea52dcef1bfaa908a962334bbc74bfbc"
+}

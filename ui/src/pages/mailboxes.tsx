@@ -56,6 +56,7 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
           <p className="text-sm text-muted-foreground">
             {provider}，每天最多发 {m.dailyLimit} 封
           </p>
+          {m.receiveError && <p className="text-sm text-destructive">收信失败：{m.receiveError}</p>}
         </div>
         <div className="flex gap-1">
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>

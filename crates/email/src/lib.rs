@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use sqlx::types::Json;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{Connection, SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 /// A first email being written on the mentor's page, outside any task.
@@ -337,10 +337,14 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
 }
 
 /// Takes an email that has not gone out back to a draft. False when it is on its way out by now.
+/// Approved again, it is another letter, with a Message-ID of its own: mailboxes drop a second
+/// email under the same one (docs/design.md#桌面端), and a copy of an earlier try is no proof the
+/// new text went out.
 pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
-           sent_at = NULL, error = NULL, html = NULL, text = NULL, updated_at = ?
+           to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
+           html = NULL, text = NULL, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'failed')",
         now,
         id,
@@ -351,11 +355,11 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
 }
 
 /// Sends a failed or maybe-sent email again, now, unless its mentor is in the trash. It keeps its
-/// Message-ID, so that mailboxes that drop duplicates drop a second copy (docs/design.md#桌面端).
+/// Message-ID, so that mailboxes that drop duplicates drop a second copy (docs/design.md#桌面端),
+/// and where and when it went before, so that a copy of that turning up still settles it.
 pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE email SET state = 'approved', planned_at = ?1, mailbox_id = NULL, from_address = NULL,
-           sent_at = NULL, error = NULL, updated_at = ?1
+        "UPDATE email SET state = 'approved', planned_at = ?1, error = NULL, updated_at = ?1
          WHERE id = ?2 AND state IN ('failed', 'maybe_sent')
            AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
         now,
@@ -369,6 +373,9 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
 /// Why an email the last run left being sent is only maybe sent.
 pub const INTERRUPTED: &str = "发送途中应用退出，无法确定是否已发出。";
 
+/// Why an email to a mentor with no address failed.
+pub const NO_ADDRESS: &str = "导师尚未填写邮箱。在导师资料里填写后重试。";
+
 /// An email that has been handed to SMTP, or may have been.
 pub struct Handed {
     pub mentor_id: i64,
@@ -376,11 +383,20 @@ pub struct Handed {
     pub mailbox_id: Option<i64>,
 }
 
-/// Marks the emails the last run left being sent as maybe sent.
+/// Marks the emails the last run left being sent as maybe sent, but those to a mentor with no
+/// address, which cannot have gone, as failed.
 pub async fn interrupted(
     conn: &mut SqliteConnection,
     now: i64,
 ) -> Result<Vec<Handed>, sqlx::Error> {
+    sqlx::query!(
+        "UPDATE email SET state = 'failed', error = ?, updated_at = ?
+         WHERE state = 'sending' AND to_address IS NULL",
+        NO_ADDRESS,
+        now,
+    )
+    .execute(&mut *conn)
+    .await?;
     sqlx::query_as!(
         Handed,
         "UPDATE email SET state = 'maybe_sent', error = ?, updated_at = ? WHERE state = 'sending'
@@ -395,6 +411,8 @@ pub async fn interrupted(
 /// What was approved, as an email is marked as being handed over.
 pub struct Handover {
     pub mentor_id: i64,
+    /// The mentor's address; None when they have none.
+    pub to_address: Option<String>,
     pub message_id: String,
     pub subject: String,
     pub html: String,
@@ -423,10 +441,11 @@ pub async fn start_sending(
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
+             to_address = (SELECT email FROM mentor WHERE id = email.mentor_id),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
-           RETURNING mentor_id, message_id AS "message_id!", subject AS "subject!", html AS "html!",
-             text AS "text!""#,
+           RETURNING mentor_id, to_address, message_id AS "message_id!", subject AS "subject!",
+             html AS "html!", text AS "text!""#,
         mailbox_id,
         from_address,
         message_id,
@@ -448,6 +467,7 @@ pub async fn start_sending(
     .await?;
     Ok(Some(Handover {
         mentor_id: row.mentor_id,
+        to_address: row.to_address,
         message_id: row.message_id,
         subject: row.subject,
         html: row.html,
@@ -503,4 +523,159 @@ pub async fn failed(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// What a copy of mail in a mailbox's sent folder tells about the app's emails.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SentCopy {
+    /// Not an email the app sent.
+    Foreign,
+    Own,
+    /// An email not yet known to have gone out, which the copy proves did.
+    Confirmed,
+}
+
+/// Looks up the email the app sent with this Message-ID, or whose copy had it, and marks it sent if
+/// it was not known to be. `recipients` are the copy's, in lowercase.
+pub async fn sent_copy(
+    conn: &mut SqliteConnection,
+    message_id: &str,
+    recipients: &[String],
+    now: i64,
+) -> Result<SentCopy, sqlx::Error> {
+    let found = sqlx::query_scalar!(
+        r#"SELECT id AS "id!" FROM email WHERE message_id = ?1 OR copy_message_id = ?1"#,
+        message_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    match found {
+        Some(id) => copied(conn, id, message_id, recipients, now).await,
+        None => Ok(SentCopy::Foreign),
+    }
+}
+
+/// A copy, in a mailbox's sent folder, under a Message-ID the app did not give.
+pub struct Copy<'a> {
+    pub mailbox_id: i64,
+    /// Its one recipient, in lowercase: the app sends each email to one mentor.
+    pub recipient: &'a str,
+    pub subject: &'a str,
+    /// When the server got it, in UTC milliseconds.
+    pub at: i64,
+}
+
+/// An email the copy may be of.
+pub struct Candidate {
+    pub id: i64,
+    pub text: String,
+    /// The names and sizes of the files it was approved with.
+    pub attachments: Vec<(String, i64)>,
+}
+
+/// How far apart an email and a copy with another Message-ID may have gone out.
+const COPY_WINDOW: i64 = 60 * 60 * 1000;
+
+/// Some providers (QQ) keep the copy of an email under a Message-ID of their own. The emails it may
+/// be a copy of, nearest in time first: sent, or tried, from the same mailbox about the same time
+/// to the same address, with the same subject, and no copy turned up yet. Which one it is, if any,
+/// the text and attachments tell.
+pub async fn copy_candidates(
+    conn: &mut SqliteConnection,
+    copy: &Copy<'_>,
+) -> Result<Vec<Candidate>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!", text AS "text!",
+             (SELECT json_group_array(json_array(file_name, size)) FROM email_attachment
+              WHERE email_id = email.id) AS "attachments!: Json<Vec<(String, i64)>>"
+           FROM email
+           WHERE mailbox_id = ?1
+             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
+             AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
+             AND subject = ?4 AND to_address = ?5
+           ORDER BY abs(sent_at - ?2)"#,
+        copy.mailbox_id,
+        copy.at,
+        COPY_WINDOW,
+        copy.subject,
+        copy.recipient,
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| Candidate {
+            id: r.id,
+            text: r.text,
+            attachments: r.attachments.0,
+        })
+        .collect())
+}
+
+/// Records the copy found of an email, and that the email went out if that was not known and the
+/// copy is of its last try: maybe sent, still being sent, or waiting to be sent again to the same
+/// address. SMTP answering later changes nothing then, as it only writes to an email still being
+/// sent. A copy of an earlier try, to an address since changed, settles nothing.
+pub async fn copied(
+    conn: &mut SqliteConnection,
+    id: i64,
+    copy_message_id: &str,
+    recipients: &[String],
+    now: i64,
+) -> Result<SentCopy, sqlx::Error> {
+    let mut tx = conn.begin().await?;
+    sqlx::query!(
+        "UPDATE email SET copy_message_id = coalesce(copy_message_id, ?) WHERE id = ?",
+        copy_message_id,
+        id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    let confirmed = sqlx::query!(
+        "UPDATE email SET state = 'sent', error = NULL, updated_at = ?1
+         WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
+           AND (state IN ('sending', 'maybe_sent')
+             OR (state = 'approved' AND sent_at IS NOT NULL
+               AND to_address = (SELECT email FROM mentor WHERE id = email.mentor_id)))",
+        now,
+        id,
+        Json(recipients),
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(if confirmed.rows_affected() == 1 {
+        SentCopy::Confirmed
+    } else {
+        SentCopy::Own
+    })
+}
+
+/// Marks the email that went out with this Message-ID, or whose copy had it, as bounced for this
+/// reason, unless the bounce names `recipients` without the address it last went to: then it is of
+/// an earlier try, to an address since changed; one being sent to no address cannot bounce. False
+/// when it was marked already, or the app sent no such email.
+pub async fn bounced(
+    conn: &mut SqliteConnection,
+    message_id: &str,
+    recipients: &[String],
+    reason: &str,
+    now: i64,
+) -> Result<bool, sqlx::Error> {
+    let recipients = Json(recipients);
+    // Sending too, as for a copy in the sent folder.
+    let done = sqlx::query!(
+        "UPDATE email SET state = 'bounced', error = ?1, updated_at = ?2
+         WHERE (message_id = ?3 OR copy_message_id = ?3)
+           AND state IN ('sending', 'maybe_sent', 'sent')
+           AND to_address IS NOT NULL
+           AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))",
+        reason,
+        now,
+        message_id,
+        recipients,
+    )
+    .execute(conn)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }

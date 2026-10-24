@@ -43,8 +43,11 @@ CREATE TABLE mailbox (
   rotation_order INTEGER NOT NULL,
   paused_until INTEGER,
   pause_reason TEXT,
+  receive_error TEXT,           -- why the last round of receiving failed
+  receive_retry_at INTEGER,     -- when to try again after the server refused
   created_at INTEGER NOT NULL,
-  CHECK ((paused_until IS NULL) = (pause_reason IS NULL))
+  CHECK ((paused_until IS NULL) = (pause_reason IS NULL)),
+  CHECK (receive_error IS NOT NULL OR receive_retry_at IS NULL)
 ) STRICT;
 
 CREATE TABLE profile (
@@ -192,9 +195,12 @@ CREATE TABLE email (
   planned_at INTEGER,
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   from_address TEXT,
+  to_address TEXT COLLATE NOCASE, -- the mentor's address it was last handed over for
   model TEXT,
   message_id TEXT UNIQUE,
-  sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent) or accepted (sent/bounced)
+  copy_message_id TEXT UNIQUE, -- of its copy found in the sent folder, which the provider may change
+  sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent, kept while waiting to be sent
+                               -- again) or accepted (sent/bounced)
   error TEXT,
   tracking_id TEXT UNIQUE,
   open_count INTEGER,
@@ -212,6 +218,8 @@ CREATE TABLE email (
              AND planned_at IS NOT NULL)),
   CHECK (state NOT IN ('sending', 'maybe_sent', 'sent', 'bounced')
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
+  -- An email to a mentor with no address fails before going out.
+  CHECK (state NOT IN ('maybe_sent', 'sent', 'bounced') OR to_address IS NOT NULL),
   CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)
@@ -248,22 +256,21 @@ CREATE TABLE message (
   sent_at INTEGER NOT NULL,
   read_at INTEGER,
   outcome TEXT CHECK (outcome IN ('interested', 'no_slot', 'declined', 'unclear')),
-  bounce_reason TEXT,
   from_address TEXT NOT NULL,
   subject TEXT,
-  recipients TEXT NOT NULL,    -- JSON {to, cc}, display only
-  refs TEXT,
+  refs TEXT,                   -- References: Message-IDs separated by spaces
   body_text TEXT,
-  body_html TEXT,
+  truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)), -- only its start was read
   UNIQUE (mailbox_id, folder, uidvalidity, uid),
-  CHECK (kind = 'reply' OR (read_at IS NULL AND outcome IS NULL)),
-  CHECK (kind = 'sent' OR bounce_reason IS NULL)
+  CHECK (kind = 'reply' OR (read_at IS NULL AND outcome IS NULL))
 ) STRICT;
-CREATE INDEX message_message_id ON message (message_id);
+-- One row per message, wherever it is seen again (docs/data-model.md#联系).
+CREATE UNIQUE INDEX message_message_id ON message (message_id);
 
 CREATE TABLE message_mentor (
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  bounce_reason TEXT,          -- mail sent to this mentor came back; a message to several may for some
   PRIMARY KEY (mentor_id, message_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX message_mentor_message ON message_mentor (message_id);
@@ -352,22 +359,40 @@ CREATE TABLE candidate (
 ) STRICT;
 CREATE INDEX candidate_crawl ON candidate (crawl_id, review);
 
+-- How far receiving has got in a folder: mail after last_uid is new.
 CREATE TABLE mailbox_folder (
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
-  folder TEXT NOT NULL,
+  folder TEXT NOT NULL,        -- the server's name, in modified UTF-7
   role TEXT NOT NULL CHECK (role IN ('inbox', 'sent')),
   uidvalidity INTEGER NOT NULL,
   last_uid INTEGER NOT NULL,
-  history_before_uid INTEGER,  -- NULL once the history scan is done
   PRIMARY KEY (mailbox_id, folder)
 ) STRICT, WITHOUT ROWID;
 
+-- Mentors whose earlier mail is still to be looked up in a mailbox, at their address.
 CREATE TABLE mentor_scan (
-  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   mailbox_id INTEGER NOT NULL REFERENCES mailbox(id) ON DELETE CASCADE,
-  created_at INTEGER NOT NULL,
-  PRIMARY KEY (mentor_id, mailbox_id)
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  PRIMARY KEY (mailbox_id, mentor_id)
 ) STRICT, WITHOUT ROWID;
+
+-- A mentor with a new address is looked up in every mailbox; a mailbox moved to another account
+-- starts receiving afresh (docs/data-model.md#个人资料和配置).
+CREATE TRIGGER mentor_scan_ai AFTER INSERT ON mentor WHEN NEW.email IS NOT NULL BEGIN
+  INSERT INTO mentor_scan (mailbox_id, mentor_id, email) SELECT id, NEW.id, NEW.email FROM mailbox;
+END;
+
+CREATE TRIGGER mentor_scan_au AFTER UPDATE OF email ON mentor WHEN NEW.email IS NOT OLD.email BEGIN
+  DELETE FROM mentor_scan WHERE mentor_id = NEW.id;
+  INSERT INTO mentor_scan (mailbox_id, mentor_id, email)
+  SELECT id, NEW.id, NEW.email FROM mailbox WHERE NEW.email IS NOT NULL;
+END;
+
+CREATE TRIGGER mailbox_folder_reset AFTER UPDATE OF address, imap_host ON mailbox
+WHEN NEW.address IS NOT OLD.address OR NEW.imap_host IS NOT OLD.imap_host BEGIN
+  DELETE FROM mailbox_folder WHERE mailbox_id = NEW.id;
+END;
 
 CREATE TABLE device (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -411,7 +436,7 @@ FROM (SELECT m.id AS mentor_id,
                 WHERE mentor_id = m.id AND state IN ('maybe_sent', 'sent', 'bounced')
                 UNION ALL
                 SELECT max(msg.sent_at) FROM message_mentor mm JOIN message msg ON msg.id = mm.message_id
-                WHERE mm.mentor_id = m.id AND msg.kind = 'sent' AND msg.bounce_reason IS NOT NULL)) AS last_bounced_at,
+                WHERE mm.mentor_id = m.id AND msg.kind = 'sent' AND mm.bounce_reason IS NOT NULL)) AS last_bounced_at,
              (SELECT count(*) FROM email
               WHERE mentor_id = m.id AND state IN ('maybe_sent', 'sent', 'bounced') AND kind = 'first')
              + (SELECT count(*) FROM message_mentor mm JOIN message msg ON msg.id = mm.message_id
@@ -455,7 +480,7 @@ CREATE TRIGGER message_mentor_au AFTER UPDATE ON message_mentor BEGIN
   INSERT INTO mentor_contact SELECT * FROM mentor_contact_live WHERE mentor_id IN (OLD.mentor_id, NEW.mentor_id);
 END;
 
-CREATE TRIGGER message_au AFTER UPDATE OF kind, sent_at, read_at, in_reply_to, bounce_reason ON message BEGIN
+CREATE TRIGGER message_au AFTER UPDATE OF kind, sent_at, read_at, in_reply_to ON message BEGIN
   DELETE FROM mentor_contact
   WHERE mentor_id IN (SELECT mentor_id FROM message_mentor WHERE message_id = NEW.id);
   INSERT INTO mentor_contact SELECT * FROM mentor_contact_live

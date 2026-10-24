@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT uidvalidity AS \"uidvalidity: u32\", last_uid AS \"last_uid: u32\"\n               FROM mailbox_folder WHERE mailbox_id = ? AND folder = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "uidvalidity: u32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox_folder",
+            "name": "uidvalidity"
+          }
+        }
+      },
+      {
+        "name": "last_uid: u32",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox_folder",
+            "name": "last_uid"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5d37a717a1dc65ad91d5d12b93090db91e3be8fbea7e75f7516c0427787c2587"
+}

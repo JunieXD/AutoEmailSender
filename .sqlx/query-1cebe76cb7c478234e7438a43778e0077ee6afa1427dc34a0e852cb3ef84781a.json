@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mailbox_folder SET last_uid = max(last_uid, ?) WHERE mailbox_id = ? AND folder = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "1cebe76cb7c478234e7438a43778e0077ee6afa1427dc34a0e852cb3ef84781a"
+}

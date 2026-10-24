@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM message WHERE message_id = ?1\n           OR (mailbox_id = ?2 AND folder = ?3 AND uidvalidity = ?4 AND uid = ?5)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "90441b25f125d73ea4e214afdd2609521cc959a0435a8693ee19944963d17108"
+}

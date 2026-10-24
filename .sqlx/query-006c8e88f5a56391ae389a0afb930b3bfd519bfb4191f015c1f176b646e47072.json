@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mailbox SET receive_error = ?, receive_retry_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "006c8e88f5a56391ae389a0afb930b3bfd519bfb4191f015c1f176b646e47072"
+}

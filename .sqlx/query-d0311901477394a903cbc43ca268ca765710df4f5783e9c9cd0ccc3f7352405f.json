@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET copy_message_id = coalesce(copy_message_id, ?) WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d0311901477394a903cbc43ca268ca765710df4f5783e9c9cd0ccc3f7352405f"
+}

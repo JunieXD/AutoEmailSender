@@ -19,6 +19,7 @@ material = { path = "crates/material" }
 mentor = { path = "crates/mentor" }
 model = { path = "crates/model" }
 profile = { path = "crates/profile" }
+receive = { path = "crates/receive" }
 send = { path = "crates/send" }
 template = { path = "crates/template" }
 writing = { path = "crates/writing" }

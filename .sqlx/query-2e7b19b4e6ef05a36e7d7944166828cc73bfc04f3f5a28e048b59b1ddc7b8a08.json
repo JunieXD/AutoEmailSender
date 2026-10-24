@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", text AS \"text!\",\n             (SELECT json_group_array(json_array(file_name, size)) FROM email_attachment\n              WHERE email_id = email.id) AS \"attachments!: Json<Vec<(String, i64)>>\"\n           FROM email\n           WHERE mailbox_id = ?1\n             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')\n             AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL\n             AND subject = ?4 AND to_address = ?5\n           ORDER BY abs(sent_at - ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "attachments!: Json<Vec<(String, i64)>>",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "2e7b19b4e6ef05a36e7d7944166828cc73bfc04f3f5a28e048b59b1ddc7b8a08"
+}

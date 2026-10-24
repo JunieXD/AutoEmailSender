@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id AS \"mentor_id!\" FROM email\n               WHERE message_id IN (SELECT value FROM json_each(?1))\n                 OR copy_message_id IN (SELECT value FROM json_each(?1))\n               UNION\n               SELECT mm.mentor_id FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n               WHERE m.message_id IN (SELECT value FROM json_each(?1))",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a83a382ab73b14726ff935d5ac903a84b2f28c526722f7cc5f20b2ab1376c18c"
+}
